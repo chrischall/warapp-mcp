@@ -26,7 +26,7 @@ afterEach(async () => {
 });
 
 async function check(env: Record<string, string>, fetchImpl: typeof fetch) {
-  harness = await createTestHarness((s) => registerAllTools(s, { env, fetchImpl }));
+  harness = await createTestHarness((s) => registerAllTools(s, { env, fetchImpl, sleep: async () => {} }));
   const res = await harness.client.callTool({ name: 'warapp_healthcheck', arguments: {} });
   const text = (res.content as Array<{ text: string }>)[0]!.text;
   return { text, body: parseToolResult<{ ok: boolean; credential: { source: string | null }; error?: { kind: string; message: string }; hint: string }>(res as never) };
@@ -88,7 +88,7 @@ describe('warapp_healthcheck', () => {
     expect(text).not.toContain(TOKEN);
   });
 
-  it('fails on an HTTP error status', async () => {
+  it('fails on an HTTP error status (after one retry)', async () => {
     const { fetchImpl } = stubFetch('oops', 503);
     const { body } = await check(CREDS, fetchImpl);
     expect(body.ok).toBe(false);

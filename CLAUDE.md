@@ -22,6 +22,12 @@ The build plan is `docs/PLAN.md`.
 - **Read-only.** Order submission is out of scope until a live capture of a turn exists.
 - **Every GameFeed scalar is a string** (ids, counts, booleans); normalize before use —
   see `docs/PLAN.md` "Facts". Fixtures under `tests/fixtures/` are anonymized.
+- **API facts live in `docs/WARAPP-API.md`**, each marked verified or unverified. The board
+  standing parser (`src/board.ts`) is unverified and must stay loose (never throw). Territory
+  and bonus ids overlap, so a bonus member is a territory first and a superbonus only otherwise.
+- **All GameFeed traffic goes through `WarappClient` (`src/client.ts`)**, including the
+  healthcheck probe. Maps are cached per process (`MapCache`), and a known game is re-fetched
+  with `GetMap=false`.
 
 ## Commands
 
