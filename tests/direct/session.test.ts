@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearSession,
   readSession,
+  readSessionSync,
   scrubToken,
   SESSION_HOST,
   sessionFilePath,
@@ -78,6 +79,26 @@ describe('readSession / writeSession', () => {
     ]) {
       await writeFile(path, bad);
       expect(await readSession(env)).toBeNull();
+    }
+  });
+});
+
+describe('readSessionSync', () => {
+  it('round-trips a written session synchronously', async () => {
+    const session: Session = { authToken: FAKE_TOKEN, capturedAt: '2026-11-12T00:00:00.000Z', host: SESSION_HOST };
+    await writeSession(session, env);
+    expect(readSessionSync(env)).toEqual(session);
+  });
+
+  it('reads a missing file as null (never throws)', () => {
+    expect(readSessionSync(env)).toBeNull();
+  });
+
+  it('reads a corrupt or wrong-shaped file as null (never throws)', async () => {
+    const path = sessionFilePath(env);
+    for (const bad of ['not json at all', '{"authToken": 123}', '{"authToken": ""}', 'null', '[]']) {
+      await writeFile(path, bad);
+      expect(readSessionSync(env)).toBeNull();
     }
   });
 });

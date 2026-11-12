@@ -45,6 +45,16 @@ import { SESSION_HOST, scrubToken, type Session } from './session.js';
 /** The env var pinning the transport: `direct` | `fetchproxy` | `auto` (default). */
 export const TRANSPORT_ENV = 'WARAPP_TRANSPORT';
 
+/**
+ * The slice of a bridge every hot-path consumer (WarappRpc, the page fetches,
+ * the push socket) actually uses: `ready()` → `{ fetch }`. Both the fetchproxy
+ * `WarappBridge` and the direct-first {@link WarappDirectBridge} satisfy it, so
+ * a consumer typed against this takes either and gains direct mode unchanged.
+ */
+export interface ReadyFetchBridge {
+  ready(): Promise<{ fetch(init: FetchproxyFetchInit): Promise<FetchproxyFetchResult> }>;
+}
+
 /** The byte cap on a direct reply (a board/standing reply is a few KB; pages tens of KB). */
 export const MAX_DIRECT_BODY_BYTES = 16 * 1024 * 1024;
 /** The deadline over a direct request and its body read. */

@@ -101,6 +101,14 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   connected. When it returns a game, go on to `warapp_plan_turn` (or picks).
 - **"How far is X from Y?"** → `warapp_plan_route` with `from` / `to` as a territory id,
   name, or unique part of a name. Map-only: it ignores who holds what.
+- **"Link my war.app session" / "let it skip the browser" / "am I linked?"** → the direct
+  (no-browser) transport. `warapp_link_session` (confirm-gated, local-only) captures the
+  signed-in session cookie once through the bridge and stores it on this machine, so later calls
+  go straight to war.app without a Chrome tab; `warapp_session_status` reports whether a session
+  is linked, its age and which transport is active. Neither ever shows the cookie — it is a
+  full-account credential kept locally (file mode `0600`). This is for a local install only; a
+  hosted deployment keeps the browser bridge. If a session expires the tools fall back to the
+  bridge and `warapp_session_status` says to relink.
 
 ## Conventions
 

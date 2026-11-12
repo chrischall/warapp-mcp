@@ -15,6 +15,7 @@
 // Deferred, like every other credential in this server: nothing here runs at
 // import time, the server boots without a session, and a missing OR corrupt
 // file reads as `null` — never a throw.
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
@@ -45,19 +46,37 @@ export function sessionFilePath(env: EnvSource = process.env): string {
   return readEnvVar('WARAPP_SESSION_FILE', { env }) ?? join(dataDir(env), 'session.json');
 }
 
+/** Parse a decoded session record, returning `null` for any unusable shape. */
+function parseSession(raw: unknown): Session | null {
+  if (!isRec(raw)) return null;
+  const { authToken, capturedAt, host } = raw;
+  if (typeof authToken !== 'string' || authToken.length === 0) return null;
+  if (typeof capturedAt !== 'string' || capturedAt.length === 0) return null;
+  if (host !== SESSION_HOST) return null;
+  return { authToken, capturedAt, host };
+}
+
 /**
  * The linked session, or `null` when none is linked or the file is missing or
  * unusable (wrong shape, wrong host, not JSON). Never throws.
  */
 export async function readSession(env: EnvSource = process.env): Promise<Session | null> {
   try {
-    const raw: unknown = JSON.parse(await readFile(sessionFilePath(env), 'utf8'));
-    if (!isRec(raw)) return null;
-    const { authToken, capturedAt, host } = raw;
-    if (typeof authToken !== 'string' || authToken.length === 0) return null;
-    if (typeof capturedAt !== 'string' || capturedAt.length === 0) return null;
-    if (host !== SESSION_HOST) return null;
-    return { authToken, capturedAt, host };
+    return parseSession(JSON.parse(await readFile(sessionFilePath(env), 'utf8')));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * {@link readSession}'s synchronous twin, for the one caller that needs the
+ * session inside a synchronous getter (the adaptive healthcheck's `path`, which
+ * reports only the non-secret linked/`capturedAt` facts — never the token).
+ * Same guarantees: a missing or corrupt file reads as `null`, never a throw.
+ */
+export function readSessionSync(env: EnvSource = process.env): Session | null {
+  try {
+    return parseSession(JSON.parse(readFileSync(sessionFilePath(env), 'utf8')));
   } catch {
     return null;
   }

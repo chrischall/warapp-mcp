@@ -36,7 +36,7 @@
     "mint.yaml"
   ],
   "scripts": {
-    "build": "tsc --noEmit && npm run bundle",
+    "build": "tsc && npm run bundle",
     "bundle": "node scripts/bundle.mjs",
     "dev": "node dist/bundle.js",
     "test": "npm run typecheck && vitest run",

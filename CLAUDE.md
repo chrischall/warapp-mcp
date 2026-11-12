@@ -116,10 +116,26 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
   war.app; the owner does live verification.
 - **The in-game player id is the GameFeed id minus two check digits each end**
   (`id.slice(2, -2)`); the digits vary per player.
+- **A chrome-less "direct" transport, LOCAL-ONLY** (`src/direct/`, phase 7 — `docs/PLAN-DIRECT.md`).
+  The signed-in session is carried by a durable **`AuthToken`** cookie, and that cookie **alone**
+  authenticates both the server-rendered pages and a `/Services` POST (**verified 2026-11-12**).
+  So the bridge has a direct-first router wrapped around it (`createWarappBridge`,
+  `createDirectFirstTransport`): the direct leg issues a plain server-side HTTPS request carrying
+  the cookie, falling back to the browser bridge when no session is linked or it has expired.
+  `WARAPP_TRANSPORT` = `auto` (default) | `direct` | `fetchproxy`; the session is stored at
+  `WARAPP_SESSION_FILE` (default `<dataDir>/session.json`). One injection point: `index.ts` builds
+  this one bridge and passes it to `WarappRpc`, the page fetches, the healthcheck and the push
+  socket, so they all get direct mode at once. `warapp_link_session` (write, confirm-gated,
+  local-only) captures the cookie once through the bridge; `warapp_session_status` reports the
+  linked state, age and active leg. **The `AuthToken` is a full-account credential:** file `0600`,
+  dir `0700`, atomic write; scrubbed by value from every upstream error string (mcp-utils
+  `stripBearer` + `scrubToken`); never logged, never in a tool result, never in an error/hint.
+  **Direct mode is local-only — `mint.yaml` keeps the browser bridge and stores no token on the host.**
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
-  probe until the bridge has carried a request, the bridge probe after. The bridge port is
-  `WARAPP_WS_PORT` (default 37149); hosting needs `bridge: true` and
-  `bridgePortEnv: WARAPP_WS_PORT` on the registration.
+  probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
+  after a fallback; either way it reports the active leg and whether a direct session is linked and
+  its age (never the token). The bridge port is `WARAPP_WS_PORT` (default 37149); hosting needs
+  `bridge: true` and `bridgePortEnv: WARAPP_WS_PORT` on the registration.
 - **A frozen war.app tab stalls bridged POSTs.** Chrome freezes background tabs; the bridge
   relays `/Services` POSTs through a page tab, so they time out ("did not respond within
   30000ms") while GETs (run by the extension) still work. Reloading or focusing a war.app tab

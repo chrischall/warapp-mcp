@@ -9,6 +9,13 @@ slug: warapp
 # registration therefore also needs `bridge: true` and
 # `bridgePortEnv: WARAPP_WS_PORT` (with a runtime that supports a bridge) —
 # registration fields this manifest has no schema for.
+#
+# Direct transport is LOCAL-ONLY. A local install can link the signed-in
+# war.app session (warapp_link_session) and then talk to war.app directly
+# without a browser (WARAPP_TRANSPORT=auto/direct). That stores a full-account
+# AuthToken on the machine, so hosting never uses it: a hosted child keeps the
+# browser bridge above and stores no session token. Nothing in this manifest
+# enables direct mode.
 summary: >-
   war.app (Warzone) game advisor — your games, players and settings, map
   bonuses and chokepoints, board analysis and route planning through war.app's
@@ -71,6 +78,17 @@ env:
     help: >-
       Truthy logs the fetchproxy bridge's role and lifecycle to stderr.
       Diagnostic only.
+  - name: WARAPP_TRANSPORT
+    required: false
+    help: >-
+      How the live-game tools reach war.app on a LOCAL install: auto (default —
+      the chrome-less direct transport when a session is linked, else the
+      browser bridge), direct, or fetchproxy. A hosted child keeps the bridge.
+  - name: WARAPP_SESSION_FILE
+    required: false
+    help: >-
+      Local-only: where the linked direct-transport session is stored (default
+      <dataDir>/session.json, file mode 0600). A hosted child stores no session.
 
 state:
   dataDir: true
