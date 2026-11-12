@@ -13,8 +13,8 @@ Advisor MCP for war.app (Warzone) with two transports:
 
 Build plans: `docs/PLAN.md` (phase 1, GameFeed), `docs/PLAN-LIVE.md` (phase 2, live board),
 `docs/PLAN-TURN.md` (phase 3, plan and submit a turn), `docs/PLAN-SCOUT.md` (phase 4, my games
-and opponent scouting) and `docs/PLAN-CARDS-PUSH.md` (phase 5, cards, turn notifications,
-threat-aware planner).
+and opponent scouting), `docs/PLAN-CARDS-PUSH.md` (phase 5, cards, turn notifications,
+threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, from a lost game).
 
 ## What is true only of this repo
 
@@ -76,6 +76,29 @@ threat-aware planner).
   GameFeed `GetHistory` (unverified in progress, parsed loosely in `src/trend.ts`), else from
   `<dataDir>/boards/<gameId>.json`, written after each plan (newest two turns kept, so re-planning a
   turn keeps the trend); it reports `trendSource`.
+- **The turn planner (`src/analysis/planner.ts`) is pure and deterministic** (ties on
+  ascending id, no I/O; its header comment is the full rule list) and judges every hold and
+  capture with the exact combat model (`armiesToTake`, `captureCost`). Its rules, learnt from
+  a lost game (`tests/analysis/lessons.test.ts` replays each lesson in miniature):
+  - **Triage by protected value.** A threatened border's protected value is my complete
+    bonuses containing it, plus bonuses I'd lose all access to, plus per-territory income;
+    holds go in order of protected value per army of hold cost. A border is **conceded** when
+    holding costs more than `CONCEDE_FACTOR` (3) × its protected value or than the income left
+    (a warning either way): it is never deployed to, and idle armies never move into it.
+  - **Withdraw** (under `balanced`/`defend`): a conceded border's movable armies go first to
+    the neighbour nearest a border that holds, and the plan sets `cardAdvice:
+    'order-priority'` because a withdrawal only executes while the border is still mine. The
+    planner never plays cards itself.
+  - **`balanced` is the default goal**: holds, completing/advancing bonuses and breaking a
+    fully visible single-enemy bonus (`BREAK_WEIGHT` / opponents × value / cost) compete by
+    income per army; `MIN_EXPANSION_SHARE` (30%) of income goes to expansion before holds that
+    protect less than it. A threatened border whose only visible threat is a breakable member
+    attacks it instead of holding. `defend` holds first, `expand` never attacks players.
+  - **Leftover** goes to the held border with the most at stake still short of a comfortable
+    margin, else the top expansion's stack — never to a conceded border (the old "most enemies
+    next to it" rule picked the hopeless border).
+  - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
+    the threat (see the threat model above), and warns "is building".
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it

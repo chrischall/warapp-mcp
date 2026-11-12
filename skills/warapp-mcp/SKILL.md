@@ -58,7 +58,22 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   never plays Blockade, which gives a territory away — offer that only if the user asks.
 - **Threats** assume each enemy deploys `enemy_deploy` armies (default max(5, 75% of the
   largest visible enemy stack)). Enemy income is unseen: say so, and raise it when the user
-  knows an opponent earns more.
+  knows an opponent earns more. An enemy stack next to the user that grew since last turn
+  ("is building: +G/turn") raises that border's threat by its growth; `trendSource` says where
+  last turn's board came from (`history`, `cache`, or null when there was none).
+- **Reading a balanced plan** (the default goal): income goes where it earns most per army —
+  holds of borders that protect bonus income, completing or advancing cheap bonuses, and
+  breaking an enemy bonus ("breaks enemy bonus …" in the reasoning). At least 30% of income
+  goes to expansion before holds that protect less than it ("Hold … later"). A border in
+  `conceded` costs more to hold than it is worth (or than the income left): nothing is
+  deployed there and its armies withdraw toward a border that holds. When `cardAdvice` is
+  `"order-priority"`, tell the user a withdrawal only runs if the border is still theirs when
+  it executes, and suggest adding Order Priority to the `orders` if they hold one (the planner
+  only plays it when a card play is required).
+- **Pick `defend` when** the user wants to hold everything worth holding before any expansion
+  — e.g. they are ahead on income and only need to survive, or a bonus they hold is under
+  attack from several sides. It still concedes hopeless borders. Pick `expand` to never attack
+  a player, `complete-bonus` to fight for a specific bonus (with `focus`).
 - **"Submit my turn"** → `warapp_submit_turn` with the reviewed `orders` (territories by id or
   name, card plays `{ "kind": "card", "card": <id or type name>, "target"? }`; confirm-gated,
   always as the signed-in account — it refuses another `player`). It validates the orders on

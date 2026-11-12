@@ -70,6 +70,8 @@ interface PlanPayload {
   orders: Array<Record<string, unknown>>;
   settings?: Record<string, unknown>;
   trendSource: 'history' | 'cache' | null;
+  conceded: Named[];
+  cardAdvice: 'order-priority' | null;
   untrusted_content?: boolean;
 }
 
@@ -82,6 +84,9 @@ describe('warapp_plan_turn', () => {
     expect(p.player).toEqual({ id: Number(ANN.feed), name: 'Ann' });
     expect(p.goal).toBe('balanced');
     expect(p.income).toBe(5);
+    expect(p.trendSource).toBeNull();
+    expect(p).toHaveProperty('conceded');
+    expect(p).toHaveProperty('cardAdvice');
 
     // Widow's Watch (2 neutrals) completes bonus 118: 3 armies at 60% from Sheepshead Hills (3, guard 1).
     expect(p.moves[0]).toEqual({
@@ -146,6 +151,15 @@ describe('warapp_plan_turn', () => {
     // Ann's threatened border is in no held bonus: it protects +0, so it is conceded, not held.
     expect(p.warnings.join('\n')).toMatch(/cannot be held economically \(needs \d+, protects \+0\): conceded/);
     expect(p.rationale.join('\n')).not.toMatch(/so it holds/);
+    // The conceded border, by name and id, and the card the withdrawal from it needs.
+    expect(p.conceded.length).toBeGreaterThan(0);
+    for (const c of p.conceded) {
+      expect(c.name).toBe(mapName(c.id));
+      expect(p.warnings.join('\n')).toContain(`${c.name} (#${c.id}) cannot be held`);
+    }
+    // Every territory Ann holds is conceded, so there is nowhere to withdraw to: no card advice.
+    expect(p.warnings.join('\n')).toMatch(/is conceded and has nowhere to withdraw to/);
+    expect(p.cardAdvice).toBeNull();
   });
 
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {

@@ -391,8 +391,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           '(default) spends income where it earns most per army — holding borders that protect income, completing ' +
           'cheap bonuses, breaking enemy bonuses — with at least 30% on expansion; "expand" takes neutrals and never ' +
           'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
-          'borders worth holding before anything else. Hopeless borders are conceded (and, under balanced/defend, ' +
-          'withdrawn from). Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
+          'borders worth holding before anything else. Hopeless borders are listed in `conceded` and get no ' +
+          'deploys; under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
+          'Priority so the withdrawal runs before the border falls. Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
           'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
           'server last planned on (`trendSource` says which, or null). ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
@@ -492,6 +493,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         income,
         enemyDeploy: plan.enemyDeploy,
         trendSource: trend?.source ?? null,
+        conceded: plan.conceded.map(name),
+        cardAdvice: plan.cardAdvice,
         cards: {
           hand: hand.map(cardView),
           maxCardsHold: rules.maxCardsHold ?? null,
