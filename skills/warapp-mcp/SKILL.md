@@ -76,8 +76,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   breaking an enemy bonus ("breaks enemy bonus …" in the reasoning). At least 30% of income
   goes to expansion before holds that protect less than it ("Hold … later"). Under
   `balanced`/`defend`, an opponent whose every territory is visible and borders the user's is
-  attacked everywhere at once when that eliminates it ("Finish off player …") or takes most of
-  it ("Pressure player …"), each attack sized for its whole estimated deploy landing there. Any
+  attacked when that eliminates it ("Finish off player …") or surely cuts it to one territory
+  or takes at least half ("Pressure player …"), judged against its best use of its estimated
+  deploy as one budget spread to save what it can (a warning says it chooses which to save). Any
   such opponent is tried, strong or weak; holds worth paying for against other players, and
   against what a pressure plan leaves the opponent, come first (no pressure when they cannot be
   funded). An opponent next to the fog is not attempted (warned only when its visible

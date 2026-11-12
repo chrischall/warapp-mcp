@@ -1,8 +1,9 @@
 // Issue #45: the planner conceded the borders facing an opponent down to two
 // 2-army territories instead of finishing it off. Before conceding, it now checks
-// whether attacking every territory of a fully visible, reachable opponent — each
-// attack sized for that opponent's full deploy landing on it — eliminates it (or
-// takes most of it). Every map, id and name here is made up.
+// whether attacking the territories of a fully visible, reachable opponent eliminates
+// it (or cuts it to one territory, or takes at least half of it) against its best
+// response: its estimated deploy is one budget, spread over its territories to save
+// as many as it can. Every map, id and name here is made up.
 //
 //   Home  (+2): 1 2       — mine
 //   Wilds (+3): 7 8 9     — neutrals: the expansion the old plan preferred
@@ -13,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 import type { BoardState } from '../../src/board.js';
 import { armiesToTake } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import { guaranteedFalls, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import { boardStateFromLive, OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap, Player } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
@@ -124,6 +125,62 @@ describe('finishing off a weak opponent (#45)', () => {
     expect(p.warnings.join('\n')).toMatch(/Eliminating player 22567833/);
     expect(p.warnings.join('\n')).not.toMatch(/conceded/);
     expect(() => validate(p, ENDGAME, 22)).not.toThrow();
+  });
+
+  it("the opponent's best response: one shared deploy, spent where it saves a target most cheaply", () => {
+    // Saving a target costs (what the attack can take) − (its armies) + 1 deploys there.
+    expect(guaranteedFalls([3, 4], 6)).toBe(1); // it saves the cheaper one, not both (3 + 4 > 6)
+    expect(guaranteedFalls([7, 7], 6)).toBe(2); // neither: each needs more than all of it
+    expect(guaranteedFalls([1, 6], 6)).toBe(1);
+    expect(guaranteedFalls([3, 3], 6)).toBe(0); // both
+    expect(guaranteedFalls([4, 4, 4], 6)).toBe(2);
+    expect(guaranteedFalls([0, 9], 6)).toBe(1); // an attack too small to take it unreinforced fails for free
+    expect(guaranteedFalls([], 6)).toBe(0);
+  });
+
+  it('#45 at a realistic income (10): attacks both, +6/+4 onto the two border stacks, and one must fall', () => {
+    // Its ~6 deploy is one budget: 8 from T3 takes up to 5 defenders (T5 needs 4 to be saved),
+    // 6 from T4 takes up to 4 (T6 needs 3). Saving both needs 7 > 6, so at least one falls
+    // and it is cut to one territory. Fewer attacking armies cannot guarantee that.
+    const p = plan(ENDGAME, 10);
+    expect(p.conceded).toEqual([]);
+    expect(p.deploys).toEqual([
+      { territoryId: 3, armies: 6 },
+      { territoryId: 4, armies: 4 },
+    ]);
+    // Cheaper attack first; T5's is sized for 3 of the ~6 landing there, T6's for 2.
+    expect(attacks(p)).toEqual([
+      expect.objectContaining({ from: 4, to: 6, armies: 6 }),
+      expect.objectContaining({ from: 3, to: 5, armies: 8 }),
+    ]);
+    const why = p.rationale.join('\n');
+    expect(why).toMatch(
+      /Pressure player 22567833: attack all 2 of its territories \(T5 \(#5\), T6 \(#6\)\) this turn: its ~6 deploy can save at most 1 of them, so at least 1 falls, cutting it to one territory/,
+    );
+    expect(why).not.toMatch(/Finish off/);
+    expect(p.warnings.join('\n')).toMatch(/Pressuring player 22567833 assumes it deploys at most ~6/);
+    expect(p.warnings.join('\n')).toMatch(/player 22567833 chooses which of T5 \(#5\), T6 \(#6\) to save/);
+    expect(p.warnings.join('\n')).not.toMatch(/conceded/);
+    expect(deploySum(p)).toBe(10);
+    expect(() => validate(p, ENDGAME, 10)).not.toThrow();
+  });
+
+  it('#45 at income 8: no split of 8 makes saving both cost more than its 6, so it is not attempted', () => {
+    // 2 movable + 2 movable + 8 deploys = 12 attacking armies take at most 4 + 4 defenders
+    // (6 and 6, or 5 + 3 with 8 and 4): saving both costs at most 3 + 3 = 6, which its ~6
+    // deploy covers. Nothing is guaranteed, so the borders are judged as before: both thin
+    // borders conceded (withdrawn to T1) and the 8 deployed to T2 to expand into Wilds.
+    const p = plan(ENDGAME, 8);
+    expect(p.rationale.join('\n')).not.toMatch(/Finish off|Pressure player/);
+    expect(attacks(p).filter((m) => m.to === 5 || m.to === 6)).toEqual([]);
+    expect(p.conceded).toEqual([3, 4]);
+    expect(p.deploys).toEqual([{ territoryId: 2, armies: 8 }]);
+    expect(attacks(p)).toEqual([
+      expect.objectContaining({ from: 2, to: 7, armies: 3 }),
+      expect.objectContaining({ from: 2, to: 9, armies: 3 }),
+    ]);
+    expect(p.expected.captures).toEqual([7, 9]);
+    expect(() => validate(p, ENDGAME, 8)).not.toThrow();
   });
 
   it('works under goal defend too', () => {
@@ -241,33 +298,64 @@ describe('finishing off a weak opponent (#45)', () => {
   });
 
   it('does not pressure at the cost of a hold that faces what is left of the opponent', () => {
-    // 10 (4 armies) is the opponent's third territory and borders my 2 (Home, +5) only:
-    // 3 movable + ~6 deploy = 9 threatens 2. Taking 5 and 6 (11 + 11 deploys) would leave
-    // nothing for that hold, so the +5 border is not thrown away for two captures.
+    // 10 (8 armies) is the opponent's third territory and borders my 2 (Home, +5) only:
+    // 7 movable + ~6 deploy = 13 threatens 2, which needs 7 more to hold. Attacking 10 too
+    // costs too much, and taking 5 and 6 for sure (11 + 11 deploys) would leave nothing
+    // for that hold, so the +5 border is not thrown away for two captures.
+    const map = mapOf(
+      [...EDGES, [2, 10]],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      [{ id: 501, name: 'Home', value: 5, territoryIds: [1, 2], bonusIds: [] }, BONUSES[1]!],
+    );
+    const live = [...ENDGAME, t(10, THEM, 8)];
+    for (const goal of ['balanced', 'defend'] as const) {
+      const p = plan(live, 22, { options: { goal } }, map);
+      expect(p.rationale.join('\n')).not.toMatch(/Pressure player|Finish off/);
+      expect(p.conceded).not.toContain(2);
+      expect(p.warnings.join('\n')).not.toMatch(/T2 \(#2\) cannot be held/);
+      expect(armiesToTake(2 + deployedTo(p, 2) - outOf(p, 2), STD)!).toBeGreaterThan(13);
+      expect(deploySum(p)).toBe(22);
+      expect(() => validate(p, live, 22, map)).not.toThrow();
+    }
+    // With 7 more income both the hold and the two captures fit: pressure, and 2 holds.
+    for (const goal of ['balanced', 'defend'] as const) {
+      const p = plan(live, 29, { options: { goal } }, map);
+      expect(p.rationale.join('\n')).toMatch(
+        /Pressure player 22567833: take 2 of its 3 territories \(T5 \(#5\), T6 \(#6\)\) this turn, each sized for its full ~6 deploy landing there, cutting it to one territory; T10 \(#10\) stays unattacked/,
+      );
+      expect(attacks(p)).toEqual([
+        expect.objectContaining({ from: 3, to: 5, armies: 13 }),
+        expect.objectContaining({ from: 4, to: 6, armies: 13 }),
+      ]);
+      expect(p.conceded).not.toContain(2);
+      expect(armiesToTake(2 + deployedTo(p, 2) - outOf(p, 2), STD)!).toBeGreaterThan(13);
+      expect(deploySum(p)).toBe(29);
+      expect(() => validate(p, live, 29, map)).not.toThrow();
+    }
+  });
+
+  it('attacks a weak third territory too when that guarantees more for fewer armies', () => {
+    // 10 (4 armies) borders only my 2. Attacking all three, its ~6 deploy can save only the
+    // cheapest one (3 for T6, then 4 and 4): two must fall, cutting it to one territory, with
+    // 25 attacking armies instead of 26 for taking 5 and 6 for sure (plus 2's hold).
     const map = mapOf(
       [...EDGES, [2, 10]],
       [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
       [{ id: 501, name: 'Home', value: 5, territoryIds: [1, 2], bonusIds: [] }, BONUSES[1]!],
     );
     const live = [...ENDGAME, t(10, THEM, 4)];
-    for (const goal of ['balanced', 'defend'] as const) {
-      const p = plan(live, 22, { options: { goal } }, map);
-      expect(p.conceded).not.toContain(2);
-      expect(p.warnings.join('\n')).not.toMatch(/T2 \(#2\) cannot be held/);
-      expect(armiesToTake(2 + deployedTo(p, 2) - outOf(p, 2), STD)!).toBeGreaterThan(9);
-      expect(deploySum(p)).toBe(22);
-      expect(() => validate(p, live, 22, map)).not.toThrow();
-    }
-    // With 4 more income both the hold and the two captures fit: pressure, and 2 holds.
-    for (const goal of ['balanced', 'defend'] as const) {
-      const p = plan(live, 26, { options: { goal } }, map);
-      expect(p.rationale.join('\n')).toMatch(/Pressure player 22567833: take 2 of its 3 territories/);
-      expect(p.expected.captures).toEqual(expect.arrayContaining([5, 6]));
-      expect(p.conceded).not.toContain(2);
-      expect(armiesToTake(2 + deployedTo(p, 2) - outOf(p, 2), STD)!).toBeGreaterThan(9);
-      expect(deploySum(p)).toBe(26);
-      expect(() => validate(p, live, 26, map)).not.toThrow();
-    }
+    const p = plan(live, 22, {}, map);
+    expect(attacks(p).filter((m) => [5, 6, 10].includes(m.to))).toEqual([
+      expect.objectContaining({ from: 4, to: 6, armies: 6 }),
+      expect.objectContaining({ from: 3, to: 5, armies: 8 }),
+      expect.objectContaining({ from: 2, to: 10, armies: 11 }),
+    ]);
+    expect(p.rationale.join('\n')).toMatch(
+      /Pressure player 22567833: attack all 3 of its territories \(T5 \(#5\), T6 \(#6\), T10 \(#10\)\) this turn: its ~6 deploy can save at most 1 of them, so at least 2 fall, cutting it to one territory/,
+    );
+    expect(p.conceded).toEqual([]);
+    expect(deploySum(p)).toBe(22);
+    expect(() => validate(p, live, 22, map)).not.toThrow();
   });
 
   it('does not pressure when an attacking border still faces what is left of the opponent', () => {

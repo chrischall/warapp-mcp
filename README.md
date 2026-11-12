@@ -163,9 +163,11 @@ and chat text comes back marked as untrusted third-party content.
    Under the default `balanced` goal the plan spends income where it earns most per army:
    holding borders that protect bonuses, completing cheap bonuses (at least 30% of income goes
    to expansion), and breaking an enemy bonus you can reach. Under `balanced` and `defend`, an
-   opponent whose every territory is visible and borders yours is attacked everywhere at once
-   when that eliminates it (or takes most of it) even if it deploys its whole estimated income
-   on each ("Finish off player …"). Any such opponent is tried, strong or weak, fewest
+   opponent whose every territory is visible and borders yours is attacked when that
+   eliminates it ("Finish off player …") or, against its best use of its estimated deploy
+   (one budget, spread to save what it can), surely cuts it to one territory or takes at
+   least half of it ("Pressure player …": e.g. +6/+4 on two border stacks against its two
+   2-army territories, when its ~6 cannot save both). Any such opponent is tried, strong or weak, fewest
    territories first; holds worth paying for against other players, and against what a
    "Pressure" plan leaves the opponent, are funded first (pressure is dropped when they cannot
    be). An opponent next to the fog is not attempted (a warning says so only when its visible
