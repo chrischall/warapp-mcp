@@ -9,8 +9,10 @@
 //     Always a warning; under `goal: 'defend'` the plan first deploys the fewest
 //     armies that make T hold, and T then makes no moves.
 //  2. Targets: visible neutrals adjacent to a territory I held at the start of
-//     the turn (plus visible enemy territories under `goal: 'complete-bonus'`).
-//     Fogged or unknown neighbours are never attacked — they produce a warning.
+//     the turn (plus visible enemy territories under `goal: 'complete-bonus'` —
+//     deliberately not under `expand`/`defend`: attacking a player is a choice the
+//     caller makes, never a default). Fogged or unknown neighbours are never
+//     attacked — they produce a warning.
 //  3. Capture cost: `armiesToTake` (0% luck, straight round). With luck L > 0
 //     the cost becomes `ceil(cost / (1 − L))`, i.e. the luck-free share of the
 //     attack alone still takes the territory.
@@ -19,6 +21,8 @@
 //     remaining cost exceeds PAYBACK_TURNS × value, or with one remaining
 //     territory costing over WASTELAND_FACTOR × value, is uneconomic and its
 //     territories are not planned (unless focused or also in an economic bonus).
+//     A negative-value bonus is always uneconomic unless focused, so the plan
+//     never captures into it (completing one would cut income).
 //     Pass 1 completes bonuses that can be finished this turn (all or nothing);
 //     pass 2 advances bonuses one capture at a time, cheapest first; pass 3
 //     (not under `complete-bonus`) takes any other affordable target.
@@ -273,9 +277,15 @@ export function planTurn(input: PlanInput): TurnPlan {
   const uneconomicMember = new Set<number>();
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     const isFocus = focus.has(b.id);
-    if (b.value <= 0 && !isFocus) continue;
     const ts = bonusTerritories(g, b.id);
     const remaining = ts.filter((t) => !mineSet.has(t));
+    if (b.value < 0 && !isFocus) {
+      // Completing it would cut income: never plan into it (an economic
+      // membership elsewhere still wins — see the pass-3 filter).
+      for (const t of remaining) uneconomicMember.add(t);
+      continue;
+    }
+    if (b.value <= 0 && !isFocus) continue;
     if (!remaining.length) continue;
     let cost = 0;
     let worst = 0;

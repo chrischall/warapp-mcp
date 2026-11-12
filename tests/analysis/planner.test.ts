@@ -290,6 +290,41 @@ describe('planTurn — targets', () => {
     expect(deploySum(p)).toBe(5);
   });
 
+  it('focus decides between bonuses neither of which completes this turn', () => {
+    // X (+1): 2, 3   Y (+5): 4, 5 — 3 and 5 are out of reach, and 4 armies fund one capture.
+    const fg = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5],
+        [
+          [1, 2],
+          [2, 3],
+          [1, 4],
+          [4, 5],
+        ],
+        [
+          [601, 1, [2, 3]],
+          [602, 5, [4, 5]],
+        ],
+      ),
+    );
+    const s = board([mine(1, 4), neutral(2, 2), neutral(3, 2), neutral(4, 2), neutral(5, 2)]);
+    const plain = planTurn({ graph: fg, board: s, me: ME, income: 0, settings: STD });
+    expect(attacks(plain).map((m) => m.to)).toEqual([4]);
+    const focused = planTurn({ graph: fg, board: s, me: ME, income: 0, settings: STD, options: { focusBonusIds: [601] } });
+    expect(attacks(focused).map((m) => m.to)).toEqual([2]);
+  });
+
+  it('never completes a negative-value bonus unless focused', () => {
+    // 2 is the lone member of a -1 bonus: taking it would lower income.
+    const ng = buildGraph(makeMap([1, 2], [[1, 2]], [[501, -1, [2]]]));
+    const s = board([mine(1, 4), neutral(2, 2)]);
+    const p = planTurn({ graph: ng, board: s, me: ME, income: 5, settings: STD });
+    expect(p.moves.some((m) => m.to === 2)).toBe(false);
+    expect(p.expected.nextIncome).toBeGreaterThanOrEqual(5);
+    const focused = planTurn({ graph: ng, board: s, me: ME, income: 5, settings: STD, options: { focusBonusIds: [501] } });
+    expect(attacks(focused).map((m) => m.to)).toEqual([2]);
+  });
+
   it('expands into territories outside any bonus', () => {
     const lg = buildGraph(makeMap([1, 2], [[1, 2]], []));
     const p = planTurn({ graph: lg, board: board([mine(1, 4), neutral(2, 2)]), me: ME, income: 0, settings: STD });
