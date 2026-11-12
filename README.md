@@ -3,9 +3,10 @@
 [war.app](https://war.app) (Warzone) game advisor MCP server for Claude. It reads your games
 through war.app's per-player **GameFeed** API and helps you think about them: players and
 settings, the map's bonuses and chokepoints, the board, and routes between territories.
-Through your signed-in war.app browser tab it also reads the **live board** (including the
-pick phase, where GameFeed has none) and your territory picks, plans your turn, and — only after
-you confirm — submits picks, commits your turn's orders and posts game chat.
+Through your signed-in war.app browser tab it also lists **your games** (the ones waiting on you
+first), **scouts an opponent** (their record and your head-to-head), reads the **live board**
+(including the pick phase, where GameFeed has none) and your territory picks, plans your turn,
+and — only after you confirm — submits picks, commits your turn's orders and posts game chat.
 
 > This project was developed and is maintained by AI (Claude Code). Use at your own discretion.
 
@@ -48,12 +49,13 @@ that needs them.
 
 ## The browser bridge (live-game tools)
 
-GameFeed has no live board during the pick phase, no picks and no way to post chat. Those
-come from war.app's own web-client protocol, which is authenticated by your browser's
-war.app session rather than by the API token. So the live-game tools —
-`warapp_get_live_board`, `warapp_get_my_picks`, `warapp_submit_picks`, `warapp_plan_turn`, `warapp_submit_turn`, `warapp_send_chat`,
-and `warapp_analyze_board` when GameFeed sends no board — relay each request through your
-signed-in war.app tab with the [fetchproxy](https://github.com/chrischall/fetchproxy) bridge.
+GameFeed has no list of your games, no player profiles, no live board during the pick phase,
+no picks and no way to post chat. Those come from war.app's own web client (its protocol and
+its profile pages), which is authenticated by your browser's war.app session rather than by
+the API token. So the live-game tools — `warapp_my_games`, `warapp_scout_player`,
+`warapp_get_live_board`, `warapp_get_my_picks`, `warapp_submit_picks`, `warapp_plan_turn`,
+`warapp_submit_turn`, `warapp_send_chat`, and `warapp_analyze_board` when GameFeed sends no
+board — relay each request through your signed-in war.app tab with the [fetchproxy](https://github.com/chrischall/fetchproxy) bridge.
 They need:
 
 - the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases)
@@ -137,7 +139,10 @@ The package (and the Claude Code plugin) ships two skills under `skills/`:
 - **warapp-api** — the same GameFeed reads from a shell with curl and jq, no server needed. Source
   `skills/warapp-api/scripts/warapp.sh` (bash or zsh) for `warapp_game`, `warapp_map` (cached per map)
   and `warapp_feed`; it reads `WARAPP_EMAIL` / `WARAPP_API_TOKEN` from the environment or
-  `~/.config/warapp-mcp/.env` and never prints the token.
+  `~/.config/warapp-mcp/.env` and never prints the token. It also scouts a player from a shell:
+  `fpx` ([`@fetchproxy/cli`](https://www.npmjs.com/package/@fetchproxy/cli), profile `warapp`)
+  fetches the Profile and CommonGames pages through your signed-in tab and
+  `references/scout.mjs` prints the same allowlisted JSON as `warapp_scout_player`.
 
 ## Development
 
