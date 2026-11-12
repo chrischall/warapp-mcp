@@ -370,10 +370,18 @@ describe('decodeReplyEnvelope', () => {
 describe('methods', () => {
   it('names every method id', () => {
     expect(Method).toEqual({
+      GetOpenGames: 10,
+      GetGameDetails: 38,
       GameRefresh: 39,
       GetLatestGameInfo: 40,
       SendChat: 42,
+      GetGameSettings: 48,
       GetMyGames: 50,
+      AcceptGame: 60,
+      AcceptOpenSeat: 61,
+      AcceptOpenAutoGame: 62,
+      GetOpenAutoGame: 63,
+      DeclineGame: 64,
       GetMapDetails: 73,
       SendOrders: 74,
       SendInProgressOrders: 75,

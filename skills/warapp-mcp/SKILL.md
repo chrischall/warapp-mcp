@@ -8,8 +8,8 @@ description: This skill should be used when the user asks about a war.app (Warzo
 An advisor. The tools read war.app as the signed-in player (fog of war applies): GameFeed
 for games, maps and chat, and the user's signed-in war.app tab for their games list, player
 scouting, the live board, picks, cards and turn notifications.
-Three tools write, all confirm-gated: `warapp_submit_picks`, `warapp_submit_turn` and
-`warapp_send_chat`. A turn goes plan → review → submit: `warapp_plan_turn` proposes it,
+Four tools write, all confirm-gated: `warapp_submit_picks`, `warapp_submit_turn`,
+`warapp_send_chat` and `warapp_join_game`. A turn goes plan → review → submit: `warapp_plan_turn` proposes it,
 the user reviews it, and only then does `warapp_submit_turn` commit it.
 
 ## Start here
@@ -33,6 +33,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   `free_only`, `exclude_teams`, `limit`), each with seats, boot time, entry fee, rules and the
   `plannerGaps` the turn planner does not model. It works without a browser once a session is
   linked.
+- **"Join that game"** → `warapp_join_game` with `game_id` (confirm-gated): it re-reads the
+  open games list and refuses team games and coin entry fees unless `allow_team` /
+  `accept_entry_fee`, and custom-scenario and mod games always. Show the user the preview (pace,
+  seats, rules, `plannerGaps`) before confirming; it reports `joined` only once the account shows
+  in the game, else `unconfirmed`.
 - **"Who am I up against?" / "scout this player"** → `warapp_scout_player` with `game_id` +
   `player` (a name), or just the player's id: level, games played, last seen, boot rate,
   ranked records per format and the user's head-to-head with them. It never returns the
@@ -127,8 +132,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 
 On a host that serves context groups (mcp-host), every tool here except `warapp_healthcheck`
 is in the **work** group: `warapp_my_games` with **whats-new** (canonical), the other reads
-with intent **lookup** (but `warapp_wait_for_turn`, intent **whats-new**), `warapp_submit_picks`
-and `warapp_submit_turn` with **change**, and
+with intent **lookup** (but `warapp_wait_for_turn`, intent **whats-new**), `warapp_submit_picks`,
+`warapp_submit_turn` and `warapp_join_game` with **change**, and
 `warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,

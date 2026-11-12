@@ -5,10 +5,19 @@
 import type { Reader, Writer } from './codec.js';
 
 export const Method = {
+  /** Exists in the client's method table, but the web client never calls it (open games come from a page). */
+  GetOpenGames: 10,
+  GetGameDetails: 38,
   GameRefresh: 39,
   GetLatestGameInfo: 40,
   SendChat: 42,
+  GetGameSettings: 48,
   GetMyGames: 50,
+  AcceptGame: 60,
+  AcceptOpenSeat: 61,
+  AcceptOpenAutoGame: 62,
+  GetOpenAutoGame: 63,
+  DeclineGame: 64,
   GetMapDetails: 73,
   SendOrders: 74,
   SendInProgressOrders: 75,
@@ -61,6 +70,48 @@ export const DEFAULT_MY_GAMES_FILTERS: Readonly<MyGamesFilters> = { filterType: 
 export function writeGetMyGamesParams(w: Writer, filters: MyGamesFilters = DEFAULT_MY_GAMES_FILTERS): void {
   w.bool(true).u8(filters.filterType).int32(filters.count).u8(filters.sort);
   w.bool(false).int32(0).bool(false).bool(false);
+}
+
+export interface AcceptOpenSeatParams {
+  gameId: number;
+  /** The team of the open seat being taken, as its record carries it (-1: a no-team seat). */
+  team: number;
+}
+
+/**
+ * AcceptOpenSeat(auth, …) — read from the client's writer (docs/PLAN-OPEN-GAMES.md;
+ * the owner verifies it live): the game id, an optional colour preference
+ * (absent), the open seat's team, an optional custom-scenario start slot
+ * (absent — scenario games are refused), then a bool the client sets when one
+ * of the game's mods hooks the join (false: mod games are refused).
+ */
+export function writeAcceptOpenSeatParams(w: Writer, p: AcceptOpenSeatParams): void {
+  w.int32(p.gameId)
+    .bool(false) // colour preference
+    .int32(p.team)
+    .bool(false) // start slot
+    .bool(false); // a mod hooks this join
+}
+
+/** A `warlight.shared.AcceptOpenSeatReturn`. */
+export interface AcceptOpenSeatResult {
+  /** The join ended the account's vacation (the client says "Welcome back"). */
+  vacationEnded: boolean;
+  /**
+   * A game id the client opens instead of reporting the join (UNVERIFIED:
+   * what war.app means by it is not known).
+   */
+  otherGameId?: number;
+}
+
+/**
+ * An AcceptOpenSeat result: the result-present flag, then a bool and an
+ * optional int32. Absent is `undefined` (the client treats it as a plain join).
+ */
+export function readAcceptOpenSeatReturn(body: Reader): AcceptOpenSeatResult | undefined {
+  if (!body.bool()) return undefined;
+  const vacationEnded = body.bool();
+  return body.bool() ? { vacationEnded, otherGameId: body.int32() } : { vacationEnded };
 }
 
 /** GetLatestGameInfo(auth, gameId) — the parameters after the auth block. */

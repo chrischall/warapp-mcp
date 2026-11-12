@@ -6,6 +6,7 @@ import { registerChatTools } from './chat.js';
 import { registerGameTool } from './game.js';
 import { registerHealthcheckTool } from './healthcheck.js';
 import { createLiveContext } from './live-context.js';
+import { registerJoinGameTool } from './join-game.js';
 import { registerLiveTools } from './live.js';
 import { registerMapTool } from './map.js';
 import { registerMyGamesTool } from './my-games.js';
@@ -67,6 +68,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerLiveTools(server, live);
   registerMyGamesTool(server, live);
   registerOpenGamesTool(server, live);
+  registerJoinGameTool(server, live);
   registerScoutTool(server, live);
   registerTurnTools(server, live);
   registerChatTools(server, live);

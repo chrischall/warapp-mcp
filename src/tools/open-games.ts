@@ -9,7 +9,8 @@ import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 
-async function openGamesPage(ctx: LiveContext): Promise<string> {
+/** The OpenGames page as text, or a tool error with a hint. */
+export async function openGamesPage(ctx: LiveContext): Promise<string> {
   try {
     return await ctx.fetchPage(OPEN_GAMES_URL);
   } catch (e) {

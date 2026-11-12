@@ -196,6 +196,9 @@ describe('WarappRpc server errors', () => {
     [88, 'This game has been deleted.'],
     [208, 'The game has already advanced to the next turn.'],
     [333, 'This game has been archived and can no longer receive new chat'],
+    [254, 'your slot was assigned to someone else by the game creator'],
+    [750, 'the slot you joined is no longer available'],
+    [473, "You don't have enough coins to join this game."],
   ];
 
   it.each(cases)('maps server error %i to the client wording', async (code, wording) => {
