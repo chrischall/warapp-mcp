@@ -61,8 +61,10 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   - base income (`MinimumArmyBonus`), per-territory income (`BonusArmyPer`) and card armies
     (Reinforcement) may be deployed anywhere;
   - a negative bonus only lowers the income; it has no pool.
-  A territory in several held bonuses may draw on each; deploys are charged innermost bonus
-  first. war.app's own refusal of a broken split has not been observed.
+  A territory in several held bonuses may draw on each. Deploys are charged to the pools by an
+  exact matching (a maximum flow from deployed territories to the pools that contain them), so a
+  valid split is never refused — whether the bonuses nest (superbonuses) or overlap without
+  nesting. war.app's own refusal of a broken split has not been observed.
 
 ## Map — verified
 

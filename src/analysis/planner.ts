@@ -1483,15 +1483,18 @@ export function planTurn(input: PlanInput): TurnPlan {
       deploy(where, n);
     }
     // Local Deployment: what is left of each bonus pool stays inside its bonus, on its
-    // most threatened member (not conceded first; ties by id).
+    // most threatened member (not conceded first; ties by id). One charge, taken before
+    // any of these deploys: re-charging after each would let the matching spread a
+    // pool's armies over an overlapping pool and strand the latter's.
     if (local && budget > 0) {
       const danger = (id: number) => {
         const b = borders.get(id);
         if (!b) return -Infinity;
         return b.threat - (armiesToTake(stays(id), rates) ?? Infinity);
       };
+      const charged = chargeDeploys(pools, deployed).used;
       for (const p of pools.bonuses) {
-        const left = p.value - (chargeDeploys(pools, deployed).used.get(p.bonusId) ?? 0);
+        const left = p.value - (charged.get(p.bonusId) ?? 0);
         if (left <= 0) continue;
         const m = [...p.territoryIds].sort(
           (a, b) => Number(conceded.has(a)) - Number(conceded.has(b)) || danger(b) - danger(a) || a - b,
@@ -1503,8 +1506,12 @@ export function planTurn(input: PlanInput): TurnPlan {
       }
     }
     if (budget > 0) {
-      // Unreachable while the pools sum to the income; never leave income undeployed.
-      warnings.push(`Local Deployment: ${budget} armies could not be placed within the pools; they go to ${label(where)}.`);
+      // Unreachable: the leftover deploy filled `where` to its exact room, so no anywhere
+      // armies remain, and each pool's unused room (from one maximum charge) went inside
+      // it. Never leave income undeployed — but say the plan breaks the pools.
+      warnings.push(
+        `Local Deployment: ${budget} armies could not be placed within the pools; they go to ${label(where)}, which breaks Local Deployment — war.app may refuse this turn.`,
+      );
       deploy(where, budget);
     }
   }

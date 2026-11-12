@@ -3,9 +3,10 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { chargeDeploys, deployPools } from '../../src/analysis/local-deploy.js';
+import { chargeDeploys, deployPools, type DeployPools } from '../../src/analysis/local-deploy.js';
 import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
+import { validateTurn } from '../../src/tools/turn.js';
 import { board, fogged, mine, neutral, tinyMap } from './helpers.js';
 
 const ME = 10;
@@ -38,6 +39,30 @@ const deployedOn = (p: TurnPlan, ids: number[]) =>
   p.deploys.filter((d) => ids.includes(d.territoryId)).reduce((s, d) => s + d.armies, 0);
 const deployMap = (p: TurnPlan) => new Map(p.deploys.map((d) => [d.territoryId, d.armies]));
 
+/**
+ * The fewest deployed armies that must draw on the anywhere pool, by brute force
+ * (max-flow min-cut, independent of chargeDeploys): the minimum over every set S of
+ * deployed territories of (armies outside S) + (value of the pools touching S), taken
+ * from the total.
+ */
+function minOutside(pools: DeployPools, deploys: ReadonlyMap<number, number>): number {
+  const ts = [...deploys].filter(([, n]) => n > 0);
+  const total = ts.reduce((s, [, n]) => s + n, 0);
+  let best = Infinity;
+  for (let mask = 0; mask < 1 << ts.length; mask++) {
+    let cut = 0;
+    const touched = new Set<number>();
+    ts.forEach(([t, n], i) => {
+      if (mask & (1 << i)) {
+        for (const p of pools.bonuses) if (p.territoryIds.includes(t)) touched.add(p.bonusId);
+      } else cut += n;
+    });
+    for (const p of pools.bonuses) if (touched.has(p.bonusId)) cut += p.value;
+    best = Math.min(best, cut);
+  }
+  return total - best;
+}
+
 describe('deployPools / chargeDeploys', () => {
   it('one pool per held positive bonus, innermost first; the rest anywhere', () => {
     // tinyMap: A (+3) = 1,2,3; B (+2) = 4,5; C (0) = 6; superbonus S (+4) = A + B.
@@ -64,6 +89,54 @@ describe('deployPools / chargeDeploys', () => {
     expect(ok.used).toEqual(new Map([[102, 2], [101, 3], [104, 4]]));
     // All 14 on T6 (outside every bonus): 9 bonus armies spent outside.
     expect(chargeDeploys(pools, new Map([[6, 14]])).anywhereUsed).toBe(14);
+  });
+
+  it('overlapping bonuses that do not nest: an exact matching, so a valid split is never refused', () => {
+    // X (+2) = T2, T5; Y (+2) = T2, T3. All held, income 4: nothing may go anywhere.
+    const g = buildGraph(makeMap([2, 3, 5], [[2, 3], [2, 5]], [[31, 2, [2, 5]], [32, 2, [2, 3]]]));
+    const pools = deployPools(g, new Set([2, 3, 5]), 4);
+    expect(pools.anywhere).toBe(0);
+    // X's 2 on T5, Y's 2 on T2: valid (a greedy pass gives T2's armies to X and refuses it).
+    const ok = chargeDeploys(pools, new Map([[2, 2], [5, 2]]));
+    expect(ok.anywhereUsed).toBe(0);
+    expect(ok.used).toEqual(new Map([[31, 2], [32, 2]]));
+    // 4 on T5: only X's 2 can sit there.
+    expect(chargeDeploys(pools, new Map([[5, 4]])).anywhereUsed).toBe(2);
+  });
+
+  it('chargeDeploys is exact: it matches a brute-force min cut on random overlapping bonuses', () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const r = rng(seed);
+      const int = (lo: number, hi: number) => lo + Math.floor(r() * (hi - lo + 1));
+      const n = int(2, 8);
+      const ids = Array.from({ length: n }, (_, i) => i + 1);
+      const bonuses: [number, number, number[]][] = [];
+      for (let b = 0; b < int(1, 5); b++) {
+        const members = ids.filter(() => r() < 0.45);
+        if (members.length) bonuses.push([100 + b, int(1, 4), members]);
+      }
+      const g = buildGraph(makeMap(ids, [], bonuses));
+      const income = int(0, 20);
+      const pools = deployPools(g, new Set(ids), income);
+      const deploys = new Map<number, number>();
+      for (let left = income; left > 0; ) {
+        const k = Math.min(left, int(1, 4));
+        const t = ids[int(0, n - 1)]!;
+        deploys.set(t, (deploys.get(t) ?? 0) + k);
+        left -= k;
+      }
+      const use = chargeDeploys(pools, deploys);
+      expect(use.anywhereUsed, `seed ${seed}`).toBe(minOutside(pools, deploys));
+      // The per-pool charge is a real assignment: within each pool's value, summing to the absorbed armies.
+      let absorbed = 0;
+      for (const p of pools.bonuses) {
+        const u = use.used.get(p.bonusId) ?? 0;
+        expect(u, `seed ${seed}`).toBeLessThanOrEqual(p.value);
+        absorbed += u;
+      }
+      const total = [...deploys.values()].reduce((a, b) => a + b, 0);
+      expect(absorbed + use.anywhereUsed, `seed ${seed}`).toBe(total);
+    }
   });
 
   it('trims the outermost pools when the income is smaller than the pools', () => {
@@ -267,6 +340,121 @@ describe('planTurn — Local Deployment property (G2)', () => {
       for (const d of on.deploys) expect(held.has(d.territoryId), ctx).toBe(true);
       const pools = deployPools(g, held, input.income);
       expect(chargeDeploys(pools, deployMap(on)).anywhereUsed, ctx).toBeLessThanOrEqual(pools.anywhere);
+    }
+  });
+});
+
+describe('validateTurn — Local Deployment with overlapping bonuses (G2)', () => {
+  const map = makeMap([2, 3, 5], [[2, 3], [2, 5]], [[31, 2, [2, 5]], [32, 2, [2, 3]]]);
+  const live = [2, 3, 5].map((territoryId) => ({ territoryId, fogLevel: 0, fogged: false, owner: 7, armies: 1 }));
+  const run = (deploys: Array<[number, number]>) =>
+    validateTurn({
+      map,
+      board: live,
+      myInGameId: 7,
+      income: 4,
+      guard: true,
+      deploys: deploys.map(([id, armies]) => ({ territory: { id, name: `T${id}` }, armies })),
+      moves: [],
+      localDeployments: true,
+    });
+
+  it('accepts a valid split over bonuses that do not nest, and refuses a broken one', () => {
+    expect(() => run([[2, 2], [5, 2]])).not.toThrow();
+    expect(() => run([[3, 2], [5, 2]])).not.toThrow();
+    expect(() => run([[5, 4]])).toThrow(/Local Deployment: .* \(2 too many\)/);
+  });
+});
+
+describe('planTurn — Local Deployment over overlapping bonuses (property, G2)', () => {
+  it('keeps every pool on a board where a greedy charge stranded an army', () => {
+    // A (+1) = T1, T3, T4;  B (+2) = T3, T5, T6;  C (+1) = T1, T3, T4. Income 4: nothing anywhere.
+    const g = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 6, 7],
+        [
+          [2, 1],
+          [3, 2],
+          [4, 1],
+          [5, 2],
+          [6, 2],
+          [7, 3],
+          [1, 6],
+          [4, 5],
+          [5, 1],
+          [1, 7],
+          [3, 6],
+        ],
+        [
+          [100, 1, [1, 3, 4]],
+          [101, 2, [3, 5, 6]],
+          [102, 1, [1, 3, 4]],
+        ],
+      ),
+    );
+    const held = new Set([1, 3, 4, 5, 6, 7]);
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 2), enemy(2, 5), mine(3, 1), mine(4, 3), mine(5, 3), mine(6, 2), mine(7, 5)]),
+      me: ME,
+      income: 4,
+      settings: LOCAL,
+      options: { goal: 'balanced' },
+    });
+    expect(deploySum(p)).toBe(4);
+    const pools = deployPools(g, held, 4);
+    expect(pools.anywhere).toBe(0);
+    expect(minOutside(pools, deployMap(p))).toBe(0);
+    expect(chargeDeploys(pools, deployMap(p)).anywhereUsed).toBe(0);
+    expect(p.warnings.join('\n')).not.toMatch(/could not be placed within the pools/);
+  });
+
+  it('never proposes deploys that break the pools (checked by brute force)', () => {
+    for (let seed = 1; seed <= 400; seed++) {
+      const r = rng(seed * 7919);
+      const int = (lo: number, hi: number) => lo + Math.floor(r() * (hi - lo + 1));
+      const n = int(3, 9);
+      const ids = Array.from({ length: n }, (_, i) => i + 1);
+      const edges: [number, number][] = [];
+      for (let i = 2; i <= n; i++) edges.push([i, int(1, i - 1)]);
+      for (let k = 0; k < n; k++) {
+        const a = int(1, n);
+        const b = int(1, n);
+        if (a !== b) edges.push([a, b]);
+      }
+      // Bonuses drawn from the held territories, so they are held and overlap freely.
+      const heldIds = ids.filter((id) => id === 1 || r() < 0.6);
+      const bonuses: [number, number, number[]][] = [];
+      for (let b = 0; b < int(2, 5); b++) {
+        const members = heldIds.filter(() => r() < 0.5);
+        if (members.length) bonuses.push([100 + b, int(1, 4), members]);
+      }
+      const g = buildGraph(makeMap(ids, edges, bonuses));
+      const held = new Set(heldIds);
+      const entries: TerritoryState[] = ids.map((id) => {
+        if (held.has(id)) return mine(id, int(0, 6));
+        const k = int(0, 2);
+        if (k === 0) return enemy(id, int(1, 10));
+        if (k === 1) return fogged(id);
+        return neutral(id, int(0, 8));
+      });
+      const goals = ['expand', 'complete-bonus', 'defend', 'balanced'] as const;
+      // Little or nothing anywhere: most of the income is pooled, where overlaps bite.
+      const pooled = deployPools(g, held, 1000).bonuses.reduce((a, b) => a + b.value, 0);
+      const income = r() < 0.8 ? pooled + int(0, 2) : int(0, 16);
+      const p = planTurn({
+        graph: g,
+        board: board(entries),
+        me: ME,
+        income,
+        settings: { ...STD, localDeployments: true },
+        options: { goal: goals[int(0, 3)], reserve: int(0, 3) },
+      });
+      const ctx = `seed ${seed}`;
+      expect(deploySum(p), ctx).toBe(income);
+      const pools = deployPools(g, held, income);
+      expect(minOutside(pools, deployMap(p)), ctx).toBeLessThanOrEqual(pools.anywhere);
+      expect(p.warnings.join('\n'), ctx).not.toMatch(/could not be placed within the pools/);
     }
   });
 });
