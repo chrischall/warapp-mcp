@@ -104,6 +104,10 @@
       "description": "Submit territory picks (confirm-gated), verified by reading them back"
     },
     {
+      "name": "warapp_submit_turn",
+      "description": "Commit your turn's orders (confirm-gated), validated on the live board and confirmed from game state"
+    },
+    {
       "name": "warapp_get_chat",
       "description": "Read a game's chat"
     },

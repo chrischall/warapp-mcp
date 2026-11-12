@@ -51,7 +51,7 @@ that needs them.
 GameFeed has no live board during the pick phase, no picks and no way to post chat. Those
 come from war.app's own web-client protocol, which is authenticated by your browser's
 war.app session rather than by the API token. So the live-game tools —
-`warapp_get_live_board`, `warapp_get_my_picks`, `warapp_submit_picks`, `warapp_plan_turn`, `warapp_send_chat`,
+`warapp_get_live_board`, `warapp_get_my_picks`, `warapp_submit_picks`, `warapp_plan_turn`, `warapp_submit_turn`, `warapp_send_chat`,
 and `warapp_analyze_board` when GameFeed sends no board — relay each request through your
 signed-in war.app tab with the [fetchproxy](https://github.com/chrischall/fetchproxy) bridge.
 They need:
@@ -91,6 +91,7 @@ restart the server and pair again.
 | `warapp_get_my_picks` | Your submitted territory picks in priority order, and how many the game allows. |
 | `warapp_plan_turn` | A plan for your turn from the live board (defaults to the signed-in account): income, deploys and moves by name and id, expected captures, bonuses and next income, warnings and reasoning, and an `orders` array. `goal`: expand / complete-bonus / defend; `focus` bonuses; `reserve`. Read-only; refuses outside a turn phase. |
 | `warapp_submit_picks` | **Writes.** Replace your territory picks (priority order, pickable territories only, at most twice the territory limit). Confirm-gated; reads the picks back and reports `verified` only on an exact match. |
+| `warapp_submit_turn` | **Writes.** Commit your turn's orders (e.g. `warapp_plan_turn`'s `orders`) as the signed-in account. Confirm-gated; validated on the live board (your territories, adjacent moves, armies available, deploys = income); confirmed from game state (`resolved` / `committed` / `unknown`). Other players see the results. |
 | `warapp_get_chat` | A game's chat, from GameFeed. |
 | `warapp_send_chat` | **Writes.** Post a chat message to the whole game or privately to one player. Confirm-gated; a message reaches other players and cannot be unsent. |
 

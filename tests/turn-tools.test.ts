@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
-import { Method } from '../src/protocol/methods.js';
+import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
+import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { plannerSettings, turnOrdersArg } from '../src/tools/turn.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
@@ -216,5 +216,304 @@ describe('turnOrdersArg', () => {
     expect(turnOrdersArg.safeParse([]).success).toBe(false);
     expect(turnOrdersArg.safeParse([{ kind: 'deploy', territory: 1, armies: 0 }]).success).toBe(false);
     expect(turnOrdersArg.safeParse([{ kind: 'attack', from: 1, to: 2, armies: 1 }]).success).toBe(false);
+  });
+});
+
+describe('warapp_submit_turn', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  // Ann: Hornwood 159 (6), Sheepshead Hills 161 (3); income 5; one army stands guard.
+  const GOOD = [
+    { kind: 'deploy', territory: 'Hornwood', armies: 3 },
+    { kind: 'deploy', territory: 161, armies: 2 },
+    { kind: 'move', from: 161, to: "Widow's Watch", armies: 4 },
+    { kind: 'move', from: 159, to: 158, armies: 8 },
+  ];
+
+  function ordersServer(reply: Partial<ReplyFrame> = { body: (w) => w.bool(true).bool(false) }) {
+    const sent: Uint8Array[] = [];
+    const warapp = routes({
+      [Method.GetLatestGameInfo]: board(BOARD),
+      [Method.SendOrders]: (req) => {
+        sent.push(req.body.raw(req.body.remaining));
+        return reply;
+      },
+    });
+    return { sent, warapp };
+  }
+
+  const expectedBytes = (orders: TurnOrder[], turn: number) => {
+    const w = new Writer();
+    writeSendOrdersParams(w, GAME, ANN.inGame, orders, turn);
+    return w.bytes();
+  };
+
+  async function confirmed(args: Record<string, unknown>) {
+    const preview = payload(await h!.call('warapp_submit_turn', args));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    return h!.call('warapp_submit_turn', { ...args, confirmToken: preview.confirmToken });
+  }
+
+  it('the description says orders reach the game and other players see the results', async () => {
+    h = await liveHarness();
+    const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_submit_turn')!;
+    expect(tool.description).toMatch(/reach the game/);
+    expect(tool.description).toMatch(/other players see the results/);
+    expect(tool.annotations?.readOnlyHint).toBe(false);
+  });
+
+  it('previews every order by name with the turn number, and sends nothing until confirmed', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    const preview = payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: GOOD }));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    const text = JSON.stringify(preview);
+    for (const id of [159, 161, 157, 158]) expect(text).toContain(JSON.stringify(mapName(id)).slice(1, -1));
+    expect(text).toMatch(/"turn":3/);
+    expect(s.sent).toEqual([]);
+    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
+  });
+
+  it('sends SendOrders (deploys first, turn = numberOfTurns + 1) and reports resolved when the turn advanced', async () => {
+    const s = ordersServer();
+    h = await liveHarness({
+      feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' })],
+      pages: ME_PAGE,
+      warapp: s.warapp,
+    });
+    const reordered = [GOOD[2], GOOD[0], GOOD[3], GOOD[1]];
+    const p = payload(await confirmed({ game_id: GAME, player: 'Ann', orders: reordered }));
+    expect(s.sent).toHaveLength(1);
+    expect(Array.from(s.sent[0]!)).toEqual(
+      Array.from(
+        expectedBytes(
+          [
+            { kind: 'deploy', territoryId: 159, armies: 3 },
+            { kind: 'deploy', territoryId: 161, armies: 2 },
+            { kind: 'move', from: 161, to: 157, armies: 4 },
+            { kind: 'move', from: 159, to: 158, armies: 8 },
+          ],
+          3,
+        ),
+      ),
+    );
+    expect(p).toMatchObject({ status: 'resolved', game: GAME, turn: 3 });
+    expect(JSON.stringify(p)).not.toMatch(/vacation/i);
+  });
+
+  it('reports committed when my orders are marked committed but the turn has not advanced', async () => {
+    const s = ordersServer({ body: (w) => w.bool(true).bool(false) });
+    h = await liveHarness({
+      feed: [game('Playing'), game('Playing'), game('Playing', {}, { hasCommittedOrders: 'True' })],
+      pages: ME_PAGE,
+      warapp: s.warapp,
+    });
+    const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
+    expect(s.sent).toHaveLength(1);
+    expect(p).toMatchObject({ status: 'committed', turn: 3 });
+  });
+
+  it('reports unknown (never success from the reply bool) when game state shows neither', async () => {
+    const s = ordersServer({ body: (w) => w.bool(true).bool(true) });
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
+    expect(p.status).toBe('unknown');
+    expect(p.warning).toMatch(/warapp_get_game|warapp_get_live_board/);
+  });
+
+  it('reports unknown when the state re-read fails after sending', async () => {
+    const s = ordersServer();
+    h = await liveHarness({
+      feed: [game('Playing'), game('Playing'), { termsOfUse: 'x', error: 'Something broke' }],
+      pages: ME_PAGE,
+      warapp: s.warapp,
+    });
+    const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
+    expect(s.sent).toHaveLength(1);
+    expect(p.status).toBe('unknown');
+    expect(p.warning).toMatch(/Do not resend/i);
+  });
+
+  it('a transport failure after sending is unknown, not safe to retry', async () => {
+    h = await liveHarness({
+      feed: [game('Playing')],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD), [Method.SendOrders]: () => ({ msgNum: 999 }) }),
+    });
+    const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
+    expect(p.status).toBe('unknown');
+    expect(p.warning).toMatch(/may already have been committed/);
+    expect(p.warning).toMatch(/Do not resend/i);
+  });
+
+  it('a server refusal is an error (error 11: deployments differ from income)', async () => {
+    const s = ordersServer({ error: { code: 11, message: 'x' } });
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    const res = await confirmed({ game_id: GAME, orders: GOOD });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/war\.app error 11/);
+  });
+
+  it('refuses an explicit player who is not the signed-in account, before any preview', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, player: 'Bob', orders: GOOD });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/signed-in account/);
+    expect(h.exchanges).toEqual([]);
+  });
+
+  it('refuses when the signed-in account cannot be determined, even with an explicit player', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing')], warapp: s.warapp });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, player: 'Ann', orders: GOOD });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Could not tell which war\.app account is signed in/);
+    expect(h.exchanges).toEqual([]);
+  });
+
+  it('refuses when the signed-in account is not in the game', async () => {
+    h = await liveHarness({
+      feed: [game('Playing')],
+      pages: { 'https://war.app/InviteToken': '<p>Your invite token is 5512345699</p>' },
+    });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: GOOD });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/not a player in game/);
+  });
+
+  it('refuses when my orders are already committed this turn', async () => {
+    h = await liveHarness({ feed: [game('Playing', {}, { hasCommittedOrders: 'True' })], pages: ME_PAGE });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: GOOD });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/already committed/);
+    expect(textOf(res)).toMatch(/modify/i);
+    expect(h.exchanges).toEqual([]);
+  });
+
+  it('refuses outside a turn phase', async () => {
+    h = await liveHarness({ feed: [game('DistributingTerritories')], pages: ME_PAGE });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: GOOD });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/not in a turn phase/);
+  });
+
+  it('refuses when GameFeed gives no turn count', async () => {
+    const g = game('Playing');
+    delete g.numberOfTurns;
+    h = await liveHarness({ feed: [g], pages: ME_PAGE });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: GOOD });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/turn number/);
+  });
+
+  it('refuses deploys that do not total the income, giving both numbers', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [{ kind: 'deploy', territory: 159, armies: 4 }],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/deploy 4 armies.*income is 5/);
+  });
+
+  it('refuses a deploy or a move source that is not mine', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    let res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [{ kind: 'deploy', territory: 157, armies: 5 }],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/not yours.*\(157\)/);
+    res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 135, to: 159, armies: 1 },
+      ],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/not yours.*\(135\)/);
+  });
+
+  it('refuses a move to a territory that is not adjacent', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 159, to: 157, armies: 2 },
+      ],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/does not border/);
+  });
+
+  it('refuses sending more armies from a territory than it has (deploys included, one stands guard)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 161, to: 157, armies: 2 },
+        { kind: 'move', from: 161, to: 158, armies: 1 },
+      ],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/send 3 armies from .*\(161\).* at most 2/);
+  });
+
+  it('lets every army move when one army does not stand guard', async () => {
+    const f = lobbyFixture();
+    const settings = { ...(f.settings as Record<string, unknown>), OneArmyStandsGuard: false };
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: s.warapp });
+    const preview = payload(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 159, armies: 5 },
+          { kind: 'move', from: 161, to: 157, armies: 3 },
+        ],
+      }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
+  });
+
+  it('refuses the same move listed twice', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 159, to: 158, armies: 2 },
+        { kind: 'move', from: 159, to: 158, armies: 2 },
+      ],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/listed twice/);
+  });
+
+  it('an unknown territory name is a clear error', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [{ kind: 'deploy', territory: 'Nowhere At All', armies: 5 }],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/No territory matches "Nowhere At All"/);
+  });
+
+  it('changed orders between preview and confirm are refused', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    const preview = payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: GOOD }));
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [{ kind: 'deploy', territory: 159, armies: 5 }],
+      confirmToken: preview.confirmToken,
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/DRAFT_CHANGED/);
+    expect(s.sent).toEqual([]);
   });
 });

@@ -97,6 +97,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_plan_turn',
       'warapp_send_chat',
       'warapp_submit_picks',
+      'warapp_submit_turn',
     ]);
     expect(nonJson).toEqual([]);
   });

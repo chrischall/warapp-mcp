@@ -21,6 +21,7 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_plan_turn: 'lookup',
   warapp_get_chat: 'lookup',
   warapp_submit_picks: 'change',
+  warapp_submit_turn: 'change',
   warapp_send_chat: 'send',
 };
 

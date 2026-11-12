@@ -42,6 +42,9 @@ them to enter instead.
   expected captures, bonuses and next income, warnings and reasoning, plus an `orders` array.
   It is read-only and refuses outside a turn phase. Review the plan and its warnings with the
   user before anything is submitted.
+- **"Submit my turn"** → `warapp_submit_turn` with the reviewed `orders` (confirm-gated, always
+  as the signed-in account). Report its `status`: `resolved` (turn advanced), `committed`
+  (waiting on others) or `unknown` — then check `warapp_get_game`; never resend blindly.
 - **"Show me the board" / "what can I pick?"** → `warapp_get_live_board`: every territory with
   its owner (player name, `neutral`, or `pickable` during picks), armies and fog, read through
   the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game.

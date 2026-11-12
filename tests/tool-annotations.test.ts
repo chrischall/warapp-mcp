@@ -3,10 +3,10 @@ import { harnessFor, type Harness } from './helpers.js';
 
 /**
  * Fleet annotation meta-test, read off the wire (tools/list). Every tool reads
- * war.app except two confirm-gated writes: submitting territory picks and
- * sending chat.
+ * war.app except three confirm-gated writes: submitting territory picks,
+ * submitting a turn's orders, and sending chat.
  */
-const WRITES = ['warapp_send_chat', 'warapp_submit_picks'];
+const WRITES = ['warapp_send_chat', 'warapp_submit_picks', 'warapp_submit_turn'];
 
 interface Ann {
   readOnlyHint?: unknown;
@@ -42,10 +42,11 @@ describe('tool annotations', () => {
       'warapp_plan_turn',
       'warapp_send_chat',
       'warapp_submit_picks',
+      'warapp_submit_turn',
     ]);
   });
 
-  it('marks every tool but the two writes read-only, never destructive', () => {
+  it('marks every tool but the writes read-only, never destructive', () => {
     const reads = Object.entries(ann).filter(([n]) => !WRITES.includes(n));
     expect(reads.filter(([, a]) => a?.readOnlyHint !== true).map(([n]) => n)).toEqual([]);
     expect(reads.filter(([, a]) => a?.destructiveHint === true).map(([n]) => n)).toEqual([]);
@@ -57,6 +58,7 @@ describe('tool annotations', () => {
     }
     expect(ann.warapp_submit_picks?.idempotentHint).toBe(true);
     expect(ann.warapp_send_chat?.idempotentHint).toBe(false);
+    expect(ann.warapp_submit_turn?.idempotentHint).toBe(false);
   });
 
   it('marks every game tool open-world (all reach war.app)', () => {
