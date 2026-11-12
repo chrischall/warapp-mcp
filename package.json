@@ -2,7 +2,7 @@
   "name": "@chrischall/warapp-mcp",
   "version": "0.0.0",
   "mcpName": "io.github.chrischall/warapp-mcp",
-  "description": "war.app (Warzone) game advisor MCP server for Claude — games, maps, bonuses and board analysis via the GameFeed API. Developed and maintained by AI (Claude Code).",
+  "description": "war.app (Warzone) game advisor MCP server for Claude — games, maps, bonuses and board analysis via the GameFeed API, plus the live board, territory picks and chat through your signed-in war.app tab. Developed and maintained by AI (Claude Code).",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {
     "type": "git",
@@ -46,7 +46,9 @@
   },
   "dependencies": {
     "@chrischall/mcp-utils": "^3.8.1",
+    "@fetchproxy/server": "^3.8.0",
     "@modelcontextprotocol/server": "^2.4.0",
+    "acorn": "^8.19.0",
     "dotenv": "^18.0.1",
     "zod": "^4.6.7"
   },

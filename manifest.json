@@ -4,7 +4,7 @@
   "name": "warapp-mcp",
   "display_name": "war.app (Warzone)",
   "version": "0.0.0",
-  "description": "Read-only war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and route planning via the GameFeed API",
+  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus the live board, territory picks and chat through your signed-in war.app tab (ContextMint Bridge). Picks and chat sends are confirm-gated.",
   "author": {
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com",
@@ -34,6 +34,7 @@
       "env": {
         "WARAPP_EMAIL": "${user_config.email}",
         "WARAPP_API_TOKEN": "${user_config.api_token}",
+        "WARAPP_WS_PORT": "${user_config.ws_port}",
         "WARAPP_ENV_FILE": "${user_config.env_file}"
       }
     }
@@ -51,6 +52,12 @@
       "description": "Your API token, shown at https://war.app/API/GetAPIToken while signed in. Changing your password rotates it.",
       "sensitive": true,
       "required": true
+    },
+    "ws_port": {
+      "type": "number",
+      "title": "Bridge port",
+      "description": "The fetchproxy bridge port the live-game tools use to reach your signed-in war.app tab. The whole fetchproxy fleet and ContextMint Bridge share 37149; override only for local testing (or when a host injects a per-registration port). Defaults to 37149.",
+      "required": false
     },
     "env_file": {
       "type": "string",
@@ -74,11 +81,31 @@
     },
     {
       "name": "warapp_analyze_board",
-      "description": "Advise a player from the board: income, closest bonuses, armies needed, threats"
+      "description": "Advise a player from the board (GameFeed or live): income, closest bonuses, armies needed, threats"
     },
     {
       "name": "warapp_plan_route",
       "description": "Shortest path between two territories on a game's map"
+    },
+    {
+      "name": "warapp_get_live_board",
+      "description": "The live board through your war.app tab: owners, armies, fog, pickable territories"
+    },
+    {
+      "name": "warapp_get_my_picks",
+      "description": "Your submitted territory picks in priority order"
+    },
+    {
+      "name": "warapp_submit_picks",
+      "description": "Submit territory picks (confirm-gated), verified by reading them back"
+    },
+    {
+      "name": "warapp_get_chat",
+      "description": "Read a game's chat"
+    },
+    {
+      "name": "warapp_send_chat",
+      "description": "Post a game chat message, public or private (confirm-gated)"
     }
   ]
 }

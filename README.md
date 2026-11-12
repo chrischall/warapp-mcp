@@ -1,9 +1,11 @@
 # warapp-mcp
 
-Read-only [war.app](https://war.app) (Warzone) game advisor MCP server for Claude. It reads
-your games through war.app's per-player **GameFeed** API and helps you think about them:
-players and settings, the map's bonuses and chokepoints, the board, and routes between
-territories. It never submits orders.
+[war.app](https://war.app) (Warzone) game advisor MCP server for Claude. It reads your games
+through war.app's per-player **GameFeed** API and helps you think about them: players and
+settings, the map's bonuses and chokepoints, the board, and routes between territories.
+Through your signed-in war.app browser tab it also reads the **live board** (including the
+pick phase, where GameFeed has none) and your territory picks, and — only after you confirm —
+submits picks and posts game chat. It never submits turn orders.
 
 > This project was developed and is maintained by AI (Claude Code). Use at your own discretion.
 
@@ -29,15 +31,52 @@ territories. It never submits orders.
    ```
 
 3. Call `warapp_healthcheck` to confirm war.app accepts the credentials.
+4. For the live-game tools, set up the browser bridge (below).
 
 | Variable | Required | |
 |---|---|---|
 | `WARAPP_EMAIL` | yes | The email address you sign in to war.app with. |
 | `WARAPP_API_TOKEN` | yes | Your API token from <https://war.app/API/GetAPIToken>. |
 | `WARAPP_ENV_FILE` | no | A dotenv file to read the two above from (default `~/.config/warapp-mcp/.env`). Values already in the environment win. |
+| `WARAPP_WS_PORT` | no | The fetchproxy bridge port (default `37149`, shared by the whole fetchproxy fleet and ContextMint Bridge). Override it only for local testing, or when a host injects a per-registration port. |
+| `WARAPP_DEBUG` | no | Truthy logs the bridge's role and lifecycle to stderr. |
+| `MCP_DATA_DIR` | no | Where the downloaded war.app client bundle is cached (default `~/.config/warapp-mcp`). A host with persistent state sets it. |
+| `MCP_CONFIRM_MODE` | no | What a write does on a client that cannot show a confirmation prompt: `ask-user` (default), `auto` or `refuse`. See [Confirming writes](#confirming-writes). |
 
 The server starts without credentials and reports what is missing on the first call
 that needs them.
+
+## The browser bridge (live-game tools)
+
+GameFeed has no live board during the pick phase, no picks and no way to post chat. Those
+come from war.app's own web-client protocol, which is authenticated by your browser's
+war.app session rather than by the API token. So the live-game tools —
+`warapp_get_live_board`, `warapp_get_my_picks`, `warapp_submit_picks`, `warapp_send_chat`,
+and `warapp_analyze_board` when GameFeed sends no board — relay each request through your
+signed-in war.app tab with the [fetchproxy](https://github.com/chrischall/fetchproxy) bridge.
+They need:
+
+- the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases)
+  browser extension, and
+- a war.app tab in that browser, signed in to the same account as `WARAPP_EMAIL`.
+
+The server never sees your war.app password or session cookies; the tab makes the request
+and hands back the answer. The tools decode the board with war.app's own client code: the
+first live call downloads the current client bundle (`ujs.js`) from War.app's CDN and caches
+it per version under the data directory. Nothing from war.app is shipped in this package.
+
+### Pairing (once)
+
+1. Install ContextMint Bridge and sign in to <https://war.app> in that browser.
+2. Ask Claude for something live, e.g. "show me the live board of game 12345678". The first
+   call that needs the bridge answers with a **pair code**.
+3. Approve that code in the ContextMint Bridge popup. The trust persists across restarts in
+   `~/.fetchproxy/identity/`. After that, `warapp_healthcheck` reports the bridge's status too.
+
+**More than one browser?** Approve the code in the browser that holds your war.app session.
+**Paired the wrong one?** Revoke `warapp-mcp` in the ContextMint Bridge popup, run
+`fpx trust clear warapp-mcp` (from [`@fetchproxy/cli`](https://www.npmjs.com/package/@fetchproxy/cli)),
+restart the server and pair again.
 
 ## Tools
 
@@ -48,8 +87,27 @@ that needs them.
 | `warapp_get_map` | The game map's bonuses ranked easiest first, plus chokepoints. Filter by `bonus` name to see one bonus's territories, borders and entry points. |
 | `warapp_analyze_board` | Advice for one `player` from the current board: income, the bonuses closest to completion with armies needed, and visible threats. Needs a board; lobbies have none. The board parser is unverified, so the advice states its assumptions. |
 | `warapp_plan_route` | Shortest path between two territories, given by name or id. |
+| `warapp_get_live_board` | The live board through your war.app tab: every territory with its owner (player, `neutral`, or `pickable` during picks), armies and fog. Works in the pick phase and mid-game. `view`: compact / full. |
+| `warapp_get_my_picks` | Your submitted territory picks in priority order, and how many the game allows. |
+| `warapp_submit_picks` | **Writes.** Replace your territory picks (priority order, pickable territories only, at most twice the territory limit). Confirm-gated; reads the picks back and reports `verified` only on an exact match. |
+| `warapp_get_chat` | A game's chat, from GameFeed. |
+| `warapp_send_chat` | **Writes.** Post a chat message to the whole game or privately to one player. Confirm-gated; a message reaches other players and cannot be unsent. |
 
-All tools are read-only. Player, game, map and chat text comes back marked as untrusted third-party content.
+Everything except `warapp_submit_picks` and `warapp_send_chat` only reads. Player, game, map
+and chat text comes back marked as untrusted third-party content.
+
+## Confirming writes
+
+`warapp_submit_picks` and `warapp_send_chat` are confirmation-gated:
+
+- **Clients that support MCP elicitation** show a confirmation prompt describing the change.
+- **Other clients** make **no** change on the first call: it returns a preview and a
+  single-use, short-lived `confirmToken`, and only a repeat call carrying that token sends.
+  `MCP_CONFIRM_MODE` decides who may use the token: `ask-user` (default — you approve in
+  chat), `auto` (the model may use it after the preview) or `refuse`.
+
+Turn orders (deploy / attack) are not supported. They stay out until a live capture of a
+submitted turn has verified the protocol.
 
 ## Skills
 

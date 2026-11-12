@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestHarness, parseToolResult, type TestHarness } from '@chrischall/mcp-utils/test';
 import { registerAllTools } from '../src/tools/index.js';
-import { PROBE_GAME_ID } from '../src/tools/healthcheck.js';
+import { BRIDGE_PROBE_PATH, PROBE_GAME_ID } from '../src/tools/healthcheck.js';
+import { mockWarappBridge } from './bridge-mock.js';
 
 const EMAIL = 'player@example.com';
 const TOKEN = 'deadbeefcafef00d';
@@ -99,5 +100,56 @@ describe('warapp_healthcheck', () => {
     const { fetchImpl } = stubFetch('<html>not json</html>');
     const { body } = await check(CREDS, fetchImpl);
     expect(body.ok).toBe(false);
+  });
+});
+
+describe('warapp_healthcheck with the browser bridge', () => {
+  const page = () => ({ status: 200, body: '<html>war.app</html>', url: 'https://war.app/' });
+
+  it('names both paths in its description', async () => {
+    const { bridge } = mockWarappBridge(page);
+    harness = await createTestHarness((s) => registerAllTools(s, { env: {}, bridge }));
+    const { tools } = await harness.client.listTools();
+    const hc = tools.find((t) => t.name === 'warapp_healthcheck')!;
+    expect(hc.description).toMatch(/bridge/i);
+  });
+
+  it('answers from the credential arm, without touching the bridge, until the bridge carries a request', async () => {
+    const { bridge, mock } = mockWarappBridge(page);
+    const { calls, fetchImpl } = stubFetch({ error: 'Loading the game produced an error: ServerGameKeyNotFound' });
+    harness = await createTestHarness((s) =>
+      registerAllTools(s, { env: CREDS, fetchImpl, sleep: async () => {}, bridge }),
+    );
+    const res = await harness.client.callTool({ name: 'warapp_healthcheck', arguments: {} });
+    const body = parseToolResult<{ ok: boolean; bridge?: unknown }>(res as never);
+    expect(body.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(mock.requests).toHaveLength(0);
+    expect(mock.listenCalls).toBe(0);
+  });
+
+  it('answers from the bridge arm once the bridge is in use, probing war.app through the tab', async () => {
+    const { bridge, mock } = mockWarappBridge(page);
+    await (await bridge.ready()).fetch({ method: 'GET', path: '/x' });
+    const { calls, fetchImpl } = stubFetch({});
+    harness = await createTestHarness((s) => registerAllTools(s, { env: CREDS, fetchImpl, bridge }));
+    const res = await harness.client.callTool({ name: 'warapp_healthcheck', arguments: {} });
+    const body = parseToolResult<{ ok: boolean; bridge?: { role: string } }>(res as never);
+    expect(body.ok).toBe(true);
+    expect(body.bridge?.role).toBe('host');
+    expect(calls).toHaveLength(0);
+    expect(mock.requests.at(-1)).toMatchObject({ method: 'GET', path: BRIDGE_PROBE_PATH });
+  });
+
+  it('reports a failing bridge probe on an HTTP error page', async () => {
+    const { bridge } = mockWarappBridge((req) =>
+      req.path === BRIDGE_PROBE_PATH ? { status: 503, body: 'down', url: 'https://war.app/' } : page(),
+    );
+    await (await bridge.ready()).fetch({ method: 'GET', path: '/x' });
+    harness = await createTestHarness((s) => registerAllTools(s, { env: CREDS, bridge }));
+    const res = await harness.client.callTool({ name: 'warapp_healthcheck', arguments: {} });
+    const body = parseToolResult<{ ok: boolean; error?: { message: string } }>(res as never);
+    expect(body.ok).toBe(false);
+    expect(body.error?.message).toContain('503');
   });
 });

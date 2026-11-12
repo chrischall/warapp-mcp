@@ -1,19 +1,24 @@
 ---
 name: warapp-mcp
-description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", or a war.app game link.
+description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "submit my picks", "what did they say in chat", "send a message in my game", or a war.app game link.
 ---
 
 # war.app / Warzone (warapp-mcp)
 
-A read-only advisor. Every tool reads war.app's per-player GameFeed API as the signed-in
-player (fog of war applies) and nothing submits orders — say so if the user asks you to
-play a turn, and give the advice for them to enter instead.
+An advisor. The tools read war.app as the signed-in player (fog of war applies): GameFeed
+for games, maps and chat, and the user's signed-in war.app tab for the live board and picks.
+Only two tools write — `warapp_submit_picks` and `warapp_send_chat`, both confirm-gated — and
+nothing submits orders: say so if the user asks you to play a turn, and give the advice for
+them to enter instead.
 
 ## Start here
 
 - **Something broken?** `warapp_healthcheck` says whether war.app accepts the email and
   API token. A rejected token is fixed at <https://war.app/API/GetAPIToken> while signed in
   (changing the password rotates it).
+- **Live tools failing?** The live board, picks and chat sends need the ContextMint Bridge
+  extension and a war.app tab signed in to the same account. The first live call may answer
+  with a pair code: ask the user to approve it in the ContextMint Bridge popup, then retry.
 - **Every game tool takes `game_id`** — the number in the game's URL
   (`…/MultiPlayer?GameID=45670418`). Ask for it if the user has not given one; there is no
   "list my games" call in the API.
@@ -29,10 +34,18 @@ play a turn, and give the advice for them to enter instead.
   lobby — no board needed.
 - **"What should I do this turn?"** → `warapp_analyze_board` with `player` (the user's war.app
   name, or part of it; omit it to list the players). It gives income, the bonuses closest to
-  completion with armies needed at the game's kill rates, and visible threats. It needs a
-  board: in a lobby or during territory picks it answers that the board is not available —
-  fall back to `warapp_get_map`. The board parser is **unverified** (no in-progress game has
-  been seen live), so pass its `assumptions` on to the user with the advice.
+  completion with armies needed at the game's kill rates, and visible threats. When GameFeed
+  sends no board it reads the live board through the user's signed-in war.app tab; a lobby
+  has none — fall back to `warapp_get_map`. Pass its `assumptions` on with the advice.
+- **"Show me the board" / "what can I pick?"** → `warapp_get_live_board`: every territory with
+  its owner (player name, `neutral`, or `pickable` during picks), armies and fog, read through
+  the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game.
+- **Territory picks** → `warapp_get_my_picks` reads the user's picks; `warapp_submit_picks`
+  replaces them (priority order, pickable territories only, at most twice the territory
+  limit). It is confirm-gated and reports `verified` only when war.app reads back exactly the
+  submitted list.
+- **Chat** → `warapp_get_chat` reads it (GameFeed); `warapp_send_chat` posts publicly or
+  privately to one player. Confirm-gated — a message reaches other players and cannot be unsent.
 - **"How far is X from Y?"** → `warapp_plan_route` with `from` / `to` as a territory id,
   name, or unique part of a name. Map-only: it ignores who holds what.
 
@@ -47,10 +60,11 @@ play a turn, and give the advice for them to enter instead.
 ## In context groups
 
 On a host that serves context groups (mcp-host), every tool here except `warapp_healthcheck`
-is in the **work** group with intent **lookup**:
+is in the **work** group: the reads with intent **lookup**, `warapp_submit_picks` with
+**change** and `warapp_send_chat` with **send**:
 
-- `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board` and `warapp_plan_route` are
-  lookups the group reaches by their aliases ("warzone game", "whose turn is it", "best
+- `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,
+  `warapp_get_live_board`, `warapp_get_my_picks` and `warapp_get_chat` are lookups the group reaches by their aliases ("warzone game", "whose turn is it", "best
   bonuses", "chokepoints", "analyze my board", "what should i attack", "warzone route", …).
 - **None is a canonical read.** GameFeed answers about one game id at a time and has no
   list of the player's games or notifications, so warapp answers neither "what's new", "what's

@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { createTestHarness, parseToolResult, type TestHarness } from '@chrischall/mcp-utils/test';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { MapCache } from '../src/client.js';
+import { WarappBundle } from '../src/protocol/bundle.js';
+import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { registerAllTools } from '../src/tools/index.js';
+import { fakeWarapp, mockWarappBridge, type MockBridgeServer, type WarappExchange } from './bridge-mock.js';
+import { LIVE_BUNDLE } from './protocol/live-bundle.js';
 
 export const EMAIL = 'player@example.com';
 export const TOKEN = 'deadbeefcafef00d';
@@ -31,21 +35,56 @@ export function stubFetch(...bodies: unknown[]) {
 
 export interface Harness {
   harness: TestHarness;
+  /** GameFeed calls. */
   calls: Call[];
+  /** Web-client frames the fake war.app answered (through the mock bridge). */
+  exchanges: WarappExchange[];
+  bridge: MockBridgeServer;
   call: (name: string, args?: Record<string, unknown>) => Promise<CallToolResult>;
 }
 
-/** A harness serving every tool, with credentials and a fresh map cache, answering with `bodies`. */
-export async function harnessFor(...bodies: unknown[]): Promise<Harness> {
-  const { calls, fetchImpl } = stubFetch(...(bodies.length ? bodies : [lobbyFixture()]));
+/** A fake war.app reply to one web-client request. */
+export type WarappReply = (req: DecodedRequest, n: number) => Partial<ReplyFrame>;
+
+/** The default fake war.app: every call answers "no result". */
+const NO_RESULT: WarappReply = () => ({ body: (w) => w.bool(false) });
+
+/**
+ * A harness serving every tool, with credentials, a fresh map cache, GameFeed
+ * answering with `feed` (the last repeating), a mock bridge whose fake war.app
+ * answers with `warapp`, and the synthetic client bundle. Nothing reaches the
+ * network.
+ */
+export async function liveHarness(
+  opts: { feed?: unknown[]; warapp?: WarappReply; pages?: Record<string, string> } = {},
+): Promise<Harness> {
+  const feed = opts.feed?.length ? opts.feed : [lobbyFixture()];
+  const { calls, fetchImpl } = stubFetch(...feed);
+  const fake = fakeWarapp(opts.warapp ?? NO_RESULT, opts.pages);
+  const { bridge, mock } = mockWarappBridge(fake.handler);
+  const bundle = new WarappBundle(LIVE_BUNDLE, 'test');
   const harness = await createTestHarness((s) =>
-    registerAllTools(s, { env: CREDS, fetchImpl, sleep: async () => {}, mapCache: new MapCache() }),
+    registerAllTools(s, {
+      env: CREDS,
+      fetchImpl,
+      sleep: async () => {},
+      mapCache: new MapCache(),
+      bridge,
+      bundle: async () => bundle,
+    }),
   );
   return {
     harness,
     calls,
+    exchanges: fake.exchanges,
+    bridge: mock,
     call: (name, args = {}) => harness.client.callTool({ name, arguments: args }) as Promise<CallToolResult>,
   };
+}
+
+/** {@link liveHarness} with GameFeed answering `bodies`. */
+export function harnessFor(...bodies: unknown[]): Promise<Harness> {
+  return liveHarness({ feed: bodies });
 }
 
 /** The JSON payload of a tool result. */
