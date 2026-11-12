@@ -6,3 +6,4 @@ export * from './combat.js';
 export * from './player.js';
 export * from './planner.js';
 export * from './local-deploy.js';
+export * from './picks.js';
