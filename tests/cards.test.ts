@@ -64,6 +64,17 @@ describe('readHand', () => {
     ]);
   });
 
+  it('does not mislabel a Reinforcement card whose armies collide with another type id (#20)', () => {
+    // Live: a ReinforcementCardInstance decodes as [tc=armies, Gb=type]. Reading the type from the
+    // first integer picked up tc (5) and labelled the Reinforcement as "Order Delay" (type 5), so
+    // the planner tried to play the wrong card. The type is the LAST integer (Gb); tc is the first.
+    const hand = readHand(info({ [ME]: [{ id: G1, type: 1, armies: 5 }, { id: G2, type: 5 }] }), ME);
+    expect(hand).toEqual<Card[]>([
+      { id: G1, type: 1, name: 'Reinforcement', armies: 5 },
+      { id: G2, type: 5, name: 'Order Delay' },
+    ]);
+  });
+
   it('is empty when I hold no cards or the board carries none', () => {
     expect(readHand(info({}), ME)).toEqual([]);
     expect(readHand(info({ [ME]: [] }), ME)).toEqual([]);
