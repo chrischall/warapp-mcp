@@ -101,6 +101,7 @@ string email                  the signed-in account's email
 | 75 | SendInProgressOrders | draft save of orders |
 | 76 | SendTerritoryPicks | params: int32 gameId, bool present, int list territoryIds (priority order), bool, bool |
 | 77 | SendInProgressPicks | as 76 without the two trailing bools (draft save) |
+| 78 | **BeginFirstTurn** | params: int32 gameId — read from the bundle, not verified live; see [Begin first turn](#begin-first-turn) |
 | 79 | GetTerritoryPicks | |
 | 80 | UnCommit | |
 | 81 | GetTurns | |
@@ -371,6 +372,30 @@ accept it ("Pending surrender"; accepting is `AcceptSurrender`, 68, not used): t
 surrender is what `surrender = false` takes back. With two players a surrender ends the game at once
 (GameFeed shows `SurrenderAccepted`), so there is nothing to take back. The encoder is pinned by a
 golden test built from synthetic ids.
+
+## Begin first turn
+
+**Read from the client bundle, not verified live (issue #44).** In a game whose move order is
+`NoLuckCycle` ("No-luck cycle") the first turn is a speed race: "the players who enter orders for
+the first turn the fastest will move first in the move cycle" (with manual distribution: the
+players who pick fastest get their picks in a conflict). war.app withholds the player's standing
+— `GetLatestGameInfo` carries none — until they press **Begin**, and Begin starts their turn
+timer. The client shows Begin whenever a `Playing` seat has no standing; GameFeed names the
+setting as `MoveOrder` (`Random`, `Cycle` or `NoLuckCycle`).
+
+Begin is `BeginFirstTurn` (78), `POST /Services?m=BeginFirstTurn&js=1` through `WarappRpc`.
+Parameters after the auth block, in the client writer's order:
+
+1. `int32` game id — and nothing else (no trailing bools).
+
+The reply is a present flag then the player's `GameStanding` (the client installs it as the
+latest standing). The client ignores server error **4** and refreshes as on success; any other
+error is thrown. `warapp_begin_turn` (confirm-gated) refuses games past turn 1, games whose move
+order is known and not `NoLuckCycle`, seats not `Playing`, and games whose board is already
+visible; after the send it reads the board back with `GetLatestGameInfo` and reports `begun` only
+when a standing arrives (`unconfirmed` otherwise; a transport failure is `unknown` and never
+retried). The encoder is pinned by a golden test built from synthetic ids; the owner verifies it
+live.
 
 ## Push channel (socket.io)
 

@@ -102,6 +102,10 @@
       "description": "Surrender a war.app game you are playing, or take back a pending surrender (confirm-gated)"
     },
     {
+      "name": "warapp_begin_turn",
+      "description": "Press Begin in a speed-first-turn game to reveal the board and start your turn timer (confirm-gated)"
+    },
+    {
       "name": "warapp_scout_player",
       "description": "Scout a war.app player: level, games, boots, ranked records and your head-to-head (through your signed-in tab)"
     },

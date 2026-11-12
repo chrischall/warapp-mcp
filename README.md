@@ -116,6 +116,7 @@ active. `warapp_healthcheck` reports the same.
 | `warapp_list_open_games` | Open games you could join, from war.app's Open Games page: pace, boot time, seats, team or not, entry fee, cards, rules, `plannerGaps` (rules the planner does not model yet), and `joined: true` on games you already hold a seat in. Filters: `pace`, `max_players`, `free_only`, `exclude_teams`, `limit`. A page GET, so it works without a browser once a session is linked. |
 | `warapp_join_game` | **Writes.** Take an open seat in a game from the open games list. Confirm-gated; refuses team games and coin entry fees unless allowed (`allow_team`, `accept_entry_fee`), and custom-scenario and mod games and games you already joined always. Joins with your preferred colour, else your secondary, else a free standard colour (or `color`, a war.app colour index). Reports `joined` only once GameFeed or your games list shows you in the game. |
 | `warapp_surrender` | **Writes.** Surrender a game you are playing — you lose it and cannot rejoin — or, with `undo: true`, take back a pending surrender. Confirm-gated; refuses finished games and games you are not in; reads the outcome from GameFeed: `surrendered`, `pending` (more than two players: the others must accept), `taken_back` or `unchanged`. |
+| `warapp_begin_turn` | **Writes.** Press Begin in a game whose first turn is a speed race (move order "No-luck cycle"): war.app hides the board until Begin, and Begin starts your turn timer, so call it only when ready to plan and submit at once. Confirm-gated; refuses games past turn 1, games without the speed first turn and games whose board is already visible; reports `begun` once the board reads back. The encoding is read from the war.app client, not yet verified live. |
 | `warapp_scout_player` | Scout a player (through your signed-in tab): level, games played, last seen, boots, ranked records per format, and your head-to-head record. Never returns location or other personal details. |
 | `warapp_get_game` | A game's state, turn, players (and who has committed orders), settings digest and map. `view`: compact / full / raw. |
 | `warapp_get_map` | The game map's bonuses ranked easiest first, plus chokepoints. Filter by `bonus` name to see one bonus's territories, borders and entry points. |
@@ -134,12 +135,12 @@ active. `warapp_healthcheck` reports the same.
 | `warapp_session_status` | Whether a war.app session is linked for the [direct transport](#direct-transport-no-browser), when it was captured and how old it is, and which transport is active. Never shows the session cookie. |
 | `warapp_link_session` | **Writes (locally).** Capture your signed-in war.app session cookie once and store it on this machine for the direct transport. Confirm-gated; stores a full-account credential locally (file mode `0600`) and never shows or sends it anywhere but war.app. |
 
-Everything except `warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game` and `warapp_surrender` only reads. Player, game, map
+Everything except `warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender` and `warapp_begin_turn` only reads. Player, game, map
 and chat text comes back marked as untrusted third-party content.
 
 ## Confirming writes
 
-`warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game` and `warapp_surrender` are confirmation-gated:
+`warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender` and `warapp_begin_turn` are confirmation-gated:
 
 - **Clients that support MCP elicitation** show a confirmation prompt describing the change.
 - **Other clients** make **no** change on the first call: it returns a preview and a

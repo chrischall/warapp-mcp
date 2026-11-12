@@ -153,7 +153,14 @@ describe('packaging for the browser bridge (phase 2)', () => {
   const mint = readFileSync(new URL('../mint.yaml', import.meta.url), 'utf8');
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
-  const WRITES = ['warapp_submit_picks', 'warapp_submit_turn', 'warapp_send_chat', 'warapp_join_game', 'warapp_surrender'];
+  const WRITES = [
+    'warapp_submit_picks',
+    'warapp_submit_turn',
+    'warapp_send_chat',
+    'warapp_join_game',
+    'warapp_surrender',
+    'warapp_begin_turn',
+  ];
   const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
 
   it('mint.yaml persists a data dir and says why (bridge identity + bundle cache)', () => {
@@ -436,5 +443,41 @@ describe('packaging for the pick advisor (#36)', () => {
     expect(row).toMatch(/Read-only/);
     expect(row).toContain('warapp_submit_picks');
     expect(skill).toMatch(/warapp_plan_picks[^\n]*warapp_submit_picks/);
+  });
+});
+
+describe('packaging for the speed first turn (#44)', () => {
+  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
+  const protocol = readFileSync(new URL('../docs/WEB-PROTOCOL.md', import.meta.url), 'utf8');
+
+  it('README and CLAUDE.md count warapp_begin_turn among the confirm-gated writes', () => {
+    const gated = readme.slice(readme.indexOf('confirmation-gated') - 250, readme.indexOf('confirmation-gated'));
+    expect(gated).toContain('warapp_begin_turn');
+    const reads = readme.slice(readme.indexOf('Everything except'), readme.indexOf('only reads'));
+    expect(reads).toContain('warapp_begin_turn');
+    const bullet = claude.slice(claude.indexOf('tools write'), claude.indexOf('tools write') + 400);
+    expect(bullet).toContain('warapp_begin_turn');
+  });
+
+  it('the skill names warapp_begin_turn in the change group and warns that Begin starts the timer', () => {
+    const head = skill.slice(skill.indexOf('tools write'), skill.indexOf('tools write') + 300);
+    expect(head).toContain('warapp_begin_turn');
+    expect(skill).toMatch(/warapp_begin_turn[^\n]*\*\*change\*\*|\*\*change\*\*[^.]*warapp_begin_turn/s);
+    expect(skill).toMatch(/Begin[^\n]*timer/);
+  });
+
+  it('WEB-PROTOCOL.md documents BeginFirstTurn (78) as read from the bundle, not verified live', () => {
+    const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
+    expect(methods).toMatch(/\| 78 \| \*\*BeginFirstTurn\*\*/);
+    const start = protocol.indexOf('## Begin first turn');
+    expect(start).toBeGreaterThan(-1);
+    const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
+    expect(section).toMatch(/not verified live/i);
+    expect(section).toContain('m=BeginFirstTurn&js=1');
+    expect(section).toMatch(/int32[^\n]*game id/);
+    expect(section).toContain('NoLuckCycle');
+    expect(section).toMatch(/timer/);
   });
 });
