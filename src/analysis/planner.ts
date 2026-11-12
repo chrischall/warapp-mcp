@@ -1519,8 +1519,7 @@ export function planTurn(input: PlanInput): TurnPlan {
    * (true) when it eliminates `p`, or cuts it to one territory or takes at least half of it
    * with no attacking border facing what is left unattacked and every hold worth paying for
    * against that funded; otherwise rolled back. `probe`: always rolled back, true when an
-   * elimination is affordable. `stay`: `p`'s territories a previous attempt left standing,
-   * not attacked, whose threat to my borders is reserved for up front.
+   * elimination is affordable.
    */
   const finishOff = (p: number, probe: boolean): boolean => {
     const ts = ownedBy.get(p)!;
