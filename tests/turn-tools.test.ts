@@ -78,11 +78,13 @@ interface PlanPayload {
 describe('warapp_plan_turn', () => {
   it('plans from the live board: deploys and moves by name and id, expected bonuses, and submit-shaped orders', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    // R3: completing bonus 118 leaves all three members facing Bob's ~11 with a next income
+    // of 7, so `balanced` refuses it (see below); `expand` ignores defence and completes it.
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' }));
     expect(p.untrusted_content).toBe(true);
     expect(p.game).toEqual({ id: GAME, name: 'Synthetic lobby game', turn: 3 });
     expect(p.player).toEqual({ id: Number(ANN.feed), name: 'Ann' });
-    expect(p.goal).toBe('balanced');
+    expect(p.goal).toBe('expand');
     expect(p.income).toBe(5);
     expect(p.trendSource).toBeNull();
     expect(p).toHaveProperty('conceded');
@@ -119,13 +121,25 @@ describe('warapp_plan_turn', () => {
     expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
   });
 
+  it('the default goal (balanced) does not complete a bonus it cannot hold next turn (R3)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.goal).toBe('balanced');
+    expect(p.expected.bonusesCompleted).toEqual([]);
+    expect(p.moves.some((m) => m.kind === 'attack')).toBe(false);
+    expect(p.warnings.join('\n')).toMatch(
+      /completing Broken Branch Riverlords \(#118\) leaves .* \(#\d+\) indefensible \(player \d+ can take it for \d+; next income 7\): not completed/,
+    );
+    expect(p.rationale.join('\n')).toMatch(/Do not complete bonus Broken Branch Riverlords \(#118\)/);
+  });
+
   it('defaults to the signed-in account, found by its invite token', async () => {
     h = await liveHarness({
       feed: [game('Playing')],
       pages: { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` },
       warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
     });
-    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, goal: 'expand' }));
     expect(p.player).toEqual({ id: Number(ANN.feed), name: 'Ann' });
     expect(p.moves.length).toBeGreaterThan(0);
   });
@@ -144,10 +158,12 @@ describe('warapp_plan_turn', () => {
     expect(props.goal!.description).toMatch(/balanced \(default\)/);
   });
 
-  it('goal defend keeps the borders of the bonus this turn completes (R2), warning they can still fall', async () => {
+  it('keeps the borders of the bonus this turn completes (R2), warning they can still fall', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }));
-    expect(p.goal).toBe('defend');
+    // R3: `defend` (like `balanced`) no longer completes this indefensible bonus; `expand`
+    // still does, and R2's re-valuation keeps its borders under every goal.
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' }));
+    expect(p.goal).toBe('expand');
     // Both threatened borders protect +0 at the start of the turn, but capturing Widow's Watch
     // completes bonus 118 around them: they are kept (not conceded, nothing withdrawn).
     expect(p.expected.bonusesCompleted).toEqual([{ id: 118, name: 'Broken Branch Riverlords', value: 2 }]);
@@ -222,7 +238,9 @@ describe('warapp_plan_turn', () => {
 
   it('full adds move reasons and the settings the plan assumed', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full', goal: 'expand' }),
+    );
     expect(p.moves[0]!.reason).toMatch(/completes bonus/);
     expect(p.settings).toEqual({
       offensiveKillRate: 60,
@@ -358,7 +376,7 @@ describe('warapp_plan_turn — threat trend', () => {
     });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.trendSource).toBeNull();
-    expect(p.moves.length).toBeGreaterThan(0);
+    expect(p.deploys.reduce((s, d) => s + d.armies, 0)).toBe(5);
     expect(existsSync(cacheFile(h.dataDir))).toBe(true);
   });
 

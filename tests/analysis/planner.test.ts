@@ -7,6 +7,7 @@ import {
   captureCost,
   COMFORT_MARGIN,
   CONCEDE_FACTOR,
+  DEFENSE_DISCOUNT,
   defaultEnemyDeploy,
   ENEMY_STACK_SHARE,
   enemyDeployEstimates,
@@ -1336,6 +1337,136 @@ describe('planTurn — border value after this turn\'s captures (R2)', () => {
     const withFog = board([mine(1, 4), mine(2, 1), mine(3, 4), fogged(4), enemy(9, 6)]);
     const q = planTurn({ graph: g, board: withFog, me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
     expect(q.conceded).toEqual([1]);
+  });
+});
+
+describe('planTurn — defensibility-aware bonus completion (R3)', () => {
+  // B901 (+5) = {1, 2, 3}; B902 (+2) = {1, 2} is already mine, so T2 protects +2.
+  // T3 is a 2-army neutral (3 to take; T1's 4 armies fund it with no deploy, and 2
+  // survive). The enemy T9 borders both T2 and T3.
+  //   T1 ─ T2 ─ T9(enemy)
+  //    \   |   /
+  //      T3(neutral)
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 9],
+      [
+        [1, 2],
+        [1, 3],
+        [2, 3],
+        [2, 9],
+        [3, 9],
+      ],
+      [
+        [901, 5, [1, 2, 3]],
+        [902, 2, [1, 2]],
+      ],
+    ),
+  );
+  const at = (e: number) => board([mine(1, 4), mine(2, 10), neutral(3, 2), enemy(9, e)]);
+  const NOT_COMPLETED =
+    'completing B901 (#901) leaves T3 (#3) indefensible (player 20 can take it for 3; next income 10): not completed';
+
+  it('exports the defence discount', () => {
+    expect(DEFENSE_DISCOUNT).toBeGreaterThan(0);
+  });
+
+  for (const goal of ['balanced', 'defend'] as const)
+    it(`(${goal}) does not complete a bonus whose new member falls next turn; it garrisons instead`, () => {
+      // T9 (16): threat 15 movable + 5 deploy = 20. Taking T3 leaves 2 armies there,
+      // which need 13 to hold (13 armies need 21 > 20): 11 more than it has, above
+      // the next income of 5 + 5 = 10 (and a fresh capture cannot be deployed to this turn).
+      expect(armiesToTake(2, STD)).toBe(3);
+      expect(armiesToTake(12, STD)).toBe(20);
+      expect(armiesToTake(13, STD)).toBe(21);
+      const p = planTurn({ graph: g, board: at(16), me: ME, income: 5, settings: STD, options: { goal } });
+      expect(attacks(p)).toEqual([]);
+      expect(p.expected.bonusesCompleted).toEqual([]);
+      expect(p.warnings).toContain(NOT_COMPLETED);
+      // Warned once, however many passes looked at the capture.
+      expect(p.warnings.filter((w) => w === NOT_COMPLETED)).toHaveLength(1);
+      expect(p.rationale.join('\n')).toMatch(/Do not complete bonus B901 \(#901\)/);
+      // The income garrisons the threatened T2 (holding needs 3) instead.
+      expect(deployedTo(p, 2)).toBe(5);
+      expect(deploySum(p)).toBe(5);
+      expect(p.conceded).toEqual([]);
+    });
+
+  it('control: a defensible frontier still completes', () => {
+    // T9 (4): threat 3 + 5 = 8; T3's 2 survivors need 6 to hold, 4 more: within the next income.
+    for (const goal of ['balanced', 'defend'] as const) {
+      const p = planTurn({ graph: g, board: at(4), me: ME, income: 5, settings: STD, options: { goal } });
+      expect(p.expected.bonusesCompleted, goal).toEqual([901]);
+      expect(attacks(p), goal).toEqual([expect.objectContaining({ from: 2, to: 3, armies: 3 })]);
+      expect(p.warnings.join('\n'), goal).not.toMatch(/indefensible/);
+    }
+  });
+
+  it('under expand the bonus is still completed, with a warning', () => {
+    const p = planTurn({ graph: g, board: at(16), me: ME, income: 5, settings: STD, options: { goal: 'expand' } });
+    expect(p.expected.bonusesCompleted).toEqual([901]);
+    expect(p.warnings).toContain(
+      'completing B901 (#901) leaves T3 (#3) indefensible (player 20 can take it for 3; next income 10): completed anyway (goal expand ignores defence)',
+    );
+  });
+
+  it('discounts a completion by its defence cost, so a defensible smaller bonus wins', () => {
+    // A = B911 (+5) = {1, 3}; B = B912 (+3) = {5, 6}. Each needs 3 deployed (sources at 1 army).
+    // T3 borders the enemy T9 (7): threat 6 + 5 = 11, so T3's 2 survivors need 8 to hold —
+    // 6 more, within the next income of 3 + 5 = 8 (defensible). Undiscounted A (5 / 3)
+    // beats B (3 / 3); discounted, A is 5 / (3 + 6) and B wins the only 3 armies.
+    const g2 = buildGraph(
+      makeMap(
+        [1, 3, 5, 6, 9],
+        [
+          [1, 3],
+          [3, 9],
+          [5, 6],
+          [1, 5],
+        ],
+        [
+          [911, 5, [1, 3]],
+          [912, 3, [5, 6]],
+        ],
+      ),
+    );
+    const s = board([mine(1, 1), neutral(3, 2), mine(5, 1), neutral(6, 2), enemy(9, 7)]);
+    expect(armiesToTake(7, STD)).toBe(11);
+    expect(armiesToTake(8, STD)).toBe(13);
+    const p = planTurn({ graph: g2, board: s, me: ME, income: 3, settings: STD });
+    expect(p.expected.bonusesCompleted).toEqual([912]);
+    expect(p.rationale.join('\n')).toMatch(/B911 \(#911\).*needs ~6 more armies next turn to hold its frontier/);
+    // Under expand defence is ignored: the bigger bonus per army wins.
+    const q = planTurn({ graph: g2, board: s, me: ME, income: 3, settings: STD, options: { goal: 'expand' } });
+    expect(q.expected.bonusesCompleted).toEqual([911]);
+  });
+
+  it('a held border that would break its only threat just holds when that capture completes an indefensible bonus', () => {
+    // My B950 (+3) = {1, 8}; the enemy's B951 (+2) = {8} is breakable. T8 (3) is T1's only
+    // threat (2 movable + 5 = 7 against T1's 3, which need 5): holding T1 needs 2. Capturing
+    // T8 would break B951 and complete B950, but T8 then faces T9 (30): indefensible.
+    //   T1 ─ T8(enemy, B951) ─ T9(enemy 30)
+    const g3 = buildGraph(
+      makeMap(
+        [1, 8, 9],
+        [
+          [1, 8],
+          [8, 9],
+        ],
+        [
+          [950, 3, [1, 8]],
+          [951, 2, [8]],
+        ],
+      ),
+    );
+    const s = board([mine(1, 3), enemy(8, 3), enemy(9, 30)]);
+    const p = planTurn({ graph: g3, board: s, me: ME, income: 10, settings: STD });
+    expect(attacks(p)).toEqual([]);
+    expect(p.expected.bonusesCompleted).toEqual([]);
+    expect(p.warnings.join('\n')).toMatch(/completing B950 \(#950\) leaves T8 \(#8\) indefensible .*: not completed/);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 2 to T1 \(#1\) so it holds/);
+    expect(p.conceded).toEqual([]);
+    expect(deploySum(p)).toBe(10);
   });
 });
 
