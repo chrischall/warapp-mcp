@@ -251,9 +251,9 @@ export type TurnOrder =
  * The `warlight.shared.TurnPhase` each order runs in. war.app refuses a turn
  * whose orders are out of phase order with error 10 `OrdersInIncorrectOrder`
  * (VERIFIED live 2026-11-12: `[OrderPriority, Reinforcement, deploys]` was
- * accepted, `[Reinforcement, OrderPriority, …]` refused). Order Delay's phase is
- * unverified; it is placed with Order Priority, and submit_turn refuses to mix
- * it with other card plays.
+ * accepted, `[Reinforcement, OrderPriority, …]` refused). Order Delay runs in
+ * the attack/transfer phase (50) — VERIFIED live 2026-11-12: placed with Order
+ * Priority (phase 12) it was refused with error 10.
  */
 export const TurnPhase = {
   OrderPriorityCards: 12,
@@ -265,7 +265,7 @@ export const TurnPhase = {
 
 const CARD_PHASE: Readonly<Record<CardPlayKind, number>> = {
   OrderPriority: TurnPhase.OrderPriorityCards,
-  OrderDelay: TurnPhase.OrderPriorityCards,
+  OrderDelay: TurnPhase.Attacks,
   Reinforcement: TurnPhase.ReinforcementCards,
   Blockade: TurnPhase.BlockadeCards,
 };
@@ -278,13 +278,23 @@ export function turnPhaseOf(o: TurnOrder): number {
 }
 
 /**
+ * Turn-phase order, and within one phase the card plays after the other
+ * orders (so an Order Delay, phase 50, follows every AttackTransfer). The
+ * within-phase position is UNVERIFIED; the phase itself is.
+ */
+function compareTurnOrders(a: TurnOrder, b: TurnOrder): number {
+  return turnPhaseOf(a) - turnPhaseOf(b) || Number(a.kind === 'card') - Number(b.kind === 'card');
+}
+
+/**
  * SendOrders(auth, …) — verified against a live turn commit: the game id, a
  * present order list (int32 count, then per order a present flag and the
  * order), the turn number (GameFeed `numberOfTurns` + 1), then two bools the
  * client sends as false. Orders are written in turn-phase order (a stable
- * sort, so orders of one phase keep their given order): Order Priority and
- * Reinforcement plays, then every deploy, then the moves (ordinary
- * AttackTransfers, mode 3), then any Blockade plays.
+ * sort, so orders of one phase keep their given order, card plays after
+ * the rest): Order Priority and Reinforcement plays, then every deploy, then
+ * the moves (ordinary AttackTransfers, mode 3) followed by any Order Delay
+ * plays, then any Blockade plays.
  */
 export function writeSendOrdersParams(
   w: Writer,
@@ -293,7 +303,7 @@ export function writeSendOrdersParams(
   orders: readonly TurnOrder[],
   turnNumber: number,
 ): void {
-  const sorted = [...orders].sort((a, b) => turnPhaseOf(a) - turnPhaseOf(b));
+  const sorted = [...orders].sort(compareTurnOrders);
   w.int32(gameId).bool(true).int32(sorted.length);
   for (const o of sorted) {
     w.bool(true);

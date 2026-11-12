@@ -110,10 +110,19 @@ export function readLatestGameInfo(bundle: ClassReader, body: Reader): unknown {
   return info;
 }
 
+/**
+ * The CURRENT GameStanding of a decoded LatestGameInfo: its first `GameStanding`
+ * field (verified 2026-11-12, #20 — the info also carries the previous turn's
+ * standing, later in field order). `undefined` when there is none; never throws.
+ */
+export function currentStanding(info: unknown): Obj | undefined {
+  if (!isObj(info)) return undefined;
+  return fields(info).find((v): v is Obj => isType(v, GAME_STANDING));
+}
+
 /** The territories of a decoded LatestGameInfo; `null` when it carries no standing. */
 export function standingFromInfo(info: unknown): LiveTerritory[] | null {
-  if (!isObj(info)) return null;
-  const standing = fields(info).find((v) => isType(v, GAME_STANDING));
+  const standing = currentStanding(info);
   if (!standing) return null;
   for (const v of fields(standing)) {
     const list = entries(v);

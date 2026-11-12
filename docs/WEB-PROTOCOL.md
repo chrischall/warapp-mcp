@@ -146,7 +146,8 @@ AttackTransfer  byte 01, bool attackTeammates, byte mode (1 Attack, 2 Transfer,
                 3 AttackTransfer), bool byPercent, int32 from,
                 Armies { bool fogged, int32 count, byte specialUnitCount, units… },
                 int32 to, base
-PlayCard*       byte <card tag> (18 = Blockade), card fields, GUID cardInstanceId, base
+PlayCard*       byte <card tag> (5 Reinforcement, 10 Order Priority, 11 Order Delay,
+                18 Blockade), card fields, GUID cardInstanceId, base
 ```
 
 **Verified 2026-11-12** against a real turn-1 commit (1 deploy + 4 attacks): the captured
@@ -168,6 +169,28 @@ action has ended your vacation" — it is a **vacation-ended flag**, `false` in 
 
 Server checks seen in the client: error 11 (deployments ≠ income) and 208 (turn already
 advanced).
+
+**Card plays and turn phases (verified live 2026-11-12).** Orders must be sent in
+`warlight.shared.TurnPhase` order or the server refuses the turn with error 10
+`OrdersInIncorrectOrder`. The card tags and phases this project encodes:
+
+| Card play | Order tag | Phase |
+|---|---|---|
+| Order Priority | 10 | 12 |
+| Reinforcement | 5 | 20 |
+| (deploys) | 2 | 25 |
+| (attacks/transfers) | 1 | 50 |
+| Order Delay | 11 | **50** — placed in phase 12 (with Order Priority) it was refused with error 10 |
+| Blockade | 18 | 60 |
+
+Within one phase the encoder writes card plays after the other orders (an Order Delay after
+every AttackTransfer); that within-phase position is unverified.
+
+**The hand is the current `GameStanding`'s.** `LatestGameInfo` holds the pending orders, the
+current `GameStanding`, the last `GameTurn` and the previous `GameStanding`, and card instances
+appear in all of them. Only the current standing's cards are playable: an instance that survives
+only in the previous standing or the turn's receive/play orders was already played, and playing
+it is refused with error 50 `CardInstanceUnavailable`.
 
 ## Verified end to end through the browser bridge
 

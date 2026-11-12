@@ -188,6 +188,54 @@ describe('SendOrders params', () => {
     ).toBe('39300000' + '01' + '03000000' + '01' + deploy + '01' + move + '01' + blockade + '02000000' + '0000');
   });
 
+  it('writes an Order Delay (phase 50) after every move, Order Priority still first', () => {
+    // Live 2026-11-12: Order Delay placed with Order Priority (phase 12) was refused with error 10.
+    const od = 'ffeeddccbbaa99887766554433221100';
+    const r = '00112233445566778899aabbccddeeff';
+    const op = '0a0b0c0d0e0f10111213141516171819';
+    const playOd = '0B' + 'CCDDEEFF' + 'AABB' + '8899' + '7766554433221100' + '090300000000';
+    const playR = '0533221100554477668899AABBCCDDEEFF090300000000';
+    const playOp = '0A' + '0D0C0B0A0F0E1110' + '1213141516171819' + '090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    const attack = '01000300090000000003000000000A000000090300000000';
+    const transfer = '010003000600000000010000000004000000090300000000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'card', card: 'OrderDelay', cardId: od },
+            { kind: 'card', card: 'Reinforcement', cardId: r },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'move', from: 9, to: 10, armies: 3 },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '04000000' + '01' + playR + '01' + deploy + '01' + attack + '01' + playOd + '02000000' + '0000');
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'card', card: 'OrderDelay', cardId: od },
+            { kind: 'move', from: 9, to: 10, armies: 3 },
+            { kind: 'card', card: 'OrderPriority', cardId: op },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+          ],
+          2,
+        ),
+      ),
+    ).toBe(
+      '39300000' + '01' + '05000000' + '01' + playOp + '01' + deploy + '01' + attack + '01' + transfer + '01' + playOd + '02000000' + '0000',
+    );
+  });
+
   it('writes an empty order list', () => {
     expect(hex((w) => writeSendOrdersParams(w, 1, 777, [], 0))).toBe('01000000' + '01' + '00000000' + '00000000' + '0000');
   });

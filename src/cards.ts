@@ -8,6 +8,7 @@
 // are found by type name and their fields by kind and read order, and the
 // reader stays loose: an unexpected shape yields fewer cards, never an error.
 
+import { currentStanding } from './live.js';
 import type { GameSettings } from './normalize.js';
 import { asInt } from './scalars.js';
 
@@ -85,9 +86,15 @@ function cardOf(o: Obj, key: unknown): Card | undefined {
 }
 
 /**
- * My hand from a decoded LatestGameInfo: every card instance under the player
- * entry keyed by `myInGameId` (or under no player key at all). Empty when the
- * board carries no cards; never throws.
+ * My hand from a decoded LatestGameInfo: every card instance in its CURRENT
+ * GameStanding (`currentStanding`, the same object the board is read from) under
+ * the player entry keyed by `myInGameId` (or under no player key at all).
+ *
+ * VERIFIED 2026-11-12 (#20): only the current standing is the hand. The pending
+ * orders, the last GameTurn (its receive/play-card orders) and the previous
+ * standing still carry instances already played — playing one is refused with
+ * error 50 `CardInstanceUnavailable` — so they are never walked. Empty when there
+ * is no standing or it carries no cards; never throws.
  */
 export function readHand(info: unknown, myInGameId: number): Card[] {
   const out: Card[] = [];
@@ -116,7 +123,8 @@ export function readHand(info: unknown, myInGameId: number): Card[] {
     }
     for (const [k, f] of Object.entries(v)) if (k !== '$type') walk(f, owner, undefined, depth + 1);
   };
-  walk(info, undefined, undefined, 0);
+  const standing = currentStanding(info);
+  if (standing) walk(standing, undefined, undefined, 0);
   return out;
 }
 
@@ -156,7 +164,12 @@ export function reinforcementArmies(card: Card, rules: CardRules): number | unde
   return card.armies ?? rules.reinforcementArmies;
 }
 
-/** Whether the hand is at the hold limit, so war.app requires a card play. */
+/**
+ * Whether the hand is at the hold limit, so war.app requires a card play (error 51).
+ * Counts only the real hand (the current standing, see `readHand`). UNVERIFIED: the
+ * threshold direction — whether a play is required AT `maxCardsHold` cards (as assumed
+ * here) or only above it — has not been confirmed live.
+ */
 export const playRequired = (hand: readonly Card[], rules: CardRules): boolean =>
   rules.maxCardsHold !== undefined && rules.maxCardsHold > 0 && hand.length >= rules.maxCardsHold;
 
