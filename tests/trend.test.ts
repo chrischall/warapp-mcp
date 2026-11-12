@@ -66,11 +66,50 @@ describe('board cache', () => {
   it('round-trips the board for the same game, player and turn only', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
     expect(await writeBoardCache(dir, 42, ANN.id, 3, board)).toBe(true);
-    expect(JSON.parse(readFileSync(boardCachePath(dir, 42), 'utf8'))).toEqual({ gameId: 42, playerId: ANN.id, turn: 3, board });
+    expect(JSON.parse(readFileSync(boardCachePath(dir, 42), 'utf8'))).toEqual({
+      gameId: 42,
+      playerId: ANN.id,
+      turns: { '3': board },
+    });
     expect(await readBoardCache(dir, 42, ANN.id, 3)).toEqual(board);
     expect(await readBoardCache(dir, 42, ANN.id, 2)).toBeUndefined();
     expect(await readBoardCache(dir, 42, BOB.id, 3)).toBeUndefined();
     expect(await readBoardCache(dir, 43, ANN.id, 3)).toBeUndefined();
+  });
+
+  it('keeps the newest two turns, so re-planning a turn still finds the one before it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    const at = (armies: number): BoardState => ({
+      ...board,
+      territories: [{ territoryId: 1, owner: { kind: 'player', playerId: ANN.id }, armies }],
+    });
+    await writeBoardCache(dir, 42, ANN.id, 3, at(3));
+    await writeBoardCache(dir, 42, ANN.id, 4, at(4));
+    await writeBoardCache(dir, 42, ANN.id, 4, at(44)); // turn 4 planned again
+    expect(await readBoardCache(dir, 42, ANN.id, 3)).toEqual(at(3));
+    expect(await readBoardCache(dir, 42, ANN.id, 4)).toEqual(at(44));
+    await writeBoardCache(dir, 42, ANN.id, 5, at(5));
+    expect(await readBoardCache(dir, 42, ANN.id, 3)).toBeUndefined();
+    expect(await readBoardCache(dir, 42, ANN.id, 4)).toEqual(at(44));
+    expect(Object.keys((JSON.parse(readFileSync(boardCachePath(dir, 42), 'utf8')) as { turns: object }).turns)).toEqual([
+      '4',
+      '5',
+    ]);
+    // Another player's plan replaces the file rather than mixing two views.
+    await writeBoardCache(dir, 42, BOB.id, 5, at(9));
+    expect(await readBoardCache(dir, 42, ANN.id, 4)).toBeUndefined();
+    expect(await readBoardCache(dir, 42, BOB.id, 5)).toEqual(at(9));
+  });
+
+  it('reads a single-board cache from before turns were kept', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    mkdirSync(join(dir, 'boards'));
+    writeFileSync(boardCachePath(dir, 7), JSON.stringify({ gameId: 7, playerId: ANN.id, turn: 2, board }));
+    expect(await readBoardCache(dir, 7, ANN.id, 2)).toEqual(board);
+    expect(await readBoardCache(dir, 7, ANN.id, 1)).toBeUndefined();
+    await writeBoardCache(dir, 7, ANN.id, 3, board);
+    expect(await readBoardCache(dir, 7, ANN.id, 2)).toEqual(board);
+    expect(await readBoardCache(dir, 7, ANN.id, 3)).toEqual(board);
   });
 
   it('reads loosely and never throws on a damaged file', async () => {
@@ -78,6 +117,8 @@ describe('board cache', () => {
     mkdirSync(join(dir, 'boards'));
     writeFileSync(boardCachePath(dir, 1), 'not json');
     expect(await readBoardCache(dir, 1, ANN.id, 1)).toBeUndefined();
+    writeFileSync(boardCachePath(dir, 4), JSON.stringify({ gameId: 4, playerId: ANN.id }));
+    expect(await readBoardCache(dir, 4, ANN.id, 1)).toBeUndefined();
     writeFileSync(boardCachePath(dir, 2), JSON.stringify({ gameId: 2, playerId: ANN.id, turn: 1, board: { territories: 'x' } }));
     expect(await readBoardCache(dir, 2, ANN.id, 1)).toBeUndefined();
     writeFileSync(

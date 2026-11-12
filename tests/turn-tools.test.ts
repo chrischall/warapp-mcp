@@ -258,8 +258,9 @@ describe('warapp_plan_turn — threat trend', () => {
     const first = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(first.trendSource).toBeNull();
     expect(first.warnings.join('\n')).not.toMatch(/is building/);
-    const cached = JSON.parse(readFileSync(cacheFile(h.dataDir), 'utf8')) as { turn: number; playerId: number };
-    expect(cached).toMatchObject({ gameId: GAME, turn: 3, playerId: Number(ANN.feed) });
+    const cached = JSON.parse(readFileSync(cacheFile(h.dataDir), 'utf8')) as { turns: object; playerId: number };
+    expect(cached).toMatchObject({ gameId: GAME, playerId: Number(ANN.feed) });
+    expect(Object.keys(cached.turns)).toEqual(['3']);
     const dir = h.dataDir;
     await h.harness.close();
 
@@ -273,7 +274,30 @@ describe('warapp_plan_turn — threat trend', () => {
     const second = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(second.trendSource).toBe('cache');
     expect(second.warnings.join('\n')).toMatch(building(7, 12));
-    expect(JSON.parse(readFileSync(cacheFile(dir), 'utf8'))).toMatchObject({ turn: 4 });
+    expect(Object.keys((JSON.parse(readFileSync(cacheFile(dir), 'utf8')) as { turns: object }).turns)).toEqual(['3', '4']);
+  });
+
+  it('(h) planning the same turn twice keeps the trend (the previous turn stays cached)', async () => {
+    // Turn 3 planned and cached.
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    const dir = h.dataDir;
+    await h.harness.close();
+
+    // Turn 4, planned twice (another goal, then again after a hand override).
+    const grown = BOARD.map((t) => (t.id === 158 ? { ...t, armies: 12 } : t));
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3' }), game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(grown) }),
+    });
+    const once = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    const twice = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }),
+    );
+    expect(once.trendSource).toBe('cache');
+    expect(twice.trendSource).toBe('cache');
+    expect(twice.warnings.join('\n')).toMatch(building(7, 12));
   });
 
   it('(h) ignores a cache from any turn but the previous one', async () => {

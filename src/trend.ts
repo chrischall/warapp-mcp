@@ -1,7 +1,8 @@
 // The previous turn's board, for the planner's threat trend. Best effort and
 // never throws: GameFeed's `GetHistory` standing for the previous turn when the
 // feed sends one (UNVERIFIED for games in progress — see docs/WARAPP-API.md),
-// else the board this server last planned on for the game, cached on disk.
+// else the board this server planned on for the previous turn, cached on disk
+// (the newest two planned turns per game).
 //
 // The cache holds only the player's own fogged view (what the live board
 // showed them), at `<dataDir>/boards/<gameId>.json`.
@@ -77,19 +78,38 @@ export function boardFromHistory(
   }
 }
 
-/** Where the last planned board of a game is cached. */
+/** Where the last planned boards of a game are cached. */
 export const boardCachePath = (dir: string, gameId: number) => join(dir, 'boards', `${gameId}.json`);
 
-interface CachedBoard {
+/**
+ * Turns kept per game. Two, so a turn planned again (another goal, or after a
+ * hand override) still finds the board of the turn before it.
+ */
+const CACHED_TURNS = 2;
+
+interface CachedBoards {
   gameId: number;
   playerId: number;
-  turn: number;
-  board: BoardState;
+  turns: Record<string, BoardState>;
+}
+
+/** The cached boards by turn for `gameId` as `playerId` saw them; `{}` when absent or unusable. */
+async function readCachedTurns(dir: string, gameId: number, playerId: number): Promise<Record<string, unknown>> {
+  try {
+    const c: unknown = JSON.parse(await readFile(boardCachePath(dir, gameId), 'utf8'));
+    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId) return {};
+    if (isRec(c.turns)) return c.turns;
+    // A single-board cache written before turns were kept.
+    if (typeof c.turn === 'number') return { [String(c.turn)]: c.board };
+    return {};
+  } catch {
+    return {};
+  }
 }
 
 /**
- * The board this server last planned on for `gameId`, only when it was planned
- * for `playerId` on exactly turn `turn`; `undefined` otherwise. Never throws.
+ * The board this server planned on for `gameId`, only when it was planned for
+ * `playerId` on exactly turn `turn`; `undefined` otherwise. Never throws.
  */
 export async function readBoardCache(
   dir: string,
@@ -97,25 +117,23 @@ export async function readBoardCache(
   playerId: number,
   turn: number,
 ): Promise<BoardState | undefined> {
-  try {
-    const c = JSON.parse(await readFile(boardCachePath(dir, gameId), 'utf8')) as Partial<CachedBoard>;
-    if (c.gameId !== gameId || c.playerId !== playerId || c.turn !== turn) return undefined;
-    const b = c.board;
-    if (!isRec(b) || !Array.isArray(b.territories)) return undefined;
-    const territories = (b.territories as unknown[]).filter(
-      (t): t is TerritoryState =>
-        isRec(t) &&
-        typeof t.territoryId === 'number' &&
-        isRec(t.owner) &&
-        (typeof t.armies === 'number' || t.armies === null),
-    );
-    return { source: b.source === 'gamefeed' ? 'gamefeed' : 'browser', verified: b.verified === true, territories };
-  } catch {
-    return undefined;
-  }
+  const b = (await readCachedTurns(dir, gameId, playerId))[String(turn)];
+  if (!isRec(b) || !Array.isArray(b.territories)) return undefined;
+  const territories = (b.territories as unknown[]).filter(
+    (t): t is TerritoryState =>
+      isRec(t) &&
+      typeof t.territoryId === 'number' &&
+      isRec(t.owner) &&
+      (typeof t.armies === 'number' || t.armies === null),
+  );
+  return { source: b.source === 'gamefeed' ? 'gamefeed' : 'browser', verified: b.verified === true, territories };
 }
 
-/** Cache the board just planned on (turn `turn` of `gameId`, as `playerId` sees it). Never throws. */
+/**
+ * Cache the board just planned on (turn `turn` of `gameId`, as `playerId` sees
+ * it), keeping the newest {@link CACHED_TURNS} turns; a different player's
+ * cache is replaced. Never throws.
+ */
 export async function writeBoardCache(
   dir: string,
   gameId: number,
@@ -125,9 +143,18 @@ export async function writeBoardCache(
 ): Promise<boolean> {
   try {
     const path = boardCachePath(dir, gameId);
+    const kept = { ...(await readCachedTurns(dir, gameId, playerId)), [String(turn)]: board };
+    const newest = Object.keys(kept)
+      .filter((k) => /^\d+$/.test(k) && Number(k) <= turn)
+      .map(Number)
+      .sort((a, b) => b - a)
+      .slice(0, CACHED_TURNS)
+      .sort((a, b) => a - b);
+    const turns: Record<string, BoardState> = {};
+    for (const n of newest) turns[String(n)] = kept[String(n)] as BoardState;
     await mkdir(join(dir, 'boards'), { recursive: true, mode: 0o700 });
     const tmp = `${path}.${process.pid}.tmp`;
-    const body: CachedBoard = { gameId, playerId, turn, board };
+    const body: CachedBoards = { gameId, playerId, turns };
     await writeFile(tmp, JSON.stringify(body), { mode: 0o600 });
     await rename(tmp, path);
     return true;

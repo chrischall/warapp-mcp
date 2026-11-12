@@ -91,9 +91,10 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `latestStanding`. **Assumed:** an entry's number is the count of completed turns its
   standing reflects (so the previous board of turn T is entry T − 2), and owners may be
   GameFeed or in-game player ids (both are mapped). When the feed sends nothing usable
-  (or errors), the planner falls back to the board it last planned on, cached at
-  `<dataDir>/boards/<gameId>.json` (the player's own fogged view, used only when cached
-  on exactly the previous turn). When a live in-progress history is seen, record its
+  (or errors), the planner falls back to the board it planned on in the previous turn,
+  cached at `<dataDir>/boards/<gameId>.json` (the player's own fogged view, the newest two
+  planned turns kept so a turn planned twice still finds the one before it, used only when
+  cached on exactly the previous turn). When a live in-progress history is seen, record its
   shape here and tighten the parser.
 
 When an in-progress game is captured live, record its shape here, add an anonymized fixture,

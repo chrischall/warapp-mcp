@@ -74,7 +74,8 @@ threat-aware planner).
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
   border's threat to movable + max(enemyDeploy, growth). `warapp_plan_turn` gets it from
   GameFeed `GetHistory` (unverified in progress, parsed loosely in `src/trend.ts`), else from
-  `<dataDir>/boards/<gameId>.json`, written after each plan; it reports `trendSource`.
+  `<dataDir>/boards/<gameId>.json`, written after each plan (newest two turns kept, so re-planning a
+  turn keeps the trend); it reports `trendSource`.
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it
