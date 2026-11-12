@@ -84,6 +84,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.roundingMode !== undefined) out.roundingMode = s.roundingMode;
   if (s.oneArmyStandsGuard !== undefined) out.oneArmyStandsGuard = s.oneArmyStandsGuard;
   if (s.multiAttack !== undefined) out.multiAttack = s.multiAttack;
+  if (s.bonusArmyPer !== undefined && s.bonusArmyPer > 0) out.bonusArmyPer = s.bonusArmyPer;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game.

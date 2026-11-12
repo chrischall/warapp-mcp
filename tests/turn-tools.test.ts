@@ -122,11 +122,13 @@ describe('warapp_plan_turn', () => {
     expect(p.moves.length).toBeGreaterThan(0);
   });
 
-  it('goal defend holds the threatened border first', async () => {
+  it('goal defend triages the threatened border by the income it protects', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }));
     expect(p.goal).toBe('defend');
-    expect(p.rationale.join('\n')).toMatch(/so it holds/);
+    // Ann's threatened border is in no held bonus: it protects +0, so it is conceded, not held.
+    expect(p.warnings.join('\n')).toMatch(/cannot be held economically \(needs \d+, protects \+0\): conceded/);
+    expect(p.rationale.join('\n')).not.toMatch(/so it holds/);
   });
 
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {
@@ -216,6 +218,9 @@ describe('plannerSettings', () => {
     expect(
       plannerSettings({ cards: [], raw: { AllowTransferOnly: false }, offensiveKillRate: 50, luckModifier: 0.16 }),
     ).toEqual({ offensiveKillRate: 50, luckModifier: 0.16 });
+    // Per-territory income feeds a border's protected value; 0 means off.
+    expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 3 })).toEqual({ bonusArmyPer: 3 });
+    expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 0 })).toEqual({});
   });
 });
 
