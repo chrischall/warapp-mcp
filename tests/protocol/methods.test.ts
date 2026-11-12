@@ -316,12 +316,22 @@ describe('AcceptOpenSeat (join an open game)', () => {
     });
   });
 
-  it('writes game id, no colour, the seat team, no start slot, then the mod-hook flag false (golden)', async () => {
+  it('writes game id, a present GameColor, the seat team, no start slot, then the mod-hook flag false (golden)', async () => {
     const { writeAcceptOpenSeatParams } = await import('../../src/protocol/methods.js');
-    expect(hex((w) => writeAcceptOpenSeatParams(w, { gameId: 0x00bc614e, team: -1 }))).toBe(
-      '4E61BC00' + '00' + 'FFFFFFFF' + '00' + '00',
+    // war.app refuses an absent colour (server error 1, "color is null"): the colour is a
+    // present flag then the GameColor record, one int32 colour index.
+    expect(hex((w) => writeAcceptOpenSeatParams(w, { gameId: 0x00bc614e, team: -1, color: 3 }))).toBe(
+      '4E61BC00' + '01' + '03000000' + 'FFFFFFFF' + '00' + '00',
     );
-    expect(hex((w) => writeAcceptOpenSeatParams(w, { gameId: 7, team: 2 }))).toBe('07000000' + '00' + '02000000' + '0000');
+    expect(hex((w) => writeAcceptOpenSeatParams(w, { gameId: 7, team: 2, color: 0x01b3 }))).toBe(
+      '07000000' + '01' + 'B3010000' + '02000000' + '0000',
+    );
+  });
+
+  it('refuses a colour index outside war.app\'s colour list', async () => {
+    const { writeAcceptOpenSeatParams } = await import('../../src/protocol/methods.js');
+    expect(() => hex((w) => writeAcceptOpenSeatParams(w, { gameId: 7, team: -1, color: 436 }))).toThrow(/colour/i);
+    expect(() => hex((w) => writeAcceptOpenSeatParams(w, { gameId: 7, team: -1, color: -1 }))).toThrow(/colour/i);
   });
 
   it('reads AcceptOpenSeatReturn: the vacation-ended flag and an optional game id', async () => {

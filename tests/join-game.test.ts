@@ -4,7 +4,8 @@ import { Writer } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { OPEN_GAMES_URL } from '../src/open-games.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
-import { writeGameInfo, type SyntheticGame } from './protocol/my-games-bundle.js';
+import { encodeStartupBytes } from '../src/join-color.js';
+import { writeGameInfo, writeInitParameters, type SyntheticAccount, type SyntheticGame } from './protocol/my-games-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -31,10 +32,17 @@ const OPEN: Record<string, SyntheticGame> = {
 
 const hexOf = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
 
-function openGamesPage(games: readonly SyntheticGame[] = Object.values(OPEN)): string {
+/** The OpenGames page: the client started with `account` (none: no startup parameters), then the list. */
+function openGamesPage(games: readonly SyntheticGame[] = Object.values(OPEN), account?: SyntheticAccount): string {
   const w = new Writer().int32(games.length);
   for (const g of games) writeGameInfo(w, g);
-  return `<html><script type="text/plain" id="AllOpenGamesData">${hexOf(w.bytes())}</script></html>`;
+  let start = '';
+  if (account) {
+    const iw = new Writer();
+    writeInitParameters(iw, account);
+    start = `<script>UJS_Init("${encodeStartupBytes(iw.bytes())}");</script>`;
+  }
+  return `<html>${start}<script type="text/plain" id="AllOpenGamesData">${hexOf(w.bytes())}</script></html>`;
 }
 
 /** A GameFeed lobby for `id`; `withMe` seats the signed-in account. */
@@ -60,7 +68,8 @@ function routes(r: Routes) {
 
 interface Sent {
   gameId: number;
-  colour: boolean;
+  /** The GameColor index sent, or null for an absent colour. */
+  colour: number | null;
   team: number;
   slot: boolean;
   modHook: boolean;
@@ -72,7 +81,9 @@ function joinServer(reply: Partial<ReplyFrame> = { body: (w) => w.bool(true).boo
   const warapp = routes({
     [Method.AcceptOpenSeat]: (req) => {
       const r = req.body;
-      sent.push({ gameId: r.int32(), colour: r.bool(), team: r.int32(), slot: r.bool(), modHook: r.bool(), left: r.remaining });
+      const gameId = r.int32();
+      const colour = r.bool() ? r.int32() : null;
+      sent.push({ gameId, colour, team: r.int32(), slot: r.bool(), modHook: r.bool(), left: r.remaining });
       return reply;
     },
     ...extra,
@@ -80,9 +91,16 @@ function joinServer(reply: Partial<ReplyFrame> = { body: (w) => w.bool(true).boo
   return { sent, warapp };
 }
 
-async function harness(opts: { feed?: unknown[]; warapp?: ReturnType<typeof joinServer>['warapp']; games?: SyntheticGame[] } = {}) {
+async function harness(
+  opts: {
+    feed?: unknown[];
+    warapp?: ReturnType<typeof joinServer>['warapp'];
+    games?: SyntheticGame[];
+    account?: SyntheticAccount;
+  } = {},
+) {
   return liveHarness({
-    pages: { [OPEN_GAMES_URL]: openGamesPage(opts.games), ...SIGNED_IN },
+    pages: { [OPEN_GAMES_URL]: openGamesPage(opts.games, opts.account ?? { preferred: 5, secondary: 6 }), ...SIGNED_IN },
     ...(opts.feed ? { feed: opts.feed } : {}),
     ...(opts.warapp ? { warapp: opts.warapp } : {}),
   });
@@ -111,7 +129,7 @@ describe('warapp_join_game', () => {
     const s = joinServer();
     h = await harness({ warapp: s.warapp, feed: [feedGame(3001, true)] });
     const p = payload(await confirmed('warapp_join_game', { game_id: 3001 }));
-    expect(s.sent).toEqual([{ gameId: 3001, colour: false, team: -1, slot: false, modHook: false, left: 0 }]);
+    expect(s.sent).toEqual([{ gameId: 3001, colour: 5, team: -1, slot: false, modHook: false, left: 0 }]);
     expect(p).toMatchObject({ status: 'joined', game: { id: 3001, name: 'Plain FFA' } });
   });
 
@@ -129,6 +147,60 @@ describe('warapp_join_game', () => {
     h = await harness({ warapp: s.warapp, feed: [feedGame(3001, true)] });
     const p = payload(await confirmed('warapp_join_game', { game_id: 3001 }));
     expect(p).toMatchObject({ status: 'joined', vacationEnded: true });
+  });
+
+  it('previews the colour it will send and why', async () => {
+    h = await harness();
+    const preview = payload(await h.call('warapp_join_game', { game_id: 3001 }));
+    expect(JSON.stringify(preview)).toContain('"color":{"index":5,"source":"preferred"}');
+  });
+
+  it('joins with the secondary colour when a lobby player has the preferred one', async () => {
+    const s = joinServer();
+    const game = { ...OPEN.plain!, players: [{ ...HOST, color: 5 }] };
+    h = await harness({ warapp: s.warapp, games: [game], feed: [feedGame(3001, true)] });
+    await confirmed('warapp_join_game', { game_id: 3001 });
+    expect(s.sent[0]).toMatchObject({ colour: 6 });
+  });
+
+  it('joins with the first free standard colour when the account colours are taken or unknown', async () => {
+    const s = joinServer();
+    const game = { ...OPEN.plain!, players: [{ ...HOST, color: 0 }, { ...HOST, id: 222222, color: 5 }, { ...HOST, id: 333333, color: 6 }] };
+    h = await harness({ warapp: s.warapp, games: [game], feed: [feedGame(3001, true)] });
+    await confirmed('warapp_join_game', { game_id: 3001 });
+    expect(s.sent[0]).toMatchObject({ colour: 1 });
+    await h.harness.close();
+
+    const s2 = joinServer();
+    h = await liveHarness({
+      pages: { [OPEN_GAMES_URL]: openGamesPage([{ ...OPEN.plain!, players: [{ ...HOST, color: 0 }] }]), ...SIGNED_IN },
+      warapp: s2.warapp,
+      feed: [feedGame(3001, true)],
+    });
+    const preview = payload(await h.call('warapp_join_game', { game_id: 3001 }));
+    expect(JSON.stringify(preview)).toContain('"color":{"index":1,"source":"free"}');
+  });
+
+  it('joins with the colour asked for, and refuses one a lobby player has', async () => {
+    const s = joinServer();
+    const game = { ...OPEN.plain!, players: [{ ...HOST, color: 12 }] };
+    h = await harness({ warapp: s.warapp, games: [game], feed: [feedGame(3001, true)] });
+    const taken = await h.call('warapp_join_game', { game_id: 3001, color: 12 });
+    expect(taken.isError).toBe(true);
+    expect(textOf(taken)).toMatch(/colour 12 is taken/i);
+    await confirmed('warapp_join_game', { game_id: 3001, color: 40 });
+    expect(s.sent[0]).toMatchObject({ colour: 40 });
+    expect((await h.call('warapp_join_game', { game_id: 3001, color: 436 })).isError).toBe(true);
+  });
+
+  it('refuses a lobby the signed-in account has already joined', async () => {
+    const s = joinServer();
+    const me = { id: ME.inGame, name: 'Me', state: P_PLAYING, committed: false };
+    h = await harness({ warapp: s.warapp, games: [{ ...OPEN.plain!, players: [HOST, me] }] });
+    const res = await h.call('warapp_join_game', { game_id: 3001 });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/already joined game 3001/i);
+    expect(s.sent).toEqual([]);
   });
 
   it('refuses a game that is not on the open games list', async () => {
@@ -192,6 +264,23 @@ describe('warapp_join_game', () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(wording);
     expect(textOf(res)).toContain(`war.app error ${code}`);
+  });
+
+  it('names a missing colour (server error 1, "color is null") plainly', async () => {
+    const s = joinServer({ error: { code: 1, message: 'CsRoot.AssertFailedException: color is null\n   at stack' } });
+    h = await harness({ warapp: s.warapp });
+    const res = await confirmed('warapp_join_game', { game_id: 3001 });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/no colour/i);
+    expect(textOf(res)).toContain('war.app error 1');
+  });
+
+  it.each([8, 75, 390])('a colour war.app will not give (error %i) says to pick another', async (code) => {
+    const s = joinServer({ error: { code, message: 'nope' } });
+    h = await harness({ warapp: s.warapp });
+    const res = await confirmed('warapp_join_game', { game_id: 3001 });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/That color is not available.*color/is);
   });
 
   it('an unanswered join is reported as unknown, not as safe to retry', async () => {

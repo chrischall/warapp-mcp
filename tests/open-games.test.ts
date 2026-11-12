@@ -133,6 +133,55 @@ describe('parseOpenGamesPage', () => {
     expect(teamsOf).toMatchObject({ teamGame: true, randomTeamsOf: 2 });
   });
 
+  it('calls a lobby a team game when any player record carries a team, declined ones included (as the client does)', () => {
+    const g = parseOpenGamesPage(
+      page(
+        payloadHex([
+          {
+            ...GAMES[0]!,
+            players: [
+              { id: 111111, name: 'Ann', state: P_PLAYING, committed: false },
+              { id: 222222, name: 'Gone', state: P_DECLINED, committed: false, team: 1 },
+            ],
+            openSeats: [-1, -1],
+          },
+        ]),
+      ),
+      bundle,
+    ).games[0]!;
+    expect(g).toMatchObject({ teamGame: true, players: 1, openSeats: 2 });
+  });
+
+  it('calls a random-teams lobby a team game though no seat carries a team id yet', () => {
+    const g = parseOpenGamesPage(
+      page(payloadHex([{ ...GAMES[0]!, name: 'Some-Teams V4', randomTeamsOf: 2, openSeats: [-1, -1, -1] }])),
+      bundle,
+    ).games[0]!;
+    expect(g).toMatchObject({ teamGame: true, randomTeamsOf: 2, openSeatTeams: [-1, -1, -1] });
+    expect(g.rules).toContain('Team game (random teams of 2)');
+    expect(filterOpenGames([g], {})).toEqual([]);
+  });
+
+  it('keeps each lobby\'s seated player ids and the colours its players hold', () => {
+    const out = parseOpenGamesPage(
+      page(
+        payloadHex([
+          {
+            ...GAMES[0]!,
+            players: [
+              { id: 111111, name: 'Ann', state: P_PLAYING, committed: false, color: 4 },
+              { id: 222222, name: 'Gone', state: P_DECLINED, committed: false, color: 9 },
+              { id: 333333, name: 'Cy', state: P_PLAYING, committed: false },
+            ],
+          },
+        ]),
+      ),
+      bundle,
+    );
+    expect(out.lobbies.get(2001)).toEqual({ seatedPlayerIds: [111111, 333333], colorsTaken: [4, 9] });
+    expect(JSON.stringify(out.games)).not.toContain('colorsTaken');
+  });
+
   it('names the settings flags it reads and the ones the planner does not model', () => {
     const g = byId(parseOpenGamesPage(page(payloadHex(GAMES)), bundle).games, 2005);
     expect(g.rules).toEqual(
@@ -248,6 +297,35 @@ describe('warapp_list_open_games', () => {
     expect((p.games as OpenGame[]).map((g) => g.id)).toEqual([2001, 2005]);
     expect(p).toMatchObject({ count: 2, listed: 5, hiddenByPrerequisites: 3 });
     expect(h.exchanges).toEqual([]); // a page GET, no /Services call
+  });
+
+  it('marks the lobbies the signed-in account has already joined', async () => {
+    const me = { id: 123456, name: 'Me', state: P_PLAYING, committed: false };
+    const games: SyntheticGame[] = [
+      { ...GAMES[0]!, players: [...GAMES[0]!.players!, me] },
+      { ...GAMES[0]!, id: 2010, players: [{ ...me, state: P_DECLINED }] },
+      { ...GAMES[0]!, id: 2011 },
+    ];
+    h = await liveHarness({
+      pages: {
+        [OPEN_GAMES_URL]: page(payloadHex(games)),
+        'https://war.app/InviteToken': '<p>Your invite token is 3312345644</p>',
+      },
+    });
+    const p = payload(await h.call('warapp_list_open_games'));
+    const listed = p.games as OpenGame[];
+    expect(listed.map((g) => [g.id, g.joined])).toEqual([
+      [2001, true],
+      [2010, undefined],
+      [2011, undefined],
+    ]);
+  });
+
+  it('marks nothing when the signed-in account cannot be told', async () => {
+    const me = { id: 123456, name: 'Me', state: P_PLAYING, committed: false };
+    h = await liveHarness({ pages: { [OPEN_GAMES_URL]: page(payloadHex([{ ...GAMES[0]!, players: [me] }])) } });
+    const p = payload(await h.call('warapp_list_open_games'));
+    expect((p.games as OpenGame[])[0]!.joined).toBeUndefined();
   });
 
   it('passes the filters through', async () => {

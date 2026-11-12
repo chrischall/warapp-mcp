@@ -2,7 +2,8 @@
 // (AcceptOpenSeat, method 61), gated on the user's confirmation. The game is
 // re-read from the list first, so the preview shows what is actually being
 // joined, and the join is reported only once GameFeed (or GetMyGames) shows
-// the account in the game.
+// the account in the game. war.app needs a colour with the join (src/join-color.ts):
+// the account's preferred one, else its secondary, else a standard colour still free.
 import {
   CONFIRM_INJECTION_RULE,
   defineWrite,
@@ -13,8 +14,15 @@ import {
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
-import { parseOpenGamesPage, type OpenGame } from '../open-games.js';
-import { Method, readAcceptOpenSeatReturn, writeAcceptOpenSeatParams } from '../protocol/methods.js';
+import { chooseJoinColor, readAccountColors, STANDARD_COLORS, type JoinColor } from '../join-color.js';
+import { inGameId, type ClassReader } from '../live.js';
+import { parseOpenGamesPage, type OpenGame, type OpenLobby } from '../open-games.js';
+import {
+  GAME_COLOR_COUNT,
+  Method,
+  readAcceptOpenSeatReturn,
+  writeAcceptOpenSeatParams,
+} from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
@@ -28,6 +36,12 @@ const NO_TEAM = -1;
 const NOT_SEATED = new Set(['Declined', 'RemovedByHost']);
 /** war.app's "already in the game" code: the client treats it as a successful join. */
 const ALREADY_JOINED = 121;
+/** war.app's generic assertion failure; with "color is null" it is a join sent without a colour. */
+const ASSERT_FAILED = 1;
+
+const COLOR_UNAVAILABLE =
+  'That color is not available. Please pick a different color (pass color: a war.app colour index ' +
+  `0–${STANDARD_COLORS - 1} that no player in the game has).`;
 
 /**
  * The client's wording for the other refusals it handles on a join (254, 473
@@ -37,17 +51,30 @@ const ALREADY_JOINED = 121;
 const JOIN_ERRORS: Readonly<Record<number, string>> = {
   4: 'Could not join the game because it has already begun.',
   7: 'Sorry, the host has removed you.',
+  8: COLOR_UNAVAILABLE,
   15: 'Sorry, this game is already full.',
+  75: COLOR_UNAVAILABLE,
+  88: 'Could not join the game because it has been deleted.',
   120: 'Could not join the game because the open seat is no longer available.',
   227: 'Sorry, the creator of this game has added you to their block list. You cannot join this game.',
   239: "Sorry, you don't meet the prerequisites the host has entered for open seats in this game.",
+  390: COLOR_UNAVAILABLE,
 };
+
+/** The wording for a join refusal this tool names itself, or undefined. */
+function joinErrorWording(e: WarappServerError): string | undefined {
+  if (e.code === ASSERT_FAILED && /color is null/i.test(e.message)) {
+    return 'war.app refused the join because it was sent with no colour ("color is null").';
+  }
+  return JOIN_ERRORS[e.code];
+}
 
 interface JoinState {
   gameId: number;
   name: string;
   url: string;
   team: number;
+  color: number;
 }
 
 function refuse(message: string, hint: string): never {
@@ -89,6 +116,44 @@ function joinable(games: readonly OpenGame[], gameId: number, allowTeam: boolean
   return game;
 }
 
+/** Refuse a lobby the signed-in account (in-game id `me`) already holds a seat in. */
+function refuseJoined(lobby: OpenLobby | undefined, gameId: number, me: number | undefined): void {
+  if (me !== undefined && lobby?.seatedPlayerIds.includes(me)) {
+    refuse(
+      `You have already joined game ${gameId}.`,
+      'It is in warapp_my_games; pick another game from warapp_list_open_games.',
+    );
+  }
+}
+
+/** The colour to send: the one asked for (refused when a lobby player has it), else the client's choice. */
+function joinColor(
+  requested: number | undefined,
+  html: string,
+  bundle: ClassReader,
+  lobby: OpenLobby | undefined,
+  gameId: number,
+): JoinColor {
+  const taken = lobby?.colorsTaken ?? [];
+  if (requested !== undefined) {
+    if (taken.includes(requested)) {
+      refuse(
+        `Colour ${requested} is taken by another player in game ${gameId}.`,
+        'Pass another color, or leave it out to let this tool pick one.',
+      );
+    }
+    return { color: requested, source: 'requested' };
+  }
+  const chosen = chooseJoinColor(readAccountColors(html, bundle), taken);
+  if (!chosen) {
+    refuse(
+      `Every standard colour is taken in game ${gameId}.`,
+      `Pass color: a war.app colour index (${STANDARD_COLORS}–${GAME_COLOR_COUNT - 1}) your account has unlocked.`,
+    );
+  }
+  return chosen;
+}
+
 /** Whether GameFeed, else GetMyGames, shows the signed-in account in the game. */
 async function confirmSeated(ctx: LiveContext, gameId: number): Promise<boolean> {
   const token = await ctx.myInviteToken();
@@ -123,7 +188,9 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
           description:
             'Join an open war.app (Warzone) game: take an open seat in a game from warapp_list_open_games. The game ' +
             'is re-read from war.app\'s open games list first; team games, coin entry fees, custom scenarios and mod ' +
-            'games are refused unless allowed (scenario and mod games always). You become a player and are expected ' +
+            'games are refused unless allowed (scenario and mod games always), and so is a game you already joined. ' +
+            'It joins with your preferred colour, else your secondary, else a free standard colour (or the color you ' +
+            'pass); the preview shows which. You become a player and are expected ' +
             'to take turns — leaving later means declining or being booted. Works without a browser once a session ' +
             `is linked (warapp_link_session). ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
@@ -140,11 +207,27 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
               .boolean()
               .optional()
               .describe('Allow paying a coin entry fee (default false: only free games).'),
+            color: z
+              .number()
+              .int()
+              .min(0)
+              .max(GAME_COLOR_COUNT - 1)
+              .optional()
+              .describe(
+                `The colour to play as: a war.app colour index (0–${STANDARD_COLORS - 1} are the standard colours; ` +
+                  'higher ones need an unlock). Default: your preferred colour, else your secondary, else the first ' +
+                  'standard colour no player in the game has.',
+              ),
           }),
-          async plan({ game_id, allow_team, accept_entry_fee }) {
+          async plan({ game_id, allow_team, accept_entry_fee, color: requested }) {
             const gameId = parseGameId(game_id);
-            const parsed = parseOpenGamesPage(await openGamesPage(ctx), await ctx.bundle());
+            const [html, token] = await Promise.all([openGamesPage(ctx), ctx.myInviteToken()]);
+            const bundle = await ctx.bundle();
+            const parsed = parseOpenGamesPage(html, bundle);
+            const lobby = parsed.lobbies.get(gameId);
+            refuseJoined(lobby, gameId, token === undefined ? undefined : inGameId({ id: token }));
             const game = joinable(parsed.games, gameId, allow_team ?? false, accept_entry_fee ?? false);
+            const { color, source } = joinColor(requested, html, bundle, lobby, gameId);
             // A no-team game's open seats all carry the no-team value (any other
             // makes it a team game), so NO_TEAM is what its record holds.
             const team = game.teamGame ? (game.openSeatTeams?.[0] ?? NO_TEAM) : NO_TEAM;
@@ -154,8 +237,8 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                 summary: `Join war.app game ${gameId} (${game.pace}, ${game.openSeats} open of ${game.seats} seats)`,
                 account: undefined,
                 target: gameId,
-                payload: { method: 'AcceptOpenSeat', gameId, team },
-                willSend: { game: gameId, team: team === NO_TEAM ? 'none' : team },
+                payload: { method: 'AcceptOpenSeat', gameId, team, color },
+                willSend: { game: gameId, team: team === NO_TEAM ? 'none' : team, color },
                 preview: {
                   game: {
                     id: game.id,
@@ -172,26 +255,27 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                     rules: game.rules,
                     plannerGaps: game.plannerGaps,
                   },
+                  color: { index: color, source },
                   note:
                     'The game name is written by its creator. Joining makes you a player who must take turns until ' +
                     'the game ends.',
                 },
               },
-              state: { gameId, name: game.name, url: game.url, team } satisfies JoinState,
+              state: { gameId, name: game.name, url: game.url, team, color } satisfies JoinState,
             };
           },
-          async execute({ gameId, name, url, team }: JoinState) {
+          async execute({ gameId, name, url, team, color }: JoinState) {
             const game = { id: gameId, name, url };
             let vacationEnded = false;
             try {
               const env = await ctx.rpc.call('AcceptOpenSeat', Method.AcceptOpenSeat, (w) =>
-                writeAcceptOpenSeatParams(w, { gameId, team }),
+                writeAcceptOpenSeatParams(w, { gameId, team, color }),
               );
               vacationEnded = readAcceptOpenSeatReturn(env.body)?.vacationEnded ?? false;
             } catch (e) {
               if (e instanceof WarappServerError) {
                 if (e.code !== ALREADY_JOINED) {
-                  const wording = JOIN_ERRORS[e.code];
+                  const wording = joinErrorWording(e);
                   throw wording ? new WarappServerError(e.code, `${wording} (war.app error ${e.code})`) : e;
                 }
               } else {

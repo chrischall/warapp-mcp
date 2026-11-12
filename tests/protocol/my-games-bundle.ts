@@ -1,14 +1,17 @@
 // A hand-written synthetic bundle carrying the classes a GetMyGames reply and the
-// OpenGames page payload read (MyGamesReturn → GameInfo → GameInfoPlayer and
-// GameInfoSettings, with their enums), in the same *shape* as war.app's generated
+// OpenGames page payload read (MyGamesReturn → GameInfo → GameInfoPlayer, with its
+// GameColor, and GameInfoSettings, with their enums) and the page startup
+// parameters (InitParameters → Player, whose two GameColor fields are the
+// account's secondary and preferred colours), in the same *shape* as war.app's generated
 // readers and with fields read in the documented order (docs/PLAN-SCOUT.md,
 // GetMyGames; docs/WEB-PROTOCOL.md, open games). Every var, field name and value
-// here is made up; nothing is taken from the real bundle. `writeMyGamesReturn`
-// and `writeGameInfo` encode matching bytes with this project's own Writer.
+// here is made up; nothing is taken from the real bundle. `writeMyGamesReturn`,
+// `writeGameInfo` and `writeInitParameters` encode matching bytes with this
+// project's own Writer.
 import type { Writer } from '../../src/protocol/codec.js';
 
 export const MY_GAMES_BUNDLE = [
-  'function Mr(){}function Gi(){}function Gp(){}function Sx(){}function Ox(){}',
+  'function Mr(){}function Gi(){}function Gp(){}function Sx(){}function Ox(){}function Cl(){}function Pr(){}function Ip(){}',
   'W["warlight.shared.MyGamesReturn"]=Mr;',
   'Mr.Ha=function(a,b,d){null==d&&(d=242);var e=new Mr;' +
     'e.m1=a.Ua()?P.Sd(a,function(){return a.Ua()?Gi.Ha(a,e,d):null}):null;e.m2=P.Ya(a);return e};',
@@ -20,7 +23,7 @@ export const MY_GAMES_BUNDLE = [
     'e.c1=P.Yc(a);e.c2=P.Yc(a);e.c3=P.Yc(a);e.c4=P.Yc(a);e.c5=a.Ua()?Sx.Ha(a,e,d):null;e.c6=Gt.Ha(a);' +
     'e.c7=P.Yc(a);e.c8=P.ak(a);e.c9=a.Ua()?Ox.Ha(a,e,d):null;e.d1=P.ak(a);return e};',
   'W["warlight.shared.GameInfoPlayer"]=Gp;',
-  'Gp.Ha=function(a,b,d){var e=new Gp;e.p1=a.Ua()?Ox.Ha(a,e,d):null;e.p2=P.Yc(a);e.p3=P.Yc(a);e.p4=P.Ya(a);' +
+  'Gp.Ha=function(a,b,d){var e=new Gp;e.p1=a.Ua()?Cl.Ha(a,e,d):null;e.p2=P.Yc(a);e.p3=P.Yc(a);e.p4=P.Ya(a);' +
     'e.p5=P.Yc(a);e.p6=P.wc(a);e.p7=P.Ya(a);e.p8=Ps.Ha(a);e.p9=P.Ya(a);e.q1=P.Yc(a);return e};',
   'W["warlight.shared.GameState"]=Gt;Gt.Ha=function(a){return P.uq(a)};',
   'W["warlight.shared.GamePlayerState"]=Ps;Ps.Ha=function(a){return P.uq(a)};',
@@ -32,6 +35,17 @@ export const MY_GAMES_BUNDLE = [
     'e.u2=P.Ya(a);e.u3=P.ak(a);e.u4=P.Yc(a);e.u5=P.Yc(a);e.u6=Rm.Ha(a,b);return e};',
   'Mo.Ha=function(a){return P.uq(a)};Rm.Ha=function(a){return P.uq(a)};',
   'Ox.Ha=function(a,b,d){var e=new Ox;e.o1=P.Ya(a);return e};',
+  'W["warlight.shared.GameColor"]=Cl;Cl.Ha=function(a,b,d){var e=new Cl;e.k=P.Ya(a);return e};',
+  // Player: 33 fields; the 19th (index 18) is the secondary colour, the 33rd (index 32) the preferred.
+  'W["warlight.shared.Player"]=Pr;',
+  'Pr.Ha=function(a,b,d){var e=new Pr;' +
+    Array.from({ length: 33 }, (_, i) =>
+      i === 18 || i === 32 ? `e.f${i}=a.Ua()?Cl.Ha(a,e,d):null;` : `e.f${i}=P.Ya(a);`,
+    ).join('') +
+    'return e};',
+  'W["warlight.shared.InitParameters"]=Ip;',
+  'Ip.Ha=function(a,b,d){var e=new Ip;e.i1=a.Ua()?P.Sd(a,function(){return P.Ya(a)}):null;e.i2=P.wc(a);' +
+    'e.i3=a.Ua()?Pr.Ha(a,e,d):null;e.i4=P.Yc(a);e.i5=P.wc(a);return e};',
 ].join('\n');
 
 export interface SyntheticGamePlayer {
@@ -43,6 +57,8 @@ export interface SyntheticGamePlayer {
   committed: boolean;
   /** -1 = no team. */
   team?: number;
+  /** The player's GameColor index; absent by default. */
+  color?: number | null;
 }
 
 /** GameInfoSettings, in read order (defaults: war.app's defaults, nothing unusual). */
@@ -97,7 +113,8 @@ export interface SyntheticGame {
 }
 
 function writePlayer(w: Writer, p: SyntheticGamePlayer): void {
-  w.bool(true).int32(11); // optional object, present
+  if (p.color === undefined || p.color === null) w.bool(false);
+  else w.bool(true).int32(p.color); // GameColor
   w.bool(false).bool(p.committed).int32(0).bool(false).string(p.name).int32(p.id).u8(p.state).int32(p.team ?? -1).bool(false);
 }
 
@@ -145,4 +162,30 @@ export function writeMyGamesReturn(w: Writer, games: readonly SyntheticGame[] | 
   if (games === null) w.bool(false);
   else w.bool(true).list(games, (ww, g) => writeGameInfo(ww.bool(true), g));
   w.int32(0);
+}
+
+/** The signed-in account in a page's startup parameters (synthetic). */
+export interface SyntheticAccount {
+  /** An auth-like string the page carries before the account; never reported. */
+  secret?: string;
+  /** The account's preferred colour; `null`/absent: none set. */
+  preferred?: number | null;
+  /** The account's secondary colour; `null`/absent: none set. */
+  secondary?: number | null;
+  /** No Player record at all (a signed-out page). */
+  signedOut?: boolean;
+}
+
+/** An InitParameters record (no present flag), as the synthetic bundle reads it. */
+export function writeInitParameters(w: Writer, a: SyntheticAccount = {}): void {
+  w.bool(true).list([1, 2], (ww, n) => ww.int32(n)).string(a.secret ?? 'test@example.com');
+  if (a.signedOut) w.bool(false);
+  else {
+    w.bool(true);
+    for (let i = 0; i < 33; i++) {
+      if (i === 18 || i === 32) writeOptionalInt(w, i === 18 ? a.secondary : a.preferred);
+      else w.int32(1000 + i);
+    }
+  }
+  w.bool(false).string('OpenGames');
 }
