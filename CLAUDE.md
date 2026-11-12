@@ -61,8 +61,9 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
   Blockade (it gives a territory away). Card plays must come in war.app's turn-phase order or
   the server answers **error 10 `OrdersInIncorrectOrder`**, so `writeSendOrdersParams` sorts
   every order by `TurnPhase` (Order Priority 12, Reinforcement 20, deploys 25, moves 50,
-  Blockade 60). Order Delay's phase is unverified, so `warapp_submit_turn` refuses it alongside
-  other card plays.
+  Order Delay 50, Blockade 60). Order Delay (tag 11) runs in phase 50, verified live 2026-11-12
+  (sent in phase 12 it drew error 10). Within a phase, card plays are written after the moves —
+  that position is unverified. Order Delay may be combined with other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
 - **Turn notifications are a socket.io v0.9 xhr-polling client over the bridge**
   (`src/push/socketio.ts`): handshake GET, then the first poll must return the connect packet
