@@ -115,7 +115,9 @@ export const DEFAULT_DIALECT: Dialect = {
     Og: (r) => r.int32(),
     bc: (r) => r.u8(),
     FJ: (r) => strBody(r),
-    E3a: (r) => r.int64(),
+    // The client's 8-byte read is a float64 (its two int32 halves reassembled as a double), not an
+    // int64: kill rates, luck and TimeSpans (milliseconds) all arrive through it.
+    E3a: (r) => r.float64(),
     Om: (r) => r.float32(),
     NGb: (r) => r.uint16(),
     S3c: (r) => r.int16(),
@@ -130,8 +132,8 @@ export const DEFAULT_DIALECT: Dialect = {
       Yc: (r) => asReader(r).bool(),
       uq: (r) => asReader(r).u8(),
       Ao: (r) => asReader(r).float32(),
-      ak: (r) => asReader(r).int64(),
-      uy: (r) => asReader(r).int64(),
+      ak: (r) => asReader(r).float64(),
+      uy: (r) => asReader(r).float64(),
       Td: (r) => asReader(r).date(),
       tL: (r) => asReader(r).guid(),
       Z5: (r) => asReader(r).uint16(),

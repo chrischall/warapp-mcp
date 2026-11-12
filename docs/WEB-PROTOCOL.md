@@ -124,7 +124,7 @@ type tag). Verified on captured replies, every byte consumed:
 | GameRefresh | `warlight.shared.GameDetailsAndChat` → `GameWL` summary | 358/358, 362/362 |
 
 Reader primitives (`P.*`): `Ya` int32 · `wc` string · `Yc` bool · `uq` byte · `Z5` uint16 ·
-`Ao` float32 · `ak`/`uy` int64 · `Td` datetime · `tL` GUID (16 bytes, .NET order:
+`Ao` float32 · `ak`/`uy` float64 (8 bytes the client reassembles as a double — kill rates, luck, TimeSpans in ms; not an int64) · `Td` datetime · `tL` GUID (16 bytes, .NET order:
 3,2,1,0,5,4,7,6,8…15) · `sL` int32-length bytes · `Sd`/`ms`/`uL` int32-count list (-1 = null) ·
 `ef` int32-count dict (-1 = null).
 

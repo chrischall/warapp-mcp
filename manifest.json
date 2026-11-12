@@ -90,6 +90,10 @@
       "description": "List your war.app games, games waiting on you first (through your signed-in tab)"
     },
     {
+      "name": "warapp_list_open_games",
+      "description": "List open war.app games you could join: pace, seats, entry fee and rules (works without a browser once a session is linked)"
+    },
+    {
       "name": "warapp_scout_player",
       "description": "Scout a war.app player: level, games, boots, ranked records and your head-to-head (through your signed-in tab)"
     },

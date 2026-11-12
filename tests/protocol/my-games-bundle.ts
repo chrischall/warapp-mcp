@@ -1,9 +1,10 @@
-// A hand-written synthetic bundle carrying the classes a GetMyGames reply reads
-// (MyGamesReturn → GameInfo → GameInfoPlayer, with their enums), in the same
-// *shape* as war.app's generated readers and with fields read in the documented
-// order (docs/PLAN-SCOUT.md, GetMyGames). Every var, field name and value here
-// is made up; nothing is taken from the real bundle. `writeMyGamesReturn`
-// encodes a matching reply body with this project's own Writer.
+// A hand-written synthetic bundle carrying the classes a GetMyGames reply and the
+// OpenGames page payload read (MyGamesReturn → GameInfo → GameInfoPlayer and
+// GameInfoSettings, with their enums), in the same *shape* as war.app's generated
+// readers and with fields read in the documented order (docs/PLAN-SCOUT.md,
+// GetMyGames; docs/WEB-PROTOCOL.md, open games). Every var, field name and value
+// here is made up; nothing is taken from the real bundle. `writeMyGamesReturn`
+// and `writeGameInfo` encode matching bytes with this project's own Writer.
 import type { Writer } from '../../src/protocol/codec.js';
 
 export const MY_GAMES_BUNDLE = [
@@ -24,7 +25,12 @@ export const MY_GAMES_BUNDLE = [
   'W["warlight.shared.GameState"]=Gt;Gt.Ha=function(a){return P.uq(a)};',
   'W["warlight.shared.GamePlayerState"]=Ps;Ps.Ha=function(a){return P.uq(a)};',
   'Fg.Ha=function(a){return P.uq(a)};',
-  'Sx.Ha=function(a,b,d){var e=new Sx;e.s1=P.Ya(a);return e};',
+  'W["warlight.shared.GameInfoSettings"]=Sx;',
+  'Sx.Ha=function(a,b,d){var e=new Sx;e.s1=a.Ua()?new uc(P.ak(a)):new uc;e.s2=P.Yc(a);e.s3=P.Ya(a);e.s4=P.wc(a);' +
+    'e.s5=P.Yc(a);e.s6=P.Yc(a);e.s7=a.Ua()?new Z(P.Ya(a)):new Z;e.s8=P.ak(a);e.s9=P.Yc(a);e.t1=P.Ya(a);e.t2=P.Yc(a);' +
+    'e.t3=P.Yc(a);e.t4=P.uy(a);e.t5=P.Yc(a);e.t6=P.ak(a);e.t7=P.Ya(a);e.t8=Mo.Ha(a,b);e.t9=P.Yc(a);e.u1=P.Yc(a);' +
+    'e.u2=P.Ya(a);e.u3=P.ak(a);e.u4=P.Yc(a);e.u5=P.Yc(a);e.u6=Rm.Ha(a,b);return e};',
+  'Mo.Ha=function(a){return P.uq(a)};Rm.Ha=function(a){return P.uq(a)};',
   'Ox.Ha=function(a,b,d){var e=new Ox;e.o1=P.Ya(a);return e};',
 ].join('\n');
 
@@ -35,6 +41,36 @@ export interface SyntheticGamePlayer {
   /** GamePlayerState code (2 = Playing). */
   state: number;
   committed: boolean;
+  /** -1 = no team. */
+  team?: number;
+}
+
+/** GameInfoSettings, in read order (defaults: war.app's defaults, nothing unusual). */
+export interface SyntheticSettings {
+  armyCap?: number | null;
+  autoDist?: boolean;
+  bonusArmiesPer?: number;
+  /** `3;<f|r>;<card ids>;<p|b>;<o|p>;<m|n>`. */
+  settingsString?: string;
+  attackOnly?: boolean;
+  transferOnly?: boolean;
+  commerce?: number | null;
+  defensiveKillRate?: number;
+  distribution?: number;
+  commanders?: boolean;
+  overriddenBonuses?: boolean;
+  bankingBootMs?: number;
+  localDeployments?: boolean;
+  luck?: number;
+  minArmies?: number;
+  multiAttack?: boolean;
+  noSplit?: boolean;
+  wastelands?: number;
+  offensiveKillRate?: number;
+  oneArmyStandsGuard?: boolean;
+  /** false = a practice game. */
+  ranked?: boolean;
+  roundingMode?: number;
 }
 
 export interface SyntheticGame {
@@ -46,31 +82,67 @@ export interface SyntheticGame {
   state: number;
   players: SyntheticGamePlayer[] | null;
   mapId?: number;
+  randomTeamsOf?: number;
+  entryFee?: number;
+  prize?: number;
+  /** Boot time, TimeSpan milliseconds. */
+  bootTimeMs?: number;
+  /** Mega-game player cap. */
+  maxPlayers?: number | null;
+  /** The team of each open seat (-1 = no team). */
+  openSeats?: number[] | null;
+  realTime?: boolean;
+  /** `null`: no settings record. */
+  settings?: SyntheticSettings | null;
 }
 
 function writePlayer(w: Writer, p: SyntheticGamePlayer): void {
   w.bool(true).int32(11); // optional object, present
-  w.bool(false).bool(p.committed).int32(0).bool(false).string(p.name).int32(p.id).u8(p.state).int32(0).bool(false);
+  w.bool(false).bool(p.committed).int32(0).bool(false).string(p.name).int32(p.id).u8(p.state).int32(p.team ?? -1).bool(false);
 }
 
-function writeGame(w: Writer, g: SyntheticGame): void {
-  w.bool(true); // list item present
-  w.int32(1).int64(2).string('synthetic').int32(3).int32(4).int64(5).u8(1);
+function writeOptionalInt(w: Writer, v: number | null | undefined): void {
+  if (v === null || v === undefined) w.bool(false);
+  else w.bool(true).int32(v);
+}
+
+/** A GameInfoSettings record, as the synthetic bundle reads it. */
+export function writeSettings(w: Writer, s: SyntheticSettings = {}): void {
+  if (s.armyCap === null || s.armyCap === undefined) w.bool(false);
+  else w.bool(true).float64(s.armyCap);
+  w.bool(s.autoDist ?? true).int32(s.bonusArmiesPer ?? 0).string(s.settingsString ?? '3;r;;p;p;n');
+  w.bool(s.attackOnly ?? false).bool(s.transferOnly ?? false);
+  writeOptionalInt(w, s.commerce);
+  w.float64(s.defensiveKillRate ?? 0.7).bool(false).int32(s.distribution ?? 0);
+  w.bool(s.commanders ?? false).bool(s.overriddenBonuses ?? false).float64(s.bankingBootMs ?? 0);
+  w.bool(s.localDeployments ?? false).float64(s.luck ?? 0).int32(s.minArmies ?? 5).u8(1);
+  w.bool(s.multiAttack ?? false).bool(s.noSplit ?? false).int32(s.wastelands ?? 0);
+  w.float64(s.offensiveKillRate ?? 0.6).bool(s.oneArmyStandsGuard ?? false).bool(s.ranked ?? true);
+  w.u8(s.roundingMode ?? 1);
+}
+
+/** One GameInfo record (no present flag), as the synthetic bundle reads it. */
+export function writeGameInfo(w: Writer, g: SyntheticGame): void {
+  w.int32(g.randomTeamsOf ?? 0).float64(0).string('synthetic').int32(g.entryFee ?? 0).int32(g.prize ?? 0);
+  w.float64(g.bootTimeMs ?? 259_200_000).u8(1);
   w.int32(g.id).bool(false).date(null).int32(g.mapId ?? 39905).int32(0);
-  w.bool(true).int32(7); // optional int32
+  writeOptionalInt(w, g.maxPlayers === undefined ? 7 : g.maxPlayers);
   w.string(g.name).int32(g.lastTurn);
-  w.bool(true).list([1, 2], (ww, n) => ww.int32(n)); // optional int list
+  const seats = g.openSeats === undefined ? [1, 2] : g.openSeats;
+  if (seats === null) w.bool(false);
+  else w.bool(true).list(seats, (ww, n) => ww.int32(n));
   if (g.players === null) w.bool(false);
   else w.bool(true).list(g.players, writePlayer);
-  w.bool(false).bool(false).bool(false).bool(false);
-  w.bool(true).int32(9); // optional settings
-  w.u8(g.state).bool(false).int64(0).bool(false).int64(0);
+  w.bool(false).bool(false).bool(g.realTime ?? false).bool(false);
+  if (g.settings === null) w.bool(false);
+  else writeSettings(w.bool(true), g.settings ?? {});
+  w.u8(g.state).bool(false).float64(0).bool(false).float64(0);
 }
 
 /** The result of GetMyGames (present flag first), as the synthetic bundle reads it. */
 export function writeMyGamesReturn(w: Writer, games: readonly SyntheticGame[] | null): void {
   w.bool(true);
   if (games === null) w.bool(false);
-  else w.bool(true).list(games, writeGame);
+  else w.bool(true).list(games, (ww, g) => writeGameInfo(ww.bool(true), g));
   w.int32(0);
 }

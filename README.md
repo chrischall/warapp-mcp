@@ -113,6 +113,7 @@ active. `warapp_healthcheck` reports the same.
 |---|---|
 | `warapp_healthcheck` | Check that war.app accepts your email and API token; report the active transport and whether a direct session is linked. |
 | `warapp_my_games` | Your games (through your signed-in tab), games waiting on you first: state, turn, players and who has committed, and `waitingOnYou`. `view`: compact / brief. |
+| `warapp_list_open_games` | Open games you could join, from war.app's Open Games page: pace, boot time, seats, team or not, entry fee, cards, rules, and `plannerGaps` (rules the planner does not model yet). Filters: `pace`, `max_players`, `free_only`, `exclude_teams`, `limit`. A page GET, so it works without a browser once a session is linked. |
 | `warapp_scout_player` | Scout a player (through your signed-in tab): level, games played, last seen, boots, ranked records per format, and your head-to-head record. Never returns location or other personal details. |
 | `warapp_get_game` | A game's state, turn, players (and who has committed orders), settings digest and map. `view`: compact / full / raw. |
 | `warapp_get_map` | The game map's bonuses ranked easiest first, plus chokepoints. Filter by `bonus` name to see one bonus's territories, borders and entry points. |

@@ -28,6 +28,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"Which games need me?" / "is it my turn anywhere?"** → `warapp_my_games`: the signed-in
   account's games (through the bridge), games waiting on you first, each with its state, turn,
   players (who has committed) and `waitingOnYou`. `view: "brief"` gives one line per game.
+- **"Find me a game" / "what open games are there?"** → `warapp_list_open_games`: open games
+  from war.app's Open Games page (free, multi-day, no-team by default; `pace`, `max_players`,
+  `free_only`, `exclude_teams`, `limit`), each with seats, boot time, entry fee, rules and the
+  `plannerGaps` the turn planner does not model. It works without a browser once a session is
+  linked.
 - **"Who am I up against?" / "scout this player"** → `warapp_scout_player` with `game_id` +
   `player` (a name), or just the player's id: level, games played, last seen, boot rate,
   ranked records per format and the user's head-to-head with them. It never returns the
