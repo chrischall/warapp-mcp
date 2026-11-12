@@ -39,7 +39,10 @@ the shape `warapp_submit_turn` accepts. Refuses with a clear message when the ga
 phase. Untrusted framing (names). Annotated read-only, `_meta.mint` hinted.
 
 ## T3 — `warapp_submit_turn` (write, confirm-gated)
-`defineWrite` / `registerWrite` like `warapp_submit_picks`. Inputs: game_id, optional player,
+`defineWrite` / `registerWrite` like `warapp_submit_picks`. **The bridge always acts as the
+signed-in account** (issue #7): an explicit `player` that is not the signed-in account (its invite
+token, `ctx.myInviteToken()`) must be refused before any preview, and when the signed-in account
+cannot be determined, refuse rather than trust `player`. Inputs: game_id, optional player,
 `orders` (territories by id or name). `plan`: read GameFeed + live board, validate — every deploy
 and move source is mine at the start of the turn; every move is to an adjacent territory; per
 source, outgoing armies ≤ armies + deployed − 1 (one army stands guard when the setting is on);
