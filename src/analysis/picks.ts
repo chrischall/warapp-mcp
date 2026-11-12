@@ -402,8 +402,13 @@ export function planPicks(input: PlanPicksInput): PickPlan {
         why.push(`${head}: ${turn === 1 ? 'first-turn bonus' : `complete on turn ${turn}`}; ${entries}`);
         worth = b.value * (PICK_HORIZON + 1 - turn);
       } else {
-        const left = b.members.reduce((acc, m) => acc + (cost.get(m) ?? 0), 0);
-        why.push(`${head}: not complete within ${PICK_HORIZON} turns (~${left} armies to take it all); ${entries}`);
+        // The pick itself is held; the rest are captured. A member that cannot be
+        // taken at these kill rates makes the bonus unreachable, not cheaper.
+        const rest = b.members.filter((m) => m !== t).map((m) => cost.get(m));
+        const left = rest.some((c) => c === null || c === undefined)
+          ? 'a member cannot be taken at these kill rates'
+          : `~${rest.reduce((acc: number, c) => acc + (c as number), 0)} armies to take the rest`;
+        why.push(`${head}: not complete within ${PICK_HORIZON} turns (${left}); ${entries}`);
         worth = PROGRESS_WEIGHT * b.value * sim.progress.get(id)!;
       }
       worth *= b.defense;

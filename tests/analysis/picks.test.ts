@@ -62,6 +62,9 @@ describe('planPicks — scoring', () => {
     expect(reasonsOf(p, 1)).toMatch(/Solo \(\+2\).*single-territory/);
     expect(reasonsOf(p, 2)).toMatch(/Duo \(\+3\).*first-turn bonus/);
     expect(reasonsOf(p, 4)).toMatch(/Long \(\+10\).*not complete within 3 turns/);
+    // The 7 members besides the pick, 2 neutrals each: captureCost(2) at 60/70 = 3 → 21
+    // (the pick itself is held, so it is not counted).
+    expect(reasonsOf(p, 4)).toMatch(/~21 armies to take the rest/);
   });
 
   it('(b) with 0-army neutrals a territory next to many small bonuses scores high', () => {
