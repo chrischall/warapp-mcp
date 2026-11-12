@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
-import { plannerSettings, turnOrdersArg } from '../src/tools/turn.js';
+import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
+import { normalizeMap } from '../src/normalize.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
@@ -278,7 +279,41 @@ describe('warapp_plan_turn', () => {
       multiAttack: false,
       baseIncome: 5,
       allowTransferOnly: true,
+      // G4: the rules the planner obeys are always echoed, off or on.
+      localDeployments: false,
+      noSplit: false,
     });
+  });
+
+  it('the plan and submit descriptions say kill rates, Local Deployment and No-Split are obeyed (G4)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({}) });
+    const { tools } = await h.harness.client.listTools();
+    for (const name of ['warapp_plan_turn', 'warapp_submit_turn']) {
+      const d = tools.find((t) => t.name === name)!.description!;
+      expect(d, name).toMatch(/kill rates/);
+      expect(d, name).toMatch(/Local Deployment/);
+      expect(d, name).toMatch(/No-Split/);
+    }
+  });
+
+  it('sizes attacks and threats at the game\'s kill rates (20/80), not 60/70 (G1, issue #28)', async () => {
+    const f = lobbyFixture();
+    const settings = { ...(f.settings as Record<string, unknown>), OffensiveKillRate: 20, DefensiveKillRate: 80 };
+    // Sheepshead Hills holds 8 (7 movable): Widow's Watch's 2 neutrals cost
+    // armiesToTake(2) = max(ceil(150 / 20) = 8, round(1.6) + 1 = 3) = 8 at 20/80 (3 at 60/70).
+    const b = BOARD.map((t) => (t.id === 161 ? { ...t, armies: 8 } : t));
+    h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(b) }) });
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand', view: 'full' }),
+    );
+    expect(p.settings).toMatchObject({ offensiveKillRate: 20, defensiveKillRate: 80 });
+    expect(p.moves.filter((m) => m.kind === 'attack')).toEqual([
+      expect.objectContaining({ from: { id: 161, name: mapName(161) }, to: { id: 157, name: mapName(157) }, armies: 8 }),
+    ]);
+    expect(p.deploys.find((d) => d.territory.id === 161)?.armies).toBeGreaterThanOrEqual(1);
+    expect(p.orders).toContainEqual({ kind: 'move', from: 161, to: 157, armies: 8 });
+    // Bob's ~11 next door cannot take Hornwood's 6 at 20/80 (it needs 28), nor Sheepshead Hills.
+    expect(p.warnings.join('\n')).not.toMatch(/could be taken next turn/);
   });
 
   it('warns when my orders are already committed this turn', async () => {
@@ -428,6 +463,11 @@ describe('plannerSettings', () => {
     expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 0 })).toEqual({});
     // The base income feeds each opponent's deploy estimate.
     expect(plannerSettings({ cards: [], raw: {}, minimumArmyBonus: 3 })).toEqual({ baseIncome: 3 });
+    // Local Deployment (G2): passed through when on.
+    expect(plannerSettings({ cards: [], raw: {}, localDeployments: true })).toEqual({ localDeployments: true });
+    // No-Split (G3): passed through when on.
+    expect(plannerSettings({ cards: [], raw: {}, noSplit: true })).toEqual({ noSplit: true });
+    expect(plannerSettings({ cards: [], raw: {}, noSplit: false })).toEqual({});
   });
 });
 
@@ -972,5 +1012,185 @@ describe('cards in the turn tools', () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(message);
     expect(s.sent).toEqual([]);
+  });
+});
+
+describe('Local Deployment in the turn tools (G2, issue #29)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  // Ann holds bonus 118 (+2: 159, 161, 157) and Oldcastle 453745 (outside it): income 5 + 2 = 7,
+  // of which 5 may go anywhere and 2 only inside bonus 118.
+  const BONUS = [159, 161, 157];
+  const LOCAL_BOARD: SyntheticTerritory[] = [
+    { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+    { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+    { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+    { id: 453745, fogLevel: 1, owner: ANN.inGame, armies: 1 },
+    { id: 1567, fogLevel: 1, owner: 0, armies: 2 },
+    { id: 23473, fogLevel: 1, owner: 0, armies: 3 },
+    { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 7 },
+  ];
+  const localSettings = () => ({ ...(lobbyFixture().settings as Record<string, unknown>), LocalDeployments: true });
+
+  it('(f) warapp_plan_turn keeps bonus armies inside the bonus when LocalDeployments is on', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: localSettings() })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(LOCAL_BOARD) }),
+    });
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand', view: 'full' }),
+    );
+    expect(p.income).toBe(7);
+    expect(p.settings).toMatchObject({ localDeployments: true });
+    const sum = (ids: number[] | null) =>
+      p.deploys.filter((d) => (ids ? ids.includes(d.territory.id) : true)).reduce((s, d) => s + d.armies, 0);
+    expect(sum(null)).toBe(7);
+    expect(sum(BONUS)).toBeGreaterThanOrEqual(2);
+    expect(7 - sum(BONUS)).toBeLessThanOrEqual(5);
+    expect(p.rationale.join('\n')).toMatch(
+      /Local Deployment: bonus Broken Branch Riverlords \(#118\)'s \+2 may only be deployed on its territories/,
+    );
+  });
+
+  it('(e) warapp_submit_turn refuses bonus armies deployed outside the bonus, sending nothing', async () => {
+    const sent: unknown[] = [];
+    const warapp = routes({
+      [Method.GetLatestGameInfo]: board(LOCAL_BOARD),
+      [Method.SendOrders]: () => {
+        sent.push(1);
+        return { body: (w) => w.bool(true).bool(false) };
+      },
+    });
+    h = await liveHarness({ feed: [game('Playing', { settings: localSettings() })], pages: ME_PAGE, warapp });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [{ kind: 'deploy', territory: 453745, armies: 7 }],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Local Deployment/);
+    expect(textOf(res)).toMatch(/Broken Branch Riverlords \(bonus 118\)/);
+    expect(textOf(res)).toMatch(/2 too many/);
+    expect(sent).toEqual([]);
+    // The correct split is accepted.
+    const ok = payload(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 453745, armies: 5 },
+          { kind: 'deploy', territory: 161, armies: 2 },
+        ],
+      }),
+    );
+    expect(ok.confirmToken).toEqual(expect.any(String));
+    expect(sent).toEqual([]);
+  });
+
+  describe('validateTurn', () => {
+    const map = normalizeMap(lobbyFixture().map);
+    const live = LOCAL_BOARD.map((t) => ({
+      territoryId: t.id,
+      fogLevel: t.fogLevel,
+      fogged: t.fogged ?? false,
+      owner: t.owner,
+      armies: t.armies,
+    }));
+    const T = (id: number) => ({ id, name: mapName(id) });
+    const run = (deploys: Array<[number, number]>, localDeployments?: boolean) =>
+      validateTurn({
+        map,
+        board: live,
+        myInGameId: ANN.inGame,
+        income: 7,
+        guard: true,
+        deploys: deploys.map(([id, armies]) => ({ territory: T(id), armies })),
+        moves: [],
+        ...(localDeployments !== undefined ? { localDeployments } : {}),
+      });
+
+    it('refuses a pooled-income deploy that spends bonus armies outside the bonus, naming it and the overspend', () => {
+      expect(() => run([[453745, 6], [159, 1]], true)).toThrow(
+        /Local Deployment: these orders deploy 6 armies outside the held bonuses' own pools, but only 5 may go anywhere this turn \(1 too many\)\. Broken Branch Riverlords \(bonus 118\): \+2 earned, only 1 deployed inside it/,
+      );
+    });
+
+    it('accepts the correct split, and any split when the flag is off', () => {
+      expect(() => run([[453745, 5], [159, 1], [157, 1]], true)).not.toThrow();
+      expect(() => run([[161, 7]], true)).not.toThrow();
+      expect(() => run([[453745, 7]], false)).not.toThrow();
+      expect(() => run([[453745, 7]])).not.toThrow();
+    });
+  });
+});
+
+describe('No-Split in the turn tools (G3, issue #31)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  // Ann holds only Oldcastle 453745 (12), which borders the neutrals White Harbor 23473 (1)
+  // and Ramsgate 1567 (1): without No-Split it attacks both from the one territory.
+  const SPLIT_BOARD: SyntheticTerritory[] = [
+    { id: 453745, fogLevel: 1, owner: ANN.inGame, armies: 12 },
+    { id: 23473, fogLevel: 1, owner: 0, armies: 1 },
+    { id: 1567, fogLevel: 1, owner: 0, armies: 1 },
+  ];
+  const settingsWith = (noSplit: boolean) => ({
+    ...(lobbyFixture().settings as Record<string, unknown>),
+    NoSplit: noSplit,
+  });
+  const plan = async (noSplit: boolean) => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: settingsWith(noSplit) })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(SPLIT_BOARD) }),
+    });
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand', view: 'full' }),
+    );
+    await h.harness.close();
+    h = undefined;
+    return p;
+  };
+
+  it('(g) warapp_plan_turn issues one attack per territory when NoSplit is on', async () => {
+    const off = await plan(false);
+    expect(off.moves.filter((m) => m.from.id === 453745 && m.kind === 'attack')).toHaveLength(2);
+    const on = await plan(true);
+    expect(on.settings).toMatchObject({ noSplit: true });
+    const fromOldcastle = on.moves.filter((m) => m.from.id === 453745);
+    expect(fromOldcastle).toHaveLength(1);
+    const dropped = [23473, 1567].find((id) => id !== fromOldcastle[0]!.to.id)!;
+    expect(on.warnings.join('\n')).toMatch(
+      new RegExp(`No-Split: ${mapName(453745)} \\(#453745\\) already attacks .*so the attack on ${mapName(dropped)} \\(#${dropped}\\) is not planned`),
+    );
+  });
+
+  it('(e) warapp_submit_turn refuses two orders from one territory, sending nothing', async () => {
+    const sent: unknown[] = [];
+    const warapp = routes({
+      [Method.GetLatestGameInfo]: board(SPLIT_BOARD),
+      [Method.SendOrders]: () => {
+        sent.push(1);
+        return { body: (w) => w.bool(true).bool(false) };
+      },
+    });
+    h = await liveHarness({ feed: [game('Playing', { settings: settingsWith(true) })], pages: ME_PAGE, warapp });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 453745, armies: 5 },
+        { kind: 'move', from: 453745, to: 23473, armies: 2 },
+        { kind: 'move', from: 453745, to: 1567, armies: 2 },
+      ],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(new RegExp(`No-Split: ${mapName(453745)} \\(453745\\) issues 2 attacks/transfers`));
+    expect(sent).toEqual([]);
+    const ok = payload(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 453745, armies: 5 },
+          { kind: 'move', from: 453745, to: 23473, armies: 2 },
+        ],
+      }),
+    );
+    expect(ok.confirmToken).toEqual(expect.any(String));
+    expect(sent).toEqual([]);
   });
 });

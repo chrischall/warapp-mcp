@@ -138,6 +138,16 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
       with exact arithmetic — only at 0% luck under straight rounding (else skipped with a
       warning), and only for a target the passes already chose. `warapp_plan_turn` lists them
       in `multiSourceCaptures`.
+  - **Game rules** (`docs/PLAN-PLANNER-4.md`, `tests/analysis/lessons-game-rules.test.ts`; the
+    full-rung `settings` echo shows each):
+    - **Kill rates (#28).** Every combat computation uses the game's offensive/defensive kill
+      rates; only settings without them fall back to 60/70, with a warning.
+    - **Local Deployment (#29).** With `localDeployments`, a held bonus's value is a pool
+      deployable only on its own territories and only the rest of the income goes anywhere
+      (pool rules unverified, `docs/WARAPP-API.md`); `warapp_submit_turn` refuses a broken split.
+    - **No-Split (#31).** With `noSplit`, a territory issues at most one attack or transfer (its
+      best; the rest are dropped with a warning, planned amounts kept, not forced all-in);
+      `warapp_submit_turn` refuses a split.
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it

@@ -199,6 +199,8 @@ export interface GameSettings {
   armyCap?: number | null;
   multiAttack?: boolean;
   localDeployments?: boolean;
+  /** No-Split: a territory issues at most one attack or transfer per turn. */
+  noSplit?: boolean;
   commanders?: boolean;
   distributionMode?: number;
   territoryLimit?: number;
@@ -213,8 +215,6 @@ export interface GameSettings {
 
 const INT_SETTINGS = {
   mapId: 'Map',
-  offensiveKillRate: 'OffensiveKillRate',
-  defensiveKillRate: 'DefensiveKillRate',
   minimumArmyBonus: 'MinimumArmyBonus',
   bonusArmyPer: 'BonusArmyPer',
   distributionMode: 'DistributionMode',
@@ -227,6 +227,7 @@ const BOOL_SETTINGS = {
   oneArmyStandsGuard: 'OneArmyStandsGuard',
   multiAttack: 'MultiAttack',
   localDeployments: 'LocalDeployments',
+  noSplit: 'NoSplit',
   commanders: 'Commanders',
 } as const;
 const STR_SETTINGS = { pace: 'Pace', fog: 'Fog', roundingMode: 'RoundingMode' } as const;
@@ -246,6 +247,12 @@ export function normalizeSettings(raw: unknown): GameSettings {
     const v = asStr(r[src]);
     if (v !== undefined) s[k as keyof typeof STR_SETTINGS] = v;
   }
+  // Kill rates are read as numbers, not integers: a rate sent as "20.0" must
+  // never be dropped, or every combat computation would silently assume 60/70.
+  const off = asNum(r.OffensiveKillRate);
+  if (off !== undefined) s.offensiveKillRate = off;
+  const def = asNum(r.DefensiveKillRate);
+  if (def !== undefined) s.defensiveKillRate = def;
   const luck = asNum(r.LuckModifier);
   if (luck !== undefined) s.luckModifier = luck;
   if ('ArmyCap' in r) s.armyCap = asInt(r.ArmyCap) ?? null;

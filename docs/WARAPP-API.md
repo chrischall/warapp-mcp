@@ -48,6 +48,36 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `<Name>Card` value is an object and disabled when the value is the string `"none"`.
   `ArmyCap` is the string `"null"` when there is no cap. `Map` is the map id.
 
+## Local Deployment — key verified, pool rules UNVERIFIED
+
+- `settings.LocalDeployments` (boolean, `GetSettings=true`) is read into
+  `GameSettings.localDeployments` (verified key: the lobby fixture sends `false`).
+- When it is on, armies earned from a bonus must be deployed inside that bonus. **Unverified
+  assumptions** the planner (`src/analysis/local-deploy.ts`) and `warapp_submit_turn`'s
+  validation make about the rest:
+  - only fully held bonuses worth more than 0 form a pool, worth the bonus's value;
+  - a superbonus's armies go anywhere inside the superbonus (all of its member territories),
+    beside its member bonuses' own pools;
+  - base income (`MinimumArmyBonus`), per-territory income (`BonusArmyPer`) and card armies
+    (Reinforcement) may be deployed anywhere;
+  - a negative bonus only lowers the income; it has no pool.
+  A territory in several held bonuses may draw on each. Deploys are charged to the pools by an
+  exact matching (a maximum flow from deployed territories to the pools that contain them), so a
+  valid split is never refused — whether the bonuses nest (superbonuses) or overlap without
+  nesting. war.app's own refusal of a broken split has not been observed.
+
+## No-Split — key verified, all-in rule UNVERIFIED
+
+- `settings.NoSplit` (boolean, `GetSettings=true`) is read into `GameSettings.noSplit`
+  (verified key: the lobby fixture sends `false`; string-typed `"True"`/`"False"` are read too).
+- When it is on, a territory issues at most one AttackTransfer (attack or transfer) per turn.
+  `warapp_plan_turn` keeps each territory's first (best) order and warns which it dropped;
+  `warapp_submit_turn` refuses two AttackTransfers from one territory before sending anything.
+- **Unverified:** whether No-Split also *requires* an order to send every movable army. A live
+  turn that sent all movable armies from each source in one attack was accepted, which is
+  consistent with either rule, so the planner keeps its planned amounts (not forced all-in)
+  and says so in a warning.
+
 ## Map — verified
 
 - `map: { id, name, territories[], bonuses[], distributionModes[] }`. Territory and bonus
