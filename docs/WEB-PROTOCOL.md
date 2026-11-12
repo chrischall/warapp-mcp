@@ -164,12 +164,28 @@ fetchproxy bridge, so the request runs inside the signed-in tab:
 `TerritoryStanding`: territory id, owner, `Armies { count, fogged, specialUnits }`, fog level.
 Owner `0` = neutral, `-2` = available to pick, otherwise an in-game player id.
 
-**Player ids.** The in-game player id is the public invite token without its `64…16`
-wrapper: invite token `64XXXXXXX16` → player id `XXXXXXX`. `GetTerritoryPicks` takes
-(gameId, playerId); `GameStanding` keys players by it.
+**Player ids.** GameFeed and the invite token give a player's id wrapped in two leading
+and two trailing check digits; the in-game id is the middle: `id[2:-2]` (e.g. a token
+`AB1234567CD` → `1234567`). The digits vary per player — do not assume a fixed `64…16`.
+`GetTerritoryPicks` and `GetFullProfile` take the in-game id; `GameStanding` keys players by
+it but lists only players the viewer can see (an opponent hidden by fog is absent).
 
 **Gotcha.** A war.app tab that is blocked (e.g. waiting on a browser permission prompt) makes
 bridged POSTs time out while GETs still work; reloading the tab clears it.
+
+## My games and profiles (verified through the bridge)
+
+- `GetMyGames` (50): auth, bool present + `MyGamesFilters { byte filterType, int32 count,
+  byte sort }` — **required**: absent filters make the server throw a NullPointerException
+  (`ServerError … MyGamesFilters.Filter()`); the client's default is `{4, 10, 2}` — then
+  bool, int32 0, bool, bool. Reply `warlight.shared.MyGamesReturn`: one entry per game with
+  id, name, map id and state codes (mapping the codes is still to do).
+- `GetFullProfile` (180): auth, int32 in-game player id. Reply
+  `warlight.shared.FullProfileData`: name, level, member-since, per-format records
+  (`{Wins, Games, NumTeams, TeamSize}`) and many counters. It also carries the player's
+  self-reported location — a scouting tool must not surface it.
+- Server errors arrive as envelope kind 5: `{ int32 code, string message }`; the message can
+  be a long server stack trace — log the code, show a short message.
 
 ## Chat
 
