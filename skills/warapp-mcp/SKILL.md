@@ -1,6 +1,6 @@
 ---
 name: warapp-mcp
-description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "which games need me", "is it my turn anywhere", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "scout this player", "who am I up against", "my record against <player>", "submit my picks", "plan my turn", "submit my turn", "commit my orders", "play a card", "what cards do I have", "is it my turn yet", "tell me when it's my turn", "what did they say in chat", "send a message in my game", or a war.app game link.
+description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "which games need me", "is it my turn anywhere", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "what should I pick", "plan my picks", "scout this player", "who am I up against", "my record against <player>", "submit my picks", "plan my turn", "submit my turn", "commit my orders", "play a card", "what cards do I have", "is it my turn yet", "tell me when it's my turn", "what did they say in chat", "send a message in my game", or a war.app game link.
 ---
 
 # war.app / Warzone (warapp-mcp)
@@ -98,6 +98,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"Show me the board" / "what can I pick?"** → `warapp_get_live_board`: every territory with
   its owner (player name, `neutral`, or `pickable` during picks), armies and fog, read through
   the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game.
+- **"What should I pick?"** → `warapp_plan_picks`, then `warapp_submit_picks` once the user agrees.
+  Picking stage only, read-only: a ranked pick list by name and id — a compact primary group of the
+  territory limit and a disjoint fallback — with each pick's reasons and `submitPicks` (pass its
+  `territories` to `warapp_submit_picks` after review). Pass its warnings on (assumed settings); the
+  heuristics and their sources are in docs/STRATEGY.md.
 - **Territory picks** → `warapp_get_my_picks` reads the user's picks; `warapp_submit_picks`
   replaces them (priority order, pickable territories only, at most twice the territory
   limit). It is confirm-gated and reports `verified` only when war.app reads back exactly the
@@ -143,7 +148,7 @@ with intent **lookup** (but `warapp_wait_for_turn`, intent **whats-new**), `wara
 `warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,
-  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_turn`, `warapp_get_chat` and
+  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_picks`, `warapp_plan_turn`, `warapp_get_chat` and
   `warapp_scout_player` and `warapp_recent_events` are lookups the group reaches by their
   aliases ("warzone game", "whose turn is it", "best bonuses", "chokepoints", "analyze my
   board", "what should i attack", "warzone route", "scout player", "head to head", …).

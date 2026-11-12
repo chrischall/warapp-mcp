@@ -11,6 +11,7 @@ import { registerLiveTools } from './live.js';
 import { registerMapTool } from './map.js';
 import { registerMyGamesTool } from './my-games.js';
 import { registerOpenGamesTool } from './open-games.js';
+import { registerPickTools } from './picks.js';
 import { registerPushTools } from './push.js';
 import { registerRouteTool } from './route.js';
 import { registerScoutTool } from './scout.js';
@@ -68,6 +69,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerBoardTool(server, client, live);
   registerRouteTool(server, client);
   registerLiveTools(server, live);
+  registerPickTools(server, live);
   registerMyGamesTool(server, live);
   registerOpenGamesTool(server, live);
   registerJoinGameTool(server, live);

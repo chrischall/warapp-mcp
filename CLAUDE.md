@@ -14,7 +14,8 @@ Advisor MCP for war.app (Warzone) with two transports:
 Build plans: `docs/PLAN.md` (phase 1, GameFeed), `docs/PLAN-LIVE.md` (phase 2, live board),
 `docs/PLAN-TURN.md` (phase 3, plan and submit a turn), `docs/PLAN-SCOUT.md` (phase 4, my games
 and opponent scouting), `docs/PLAN-CARDS-PUSH.md` (phase 5, cards, turn notifications,
-threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, from a lost game).
+threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, from a lost game) and
+`docs/PLAN-PICKS.md` (the pick advisor; its heuristics and sources are in `docs/STRATEGY.md`).
 
 ## What is true only of this repo
 
@@ -38,6 +39,11 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
   `MCP_CONFIRM_MODE`). `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
   is read-only, `warapp_plan_turn` included.
+- **The pick advisor `warapp_plan_picks` is read-only** and refuses outside `DistributingTerritories` or when the
+  live board has nothing pickable. Its scorer (`src/analysis/picks.ts`) is pure and deterministic like the turn
+  planner; neutral sizes come from the live board when shown (wastelands at their real size), else the settings.
+  Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes. `docs/STRATEGY.md` states the community
+  heuristics in our own words with source links (cite, never copy) and marks which are encoded.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'
