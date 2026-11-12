@@ -84,9 +84,16 @@ string email                  the signed-in account's email
 
 | Id | Name | Notes |
 |---|---|---|
+| 10 | GetOpenGames | exists, but the web client never calls it — the open games list comes from a page payload (see [Open games](#open-games)); do not use |
 | 38 | GetGameDetails | |
 | 39 | GameRefresh | params: int32 gameId, bool, bool, string "-1", string "-1", bool, dict, dict |
 | 40 | GetLatestGameInfo | params: int32 gameId; reply class `NE` — expected to carry the board |
+| 48 | GetGameSettings | |
+| 60 | AcceptGame | accept an invitation (not used) |
+| 61 | **AcceptOpenSeat** | take an open seat — see [Open games](#open-games) |
+| 62 | AcceptOpenAutoGame | not used |
+| 63 | GetOpenAutoGame | not used |
+| 64 | DeclineGame | not used |
 | 73 | GetMapDetails | no auth; params: int32 mapId |
 | 74 | **SendOrders** | the turn commit — not yet captured |
 | 75 | SendInProgressOrders | draft save of orders |
@@ -124,7 +131,7 @@ type tag). Verified on captured replies, every byte consumed:
 | GameRefresh | `warlight.shared.GameDetailsAndChat` → `GameWL` summary | 358/358, 362/362 |
 
 Reader primitives (`P.*`): `Ya` int32 · `wc` string · `Yc` bool · `uq` byte · `Z5` uint16 ·
-`Ao` float32 · `ak`/`uy` int64 · `Td` datetime · `tL` GUID (16 bytes, .NET order:
+`Ao` float32 · `ak`/`uy` float64 (8 bytes the client reassembles as a double — kill rates, luck, TimeSpans in ms; not an int64) · `Td` datetime · `tL` GUID (16 bytes, .NET order:
 3,2,1,0,5,4,7,6,8…15) · `sL` int32-length bytes · `Sd`/`ms`/`uL` int32-count list (-1 = null) ·
 `ef` int32-count dict (-1 = null).
 
@@ -241,6 +248,54 @@ bridged POSTs time out while GETs still work; reloading the tab clears it.
   marker strings, two optional "last seen" dicts. Reply: the updated message list
   (`uv` objects). Server errors the client names: 36 rate-limited, 33 too long, 88 game
   deleted, 333 game archived. A send reaches other people, so it is always confirm-gated.
+
+## Open games
+
+**The list is a page payload, not a `/Services` call** (verified live 2026-11-12). A signed-in
+`GET https://war.app/MultiPlayer/OpenGames` — the direct transport's cookie or the bridge's page
+fetch, so no browser is needed once a session is linked — returns HTML holding
+`<script type="text/plain" id="AllOpenGamesData">…</script>`: the payload as **uppercase hex**
+(~68 KB for ~75 games). The client hex-decodes it into a reader and reads an **int32 count**, then
+that many **`warlight.shared.GameInfo`** records, each with the bundle's registered reader for that
+type (no present flag before each record). `src/open-games.ts` does the same through the
+interpreter (`ClassReader.readClass`). `GetOpenGames` (10) exists in the method table but the web
+client never calls it.
+
+`GameInfo` fields are minified, so they are identified by read order and checked by type, never by
+name: random-teams size, entry fee and prize (coins), boot time (a float64 TimeSpan in ms), game id,
+map id, the mega-game player cap, name, the open seats, the seated players
+(`warlight.shared.GameInfoPlayer`, each with a player state and a team), a real-time flag, and a
+`warlight.shared.GameInfoSettings` record (distribution — custom scenario included — commanders,
+commerce, kill rates, local deployments, luck, wastelands, army cap, ranked, and a settings string
+whose fields carry the card ids and a mods marker). The plan expected the open seats as
+`warlight.shared.GameOpenSeat` records; inside `GameInfo` they read as a plain int32 list with one
+**team per open seat** (`-1` = no team), and that team is what a join sends. Anything the reader
+cannot place is omitted, never guessed; a record that does not fit is skipped and a payload that
+stops decoding keeps what was read. A missing tag or bad hex is an empty list with a note.
+
+The page hides games the account fails the prerequisites for and says so in its text
+("N games are being hidden due to prerequisites"); that count is reported when present.
+
+**Joining is `AcceptOpenSeat` (61)**, `POST /Services?m=AcceptOpenSeat&js=1` through `WarappRpc`
+like every other method. Parameters after the auth block, in the client writer's order:
+
+1. `int32` game id;
+2. an optional colour preference (present flag + record) — sent **absent**;
+3. `int32` team — the open seat's team from the `GameInfo` record (`-1` in a no-team game);
+4. an optional `int32` start slot (present flag + value) — sent **absent**; custom-scenario games
+   need one, so they are refused;
+5. a `bool` the client sets when one of the game's mods hooks the join — sent `false`, so mod
+   games are refused.
+
+The reply is `warlight.shared.AcceptOpenSeatReturn`: a present flag, a "vacation ended" bool and an
+optional `int32` game id (what war.app means by that id is unverified). The reply is not proof of
+the join: `warapp_join_game` reports `joined` only when GameFeed (or `GetMyGames`) then lists the
+account in the game. Error codes the client handles on a join, with its wording: **254** your slot
+was assigned to someone else by the game creator, **473** not enough coins, **750** the slot you
+joined is no longer available (these three are in the RPC error table); also 4 already begun,
+7 removed by the host, 15 full, 120 seat no longer available, 227 on the creator's block list,
+239 prerequisites not met, and **121** already in the game (the client treats it as joined).
+The encoder is pinned by a golden test built from synthetic ids.
 
 ## Push channel (socket.io)
 

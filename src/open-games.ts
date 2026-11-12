@@ -1,0 +1,398 @@
+// Open games: the list war.app's OpenGames page embeds, decoded by the client
+// bundle's own GameInfo reader and normalized into what a player picks a game by.
+//
+// VERIFIED 2026-11-12 (docs/PLAN-OPEN-GAMES.md): `GET /MultiPlayer/OpenGames`
+// carries `<script type="text/plain" id="AllOpenGamesData">HEX</script>`; the
+// client hex-decodes it and reads an int32 count, then that many
+// `warlight.shared.GameInfo` records (no present flags). Field names are
+// minified, so GameInfo and its GameInfoSettings are read by registered type
+// name and fields by read order (positions below, each checked for its type),
+// the same as `my-games.ts`. The reader stays loose: a record that does not
+// fit is skipped, a payload that stops decoding keeps what was read, and a
+// missing or malformed payload is an empty list with a note — never a throw.
+// Whatever the record does not carry reliably is omitted, never guessed.
+
+import { cardTypeName } from './cards.js';
+import type { ClassReader } from './live.js';
+import { Reader } from './protocol/codec.js';
+
+export const OPEN_GAMES_URL = 'https://war.app/MultiPlayer/OpenGames';
+export const GAME_INFO = 'warlight.shared.GameInfo';
+export const GAME_INFO_SETTINGS = 'warlight.shared.GameInfoSettings';
+const GAME_INFO_PLAYER = 'warlight.shared.GameInfoPlayer';
+
+/** GameInfo field positions in read order. */
+const GI = {
+  randomTeamsOf: 0,
+  entryFee: 3,
+  prize: 4,
+  bootTime: 5,
+  gameId: 7,
+  mapId: 10,
+  maxPlayers: 12,
+  name: 13,
+  openSeats: 15,
+  players: 16,
+  realTime: 19,
+  settings: 21,
+} as const;
+const GI_MIN_FIELDS = 23;
+/** GameInfoPlayer: the state (GamePlayerState) and the team. */
+const GP = { state: 7, team: 8 } as const;
+const GP_MIN_FIELDS = 9;
+/** Player states not holding a seat: Declined, RemovedByHost. */
+const NOT_SEATED = new Set([5, 6]);
+const NO_TEAM = -1;
+
+/** GameInfoSettings field positions in read order. */
+const GS = {
+  armyCap: 0,
+  autoDist: 1,
+  bonusArmiesPer: 2,
+  settingsString: 3,
+  attackOnly: 4,
+  transferOnly: 5,
+  commerce: 6,
+  defensiveKillRate: 7,
+  distribution: 9,
+  commanders: 10,
+  overriddenBonuses: 11,
+  bankingBoot: 12,
+  localDeployments: 13,
+  luck: 14,
+  minArmies: 15,
+  multiAttack: 17,
+  noSplit: 18,
+  wastelands: 19,
+  offensiveKillRate: 20,
+  oneArmyStandsGuard: 21,
+  ranked: 22,
+  roundingMode: 23,
+} as const;
+const GS_MIN_FIELDS = 24;
+/** The distribution mode of a custom scenario. */
+const DIST_CUSTOM_SCENARIO = -3;
+const DEFAULT_MIN_ARMIES = 5;
+const DEFAULT_OFFENSIVE = 0.6;
+const DEFAULT_DEFENSIVE = 0.7;
+const DEFAULT_ROUNDING = 1;
+/** TimeSpans at or beyond this many ms are war.app's "never". */
+const NEVER_MS = 922_336_666_814_565;
+
+export type Pace = 'multi-day' | 'real-time';
+
+/** One open game as the tool reports it. */
+export interface OpenGame {
+  id: number;
+  /** Written by the game's creator. */
+  name: string;
+  url: string;
+  pace: Pace;
+  /** The boot time, e.g. `3d`, `1d12h`, `5m`; absent when it is "never". */
+  bootTime?: string;
+  bootTimeMinutes?: number;
+  /** Players holding a seat (declined and removed players excluded). */
+  players: number;
+  openSeats: number;
+  /** players + openSeats. */
+  seats: number;
+  /** A mega game's player cap. */
+  maxPlayers?: number;
+  teamGame: boolean;
+  /** Random teams of this size. */
+  randomTeamsOf?: number;
+  /** The team of each open seat (team games only). */
+  openSeatTeams?: number[];
+  mapId: number;
+  entryFeeCoins: number;
+  prizeCoins: number;
+  /** Cards in play, when the settings name them. */
+  cards?: string[];
+  /** The settings flags read from the record, in war.app's wording. */
+  rules: string[];
+  /** Rules the turn planner does not model yet (only for flags read from the record). */
+  plannerGaps: string[];
+}
+
+export interface OpenGamesPage {
+  games: OpenGame[];
+  /** "N games are being hidden due to prerequisites", when the page says so. */
+  hiddenByPrerequisites?: number;
+  /** Why the list is empty or partial. */
+  note?: string;
+}
+
+type Obj = Record<string, unknown> & { $type?: unknown };
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
+const META_KEYS = new Set(['$type', '$ctorError']);
+const fields = (o: Obj): unknown[] =>
+  Object.entries(o)
+    .filter(([k]) => !META_KEYS.has(k))
+    .map(([, v]) => v);
+const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
+const isIntList = (v: unknown): v is number[] => Array.isArray(v) && v.every(isInt);
+
+/** A TimeSpan in ms as war.app shows it: `3d`, `1d12h`, `6h`, `2h30m`, `5m`, `45s`. */
+export function formatDuration(ms: number): string {
+  const days = Math.floor(ms / 86_400_000);
+  const hours = Math.floor(ms / 3_600_000) % 24;
+  const mins = Math.floor(ms / 60_000) % 60;
+  if (days > 0) return hours > 0 ? `${days}d${hours}h` : `${days}d`;
+  if (hours > 5) return `${hours}h`;
+  if (hours > 0) return mins > 0 ? `${hours}h${mins}m` : `${hours}h`;
+  if (mins > 0) return `${mins}m`;
+  return `${Math.floor(ms / 1000) % 60}s`;
+}
+
+const pct = (rate: number) => Math.round(rate * 100);
+
+interface SettingsRead {
+  rules: string[];
+  gaps: string[];
+  cards?: string[];
+}
+
+/** The settings string `<ver>;<f|r>;<card ids>;<p|b>;<o|p>;<m|n>`: cards and mods. */
+function settingsString(s: string): { cards: number[]; mods: boolean } | undefined {
+  const parts = s.split(';');
+  if (!['1', '2', '3'].includes(parts[0] ?? '')) return undefined;
+  const cards = (parts[2] ?? '')
+    .split(',')
+    .filter((c) => c.trim() !== '')
+    .map(Number)
+    .filter((n) => Number.isInteger(n));
+  return { cards, mods: parts[0] === '3' && parts[5] === 'm' };
+}
+
+/** The flags a GameInfoSettings record carries; `undefined` when it is not one. */
+function readSettings(v: unknown): SettingsRead | undefined {
+  if (!isObj(v) || v.$type !== GAME_INFO_SETTINGS) return undefined;
+  const f = fields(v);
+  if (f.length < GS_MIN_FIELDS) return undefined;
+  const rules: string[] = [];
+  const gaps: string[] = [];
+  let cards: string[] | undefined;
+  const bool = (k: keyof typeof GS) => f[GS[k]] === true;
+
+  const dist = f[GS.distribution];
+  const scenario = isInt(dist) && dist === DIST_CUSTOM_SCENARIO;
+  if (scenario) {
+    rules.push('Custom scenario');
+    gaps.push('Custom scenario');
+  } else if (isBool(f[GS.autoDist])) {
+    rules.push(f[GS.autoDist] ? 'Automatic distribution' : 'Manual distribution');
+  }
+  if (bool('commanders')) {
+    rules.push('Commanders');
+    gaps.push('Commanders');
+  }
+  const ss = typeof f[GS.settingsString] === 'string' ? settingsString(f[GS.settingsString] as string) : undefined;
+  if (ss && ss.cards.length) {
+    cards = ss.cards.map(cardTypeName);
+    rules.push(`Cards: ${cards.join(', ')}`);
+  }
+  const commerce = f[GS.commerce];
+  if (isInt(commerce)) {
+    rules.push(`Commerce (${commerce === 0 ? 'no army multiplier' : `army multiplier of ${commerce}`})`);
+    gaps.push('Commerce');
+  }
+  const banking = f[GS.bankingBoot];
+  if (isNum(banking) && banking > 0 && banking < NEVER_MS) rules.push(`Start with ${formatDuration(banking)} banked`);
+  const waste = f[GS.wastelands];
+  if (isInt(waste) && waste > 0 && !scenario) rules.push('Wastelands');
+  if (bool('oneArmyStandsGuard')) rules.push('One army must stand guard');
+  const luck = f[GS.luck];
+  if (isNum(luck) && luck !== 0) rules.push(`Luck modifier ${pct(luck)}%`);
+  const rounding = f[GS.roundingMode];
+  if (isInt(rounding) && rounding !== DEFAULT_ROUNDING) rules.push(`Non-default rounding mode (${rounding})`);
+  if (f[GS.ranked] === false) rules.push('Practice game');
+  const minArmies = f[GS.minArmies];
+  if (isInt(minArmies) && minArmies !== DEFAULT_MIN_ARMIES) rules.push(`Minimum armies per turn is ${minArmies}`);
+  const per = f[GS.bonusArmiesPer];
+  if (isInt(per) && per > 0) rules.push(`Extra army for every ${per} ${per === 1 ? 'territory' : 'territories'}`);
+  if (bool('overriddenBonuses')) rules.push('Overridden bonuses');
+  if (bool('attackOnly') || bool('transferOnly')) {
+    rules.push(
+      bool('attackOnly') && bool('transferOnly')
+        ? 'Can attack-only and transfer-only'
+        : bool('attackOnly')
+          ? 'Can attack-only'
+          : 'Can transfer-only',
+    );
+  }
+  if (ss?.mods) {
+    rules.push('Mods');
+    gaps.push('Mods');
+  }
+  if (bool('localDeployments')) {
+    rules.push('Local deployments');
+    gaps.push('Local deployments (#29)');
+  }
+  if (bool('noSplit')) rules.push('No-split mode');
+  const cap = f[GS.armyCap];
+  if (isNum(cap)) {
+    rules.push(`Army cap: ${cap}× income`);
+    gaps.push('Army cap');
+  }
+  const off = f[GS.offensiveKillRate];
+  const def = f[GS.defensiveKillRate];
+  if (isNum(off) && isNum(def) && (pct(off) !== pct(DEFAULT_OFFENSIVE) || pct(def) !== pct(DEFAULT_DEFENSIVE))) {
+    rules.push(`Kill rates: offensive ${pct(off)}%, defensive ${pct(def)}%`);
+    gaps.push('Non-default kill rates (#28)');
+  }
+  if (bool('multiAttack')) rules.push('Multi-attack');
+  return { rules, gaps, ...(cards ? { cards } : {}) };
+}
+
+/** A seated player's team, or `undefined` for a player not holding a seat or an unreadable record. */
+function seatedTeam(p: unknown): number | undefined {
+  if (!isObj(p) || p.$type !== GAME_INFO_PLAYER) return undefined;
+  const f = fields(p);
+  const state = f[GP.state];
+  const team = f[GP.team];
+  if (f.length < GP_MIN_FIELDS || !isInt(state) || !isInt(team) || NOT_SEATED.has(state)) return undefined;
+  return team;
+}
+
+/** One decoded GameInfo as an open game; `undefined` when the record does not fit. */
+export function openGameOf(record: unknown): OpenGame | undefined {
+  if (!isObj(record) || record.$type !== GAME_INFO) return undefined;
+  const f = fields(record);
+  if (f.length < GI_MIN_FIELDS) return undefined;
+  const id = f[GI.gameId];
+  const name = f[GI.name];
+  const mapId = f[GI.mapId];
+  const realTime = f[GI.realTime];
+  const seats = f[GI.openSeats];
+  const players = f[GI.players];
+  if (!isInt(id) || !(name === null || typeof name === 'string') || !isInt(mapId) || !isBool(realTime)) return undefined;
+  if (!(seats === null || isIntList(seats)) || !(players === null || Array.isArray(players))) return undefined;
+
+  const openSeatTeams = seats ?? [];
+  const teams = (players ?? []).map(seatedTeam).filter((t): t is number => t !== undefined);
+  const randomTeamsOf = f[GI.randomTeamsOf];
+  const random = isInt(randomTeamsOf) && randomTeamsOf > 0 ? randomTeamsOf : undefined;
+  const teamGame = random !== undefined || teams.some((t) => t !== NO_TEAM) || openSeatTeams.some((t) => t !== NO_TEAM);
+  const settings = readSettings(f[GI.settings]);
+  const rules = [...(settings?.rules ?? [])];
+  if (teamGame) rules.push(random !== undefined ? `Team game (random teams of ${random})` : 'Team game');
+
+  const game: OpenGame = {
+    id,
+    name: name ?? '',
+    url: `https://war.app/MultiPlayer?GameID=${id}`,
+    pace: realTime ? 'real-time' : 'multi-day',
+    players: teams.length,
+    openSeats: openSeatTeams.length,
+    seats: teams.length + openSeatTeams.length,
+    teamGame,
+    mapId,
+    entryFeeCoins: isInt(f[GI.entryFee]) ? (f[GI.entryFee] as number) : 0,
+    prizeCoins: isInt(f[GI.prize]) ? (f[GI.prize] as number) : 0,
+    rules,
+    plannerGaps: settings?.gaps ?? [],
+  };
+  const boot = f[GI.bootTime];
+  if (isNum(boot) && boot > 0 && boot < NEVER_MS) {
+    game.bootTime = formatDuration(boot);
+    game.bootTimeMinutes = Math.round(boot / 60_000);
+  }
+  const max = f[GI.maxPlayers];
+  if (isInt(max) && max > 0) game.maxPlayers = max;
+  if (random !== undefined) game.randomTeamsOf = random;
+  if (teamGame) game.openSeatTeams = openSeatTeams;
+  if (settings?.cards) game.cards = settings.cards;
+  return orderKeys(game);
+}
+
+const KEY_ORDER: Array<keyof OpenGame> = [
+  'id', 'name', 'url', 'pace', 'bootTime', 'bootTimeMinutes', 'players', 'openSeats', 'seats', 'maxPlayers',
+  'teamGame', 'randomTeamsOf', 'openSeatTeams', 'mapId', 'entryFeeCoins', 'prizeCoins', 'cards', 'rules', 'plannerGaps',
+];
+function orderKeys(g: OpenGame): OpenGame {
+  const out: Record<string, unknown> = {};
+  for (const k of KEY_ORDER) if (g[k] !== undefined) out[k] = g[k];
+  return out as unknown as OpenGame;
+}
+
+const PAYLOAD_RE = /<script\b[^>]*\bid=["']AllOpenGamesData["'][^>]*>([\s\S]*?)<\/script>/i;
+const HIDDEN_RE = /(\d+)\s+games?\s+(?:is|are)\s+being\s+hidden\s+due\s+to\s+prerequisites/i;
+
+function hexBytes(hex: string): Uint8Array | undefined {
+  const h = hex.replace(/\s+/g, '');
+  if (h.length === 0 || h.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(h)) return undefined;
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(2 * i, 2 * i + 2), 16);
+  return out;
+}
+
+const UNREADABLE = "war.app's open-games data could not be read (the client may have changed).";
+
+/** The open games a signed-in OpenGames page lists; never throws. */
+export function parseOpenGamesPage(html: string, bundle: ClassReader): OpenGamesPage {
+  const out: OpenGamesPage = { games: [] };
+  const hidden = HIDDEN_RE.exec(html);
+  if (hidden) out.hiddenByPrerequisites = Number(hidden[1]);
+  const m = PAYLOAD_RE.exec(html);
+  if (!m) {
+    out.note = 'The OpenGames page had no open-games data — war.app may have signed this session out.';
+    return out;
+  }
+  const bytes = hexBytes(m[1] ?? '');
+  if (!bytes) {
+    out.note = UNREADABLE;
+    return out;
+  }
+  const reader = new Reader(bytes);
+  let count: number;
+  try {
+    count = reader.int32();
+  } catch {
+    out.note = UNREADABLE;
+    return out;
+  }
+  if (count < 0) {
+    out.note = UNREADABLE;
+    return out;
+  }
+  let read = 0;
+  try {
+    for (; read < count; read++) {
+      const game = openGameOf(bundle.readClass(GAME_INFO, reader));
+      if (game) out.games.push(game);
+    }
+  } catch (e) {
+    // Records are back to back with no lengths: after a failed one the rest cannot be found.
+    out.note = `${UNREADABLE} Read ${read} of ${count} games before: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  return out;
+}
+
+export interface OpenGameFilters {
+  /** Default `multi-day`. */
+  pace?: Pace | 'both';
+  /** At most this many seats (players + open seats, or a mega game's cap). */
+  max_players?: number;
+  /** Only games without an entry fee (default true). */
+  free_only?: boolean;
+  /** Leave out team games (default true). */
+  exclude_teams?: boolean;
+  limit?: number;
+}
+
+/** The games matching `filters`, in war.app's order. */
+export function filterOpenGames(games: readonly OpenGame[], filters: OpenGameFilters): OpenGame[] {
+  const pace = filters.pace ?? 'multi-day';
+  const freeOnly = filters.free_only ?? true;
+  const noTeams = filters.exclude_teams ?? true;
+  const out = games.filter(
+    (g) =>
+      (pace === 'both' || g.pace === pace) &&
+      (!freeOnly || g.entryFeeCoins === 0) &&
+      (!noTeams || !g.teamGame) &&
+      (filters.max_players === undefined || (g.maxPlayers ?? g.seats) <= filters.max_players),
+  );
+  return filters.limit === undefined ? out : out.slice(0, filters.limit);
+}

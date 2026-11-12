@@ -300,3 +300,39 @@ describe('Subscribe (push socket)', () => {
     expect(readSubscribeResult(new Reader(new Writer().bool(true).int32(-1).bytes())).size).toBe(0);
   });
 });
+
+describe('AcceptOpenSeat (join an open game)', () => {
+  it('has the client method-table ids for the lobby methods', async () => {
+    const { Method } = await import('../../src/protocol/methods.js');
+    expect(Method).toMatchObject({
+      GetOpenGames: 10,
+      GetGameDetails: 38,
+      GetGameSettings: 48,
+      AcceptGame: 60,
+      AcceptOpenSeat: 61,
+      AcceptOpenAutoGame: 62,
+      GetOpenAutoGame: 63,
+      DeclineGame: 64,
+    });
+  });
+
+  it('writes game id, no colour, the seat team, no start slot, then the mod-hook flag false (golden)', async () => {
+    const { writeAcceptOpenSeatParams } = await import('../../src/protocol/methods.js');
+    expect(hex((w) => writeAcceptOpenSeatParams(w, { gameId: 0x00bc614e, team: -1 }))).toBe(
+      '4E61BC00' + '00' + 'FFFFFFFF' + '00' + '00',
+    );
+    expect(hex((w) => writeAcceptOpenSeatParams(w, { gameId: 7, team: 2 }))).toBe('07000000' + '00' + '02000000' + '0000');
+  });
+
+  it('reads AcceptOpenSeatReturn: the vacation-ended flag and an optional game id', async () => {
+    const { readAcceptOpenSeatReturn } = await import('../../src/protocol/methods.js');
+    const read = (write: (w: Writer) => void) => {
+      const w = new Writer();
+      write(w);
+      return readAcceptOpenSeatReturn(new Reader(w.bytes()));
+    };
+    expect(read((w) => w.bool(false))).toBeUndefined();
+    expect(read((w) => w.bool(true).bool(false).bool(false))).toEqual({ vacationEnded: false });
+    expect(read((w) => w.bool(true).bool(true).bool(true).int32(42))).toEqual({ vacationEnded: true, otherGameId: 42 });
+  });
+});

@@ -19,7 +19,7 @@ function boardBytes(version: number): Uint8Array {
   w.int32(2).int32(10).int32(11); // ids
   w.date(WHEN);
   w.guid(GUID);
-  w.int64(1234567890123);
+  w.float64(0.6); // P.ak reads a float64 (kill rates, luck)
   w.uint16(65535);
   w.int32(2).raw(new Uint8Array([0xab, 0xcd]));
   w.bool(true);
@@ -73,7 +73,7 @@ describe('BundleInterpreter', () => {
       ids: [10, 11],
       when: WHEN,
       id: GUID,
-      big: 1234567890123,
+      big: 0.6,
       u16: 65535,
       blob: new Uint8Array([0xab, 0xcd]),
       flag: true,
@@ -111,8 +111,8 @@ describe('BundleInterpreter', () => {
     w.u8(1).u8(2).u8(3); // E.Range mapped
     w.int32(-7).u8(200);
     w.varint(2).raw(new TextEncoder().encode('hi'));
-    w.int64(42).float32(0.5).uint16(7).int16(-2).u8(9).raw(new Uint8Array([1, 2])).varint(300);
-    w.int64(5).int32(1).int32(8).int32(-1).int32(-1).float64(NO_DATE_SENTINEL);
+    w.float64(42.5).float32(0.5).uint16(7).int16(-2).u8(9).raw(new Uint8Array([1, 2])).varint(300);
+    w.float64(259_200_000).int32(1).int32(8).int32(-1).int32(-1).float64(NO_DATE_SENTINEL);
     const r = new Reader(w.bytes());
     const d = interp().readClass('demo.shared.Ops', r) as Record<string, unknown>;
     expect(r.remaining).toBe(0);
@@ -121,8 +121,8 @@ describe('BundleInterpreter', () => {
       eq: true, ne: false, seq: true, sne: false, lt: false, le: true, gt: false, ge: true,
       or: 3, and: 7, andf: 0, seqv: 9, dbl: 6, pre: 4, post: 4, after: 3, w: 5, wn: null, arr: [],
       r: [1, 3, 5],
-      raw: [-7, 200, 'hi', 42, 0.5, 7, -2, 9, new Uint8Array([1, 2]), 300],
-      more: [5, [8], null, null, null],
+      raw: [-7, 200, 'hi', 42.5, 0.5, 7, -2, 9, new Uint8Array([1, 2]), 300],
+      more: [259_200_000, [8], null, null, null],
       len: 10, id: 4, branch: 'else',
     });
   });

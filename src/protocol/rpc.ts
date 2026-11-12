@@ -42,7 +42,8 @@ export function methodTakesAuth(methodId: number): boolean {
 
 /**
  * The web client's own wording for the server error codes this server can
- * meet (11, 51, 208: order commits; 33, 36, 333: chat; 88: any game call).
+ * meet (11, 51, 208: order commits; 33, 36, 333: chat; 254, 473, 750: joining
+ * an open seat; 88: any game call).
  * 51 (`MustUseCard`, verified live) has no client wording; this is ours.
  */
 export const SERVER_ERROR_MESSAGES: Readonly<Record<number, string>> = {
@@ -54,6 +55,9 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<number, string>> = {
   88: 'This game has been deleted.',
   208: 'The game has already advanced to the next turn. Please refresh.',
   333: 'This game has been archived and can no longer receive new chat.',
+  254: 'Sorry, your slot was assigned to someone else by the game creator. Please ask the game creator to open up your slot.',
+  473: "You don't have enough coins to join this game. Please deposit some coins and try again.",
+  750: 'Sorry, the slot you joined is no longer available. Please try again with a different slot.',
 };
 
 /** The longest slice of an unmapped server message shown to the caller. */
