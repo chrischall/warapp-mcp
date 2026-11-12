@@ -9,7 +9,7 @@ client `v6.07.0.1`, protocol version 242) and checked against captured traffic.
 **Status (2026-11-12):** request framing fully decoded — 7/7 captured requests rebuilt
 byte-identical from decoded fields; reply payloads decode generically (every byte consumed on
 all captured replies); `SendOrders` layout read from the client's serializers, awaiting a
-live capture to verify; picks verified end to end through the bridge (below). Nothing here
+live capture — now verified (below); picks verified end to end through the bridge. Nothing here
 is a captured value; no captures are committed.
 
 ## Transport
@@ -122,7 +122,7 @@ runtime, so class layouts track the live client. Field names in the bundle are m
 change between releases; semantic mapping is by class name (`W["warlight.shared.*"]`, stable)
 and field read order.
 
-## Orders (`SendOrders`, method 74) — read from the client's serializers, not yet captured
+## Orders (`SendOrders`, method 74) — verified against a live turn commit
 
 ```
 params: auth, int32 gameId,
@@ -138,8 +138,16 @@ AttackTransfer  byte 01, bool attackTeammates, byte mode (1 Attack, 2 Transfer,
 PlayCard*       byte <card tag> (18 = Blockade), card fields, GUID cardInstanceId, base
 ```
 
+**Verified 2026-11-12** against a real turn-1 commit (1 deploy + 4 attacks): the captured
+frame parses with 0 bytes left over, and the encoder's parameter bytes for the same orders
+are byte-identical (132/132). Observed values: `mode` 3 (AttackTransfer) is what the client
+sends for an ordinary attack; `turnNumber` is the turn being submitted (GameFeed
+`numberOfTurns` + 1 — it was 0 before turn 1); the trailing two bools were `false`; the
+client also sends `SendInProgressOrders` (75) drafts as orders are built, which a tool does
+not need. The reply's result bool is `false` when the commit did not advance the game.
+
 Server checks seen in the client: error 11 (deployments ≠ income) and 208 (turn already
-advanced). The encoder must be verified byte-for-byte against a real turn commit before use.
+advanced).
 
 ## Verified end to end through the browser bridge
 
