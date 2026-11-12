@@ -388,6 +388,7 @@ describe('methods', () => {
       SendInProgressOrders: 75,
       SendTerritoryPicks: 76,
       SendInProgressPicks: 77,
+      BeginFirstTurn: 78,
       GetTerritoryPicks: 79,
       UnCommit: 80,
       GetTurns: 81,

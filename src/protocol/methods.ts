@@ -24,6 +24,7 @@ export const Method = {
   SendInProgressOrders: 75,
   SendTerritoryPicks: 76,
   SendInProgressPicks: 77,
+  BeginFirstTurn: 78,
   GetTerritoryPicks: 79,
   UnCommit: 80,
   GetTurns: 81,
@@ -139,6 +140,19 @@ export interface SurrenderParams {
  */
 export function writeSurrenderParams(w: Writer, p: SurrenderParams): void {
   w.int32(p.gameId).bool(p.surrender).bool(false);
+}
+
+/**
+ * BeginFirstTurn(auth, gameId) — the web client's Begin button in a game whose
+ * first turn is a speed race (MoveOrder `NoLuckCycle`): war.app withholds the
+ * board until it is pressed, and pressing it starts the player's first-turn
+ * timer. READ FROM THE CLIENT'S WRITER, NOT VERIFIED LIVE: after the auth block
+ * the client writes the game id alone (no trailing bools). The reply is a
+ * present flag then the player's GameStanding (this server reads the board back
+ * with GetLatestGameInfo instead of decoding it).
+ */
+export function writeBeginFirstTurnParams(w: Writer, gameId: number): void {
+  w.int32(gameId);
 }
 
 /** GetLatestGameInfo(auth, gameId) — the parameters after the auth block. */
