@@ -95,6 +95,19 @@ const hopelessBoard = board([
   neutral(8, 2), theirs(9, 5), theirs(10, 5), theirs(15, 51), neutral(18, 2), ...FAR,
 ]);
 
+/** Lesson 3, with an enemy bonus to break next to the hopeless border: T8 (20) in a complete Outpost. */
+const hopelessBreakBoard = board([
+  mine(1, 2), mine(2, 3), mine(3, 4), mine(4, 3), mine(5, 2), mine(6, 2), mine(7, 2),
+  theirs(8, 20), theirs(9, 5), theirs(10, 5), neutral(15, 2), neutral(18, 2), ...FAR,
+]);
+
+/** Lesson 3 under expand: a doomed 15-army T2 with two cheap neutrals next to it. */
+const attackOutBoard = board([
+  mine(1, 2), mine(2, 15), mine(3, 4), mine(4, 3),
+  theirs(5, 51), neutral(6, 2), neutral(7, 2), neutral(8, 2), theirs(9, 5), theirs(10, 5),
+  neutral(15, 2), neutral(18, 2), ...FAR,
+]);
+
 /** Lesson 4: 20 idle armies at home, a doomed front at 3 and a holdable one at 4. */
 const spreadBoard = board([
   mine(1, 20), mine(2, 3), mine(3, 15), mine(4, 10), mine(5, 2), mine(6, 2), mine(7, 2),
@@ -142,13 +155,15 @@ describe('lessons from a lost game', () => {
 
   it('2. an enemy bonus touching me at a 2-army territory is broken, with the exact cost', () => {
     // My T3 (4 armies, in my +5) is itself threatened by T8: its 1 movable plus ~5 deploy
-    // take 4. Capturing T8 removes that threat and breaks the opponent's +4.
+    // take 4. Capturing T8 removes that threat and breaks the opponent's +4; T3 attacks on
+    // top of its hold, so it still holds if the attack fails (T8 reinforced first).
     const p = plan(outpostBoard, 8);
-    expect(armiesToTake(4)).toBe(6);
+    expect(armiesToTake(4, STD)).toBe(6);
     expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 3, to: 8, armies: captureCost(2, STD) }));
     const why = p.rationale.join('\n');
-    expect(why).toMatch(/Attack T8 \(#8\) from T3 \(#3\) with 3: breaks enemy bonus Outpost \(#203\) \(\+4 from player 20\)/);
+    expect(why).toMatch(/Attack T8 \(#8\) from T3 \(#3\) with 3 \(deploy 3 there\): breaks enemy bonus Outpost \(#203\) \(\+4 from player 20\)/);
     expect(why).toMatch(/T8 \(#8\) is the only visible threat to T3 \(#3\)/);
+    expect(armiesToTake(4 + deployedTo(p, 3) - 3, STD)).toBeGreaterThan(6);
     expect(p.expected.captures).toContain(8);
     // Its 2 survivors cannot hold against T9 and T10 next door: said, and still worth a turn of +4.
     expect(p.warnings.join('\n')).toMatch(/T8 \(#8\) can be retaken after it breaks Outpost/);
@@ -171,6 +186,24 @@ describe('lessons from a lost game', () => {
     expect(p.moves[0]).toEqual(expect.objectContaining({ from: 4, to: 3, armies: 14, kind: 'transfer' }));
     expect(p.cardAdvice).toBe('order-priority');
     expect(p.rationale.join('\n')).toMatch(/Deploy the leftover \d+ to T3 \(#3\)/);
+
+    // Nor does a conceded border become the source of a break: T3 faces 19 + ~15 = 34 and is
+    // conceded; it withdraws rather than taking 30 deploys to attack the 20 on T8.
+    const b = plan(hopelessBreakBoard, 40);
+    expect(b.conceded).toContain(3);
+    expect(b.warnings).toContain('T3 (#3) cannot be held economically (needs 17, protects +5): conceded');
+    expect(deployedTo(b, 3)).toBe(0);
+    expect(attacks(b).some((m) => m.from === 3)).toBe(false);
+    expect(b.moves[0]).toEqual(expect.objectContaining({ from: 3, kind: 'transfer', reason: 'withdraws from a conceded border' }));
+    expect(deploySum(b)).toBe(40);
+
+    // Under expand (no withdrawal) a conceded border may still attack out, but only with the
+    // armies already on it: T2 (15) faces 51 at T5, and takes the 2-army T6 and T7 itself
+    // (Lowlands is focused, as it holds the 51).
+    const out = plan(attackOutBoard, 6, { goal: 'expand', focusBonusIds: [202] });
+    expect(out.conceded).toContain(2);
+    expect(attacks(out).filter((m) => m.from === 2).map((m) => m.to)).toEqual([6, 7]);
+    expect(deployedTo(out, 2)).toBe(0);
   });
 
   it('4. idle armies concentrate on the front that holds, never on the conceded one', () => {
@@ -222,6 +255,8 @@ describe('lessons from a lost game', () => {
       [expansionBoard, 8, { enemyDeploy: 5 }],
       [outpostBoard, 8, {}],
       [hopelessBoard, 20, {}],
+      [hopelessBreakBoard, 40, {}],
+      [attackOutBoard, 6, { focusBonusIds: [202] }],
       [spreadBoard, 10, { enemyDeploy: 10 }],
       [growingNow, 10, { enemyDeploy: 15 }, growingThen],
       [withdrawBoard, 9, {}],

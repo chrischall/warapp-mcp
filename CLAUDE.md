@@ -84,7 +84,9 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
     bonuses containing it, plus bonuses I'd lose all access to, plus per-territory income;
     holds go in order of protected value per army of hold cost. A border is **conceded** when
     holding costs more than `CONCEDE_FACTOR` (3) × its protected value or than the income left
-    (a warning either way): it is never deployed to, and idle armies never move into it.
+    (a warning either way): it is never deployed to (unless every territory I hold is
+    conceded), it attacks out only with the armies already on it, and idle armies never move
+    into it.
   - **Withdraw** (under `balanced`/`defend`): a conceded border's movable armies go first to
     the neighbour nearest a border that holds, and the plan sets `cardAdvice:
     'order-priority'` because a withdrawal only executes while the border is still mine. The
@@ -93,7 +95,9 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
     fully visible single-enemy bonus (`BREAK_WEIGHT` / opponents × value / cost) compete by
     income per army; `MIN_EXPANSION_SHARE` (30%) of income goes to expansion before holds that
     protect less than it. A threatened border whose only visible threat is a breakable member
-    attacks it instead of holding. `defend` holds first, `expand` never attacks players.
+    attacks it on top of its hold (hold + capture deployed there, so it still holds if the
+    member is reinforced and the attack fails); unable to afford both, it just holds — never
+    a capture instead of the hold. `defend` holds first, `expand` never attacks players.
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin, else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border).

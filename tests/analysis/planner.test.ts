@@ -46,6 +46,7 @@ const enemy = (territoryId: number, armies: number, playerId = ENEMY): Territory
 
 const attacks = (p: TurnPlan) => p.moves.filter((m) => m.kind === 'attack');
 const deploySum = (p: TurnPlan) => p.deploys.reduce((s, d) => s + d.armies, 0);
+const deployedTo = (p: TurnPlan, id: number) => p.deploys.find((d) => d.territoryId === id)?.armies ?? 0;
 
 describe('captureCost', () => {
   it('is armiesToTake with no luck', () => {
@@ -905,12 +906,59 @@ describe('planTurn — balanced', () => {
     );
     const base = { graph: g, me: ME, settings: STD } as const;
 
-    it('attacks it instead of holding: the capture removes the threat and breaks the bonus', () => {
+    it('attacks it from the border and still holds: what stays behind holds if the capture fails', () => {
+      // T1 (4) faces 1 movable + ~5 deploy = 6: the hold costs 1. The capture (3) comes on
+      // top of it, so T1 keeps 4 + 1 armies whether or not T5 falls.
       const p = planTurn({ ...base, board: board([mine(1, 4), enemy(5, 2), enemy(6, 2), enemy(7, 2)]), income: 5 });
       expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 3]]);
-      expect(p.rationale.join('\n')).toMatch(/T5 \(#5\) is the only visible threat to T1 \(#1\): capturing it removes that threat/);
-      expect(p.rationale.join('\n')).not.toMatch(/so it holds/);
+      // 1 for the hold and 3 for the capture; the leftover 1 goes to the attacking stack.
+      expect(p.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
+      expect(armiesToTake(4 + 1)).toBeGreaterThan(6);
+      const why = p.rationale.join('\n');
+      expect(why).toMatch(/T5 \(#5\) is the only visible threat to T1 \(#1\): capturing it removes that threat/);
+      expect(why).toContain('Deploy 1 to T1 (#1) so it still holds (protects +5) after attacking T5 (#5): 5 armies stay');
+      expect(p.conceded).toEqual([]);
       expect(deploySum(p)).toBe(5);
+    });
+
+    it('holds instead when the threat is too costly to capture on top of the hold (it would be reinforced)', () => {
+      // T1 (4, a held +5) next to T5 (12) in the enemy's complete +4; enemy deploy 9, income 17.
+      // The threat is 11 + 9 = 20: the hold costs 9. Capturing T5 at its current 12 would cost 20
+      // and leave T1 with 2, and under the threat model T5 is reinforced to 21 first, so the
+      // attack fails and T1 falls. Holding is what keeps the +5.
+      const p = planTurn({
+        ...base,
+        board: board([mine(1, 4), enemy(5, 12), enemy(6, 2), enemy(7, 2)]),
+        income: 17,
+        options: { enemyDeploy: 9 },
+      });
+      expect(attacks(p)).toEqual([]);
+      expect(p.rationale.join('\n')).toMatch(/Deploy 9 to T1 \(#1\) so it holds \(protects \+5\)/);
+      expect(p.rationale.join('\n')).not.toMatch(/only visible threat/);
+      expect(armiesToTake(4 + deployedTo(p, 1))).toBeGreaterThan(20);
+      expect(p.conceded).toEqual([]);
+      expect(deploySum(p)).toBe(17);
+    });
+
+    it('never leaves the border short: every break from a held border keeps the hold', () => {
+      for (const [have, n, income, enemyDeploy] of [
+        [4, 2, 5, 5],
+        [4, 6, 30, 5],
+        [1, 2, 9, 3],
+        [6, 9, 25, 2],
+        [4, 12, 40, 9],
+      ] as const) {
+        const p = planTurn({
+          ...base,
+          board: board([mine(1, have), enemy(5, n), enemy(6, 2), enemy(7, 2)]),
+          income,
+          options: { enemyDeploy },
+        });
+        const out = p.moves.filter((m) => m.from === 1).reduce((s, m) => s + m.armies, 0);
+        const threat = n - 1 + enemyDeploy;
+        if ((armiesToTake(have) ?? Infinity) <= threat)
+          expect(armiesToTake(have + deployedTo(p, 1) - out), `${have} vs ${n}`).toBeGreaterThan(threat);
+      }
     });
 
     it('holds instead when another enemy also threatens the border', () => {

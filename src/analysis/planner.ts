@@ -33,9 +33,9 @@
 //     complete bonus and no per-territory income (`bonusArmyPer` off), a threatened
 //     border protects +0 and is conceded: early in a game `defend` holds nothing
 //     and withdraws from every threatened border, keeping armies for expansion.
-//     Under other goals a conceded border is only kept out of the leftover deploy:
-//     it may still attack out (and get that capture's shortfall deployed), since its
-//     armies are lost anyway if they stay.
+//     A conceded border is never deployed to (unless every territory I hold is
+//     conceded): it may still attack out with the armies already on it, since they
+//     are lost anyway if they stay, but no capture is funded there.
 //     Under `balanced` a hold is not deployed here: it competes in the greedy
 //     step (rule 4a), and a threatened border it might hold makes no attacks.
 //  1b. Withdraw (under `defend` and `balanced`). A conceded border's movable armies move first
@@ -69,9 +69,10 @@
 //     bonus (BREAK_WEIGHT / opponents × value / capture cost, aimed at the member
 //     whose survivors would hold against the counter-attack if any, else the
 //     cheapest, warning when it can be retaken). A threatened border whose only
-//     visible threat is a member of a breakable bonus attacks it instead of
-//     holding (the capture removes the threat; a held border otherwise makes no
-//     attacks), once per bonus. While expansion candidates
+//     visible threat is a member of a breakable bonus also attacks it, once per
+//     bonus: it deploys its hold plus the capture, so what stays still holds if
+//     the enemy reinforces that member first and the attack fails; when it cannot
+//     afford both it just holds (a held border otherwise makes no attacks). While expansion candidates
 //     remain, a hold protecting less than the best expansion's value may not dip
 //     into the first MIN_EXPANSION_SHARE of income not yet spent on expansion; it
 //     is deferred and funded afterwards if the budget allows, else conceded.
@@ -645,14 +646,27 @@ export function planTurn(input: PlanInput): TurnPlan {
 
   // ---- capture helper ----
   let anchor: number | undefined;
-  const tryCapture = (t: number, reason: string): boolean => {
+  /**
+   * Capture `t` from its best source. A conceded border is never deployed to: it attacks
+   * out only with the armies already on it (unless every territory I hold is conceded,
+   * when there is nowhere better). `force` names the source (it may be locked) and the
+   * armies on it that stay out of the attack.
+   */
+  const tryCapture = (t: number, reason: string, force?: { from: number; keep: number }): boolean => {
     const tg = targets.get(t)!;
-    const sources = tg.sources
-      .filter((x) => !locked.has(x))
-      .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
+    const spare = (x: number) => avail.get(x)! - (force?.keep ?? 0);
+    const sources = force
+      ? [force.from]
+      : tg.sources
+          .filter(
+            (x) =>
+              !locked.has(x) &&
+              (!conceded.has(x) || avail.get(x)! >= tg.cost || mine.every((id) => conceded.has(id))),
+          )
+          .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
     const src = sources[0];
     if (src === undefined) return false;
-    const need = Math.max(0, tg.cost - avail.get(src)!);
+    const need = Math.max(0, tg.cost - spare(src));
     if (budget - need < reserve) return false;
     deploy(src, need);
     avail.set(src, avail.get(src)! - tg.cost);
@@ -781,9 +795,12 @@ export function planTurn(input: PlanInput): TurnPlan {
     const breakOf = new Map<number, Breakable>();
     for (const b of breakable) for (const t of bonusTerritories(g, b.bonusId)) breakOf.set(t, b);
     // A threatened border whose only visible threat is a member of a breakable enemy
-    // bonus attacks it instead of holding: the capture removes the threat and breaks
-    // the bonus. (A held border otherwise makes no attacks.)
-    const breakInstead = (t: Threatened): boolean => {
+    // bonus also attacks it: the capture removes the threat and breaks the bonus. It
+    // attacks on top of its hold, never instead of it: the threat assumes the enemy
+    // reinforces that member first, so the capture can fail, and what stays on the
+    // border must still hold. When the hold plus the capture is unaffordable, it just
+    // holds. (A held border otherwise makes no attacks.)
+    const holdAndBreak = (t: Threatened): boolean => {
       const threats = neighborsOf(g, t.id).filter((n) => {
         const st = state.get(n);
         return st?.owner.kind === 'player' && st.owner.playerId !== me && st.armies !== null;
@@ -793,15 +810,15 @@ export function planTurn(input: PlanInput): TurnPlan {
       const b = breakOf.get(n);
       if (!b || !targets.has(n) || broken(b)) return false;
       const o = breakOption(n);
+      if (t.holdCost + o.cost > budget - reserve) return false;
       const before = budget;
-      locked.delete(t.id);
-      const ok = tryCapture(n, breakReason(b));
-      locked.add(t.id);
-      if (!ok) return false;
-      expansionSpent += before - budget;
+      deploy(t.id, t.holdCost);
+      tryCapture(n, breakReason(b), { from: t.id, keep: avail.get(t.id)! });
+      expansionSpent += before - budget - t.holdCost;
       anchor ??= moves[moves.length - 1]!.from;
       rationale.push(
-        `${label(n)} is the only visible threat to ${label(t.id)}: capturing it removes that threat, instead of deploying ${t.holdCost} to hold ${label(t.id)}.`,
+        `${label(n)} is the only visible threat to ${label(t.id)}: capturing it removes that threat and breaks the bonus.`,
+        `Deploy ${t.holdCost} to ${label(t.id)} so it still holds (protects +${t.value}) after attacking ${label(n)}: ${t.have + t.holdCost} armies stay, needing ${armiesToTake(t.have + t.holdCost, rates)} to take, above the ~${t.threat} threat if the attack fails.`,
       );
       warnRetake(b, o);
       return true;
@@ -843,7 +860,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         focus: false,
         borders: 0,
         run: () => {
-          if (breakInstead(t)) return;
+          if (holdAndBreak(t)) return;
           const pending = expansionLeft > 0 && t.value < topValue ? Math.max(0, floor - expansionSpent) : 0;
           if (t.holdCost > budget) return concedeUnaffordable(t, budget);
           if (t.holdCost > budget - pending) {

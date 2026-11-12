@@ -66,7 +66,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   breaking an enemy bonus ("breaks enemy bonus …" in the reasoning). At least 30% of income
   goes to expansion before holds that protect less than it ("Hold … later"). A border in
   `conceded` costs more to hold than it is worth (or than the income left): nothing is
-  deployed there and its armies withdraw toward a border that holds. When `cardAdvice` is
+  deployed there (unless every territory the user holds is conceded) and no attack from it
+  is funded — it attacks out only with the armies already on it — and its armies withdraw
+  toward a border that holds. When `cardAdvice` is
   `"order-priority"`, tell the user a withdrawal only runs if the border is still theirs when
   it executes, and suggest adding Order Priority to the `orders` if they hold one (the planner
   only plays it when a card play is required).

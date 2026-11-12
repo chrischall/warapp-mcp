@@ -392,7 +392,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'cheap bonuses, breaking enemy bonuses — with at least 30% on expansion; "expand" takes neutrals and never ' +
           'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
           'borders worth holding before anything else. Hopeless borders are listed in `conceded` and get no ' +
-          'deploys; under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
+          'deploys (unless every territory you hold is conceded); under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
           'Priority so the withdrawal runs before the border falls. Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
           'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
           'server last planned on (`trendSource` says which, or null). ' +
