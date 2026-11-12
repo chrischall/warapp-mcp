@@ -1144,6 +1144,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       deployed: new Map(deployed),
       avail: new Map(avail),
       incoming: new Map(incoming),
+      combined: new Set(combined),
+      survivorsAt: new Map(survivorsAt),
       moves: moves.length,
       rationale: rationale.length,
       warnings: warnings.length,
@@ -1160,6 +1162,10 @@ export function planTurn(input: PlanInput): TurnPlan {
     incoming.clear();
     for (const [k, v] of snap.incoming) incoming.set(k, v);
     for (const m of moves.splice(snap.moves)) captured.delete(m.to);
+    combined.clear();
+    for (const t of snap.combined) combined.add(t);
+    survivorsAt.clear();
+    for (const [k, v] of snap.survivorsAt) survivorsAt.set(k, v);
     rationale.length = snap.rationale;
     warnings.length = snap.warnings;
   };

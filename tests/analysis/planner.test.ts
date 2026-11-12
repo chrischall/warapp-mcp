@@ -1570,6 +1570,39 @@ describe('planTurn — multi-source attacks (R4)', () => {
       expect(deploySum(p)).toBe(5);
     });
 
+  it('a combined capture rolled back with its bonus completion is not reported in multiSourceCaptures', () => {
+    // Bonus 901 (+20) = {T3, T5}: completing it takes T3 (15) first by a combined
+    // attack (T2 14, then T1 11), then needs T5 (20 → 33 armies) from T1's 3 left
+    // + 5 income: the completion fails and is rolled back. Bonus 902 (+3) = {T6}
+    // then takes T6 (8 → 13) from T1 (under expand, pass 1 completes before any
+    // advance), so nothing re-takes T3 — it must not stay listed as a combined
+    // capture with no attack on it.
+    //   T1 ─ T3 ─ T2,  T1 ─ T5 ─ T2,  T1 ─ T6
+    const g2 = buildGraph(
+      makeMap(
+        [1, 2, 3, 5, 6],
+        [
+          [1, 3],
+          [2, 3],
+          [1, 5],
+          [2, 5],
+          [1, 6],
+        ],
+        [
+          [901, 20, [3, 5]],
+          [902, 3, [6]],
+        ],
+      ),
+    );
+    expect(armiesToTake(20, STD)).toBe(33);
+    expect(armiesToTake(8, STD)).toBe(13);
+    const s = board([mine(1, 15), mine(2, 15), neutral(3, 15), neutral(5, 20), neutral(6, 8)]);
+    const p = planTurn({ graph: g2, board: s, me: ME, income: 5, settings: STD, options: { goal: 'expand' } });
+    expect(attacks(p).filter((m) => m.to === 3)).toEqual([]);
+    expect(p.expected.captures).not.toContain(3);
+    expect(p.multiSourceCaptures).toEqual([]);
+  });
+
   it('combines three sources when two are not enough', () => {
     // 25 defenders: T2 and T4 each kill 8 (two sources leave 17, needing 28 > 19);
     // three leave 9, which T1 takes with 15 (14 movable + 1 deployed).
@@ -1888,6 +1921,11 @@ describe('planTurn — accounting property', () => {
         expect(n, ctx).toBeLessThanOrEqual(byId.get(from)!.armies! + dep - guard);
       }
       expect(p.expected.captures, ctx).toEqual([...captured].sort((a, b) => a - b));
+      // multiSourceCaptures lists exactly the targets hit by a combined capture
+      // (a rolled-back completion must not leave one behind).
+      expect(p.multiSourceCaptures, ctx).toEqual(
+        [...attacksOn].filter(([, sent]) => sent.length > 1).map(([t]) => t).sort((a, b) => a - b),
+      );
     }
   });
 });

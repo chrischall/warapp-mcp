@@ -426,9 +426,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .optional()
           .describe(
             'Armies every enemy is assumed to deploy next turn when judging threats. Default, per opponent: base ' +
-              'income plus the bonuses it visibly holds in full, at least 5 and at most 75% of its largest stack ' +
-              'next to you (5 each on an untouched opening board) — income in the fog is unseen, so raise it if ' +
-              'you know they earn more.',
+              'income plus the bonuses it visibly holds in full, at most 75% of its largest stack next to you but ' +
+              'never below the game\'s base income (at least 5); just that base income on an untouched opening ' +
+              'board — income in the fog is unseen, so raise it if you know they earn more.',
           ),
         view: viewArg(
           VIEWS,
