@@ -29,7 +29,8 @@
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income goes
 //     to the most exposed border (next to visible enemies, else the most fogged
 //     neighbours, else the first planned bonus's source, else my biggest stack).
-//  6. Idle armies on interior territories transfer one step toward the front
+//  6. Idle armies on interior territories transfer one step toward the front,
+//     only into territories held at the start of the turn
 //     (only when transfer-only orders are allowed).
 // Accounting: a territory's outgoing armies never exceed its armies after deploy
 // minus the guard. Armies never move twice and captured armies never attack, so
@@ -439,8 +440,10 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (n <= 0 || locked.has(t)) continue;
       const d = dist.get(t);
       if (d === undefined || d <= 1) continue;
+      // Only into a territory held at the start of the turn: a planned capture is
+      // not mine yet, and a "transfer" into it would execute as an attack.
       const step = neighborsOf(g, t)
-        .filter((x) => held.has(x) && (dist.get(x) ?? Infinity) < d)
+        .filter((x) => mineSet.has(x) && (dist.get(x) ?? Infinity) < d)
         .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
       if (step === undefined) continue;
       avail.set(t, 0);

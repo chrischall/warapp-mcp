@@ -314,6 +314,25 @@ describe('planTurn — targets', () => {
     expect(attacks(focused).map((m) => m.to)).toEqual([2]);
   });
 
+  it('never transfers into a territory that is only being captured this turn', () => {
+    // 1 (3 armies) and 2 (4) both border neutral 3; 3 borders fogged 4. 2 takes 3, and
+    // 1's only route forward is through 3 — which I do not own yet, so no transfer.
+    const tg = buildGraph(
+      makeMap(
+        [1, 2, 3, 4],
+        [
+          [1, 3],
+          [2, 3],
+          [3, 4],
+        ],
+        [],
+      ),
+    );
+    const p = planTurn({ graph: tg, board: board([mine(1, 3), mine(2, 4), neutral(3, 2), fogged(4)]), me: ME, income: 0, settings: STD });
+    expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[2, 3]]);
+    expect(p.moves.filter((m) => m.kind === 'transfer')).toEqual([]);
+  });
+
   it('never completes a negative-value bonus unless focused', () => {
     // 2 is the lone member of a -1 bonus: taking it would lower income.
     const ng = buildGraph(makeMap([1, 2], [[1, 2]], [[501, -1, [2]]]));
