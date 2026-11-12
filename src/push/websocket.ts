@@ -42,7 +42,12 @@ export type SetTimer = (ms: number, fn: () => void) => () => void;
 export const defaultWebSocketFactory: WebSocketFactory = (url, init) => {
   const Ctor = (globalThis as { WebSocket?: new (url: string, opts: unknown) => WebSocketLike }).WebSocket;
   if (!Ctor) throw new Error('This Node.js has no built-in WebSocket.');
-  return new Ctor(url, init);
+  // The host is the fixed literal wss://war.app (see websocketUrl), so the
+  // socket needs no netguard address pinning. Binary frames arrive as
+  // ArrayBuffer (Node defaults to Blob, which dataText cannot read).
+  const ws = new Ctor(url, init) as WebSocketLike & { binaryType?: string };
+  ws.binaryType = 'arraybuffer';
+  return ws;
 };
 
 export const realSetTimer: SetTimer = (ms, fn) => {
@@ -86,7 +91,7 @@ export function websocketUrl(sid: string): string {
  * still on the direct leg); otherwise the push stays on xhr-polling.
  */
 export function pushWebSocketLeg(
-  bridge: { status(): Pick<DirectFirstStatus, 'transport' | 'mode'> },
+  bridge: { status(): Pick<DirectFirstStatus, 'transport'> },
   readSession: () => Promise<Session | null>,
   seams: Pick<WebSocketLeg, 'fetch' | 'open'> = {},
 ): WebSocketLeg {
