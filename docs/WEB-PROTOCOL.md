@@ -95,6 +95,8 @@ string email                  the signed-in account's email
 | 79 | GetTerritoryPicks | |
 | 80 | UnCommit | |
 | 81 | GetTurns | |
+| 238 | Subscribe | push channel only, **no auth**; params: bool true, list of topic strings, string null; reply dict topic→int32 error |
+| 241 | GameUpdated | server push, **no auth**; msgNum `0x80000000`, 61 bytes, starts with the game id; carries no detail — re-read GameFeed |
 
 Server error codes seen in the client: 11 = deployed armies ≠ income, 208 = game already
 advanced to the next turn, 88 = game deleted, 483 = game started without you.
@@ -216,6 +218,38 @@ bridged POSTs time out while GETs still work; reloading the tab clears it.
   marker strings, two optional "last seen" dicts. Reply: the updated message list
   (`uv` objects). Server errors the client names: 36 rate-limited, 33 too long, 88 game
   deleted, 333 game archived. A send reaches other people, so it is always confirm-gated.
+
+## Push channel (socket.io)
+
+Turn notifications arrive on war.app's **socket.io v0.9** channel over **xhr-polling** (the other
+advertised transport is `websocket`; xhr-polling is plain HTTP, so it rides the same browser
+bridge). Decoded from `src/push/socketio.ts` and verified live.
+
+**Handshake.** `GET https://war.app/socket.io/1/?t=<ms>` → a colon-joined
+`sid:heartbeat:close:transports` (heartbeat/close in seconds; `15`/`10` observed). Then open a
+long poll `GET …/socket.io/1/xhr-polling/<sid>?t=<ms>`. **The first poll of a session must return
+the connect packet `1::` before anything is POSTed** — a POST before the connect is answered is
+HTTP 400.
+
+**Packets.** A poll body is a single packet, or several framed as `�<len>�<packet>` (delimiter
+U+FFFD; `<len>` is the packet's character length). Types: `0` disconnect, `1` / `1::` connect,
+`2::` heartbeat (answered with a POST of `2::`), `3:::<data>` message, `8` noop. A message
+packet's `<data>` is a web-client frame (the same framing as `/Services`) as **uppercase hex**.
+
+**Send.** `POST …/socket.io/1/xhr-polling/<sid>?t=<ms>`, content-type
+`text/plain;charset=UTF-8`, body `3:::<UPPERCASE HEX FRAME>`.
+
+**Subscribe (method 238).** A message frame with the usual `MessageExtrasUp` but **no auth block**
+(the poll is already authenticated by the browser session). Params: `bool true`, a list of topic
+strings, then a trailing `string null`. A game's topic is `Game.<gameId>`. The reply is a frame
+(method 238) whose body is `bool present` then a dict `topic → int32 error`; an absent or empty
+dict means every topic was accepted.
+
+**GameUpdated (method 241).** The server push: a request-shaped frame (carries `MessageExtrasUp`,
+no auth) with message number `0x80000000`, 61 bytes, that **starts with the game id and carries no
+other detail**. On receipt, re-read the game from GameFeed — it arrives within ~1 s of the turn
+resolving. `src/push/listener.ts` holds one socket per process, (re)subscribes to every watched
+`Game.<id>` on each connect, answers heartbeats, and reconnects with backoff.
 
 ## Data handling
 
