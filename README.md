@@ -166,8 +166,11 @@ and chat text comes back marked as untrusted third-party content.
    opponent whose every territory is visible and borders yours is attacked everywhere at once
    when that eliminates it (or takes most of it) even if it deploys its whole estimated income
    on each ("Finish off player …"). Any such opponent is tried, strong or weak, fewest
-   territories first; holds worth paying for against other players are funded first, and with
-   fog anywhere on the board the elimination is hedged (it may hold unseen territories). A
+   territories first; holds worth paying for against other players, and against what a
+   "Pressure" plan leaves the opponent, are funded first (pressure is dropped when they cannot
+   be). An opponent next to the fog is not attempted (a warning says so only when its visible
+   territories could all fall), and with fog anywhere else on the board the elimination is
+   hedged (it may hold unseen territories). A
    border just taken last turn from a weak opponent (fewer territories, smaller deploy) is never
    conceded. A border too costly to hold for
    what it protects is `conceded`: nothing is deployed there (unless every territory you hold

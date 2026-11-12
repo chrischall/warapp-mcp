@@ -240,6 +240,36 @@ describe('finishing off a weak opponent (#45)', () => {
     expect(() => validate(p, live, 22, map)).not.toThrow();
   });
 
+  it('does not pressure at the cost of a hold that faces what is left of the opponent', () => {
+    // 10 (4 armies) is the opponent's third territory and borders my 2 (Home, +5) only:
+    // 3 movable + ~6 deploy = 9 threatens 2. Taking 5 and 6 (11 + 11 deploys) would leave
+    // nothing for that hold, so the +5 border is not thrown away for two captures.
+    const map = mapOf(
+      [...EDGES, [2, 10]],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      [{ id: 501, name: 'Home', value: 5, territoryIds: [1, 2], bonusIds: [] }, BONUSES[1]!],
+    );
+    const live = [...ENDGAME, t(10, THEM, 4)];
+    for (const goal of ['balanced', 'defend'] as const) {
+      const p = plan(live, 22, { options: { goal } }, map);
+      expect(p.conceded).not.toContain(2);
+      expect(p.warnings.join('\n')).not.toMatch(/T2 \(#2\) cannot be held/);
+      expect(armiesToTake(2 + deployedTo(p, 2) - outOf(p, 2), STD)!).toBeGreaterThan(9);
+      expect(deploySum(p)).toBe(22);
+      expect(() => validate(p, live, 22, map)).not.toThrow();
+    }
+    // With 4 more income both the hold and the two captures fit: pressure, and 2 holds.
+    for (const goal of ['balanced', 'defend'] as const) {
+      const p = plan(live, 26, { options: { goal } }, map);
+      expect(p.rationale.join('\n')).toMatch(/Pressure player 22567833: take 2 of its 3 territories/);
+      expect(p.expected.captures).toEqual(expect.arrayContaining([5, 6]));
+      expect(p.conceded).not.toContain(2);
+      expect(armiesToTake(2 + deployedTo(p, 2) - outOf(p, 2), STD)!).toBeGreaterThan(9);
+      expect(deploySum(p)).toBe(26);
+      expect(() => validate(p, live, 26, map)).not.toThrow();
+    }
+  });
+
   it('does not pressure when an attacking border still faces what is left of the opponent', () => {
     // 10 (20 armies) also borders my 3: after 3 attacks 5, 3 would face 10 alone.
     const map = mapOf([...EDGES, [3, 10]], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], BONUSES);
@@ -260,5 +290,24 @@ describe('finishing off a weak opponent (#45)', () => {
     expect(p.rationale.join('\n')).toMatch(/T3 \(#3\) was captured from player 22567833 last turn/);
     // Without the history it is conceded like 4.
     expect(plan(ENDGAME, 8).conceded).toEqual([3, 4]);
+  });
+
+  it('says a recently captured border is held only when its hold is funded', () => {
+    const previous = toBoard([...ENDGAME.filter((x) => x.territoryId !== 3), t(3, THEM, 4)]);
+    const recent = /T3 \(#3\) was captured from player 22567833 last turn/;
+    // defend, too poor to hold it (12 next to it: 11 movable + ~6 deploy = 17): conceded,
+    // never also called held.
+    const heavy = ENDGAME.map((x) => (x.territoryId === 5 ? { ...x, armies: 12 } : x));
+    const poor = plan(heavy, 7, { previousBoard: previous, options: { goal: 'defend' } });
+    expect(poor.warnings.join('\n')).toMatch(/T3 \(#3\) cannot be held with the 7 armies left/);
+    expect(poor.conceded).toContain(3);
+    expect(poor.rationale.join('\n')).not.toMatch(recent);
+    // defend, funded: held, and the line says why it was not conceded economically.
+    const held = plan(ENDGAME, 8, { previousBoard: previous, options: { goal: 'defend' } });
+    expect(deployedTo(held, 3)).toBeGreaterThanOrEqual(2);
+    expect(held.rationale.join('\n')).toMatch(/last turn, and that opponent is weak: it is not conceded economically/);
+    // expand reserves nothing for it: no line claiming it is held.
+    const expand = plan(ENDGAME, 8, { previousBoard: previous, options: { goal: 'expand' } });
+    expect(expand.rationale.join('\n')).not.toMatch(recent);
   });
 });

@@ -35,16 +35,19 @@
 //     a source keeps what holds it there, and the deploys a hold on any other border
 //     needs are reserved out of the budget (in triage order) while the captures are
 //     sized. Kept when it eliminates the opponent, or takes most (over half) of its
-//     territories with no attacking border facing the rest; else rolled back (a kept
-//     pressure plan leaves the untaken territories as they were). An opponent bordering
+//     territories with no attacking border facing the rest and every hold worth paying
+//     for against the rest funded (a first attempt that leaves one unfunded is retried
+//     once with those holds reserved and the untaken territories left alone); else
+//     rolled back (a kept pressure plan leaves the untaken territories as they were),
+//     and the reservations are released for triage to deploy. An opponent bordering
 //     the fog is never attempted (a warning says so when its visible territories could
 //     all fall); with fog anywhere else, the elimination is hedged ("if it holds nothing
 //     in the fog") and a warning says it may hold unseen territories. Borders next to
 //     the captures are then re-judged without them, and triage judges each border by
 //     the armies that stay on it. A border held last turn (per `previousBoard`) by a
 //     weak opponent (fully visible, fewer territories than mine, deploy below my
-//     income) that threatens it now is never conceded economically; under `balanced`
-//     its hold goes first.
+//     income) that threatens it now is never conceded economically (the rationale says
+//     so once its hold is deployed); under `balanced` its hold goes first.
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
 //     of my complete bonuses containing it, plus incomplete bonuses containing it
 //     that I would lose all access to without it, plus the per-territory
@@ -825,7 +828,15 @@ export function planTurn(input: PlanInput): TurnPlan {
       `${label(t.id)} cannot be held with the ${left} armies left to deploy (needs ${t.holdCost}, protects +${t.value}): conceded`,
     );
   };
+  /** Said only once its hold is actually deployed. */
+  const noteRecent = (t: Threatened) => {
+    if (t.recentFrom !== undefined)
+      rationale.push(
+        `${label(t.id)} was captured from player ${t.recentFrom} last turn, and that opponent is weak: it is not conceded economically (conceding hands it back for free).`,
+      );
+  };
   const hold = (t: Threatened) => {
+    noteRecent(t);
     deploy(t.id, t.holdCost);
     locked.add(t.id);
     rationale.push(
@@ -838,11 +849,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     let triageBudget = budget;
     for (const t of threatened) {
       const left = Math.min(acting ? budget : triageBudget, local ? roomAt(t.id) : Infinity);
-      if (t.recentFrom !== undefined)
-        rationale.push(
-          `${label(t.id)} was captured from player ${t.recentFrom} last turn, and that opponent is weak: it is held, not conceded (conceding hands it back for free).`,
-        );
-      else if (t.holdCost > CONCEDE_FACTOR * t.worth) {
+      if (t.recentFrom === undefined && t.holdCost > CONCEDE_FACTOR * t.worth) {
         conceded.add(t.id);
         warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
         continue;
@@ -1364,9 +1371,10 @@ export function planTurn(input: PlanInput): TurnPlan {
   // fewest territories first — plan "attack every one of its territories this turn", each
   // target assumed to receive that opponent's full deploy estimate (the worst case). Kept
   // when it eliminates the opponent, or takes most of what it holds with every attacking
-  // border left facing none of the rest. Holds worth paying for against other players
-  // come first: an attacking border keeps what holds it, and the deploys a hold elsewhere
-  // needs are reserved out of the budget.
+  // border left facing none of the rest and every hold worth paying for against the rest
+  // funded. Holds worth paying for against other players come first: an attacking border
+  // keeps what holds it, and the deploys a hold elsewhere needs are reserved out of the
+  // budget (and out of its Local Deployment pool).
   /** Visible enemy territories by owner, sorted. */
   const ownedBy = new Map<number, number[]>();
   for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
@@ -1381,9 +1389,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     const st = state.get(n);
     return !st || st.owner.kind === 'unknown' || st.armies === null;
   };
-  /** Its territories with a fogged neighbour: it may hold more in the fog. */
   /** Anything on the board hidden: an opponent may hold territories there no visible one borders. */
   const fogAnywhere = [...g.territoryById.keys()].some(hidden);
+  /** Its territories with a fogged neighbour: it may hold more in the fog. */
   const fogEdge = (p: number) => ownedBy.get(p)!.filter((t) => neighborsOf(g, t).some(hidden));
   const inReach = (p: number) => ownedBy.get(p)!.every((t) => neighborsOf(g, t).some((n) => mineSet.has(n)));
   /** Fully visible, fewer territories than mine, and a deploy below my income. */
@@ -1404,10 +1412,12 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
   /**
    * Plan every capture of player `p`'s territories against the worst case. Committed
-   * (true) when it eliminates `p` or takes most of it with the attacking borders freed;
-   * otherwise rolled back. `probe`: always rolled back, true when all would fall.
+   * (true) when it eliminates `p` or takes most of it with the attacking borders freed
+   * and every hold worth paying for against what it keeps funded; otherwise rolled back.
+   * `probe`: always rolled back, true when all would fall. `stay`: `p`'s territories a
+   * previous attempt left standing, whose threat to my borders is reserved for up front.
    */
-  const finishOff = (p: number, probe: boolean): boolean => {
+  const finishOff = (p: number, probe: boolean, stay: ReadonlySet<number> = new Set()): boolean => {
     const ts = ownedBy.get(p)!;
     const deployP = deployOf(p);
     const snap = {
@@ -1458,51 +1468,83 @@ export function planTurn(input: PlanInput): TurnPlan {
       worstCase.set(t, defenders);
       targets.set(t, { id: t, cost, enemy: true, sources: neighborsOf(g, t).filter((n) => mineSet.has(n)) });
     }
-    // Holds against other players worth paying for (rule 1a's CONCEDE_FACTOR test) come
-    // first. A source keeps what holds it there; a border that attacks nothing has the
-    // deploys its hold needs reserved out of the budget (in triage order, while it lasts).
-    const sources = new Set(ts.flatMap((t) => targets.get(t)!.sources));
+    // Holds against other players (and against what `p` keeps, `stay`) worth paying for
+    // (rule 1a's CONCEDE_FACTOR test) come first. A source keeps what holds it there; a
+    // border that attacks nothing has the deploys its hold needs reserved (in triage
+    // order, while they last) by deploying them there for now, so a Local Deployment
+    // pool cannot spend that room on a capture either.
+    // A retry does not attack what the first attempt left standing: it fell short with more.
+    const tried = ts.filter((t) => !stay.has(t));
+    const sources = new Set(tried.flatMap((t) => targets.get(t)!.sources));
     const keepAt = new Map<number, number>();
     const elsewhere: { x: number; cost: number; worth: number }[] = [];
-    for (const x of mine) {
-      const rest = borderAt(x, (n) => ownerOf(n) === p);
-      if (!rest) continue;
+    /** A hold's cost on my `x` against the threats left once `gone` fall, or null when not worth paying. */
+    const holdCostAt = (x: number, gone: (n: number) => boolean) => {
+      const rest = borderAt(x, gone);
+      if (!rest) return null;
       const need = holdArmies(rest.threat);
       const cost = Math.max(0, need - armiesOf(x));
       const worth = valueOf(x) + armiesOf(x) / PAYBACK_TURNS;
-      if (cost > CONCEDE_FACTOR * worth) continue;
+      return cost > CONCEDE_FACTOR * worth ? null : { need, cost, worth };
+    };
+    for (const x of mine) {
+      const h = holdCostAt(x, (n) => ownerOf(n) === p && !stay.has(n));
+      if (!h) continue;
+      const { need, cost, worth } = h;
       if (sources.has(x)) {
         const keep = Math.max(0, need - guard);
         keepAt.set(x, keep);
         avail.set(x, avail.get(x)! - keep);
       } else if (cost > 0) elsewhere.push({ x, cost, worth });
     }
-    let reserved = 0;
+    /** The holds reserved, by border. */
+    const funded = new Map<number, number>();
     elsewhere.sort((a, b) => b.worth / b.cost - a.worth / a.cost || a.cost - b.cost || a.x - b.x);
     for (const h of elsewhere) {
-      const room = local ? Math.min(budget, roomAt(h.x)) : budget;
-      if (h.cost > room) continue;
-      budget -= h.cost;
-      reserved += h.cost;
+      if (h.cost > roomAt(h.x)) continue;
+      deploy(h.x, h.cost);
+      funded.set(h.x, h.cost);
     }
     const reason = `takes player ${p}'s territory, sized for its full ~${deployP} deploy landing there`;
-    const order = [...ts].sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
+    const order = [...tried].sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
     const taken = order.filter((t) => tryCapture(t, reason));
     for (const [x, k] of keepAt) avail.set(x, avail.get(x)! + k);
-    budget += reserved;
+    // Release the reservations: the triage (or the greedy step) deploys the holds.
+    for (const [x, k] of funded) {
+      const d = deployed.get(x)! - k;
+      if (d) deployed.set(x, d);
+      else deployed.delete(x);
+      avail.set(x, avail.get(x)! - k);
+      budget += k;
+    }
     const all = taken.length === ts.length;
     if (probe) {
       rollback();
       return all;
     }
     const left = ts.filter((t) => !captured.has(t));
-    const freed = moves
-      .slice(snap.moves)
-      .filter((m) => m.kind === 'attack')
-      .every((m) => !neighborsOf(g, m.from).some((n) => left.includes(n)));
+    const attackers = new Set(
+      moves
+        .slice(snap.moves)
+        .filter((m) => m.kind === 'attack')
+        .map((m) => m.from),
+    );
+    const freed = [...attackers].every((x) => !neighborsOf(g, x).some((n) => left.includes(n)));
     if (!taken.length || !(all || (taken.length * 2 > ts.length && freed))) {
       rollback();
       return false;
+    }
+    // Pressure leaves `left` standing: a border that attacks nothing but faces it must
+    // still have its hold funded, or the captures cost a border worth holding.
+    const unfunded = mine.filter((x) => {
+      if (attackers.has(x) || !neighborsOf(g, x).some((n) => left.includes(n))) return false;
+      const h = holdCostAt(x, (n) => captured.has(n));
+      return h !== null && h.cost > (funded.get(x) ?? 0);
+    });
+    if (unfunded.length) {
+      rollback();
+      // Once more with those holds reserved first, unless this attempt already did.
+      return left.every((t) => stay.has(t)) ? false : finishOff(p, false, new Set(left));
     }
     // The territories left stay ordinary (non-worst-case) targets, as before this attempt.
     for (const t of left) {
@@ -1658,6 +1700,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const o = breakOption(n);
       if (t.holdCost + o.cost > spareAt(t.id)) return false;
       const before = budget;
+      noteRecent(t);
       deploy(t.id, t.holdCost);
       if (!tryCapture(n, breakReason(b), { from: t.id, keep: avail.get(t.id)! })) {
         // Refused (R3: it would complete a bonus I cannot hold next turn): just hold.
