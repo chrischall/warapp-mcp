@@ -262,7 +262,15 @@ export interface CreateDirectFirstBridgeOptions {
   directFetch?: DirectFetch;
   /** Where the switch notice goes (default stderr; never prints the token). */
   log?: (message: string) => void;
+  /** Test seam: the clock (ms) used to throttle the relink check (default `Date.now`). */
+  now?: () => number;
 }
+
+/**
+ * Behind a session wall, the session file is re-read (to notice a relink by
+ * another process) at most once per this many ms, not on every bridged call.
+ */
+export const RELINK_CHECK_MS = 5_000;
 
 /** Why the router left the direct leg: a session problem (lifted by a relink) or an edge block (sticky). */
 type Wall = { kind: 'session'; capturedAt: string | null } | { kind: 'edge' };
@@ -282,9 +290,11 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
   const mode = opts.mode ?? readTransportMode(TRANSPORT_ENV, opts.env ? { env: opts.env } : {});
   const direct = new DirectBridge(opts.store, opts.directFetch);
   const log = opts.log ?? ((m: string) => console.error(m));
+  const now = opts.now ?? Date.now;
 
   let wall: Wall | null = null;
   let stale = false;
+  let lastRelinkCheck = Number.NEGATIVE_INFINITY;
 
   const onFallback = ({ error }: { error: unknown }): void => {
     const next: Wall =
@@ -331,6 +341,9 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
   /** Behind a session wall: has a DIFFERENT session been linked since (e.g. by another process)? */
   const relinkedSinceWall = async (): Promise<boolean> => {
     if (wall?.kind !== 'session') return false;
+    const t = now();
+    if (t - lastRelinkCheck < RELINK_CHECK_MS) return false;
+    lastRelinkCheck = t;
     const sess = await opts.store.read();
     return sess !== null && sess.capturedAt !== wall.capturedAt;
   };
@@ -347,7 +360,8 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
       if (leg === direct) {
         try {
           const res = await direct.fetch(init, ctx.signal);
-          stale = false;
+          // Only a 200 proves the session works; a 5xx says nothing about it.
+          if (res.status === 200) stale = false;
           return res;
         } catch (err) {
           if (err instanceof SessionExpiredError) {

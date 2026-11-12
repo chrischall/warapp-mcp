@@ -7,6 +7,7 @@ import {
   DirectBridge,
   looksLikeHexFrame,
   looksSignedOut,
+  RELINK_CHECK_MS,
   SessionExpiredError,
   SessionNotLinkedError,
   toDirectResult,
@@ -374,6 +375,53 @@ describe('createDirectFirstBridge router', () => {
     signedIn = true;
     await (await bridge.ready()).fetch(servicesPost);
     expect(bridge.sessionStale()).toBe(false);
+  });
+
+  it('a 5xx after a signed-out reply does not clear the stale flag (it proves nothing about the session)', async () => {
+    let reply = { status: 200, body: '<html>signed out</html>', url: 'https://war.app/Services' };
+    const stub = stubFetch(() => reply);
+    const bridge = createDirectFirstBridge({
+      store: linkedStore(),
+      makeBridge: () => fakeFetchproxy().bridge,
+      mode: 'direct',
+      directFetch: stub.fn,
+    });
+    await expect((await bridge.ready()).fetch(servicesPost)).rejects.toBeInstanceOf(SessionExpiredError);
+    expect(bridge.sessionStale()).toBe(true);
+    reply = { status: 502, body: '<html>Bad Gateway</html>', url: 'https://war.app/Services' };
+    const res = await (await bridge.ready()).fetch(servicesPost);
+    expect(res.status).toBe(502);
+    expect(bridge.sessionStale()).toBe(true);
+  });
+
+  it('behind a session wall, re-reads the session file at most once per RELINK_CHECK_MS', async () => {
+    let reads = 0;
+    const store: SessionStore = {
+      read: async () => {
+        reads++;
+        return null;
+      },
+    };
+    let t = 1_000_000;
+    const fp = fakeFetchproxy();
+    const bridge = createDirectFirstBridge({
+      store,
+      makeBridge: () => fp.bridge,
+      mode: 'auto',
+      directFetch: stubFetch({ status: 200, body: HEX_FRAME, url: 'https://war.app/Services' }).fn,
+      log: () => {},
+      now: () => t,
+    });
+    await (await bridge.ready()).fetch(servicesPost); // no session: walled onto the bridge
+    const afterWall = reads;
+    await (await bridge.ready()).fetch(servicesPost); // first check behind the wall
+    await (await bridge.ready()).fetch(servicesPost); // throttled
+    await (await bridge.ready()).fetch(servicesPost); // throttled
+    expect(reads - afterWall).toBe(1);
+    t += RELINK_CHECK_MS;
+    await (await bridge.ready()).fetch(servicesPost);
+    expect(reads - afterWall).toBe(2);
+    expect(fp.calls).toHaveLength(5);
   });
 
   it('after a relink (sessionLinked), auto mode returns to the direct leg and clears the stale flag', async () => {
