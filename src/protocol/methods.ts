@@ -16,6 +16,8 @@ export const Method = {
   GetTerritoryPicks: 79,
   UnCommit: 80,
   GetTurns: 81,
+  Subscribe: 238,
+  GameUpdated: 241,
 } as const;
 
 export type MethodName = keyof typeof Method;
@@ -65,6 +67,34 @@ export function writeSendTerritoryPicksParams(w: Writer, gameId: number, territo
 export function readTerritoryPicks(body: Reader): number[] {
   if (!body.bool()) return [];
   return body.list((r) => r.int32()) ?? [];
+}
+
+/**
+ * Subscribe(topics) — sent on the push socket, not through `/Services`, and
+ * with NO auth block (verified live): a present list of topic strings
+ * (`Game.<id>`), then a null string.
+ */
+export function writeSubscribeParams(w: Writer, topics: readonly string[]): void {
+  w.bool(true)
+    .list(topics, (ww, t) => ww.string(t))
+    .string(null);
+}
+
+/** The push topic for a game's updates. */
+export const gameTopic = (gameId: number): string => `Game.${gameId}`;
+
+/**
+ * A Subscribe result: present flag, then a dict topic → error code
+ * (EnumSerialization_ErrorTypes, int32). Absent or null means every topic
+ * was accepted; an entry is a refused topic.
+ */
+export function readSubscribeResult(body: Reader): Map<string, number> {
+  if (!body.bool()) return new Map();
+  const d = body.dict(
+    (r) => r.string() ?? '',
+    (r) => r.int32(),
+  );
+  return d ?? new Map();
 }
 
 /** SendChat channel for the whole game (any other value is a team channel). */

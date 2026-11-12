@@ -58,6 +58,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   submitted list.
 - **Chat** → `warapp_get_chat` reads it (GameFeed); `warapp_send_chat` posts publicly or
   privately to one player. Confirm-gated — a message reaches other players and cannot be unsent.
+- **"Tell me when it's my turn"** → `warapp_wait_for_turn` with the game ids to watch: it
+  returns as soon as one is waiting on the user (or at the timeout), woken by war.app's push
+  notifications. `warapp_recent_events` lists the pushes seen so far.
 - **"How far is X from Y?"** → `warapp_plan_route` with `from` / `to` as a territory id,
   name, or unique part of a name. Map-only: it ignores who holds what.
 

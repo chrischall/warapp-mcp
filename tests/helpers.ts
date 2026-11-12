@@ -7,6 +7,7 @@ import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { registerAllTools } from '../src/tools/index.js';
 import { fakeWarapp, mockWarappBridge, type MockBridgeServer, type WarappExchange } from './bridge-mock.js';
 import { LIVE_BUNDLE } from './protocol/live-bundle.js';
+import { withSocket, type FakeSocketIo } from './push/fake-socket.js';
 
 export const EMAIL = 'player@example.com';
 export const TOKEN = 'deadbeefcafef00d';
@@ -56,12 +57,12 @@ const NO_RESULT: WarappReply = () => ({ body: (w) => w.bool(false) });
  * network.
  */
 export async function liveHarness(
-  opts: { feed?: unknown[]; warapp?: WarappReply; pages?: Record<string, string> } = {},
+  opts: { feed?: unknown[]; warapp?: WarappReply; pages?: Record<string, string>; socket?: FakeSocketIo } = {},
 ): Promise<Harness> {
   const feed = opts.feed?.length ? opts.feed : [lobbyFixture()];
   const { calls, fetchImpl } = stubFetch(...feed);
   const fake = fakeWarapp(opts.warapp ?? NO_RESULT, opts.pages);
-  const { bridge, mock } = mockWarappBridge(fake.handler);
+  const { bridge, mock } = mockWarappBridge(opts.socket ? withSocket(opts.socket, fake.handler) : fake.handler);
   const bundle = new WarappBundle(LIVE_BUNDLE, 'test');
   const harness = await createTestHarness((s) =>
     registerAllTools(s, {

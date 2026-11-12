@@ -185,3 +185,25 @@ describe('card play orders', () => {
     expect(() => hex((w) => writeCardPlayOrder(w, { card: 'Blockade', cardId: card, playerId: 777 }))).toThrow(/target/);
   });
 });
+
+describe('Subscribe (push socket)', () => {
+  it('writes a present topic list then a null string', async () => {
+    const { writeSubscribeParams, gameTopic } = await import('../../src/protocol/methods.js');
+    const w = new Writer();
+    writeSubscribeParams(w, [gameTopic(42)]);
+    // 01 present, count 1, string "Game.42" (present, len 7), null string
+    expect(toHex(w.bytes())).toBe('0101000000' + '0107' + '47616D652E3432' + '00');
+  });
+
+  it('reads the refused-topic dict; absent or null is "all accepted"', async () => {
+    const { readSubscribeResult } = await import('../../src/protocol/methods.js');
+    const w = new Writer().bool(true).dict(
+      new Map([['Game.7', 12]]),
+      (ww, k) => ww.string(k),
+      (ww, v) => ww.int32(v),
+    );
+    expect([...readSubscribeResult(new Reader(w.bytes()))]).toEqual([['Game.7', 12]]);
+    expect(readSubscribeResult(new Reader(new Writer().bool(false).bytes())).size).toBe(0);
+    expect(readSubscribeResult(new Reader(new Writer().bool(true).int32(-1).bytes())).size).toBe(0);
+  });
+});

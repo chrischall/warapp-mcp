@@ -23,6 +23,8 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_submit_picks: 'change',
   warapp_submit_turn: 'change',
   warapp_send_chat: 'send',
+  warapp_wait_for_turn: 'whats-new',
+  warapp_recent_events: 'lookup',
 };
 
 interface Tool {

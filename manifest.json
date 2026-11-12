@@ -114,6 +114,14 @@
     {
       "name": "warapp_send_chat",
       "description": "Post a game chat message, public or private (confirm-gated)"
+    },
+    {
+      "name": "warapp_wait_for_turn",
+      "description": "Wait until one of your games is waiting on you, woken by war.app's push notifications"
+    },
+    {
+      "name": "warapp_recent_events",
+      "description": "List the game-update pushes this server has received"
     }
   ]
 }
