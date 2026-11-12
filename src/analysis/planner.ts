@@ -6,6 +6,9 @@
 //  1. Defence. A visible enemy next to my territory T threatens it when
 //     `armiesToTake(armies(T)) ≤ E + enemyDeploy`, where E is that player's
 //     movable armies (minus the guard) summed over its territories bordering T.
+//     enemyDeploy defaults to max(5, round(0.75 × the largest visible enemy
+//     stack)): an opponent's income is unseen, and a big visible stack implies
+//     a big income (live, 13 showing next door broke a 12-army border).
 //     Always a warning; under `goal: 'defend'` the plan first deploys the fewest
 //     armies that make T hold, and T then makes no moves.
 //  2. Targets: visible neutrals adjacent to a territory I held at the start of
@@ -47,6 +50,10 @@ import { analyzePlayer, DEFAULT_BASE_INCOME } from './player.js';
 export const PAYBACK_TURNS = 10;
 /** …or when one remaining territory alone costs more than this many times its value (a wasteland). */
 export const WASTELAND_FACTOR = 5;
+/** Floor of the default enemy deploy estimate (a player's base income). */
+export const MIN_ENEMY_DEPLOY = DEFAULT_BASE_INCOME;
+/** The default estimate is this share of the largest visible enemy stack. */
+export const ENEMY_STACK_SHARE = 0.75;
 
 export type PlanGoal = 'expand' | 'complete-bonus' | 'defend';
 
@@ -70,7 +77,7 @@ export interface PlanOptions {
   focusBonusIds?: number[];
   /** Income held back from captures (still deployed, as leftover). */
   reserve?: number;
-  /** Assumed enemy deploy next turn when judging threats (default 5). */
+  /** Assumed enemy deploy next turn when judging threats (default {@link defaultEnemyDeploy}). */
   enemyDeploy?: number;
 }
 
@@ -111,6 +118,8 @@ export interface TurnPlan {
   };
   warnings: string[];
   rationale: string[];
+  /** The enemy deploy the threat checks assumed. */
+  enemyDeploy: number;
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -130,6 +139,21 @@ export function captureCost(defenders: number, settings: PlannerSettings = {}): 
   if (base === null) return null;
   const luck = luckFraction(settings.luckModifier);
   return luck > 0 ? Math.ceil(base / (1 - luck)) : base;
+}
+
+function largestEnemyStack(board: BoardState, me: number): number {
+  let max = 0;
+  for (const t of board.territories)
+    if (t.owner.kind === 'player' && t.owner.playerId !== me && t.armies !== null) max = Math.max(max, t.armies);
+  return max;
+}
+
+/**
+ * Default enemy deploy estimate: max(5, round(0.75 × the largest visible enemy
+ * stack)). Unseen income is unknown; a big visible stack implies a big one.
+ */
+export function defaultEnemyDeploy(board: BoardState, me: number): number {
+  return Math.max(MIN_ENEMY_DEPLOY, Math.round(ENEMY_STACK_SHARE * largestEnemyStack(board, me)));
 }
 
 /** This turn's income from the existing income code (base + per-territory + held bonuses). */
@@ -162,7 +186,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   const focus = new Set(opts.focusBonusIds ?? []);
   const income = Math.max(0, Math.floor(input.income));
   const reserve = Math.min(income, Math.max(0, Math.floor(opts.reserve ?? 0)));
-  const enemyDeploy = Math.max(0, opts.enemyDeploy ?? DEFAULT_BASE_INCOME);
+  const custom = opts.enemyDeploy !== undefined;
+  const enemyDeploy = custom ? Math.max(0, Math.floor(opts.enemyDeploy!)) : defaultEnemyDeploy(board, me);
   const guard = (s.oneArmyStandsGuard ?? true) ? 1 : 0;
   const rates = {
     offensiveKillRate: s.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
@@ -202,6 +227,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       expected: { captures: [], bonusesCompleted: [], nextIncome: income },
       warnings,
       rationale,
+      enemyDeploy,
     };
   }
 
@@ -221,6 +247,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
 
   // ---- 1. defence ----
+  let estimateNoted = false;
   for (const t of mine) {
     const byPlayer = new Map<number, number>();
     for (const n of neighborsOf(g, t)) {
@@ -229,6 +256,14 @@ export function planTurn(input: PlanInput): TurnPlan {
       byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard));
     }
     if (!byPlayer.size) continue;
+    if (!estimateNoted) {
+      estimateNoted = true;
+      warnings.push(
+        custom
+          ? `Enemy deploy estimate: threat checks assume ~${enemyDeploy} (your estimate); enemy income is unknown, so they could deploy more.`
+          : `Enemy deploy estimate: threat checks assume ~${enemyDeploy} (max(${MIN_ENEMY_DEPLOY}, ${ENEMY_STACK_SHARE * 100}% of the largest visible enemy stack (${largestEnemyStack(board, me)}))); enemy income is unknown, so they could deploy more.`,
+      );
+    }
     const [player, e] = [...byPlayer].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]!;
     const threat = e + enemyDeploy;
     const have = armiesOf(t);
@@ -473,5 +508,6 @@ export function planTurn(input: PlanInput): TurnPlan {
     expected: { captures: [...captured].sort(byNum), bonusesCompleted: completed, nextIncome: income + gained },
     warnings,
     rationale,
+    enemyDeploy,
   };
 }

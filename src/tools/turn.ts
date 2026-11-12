@@ -39,6 +39,7 @@ const GOALS = ['expand', 'complete-bonus', 'defend'] as const satisfies readonly
 export const TURN_PHASE_STATE = 'Playing';
 const MAX_ORDERS = 500;
 const MAX_FOCUS = 50;
+const MAX_ENEMY_DEPLOY = 10_000;
 
 const territoryRef = z.union([z.string(), z.number()]);
 const armiesArg = z.coerce.number().int().min(1);
@@ -347,7 +348,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       description: untrustedDescription(
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
           "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
-          'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. It reports ' +
+          'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. Threat ' +
+          'checks assume each enemy deploys `enemy_deploy` (default from the largest visible enemy stack). It reports ' +
           'your cards and whether you must play one (hand at the hold limit), and plays Reinforcement cards (their ' +
           'armies are planned) and, when a play is required, Order Priority or Order Delay — never Blockade. Its ' +
           '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Goal "expand" ' +
@@ -374,13 +376,23 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .min(0)
           .optional()
           .describe('Armies of income held out of captures (they are still deployed, on the most exposed border).'),
+        enemy_deploy: z.coerce
+          .number()
+          .int()
+          .min(0)
+          .max(MAX_ENEMY_DEPLOY)
+          .optional()
+          .describe(
+            'Armies an enemy is assumed to deploy next turn when judging threats. Default max(5, 75% of the largest ' +
+              'visible enemy stack) — enemy income is unseen, so raise it if you know they earn more.',
+          ),
         view: viewArg(
           VIEWS,
           'compact (default) gives the plan and orders; "full" adds each move\'s reason and the settings the plan assumed.',
         ),
       }),
     },
-    async ({ game_id, player, goal, focus, reserve, view }) => {
+    async ({ game_id, player, goal, focus, reserve, enemy_deploy, view }) => {
       const game = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(game);
       const map = mapOf(game);
@@ -401,7 +413,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         me: me.id,
         income,
         settings,
-        options: { goal: chosen, focusBonusIds, ...(reserve !== undefined ? { reserve } : {}) },
+        options: {
+          goal: chosen,
+          focusBonusIds,
+          ...(reserve !== undefined ? { reserve } : {}),
+          ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
+        },
       });
       const name = namer(map);
       const warnings = [
@@ -422,6 +439,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         player: { id: me.id, name: me.name },
         goal: chosen,
         income,
+        enemyDeploy: plan.enemyDeploy,
         cards: {
           hand: hand.map(cardView),
           maxCardsHold: rules.maxCardsHold ?? null,

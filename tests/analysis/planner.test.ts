@@ -4,6 +4,7 @@ import { armiesToTake } from '../../src/analysis/combat.js';
 import { buildGraph, neighborsOf } from '../../src/analysis/graph.js';
 import {
   captureCost,
+  defaultEnemyDeploy,
   incomeFor,
   PAYBACK_TURNS,
   planTurn,
@@ -416,6 +417,69 @@ describe('planTurn — defence', () => {
     );
     const p = planTurn({ graph: fg, board: board([mine(1, 1), mine(2, 1), fogged(3), fogged(4), fogged(5)]), me: ME, income: 4, settings: STD });
     expect(p.deploys).toEqual([{ territoryId: 2, armies: 4 }]);
+  });
+});
+
+describe('enemy deploy estimate', () => {
+  it('defaults to max(5, round(0.75 × the largest visible enemy stack))', () => {
+    expect(defaultEnemyDeploy(board([mine(1, 2), neutral(3, 2)]), ME)).toBe(5);
+    expect(defaultEnemyDeploy(board([mine(1, 2), enemy(2, 6)]), ME)).toBe(5);
+    expect(defaultEnemyDeploy(board([mine(1, 40), enemy(2, 13), enemy(3, 4, 30)]), ME)).toBe(10);
+    expect(defaultEnemyDeploy(board([enemy(2, 20), enemy(3, 9, 30)]), ME)).toBe(15);
+    // Fogged territories and my own stacks never count.
+    expect(defaultEnemyDeploy(board([mine(1, 99), fogged(2)]), ME)).toBe(5);
+  });
+
+  // Synthetic stand-in for the live case: my 12 armies on T1 ("Florida") next to
+  // an enemy showing 13 on T2 ("Tennessee"). 12 armies need 20 to take; the old
+  // fixed estimate (12 movable + 5) said it was safe, but the enemy deployed more.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3],
+      [
+        [1, 2],
+        [1, 3],
+      ],
+      [[501, 1, [3]]],
+    ),
+  );
+  const florida = board([mine(1, 12), enemy(2, 13), neutral(3, 2)]);
+
+  it('regression: 13 visible next door threatens a 12-army border, and defend holds it', () => {
+    expect(armiesToTake(12)).toBe(20);
+    expect(armiesToTake(12)).toBeGreaterThan(12 + 5);
+    const warnOnly = planTurn({ graph: g, board: florida, me: ME, income: 5, settings: STD });
+    expect(warnOnly.warnings.join(' ')).toMatch(/T1 \(#1\) \(12 armies\) could be taken/);
+
+    const p = planTurn({ graph: g, board: florida, me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    const d = p.deploys.find((x) => x.territoryId === 1)?.armies ?? 0;
+    expect(d).toBeGreaterThan(0);
+    // Holds against 12 movable + ~10 deploy.
+    expect(armiesToTake(12 + d)).toBeGreaterThan(12 + 10);
+    expect(p.rationale.join(' ')).toMatch(/so it holds/);
+    expect(p.moves.filter((m) => m.from === 1)).toEqual([]);
+  });
+
+  it('the warnings state the estimate used and that unseen income is unknown', () => {
+    const p = planTurn({ graph: g, board: florida, me: ME, income: 5, settings: STD });
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/~10/);
+    expect(w).toMatch(/largest visible enemy stack \(13\)/);
+    expect(w).toMatch(/income .*unknown/i);
+    expect(p.enemyDeploy).toBe(10);
+  });
+
+  it('a caller estimate replaces the default and is named as such', () => {
+    const p = planTurn({ graph: g, board: florida, me: ME, income: 5, settings: STD, options: { enemyDeploy: 3 } });
+    expect(p.enemyDeploy).toBe(3);
+    expect(p.warnings.join(' ')).not.toMatch(/could be taken/);
+    expect(p.warnings.join('\n')).toMatch(/~3 .*your estimate/);
+  });
+
+  it('says nothing about the estimate when no visible enemy borders me', () => {
+    const p = planTurn({ graph: g, board: board([mine(1, 12), neutral(3, 2)]), me: ME, income: 5, settings: STD });
+    expect(p.warnings.join(' ')).not.toMatch(/enemy deploy estimate/i);
+    expect(p.enemyDeploy).toBe(5);
   });
 });
 

@@ -59,6 +59,7 @@ interface PlanPayload {
   player: { id: number; name: string };
   goal: string;
   income: number;
+  enemyDeploy: number;
   deploys: Array<{ territory: Named; armies: number }>;
   moves: Array<{ from: Named; to: Named; armies: number; kind: string; reason?: string }>;
   expected: { captures: Named[]; bonusesCompleted: Array<Named & { value: number }>; nextIncome: number };
@@ -126,6 +127,19 @@ describe('warapp_plan_turn', () => {
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }));
     expect(p.goal).toBe('defend');
     expect(p.rationale.join('\n')).toMatch(/so it holds/);
+  });
+
+  it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    // Bob shows 7: max(5, round(0.75 × 7)) = 5.
+    const def = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(def.enemyDeploy).toBe(5);
+    expect(def.warnings.join('\n')).toMatch(/Enemy deploy estimate: .*~5 .*largest visible enemy stack \(7\).*unknown/);
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', enemy_deploy: 0 }));
+    expect(p.enemyDeploy).toBe(0);
+    expect(p.warnings.join('\n')).toMatch(/~0 \(your estimate\)/);
+    const bad = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', enemy_deploy: -1 });
+    expect(bad.isError).toBe(true);
   });
 
   it('focus takes bonus names or ids; reserve is held out of captures', async () => {
