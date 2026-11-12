@@ -32,9 +32,11 @@ Build plans: `docs/PLAN.md` (phase 1, GameFeed) and `docs/PLAN-LIVE.md` (phase 2
   registered with mcp-utils' `defineWrite` / `registerWrite` (`confirmWrite`: elicitation, or
   a preview + single-use `confirmToken` per `MCP_CONFIRM_MODE`). `warapp_submit_picks`
   validates against the live board and reports `verified` only when `GetTerritoryPicks` reads
-  back exactly what was sent. Every other tool is read-only. Turn-order submission
-  (`SendOrders`) stays out until a live turn capture verifies it; the Deploy/AttackTransfer
-  encoders in `src/protocol/methods.ts` are marked unverified and no tool uses them.
+  back exactly what was sent. Every other tool is read-only. The Deploy/AttackTransfer
+  encoders in `src/protocol/methods.ts` are verified against a live turn commit (golden
+  tests pin them), but no tool sends `SendOrders` yet — that needs its own confirm-gated
+  tool, and its success must be read from game state: the commit reply's bool is the
+  "vacation ended" flag, not a success signal.
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it

@@ -5,6 +5,8 @@ import {
   readTerritoryPicks,
   writeGetLatestGameInfoParams,
   writeSendChatParams,
+  writeAttackTransferOrder,
+  writeDeployOrder,
   writeSendTerritoryPicksParams,
 } from '../../src/protocol/methods.js';
 
@@ -72,6 +74,26 @@ describe('SendChat params', () => {
   it('private: the recipient is a present int32', () => {
     expect(hex((w) => writeSendChatParams(w, { gameId: 5, text: 'hi', recipient: 1234567 }))).toBe(
       '05000000' + str('hi') + 'FFFFFFFF' + '01' + '87D61200' + '00' + '00' + '00' + '00' + '00',
+    );
+  });
+});
+
+// Golden bytes from the prototype encoder whose output matched a live client turn commit
+// byte for byte (docs/WEB-PROTOCOL.md, Orders). Synthetic ids: player 777, territories 4–10.
+describe('order encoders match the live-verified layout', () => {
+  it('Deploy', () => {
+    expect(hex((w) => writeDeployOrder(w, { playerId: 777, territoryId: 9, armies: 5 }))).toBe(
+      '02090000000005000000090300000000',
+    );
+  });
+  it('AttackTransfer (attack)', () => {
+    expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 9, to: 10, armies: 3 }))).toBe(
+      '01000300090000000003000000000A000000090300000000',
+    );
+  });
+  it('AttackTransfer (1-army transfer)', () => {
+    expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 6, to: 4, armies: 1 }))).toBe(
+      '010003000600000000010000000004000000090300000000',
     );
   });
 });

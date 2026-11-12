@@ -53,8 +53,11 @@ export function readCredentials(env: EnvSource = process.env): WarappCredentials
  * request). Throws a value-free {@link WarappConfigError} when it is unset.
  */
 export function readEmail(env: EnvSource = process.env): string {
-  const email = readEnvVar('WARAPP_EMAIL', { env });
-  if (email) return email;
+  try {
+    return requireEnvVar('WARAPP_EMAIL', { env });
+  } catch {
+    // Fall through to the live-tools wording below (requireEnvVar's is generic).
+  }
   throw new WarappConfigError(
     'WARAPP_EMAIL is not set. Set it to the email you sign in to war.app with — the live-game tools send it ' +
       'with each request, alongside the session of your signed-in war.app tab.',

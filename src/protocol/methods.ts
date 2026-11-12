@@ -100,8 +100,9 @@ export function writeSendChatParams(w: Writer, p: SendChatParams): void {
 // ---------------------------------------------------------------------------
 // Orders (SendOrders, method 74).
 //
-// UNVERIFIED: these encoders follow a reading of the client bundle and have not
-// been checked against a live turn capture. Nothing may send them until one has.
+// VERIFIED 2026-11-12: these layouts match a live client turn commit byte for byte
+// (docs/WEB-PROTOCOL.md, Orders; pinned by golden tests in tests/protocol/methods.test.ts).
+// No tool sends them yet — turn submission arrives with its own confirm-gated tool.
 
 /** AttackTransfer mode byte. */
 export const AttackTransferMode = { Attack: 1, Transfer: 2, AttackTransfer: 3 } as const;
@@ -123,7 +124,7 @@ export interface DeployOrder {
   flag?: boolean;
 }
 
-/** @unverified Encode a Deploy order. */
+/** Encode a Deploy order (layout verified against a live turn commit). */
 export function writeDeployOrder(w: Writer, o: DeployOrder): void {
   w.u8(ORDER_TAG_DEPLOY)
     .int32(o.territoryId)
@@ -142,7 +143,7 @@ export interface AttackTransferOrder {
   attackTeammates?: boolean;
 }
 
-/** @unverified Encode an AttackTransfer order. */
+/** Encode an AttackTransfer order (layout verified against a live turn commit). */
 export function writeAttackTransferOrder(w: Writer, o: AttackTransferOrder): void {
   w.u8(ORDER_TAG_ATTACK_TRANSFER)
     .bool(o.attackTeammates ?? false)
