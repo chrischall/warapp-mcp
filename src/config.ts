@@ -3,7 +3,7 @@
 // that needs it, never a boot failure.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
+import { readEnvVar, requireEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 
 /** Where a regenerated token comes from (signed in to war.app in a browser). */
 export const TOKEN_URL = 'https://war.app/API/GetAPIToken';
@@ -28,8 +28,17 @@ export function envFilePath(env: EnvSource = process.env): string {
  * not echoed back.
  */
 export function readCredentials(env: EnvSource = process.env): WarappCredentials {
-  const email = readEnvVar('WARAPP_EMAIL', { env });
-  const token = readEnvVar('WARAPP_API_TOKEN', { env });
+  // requireEnvVar (not readEnvVar): both are required to make any call, and the
+  // throw is caught here so the deferred-config pattern still holds.
+  const required = (key: string): string | undefined => {
+    try {
+      return requireEnvVar(key, { env });
+    } catch {
+      return undefined;
+    }
+  };
+  const email = required('WARAPP_EMAIL');
+  const token = required('WARAPP_API_TOKEN');
   if (email && token) return { email, token };
   const missing = [email ? null : 'WARAPP_EMAIL', token ? null : 'WARAPP_API_TOKEN'].filter(Boolean);
   throw new WarappConfigError(
