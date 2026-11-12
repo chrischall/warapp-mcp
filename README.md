@@ -162,7 +162,19 @@ and chat text comes back marked as untrusted third-party content.
    its growth (`trendSource` says where last turn's board came from).
    Under the default `balanced` goal the plan spends income where it earns most per army:
    holding borders that protect bonuses, completing cheap bonuses (at least 30% of income goes
-   to expansion), and breaking an enemy bonus you can reach. A border too costly to hold for
+   to expansion), and breaking an enemy bonus you can reach. Under `balanced` and `defend`, an
+   opponent whose every territory is visible and borders yours is attacked when that
+   eliminates it ("Finish off player …") or, against its best use of its estimated deploy
+   (one budget, spread to save what it can), surely cuts it to one territory or takes at
+   least half of it ("Pressure player …": e.g. +6/+4 on two border stacks against its two
+   2-army territories, when its ~6 cannot save both). Any such opponent is tried, strong or weak, fewest
+   territories first; holds worth paying for against other players, and against what a
+   "Pressure" plan leaves the opponent, are funded first (pressure is dropped when they cannot
+   be). An opponent next to the fog is not attempted (a warning says so only when its visible
+   territories could all fall), and with fog anywhere else on the board the elimination is
+   hedged (it may hold unseen territories). A
+   border just taken last turn from a weak opponent (fewer territories, smaller deploy) is never
+   conceded. A border too costly to hold for
    what it protects is `conceded`: nothing is deployed there (unless every territory you hold
    is conceded) and no attack from it is funded, its armies withdraw to a border
    that holds, and `cardAdvice: "order-priority"` says to play Order Priority (add it to the

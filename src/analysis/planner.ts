@@ -23,6 +23,42 @@
 //     next turn and the turn after). A border's threat becomes movable +
 //     max(enemyDeploy, the owner's fastest growth next to it), so its hold cost
 //     and the leftover margin both use the projection (a rationale line says so).
+//  1e. Finish off (under `balanced` and `defend`, before triage; issue #45). For
+//     each visible opponent whose every territory is visible (none borders the fog)
+//     and borders mine — fewest territories, then fewest armies, then id — size
+//     attacks on its territories against its best response: its deploy estimate D is
+//     ONE budget, split (in whole armies) over its territories to save as many as it
+//     can. An attack that takes up to c defenders is saved by c − armies + 1 deploys
+//     there; saving the cheapest first is optimal, so the sure falls are exact
+//     (`guaranteedFalls`). Every sizing is searched: each territory attacked as if
+//     0..D of the deploy lands there, or not attacked (all of them while there are at
+//     most 1024 sizings, else evenly spaced shares, always including D), with the
+//     usual capture rules (single and combined attacks, kill rates, luck margin, R3);
+//     a softener in a combined capture never kills the defenders there now either.
+//     Every opponent in reach is tried, not only weak ones. A sizing succeeds when every
+//     territory falls for sure (elimination, so each attack is sized for all of D), or
+//     when the sure falls leave it at most one territory or take at least half of it,
+//     no attacking border faces a territory left unattacked, and every hold worth
+//     paying for against those is funded. The best success wins: elimination, then
+//     more sure falls, then fewer attacking armies, then a dearer cheapest save, then
+//     fewer deploys. Holds that pass rule 1a's CONCEDE_FACTOR test against other
+//     players (and against what a retry leaves unattacked) come first: an attacking
+//     source keeps what holds it; on a border that attacks nothing, each hold, best
+//     worth per army first, is deployed there while the attacks are sized when it fits
+//     what is left (one that does not is left to triage), then released for triage to
+//     deploy. When the best sizing fails only on an unfunded hold, the search runs once
+//     more with those holds reserved and those territories left unattacked, and its
+//     best is kept if it beats the first search's. With no success, nothing changes.
+//     An opponent bordering the fog is never attempted (a warning says so when its
+//     visible territories could all be eliminated); with fog anywhere else, the
+//     elimination is hedged ("if it holds nothing in the fog") and a warning says it
+//     may hold unseen territories. When it can save some attacked territories, a
+//     warning says it chooses which. Borders next to the attacks are then re-judged
+//     without the territories attacked, and triage judges each border by the armies
+//     that stay on it. A border held last turn (per `previousBoard`) by a weak opponent
+//     (fully visible, fewer territories than mine, deploy below my income) that
+//     threatens it now is never conceded economically (the rationale says so once its
+//     hold is deployed); under `balanced` its hold goes first.
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
 //     of my complete bonuses containing it, plus incomplete bonuses containing it
 //     that I would lose all access to without it, plus the per-territory
@@ -299,6 +335,25 @@ export function captureCost(defenders: number, settings: PlannerSettings = {}): 
   if (base === null) return null;
   const luck = luckFraction(settings.luckModifier);
   return luck > 0 ? Math.ceil(base / (1 - luck)) : base;
+}
+
+/**
+ * How many attacked territories fall for sure when their owner answers with its best
+ * response: one deploy budget `deploy`, split over its territories to save as many as it
+ * can. `saveCosts[i]` is the deploys target i needs to survive its attack (the most
+ * defenders the attack takes, minus its armies, plus one; 0 when it survives unreinforced).
+ * Saving the cheapest first is optimal: any j saved targets cost at least the j cheapest
+ * save costs, so j can be saved exactly when those fit the budget.
+ */
+export function guaranteedFalls(saveCosts: readonly number[], deploy: number): number {
+  let left = deploy;
+  let saved = 0;
+  for (const c of [...saveCosts].sort((a, b) => a - b)) {
+    if (c > left) break;
+    left -= c;
+    saved++;
+  }
+  return saveCosts.length - saved;
 }
 
 /** One visible opponent's estimated deploy next turn and how it was reached. */
@@ -684,23 +739,31 @@ export function planTurn(input: PlanInput): TurnPlan {
   const borders = new Map<number, Border>();
   /** Every visible enemy player with a stack next to one of my territories. */
   const facing = new Set<number>();
-  for (const t of mine) {
+  /** The strongest visible enemy threat to my `t` (territories in `gone` excluded), or `null` with none next to it. */
+  const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
     const byPlayer = new Map<number, { movable: number; growth: number }>();
     for (const n of neighborsOf(g, t)) {
       const st = state.get(n);
-      if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      if (gone(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
       const p = byPlayer.get(st.owner.playerId) ?? { movable: 0, growth: 0 };
       p.movable += Math.max(0, st.armies - guard);
       p.growth = Math.max(p.growth, growthOf.get(n)?.growth ?? 0);
       byPlayer.set(st.owner.playerId, p);
     }
-    if (!byPlayer.size) continue;
-    for (const p of byPlayer.keys()) facing.add(p);
+    if (!byPlayer.size) return null;
     const [player, { movable, growth }] = [...byPlayer]
       .map(([id, p]) => [id, p, p.movable + Math.max(deployOf(id), p.growth)] as const)
       .sort((a, b) => b[2] - a[2] || a[0] - b[0])[0]!;
     const deploy = deployOf(player);
-    borders.set(t, { id: t, player, movable, growth, deploy, threat: movable + Math.max(deploy, growth) });
+    return { id: t, player, movable, growth, deploy, threat: movable + Math.max(deploy, growth) };
+  };
+  for (const t of mine) {
+    for (const n of neighborsOf(g, t)) {
+      const st = state.get(n);
+      if (st?.owner.kind === 'player' && st.owner.playerId !== me && st.armies !== null) facing.add(st.owner.playerId);
+    }
+    const b = borderAt(t, () => false);
+    if (b) borders.set(t, b);
   }
   for (const [e, gr] of growthOf) {
     // Name the most exposed of my territories next to it (fewest armies, then id).
@@ -745,24 +808,47 @@ export function planTurn(input: PlanInput): TurnPlan {
     value: number;
     /** Protected value plus the armies a hold saves, in income terms (armies / PAYBACK_TURNS). */
     worth: number;
+    /** A weak opponent that held it last turn and threatens it now: it is never conceded economically. */
+    recentFrom?: number;
   }
   const threatened: Threatened[] = [];
-  for (const b of borders.values()) {
-    const have = armiesOf(b.id);
-    const take = armiesToTake(have, rates);
-    if (take === null || take > b.threat) continue;
-    warnings.push(
-      `${label(b.id)} (${have} armies) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${take} would do.`,
+  /** Armies that stay on my `id` after this turn's deploys, outgoing moves and incoming withdrawals so far. */
+  const stayAt = (id: number) => avail.get(id)! + guard + (incoming.get(id) ?? 0);
+  /**
+   * Fill `threatened` from `borders`, judging each by the armies that stay on it (its
+   * armies at the start of the turn unless a finishing-off attack already left).
+   */
+  const assessThreats = () => {
+    for (const b of borders.values()) {
+      const have = stayAt(b.id);
+      const take = armiesToTake(have, rates);
+      if (take === null || take > b.threat) continue;
+      warnings.push(
+        `${label(b.id)} (${have} armies) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${take} would do.`,
+      );
+      // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.
+      let d = 1;
+      while ((armiesToTake(have + d, rates) ?? Infinity) <= b.threat) d++;
+      const value = valueOf(b.id);
+      const from = recentlyTakenFrom(b.id);
+      threatened.push({
+        id: b.id,
+        have,
+        threat: b.threat,
+        holdCost: d,
+        value,
+        worth: value + have / PAYBACK_TURNS,
+        ...(from !== undefined && from === b.player ? { recentFrom: from } : {}),
+      });
+    }
+    threatened.sort(
+      (a, b) =>
+        Number(b.recentFrom !== undefined) - Number(a.recentFrom !== undefined) ||
+        b.worth / b.holdCost - a.worth / a.holdCost ||
+        a.holdCost - b.holdCost ||
+        a.id - b.id,
     );
-    // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.
-    let d = 1;
-    while ((armiesToTake(have + d, rates) ?? Infinity) <= b.threat) d++;
-    const value = valueOf(b.id);
-    threatened.push({ id: b.id, have, threat: b.threat, holdCost: d, value, worth: value + have / PAYBACK_TURNS });
-  }
-  threatened.sort(
-    (a, b) => b.worth / b.holdCost - a.worth / a.holdCost || a.holdCost - b.holdCost || a.id - b.id,
-  );
+  };
 
   const acting = goal === 'defend';
   const conceded = new Set<number>();
@@ -772,7 +858,15 @@ export function planTurn(input: PlanInput): TurnPlan {
       `${label(t.id)} cannot be held with the ${left} armies left to deploy (needs ${t.holdCost}, protects +${t.value}): conceded`,
     );
   };
+  /** Said only once its hold is actually deployed. */
+  const noteRecent = (t: Threatened) => {
+    if (t.recentFrom !== undefined)
+      rationale.push(
+        `${label(t.id)} was captured from player ${t.recentFrom} last turn, and that opponent is weak: it is not conceded economically (conceding hands it back for free).`,
+      );
+  };
   const hold = (t: Threatened) => {
+    noteRecent(t);
     deploy(t.id, t.holdCost);
     locked.add(t.id);
     rationale.push(
@@ -781,27 +875,29 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
   // Under `balanced`, holds worth paying for compete with expansion in the greedy step below.
   const holds: Threatened[] = [];
-  let triageBudget = budget;
-  for (const t of threatened) {
-    const left = Math.min(acting ? budget : triageBudget, local ? roomAt(t.id) : Infinity);
-    if (t.holdCost > CONCEDE_FACTOR * t.worth) {
-      conceded.add(t.id);
-      warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
-      continue;
+  const triage = () => {
+    let triageBudget = budget;
+    for (const t of threatened) {
+      const left = Math.min(acting ? budget : triageBudget, local ? roomAt(t.id) : Infinity);
+      if (t.recentFrom === undefined && t.holdCost > CONCEDE_FACTOR * t.worth) {
+        conceded.add(t.id);
+        warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
+        continue;
+      }
+      if (balanced) {
+        // Its armies stay put until the greedy step decides: holding assumes they are all there.
+        holds.push(t);
+        locked.add(t.id);
+        continue;
+      }
+      if (t.holdCost > left) {
+        concedeUnaffordable(t, left);
+        continue;
+      }
+      triageBudget -= t.holdCost;
+      if (acting) hold(t);
     }
-    if (balanced) {
-      // Its armies stay put until the greedy step decides: holding assumes they are all there.
-      holds.push(t);
-      locked.add(t.id);
-      continue;
-    }
-    if (t.holdCost > left) {
-      concedeUnaffordable(t, left);
-      continue;
-    }
-    triageBudget -= t.holdCost;
-    if (acting) hold(t);
-  }
+  };
 
   // ---- 1b. withdraw from conceded borders ----
   let cardAdvice: CardAdvice | null = null;
@@ -1077,6 +1173,12 @@ export function planTurn(input: PlanInput): TurnPlan {
   // ---- capture helper ----
   let anchor: number | undefined;
   /**
+   * Defenders assumed at a target attacked to finish its owner off: its armies plus that
+   * owner's full deploy estimate (the worst case). Other targets: their armies now.
+   */
+  const worstCase = new Map<number, number>();
+  const defendersAt = (t: number) => worstCase.get(t) ?? armiesOf(t);
+  /**
    * Capture `t` from its best source. A conceded border is never deployed to: it attacks
    * out only with the armies already on it (unless every territory I hold is conceded,
    * when there is nowhere better). `force` names the source (it may be locked) and the
@@ -1108,7 +1210,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     deploy(src, need);
     avail.set(src, avail.get(src)! - tg.cost);
     captured.add(t);
-    const survivors = tg.cost - Math.round((armiesOf(t) * rates.defensiveKillRate) / 100);
+    const survivors = tg.cost - Math.round((defendersAt(t) * rates.defensiveKillRate) / 100);
     if (!defensible(t, survivors)) {
       // Undo: under a guarded goal a bonus that falls next turn is not completed.
       avail.set(src, avail.get(src)! + tg.cost - need);
@@ -1121,7 +1223,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     survivorsAt.set(t, survivors);
     moves.push({ from: src, to: t, armies: tg.cost, kind: 'attack', reason });
-    if (tg.enemy)
+    if (tg.enemy && !worstCase.has(t))
       warnings.push(`Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`);
     rationale.push(
       `Attack ${label(t)} from ${label(src)} with ${tg.cost}${need ? ` (deploy ${need} there)` : ''}: ${reason}.`,
@@ -1164,17 +1266,21 @@ export function planTurn(input: PlanInput): TurnPlan {
     const def = rates.defensiveKillRate;
     for (let k = 2; k <= eligible.length; k++) {
       const finisher = eligible[0]!;
-      let left = armiesOf(t);
+      let left = defendersAt(t);
+      // The defenders there now: under a worst case (more assumed) a softener must not take
+      // it either if the reinforcement never comes.
+      let real = armiesOf(t);
       const softeners: Softener[] = [];
       for (const x of eligible.slice(1, k).sort(byNum)) {
         // Never kill the last defender: the finisher's attack is the one that moves in.
         let a = avail.get(x)!;
-        while (a > 0 && Math.round((a * off) / 100) >= left) a--;
+        while (a > 0 && Math.round((a * off) / 100) >= Math.min(left, real)) a--;
         const kills = Math.round((a * off) / 100);
         if (a <= 0 || kills <= 0) continue;
         const lost = Math.min(a, Math.round((left * def) / 100));
         softeners.push({ from: x, armies: a, kills, before: left, survivors: a - lost });
         left -= kills;
+        real -= kills;
       }
       if (!softeners.length) continue;
       const armies = armiesToTake(left, rates);
@@ -1226,7 +1332,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         reason: `wears ${label(t)} down for a combined capture (${reason})`,
       });
     moves.push({ from: plan.finisher, to: t, armies: plan.armies, kind: 'attack', reason });
-    if (tg.enemy) warnings.push(`Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`);
+    if (tg.enemy && !worstCase.has(t))
+      warnings.push(`Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`);
     const order = [...plan.softeners.map((x) => x.from), plan.finisher].map(label).join(', then ');
     warnings.push(
       `The capture of ${label(t)} combines ${n} attacks that must run in this order (${order}): the first ${n === 2 ? 'one fails' : `${n - 1} fail`} by design, only wearing the defenders down; the arithmetic is exact only at 0% luck under straight rounding.`,
@@ -1287,6 +1394,382 @@ export function planTurn(input: PlanInput): TurnPlan {
         anchor ??= moves[moves.length - 1]!.from;
     }
   };
+
+  // ---- 1e. finish off an opponent (#45) ----
+  // Before any border is conceded: for each visible opponent whose every territory is
+  // visible (none borders the fog) and borders mine — any such opponent, however strong,
+  // fewest territories first — search the attack sizes on its territories against its best
+  // response (its deploy estimate is one budget, spread to save as many as it can; see
+  // `guaranteedFalls`). Kept when every territory falls (elimination), or when the falls it
+  // cannot prevent leave it one territory or take at least half, no attacking border faces
+  // a territory left unattacked, and every hold worth paying for against those is funded.
+  // Visible enemy territories by owner, sorted.
+  const ownedBy = new Map<number, number[]>();
+  for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
+    if (st.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+    ownedBy.set(st.owner.playerId, [...(ownedBy.get(st.owner.playerId) ?? []), id]);
+  }
+  const ownerOf = (id: number) => {
+    const o = state.get(id)?.owner;
+    return o?.kind === 'player' ? o.playerId : undefined;
+  };
+  const hidden = (n: number) => {
+    const st = state.get(n);
+    return !st || st.owner.kind === 'unknown' || st.armies === null;
+  };
+  // Anything on the board hidden: an opponent may hold territories there no visible one borders.
+  const fogAnywhere = [...g.territoryById.keys()].some(hidden);
+  /** Its territories with a fogged neighbour: it may hold more in the fog. */
+  const fogEdge = (p: number) => ownedBy.get(p)!.filter((t) => neighborsOf(g, t).some(hidden));
+  const inReach = (p: number) => ownedBy.get(p)!.every((t) => neighborsOf(g, t).some((n) => mineSet.has(n)));
+  /** Fully visible, fewer territories than mine, and a deploy below my income. */
+  const weak = new Set(
+    [...ownedBy.keys()].filter(
+      (p) => !fogEdge(p).length && ownedBy.get(p)!.length < mine.length && deployOf(p) < income,
+    ),
+  );
+  const previousOwner = new Map(
+    (input.previousBoard?.territories ?? []).flatMap((t) =>
+      t.owner.kind === 'player' ? [[t.territoryId, t.owner.playerId] as const] : [],
+    ),
+  );
+  /** The weak opponent that held my `id` on the previous board, if any. */
+  const recentlyTakenFrom = (id: number): number | undefined => {
+    const p = previousOwner.get(id);
+    return p !== undefined && p !== me && weak.has(p) ? p : undefined;
+  };
+  /** The most defenders `armies` attackers take (capture cost, luck margin included). */
+  const takesUpTo = (armies: number) => {
+    let y = 0;
+    while ((captureCost(y + 1, s) ?? Infinity) <= armies) y++;
+    return y;
+  };
+  /** Everything a finish-off attempt may change, to restore it. */
+  const checkpoint = (ts: readonly number[]) => ({
+    budget,
+    deployed: new Map(deployed),
+    avail: new Map(avail),
+    incoming: new Map(incoming),
+    captured: new Set(captured),
+    combined: new Set(combined),
+    survivorsAt: new Map(survivorsAt),
+    worstCase: new Map(worstCase),
+    targets: new Map(ts.map((t) => [t, targets.get(t)] as const)),
+    notCompleted: new Map(notCompleted),
+    moves: moves.length,
+    rationale: rationale.length,
+    warnings: warnings.length,
+  });
+  const restore = (c: ReturnType<typeof checkpoint>) => {
+    budget = c.budget;
+    deployed.clear();
+    for (const [k, v] of c.deployed) deployed.set(k, v);
+    for (const [k, v] of c.avail) avail.set(k, v);
+    incoming.clear();
+    for (const [k, v] of c.incoming) incoming.set(k, v);
+    captured.clear();
+    for (const t of c.captured) captured.add(t);
+    combined.clear();
+    for (const t of c.combined) combined.add(t);
+    survivorsAt.clear();
+    for (const [k, v] of c.survivorsAt) survivorsAt.set(k, v);
+    worstCase.clear();
+    for (const [k, v] of c.worstCase) worstCase.set(k, v);
+    for (const [t, tg] of c.targets) {
+      if (tg) targets.set(t, tg);
+      else targets.delete(t);
+    }
+    notCompleted.clear();
+    for (const [k, v] of c.notCompleted) notCompleted.set(k, v);
+    moves.length = c.moves;
+    rationale.length = c.rationale;
+    warnings.length = c.warnings;
+  };
+  /** One sizing of the attacks: per target, the share of the deploy it is sized for, or SKIP. */
+  const SKIP = -1;
+  interface Attempt {
+    sizes: number[];
+    attacked: number[];
+    /** Deploys player `p` must place on each attacked target to save it. */
+    saveCost: number[];
+    falls: number;
+    all: boolean;
+    armies: number;
+    deploys: number;
+    /** Success before the hold checks: eliminates, or leaves it one territory, or takes half. */
+    enough: boolean;
+    freed: boolean;
+    unfunded: boolean;
+    left: number[];
+  }
+  /**
+   * Positive when `a` beats `b`: an elimination, then more sure falls, then fewer attacking
+   * armies, then a dearer cheapest save (the opponent must commit more to save any one), then
+   * fewer deploys. A tie keeps the first found (shares are tried from the full deploy down,
+   * lowest territory id first), so the plan is deterministic.
+   */
+  const better = (a: Attempt, b: Attempt) =>
+    Number(a.all) - Number(b.all) ||
+    a.falls - b.falls ||
+    b.armies - a.armies ||
+    Math.min(...a.saveCost) - Math.min(...b.saveCost) ||
+    b.deploys - a.deploys;
+  /**
+   * Plan the captures of player `p`'s territories against its best response. Committed
+   * (true) when it eliminates `p`, or cuts it to one territory or takes at least half of it
+   * with no attacking border facing what is left unattacked and every hold worth paying for
+   * against that funded; otherwise rolled back. `probe`: always rolled back, true when an
+   * elimination is affordable.
+   */
+  const finishOff = (p: number, probe: boolean): boolean => {
+    const ts = ownedBy.get(p)!;
+    const deployP = deployOf(p);
+    const start = checkpoint(ts);
+    if (ts.some((t) => captureCost(armiesOf(t), s) === null)) return false;
+    /**
+     * Reserve the holds for an attempt that leaves `stay` unattacked. Holds against other
+     * players (and against `stay`) worth paying for (rule 1a's CONCEDE_FACTOR test) come
+     * first. A source keeps what holds it there. On a border that attacks nothing, each such
+     * hold — best worth per army first, and only if it fits what is left — is deployed there
+     * while the captures are sized, so neither the captures nor a Local Deployment pool can
+     * spend that room; one that does not fit is left to triage.
+     */
+    const reserve = (stay: ReadonlySet<number>) => {
+      const tried = ts.filter((t) => !stay.has(t));
+      const sources = new Set(tried.flatMap((t) => neighborsOf(g, t).filter((n) => mineSet.has(n))));
+      const keepAt = new Map<number, number>();
+      const elsewhere: { x: number; cost: number; worth: number }[] = [];
+      /** A hold's cost on my `x` against the threats left once `gone` fall, or null when not worth paying. */
+      const holdCostAt = (x: number, gone: (n: number) => boolean) => {
+        const rest = borderAt(x, gone);
+        if (!rest) return null;
+        const need = holdArmies(rest.threat);
+        const cost = Math.max(0, need - armiesOf(x));
+        const worth = valueOf(x) + armiesOf(x) / PAYBACK_TURNS;
+        return cost > CONCEDE_FACTOR * worth ? null : { need, cost, worth };
+      };
+      for (const x of mine) {
+        const h = holdCostAt(x, (n) => ownerOf(n) === p && !stay.has(n));
+        if (!h) continue;
+        const { need, cost, worth } = h;
+        if (sources.has(x)) {
+          const keep = Math.max(0, need - guard);
+          keepAt.set(x, keep);
+          avail.set(x, avail.get(x)! - keep);
+        } else if (cost > 0) elsewhere.push({ x, cost, worth });
+      }
+      /** The holds reserved, by border. */
+      const funded = new Map<number, number>();
+      elsewhere.sort((a, b) => b.worth / b.cost - a.worth / a.cost || a.cost - b.cost || a.x - b.x);
+      for (const h of elsewhere) {
+        if (h.cost > roomAt(h.x)) continue;
+        deploy(h.x, h.cost);
+        funded.set(h.x, h.cost);
+      }
+      const reserved = checkpoint(ts);
+      const fullReason = `takes player ${p}'s territory, sized for its full ~${deployP} deploy landing there`;
+      /** Size and plan the attacks for `sizes` (from `reserved`), and judge the result. */
+      const attempt = (sizes: number[]): Attempt => {
+        tried.forEach((t, i) => {
+          const e = sizes[i]!;
+          if (e === SKIP) return;
+          worstCase.set(t, armiesOf(t) + e);
+          targets.set(t, {
+            id: t,
+            cost: captureCost(armiesOf(t) + e, s)!,
+            enemy: true,
+            sources: neighborsOf(g, t).filter((n) => mineSet.has(n)),
+          });
+        });
+        const order = tried
+          .map((t, i) => ({ t, e: sizes[i]! }))
+          .filter((x) => x.e !== SKIP)
+          .sort((a, b) => targets.get(a.t)!.cost - targets.get(b.t)!.cost || a.t - b.t);
+        const attacked = order
+          .filter(({ t, e }) =>
+            tryCapture(t, e >= deployP ? fullReason : `presses player ${p}: sized for ${e} of its ~${deployP} deploy landing there`),
+          )
+          .map((x) => x.t)
+          .sort(byNum);
+        const ours = moves.slice(reserved.moves).filter((m) => m.kind === 'attack');
+        const saveCost = attacked.map((t) => {
+          const at = ours.filter((m) => m.to === t);
+          const finisher = at[at.length - 1]!;
+          const kills = at
+            .slice(0, -1)
+            .reduce((n, m) => n + Math.round((m.armies * rates.offensiveKillRate) / 100), 0);
+          return Math.max(0, kills + takesUpTo(finisher.armies) - armiesOf(t) + 1);
+        });
+        const falls = guaranteedFalls(saveCost, deployP);
+        const all = falls === ts.length;
+        const left = ts.filter((t) => !attacked.includes(t));
+        const attackers = new Set(ours.map((m) => m.from));
+        const freed = [...attackers].every((x) => !neighborsOf(g, x).some((n) => left.includes(n)));
+        // What stays unattacked: a border that attacks nothing but faces it must still have its
+        // hold funded, or the captures cost a border worth holding.
+        const unfunded = ours.length
+          ? mine.some((x) => {
+              if (attackers.has(x) || !neighborsOf(g, x).some((n) => left.includes(n))) return false;
+              const h = holdCostAt(x, (n) => captured.has(n));
+              return h !== null && h.cost > (funded.get(x) ?? 0);
+            })
+          : false;
+        return {
+          sizes,
+          attacked,
+          saveCost,
+          falls,
+          all,
+          armies: ours.reduce((n, m) => n + m.armies, 0),
+          deploys: reserved.budget - budget,
+          enough: falls > 0 && (all || ts.length - falls <= 1 || falls * 2 >= ts.length),
+          freed,
+          unfunded,
+          left,
+        };
+      };
+      // Every sizing, each target sized for 0..its full deploy share (or not attacked): exact
+      // while there are few; otherwise evenly spaced shares, always including the full one.
+      const LIMIT = 1024;
+      let levels = deployP + 2;
+      while (levels > 1 && levels ** tried.length > LIMIT) levels--;
+      const spaced = Array.from({ length: Math.max(1, levels - 1) }, (_, i) =>
+        Math.round(deployP - (i * deployP) / Math.max(1, levels - 2)),
+      );
+      const shares = levels >= 2 ? [...new Set(spaced), SKIP] : [deployP];
+      /** Every sizing tried; the state is left as reserved. */
+      const search = () => {
+        let best: Attempt | null = null;
+        let bestUnfunded: Attempt | null = null;
+        let canEliminate = false;
+        const sizes = tried.map(() => 0);
+        const visit = (i: number) => {
+          if (i === tried.length) {
+            const a = attempt([...sizes]);
+            restore(reserved);
+            if (a.all) canEliminate = true;
+            if (!a.enough || !a.freed) return;
+            if (a.unfunded) {
+              if (!bestUnfunded || better(a, bestUnfunded) > 0) bestUnfunded = a;
+            } else if (!best || better(a, best) > 0) best = a;
+            return;
+          }
+          for (const e of shares) {
+            sizes[i] = e;
+            visit(i + 1);
+          }
+        };
+        if (tried.length) visit(0);
+        return { best: best as Attempt | null, bestUnfunded: bestUnfunded as Attempt | null, canEliminate };
+      };
+      /** Plan `chosen`, then release the reservations: the triage (or the greedy step) deploys the holds. */
+      const commit = (chosen: Attempt) => {
+        attempt(chosen.sizes);
+        for (const [x, k] of keepAt) avail.set(x, avail.get(x)! + k);
+        for (const [x, k] of funded) {
+          const d = deployed.get(x)! - k;
+          if (d) deployed.set(x, d);
+          else deployed.delete(x);
+          avail.set(x, avail.get(x)! - k);
+          budget += k;
+        }
+      };
+      return { search, commit };
+    };
+    const found = reserve(new Set()).search();
+    restore(start);
+    if (probe) return found.canEliminate;
+    let chosen = found.best;
+    let stay: ReadonlySet<number> = new Set();
+    // A better attempt that left a hold facing what it left unattacked unfunded: once more,
+    // with those holds reserved first and those territories left alone.
+    const retry = found.bestUnfunded;
+    if (retry && (!chosen || better(retry, chosen) > 0)) {
+      const again = reserve(new Set(retry.left)).search();
+      restore(start);
+      if (again.best && (!chosen || better(again.best, chosen) > 0)) {
+        chosen = again.best;
+        stay = new Set(retry.left);
+      }
+    }
+    if (!chosen) return false;
+    reserve(stay).commit(chosen);
+    const { attacked, falls, left } = chosen;
+    // The territories left unattacked stay ordinary (non-worst-case) targets.
+    for (const t of left) {
+      worstCase.delete(t);
+      const tg = start.targets.get(t);
+      if (tg) targets.set(t, tg);
+      else targets.delete(t);
+    }
+    const names = attacked.map(label).join(', ');
+    const rest = left.length
+      ? `; ${left.map(label).join(', ')} stay${left.length === 1 ? 's' : ''} unattacked, and no attacking border faces ${left.length === 1 ? 'it' : 'them'}`
+      : '';
+    if (chosen.all) {
+      rationale.push(
+        `Finish off player ${p}: attack all ${ts.length} of its territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there, so it is eliminated ${fogAnywhere ? 'if it holds nothing in the fog, ' : ''}even if it reinforces; the borders facing it need no holding.`,
+      );
+      warnings.push(
+        `Eliminating player ${p} assumes it deploys at most ~${deployP} (its estimate); more income than that (unseen bonuses, cards) could still save one of its territories.`,
+      );
+      if (fogAnywhere)
+        warnings.push(
+          `player ${p} could still hold territories in the fog that border none of its visible ones: taking all ${ts.length} visible ones may not eliminate it.`,
+        );
+      return true;
+    }
+    const kept = ts.length - falls;
+    const outcome = kept <= 1 ? 'cutting it to one territory' : `taking ${falls} of its ${ts.length}`;
+    if (falls === attacked.length)
+      rationale.push(
+        `Pressure player ${p}: take ${falls} of its ${ts.length} territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there, ${outcome}${rest}.`,
+      );
+    else {
+      const saved = attacked.length - falls;
+      rationale.push(
+        `Pressure player ${p}: attack ${attacked.length === ts.length ? 'all' : attacked.length} ${attacked.length === ts.length ? `${ts.length} of its` : `of its ${ts.length}`} territories (${names}) this turn: its ~${deployP} deploy can save at most ${saved} of them, so at least ${falls} fall${falls === 1 ? 's' : ''}, ${outcome}${rest}.`,
+      );
+      warnings.push(
+        `player ${p} chooses which of ${names} to save (up to ${saved}): what it deploys there survives my attack, next to the borders that attacked it.`,
+      );
+    }
+    warnings.push(
+      `Pressuring player ${p} assumes it deploys at most ~${deployP} (its estimate); more income than that (unseen bonuses, cards) could still save a territory.`,
+    );
+    return true;
+  };
+  if (guarded) {
+    const candidates = [...ownedBy.keys()]
+      .filter(inReach)
+      .sort(
+        (a, b) =>
+          ownedBy.get(a)!.length - ownedBy.get(b)!.length ||
+          ownedBy.get(a)!.reduce((n, t) => n + armiesOf(t), 0) - ownedBy.get(b)!.reduce((n, t) => n + armiesOf(t), 0) ||
+          a - b,
+      );
+    for (const p of candidates) {
+      const edge = fogEdge(p);
+      if (edge.length) {
+        if (finishOff(p, true))
+          warnings.push(
+            `player ${p} may hold more territories in the fog (next to ${edge.map(label).join(', ')}): finishing it off is not attempted, though its ${ownedBy.get(p)!.length} visible territories could all be taken this turn.`,
+          );
+        continue;
+      }
+      finishOff(p, false);
+    }
+    // The borders those captures relieve: re-judged without the territories taken.
+    if (captured.size)
+      for (const id of [...borders.keys()]) {
+        if (!neighborsOf(g, id).some((n) => captured.has(n))) continue;
+        const b = borderAt(id, (n) => captured.has(n));
+        if (b) borders.set(id, b);
+        else borders.delete(id);
+      }
+  }
+  assessThreats();
+  triage();
 
   if (balanced) {
     // ---- balanced: greedy by income per army ----
@@ -1381,6 +1864,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const o = breakOption(n);
       if (t.holdCost + o.cost > spareAt(t.id)) return false;
       const before = budget;
+      noteRecent(t);
       deploy(t.id, t.holdCost);
       if (!tryCapture(n, breakReason(b), { from: t.id, keep: avail.get(t.id)! })) {
         // Refused (R3: it would complete a bonus I cannot hold next turn): just hold.
@@ -1428,7 +1912,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const t of holds)
       candidates.push({
         kind: 'hold',
-        score: t.worth / t.holdCost,
+        // A border just taken from a weak opponent is held first: conceding it hands it back.
+        score: t.recentFrom !== undefined ? Infinity : t.worth / t.holdCost,
         cost: t.holdCost,
         id: t.id,
         value: t.value,
@@ -1436,7 +1921,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         borders: 0,
         run: () => {
           if (holdAndBreak(t)) return;
-          const pending = expansionLeft > 0 && t.worth < topValue ? Math.max(0, floor - expansionSpent) : 0;
+          const pending =
+            expansionLeft > 0 && t.worth < topValue && t.recentFrom === undefined ? Math.max(0, floor - expansionSpent) : 0;
           const room = roomAt(t.id);
           if (t.holdCost > room) return concedeUnaffordable(t, room);
           if (t.holdCost > room - pending) {

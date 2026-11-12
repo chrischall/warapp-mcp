@@ -74,7 +74,16 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **Reading a balanced plan** (the default goal): income goes where it earns most per army —
   holds of borders that protect bonus income, completing or advancing cheap bonuses, and
   breaking an enemy bonus ("breaks enemy bonus …" in the reasoning). At least 30% of income
-  goes to expansion before holds that protect less than it ("Hold … later"). A border in
+  goes to expansion before holds that protect less than it ("Hold … later"). Under
+  `balanced`/`defend`, an opponent whose every territory is visible and borders the user's is
+  attacked when that eliminates it ("Finish off player …") or surely cuts it to one territory
+  or takes at least half ("Pressure player …"), judged against its best use of its estimated
+  deploy as one budget spread to save what it can (a warning says it chooses which to save). Any
+  such opponent is tried, strong or weak; holds worth paying for against other players, and
+  against what a pressure plan leaves the opponent, come first (no pressure when they cannot be
+  funded). An opponent next to the fog is not attempted (warned only when its visible
+  territories could all fall); fog anywhere else hedges the elimination. A border taken last turn from a
+  weak opponent (fewer territories, smaller deploy) is never conceded. A border in
   `conceded` costs more to hold than it is worth (or than the income left): nothing is
   deployed there (unless every territory the user holds is conceded) and no attack from it
   is funded — it attacks out only with the armies already on it — and its armies withdraw

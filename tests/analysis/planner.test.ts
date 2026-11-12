@@ -876,8 +876,15 @@ describe('planTurn — balanced', () => {
   });
 
   it('never attacks an enemy territory that breaks nothing', () => {
-    const g = buildGraph(makeMap([1, 5], [[1, 5]], []));
-    const p = planTurn({ graph: g, board: board([mine(1, 9), enemy(5, 1)]), me: ME, income: 5, settings: STD });
+    // The enemy also holds 6, out of my reach, so it cannot be finished off this turn (#45).
+    const g = buildGraph(makeMap([1, 5, 6], [[1, 5], [5, 6]], []));
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 9), enemy(5, 1), enemy(6, 1)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+    });
     expect(attacks(p)).toEqual([]);
   });
 
