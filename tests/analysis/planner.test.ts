@@ -882,6 +882,70 @@ describe('planTurn — balanced', () => {
     expect(p.conceded).toEqual([]);
     expect(p.expected.bonusesCompleted).toEqual([]);
   });
+
+  describe('a threatened border whose only threat is a breakable member', () => {
+    // T1 and T2 are each a held +5, threatened only by T5 / T6 (2 armies each), members of
+    // an enemy's complete +4 {T5, T6, T7}. T9 is an enemy territory in no bonus.
+    const g = buildGraph(
+      makeMap(
+        [1, 2, 5, 6, 7, 9],
+        [
+          [1, 5],
+          [2, 6],
+          [5, 6],
+          [6, 7],
+          [1, 9],
+        ],
+        [
+          [831, 5, [1]],
+          [832, 5, [2]],
+          [833, 4, [5, 6, 7]],
+        ],
+      ),
+    );
+    const base = { graph: g, me: ME, settings: STD } as const;
+
+    it('attacks it instead of holding: the capture removes the threat and breaks the bonus', () => {
+      const p = planTurn({ ...base, board: board([mine(1, 4), enemy(5, 2), enemy(6, 2), enemy(7, 2)]), income: 5 });
+      expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 3]]);
+      expect(p.rationale.join('\n')).toMatch(/T5 \(#5\) is the only visible threat to T1 \(#1\): capturing it removes that threat/);
+      expect(p.rationale.join('\n')).not.toMatch(/so it holds/);
+      expect(deploySum(p)).toBe(5);
+    });
+
+    it('holds instead when another enemy also threatens the border', () => {
+      const p = planTurn({
+        ...base,
+        board: board([mine(1, 4), enemy(5, 2), enemy(6, 2), enemy(7, 2), enemy(9, 2)]),
+        income: 5,
+        options: { enemyDeploy: 5 },
+      });
+      expect(attacks(p)).toEqual([]);
+      expect(p.rationale.join('\n')).toMatch(/so it holds/);
+    });
+
+    it('holds instead when the reserve leaves nothing for the capture', () => {
+      const p = planTurn({
+        ...base,
+        board: board([mine(1, 1), enemy(5, 2), enemy(6, 2), enemy(7, 2)]),
+        income: 4,
+        options: { reserve: 2 },
+      });
+      expect(attacks(p)).toEqual([]);
+      expect(p.rationale.join('\n')).toMatch(/Deploy 4 to T1 \(#1\) so it holds/);
+    });
+
+    it('breaks a bonus once: a second border next to it holds', () => {
+      const p = planTurn({
+        ...base,
+        board: board([mine(1, 4), mine(2, 4), enemy(5, 2), enemy(6, 2), enemy(7, 2)]),
+        income: 6,
+      });
+      expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 5]]);
+      expect(p.rationale.join('\n')).toMatch(/so it holds/);
+      expect(p.rationale.join('\n')).toMatch(/T2 \(#2\) so it holds/);
+    });
+  });
 });
 
 describe('enemy deploy estimate', () => {

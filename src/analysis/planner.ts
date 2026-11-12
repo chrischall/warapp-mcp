@@ -68,7 +68,10 @@
 //     completing or advancing a bonus (value / remaining cost), breaking an enemy
 //     bonus (BREAK_WEIGHT / opponents × value / capture cost, aimed at the member
 //     whose survivors would hold against the counter-attack if any, else the
-//     cheapest, warning when it can be retaken). While expansion candidates
+//     cheapest, warning when it can be retaken). A threatened border whose only
+//     visible threat is a member of a breakable bonus attacks it instead of
+//     holding (the capture removes the threat; a held border otherwise makes no
+//     attacks), once per bonus. While expansion candidates
 //     remain, a hold protecting less than the best expansion's value may not dip
 //     into the first MIN_EXPANSION_SHARE of income not yet spent on expansion; it
 //     is deferred and funded afterwards if the budget allows, else conceded.
@@ -757,20 +760,59 @@ export function planTurn(input: PlanInput): TurnPlan {
         candidates.push({ kind: 'complete', score, cost: p.cost, id: p.bonusId, value: p.value, focus: p.focus, borders: p.borders, run: spend(() => complete(p)) });
       candidates.push({ kind: 'advance', score, cost: p.cost, id: p.bonusId, value: p.value, focus: p.focus, borders: p.borders, run: spend(() => advance(p)) });
     }
+    // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
+    const breakOption = (t: number) => {
+      const cost = targets.get(t)!.cost;
+      const survivors = cost - Math.round((armiesOf(t) * rates.defensiveKillRate) / 100);
+      const counter = counterThreat(t);
+      const take = armiesToTake(survivors, rates);
+      return { t, cost, survivors, counter, take, survives: take === null || take > counter };
+    };
+    type BreakOption = ReturnType<typeof breakOption>;
+    const broken = (b: Breakable) => bonusTerritories(g, b.bonusId).some((x) => captured.has(x));
+    const breakReason = (b: Breakable) =>
+      `breaks enemy bonus ${bonusName(b.bonusId)} (+${b.value} from player ${b.player})`;
+    const warnRetake = (b: Breakable, o: BreakOption) => {
+      if (!o.survives)
+        warnings.push(
+          `${label(o.t)} can be retaken after it breaks ${bonusName(b.bonusId)}: ${o.survivors} survivors need ${o.take} to take, against ~${o.counter} next turn.`,
+        );
+    };
+    const breakOf = new Map<number, Breakable>();
+    for (const b of breakable) for (const t of bonusTerritories(g, b.bonusId)) breakOf.set(t, b);
+    // A threatened border whose only visible threat is a member of a breakable enemy
+    // bonus attacks it instead of holding: the capture removes the threat and breaks
+    // the bonus. (A held border otherwise makes no attacks.)
+    const breakInstead = (t: Threatened): boolean => {
+      const threats = neighborsOf(g, t.id).filter((n) => {
+        const st = state.get(n);
+        return st?.owner.kind === 'player' && st.owner.playerId !== me && st.armies !== null;
+      });
+      if (threats.length !== 1) return false;
+      const n = threats[0]!;
+      const b = breakOf.get(n);
+      if (!b || !targets.has(n) || broken(b)) return false;
+      const o = breakOption(n);
+      const before = budget;
+      locked.delete(t.id);
+      const ok = tryCapture(n, breakReason(b));
+      locked.add(t.id);
+      if (!ok) return false;
+      expansionSpent += before - budget;
+      anchor ??= moves[moves.length - 1]!.from;
+      rationale.push(
+        `${label(n)} is the only visible threat to ${label(t.id)}: capturing it removes that threat, instead of deploying ${t.holdCost} to hold ${label(t.id)}.`,
+      );
+      warnRetake(b, o);
+      return true;
+    };
     for (const b of breakable) {
       const options = bonusTerritories(g, b.bonusId)
         .filter((t) => targets.has(t))
-        .map((t) => {
-          const cost = targets.get(t)!.cost;
-          const survivors = cost - Math.round((armiesOf(t) * rates.defensiveKillRate) / 100);
-          const counter = counterThreat(t);
-          const take = armiesToTake(survivors, rates);
-          return { t, cost, survivors, counter, take, survives: take === null || take > counter };
-        })
+        .map(breakOption)
         .sort((a, b) => Number(b.survives) - Number(a.survives) || a.cost - b.cost || a.t - b.t);
       const o = options[0];
       if (!o) continue;
-      const name = bonusName(b.bonusId);
       candidates.push({
         kind: 'break',
         score: (weight * b.value) / Math.max(1, o.cost),
@@ -780,13 +822,11 @@ export function planTurn(input: PlanInput): TurnPlan {
         focus: false,
         borders: analyzeBonus(g, b.bonusId)!.borderTerritoryIds.length,
         run: spend(() => {
-          if (captured.has(o.t)) return;
-          if (!tryCapture(o.t, `breaks enemy bonus ${name} (+${b.value} from player ${b.player})`)) return;
+          // Already broken (by a border attacking its only threat): one capture is enough.
+          if (broken(b)) return;
+          if (!tryCapture(o.t, breakReason(b))) return;
           anchor ??= moves[moves.length - 1]!.from;
-          if (!o.survives)
-            warnings.push(
-              `${label(o.t)} can be retaken after it breaks ${name}: ${o.survivors} survivors need ${o.take} to take, against ~${o.counter} next turn.`,
-            );
+          warnRetake(b, o);
         }),
       });
     }
@@ -803,6 +843,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         focus: false,
         borders: 0,
         run: () => {
+          if (breakInstead(t)) return;
           const pending = expansionLeft > 0 && t.value < topValue ? Math.max(0, floor - expansionSpent) : 0;
           if (t.holdCost > budget) return concedeUnaffordable(t, budget);
           if (t.holdCost > budget - pending) {
