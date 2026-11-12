@@ -1506,6 +1506,130 @@ describe('planTurn — defensibility-aware bonus completion (R3)', () => {
   });
 });
 
+describe('planTurn — multi-source attacks (R4)', () => {
+  // My stacks on T1, T2 (and T4) all border the neutral T3; nothing else is in reach.
+  //   T1 ─ T3 ─ T2      T4 ─ T3
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4],
+      [
+        [1, 3],
+        [2, 3],
+        [4, 3],
+      ],
+      [],
+    ),
+  );
+
+  it('takes a 15-army neutral with two 15-stacks that each fall short alone (issue #17 b)', () => {
+    // One source: 14 movable + 5 income = 19 < 25. Two, at 0% luck: T2's 14 kill
+    // round(8.4) = 8 (the attack fails; 14 − round(10.5) = 3 survive and stay home),
+    // leaving 7, which T1 takes with 11 (round(6.6) = 7 kills; 11 − 5 = 6 move in).
+    expect(armiesToTake(15, STD)).toBe(25);
+    expect(armiesToTake(7, STD)).toBe(11);
+    const s = board([mine(1, 15), mine(2, 15), neutral(3, 15)]);
+    const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD });
+    expect(attacks(p)).toEqual([
+      expect.objectContaining({ from: 2, to: 3, armies: 14 }),
+      expect.objectContaining({ from: 1, to: 3, armies: 11 }),
+    ]);
+    expect(p.expected.captures).toEqual([3]);
+    expect(deploySum(p)).toBe(5);
+    expect(p.rationale.join('\n')).toMatch(/T3 \(#3\).*2 attacks/);
+    // The attacks must run in this order.
+    expect(p.warnings.join('\n')).toMatch(/T3 \(#3\).*in this order/);
+  });
+
+  for (const settings of [
+    { ...STD, luckModifier: 0.16 },
+    { ...STD, roundingMode: 'WeightedRandom' },
+  ])
+    it(`is not attempted, and warned, under ${settings.luckModifier ? 'luck' : 'weighted rounding'}`, () => {
+      const s = board([mine(1, 15), mine(2, 15), neutral(3, 15)]);
+      const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings });
+      expect(attacks(p)).toEqual([]);
+      expect(p.expected.captures).toEqual([]);
+      const w = p.warnings.filter((x) => /multi-source/i.test(x));
+      expect(w).toHaveLength(1);
+      expect(w[0]).toMatch(/T3 \(#3\)/);
+      expect(w[0]).toMatch(settings.luckModifier ? /luck/ : /rounding/);
+      expect(deploySum(p)).toBe(5);
+    });
+
+  it('combines three sources when two are not enough', () => {
+    // 25 defenders: T2 and T4 each kill 8 (two sources leave 17, needing 28 > 19);
+    // three leave 9, which T1 takes with 15 (14 movable + 1 deployed).
+    expect(armiesToTake(17, STD)).toBe(28);
+    expect(armiesToTake(9, STD)).toBe(15);
+    const s = board([mine(1, 15), mine(2, 15), neutral(3, 25), mine(4, 15)]);
+    const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD });
+    expect(attacks(p)).toEqual([
+      expect.objectContaining({ from: 2, to: 3, armies: 14 }),
+      expect.objectContaining({ from: 4, to: 3, armies: 14 }),
+      expect.objectContaining({ from: 1, to: 3, armies: 15 }),
+    ]);
+    expect(p.expected.captures).toEqual([3]);
+    expect(deploySum(p)).toBe(5);
+    expect(deployedTo(p, 1)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('plans nothing when even every source together cannot afford it', () => {
+    // 40 defenders: two sources leave 32, needing 53 > 19.
+    const s = board([mine(1, 15), mine(2, 15), neutral(3, 40)]);
+    const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD });
+    expect(attacks(p)).toEqual([]);
+    expect(p.expected.captures).toEqual([]);
+    expect(deploySum(p)).toBe(5);
+  });
+
+  it('is not used when one source suffices', () => {
+    // T1's 24 movable + 1 deploy take 15 alone.
+    const s = board([mine(1, 25), mine(2, 15), neutral(3, 15)]);
+    const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD });
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 25 })]);
+  });
+
+  it('is not used for an uneconomic target', () => {
+    // T3 is the only member of a +1 bonus: 25 armies for +1 is a wasteland (> 5 × 1).
+    const g2 = buildGraph(
+      makeMap(
+        [1, 2, 3],
+        [
+          [1, 3],
+          [2, 3],
+        ],
+        [[901, 1, [3]]],
+      ),
+    );
+    const s = board([mine(1, 15), mine(2, 15), neutral(3, 15)]);
+    const p = planTurn({ graph: g2, board: s, me: ME, income: 5, settings: STD });
+    expect(attacks(p)).toEqual([]);
+  });
+
+  it('completes a bonus with a combined capture', () => {
+    // T3 alone is bonus B901 (+5): 25 ≤ 5 × 5, economic.
+    const g2 = buildGraph(
+      makeMap(
+        [1, 2, 3],
+        [
+          [1, 3],
+          [2, 3],
+        ],
+        [[901, 5, [3]]],
+      ),
+    );
+    const s = board([mine(1, 15), mine(2, 15), neutral(3, 15)]);
+    for (const goal of ['balanced', 'expand', 'complete-bonus', 'defend'] as const) {
+      const p = planTurn({ graph: g2, board: s, me: ME, income: 5, settings: STD, options: { goal } });
+      expect(p.expected.bonusesCompleted, goal).toEqual([901]);
+      expect(attacks(p).map((m) => [m.from, m.armies]), goal).toEqual([
+        [2, 14],
+        [1, 11],
+      ]);
+    }
+  });
+});
+
 describe('planTurn — threat trend', () => {
   // (g) A growing enemy stack: T2 went 51 → 76 last turn, next to my 55 on T1
   // (a held +5 bonus). With a caller estimate of ~10 deploy, 75 movable + 10 = 85
@@ -1709,6 +1833,8 @@ describe('planTurn — accounting property', () => {
       const guard = settings.oneArmyStandsGuard ? 1 : 0;
       const out = new Map<number, number>();
       const captured = new Set<number>();
+      // Attacks per target, in order: one, or (R4) a combined capture.
+      const attacksOn = new Map<number, number[]>();
       for (const m of p.moves) {
         expect(neighborsOf(g, m.from), ctx).toContain(m.to);
         expect(isMine(m.from), ctx).toBe(true); // nothing moves out of a fresh capture
@@ -1718,12 +1844,29 @@ describe('planTurn — accounting property', () => {
           const t = byId.get(m.to)!;
           expect(t.armies, ctx).not.toBeNull();
           expect(isMine(m.to), ctx).toBe(false);
-          expect(m.armies, ctx).toBeGreaterThanOrEqual(captureCost(t.armies!, settings)!);
-          expect(captured.has(m.to), ctx).toBe(false);
+          attacksOn.set(m.to, [...(attacksOn.get(m.to) ?? []), m.armies]);
           captured.add(m.to);
         } else {
           expect(isMine(m.to) || captured.has(m.to), ctx).toBe(true);
         }
+      }
+      for (const [to, sent] of attacksOn) {
+        const defenders = byId.get(to)!.armies!;
+        if (sent.length === 1) {
+          expect(sent[0], ctx).toBeGreaterThanOrEqual(captureCost(defenders, settings)!);
+          continue;
+        }
+        // A combined capture: only at 0% luck; every attack but the last fails yet
+        // kills, and the last takes what is left.
+        expect(settings.luckModifier, ctx).toBe(0);
+        let left = defenders;
+        for (const a of sent.slice(0, -1)) {
+          const kills = Math.round((a * settings.offensiveKillRate!) / 100);
+          expect(kills, ctx).toBeGreaterThan(0);
+          expect(kills, ctx).toBeLessThan(left);
+          left -= kills;
+        }
+        expect(sent.at(-1)!, ctx).toBeGreaterThanOrEqual(armiesToTake(left, settings)!);
       }
       for (const [from, n] of out) {
         const dep = p.deploys.find((d) => d.territoryId === from)?.armies ?? 0;

@@ -65,6 +65,18 @@
 //  3. Capture cost: `armiesToTake` (0% luck, straight round). With luck L > 0
 //     the cost becomes `ceil(cost / (1 − L))`, i.e. the luck-free share of the
 //     attack alone still takes the territory.
+//  3a. Combined (multi-source) captures (R4). When no single source can afford a
+//     target (its movable armies plus the deploys left), two or more of my
+//     sources held at the start of the turn (not locked, not conceded) attack it
+//     in sequence: sources by most movable armies, then id; the first is the
+//     finisher, the others ("softeners", in id order) each attack first with their
+//     movable armies (capped so they never kill the last defender), killing
+//     round(off × armies) defenders each, cumulatively; their survivors stay home.
+//     The finisher then sends armiesToTake(defenders left), deploying its
+//     shortfall. Fewest sources first. Exact only under straight rounding at 0%
+//     luck: otherwise it is skipped with a warning. It is a fallback inside every
+//     pass, so it only ever takes a target the passes already chose (economic by
+//     the same scoring), and only when no single source suffices.
 //  4. Bonuses (value > 0) are scored by value / remaining capture cost, ties by
 //     fewest external borders, then id; focused bonuses come first. A bonus whose
 //     remaining cost exceeds PAYBACK_TURNS × value, or with one remaining
@@ -444,6 +456,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   const locked = new Set<number>();
   const captured = new Set<number>();
   const moves: PlannedMove[] = [];
+  /** Armies that occupy each capture this turn (its finishing attack's survivors). */
+  const survivorsAt = new Map<number, number>();
   const deploy = (id: number, n: number) => {
     if (n <= 0) return;
     deployed.set(id, (deployed.get(id) ?? 0) + n);
@@ -896,7 +910,7 @@ export function planTurn(input: PlanInput): TurnPlan {
    */
   const notCompleted = new Map<number, { warning: string; why: string }>();
   /**
-   * Called with `t` just captured (with `sent` armies): for every bonus this
+   * Called with `t` just captured (`survivors` armies move in): for every bonus this
    * capture completes, the deploys its exposed members still need next turn to
    * hold must fit my projected next income (plus this turn's leftover, for members
    * I held at the start: a fresh capture cannot be deployed to). Otherwise the
@@ -905,7 +919,7 @@ export function planTurn(input: PlanInput): TurnPlan {
    * exposed member held. The leftover is as of this check; a later capture this turn
    * may still spend it (defence funds held borders first, so this is rarely material).
    */
-  const defensible = (t: number, sent: number): boolean => {
+  const defensible = (t: number, survivors: number): boolean => {
     const after = new Set([...mine, ...captured]);
     const completes = g.map.bonuses
       .filter((b) => {
@@ -922,10 +936,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     const spare = Math.max(0, budget - reserve);
     const stays = (m: number) => {
       if (mineSet.has(m)) return avail.get(m)! + guard + (incoming.get(m) ?? 0);
-      if (m === t) return sent - Math.round((armiesOf(m) * rates.defensiveKillRate) / 100);
-      // An earlier capture this turn: the armies its attack sent, less the defenders' kills.
-      const sentThere = moves.filter((x) => x.kind === 'attack' && x.to === m).reduce((sum, x) => sum + x.armies, 0);
-      return sentThere - Math.round((armiesOf(m) * rates.defensiveKillRate) / 100);
+      if (m === t) return survivors;
+      // An earlier capture this turn: the survivors of its finishing attack.
+      return survivorsAt.get(m) ?? 0;
     };
     let ok = true;
     for (const b of completes) {
@@ -972,13 +985,14 @@ export function planTurn(input: PlanInput): TurnPlan {
           )
           .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
     const src = sources[0];
-    if (src === undefined) return false;
-    const need = Math.max(0, tg.cost - spare(src));
-    if (budget - need < reserve) return false;
+    const need = src === undefined ? Infinity : Math.max(0, tg.cost - spare(src));
+    // No single source can afford it: try a combined capture (never for a forced source).
+    if (src === undefined || budget - need < reserve) return force ? false : tryCombined(t, reason);
     deploy(src, need);
     avail.set(src, avail.get(src)! - tg.cost);
     captured.add(t);
-    if (!defensible(t, tg.cost)) {
+    const survivors = tg.cost - Math.round((armiesOf(t) * rates.defensiveKillRate) / 100);
+    if (!defensible(t, survivors)) {
       // Undo: under a guarded goal a bonus that falls next turn is not completed.
       avail.set(src, avail.get(src)! + tg.cost - need);
       const left = (deployed.get(src) ?? 0) - need;
@@ -988,6 +1002,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       captured.delete(t);
       return false;
     }
+    survivorsAt.set(t, survivors);
     moves.push({ from: src, to: t, armies: tg.cost, kind: 'attack', reason });
     if (tg.enemy)
       warnings.push(`Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`);
@@ -997,6 +1012,115 @@ export function planTurn(input: PlanInput): TurnPlan {
     return true;
   };
   if (reserve) rationale.push(`Hold a reserve of ${reserve} out of captures.`);
+
+  // ---- 3a. combined (multi-source) captures (R4) ----
+  interface Softener {
+    from: number;
+    armies: number;
+    kills: number;
+    /** Defenders left when it attacks. */
+    before: number;
+    /** Its attack fails by design: these return home. */
+    survivors: number;
+  }
+  interface Combined {
+    softeners: Softener[];
+    finisher: number;
+    armies: number;
+    /** Deploys the finisher needs. */
+    need: number;
+    /** Defenders left for the finisher. */
+    left: number;
+    survivors: number;
+  }
+  /**
+   * The cheapest combined capture of `t` (fewest sources) under exact 0%-luck,
+   * straight-round arithmetic, or `null` when even every eligible source together
+   * (plus the deploys left) cannot take it.
+   */
+  const combinedPlan = (t: number): Combined | null => {
+    const tg = targets.get(t)!;
+    const eligible = tg.sources
+      .filter((x) => !locked.has(x) && !conceded.has(x) && avail.get(x)! > 0)
+      .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
+    const off = rates.offensiveKillRate;
+    const def = rates.defensiveKillRate;
+    const spareBudget = budget - reserve;
+    for (let k = 2; k <= eligible.length; k++) {
+      const finisher = eligible[0]!;
+      let left = armiesOf(t);
+      const softeners: Softener[] = [];
+      for (const x of eligible.slice(1, k).sort(byNum)) {
+        // Never kill the last defender: the finisher's attack is the one that moves in.
+        let a = avail.get(x)!;
+        while (a > 0 && Math.round((a * off) / 100) >= left) a--;
+        const kills = Math.round((a * off) / 100);
+        if (a <= 0 || kills <= 0) continue;
+        const lost = Math.min(a, Math.round((left * def) / 100));
+        softeners.push({ from: x, armies: a, kills, before: left, survivors: a - lost });
+        left -= kills;
+      }
+      if (!softeners.length) continue;
+      const armies = armiesToTake(left, rates);
+      if (armies === null) return null;
+      const need = Math.max(0, armies - avail.get(finisher)!);
+      if (need > spareBudget) continue;
+      const survivors = armies - Math.round((left * def) / 100);
+      return { softeners, finisher, armies, need, left, survivors };
+    }
+    return null;
+  };
+  const tryCombined = (t: number, reason: string): boolean => {
+    const plan = combinedPlan(t);
+    if (!plan) return false;
+    const tg = targets.get(t)!;
+    const n = plan.softeners.length + 1;
+    if (luck > 0 || (s.roundingMode !== undefined && s.roundingMode !== 'StraightRound')) {
+      const why = luck > 0 ? `luck is ${Math.round(luck * 100)}%` : `this game uses ${s.roundingMode} rounding`;
+      const w = `Multi-source capture of ${label(t)} skipped: no single source can afford its ${tg.cost}, and ${n} sources together could only at 0% luck under straight rounding, but ${why}.`;
+      if (!warnings.includes(w)) warnings.push(w);
+      return false;
+    }
+    const before = { avail: new Map(avail), incoming: new Map(incoming), deployed: new Map(deployed), budget };
+    deploy(plan.finisher, plan.need);
+    for (const x of plan.softeners) {
+      avail.set(x.from, avail.get(x.from)! - x.armies);
+      incoming.set(x.from, (incoming.get(x.from) ?? 0) + x.survivors);
+    }
+    avail.set(plan.finisher, avail.get(plan.finisher)! - plan.armies);
+    captured.add(t);
+    if (!defensible(t, plan.survivors)) {
+      for (const [k, v] of before.avail) avail.set(k, v);
+      incoming.clear();
+      for (const [k, v] of before.incoming) incoming.set(k, v);
+      deployed.clear();
+      for (const [k, v] of before.deployed) deployed.set(k, v);
+      budget = before.budget;
+      captured.delete(t);
+      return false;
+    }
+    survivorsAt.set(t, plan.survivors);
+    for (const x of plan.softeners)
+      moves.push({
+        from: x.from,
+        to: t,
+        armies: x.armies,
+        kind: 'attack',
+        reason: `wears ${label(t)} down for a combined capture (${reason})`,
+      });
+    moves.push({ from: plan.finisher, to: t, armies: plan.armies, kind: 'attack', reason });
+    if (tg.enemy) warnings.push(`Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`);
+    const order = [...plan.softeners.map((x) => x.from), plan.finisher].map(label).join(', then ');
+    warnings.push(
+      `The capture of ${label(t)} combines ${n} attacks that must run in this order (${order}): the first ${n === 2 ? 'one fails' : `${n - 1} fail`} by design, only wearing the defenders down; the arithmetic is exact only at 0% luck under straight rounding.`,
+    );
+    rationale.push(
+      `Attack ${label(t)} with ${n} attacks (no single source can afford its ${tg.cost}): ${plan.softeners
+        .map((x) => `from ${label(x.from)} with ${x.armies} (kills ${x.kills} of ${x.before}; ${x.survivors} survive and stay)`)
+        .join(', then ')}, then from ${label(plan.finisher)} with ${plan.armies}${plan.need ? ` (deploy ${plan.need} there)` : ''}, taking the last ${plan.left}: ${reason}.`,
+    );
+    return true;
+  };
 
   // ---- pass 1: complete a bonus this turn (all or nothing) ----
   const complete = (p: BonusPlan) => {
@@ -1009,6 +1133,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       budget,
       deployed: new Map(deployed),
       avail: new Map(avail),
+      incoming: new Map(incoming),
       moves: moves.length,
       rationale: rationale.length,
       warnings: warnings.length,
@@ -1022,6 +1147,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     deployed.clear();
     for (const [k, v] of snap.deployed) deployed.set(k, v);
     for (const [k, v] of snap.avail) avail.set(k, v);
+    incoming.clear();
+    for (const [k, v] of snap.incoming) incoming.set(k, v);
     for (const m of moves.splice(snap.moves)) captured.delete(m.to);
     rationale.length = snap.rationale;
     warnings.length = snap.warnings;
