@@ -1,0 +1,348 @@
+import { execFile } from 'node:child_process';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type IncomingMessage, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { createTestHarness } from '@chrischall/mcp-utils/test';
+import { registerAllTools } from '../src/tools/index.js';
+import { EMAIL, TOKEN, lobbyFixture } from './helpers.js';
+
+/**
+ * The two skills shipped in the npm tarball (`files: skills`):
+ * - skills/warapp-mcp — how to drive this server's tools;
+ * - skills/warapp-api — curl + jq over GameFeed with a sourced helper script.
+ *
+ * The helper runs under BOTH bash and zsh against a local GameFeed stand-in
+ * (real curl, real jq), and every recipe the skill documents is executed
+ * against the anonymized lobby fixture in both shells.
+ */
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const SKILLS = join(ROOT, 'skills');
+const HELPER = join(SKILLS, 'warapp-api', 'scripts', 'warapp.sh');
+const read = (p: string) => readFileSync(p, 'utf8');
+const SHELLS = ['bash', 'zsh'] as const;
+
+function frontmatter(md: string): Record<string, string> {
+  const m = /^---\n([\s\S]*?)\n---\n/.exec(md);
+  if (!m) return {};
+  return Object.fromEntries(
+    m[1]!.split('\n').map((l) => [l.slice(0, l.indexOf(':')).trim(), l.slice(l.indexOf(':') + 1).trim()]),
+  );
+}
+
+describe('skill files', () => {
+  it('ships exactly the two skills, each with a name matching its folder and a description', () => {
+    const dirs = readdirSync(SKILLS).sort();
+    expect(dirs).toEqual(['warapp-api', 'warapp-mcp']);
+    for (const d of dirs) {
+      const fm = frontmatter(read(join(SKILLS, d, 'SKILL.md')));
+      expect(fm.name, d).toBe(d);
+      expect((fm.description ?? '').length, d).toBeGreaterThan(80);
+      expect((fm.description ?? '').length, d).toBeLessThanOrEqual(1024);
+    }
+  });
+
+  it('warapp-mcp names every served tool and has an "In context groups" section', async () => {
+    const harness = await createTestHarness((s) => registerAllTools(s, { env: {} }));
+    const names = (await harness.client.listTools()).tools.map((t) => t.name);
+    await harness.close();
+    const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
+    expect(names.filter((n) => !md.includes(n))).toEqual([]);
+    expect(md).toMatch(/^## In context groups$/m);
+  });
+
+  it('the helper never names a shell variable `path` or `status` (zsh specials)', () => {
+    const src = read(HELPER);
+    expect(src).not.toMatch(/(^|[\s;(])(local\s+[^\n]*\b)?(path|status)=/m);
+    expect(src).not.toMatch(/\blocal\b[^\n]*\b(path|status)\b/);
+    expect(src).not.toMatch(/\$\{?(path|status)\b/);
+  });
+
+  it('the helper keeps the token off curl\'s argv (body goes in on stdin)', () => {
+    const src = read(HELPER);
+    expect(src).toMatch(/--data-binary @-/);
+    expect(src).not.toMatch(/APIToken=\$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A local GameFeed stand-in.
+
+interface Seen {
+  query: URLSearchParams;
+  form: URLSearchParams;
+}
+let server: Server;
+let base: string;
+let seen: Seen[] = [];
+let answer: (s: Seen) => unknown = () => lobbyFixture();
+let scratch: string;
+
+function body(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve) => {
+    let s = '';
+    req.on('data', (c) => (s += c));
+    req.on('end', () => resolve(s));
+  });
+}
+
+/** The fixture as war.app sends it: the map is `{}` when GetMap=false. */
+function gamefeed(s: Seen): unknown {
+  if (s.form.get('Email') !== EMAIL || s.form.get('APIToken') !== TOKEN) {
+    return { termsOfUse: 'x', error: 'Auth failed' };
+  }
+  const game = lobbyFixture();
+  if (s.query.get('GetMap') === 'false') game.map = {};
+  if (s.query.get('GetSettings') !== 'true') delete game.settings;
+  return game;
+}
+
+beforeAll(async () => {
+  server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    const s: Seen = { query: url.searchParams, form: new URLSearchParams(await body(req)) };
+    if (req.method !== 'POST' || url.pathname !== '/API/GameFeed') {
+      res.writeHead(404).end('nope');
+      return;
+    }
+    seen.push(s);
+    const out = answer(s);
+    res.writeHead(200, { 'content-type': 'application/json' }).end(typeof out === 'string' ? out : JSON.stringify(out));
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+});
+afterAll(async () => {
+  await new Promise<void>((r) => server.close(() => r()));
+});
+afterEach(() => {
+  seen = [];
+  answer = gamefeed;
+  if (scratch) rmSync(scratch, { recursive: true, force: true });
+  scratch = '';
+});
+
+interface Run {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** Source the helper in `shell` and run `script`, against the stand-in. */
+function run(shell: string, script: string, env: Record<string, string | undefined> = {}): Promise<Run> {
+  scratch ||= mkdtempSync(join(tmpdir(), 'warapp-skill-'));
+  const fullEnv: Record<string, string> = {
+    PATH: process.env.PATH ?? '',
+    HOME: scratch,
+    WARAPP_BASE_URL: base,
+    WARAPP_EMAIL: EMAIL,
+    WARAPP_API_TOKEN: TOKEN,
+    WARAPP_ENV_FILE: join(scratch, 'absent.env'),
+    WARAPP_CACHE_DIR: join(scratch, 'cache'),
+    GAME: '45670418',
+  };
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) delete fullEnv[k];
+    else fullEnv[k] = v;
+  }
+  return new Promise((resolve) => {
+    execFile(
+      shell,
+      ['-c', `. "$1" || exit 99\n${script}`, shell, HELPER],
+      { env: fullEnv, cwd: scratch },
+      (err, stdout, stderr) => {
+        const code = err ? ((err as { code?: unknown }).code as number) : 0;
+        resolve({ code: typeof code === 'number' ? code : -1, stdout, stderr });
+      },
+    );
+  });
+}
+
+const noToken = (r: Run) => {
+  expect(r.stdout).not.toContain(TOKEN);
+  expect(r.stderr).not.toContain(TOKEN);
+};
+
+describe.each(SHELLS)('helper under %s', (shell) => {
+  it('warapp_game posts the credentials as a form body and omits the map', async () => {
+    const r = await run(shell, 'warapp_game "$GAME" | jq -r .name');
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe(String(lobbyFixture().name));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.query.get('GameID')).toBe('45670418');
+    expect(seen[0]!.query.get('GetMap')).toBe('false');
+    expect(seen[0]!.query.get('GetSettings')).toBe('true');
+    expect(seen[0]!.form.get('Email')).toBe(EMAIL);
+    expect(seen[0]!.form.get('APIToken')).toBe(TOKEN);
+    noToken(r);
+  });
+
+  it('url-encodes an email with + and & in it', async () => {
+    answer = (s) => ({ ok: s.form.get('Email') });
+    const r = await run(shell, 'warapp_feed 7 | jq -r .ok', { WARAPP_EMAIL: 'a+b&c@example.com' });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe('a+b&c@example.com');
+  });
+
+  it('warapp_feed passes extra query parameters through', async () => {
+    const r = await run(shell, 'warapp_feed 9 GetHistory=true GetChat=true >/dev/null');
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen[0]!.query.get('GetHistory')).toBe('true');
+    expect(seen[0]!.query.get('GetChat')).toBe('true');
+  });
+
+  it.each(['', 'abc', '0', '-3', '12x', '2147483648', '99999999999'])('rejects game id %j locally (exit 1)', async (id) => {
+    const r = await run(shell, `warapp_feed '${id}'`);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/game id/i);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('accepts the largest game id', async () => {
+    const r = await run(shell, 'warapp_feed 2147483647 >/dev/null');
+    expect(r.code, r.stderr).toBe(0);
+  });
+
+  it('without credentials exits 2 and names what is missing', async () => {
+    const r = await run(shell, 'warapp_game 5', { WARAPP_EMAIL: undefined, WARAPP_API_TOKEN: undefined });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/WARAPP_EMAIL/);
+    expect(r.stderr).toMatch(/WARAPP_API_TOKEN/);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('reads credentials from the env file, with the host environment winning', async () => {
+    scratch = mkdtempSync(join(tmpdir(), 'warapp-skill-'));
+    const file = join(scratch, 'warapp.env');
+    writeFileSync(file, `# comment\nexport WARAPP_EMAIL="${EMAIL}"\r\nWARAPP_API_TOKEN='${TOKEN}'\nOTHER=1`);
+    const r = await run(shell, 'warapp_game 5 | jq -r .id', {
+      WARAPP_ENV_FILE: file,
+      WARAPP_EMAIL: undefined,
+      WARAPP_API_TOKEN: undefined,
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen[0]!.form.get('Email')).toBe(EMAIL);
+    expect(seen[0]!.form.get('APIToken')).toBe(TOKEN);
+
+    writeFileSync(file, `WARAPP_EMAIL=${EMAIL}\nWARAPP_API_TOKEN=wrongtoken`);
+    const r2 = await run(shell, 'warapp_game 5 >/dev/null', { WARAPP_ENV_FILE: file, WARAPP_EMAIL: undefined });
+    expect(r2.code, r2.stderr).toBe(0);
+    expect(seen[1]!.form.get('APIToken')).toBe(TOKEN);
+  });
+
+  it('defaults the env file to ~/.config/warapp-mcp/.env', async () => {
+    const r = await run(shell, 'mkdir -p "$HOME/.config/warapp-mcp" && printf "WARAPP_EMAIL=%s\\nWARAPP_API_TOKEN=%s\\n" "$E" "$T" > "$HOME/.config/warapp-mcp/.env" && warapp_game 5 >/dev/null', {
+      WARAPP_ENV_FILE: undefined,
+      WARAPP_EMAIL: undefined,
+      WARAPP_API_TOKEN: undefined,
+      E: EMAIL,
+      T: TOKEN,
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen[0]!.form.get('APIToken')).toBe(TOKEN);
+  });
+
+  it('does not leave the credentials in the calling shell', async () => {
+    const r = await run(
+      shell,
+      'printf "WARAPP_API_TOKEN=%s\\n" "$T" > "$HOME/w.env"; unset T; WARAPP_ENV_FILE="$HOME/w.env" warapp_game 5 >/dev/null || exit 7; set | grep -c deadbeef""cafef00d || true',
+      { WARAPP_API_TOKEN: undefined, T: TOKEN },
+    );
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen).toHaveLength(1);
+    expect(r.stdout.trim()).toBe('0');
+  });
+
+  it('maps "Auth failed" to exit 3 with the token hint, never echoing the token', async () => {
+    answer = () => ({ termsOfUse: 'x', error: 'Auth failed' });
+    const r = await run(shell, 'warapp_game 5');
+    expect(r.code).toBe(3);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toMatch(/GetAPIToken/);
+    noToken(r);
+  });
+
+  it('maps ServerGameKeyNotFound to exit 4', async () => {
+    answer = () => ({ termsOfUse: 'x', error: 'Loading the game produced an error: ServerGameKeyNotFound' });
+    const r = await run(shell, 'warapp_game 5');
+    expect(r.code).toBe(4);
+    expect(r.stderr).toMatch(/no game 5/i);
+  });
+
+  it('other errors exit 5 with the credentials scrubbed from the message', async () => {
+    answer = () => ({ termsOfUse: 'x', error: `weird ${TOKEN} for ${EMAIL}` });
+    const r = await run(shell, 'warapp_game 5');
+    expect(r.code).toBe(5);
+    expect(r.stderr).toMatch(/weird \[redacted\] for \[redacted\]/);
+    noToken(r);
+    expect(r.stderr).not.toContain(EMAIL);
+  });
+
+  it('a non-JSON answer exits 5', async () => {
+    answer = () => '<html>busy</html>';
+    const r = await run(shell, 'warapp_game 5');
+    expect(r.code).toBe(5);
+    expect(r.stderr).toMatch(/not JSON/i);
+  });
+
+  it('an unreachable server exits 5', async () => {
+    const r = await run(shell, 'warapp_game 5', { WARAPP_BASE_URL: 'http://127.0.0.1:9' });
+    expect(r.code).toBe(5);
+  });
+
+  it('warapp_map fetches the map once and serves it from the cache after', async () => {
+    const r = await run(shell, 'warapp_map "$GAME" | jq -r .id; warapp_map "$GAME" | jq ".territories | length"');
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.trim().split('\n')).toEqual(['39905', '761']);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.query.get('GetMap')).toBeNull();
+  });
+
+  it('warapp_map surfaces errors with their exit code', async () => {
+    answer = () => ({ termsOfUse: 'x', error: 'Auth failed' });
+    const r = await run(shell, 'warapp_map 5');
+    expect(r.code).toBe(3);
+  });
+
+  it('warapp_map refuses a map id that is not a number', async () => {
+    answer = () => ({ ...lobbyFixture(), map: { id: '../../x' } });
+    const r = await run(shell, 'warapp_map 5');
+    expect(r.code).toBe(5);
+    expect(r.stderr).toMatch(/map/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Every recipe documented in skills/warapp-api/SKILL.md runs against the fixture.
+
+const recipes = [...read(join(SKILLS, 'warapp-api', 'SKILL.md')).matchAll(/<!-- recipe: ([^>]+?) -->\n```sh\n([\s\S]*?)```/g)].map(
+  (m) => ({ name: m[1]!, script: m[2]! }),
+);
+
+describe('documented recipes', () => {
+  it('documents the player, bonus and standing recipes', () => {
+    const names = recipes.map((r) => r.name);
+    expect(names.length).toBeGreaterThanOrEqual(5);
+    for (const want of ['players', 'bonuses', 'standing']) expect(names.join(' ')).toContain(want);
+  });
+
+  it('every sh block in the skill is a marked recipe (none escapes the run below)', () => {
+    const md = read(join(SKILLS, 'warapp-api', 'SKILL.md'));
+    const blocks = [...md.matchAll(/```sh\n/g)].length;
+    const setup = [...md.matchAll(/<!-- setup -->\n```sh\n/g)].length;
+    expect(blocks).toBe(recipes.length + setup);
+  });
+
+  describe.each(SHELLS)('under %s', (shell) => {
+    it.each(recipes.map((r) => [r.name, r.script] as const))('%s', async (_name, script) => {
+      const r = await run(shell, `set -e\n${script}`);
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout.trim().length).toBeGreaterThan(0);
+      expect(r.stdout).not.toMatch(/^null$/m);
+      noToken(r);
+    });
+  });
+});

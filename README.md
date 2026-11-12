@@ -51,6 +51,16 @@ that needs them.
 
 All tools are read-only. Player, game, map and chat text comes back marked as untrusted third-party content.
 
+## Skills
+
+The package (and the Claude Code plugin) ships two skills under `skills/`:
+
+- **warapp-mcp** — which tool answers which question, and how the tools behave in mcp-host context groups.
+- **warapp-api** — the same GameFeed reads from a shell with curl and jq, no server needed. Source
+  `skills/warapp-api/scripts/warapp.sh` (bash or zsh) for `warapp_game`, `warapp_map` (cached per map)
+  and `warapp_feed`; it reads `WARAPP_EMAIL` / `WARAPP_API_TOKEN` from the environment or
+  `~/.config/warapp-mcp/.env` and never prints the token.
+
 ## Development
 
 ```sh
