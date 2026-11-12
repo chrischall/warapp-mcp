@@ -4,7 +4,7 @@
 import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
-import { readLiveStanding, type ClassReader, type LiveTerritory } from '../live.js';
+import { readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
 import type { Game } from '../normalize.js';
 import { BundleProvider } from '../protocol/bundle.js';
 import {
@@ -115,17 +115,23 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
 
 /** The game's live board through the bridge; throws when war.app has none for it. */
 export async function loadLiveTerritories(ctx: LiveContext, game: Game): Promise<LiveTerritory[]> {
+  return (await loadLiveGame(ctx, game)).territories;
+}
+
+/** The live board plus the decoded LatestGameInfo (cards live there); throws when war.app has no board. */
+export async function loadLiveGame(ctx: LiveContext, game: Game): Promise<{ territories: LiveTerritory[]; info: unknown }> {
   const env = await ctx.rpc.call('GetLatestGameInfo', Method.GetLatestGameInfo, (w) =>
     writeGetLatestGameInfoParams(w, game.id),
   );
   const bundle = await ctx.bundle();
-  const territories = readLiveStanding(bundle, env.body);
+  const info = readLatestGameInfo(bundle, env.body);
+  const territories = standingFromInfo(info);
   if (!territories) {
     throw new McpToolError(`war.app has no board for game ${game.id} yet (game state: ${game.state}).`, {
       hint: 'A lobby has no board until territories are distributed. warapp_get_map works without one.',
     });
   }
-  return territories;
+  return { territories, info };
 }
 
 /** A player's current territory picks, in priority order. */

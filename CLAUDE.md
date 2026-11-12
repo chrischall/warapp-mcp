@@ -8,11 +8,13 @@ Advisor MCP for war.app (Warzone) with two transports:
   `https://war.app/Services?m=<name>&js=1`, relayed through the user's signed-in war.app tab
   by the fetchproxy bridge (ContextMint Bridge), because they are authenticated by the
   browser's cookies — the live board, territory picks, turn orders and chat sends. The spec is
-  `docs/WEB-PROTOCOL.md`.
+  `docs/WEB-PROTOCOL.md`. War.app's socket.io push channel (turn notifications) rides the
+  same bridge.
 
 Build plans: `docs/PLAN.md` (phase 1, GameFeed), `docs/PLAN-LIVE.md` (phase 2, live board),
-`docs/PLAN-TURN.md` (phase 3, plan and submit a turn) and `docs/PLAN-SCOUT.md` (phase 4, my games
-and opponent scouting).
+`docs/PLAN-TURN.md` (phase 3, plan and submit a turn), `docs/PLAN-SCOUT.md` (phase 4, my games
+and opponent scouting) and `docs/PLAN-CARDS-PUSH.md` (phase 5, cards, turn notifications,
+threat-aware planner).
 
 ## What is true only of this repo
 
@@ -36,7 +38,7 @@ and opponent scouting).
   `MCP_CONFIRM_MODE`). `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
   is read-only, `warapp_plan_turn` included.
-- **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (deploys first, then moves;
+- **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (card plays, then deploys, then moves;
   encoders in `src/protocol/methods.ts` are golden-pinned to a live commit), turn number =
   GameFeed `numberOfTurns` + 1. It always acts as the signed-in account (refuses any other
   `player`, and refuses when that account cannot be determined), validates on the live board
@@ -47,6 +49,28 @@ and opponent scouting).
   from the reply:** its bool is the "vacation ended" flag. After sending, GameFeed is re-read:
   `numberOfTurns` advanced → `resolved`; my `hasCommittedOrders` true → `committed`; neither,
   or a transport failure after sending → `unknown` (never suggest resending blindly).
+- **Cards (`src/cards.ts`).** The hand is read from the live board (`LatestGameInfo` standing →
+  my in-game id → GUID → card instance, by bundle type name); the rules from GameFeed settings
+  (`MaxCardsHold`, `ReinforcementCard.FixedArmies`; a card set to `'none'` is not in play). At
+  the hold limit war.app refuses a `SendOrders` with no card play (**error 51 `MustUseCard`**),
+  so `warapp_submit_turn` refuses up front. The planner always plays Reinforcement (its armies
+  join the income) and, only when a play is required, Order Priority, else Order Delay — never
+  Blockade (it gives a territory away). Card plays must come in war.app's turn-phase order or
+  the server answers **error 10 `OrdersInIncorrectOrder`**, so `writeSendOrdersParams` sorts
+  every order by `TurnPhase` (Order Priority 12, Reinforcement 20, deploys 25, moves 50,
+  Blockade 60). Order Delay's phase is unverified, so `warapp_submit_turn` refuses it alongside
+  other card plays.
+  Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
+- **Turn notifications are a socket.io v0.9 xhr-polling client over the bridge**
+  (`src/push/socketio.ts`): handshake GET, then the first poll must return the connect packet
+  `1::` before any POST (a POST first is HTTP 400); heartbeats `2::` are answered; `Subscribe`
+  (method 238, no auth block) to `Game.<id>`. A push is method 241 `GameUpdated` carrying only
+  the game id, so `warapp_wait_for_turn` re-reads GameFeed on each one. One listener per process
+  (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
+  Tests drive it against a scripted fake bridge, never a socket.
+- **Threat model.** The planner assumes an enemy deploys max(5, round(0.75 × the largest visible
+  enemy stack)) (`enemyDeploy` / `enemy_deploy`), because enemy income is unseen — live, 13
+  visible armies broke a 12-army border.
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it

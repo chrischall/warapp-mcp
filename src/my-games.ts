@@ -167,6 +167,17 @@ export function summarizeMyGames(games: readonly RawMyGame[], myInGameId: number
   return [...out.filter((g) => g.waitingOnYou), ...out.filter((g) => !g.waitingOnYou)];
 }
 
+/**
+ * Games I can still take a turn in (`myInGameId`): being played or distributing
+ * territories, with my player Playing — committed or not. war.app's order.
+ */
+export function activeGameIds(games: readonly RawMyGame[], myInGameId: number): number[] {
+  return games
+    .filter((g) => g.stateCode === GAME_PLAYING || g.stateCode === GAME_DISTRIBUTING)
+    .filter((g) => g.players.some((p) => p.id === myInGameId && p.stateCode === PLAYER_PLAYING))
+    .map((g) => g.id);
+}
+
 /** The longest line `view: 'brief'` answers (the context-groups contract). */
 export const BRIEF_MAX = 120;
 

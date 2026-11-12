@@ -16,8 +16,18 @@ export const LIVE_BUNDLE = [
   'Gs.Ha=function(a,b,d){var e=new Gs;' +
     'e.q1=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return Pc.Ha(a,e,d)}):null;' +
     'e.q2=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Ts.Ha(a,e,d):null}):null;return e};',
-  // Per-player data keyed by in-game id (an unregistered class, as in the client).
-  'Pc.Ha=function(a,b,d){var e=new Pc;e.z1=P.Ya(a);return e};',
+  // Per-player data keyed by in-game id (an unregistered class, as in the client),
+  // holding the player's cards: a dict GUID → card instance.
+  'Pc.Ha=function(a,b,d){var e=new Pc;e.z1=P.Ya(a);' +
+    'e.z2=a.Ua()?P.ef(a,function(){return P.tL(a)},function(){return a.Ua()?Cd.Ha(a,e,d):null}):null;return e};',
+  'function Cd(){}function Rc(){}function Nc(){}',
+  'W["warlight.shared.CardInstance"]=Cd;',
+  'Cd.Ha=function(a,b,d){switch(P.uq(a)){case 1:return Rc.Ha(a,b,d);case 2:return Nc.Ha(a,b,d);' +
+    'default:throw Y.sa(new Pa("unknown card instance tag"))}};',
+  'W["warlight.shared.ReinforcementCardInstance"]=Rc;',
+  'Rc.Ha=function(a,b,d){var e=new Rc;e.c1=P.tL(a);e.c2=P.Ya(a);e.c3=P.Ya(a);return e};',
+  'W["warlight.shared.NoParameterCardInstance"]=Nc;',
+  'Nc.Ha=function(a,b,d){var e=new Nc;e.c1=P.tL(a);e.c2=P.Ya(a);return e};',
   'W["warlight.shared.TerritoryStanding"]=Ts;',
   'Ts.Ha=function(a,b,d){var e=new Ts;e.f1=P.Ya(a);e.f2=P.Ya(a);e.f3=Am.Ha(a,e,d);e.f4=P.Ya(a);' +
     'e.f5=a.Ua()?P.Ya(a):null;return e};',
@@ -25,6 +35,13 @@ export const LIVE_BUNDLE = [
   'Am.Ha=function(a,b,d){var e=new Am;e.g1=P.Yc(a);e.g2=P.Ya(a);' +
     'e.g3=a.Ua()?P.Sd(a,function(){return P.Ya(a)}):null;return e};',
 ].join('\n');
+
+/** A synthetic card instance: a made-up GUID, the card type id and, for Reinforcement, its armies. */
+export interface SyntheticCard {
+  id: string;
+  type: number;
+  armies?: number;
+}
 
 export interface SyntheticTerritory {
   id: number;
@@ -41,13 +58,26 @@ export function writeLatestGameInfo(
   w: Writer,
   territories: readonly SyntheticTerritory[] | null,
   playerIds: readonly number[] = [],
+  hands: Readonly<Record<number, readonly SyntheticCard[]>> = {},
 ): void {
   w.bool(true).int32(1);
   if (territories === null) {
     w.bool(false);
   } else {
     w.bool(true);
-    w.bool(true).list(playerIds, (ww, id) => ww.int32(id).int32(0));
+    w.bool(true).list(playerIds, (ww, id) => {
+      ww.int32(id).int32(0);
+      const hand = hands[id];
+      if (!hand) {
+        ww.bool(false);
+        return;
+      }
+      ww.bool(true).list(hand, (cw, c) => {
+        cw.guid(c.id).bool(true);
+        if (c.armies !== undefined) cw.u8(1).guid(c.id).int32(c.type).int32(c.armies);
+        else cw.u8(2).guid(c.id).int32(c.type);
+      });
+    });
     w.bool(true).list(territories, (ww, t) => {
       ww.int32(t.id).bool(true).int32(t.fogLevel).int32(t.id).bool(t.fogged ?? false).int32(t.armies).bool(false);
       ww.int32(t.owner).bool(false);

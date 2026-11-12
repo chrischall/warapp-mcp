@@ -9,9 +9,11 @@ import { createLiveContext } from './live-context.js';
 import { registerLiveTools } from './live.js';
 import { registerMapTool } from './map.js';
 import { registerMyGamesTool } from './my-games.js';
+import { registerPushTools } from './push.js';
 import { registerRouteTool } from './route.js';
 import { registerScoutTool } from './scout.js';
 import { registerTurnTools } from './turn.js';
+import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
 
 export type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCache'> & {
@@ -23,6 +25,8 @@ export type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' |
   bridge?: WarappBridge;
   /** Test seam: the client bundle, instead of discovering and downloading it. */
   bundle?: () => Promise<ClassReader>;
+  /** The turn-notification listener; default: the bridge's one per process. */
+  push?: PushListener;
 };
 
 /** Every tool this server serves. index.ts and the tests share this list. */
@@ -48,4 +52,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerScoutTool(server, live);
   registerTurnTools(server, live);
   registerChatTools(server, live);
+  // One push socket per bridge (= per process): connections share it.
+  const push =
+    deps.push ?? pushListenerFor(bridge, { transport: () => bridge.ready(), extras: () => live.rpc.extras });
+  registerPushTools(server, live, push);
 }

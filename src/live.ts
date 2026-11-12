@@ -96,9 +96,23 @@ function territoryOf(key: unknown, ts: Obj): LiveTerritory {
  * result, or a game with no board yet).
  */
 export function readLiveStanding(bundle: ClassReader, body: Reader): LiveTerritory[] | null {
+  return standingFromInfo(readLatestGameInfo(bundle, body));
+}
+
+/**
+ * Decode a GetLatestGameInfo result (the body positioned at the result-present
+ * flag) into the bundle's LatestGameInfo object; `null` when war.app sent no result.
+ */
+export function readLatestGameInfo(bundle: ClassReader, body: Reader): unknown {
   if (!body.bool()) return null;
   const info = bundle.readClass(LATEST_GAME_INFO, body);
   if (!isObj(info)) throw new LiveBoardFormatError('no LatestGameInfo');
+  return info;
+}
+
+/** The territories of a decoded LatestGameInfo; `null` when it carries no standing. */
+export function standingFromInfo(info: unknown): LiveTerritory[] | null {
+  if (!isObj(info)) return null;
   const standing = fields(info).find((v) => isType(v, GAME_STANDING));
   if (!standing) return null;
   for (const v of fields(standing)) {

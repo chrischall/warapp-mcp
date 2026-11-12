@@ -17,6 +17,8 @@ export const Method = {
   GetTerritoryPicks: 79,
   UnCommit: 80,
   GetTurns: 81,
+  Subscribe: 238,
+  GameUpdated: 241,
 } as const;
 
 export type MethodName = keyof typeof Method;
@@ -86,6 +88,34 @@ export function writeSendTerritoryPicksParams(w: Writer, gameId: number, territo
 export function readTerritoryPicks(body: Reader): number[] {
   if (!body.bool()) return [];
   return body.list((r) => r.int32()) ?? [];
+}
+
+/**
+ * Subscribe(topics) — sent on the push socket, not through `/Services`, and
+ * with NO auth block (verified live): a present list of topic strings
+ * (`Game.<id>`), then a null string.
+ */
+export function writeSubscribeParams(w: Writer, topics: readonly string[]): void {
+  w.bool(true)
+    .list(topics, (ww, t) => ww.string(t))
+    .string(null);
+}
+
+/** The push topic for a game's updates. */
+export const gameTopic = (gameId: number): string => `Game.${gameId}`;
+
+/**
+ * A Subscribe result: present flag, then a dict topic → error code
+ * (EnumSerialization_ErrorTypes, int32). Absent or null means every topic
+ * was accepted; an entry is a refused topic.
+ */
+export function readSubscribeResult(body: Reader): Map<string, number> {
+  if (!body.bool()) return new Map();
+  const d = body.dict(
+    (r) => r.string() ?? '',
+    (r) => r.int32(),
+  );
+  return d ?? new Map();
 }
 
 /** SendChat channel for the whole game (any other value is a team channel). */
@@ -179,17 +209,82 @@ export function writeAttackTransferOrder(w: Writer, o: AttackTransferOrder): voi
   writeOrderBase(w, o.playerId);
 }
 
+/**
+ * The card plays this server can encode, by order tag. VERIFIED 2026-11-12
+ * (docs/PLAN-CARDS-PUSH.md): Reinforcement (5) live, golden-pinned; the others
+ * follow the same layout with the fields read from the client.
+ */
+export const CardPlayTag = { Reinforcement: 5, OrderPriority: 10, OrderDelay: 11, Blockade: 18 } as const;
+export type CardPlayKind = keyof typeof CardPlayTag;
+
+export interface CardPlayOrder {
+  playerId: number;
+  card: CardPlayKind;
+  /** The card instance GUID (32 hex digits; dashes allowed). */
+  cardId: string;
+  /** Blockade only: the territory to blockade. */
+  target?: number;
+}
+
+/**
+ * Encode a play-card order: the tag, the card's own fields (Blockade: the
+ * target territory), the card instance GUID in .NET byte order, then the
+ * player id and two false bools.
+ */
+export function writeCardPlayOrder(w: Writer, o: CardPlayOrder): void {
+  w.u8(CardPlayTag[o.card]);
+  if (o.card === 'Blockade') {
+    if (o.target === undefined) throw new Error('A Blockade card play needs a target territory.');
+    w.int32(o.target);
+  }
+  w.guid(o.cardId);
+  writeOrderBase(w, o.playerId);
+}
+
 /** One order of a turn, as a tool builds it (the player id is supplied per turn). */
 export type TurnOrder =
   | { kind: 'deploy'; territoryId: number; armies: number }
-  | { kind: 'move'; from: number; to: number; armies: number };
+  | { kind: 'move'; from: number; to: number; armies: number }
+  | { kind: 'card'; card: CardPlayKind; cardId: string; target?: number };
+
+/**
+ * The `warlight.shared.TurnPhase` each order runs in. war.app refuses a turn
+ * whose orders are out of phase order with error 10 `OrdersInIncorrectOrder`
+ * (VERIFIED live 2026-11-12: `[OrderPriority, Reinforcement, deploys]` was
+ * accepted, `[Reinforcement, OrderPriority, …]` refused). Order Delay's phase is
+ * unverified; it is placed with Order Priority, and submit_turn refuses to mix
+ * it with other card plays.
+ */
+export const TurnPhase = {
+  OrderPriorityCards: 12,
+  ReinforcementCards: 20,
+  Deploys: 25,
+  Attacks: 50,
+  BlockadeCards: 60,
+} as const;
+
+const CARD_PHASE: Readonly<Record<CardPlayKind, number>> = {
+  OrderPriority: TurnPhase.OrderPriorityCards,
+  OrderDelay: TurnPhase.OrderPriorityCards,
+  Reinforcement: TurnPhase.ReinforcementCards,
+  Blockade: TurnPhase.BlockadeCards,
+};
+
+/** The turn phase an order runs in. */
+export function turnPhaseOf(o: TurnOrder): number {
+  if (o.kind === 'deploy') return TurnPhase.Deploys;
+  if (o.kind === 'move') return TurnPhase.Attacks;
+  return CARD_PHASE[o.card];
+}
 
 /**
  * SendOrders(auth, …) — verified against a live turn commit: the game id, a
  * present order list (int32 count, then per order a present flag and the
  * order), the turn number (GameFeed `numberOfTurns` + 1), then two bools the
- * client sends as false. Like the client, every deploy is written first, then
- * the moves in the given order; a move is an ordinary AttackTransfer (mode 3).
+ * client sends as false. Orders are written in turn-phase order (a stable
+ * sort, so orders of one phase keep their given order): Order Priority and
+ * Reinforcement plays, then every deploy, then the moves (ordinary
+ * AttackTransfers, mode 3), then any Blockade plays.
  */
 export function writeSendOrdersParams(
   w: Writer,
@@ -198,16 +293,17 @@ export function writeSendOrdersParams(
   orders: readonly TurnOrder[],
   turnNumber: number,
 ): void {
-  const deploys = orders.filter((o): o is Extract<TurnOrder, { kind: 'deploy' }> => o.kind === 'deploy');
-  const moves = orders.filter((o): o is Extract<TurnOrder, { kind: 'move' }> => o.kind === 'move');
-  w.int32(gameId).bool(true).int32(deploys.length + moves.length);
-  for (const d of deploys) {
+  const sorted = [...orders].sort((a, b) => turnPhaseOf(a) - turnPhaseOf(b));
+  w.int32(gameId).bool(true).int32(sorted.length);
+  for (const o of sorted) {
     w.bool(true);
-    writeDeployOrder(w, { playerId, territoryId: d.territoryId, armies: d.armies });
-  }
-  for (const m of moves) {
-    w.bool(true);
-    writeAttackTransferOrder(w, { playerId, from: m.from, to: m.to, armies: m.armies });
+    if (o.kind === 'card') {
+      writeCardPlayOrder(w, { playerId, card: o.card, cardId: o.cardId, ...(o.target !== undefined ? { target: o.target } : {}) });
+    } else if (o.kind === 'deploy') {
+      writeDeployOrder(w, { playerId, territoryId: o.territoryId, armies: o.armies });
+    } else {
+      writeAttackTransferOrder(w, { playerId, from: o.from, to: o.to, armies: o.armies });
+    }
   }
   w.int32(turnNumber).bool(false).bool(false);
 }

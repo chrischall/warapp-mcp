@@ -4,15 +4,31 @@
 import { CONFIRM_INJECTION_RULE, defineWrite, McpToolError, registerWrite, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import {
+  CARD_BLOCKADE,
+  CARD_ORDER_DELAY,
+  CARD_ORDER_PRIORITY,
+  CARD_REINFORCEMENT,
+  cardRules,
+  cardTypeByName,
+  cardTypeName,
+  chooseCardPlays,
+  normalizeGuid,
+  playRequired,
+  readHand,
+  reinforcementArmies,
+  type Card,
+  type CardRules,
+} from '../cards.js';
 import { incomeFor, neighborsOf, planTurn, type PlanGoal, type PlannerSettings } from '../analysis/index.js';
 import { parseGameId } from '../client.js';
 import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
 import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
-import { Method, writeSendOrdersParams, type TurnOrder } from '../protocol/methods.js';
-import { WarappServerError } from '../protocol/rpc.js';
+import { Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
+import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
-import { loadLiveTerritories, type LiveContext } from './live-context.js';
+import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
@@ -23,6 +39,7 @@ const GOALS = ['expand', 'complete-bonus', 'defend'] as const satisfies readonly
 export const TURN_PHASE_STATE = 'Playing';
 const MAX_ORDERS = 500;
 const MAX_FOCUS = 50;
+const MAX_ENEMY_DEPLOY = 10_000;
 
 const territoryRef = z.union([z.string(), z.number()]);
 const armiesArg = z.coerce.number().int().min(1);
@@ -39,6 +56,17 @@ export const turnOrderArg = z.discriminatedUnion('kind', [
     from: territoryRef.describe('Territory the armies leave: id or name.'),
     to: territoryRef.describe('Adjacent territory to attack or transfer into: id or name.'),
     armies: armiesArg.describe('Armies to send.'),
+  }),
+  z.object({
+    kind: z.literal('card'),
+    card: z
+      .string()
+      .min(1)
+      .max(64)
+      .describe('Card to play from your hand: its id (GUID) or its type name, e.g. "Reinforcement".'),
+    target: territoryRef
+      .optional()
+      .describe('Blockade only: your territory to blockade (id or name).'),
   }),
 ]);
 
@@ -119,11 +147,13 @@ export async function requireSignedInMe(
 }
 
 interface NamedOrder {
-  kind: 'deploy' | 'move';
+  kind: 'deploy' | 'move' | 'card';
+  card?: { id: string; name: string; armies?: number };
+  target?: { id: number; name: string };
   territory?: { id: number; name: string };
   from?: { id: number; name: string };
   to?: { id: number; name: string };
-  armies: number;
+  armies?: number;
 }
 
 interface TurnState {
@@ -206,6 +236,116 @@ export function validateTurn(args: {
   }
 }
 
+/** The card types warapp_submit_turn can play, by the encoder's name. */
+const PLAYABLE: Readonly<Record<number, CardPlayKind>> = {
+  [CARD_REINFORCEMENT]: 'Reinforcement',
+  [CARD_ORDER_PRIORITY]: 'OrderPriority',
+  [CARD_ORDER_DELAY]: 'OrderDelay',
+  [CARD_BLOCKADE]: 'Blockade',
+};
+
+/** A card play resolved against the hand. */
+export interface ResolvedCardPlay {
+  card: Card;
+  kind: CardPlayKind;
+  target?: { id: number; name: string };
+  /** Armies it adds to this turn's deploys (Reinforcement). */
+  armies: number;
+}
+
+/**
+ * Resolve card plays (by GUID or type name) against my hand. Refuses a card not
+ * held, the same card twice, a card this server cannot play, a Blockade with no
+ * target, a target on any other card, a Reinforcement whose armies are unknown,
+ * and an Order Delay played alongside other cards (its turn phase is unverified).
+ */
+export function resolveCardPlays(
+  map: GameMap,
+  hand: readonly Card[],
+  rules: CardRules,
+  inputs: ReadonlyArray<{ card: string; target?: string | number | undefined }>,
+): ResolvedCardPlay[] {
+  const used = new Set<string>();
+  const out: ResolvedCardPlay[] = [];
+  for (const input of inputs) {
+    const guid = normalizeGuid(input.card.trim());
+    let card: Card | undefined;
+    if (guid !== undefined) {
+      card = hand.find((c) => c.id === guid);
+      if (!card) {
+        throw new McpToolError(`Card ${guid} is not in your hand.`, {
+          hint: `Your hand: ${hand.length ? hand.map((c) => `${c.name} (${c.id})`).join(', ') : 'no cards'}.`,
+        });
+      }
+      if (used.has(card.id)) {
+        throw new McpToolError(`The ${card.name} card ${card.id} is played twice.`, { hint: 'Each card can be played once.' });
+      }
+    } else {
+      const type = cardTypeByName(input.card);
+      if (type === undefined) {
+        throw new McpToolError(`No card type matches "${input.card}".`, {
+          hint: 'Name a card by its id (GUID) or its type, e.g. "Reinforcement" or "Order Priority".',
+        });
+      }
+      card = hand.find((c) => c.type === type && !used.has(c.id));
+      if (!card) {
+        throw new McpToolError(`You hold no ${cardTypeName(type)} card${hand.some((c) => c.type === type) ? ' left to play' : ''}.`, {
+          hint: `Your hand: ${hand.length ? hand.map((c) => c.name).join(', ') : 'no cards'}.`,
+        });
+      }
+    }
+    used.add(card.id);
+    const kind = PLAYABLE[card.type];
+    if (!kind) {
+      throw new McpToolError(`Playing a ${card.name} card is not supported here yet.`, {
+        hint: 'Play it in the game itself; this tool plays Reinforcement, Order Priority, Order Delay and Blockade cards.',
+      });
+    }
+    const hasTarget = input.target !== undefined && String(input.target).trim() !== '';
+    if (kind === 'Blockade' && !hasTarget) {
+      throw new McpToolError('A Blockade needs a `target`: the territory of yours to blockade.', {
+        hint: 'A Blockade turns your territory neutral with multiplied armies — it gives the territory away.',
+      });
+    }
+    if (kind !== 'Blockade' && hasTarget) {
+      throw new McpToolError(`A ${card.name} card takes no target.`, { hint: 'Only Blockade takes a `target`.' });
+    }
+    let armies = 0;
+    if (kind === 'Reinforcement') {
+      const a = reinforcementArmies(card, rules);
+      if (a === undefined) {
+        throw new McpToolError(`The armies Reinforcement card ${card.id} adds are unknown, so the deploy total cannot be checked.`, {
+          hint: 'Play it in the game itself.',
+        });
+      }
+      armies = a;
+    }
+    const play: ResolvedCardPlay = { card, kind, armies };
+    if (hasTarget) {
+      const t = resolveTerritory(map, input.target!);
+      play.target = { id: t.id, name: t.name };
+    }
+    out.push(play);
+  }
+  if (out.length > 1 && out.some((p) => p.kind === 'OrderDelay')) {
+    throw new McpToolError('Play an Order Delay card on its own: its turn phase is unverified, so war.app may refuse it alongside other card plays (error 10).', {
+      hint: 'Submit the Order Delay play without other card plays, or drop it and play the others.',
+    });
+  }
+  return out;
+}
+
+/** The required-play refusal (war.app's error 51, `MustUseCard`), raised before anything is sent. */
+function mustPlayCard(hand: readonly Card[], rules: CardRules): McpToolError {
+  return new McpToolError(`${SERVER_ERROR_MESSAGES[51]} (You hold ${hand.length}; the limit is ${rules.maxCardsHold}.)`, {
+    hint: `Add a card play to the orders, e.g. { "kind": "card", "card": "${hand[0]?.name ?? 'Reinforcement'}" }. Your hand: ${hand
+      .map((c) => `${c.name} (${c.id})`)
+      .join(', ')}.`,
+  });
+}
+
+const cardView = (c: Card) => ({ id: c.id, name: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}) });
+
 export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_plan_turn',
@@ -214,7 +354,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       description: untrustedDescription(
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
           "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
-          'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. Its ' +
+          'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. Threat ' +
+          'checks assume each enemy deploys `enemy_deploy` (default from the largest visible enemy stack). It reports ' +
+          'your cards and whether you must play one (hand at the hold limit), and plays Reinforcement cards (their ' +
+          'armies are planned) and, when a play is required, Order Priority or Order Delay — never Blockade. Its ' +
           '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Goal "expand" ' +
           '(default) takes neutrals; "complete-bonus" also attacks players to finish bonuses; "defend" first ' +
           `reinforces threatened borders. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only; it never submits orders.`,
@@ -239,23 +382,36 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .min(0)
           .optional()
           .describe('Armies of income held out of captures (they are still deployed, on the most exposed border).'),
+        enemy_deploy: z.coerce
+          .number()
+          .int()
+          .min(0)
+          .max(MAX_ENEMY_DEPLOY)
+          .optional()
+          .describe(
+            'Armies an enemy is assumed to deploy next turn when judging threats. Default max(5, 75% of the largest ' +
+              'visible enemy stack) — enemy income is unseen, so raise it if you know they earn more.',
+          ),
         view: viewArg(
           VIEWS,
           'compact (default) gives the plan and orders; "full" adds each move\'s reason and the settings the plan assumed.',
         ),
       }),
     },
-    async ({ game_id, player, goal, focus, reserve, view }) => {
+    async ({ game_id, player, goal, focus, reserve, enemy_deploy, view }) => {
       const game = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(game);
       const map = mapOf(game);
       const focusBonusIds = (focus ?? []).map((b) => resolveBonus(map, b).id);
       const me = await resolveMe(ctx, game.players, player);
-      const territories = await loadLiveTerritories(ctx, game);
+      const { territories, info } = await loadLiveGame(ctx, game);
       const graph = graphOf(map);
       const board = boardStateFromLive(territories, me, game.players);
       const settings = plannerSettings(game.settings);
-      const income = incomeFor(graph, board, me.id, game.settings);
+      const rules = cardRules(game.settings);
+      const hand = readHand(info, inGameId(me));
+      const cards = chooseCardPlays(hand, rules);
+      const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
       const chosen: PlanGoal = goal ?? 'expand';
       const plan = planTurn({
         graph,
@@ -263,16 +419,23 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         me: me.id,
         income,
         settings,
-        options: { goal: chosen, focusBonusIds, ...(reserve !== undefined ? { reserve } : {}) },
+        options: {
+          goal: chosen,
+          focusBonusIds,
+          ...(reserve !== undefined ? { reserve } : {}),
+          ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
+        },
       });
       const name = namer(map);
-      const warnings = me.hasCommittedOrders
-        ? [
-            'You have already committed orders this turn; warapp_submit_turn will refuse — modify orders in the game instead.',
-            ...plan.warnings,
-          ]
-        : plan.warnings;
+      const warnings = [
+        ...(me.hasCommittedOrders
+          ? ['You have already committed orders this turn; warapp_submit_turn will refuse — modify orders in the game instead.']
+          : []),
+        ...cards.warnings,
+        ...plan.warnings,
+      ];
       const orders = [
+        ...cards.plays.map((c) => ({ kind: 'card' as const, card: c.id })),
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
         ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
       ];
@@ -282,6 +445,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         player: { id: me.id, name: me.name },
         goal: chosen,
         income,
+        enemyDeploy: plan.enemyDeploy,
+        cards: {
+          hand: hand.map(cardView),
+          maxCardsHold: rules.maxCardsHold ?? null,
+          playRequired: cards.required,
+          plays: cards.plays.map(cardView),
+          armiesFromCards: cards.extraArmies,
+        },
         deploys: plan.deploys.map((d) => ({ territory: name(d.territoryId), armies: d.armies })),
         moves: plan.moves.map((m) => ({
           from: name(m.from),
@@ -309,8 +480,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
     game_id: gameIdArg,
     player: playerArg,
     orders: turnOrdersArg.describe(
-      'The turn\'s orders (deploys and attacks/transfers), territories by id or name — e.g. the `orders` array ' +
-        'warapp_plan_turn returns. Deploys must total exactly your income.',
+      'The turn\'s orders (card plays, deploys and attacks/transfers), territories by id or name, cards by id or type ' +
+        'name — e.g. the `orders` array warapp_plan_turn returns. Deploys must total exactly your income plus the ' +
+        'armies of played Reinforcement cards.',
     ),
   });
 
@@ -326,11 +498,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         defineWrite({
           name: 'warapp_submit_turn',
           description:
-            'Commit your orders for the current turn of a war.app (Warzone) game: deploys, then attacks/transfers ' +
-            '(territories by id or name — usually the `orders` from warapp_plan_turn, reviewed with the user). The ' +
+            'Commit your orders for the current turn of a war.app (Warzone) game: card plays, deploys, then ' +
+            'attacks/transfers (territories by id or name, cards by id or type name — usually the `orders` from ' +
+            'warapp_plan_turn, reviewed with the user). Plays Reinforcement, Order Priority, Order Delay and Blockade ' +
+            '(with a `target` of yours) from your hand; refuses with no card play when your hand is at the hold limit. The ' +
             'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
             'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
-            'adjacent ones, no more armies than a territory has, deploys totalling exactly your income. Always sent as ' +
+            'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
+            'Reinforcement armies. Always sent as ' +
             'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
             `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
@@ -359,8 +534,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const map = mapOf(game);
             const deploys: Array<{ territory: { id: number; name: string }; armies: number }> = [];
             const moves: Array<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }> = [];
+            const cardInputs: Array<{ card: string; target?: string | number | undefined }> = [];
             for (const o of orders) {
-              if (o.kind === 'deploy') {
+              if (o.kind === 'card') {
+                cardInputs.push({ card: o.card, target: o.target });
+              } else if (o.kind === 'deploy') {
                 const t = resolveTerritory(map, o.territory);
                 deploys.push({ territory: { id: t.id, name: t.name }, armies: o.armies });
               } else {
@@ -369,10 +547,23 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 moves.push({ from: { id: f.id, name: f.name }, to: { id: t.id, name: t.name }, armies: o.armies });
               }
             }
-            const territories = await loadLiveTerritories(ctx, game);
+            const { territories, info } = await loadLiveGame(ctx, game);
             const board = boardStateFromLive(territories, me, game.players);
-            const income = incomeFor(graphOf(map), board, me.id, game.settings);
             const playerId = inGameId(me);
+            const rules = cardRules(game.settings);
+            const hand = readHand(info, playerId);
+            const plays = resolveCardPlays(map, hand, rules, cardInputs);
+            if (plays.length === 0 && playRequired(hand, rules)) throw mustPlayCard(hand, rules);
+            for (const p of plays) {
+              const t = p.target && territories.find((x) => x.territoryId === p.target!.id);
+              if (p.target && (!t || t.fogged || t.owner !== playerId)) {
+                throw new McpToolError(`${label(p.target)} is not yours at the start of this turn, so it cannot be blockaded.`, {
+                  hint: 'A Blockade targets a territory you hold on the live board (warapp_get_live_board).',
+                });
+              }
+            }
+            const income =
+              incomeFor(graphOf(map), board, me.id, game.settings) + plays.reduce((sum, p) => sum + p.armies, 0);
             validateTurn({
               map,
               board: territories,
@@ -390,10 +581,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               else merged.set(d.territory.id, { ...d });
             }
             const send: TurnOrder[] = [
+              ...plays.map((p) => ({
+                kind: 'card' as const,
+                card: p.kind,
+                cardId: p.card.id,
+                ...(p.target ? { target: p.target.id } : {}),
+              })),
               ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territoryId: d.territory.id, armies: d.armies })),
               ...moves.map((m) => ({ kind: 'move' as const, from: m.from.id, to: m.to.id, armies: m.armies })),
             ];
             const named: NamedOrder[] = [
+              ...plays.map((p) => ({ kind: 'card' as const, card: cardView(p.card), ...(p.target ? { target: p.target } : {}) })),
               ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territory: d.territory, armies: d.armies })),
               ...moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
             ];

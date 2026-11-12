@@ -382,6 +382,8 @@ describe('methods', () => {
       GetTerritoryPicks: 79,
       UnCommit: 80,
       GetTurns: 81,
+      Subscribe: 238,
+      GameUpdated: 241,
     });
     expect(methodName(40)).toBe('GetLatestGameInfo');
     expect(methodName(41)).toBeUndefined();

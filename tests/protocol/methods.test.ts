@@ -7,6 +7,7 @@ import {
   writeSendChatParams,
   writeAttackTransferOrder,
   writeDeployOrder,
+  writeCardPlayOrder,
   writeSendOrdersParams,
   writeSendTerritoryPicksParams,
 } from '../../src/protocol/methods.js';
@@ -122,7 +123,132 @@ describe('SendOrders params', () => {
     );
   });
 
+  it('writes card plays first, then deploys, then moves', () => {
+    const card = '00112233445566778899aabbccddeeff';
+    const play = '0533221100554477668899AABBCCDDEEFF090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'card', card: 'Reinforcement', cardId: card },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '02000000' + '01' + play + '01' + deploy + '02000000' + '0000');
+  });
+
+  it('sorts card plays into turn-phase order: Order Priority before Reinforcement', () => {
+    const r = '00112233445566778899aabbccddeeff';
+    const op = '0a0b0c0d0e0f10111213141516171819';
+    const playR = '0533221100554477668899AABBCCDDEEFF090300000000';
+    const playOp = '0A' + '0D0C0B0A0F0E1110' + '1213141516171819' + '090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'card', card: 'Reinforcement', cardId: r },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'card', card: 'OrderPriority', cardId: op },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '03000000' + '01' + playOp + '01' + playR + '01' + deploy + '02000000' + '0000');
+  });
+
+  it('writes a Blockade (phase 60) after deploys and moves', () => {
+    const bl = '00112233445566778899aabbccddeeff';
+    const deploy = '0209000000000500000009030000' + '0000';
+    const move = '010003000600000000010000000004000000090300000000';
+    const blockade = '12' + '9F000000' + '33221100554477668899AABBCCDDEEFF090300000000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'card', card: 'Blockade', cardId: bl, target: 159 },
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '03000000' + '01' + deploy + '01' + move + '01' + blockade + '02000000' + '0000');
+  });
+
   it('writes an empty order list', () => {
     expect(hex((w) => writeSendOrdersParams(w, 1, 777, [], 0))).toBe('01000000' + '01' + '00000000' + '00000000' + '0000');
+  });
+});
+
+describe('card play orders', () => {
+  const card = '00112233445566778899aabbccddeeff';
+
+  it('Reinforcement matches the live-verified golden bytes', () => {
+    // Live 2026-11-12: tag 5, the card GUID in .NET order, player id, two false bools.
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Reinforcement', cardId: card, playerId: 777 }))).toBe(
+      '0533221100554477668899AABBCCDDEEFF090300000000',
+    );
+  });
+
+  it('accepts a dashed, upper-case GUID', () => {
+    expect(
+      hex((w) =>
+        writeCardPlayOrder(w, { card: 'Reinforcement', cardId: '00112233-4455-6677-8899-AABBCCDDEEFF', playerId: 777 }),
+      ),
+    ).toBe('0533221100554477668899AABBCCDDEEFF090300000000');
+  });
+
+  it('Order Priority (10) and Order Delay (11) carry no fields', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'OrderPriority', cardId: card, playerId: 777 }))).toBe(
+      '0A33221100554477668899AABBCCDDEEFF090300000000',
+    );
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'OrderDelay', cardId: card, playerId: 777 }))).toBe(
+      '0B33221100554477668899AABBCCDDEEFF090300000000',
+    );
+  });
+
+  it('Blockade (18) writes its target territory before the GUID', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Blockade', cardId: card, playerId: 777, target: 42 }))).toBe(
+      '122A00000033221100554477668899AABBCCDDEEFF090300000000',
+    );
+  });
+
+  it('Blockade without a target is refused', () => {
+    expect(() => hex((w) => writeCardPlayOrder(w, { card: 'Blockade', cardId: card, playerId: 777 }))).toThrow(/target/);
+  });
+});
+
+describe('Subscribe (push socket)', () => {
+  it('writes a present topic list then a null string', async () => {
+    const { writeSubscribeParams, gameTopic } = await import('../../src/protocol/methods.js');
+    const w = new Writer();
+    writeSubscribeParams(w, [gameTopic(42)]);
+    // 01 present, count 1, string "Game.42" (present, len 7), null string
+    expect(toHex(w.bytes())).toBe('0101000000' + '0107' + '47616D652E3432' + '00');
+  });
+
+  it('reads the refused-topic dict; absent or null is "all accepted"', async () => {
+    const { readSubscribeResult } = await import('../../src/protocol/methods.js');
+    const w = new Writer().bool(true).dict(
+      new Map([['Game.7', 12]]),
+      (ww, k) => ww.string(k),
+      (ww, v) => ww.int32(v),
+    );
+    expect([...readSubscribeResult(new Reader(w.bytes()))]).toEqual([['Game.7', 12]]);
+    expect(readSubscribeResult(new Reader(new Writer().bool(false).bytes())).size).toBe(0);
+    expect(readSubscribeResult(new Reader(new Writer().bool(true).int32(-1).bytes())).size).toBe(0);
   });
 });

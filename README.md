@@ -5,8 +5,10 @@ through war.app's per-player **GameFeed** API and helps you think about them: pl
 settings, the map's bonuses and chokepoints, the board, and routes between territories.
 Through your signed-in war.app browser tab it also lists **your games** (the ones waiting on you
 first), **scouts an opponent** (their record and your head-to-head), reads the **live board**
-(including the pick phase, where GameFeed has none) and your territory picks, plans your turn,
-and — only after you confirm — submits picks, commits your turn's orders and posts game chat.
+(including the pick phase, where GameFeed has none), your territory picks and your cards, plans
+your turn, tells you when a game is waiting on you (war.app's push notifications), and — only
+after you confirm — submits picks, commits your turn's orders (card plays included) and posts
+game chat.
 
 > This project was developed and is maintained by AI (Claude Code). Use at your own discretion.
 
@@ -54,8 +56,8 @@ no picks and no way to post chat. Those come from war.app's own web client (its 
 its profile pages), which is authenticated by your browser's war.app session rather than by
 the API token. So the live-game tools — `warapp_my_games`, `warapp_scout_player`,
 `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_submit_picks`, `warapp_plan_turn`,
-`warapp_submit_turn`, `warapp_send_chat`, and `warapp_analyze_board` when GameFeed sends no
-board — relay each request through your signed-in war.app tab with the [fetchproxy](https://github.com/chrischall/fetchproxy) bridge.
+`warapp_submit_turn`, `warapp_send_chat`, `warapp_wait_for_turn`, and `warapp_analyze_board`
+when GameFeed sends no board — relay each request through your signed-in war.app tab with the [fetchproxy](https://github.com/chrischall/fetchproxy) bridge.
 They need:
 
 - the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge/releases)
@@ -93,11 +95,13 @@ restart the server and pair again.
 | `warapp_plan_route` | Shortest path between two territories, given by name or id. |
 | `warapp_get_live_board` | The live board through your war.app tab: every territory with its owner (player, `neutral`, or `pickable` during picks), armies and fog. Works in the pick phase and mid-game. `view`: compact / full. |
 | `warapp_get_my_picks` | Your submitted territory picks in priority order, and how many the game allows. |
-| `warapp_plan_turn` | A plan for your turn from the live board (defaults to the signed-in account): income, deploys and moves by name and id, expected captures, bonuses and next income, warnings and reasoning, and an `orders` array. `goal`: expand / complete-bonus / defend; `focus` bonuses; `reserve`. Read-only; refuses outside a turn phase. |
+| `warapp_plan_turn` | A plan for your turn from the live board (defaults to the signed-in account): income, your cards and whether you must play one, deploys and moves by name and id, expected captures, bonuses and next income, warnings and reasoning, and an `orders` array (card plays included). `goal`: expand / complete-bonus / defend; `focus` bonuses; `reserve`; `enemy_deploy` (armies an enemy is assumed to deploy; default from the largest visible enemy stack). Read-only; refuses outside a turn phase. |
 | `warapp_submit_picks` | **Writes.** Replace your territory picks (priority order, pickable territories only, at most twice the territory limit). Confirm-gated; reads the picks back and reports `verified` only on an exact match. |
-| `warapp_submit_turn` | **Writes.** Commit your turn's orders (e.g. `warapp_plan_turn`'s `orders`) as the signed-in account. Confirm-gated; validated on the live board (your territories, adjacent moves, armies available, deploys = income); confirmed from game state (`resolved` / `committed` / `unknown`). Other players see the results. |
+| `warapp_submit_turn` | **Writes.** Commit your turn's orders (e.g. `warapp_plan_turn`'s `orders`) as the signed-in account: card plays (Reinforcement, Order Priority, Order Delay, Blockade), deploys and moves. Confirm-gated; validated on the live board (cards in your hand, your territories, adjacent moves, armies available, deploys = income + played Reinforcement armies; a card play when your hand is full); confirmed from game state (`resolved` / `committed` / `unknown`). Other players see the results. |
 | `warapp_get_chat` | A game's chat, from GameFeed. |
 | `warapp_send_chat` | **Writes.** Post a chat message to the whole game or privately to one player. Confirm-gated; a message reaches other players and cannot be unsent. |
+| `warapp_wait_for_turn` | Wait until one of the given games (`game_ids`, 1–20; omitted, every game of yours being played or picked) is waiting on you, woken by war.app's push notifications through your war.app tab; returns at once if one already is, else at `timeout_seconds` (default 300, max 1800). Reports progress; honours cancellation. |
+| `warapp_recent_events` | The game-update pushes this server process has received (newest first), and whether the push socket is connected. |
 
 Everything except `warapp_submit_picks`, `warapp_submit_turn` and `warapp_send_chat` only reads. Player, game, map
 and chat text comes back marked as untrusted third-party content.
@@ -114,17 +118,24 @@ and chat text comes back marked as untrusted third-party content.
 
 ## Playing a turn
 
+0. **Wait (optional).** `warapp_wait_for_turn` (all your games in play, or the ones you name) returns as soon as one is
+   waiting on you, woken by war.app's push notifications through your war.app tab.
 1. **Plan.** `warapp_plan_turn` reads the live board and proposes deploys and moves by name and
    id, with the expected captures, bonuses and next income, warnings and its reasoning. It
-   changes nothing.
+   changes nothing. It reports your cards: Reinforcement cards are always played (their armies
+   are planned), and when your hand is at the hold limit — war.app then requires a play — it
+   plays Order Priority or Order Delay. It never plays Blockade (that gives a territory away).
+   Threat warnings assume each enemy deploys `enemy_deploy` armies; enemy income is unseen, so
+   raise it if you know better.
 2. **Review.** Go through the plan and its warnings; edit the `orders` if you want something
-   different (territories by id or name).
+   different (territories by id or name, cards by id or type name).
 3. **Submit.** `warapp_submit_turn` with those `orders`. It always acts as the account signed in
    to your war.app tab, and refuses another `player`. It validates the orders on the live board
-   (your territories at the start of the turn, adjacent moves, armies available with one left
-   behind, deploys equal to your income), refuses outside a turn phase or when you have already
-   committed this turn (modify orders in the game instead), and shows the orders and the turn
-   number before anything is sent.
+   (cards in your hand, your territories at the start of the turn, adjacent moves, armies
+   available with one left behind, deploys equal to your income plus played Reinforcement
+   armies), refuses with no card play when your hand is full, refuses outside a turn phase or
+   when you have already committed this turn (modify orders in the game instead), and shows the
+   orders and the turn number before anything is sent.
 
 war.app's reply to a commit does not say whether it worked, so the result is read back from the
 game: `resolved` (the turn advanced), `committed` (your orders are in and the game waits on

@@ -1,13 +1,13 @@
 ---
 name: warapp-mcp
-description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "which games need me", "is it my turn anywhere", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "scout this player", "who am I up against", "my record against <player>", "submit my picks", "plan my turn", "submit my turn", "commit my orders", "what did they say in chat", "send a message in my game", or a war.app game link.
+description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "which games need me", "is it my turn anywhere", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "scout this player", "who am I up against", "my record against <player>", "submit my picks", "plan my turn", "submit my turn", "commit my orders", "play a card", "what cards do I have", "is it my turn yet", "tell me when it's my turn", "what did they say in chat", "send a message in my game", or a war.app game link.
 ---
 
 # war.app / Warzone (warapp-mcp)
 
 An advisor. The tools read war.app as the signed-in player (fog of war applies): GameFeed
 for games, maps and chat, and the user's signed-in war.app tab for their games list, player
-scouting, the live board and picks.
+scouting, the live board, picks, cards and turn notifications.
 Three tools write, all confirm-gated: `warapp_submit_picks`, `warapp_submit_turn` and
 `warapp_send_chat`. A turn goes plan → review → submit: `warapp_plan_turn` proposes it,
 the user reviews it, and only then does `warapp_submit_turn` commit it.
@@ -48,14 +48,23 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   sends no board it reads the live board through the user's signed-in war.app tab; a lobby
   has none — fall back to `warapp_get_map`. Pass its `assumptions` on with the advice.
 - **"Plan my turn"** → `warapp_plan_turn` (defaults to the signed-in account; `goal` expand /
-  complete-bonus / defend, `focus` bonuses, `reserve`): deploys and moves by name and id, the
-  expected captures, bonuses and next income, warnings and reasoning, plus an `orders` array.
-  It is read-only and refuses outside a turn phase. Review the plan and its warnings with the
-  user before anything is submitted.
+  complete-bonus / defend, `focus` bonuses, `reserve`, `enemy_deploy`): deploys and moves by
+  name and id, the expected captures, bonuses and next income, warnings and reasoning, plus an
+  `orders` array. It is read-only and refuses outside a turn phase. Review the plan and its
+  warnings with the user before anything is submitted.
+- **Cards** → `warapp_plan_turn` reports the hand and whether a play is required (hand at the
+  hold limit — war.app then refuses a turn with no card play). It always plays Reinforcement
+  (its armies are planned) and, when a play is required, Order Priority or else Order Delay; it
+  never plays Blockade, which gives a territory away — offer that only if the user asks.
+- **Threats** assume each enemy deploys `enemy_deploy` armies (default max(5, 75% of the
+  largest visible enemy stack)). Enemy income is unseen: say so, and raise it when the user
+  knows an opponent earns more.
 - **"Submit my turn"** → `warapp_submit_turn` with the reviewed `orders` (territories by id or
-  name; confirm-gated, always as the signed-in account — it refuses another `player`). It
-  validates the orders on the live board (the user's territories, adjacent moves, armies
-  available, deploys = income) and refuses outside a turn phase or when the user has already
+  name, card plays `{ "kind": "card", "card": <id or type name>, "target"? }`; confirm-gated,
+  always as the signed-in account — it refuses another `player`). It validates the orders on
+  the live board (cards in the hand, the user's territories, adjacent moves, armies available,
+  deploys = income + played Reinforcement armies), refuses with no card play when the hand is
+  full, and refuses outside a turn phase or when the user has already
   committed this turn (they modify orders in the game). Report its `status`: `resolved` (the
   turn advanced), `committed` (orders in, waiting on others) or `unknown` — then check
   `warapp_get_game`; never resend blindly. Other players see the results.
@@ -68,6 +77,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   submitted list.
 - **Chat** → `warapp_get_chat` reads it (GameFeed); `warapp_send_chat` posts publicly or
   privately to one player. Confirm-gated — a message reaches other players and cannot be unsent.
+- **"Tell me when it's my turn"** → `warapp_wait_for_turn` with the game ids to watch (1–20; omit
+  them to watch every game of the user's being played or picked; `timeout_seconds` default 300, max 1800): it returns as soon as one is waiting on the user
+  (or at the timeout), woken by war.app's push notifications through the signed-in war.app tab.
+  `warapp_recent_events` lists the pushes this server has seen and whether the socket is
+  connected. When it returns a game, go on to `warapp_plan_turn` (or picks).
 - **"How far is X from Y?"** → `warapp_plan_route` with `from` / `to` as a territory id,
   name, or unique part of a name. Map-only: it ignores who holds what.
 
@@ -83,17 +97,20 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 
 On a host that serves context groups (mcp-host), every tool here except `warapp_healthcheck`
 is in the **work** group: `warapp_my_games` with **whats-new** (canonical), the other reads
-with intent **lookup**, `warapp_submit_picks` and `warapp_submit_turn` with **change**, and
+with intent **lookup** (but `warapp_wait_for_turn`, intent **whats-new**), `warapp_submit_picks`
+and `warapp_submit_turn` with **change**, and
 `warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,
   `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_turn`, `warapp_get_chat` and
-  `warapp_scout_player` are lookups the group reaches by their aliases ("warzone game", "whose
-  turn is it", "best bonuses", "chokepoints", "analyze my board", "what should i attack",
-  "warzone route", "scout player", "head to head", …).
+  `warapp_scout_player` and `warapp_recent_events` are lookups the group reaches by their
+  aliases ("warzone game", "whose turn is it", "best bonuses", "chokepoints", "analyze my
+  board", "what should i attack", "warzone route", "scout player", "head to head", …).
 - **`warapp_my_games` is the canonical "what's new" read**: which games are waiting on the
   user. It accepts `view: "brief"` — one line per game, `name — turn N (or the state) —
   waiting on you | waiting on others`. warapp answers neither "what's due" nor "what's on".
+- `warapp_wait_for_turn` answers "is it my turn" ("whats-new", not canonical) for the games it
+  is given (or all of the user's games in play), reached by its aliases ("is it my turn", "wait for my turn", …).
 - No read takes a subject from the group: the player to advise or scout is an argument
   (`player`) of `warapp_analyze_board` and `warapp_scout_player`, not a listable set of people.
 
