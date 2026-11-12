@@ -8,6 +8,7 @@ import { registerAllTools } from '../src/tools/index.js';
 import { fakeWarapp, mockWarappBridge, type MockBridgeServer, type WarappExchange } from './bridge-mock.js';
 import { LIVE_BUNDLE } from './protocol/live-bundle.js';
 import { withSocket, type FakeSocketIo } from './push/fake-socket.js';
+import { MY_GAMES_BUNDLE } from './protocol/my-games-bundle.js';
 
 export const EMAIL = 'player@example.com';
 export const TOKEN = 'deadbeefcafef00d';
@@ -63,7 +64,7 @@ export async function liveHarness(
   const { calls, fetchImpl } = stubFetch(...feed);
   const fake = fakeWarapp(opts.warapp ?? NO_RESULT, opts.pages);
   const { bridge, mock } = mockWarappBridge(opts.socket ? withSocket(opts.socket, fake.handler) : fake.handler);
-  const bundle = new WarappBundle(LIVE_BUNDLE, 'test');
+  const bundle = new WarappBundle(`${LIVE_BUNDLE}\n${MY_GAMES_BUNDLE}`, 'test');
   const harness = await createTestHarness((s) =>
     registerAllTools(s, {
       env: CREDS,

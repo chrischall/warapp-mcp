@@ -12,8 +12,9 @@ Advisor MCP for war.app (Warzone) with two transports:
   same bridge.
 
 Build plans: `docs/PLAN.md` (phase 1, GameFeed), `docs/PLAN-LIVE.md` (phase 2, live board),
-`docs/PLAN-TURN.md` (phase 3, plan and submit a turn) and `docs/PLAN-CARDS-PUSH.md` (phase 5,
-cards, turn notifications, threat-aware planner).
+`docs/PLAN-TURN.md` (phase 3, plan and submit a turn), `docs/PLAN-SCOUT.md` (phase 4, my games
+and opponent scouting) and `docs/PLAN-CARDS-PUSH.md` (phase 5, cards, turn notifications,
+threat-aware planner).
 
 ## What is true only of this repo
 
@@ -94,6 +95,22 @@ cards, turn notifications, threat-aware planner).
   invite token (`https://war.app/InviteToken`, read through the bridge) matches a GameFeed
   player id; the bundle is discovered from `https://war.app/MultiPlayer` (the homepage does
   not load the game client).
+- **"My games" is `GetMyGames` (method 50)** through the bridge, decoded by the bundle's own
+  readers by stable type name (`warlight.shared.MyGamesReturn` / `GameInfo` /
+  `GameInfoPlayer`) — never a hand-transcribed layout. Its `MyGamesFilters` argument is
+  required (absent, the server throws). `waitingOnYou` = the game is Playing or
+  DistributingTerritories, my player is Playing, and my `committed` flag is false.
+- **Scouting reads two server-rendered pages** through the bridge (GETs the extension makes):
+  `https://war.app/Profile?p=<invite token>` (level, games played, last seen, boots, ranked
+  records) and `https://war.app/CommonGames?p=<invite token>` (the head-to-head games). The
+  invite token is the GameFeed player id. `src/scout.ts` and the skill's
+  `references/scout.mjs` parse them identically (parity is tested) and tolerate missing
+  blocks (`null`, never a throw).
+- **Scouting never returns personal fields.** The Profile page also shows self-reported
+  details such as location: the parser projects an **allowlist** (name, level, games, real-time
+  share, last seen, boots, ranked records, common games) and nothing else. Never add location
+  or any other personal field to the output, a fixture's expected output, or a doc example;
+  the tests feed a page that carries a location and assert it is absent.
 - **Every GameFeed scalar is a string** (ids, counts, booleans); normalize before use —
   see `docs/PLAN.md` "Facts". Fixtures under `tests/fixtures/` are anonymized.
 - **API facts live in `docs/WARAPP-API.md`**, each marked verified or unverified. The board

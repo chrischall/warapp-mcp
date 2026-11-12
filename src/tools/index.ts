@@ -8,8 +8,10 @@ import { registerHealthcheckTool } from './healthcheck.js';
 import { createLiveContext } from './live-context.js';
 import { registerLiveTools } from './live.js';
 import { registerMapTool } from './map.js';
+import { registerMyGamesTool } from './my-games.js';
 import { registerPushTools } from './push.js';
 import { registerRouteTool } from './route.js';
+import { registerScoutTool } from './scout.js';
 import { registerTurnTools } from './turn.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
@@ -46,6 +48,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerBoardTool(server, client, live);
   registerRouteTool(server, client);
   registerLiveTools(server, live);
+  registerMyGamesTool(server, live);
+  registerScoutTool(server, live);
   registerTurnTools(server, live);
   registerChatTools(server, live);
   // One push socket per bridge (= per process): connections share it.

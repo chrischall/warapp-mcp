@@ -254,3 +254,54 @@ describe('packaging for the browser bridge (phase 2)', () => {
     expect(claude).toMatch(/captur/i);
   });
 });
+
+describe('packaging for my games and scouting (phase 4)', () => {
+  const mint = readFileSync(new URL('../mint.yaml', import.meta.url), 'utf8');
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
+  const BRIDGED = ['warapp_my_games', 'warapp_scout_player'];
+
+  it('CLAUDE.md names GetMyGames, the two scouting pages, the plan and the no-personal-fields rule', () => {
+    expect(claude).toMatch(/GetMyGames/);
+    expect(claude).toMatch(/\/Profile\?p=/);
+    expect(claude).toMatch(/\/CommonGames\?p=/);
+    expect(claude).toContain('docs/PLAN-SCOUT.md');
+    expect(claude).toMatch(/location/i);
+    expect(claude).toMatch(/allowlist/i);
+  });
+
+  it('README lists my games and scouting among the bridged tools, and the scout privacy rule', () => {
+    const bridge = readme.slice(readme.indexOf('## The browser bridge'), readme.indexOf('### Pairing'));
+    for (const t of BRIDGED) expect(bridge, t).toContain(t);
+    expect(readme).toMatch(/never returns? (the player's )?location/i);
+    const skills = readme.slice(readme.indexOf('## Skills'), readme.indexOf('## Development'));
+    expect(skills).toMatch(/scout/i);
+    expect(skills).toMatch(/fpx/);
+  });
+
+  it('the skill triggers on "which games need me" and scouting', () => {
+    const description = skill.slice(0, skill.indexOf('\n---', 4));
+    expect(description).toMatch(/which games need me/i);
+    expect(description).toMatch(/scout/i);
+  });
+
+  it('the store-facing descriptions mention your games and scouting', () => {
+    const manifest = read('../manifest.json') as { description: string };
+    const summary = mint.slice(mint.indexOf('\nsummary:'), mint.indexOf('\nexamples:'));
+    for (const [file, text] of [['manifest.json', manifest.description], ['mint.yaml summary', summary]] as const) {
+      expect(text, file).toMatch(/scout/i);
+      expect(text, file).toMatch(/waiting on you/i);
+    }
+  });
+
+  it('mint.yaml keeps within the host\'s 5 examples and leads with the games waiting on you', () => {
+    const examples = mint.slice(mint.indexOf('\nexamples:'), mint.indexOf('\nidentity:'));
+    const prompts = [...examples.matchAll(/^ {2}- prompt: (.+)$/gm)].map((m) => m[1]!);
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(prompts.length).toBeLessThanOrEqual(5);
+    expect(prompts[0]).toMatch(/waiting on me/i);
+    expect(prompts.some((p) => /scout/i.test(p))).toBe(true);
+    expect(examples).not.toMatch(/note: .*location/i);
+  });
+});

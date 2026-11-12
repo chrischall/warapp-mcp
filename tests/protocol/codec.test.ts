@@ -373,6 +373,7 @@ describe('methods', () => {
       GameRefresh: 39,
       GetLatestGameInfo: 40,
       SendChat: 42,
+      GetMyGames: 50,
       GetMapDetails: 73,
       SendOrders: 74,
       SendInProgressOrders: 75,
