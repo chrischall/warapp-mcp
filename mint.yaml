@@ -1,10 +1,18 @@
 version: 1
 name: war.app (Warzone)
 slug: warapp
+# Hosting: browser bridge. GameFeed is called directly with the API token, but
+# the live board, territory picks and chat sends go over war.app's web-client
+# protocol (/Services), which is authenticated by the browser's cookies, so the
+# fetchproxy bridge relays them through the user's signed-in war.app tab. The
+# registration therefore also needs `bridge: true` and
+# `bridgePortEnv: WARAPP_WS_PORT` (with a runtime that supports a bridge) —
+# registration fields this manifest has no schema for.
 summary: >-
-  Read-only war.app (Warzone) game advisor — your games, players and settings,
-  map bonuses and chokepoints, board analysis and route planning, through
-  war.app's per-player GameFeed API.
+  war.app (Warzone) game advisor — your games, players and settings, map
+  bonuses and chokepoints, board analysis and route planning through war.app's
+  GameFeed API, plus the live board, territory picks and game chat through your
+  signed-in war.app tab. Picks and chat messages are sent only after you confirm.
 examples:
   - prompt: Which bonuses on the map of my war.app game 12345678 are easiest to take and hold?
     note: Ranks bonuses by value per territory and per border.
@@ -12,6 +20,8 @@ examples:
     note: Summarises the game's state, players and settings.
   - prompt: What's the shortest path from Alaska to Kamchatka on my game's map?
     note: Plans a route between two territories by name.
+  - prompt: Which territories can I still pick in game 12345678, and what have I picked so far?
+    note: Reads the live board and your picks through your war.app tab.
 
 identity:
   # One child per caller: GameFeed answers AS the player whose email + token
@@ -39,15 +49,41 @@ auth:
         in to war.app. Stored as a per-user secret and never shown again.
         Changing your war.app password rotates it — reconnect with the new one.
 
-# No `env` block: WARAPP_EMAIL / WARAPP_API_TOKEN are collected per user above,
-# and an auth field may not name a host-set variable. Set them in the
-# environment (or ~/.config/warapp-mcp/.env, or the file WARAPP_ENV_FILE names)
-# only for a local, single-user install.
+# WARAPP_EMAIL / WARAPP_API_TOKEN are collected per user above, and an auth
+# field may not name a host-set variable, so they are not in `env`. Set them in
+# the environment (or ~/.config/warapp-mcp/.env, or the file WARAPP_ENV_FILE
+# names) only for a local, single-user install.
+env:
+  - name: WARAPP_WS_PORT
+    required: false
+    help: >-
+      Concentrator port for the fetchproxy bridge (defaults to the fleet-shared
+      37149). The runner injects a per-registration port for a hosted bridged
+      child, so this is the name to give `bridgePortEnv` at registration.
+  - name: WARAPP_DEBUG
+    required: false
+    help: >-
+      Truthy logs the fetchproxy bridge's role and lifecycle to stderr.
+      Diagnostic only.
 
-# No `state` block: nothing needs to persist. The per-map cache lives in memory
-# and is rebuilt on demand after a cold start.
+state:
+  dataDir: true
+  reason: >-
+    Two things must survive a cold start. The fetchproxy identity
+    ($HOME/.fetchproxy/identity/warapp-mcp.json) is what the browser extension
+    paired with: without a persistent $HOME every cold start mints a new
+    identity and asks the user to pair again. And the war.app client bundle
+    (ujs.js, ~16 MB) is cached under $MCP_DATA_DIR/bundle/<version>.js: the
+    live board is decoded with the client's own readers, so without the cache
+    every cold start downloads it again. The per-map GameFeed cache lives in
+    memory and needs no state.
 
 egress:
   allow:
-    # The only host the server fetches: POST /API/GameFeed (src/tools/healthcheck.ts).
+    # Fetched by this process: POST /API/GameFeed (src/client.ts). The
+    # /Services calls and war.app pages go through the user's tab over the
+    # bridge, not from here.
     - war.app
+    # The client bundle (https://warappcdn.com/js/Release/ujs.js?v=<n>),
+    # downloaded directly once per version (src/tools/live-context.ts).
+    - warappcdn.com

@@ -1,6 +1,6 @@
 ---
 name: warapp-mcp
-description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", or a war.app game link.
+description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "submit my picks", "what did they say in chat", "send a message in my game", or a war.app game link.
 ---
 
 # war.app / Warzone (warapp-mcp)
@@ -16,6 +16,9 @@ them to enter instead.
 - **Something broken?** `warapp_healthcheck` says whether war.app accepts the email and
   API token. A rejected token is fixed at <https://war.app/API/GetAPIToken> while signed in
   (changing the password rotates it).
+- **Live tools failing?** The live board, picks and chat sends need the ContextMint Bridge
+  extension and a war.app tab signed in to the same account. The first live call may answer
+  with a pair code: ask the user to approve it in the ContextMint Bridge popup, then retry.
 - **Every game tool takes `game_id`** — the number in the game's URL
   (`…/MultiPlayer?GameID=45670418`). Ask for it if the user has not given one; there is no
   "list my games" call in the API.

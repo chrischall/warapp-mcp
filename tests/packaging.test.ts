@@ -143,6 +143,77 @@ describe('packaging', () => {
     expect(text).toMatch(/name: WARAPP_API_TOKEN/);
     const egress = text.slice(text.indexOf('\negress:'));
     const hosts = [...egress.matchAll(/^\s+-\s+([a-z0-9.-]+)\s*$/gm)].map((m) => m[1]);
-    expect(hosts).toEqual(['war.app']);
+    // war.app (GameFeed, and /Services through the user's tab) plus the CDN the
+    // client bundle is downloaded from by Node itself (src/tools/live-context.ts).
+    expect(hosts).toEqual(['war.app', 'warappcdn.com']);
+  });
+});
+
+describe('packaging for the browser bridge (phase 2)', () => {
+  const mint = readFileSync(new URL('../mint.yaml', import.meta.url), 'utf8');
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const WRITES = ['warapp_submit_picks', 'warapp_send_chat'];
+
+  it('mint.yaml persists a data dir and says why (bridge identity + bundle cache)', () => {
+    const state = mint.slice(mint.indexOf('\nstate:'), mint.indexOf('\negress:'));
+    expect(state).toMatch(/^\s+dataDir: true$/m);
+    expect(state).toMatch(/reason:/);
+    expect(state).toMatch(/fetchproxy/i);
+    expect(state).toMatch(/bundle/i);
+  });
+
+  it('mint.yaml notes the registration fields hosting needs and declares the port env', () => {
+    expect(mint).toMatch(/bridge: true/);
+    expect(mint).toMatch(/bridgePortEnv: WARAPP_WS_PORT/);
+    expect(mint).toMatch(/^\s+- name: WARAPP_WS_PORT$/m);
+  });
+
+  it('manifest.json and server.json expose WARAPP_WS_PORT as optional', () => {
+    const manifest = read('../manifest.json') as {
+      server: { mcp_config: { env: Record<string, string> } };
+      user_config: Record<string, { required?: boolean }>;
+    };
+    const ref = manifest.server.mcp_config.env.WARAPP_WS_PORT;
+    expect(ref).toMatch(/^\$\{user_config\.(\w+)\}$/);
+    const key = /user_config\.(\w+)/.exec(ref!)![1]!;
+    expect(manifest.user_config[key]?.required).toBe(false);
+
+    const server = read('../server.json') as {
+      packages: Array<{ environmentVariables: Array<{ name: string; isRequired: boolean }> }>;
+    };
+    const port = server.packages[0]!.environmentVariables.find((v) => v.name === 'WARAPP_WS_PORT');
+    expect(port?.isRequired).toBe(false);
+  });
+
+  it('no packaging text still calls the server read-only', () => {
+    const manifest = read('../manifest.json') as { description: string };
+    const server = read('../server.json') as { description: string };
+    for (const [file, text] of [
+      ['manifest.json', manifest.description],
+      ['server.json', server.description],
+      ['package.json', (read('../package.json') as { description: string }).description],
+      ['.claude-plugin/plugin.json', JSON.stringify(read('../.claude-plugin/plugin.json'))],
+      ['.claude-plugin/marketplace.json', JSON.stringify(read('../.claude-plugin/marketplace.json'))],
+      ['mint.yaml', mint],
+      ['README.md', readme],
+      ['CLAUDE.md', claude],
+    ] as const) {
+      expect(text, file).not.toMatch(/read-only (war\.app|advisor|mcp server)/i);
+    }
+  });
+
+  it('README names every tool, the bridge requirement and how to pair', () => {
+    expect(registered.map((t) => t.name).filter((n) => !readme.includes(n))).toEqual([]);
+    expect(readme).toMatch(/ContextMint Bridge/);
+    expect(readme).toMatch(/pair/i);
+    expect(readme).toMatch(/WARAPP_WS_PORT/);
+  });
+
+  it('CLAUDE.md names the write tools and the bundle / capture rules', () => {
+    for (const w of WRITES) expect(claude).toContain(w);
+    expect(claude).toMatch(/confirm/i);
+    expect(claude).toMatch(/ujs\.js/);
+    expect(claude).toMatch(/captur/i);
   });
 });
