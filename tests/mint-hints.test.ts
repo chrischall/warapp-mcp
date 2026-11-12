@@ -4,14 +4,16 @@ import { harnessFor, type Harness } from './helpers.js';
 /**
  * Context-group hints (`_meta.mint`, mcp-host's mintHintSchema), read off the
  * served tools/list — what a host sees. Every warapp tool is in the `work`
- * group: reads are lookups, submitting picks or a turn a change, chat a send; none is
- * canonical (nothing here answers what's new / due / on).
+ * group: reads are lookups, submitting picks or a turn a change, chat a send.
+ * One tool is canonical: `warapp_my_games` answers what's new (which games need
+ * me), and like every canonical read it accepts `view: 'brief'`.
  */
 const DOMAINS = ['school', 'home', 'work', 'family', 'health', 'money', 'travel', 'food'];
 const INTENTS = ['whats-new', 'whats-due', 'whats-on', 'lookup', 'turn-on-off', 'send', 'change', 'other'];
 const KEYS = ['domain', 'intent', 'canonical', 'subject', 'when', 'aliases'];
 
 const EXPECTED_INTENT: Record<string, string> = {
+  warapp_my_games: 'whats-new',
   warapp_get_game: 'lookup',
   warapp_get_map: 'lookup',
   warapp_analyze_board: 'lookup',
@@ -55,14 +57,14 @@ describe('_meta.mint on tools/list', () => {
     expect(mint?.intent).toBe(intent);
   });
 
-  it('every hint is shaped per the host contract, none canonical', () => {
+  it('every hint is shaped per the host contract', () => {
     for (const t of tools) {
       const mint = mintOf(t);
       if (!mint) continue;
       expect(Object.keys(mint).filter((k) => !KEYS.includes(k)), t.name).toEqual([]);
       expect(DOMAINS, t.name).toContain(mint.domain);
       expect(INTENTS, t.name).toContain(mint.intent);
-      expect(mint, t.name).not.toHaveProperty('canonical');
+      if ('canonical' in mint) expect(mint.canonical, t.name).toBe(true);
       if ('aliases' in mint) {
         const aliases = mint.aliases as string[];
         expect(aliases.length, t.name).toBeGreaterThan(0);
@@ -72,6 +74,20 @@ describe('_meta.mint on tools/list', () => {
           expect(a, t.name).toBe(a.toLowerCase());
         }
       }
+    }
+  });
+
+  it('marks warapp_my_games as THE canonical whats-new tool', () => {
+    const canonical = tools.filter((t) => mintOf(t)?.canonical === true);
+    expect(canonical.map((t) => [t.name, mintOf(t)!.intent])).toEqual([['warapp_my_games', 'whats-new']]);
+    expect(mintOf(canonical[0]!)).toMatchObject({ domain: 'work', intent: 'whats-new', canonical: true });
+  });
+
+  it('every canonical read accepts view: "brief"', () => {
+    for (const t of tools.filter((x) => mintOf(x)?.canonical === true)) {
+      const props = (t as unknown as { inputSchema: { properties?: Record<string, { enum?: string[] }> } }).inputSchema
+        .properties;
+      expect(props?.view?.enum, t.name).toContain('brief');
     }
   });
 });

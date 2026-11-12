@@ -38,6 +38,7 @@ describe('tool annotations', () => {
       'warapp_get_map',
       'warapp_get_my_picks',
       'warapp_healthcheck',
+      'warapp_my_games',
       'warapp_plan_route',
       'warapp_plan_turn',
       'warapp_send_chat',

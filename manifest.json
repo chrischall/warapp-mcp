@@ -72,6 +72,10 @@
       "description": "Check that war.app accepts your email and API token"
     },
     {
+      "name": "warapp_my_games",
+      "description": "List your war.app games, games waiting on you first (through your signed-in tab)"
+    },
+    {
       "name": "warapp_get_game",
       "description": "Look up a war.app game: state, turn, players and who has committed, settings digest"
     },

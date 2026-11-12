@@ -20,8 +20,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   extension and a war.app tab signed in to the same account. The first live call may answer
   with a pair code: ask the user to approve it in the ContextMint Bridge popup, then retry.
 - **Every game tool takes `game_id`** — the number in the game's URL
-  (`…/MultiPlayer?GameID=45670418`). Ask for it if the user has not given one; there is no
-  "list my games" call in the API.
+  (`…/MultiPlayer?GameID=45670418`). If the user has not given one, `warapp_my_games` lists
+  their games with ids.
+- **"Which games need me?" / "is it my turn anywhere?"** → `warapp_my_games`: the signed-in
+  account's games (through the bridge), games waiting on you first, each with its state, turn,
+  players (who has committed) and `waitingOnYou`. `view: "brief"` gives one line per game.
 - **"What's going on in game N?" / "whose turn is it?"** → `warapp_get_game`. It returns the
   state, the turn, every player with whether they have committed orders (the ones who have
   not are who the game waits on), a settings digest (fog, kill rates, luck, rounding, base
@@ -72,15 +75,16 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 ## In context groups
 
 On a host that serves context groups (mcp-host), every tool here except `warapp_healthcheck`
-is in the **work** group: the reads with intent **lookup**, `warapp_submit_picks` and
-`warapp_submit_turn` with **change**, and `warapp_send_chat` with **send**:
+is in the **work** group: `warapp_my_games` with **whats-new** (canonical), the other reads
+with intent **lookup**, `warapp_submit_picks` and `warapp_submit_turn` with **change**, and
+`warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,
   `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_turn` and `warapp_get_chat` are lookups the group reaches by their aliases ("warzone game", "whose turn is it", "best
   bonuses", "chokepoints", "analyze my board", "what should i attack", "warzone route", …).
-- **None is a canonical read.** GameFeed answers about one game id at a time and has no
-  list of the player's games or notifications, so warapp answers neither "what's new", "what's
-  due" nor "what's on"; the group asks its other members for those.
+- **`warapp_my_games` is the canonical "what's new" read**: which games are waiting on the
+  user. It accepts `view: "brief"` — one line per game, `name — turn N (or the state) —
+  waiting on you | waiting on others`. warapp answers neither "what's due" nor "what's on".
 - No read takes a subject from the group: the player to advise is an argument
   (`player`) of `warapp_analyze_board`, not a listable set of people.
 
