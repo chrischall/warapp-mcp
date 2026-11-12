@@ -20,6 +20,15 @@
 //     CONCEDE_FACTOR × its protected value (so a border protecting nothing is
 //     conceded). Under `goal: 'defend'` the plan deploys each hold, and a held
 //     border then makes no moves.
+//     Scope of "protected value", deliberately narrow: only bonuses containing T
+//     count (not a bonus T merely borders), and an incomplete one counts in full
+//     when T is my only foothold, however much of it the enemy holds. So with no
+//     complete bonus and no per-territory income (`bonusArmyPer` off), a threatened
+//     border protects +0 and is conceded: early in a game `defend` holds nothing
+//     and withdraws from every threatened border, keeping armies for expansion.
+//     Under other goals a conceded border is only kept out of the leftover deploy:
+//     it may still attack out (and get that capture's shortfall deployed), since its
+//     armies are lost anyway if they stay.
 //  1b. Withdraw (under `defend`). A conceded border's movable armies move first
 //     to the adjacent territory of mine nearest a border that holds (then the
 //     one protecting the most value, then id); the plan advises Order Priority
@@ -44,11 +53,13 @@
 //     (not under `complete-bonus`) takes any other affordable target.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border: it goes to the held border with the highest
-//     protected value still short of COMFORT_MARGIN × its threat, else the source
-//     of the top expansion, else the border with the most fogged neighbours, else
+//     protected value still short of COMFORT_MARGIN × its threat (counting armies
+//     withdrawn into it), else the source of the top expansion (which then makes
+//     no transfer), else the border with the most fogged neighbours, else
 //     my biggest stack.
 //  6. Idle armies on interior territories transfer one step toward the front,
-//     only into territories held at the start of the turn
+//     only into territories held at the start of the turn and never into, or
+//     measured through, a conceded border
 //     (only when transfer-only orders are allowed).
 // Accounting: a territory's outgoing armies never exceed its armies after deploy
 // minus the guard. Armies never move twice and captured armies never attack, so
@@ -381,6 +392,8 @@ export function planTurn(input: PlanInput): TurnPlan {
 
   // ---- 1b. withdraw from conceded borders ----
   let cardAdvice: CardAdvice | null = null;
+  // Armies withdrawn into each territory this turn (they stay there: armies never move twice).
+  const incoming = new Map<number, number>();
   if (acting && conceded.size) {
     const keep = (id: number) => mineSet.has(id) && !conceded.has(id);
     // Borders that can hold: mine, not conceded, next to something not mine.
@@ -411,6 +424,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       locked.add(t);
       const reason = 'withdraws from a conceded border';
       moves.push({ from: t, to: to.id, armies: n, kind: 'transfer', reason });
+      incoming.set(to.id, (incoming.get(to.id) ?? 0) + n);
       rationale.push(`Withdraw ${n} from ${label(t)} to ${label(to.id)}: ${reason}, toward a border that holds.`);
       warnings.push(
         `The withdrawal from ${label(t)} only executes if ${label(t)} is still mine when the order runs; play Order Priority so it goes first.`,
@@ -571,8 +585,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         const st = state.get(n);
         return !captured.has(n) && (!st || st.owner.kind === 'unknown' || st.armies === null);
       }).length;
-    // Armies that stay on a border after its deploys and outgoing moves.
-    const stays = (id: number) => avail.get(id)! + guard;
+    // Armies that stay on a border after its deploys, outgoing moves and incoming withdrawals.
+    const stays = (id: number) => avail.get(id)! + guard + (incoming.get(id) ?? 0);
     const short = [...borders.values()]
       .filter((b) => open(b.id))
       .map((b) => ({ ...b, take: armiesToTake(stays(b.id), rates) }))
@@ -590,6 +604,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     } else if (expansion !== undefined && open(expansion)) {
       where = expansion;
       why = 'the stack working on the top expansion';
+      // Keep it there: the transfer step must not walk it back as "idle interior" armies.
+      locked.add(where);
     } else if (fogged !== undefined) {
       where = fogged;
       why = 'the border with the most fogged neighbours';
@@ -611,8 +627,10 @@ export function planTurn(input: PlanInput): TurnPlan {
   // ---- transfers ----
   if (s.allowTransferOnly ?? true) {
     const held = new Set([...mine, ...captured]);
+    // A conceded border is not "the front": the plan gives it up, so armies never
+    // flow into it and distances are not measured through it.
     const front = [...g.territoryById.keys()].filter((id) => !held.has(id));
-    const dist = bfsDistances(g, front, { passable: (id) => held.has(id) });
+    const dist = bfsDistances(g, front, { passable: (id) => held.has(id) && !conceded.has(id) });
     for (const t of mine) {
       const n = avail.get(t)!;
       if (n <= 0 || locked.has(t)) continue;
@@ -621,7 +639,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       // Only into a territory held at the start of the turn: a planned capture is
       // not mine yet, and a "transfer" into it would execute as an attack.
       const step = neighborsOf(g, t)
-        .filter((x) => mineSet.has(x) && (dist.get(x) ?? Infinity) < d)
+        .filter((x) => mineSet.has(x) && !conceded.has(x) && (dist.get(x) ?? Infinity) < d)
         .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
       if (step === undefined) continue;
       avail.set(t, 0);

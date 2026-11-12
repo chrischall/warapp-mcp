@@ -477,6 +477,48 @@ describe('planTurn — value-aware defence', () => {
     expect(p.rationale.join('\n')).toMatch(/Withdraw 14 from T1 \(#1\) to T2 \(#2\)/);
     // Leftover goes to the expansion, never to the conceded border.
     expect(p.deploys.find((d) => d.territoryId === 3)!.armies).toBe(35);
+    // …and stays there: the stack working on the expansion is not transferred back.
+    expect(p.moves.filter((m) => m.from === 3)).toEqual([
+      expect.objectContaining({ from: 3, to: 4, kind: 'attack' }),
+    ]);
+    expect(p.moves.some((m) => m.kind === 'transfer' && m.from !== 1)).toBe(false);
+  });
+
+  it('(a) never sends idle interior armies into a conceded border', () => {
+    // T2 (10 armies) is interior next to the conceded T1: its idle armies never go
+    // back into the border the plan gives up (which defend is withdrawing 14 from).
+    const s = board([mine(1, 15), mine(2, 10), mine(3, 4), neutral(4, 2), mine(5, 1), enemy(9, 50)]);
+    for (const goal of ['expand', 'defend'] as const) {
+      const p = planTurn({ graph: ag, board: s, me: ME, income: 35, settings: STD, options: { goal } });
+      expect(p.conceded, goal).toEqual([1]);
+      expect(p.moves.filter((m) => m.to === 1), goal).toEqual([]);
+      // Once T4 falls, the only front left lies past T1, so T2's armies stay put.
+      expect(p.moves.filter((m) => m.from === 2), goal).toEqual([]);
+    }
+  });
+
+  it('counts armies withdrawn into a border when judging whether it is short of a comfortable margin', () => {
+    // T1 (20, protects 0) is conceded and withdraws 19 into T2 (5, a held +3, next to a
+    // 3-army enemy). With those 19 T2 is comfortable, so the leftover goes to T3,
+    // the border with a fogged neighbour, instead of piling onto T2.
+    const g = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 8, 9],
+        [
+          [1, 8],
+          [2, 9],
+          [1, 2],
+          [2, 3],
+          [3, 4],
+        ],
+        [[704, 3, [2]]],
+      ),
+    );
+    const s = board([mine(1, 20), mine(2, 5), mine(3, 1), fogged(4), enemy(8, 40), enemy(9, 3)]);
+    const p = planTurn({ graph: g, board: s, me: ME, income: 6, settings: STD, options: { goal: 'defend', enemyDeploy: 5 } });
+    expect(p.conceded).toEqual([1]);
+    expect(p.moves[0]).toEqual(expect.objectContaining({ from: 1, to: 2, armies: 19, kind: 'transfer' }));
+    expect(p.deploys).toEqual([{ territoryId: 3, armies: 6 }]);
   });
 
   it('(a) under expand it still warns of the concession but neither withdraws nor advises a card', () => {
@@ -540,8 +582,9 @@ describe('planTurn — value-aware defence', () => {
   });
 
   it('(c) leftover never lands on a conceded border, even the one with the most enemies next to it', () => {
-    // T1 (2 armies) faces 40 enemies: hopeless. T2 (5 armies, a held +3) faces 3: not
-    // threatened (8 to take > 3 − 1 + 5), but short of a comfortable margin.
+    // T1 (1 army, so nothing to withdraw) faces 40 enemies: hopeless. T2 (5 armies, a
+    // held +3) faces 3: not threatened (8 to take > 3 − 1 + 5), but short of a
+    // comfortable margin. (With 2 on T1, its withdrawn army would make T2 comfortable.)
     const g = buildGraph(
       makeMap(
         [1, 2, 8, 9],
@@ -553,7 +596,7 @@ describe('planTurn — value-aware defence', () => {
         [[704, 3, [2]]],
       ),
     );
-    const s = board([mine(1, 2), mine(2, 5), enemy(8, 40), enemy(9, 3)]);
+    const s = board([mine(1, 1), mine(2, 5), enemy(8, 40), enemy(9, 3)]);
     for (const goal of ['expand', 'defend', 'complete-bonus'] as const) {
       const p = planTurn({ graph: g, board: s, me: ME, income: 6, settings: STD, options: { goal, enemyDeploy: 5 } });
       expect(p.conceded, goal).toEqual([1]);
