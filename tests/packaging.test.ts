@@ -405,3 +405,36 @@ describe('packaging for surrender (phase 11)', () => {
     expect(section).toMatch(/more than two players/);
   });
 });
+
+describe('packaging for the pick advisor (#36)', () => {
+  const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const readme = doc('../README.md');
+  const claude = doc('../CLAUDE.md');
+  const skill = doc('../skills/warapp-mcp/SKILL.md');
+
+  it('docs/STRATEGY.md cites the community picking guides by URL and marks what is encoded', () => {
+    const strategy = doc('../docs/STRATEGY.md');
+    for (const url of [
+      'https://war.app/Forum/434535-1v1-ladder-strategic-picking-guide',
+      'https://war.app/Forum/811395-general-strategy-guidelines',
+      'https://war.app/Forum/99097-good-1v1-strategies',
+      'https://war.app/Forum/621189-ffa-strategy',
+      'https://war.app/wiki/Combat_Basics',
+      'https://war.app/wiki/Luck_Modifier',
+    ])
+      expect(strategy, url).toContain(url);
+    expect(strategy).toMatch(/encoded/i);
+    expect(strategy).toMatch(/not encoded/i);
+    expect(strategy).toContain('src/analysis/picks.ts');
+  });
+
+  it('CLAUDE.md, README and the skill describe warapp_plan_picks as read-only, feeding warapp_submit_picks', () => {
+    const bullet = claude.split('\n').find((l) => l.includes('warapp_plan_picks')) ?? '';
+    expect(bullet).toMatch(/read-only/i);
+    expect(claude).toContain('docs/STRATEGY.md');
+    const row = readme.split('\n').find((l) => l.startsWith('| `warapp_plan_picks`')) ?? '';
+    expect(row).toMatch(/Read-only/);
+    expect(row).toContain('warapp_submit_picks');
+    expect(skill).toMatch(/warapp_plan_picks[^\n]*warapp_submit_picks/);
+  });
+});
