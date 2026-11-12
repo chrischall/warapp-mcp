@@ -4,8 +4,8 @@
 through war.app's per-player **GameFeed** API and helps you think about them: players and
 settings, the map's bonuses and chokepoints, the board, and routes between territories.
 Through your signed-in war.app browser tab it also reads the **live board** (including the
-pick phase, where GameFeed has none) and your territory picks, and — only after you confirm —
-submits picks and posts game chat. It never submits turn orders.
+pick phase, where GameFeed has none) and your territory picks, plans your turn, and — only after
+you confirm — submits picks, commits your turn's orders and posts game chat.
 
 > This project was developed and is maintained by AI (Claude Code). Use at your own discretion.
 
@@ -95,12 +95,12 @@ restart the server and pair again.
 | `warapp_get_chat` | A game's chat, from GameFeed. |
 | `warapp_send_chat` | **Writes.** Post a chat message to the whole game or privately to one player. Confirm-gated; a message reaches other players and cannot be unsent. |
 
-Everything except `warapp_submit_picks` and `warapp_send_chat` only reads. Player, game, map
+Everything except `warapp_submit_picks`, `warapp_submit_turn` and `warapp_send_chat` only reads. Player, game, map
 and chat text comes back marked as untrusted third-party content.
 
 ## Confirming writes
 
-`warapp_submit_picks` and `warapp_send_chat` are confirmation-gated:
+`warapp_submit_picks`, `warapp_submit_turn` and `warapp_send_chat` are confirmation-gated:
 
 - **Clients that support MCP elicitation** show a confirmation prompt describing the change.
 - **Other clients** make **no** change on the first call: it returns a preview and a
@@ -108,8 +108,24 @@ and chat text comes back marked as untrusted third-party content.
   `MCP_CONFIRM_MODE` decides who may use the token: `ask-user` (default — you approve in
   chat), `auto` (the model may use it after the preview) or `refuse`.
 
-Turn orders (deploy / attack) are not supported. They stay out until a live capture of a
-submitted turn has verified the protocol.
+## Playing a turn
+
+1. **Plan.** `warapp_plan_turn` reads the live board and proposes deploys and moves by name and
+   id, with the expected captures, bonuses and next income, warnings and its reasoning. It
+   changes nothing.
+2. **Review.** Go through the plan and its warnings; edit the `orders` if you want something
+   different (territories by id or name).
+3. **Submit.** `warapp_submit_turn` with those `orders`. It always acts as the account signed in
+   to your war.app tab, and refuses another `player`. It validates the orders on the live board
+   (your territories at the start of the turn, adjacent moves, armies available with one left
+   behind, deploys equal to your income), refuses outside a turn phase or when you have already
+   committed this turn (modify orders in the game instead), and shows the orders and the turn
+   number before anything is sent.
+
+war.app's reply to a commit does not say whether it worked, so the result is read back from the
+game: `resolved` (the turn advanced), `committed` (your orders are in and the game waits on
+others) or `unknown` (check the game with `warapp_get_game` before trying again — never resend
+blindly). Once submitted, the orders play out and every player sees the results.
 
 ## Skills
 

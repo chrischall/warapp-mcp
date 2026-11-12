@@ -1,15 +1,15 @@
 ---
 name: warapp-mcp
-description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "submit my picks", "what did they say in chat", "send a message in my game", or a war.app game link.
+description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "submit my picks", "plan my turn", "submit my turn", "commit my orders", "what did they say in chat", "send a message in my game", or a war.app game link.
 ---
 
 # war.app / Warzone (warapp-mcp)
 
 An advisor. The tools read war.app as the signed-in player (fog of war applies): GameFeed
 for games, maps and chat, and the user's signed-in war.app tab for the live board and picks.
-Only two tools write — `warapp_submit_picks` and `warapp_send_chat`, both confirm-gated — and
-nothing submits orders: say so if the user asks you to play a turn, and give the advice for
-them to enter instead.
+Three tools write, all confirm-gated: `warapp_submit_picks`, `warapp_submit_turn` and
+`warapp_send_chat`. A turn goes plan → review → submit: `warapp_plan_turn` proposes it,
+the user reviews it, and only then does `warapp_submit_turn` commit it.
 
 ## Start here
 
@@ -42,9 +42,13 @@ them to enter instead.
   expected captures, bonuses and next income, warnings and reasoning, plus an `orders` array.
   It is read-only and refuses outside a turn phase. Review the plan and its warnings with the
   user before anything is submitted.
-- **"Submit my turn"** → `warapp_submit_turn` with the reviewed `orders` (confirm-gated, always
-  as the signed-in account). Report its `status`: `resolved` (turn advanced), `committed`
-  (waiting on others) or `unknown` — then check `warapp_get_game`; never resend blindly.
+- **"Submit my turn"** → `warapp_submit_turn` with the reviewed `orders` (territories by id or
+  name; confirm-gated, always as the signed-in account — it refuses another `player`). It
+  validates the orders on the live board (the user's territories, adjacent moves, armies
+  available, deploys = income) and refuses outside a turn phase or when the user has already
+  committed this turn (they modify orders in the game). Report its `status`: `resolved` (the
+  turn advanced), `committed` (orders in, waiting on others) or `unknown` — then check
+  `warapp_get_game`; never resend blindly. Other players see the results.
 - **"Show me the board" / "what can I pick?"** → `warapp_get_live_board`: every territory with
   its owner (player name, `neutral`, or `pickable` during picks), armies and fog, read through
   the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game.
@@ -68,8 +72,8 @@ them to enter instead.
 ## In context groups
 
 On a host that serves context groups (mcp-host), every tool here except `warapp_healthcheck`
-is in the **work** group: the reads with intent **lookup**, `warapp_submit_picks` with
-**change** and `warapp_send_chat` with **send**:
+is in the **work** group: the reads with intent **lookup**, `warapp_submit_picks` and
+`warapp_submit_turn` with **change**, and `warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,
   `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_turn` and `warapp_get_chat` are lookups the group reaches by their aliases ("warzone game", "whose turn is it", "best

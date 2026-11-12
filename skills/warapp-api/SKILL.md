@@ -7,7 +7,8 @@ description: Read war.app (Warzone) games from a shell with curl and jq over the
 
 war.app has one read API for players: `POST https://war.app/API/GameFeed?GameID=<n>` with
 the form body `Email=<email>&APIToken=<token>`. It answers as the player whose token is
-presented, so fog of war applies. It never submits orders, and nothing here does either.
+presented, so fog of war applies. It never submits orders, and nothing here does either
+(warapp-mcp's confirm-gated `warapp_submit_turn` does, through the browser tab).
 
 ## Credentials
 

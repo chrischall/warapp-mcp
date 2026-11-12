@@ -4,7 +4,7 @@ import { harnessFor, type Harness } from './helpers.js';
 /**
  * Context-group hints (`_meta.mint`, mcp-host's mintHintSchema), read off the
  * served tools/list — what a host sees. Every warapp tool is in the `work`
- * group: reads are lookups, submitting picks a change, chat a send; none is
+ * group: reads are lookups, submitting picks or a turn a change, chat a send; none is
  * canonical (nothing here answers what's new / due / on).
  */
 const DOMAINS = ['school', 'home', 'work', 'family', 'health', 'money', 'travel', 'food'];

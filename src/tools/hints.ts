@@ -4,8 +4,8 @@
  * `_meta` key and nothing else. The shape is fixed by the host's contract, so
  * it is restated here rather than imported.
  *
- * Every warapp tool is in the `work` group: reads are lookups, picks are a
- * change, chat is a send. None is canonical: nothing here answers what's new,
+ * Every warapp tool is in the `work` group: reads are lookups, picks and turn
+ * orders are a change, chat is a send. None is canonical: nothing here answers what's new,
  * due or on.
  */
 import type { McpServer } from '@modelcontextprotocol/server';
