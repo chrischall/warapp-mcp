@@ -3,12 +3,13 @@ import { harnessFor, type Harness } from './helpers.js';
 
 /**
  * Fleet annotation meta-test, read off the wire (tools/list). Every tool reads
- * war.app except three confirm-gated writes that reach other people
- * (submitting territory picks, submitting a turn's orders, sending chat) and
+ * war.app except the confirm-gated writes that reach other people
+ * (submitting territory picks, submitting a turn's orders, sending chat,
+ * joining a game, surrendering one) and
  * one confirm-gated LOCAL write that reaches no one but this machine — linking
  * the direct-transport session (it only stores a cookie locally).
  */
-const WRITES = ['warapp_join_game', 'warapp_send_chat', 'warapp_submit_picks', 'warapp_submit_turn'];
+const WRITES = ['warapp_join_game', 'warapp_send_chat', 'warapp_submit_picks', 'warapp_submit_turn', 'warapp_surrender'];
 const LOCAL_WRITES = ['warapp_link_session'];
 
 interface Ann {
@@ -53,6 +54,7 @@ describe('tool annotations', () => {
       'warapp_session_status',
       'warapp_submit_picks',
       'warapp_submit_turn',
+      'warapp_surrender',
       'warapp_wait_for_turn',
     ]);
   });
@@ -71,6 +73,7 @@ describe('tool annotations', () => {
     expect(ann.warapp_send_chat?.idempotentHint).toBe(false);
     expect(ann.warapp_submit_turn?.idempotentHint).toBe(false);
     expect(ann.warapp_join_game?.idempotentHint).toBe(false);
+    expect(ann.warapp_surrender?.idempotentHint).toBe(false);
   });
 
   it('marks linking the session a write, but a local one that reaches no other people', () => {

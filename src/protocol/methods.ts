@@ -18,6 +18,7 @@ export const Method = {
   AcceptOpenAutoGame: 62,
   GetOpenAutoGame: 63,
   DeclineGame: 64,
+  Surrender: 67,
   GetMapDetails: 73,
   SendOrders: 74,
   SendInProgressOrders: 75,
@@ -112,6 +113,21 @@ export function readAcceptOpenSeatReturn(body: Reader): AcceptOpenSeatResult | u
   if (!body.bool()) return undefined;
   const vacationEnded = body.bool();
   return body.bool() ? { vacationEnded, otherGameId: body.int32() } : { vacationEnded };
+}
+
+export interface SurrenderParams {
+  gameId: number;
+  /** true: surrender; false: take back a pending surrender. */
+  surrender: boolean;
+}
+
+/**
+ * Surrender(auth, …) — VERIFIED live 2026-11-12 (issue #30): the game id, the
+ * surrender flag (false takes back a pending surrender), then the per-method
+ * trailing "ends vacation" bool the client sends as false. No result payload.
+ */
+export function writeSurrenderParams(w: Writer, p: SurrenderParams): void {
+  w.int32(p.gameId).bool(p.surrender).bool(false);
 }
 
 /** GetLatestGameInfo(auth, gameId) — the parameters after the auth block. */

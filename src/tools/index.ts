@@ -15,6 +15,7 @@ import { registerPushTools } from './push.js';
 import { registerRouteTool } from './route.js';
 import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
+import { registerSurrenderTool } from './surrender.js';
 import { registerTurnTools } from './turn.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { readSession } from '../direct/session.js';
@@ -69,6 +70,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerMyGamesTool(server, live);
   registerOpenGamesTool(server, live);
   registerJoinGameTool(server, live);
+  registerSurrenderTool(server, live);
   registerScoutTool(server, live);
   registerTurnTools(server, live);
   registerChatTools(server, live);

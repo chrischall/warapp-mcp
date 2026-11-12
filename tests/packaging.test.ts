@@ -153,7 +153,7 @@ describe('packaging for the browser bridge (phase 2)', () => {
   const mint = readFileSync(new URL('../mint.yaml', import.meta.url), 'utf8');
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
-  const WRITES = ['warapp_submit_picks', 'warapp_submit_turn', 'warapp_send_chat', 'warapp_join_game'];
+  const WRITES = ['warapp_submit_picks', 'warapp_submit_turn', 'warapp_send_chat', 'warapp_join_game', 'warapp_surrender'];
   const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
 
   it('mint.yaml persists a data dir and says why (bridge identity + bundle cache)', () => {
@@ -361,5 +361,47 @@ describe('packaging for open games (phase 10)', () => {
     expect(readme).toMatch(/confirmation-gated/);
     const gated = readme.slice(readme.indexOf('confirmation-gated') - 200, readme.indexOf('confirmation-gated'));
     expect(gated).toContain('warapp_join_game');
+  });
+});
+
+describe('packaging for surrender (phase 11)', () => {
+  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
+  const protocol = readFileSync(new URL('../docs/WEB-PROTOCOL.md', import.meta.url), 'utf8');
+
+  it('CLAUDE.md lists warapp_surrender among the confirm-gated write tools', () => {
+    const bullet = claude.slice(claude.indexOf('tools write'), claude.indexOf('tools write') + 400);
+    expect(bullet).toMatch(/confirm-gated/);
+    expect(bullet).toContain('warapp_surrender');
+  });
+
+  it('README counts warapp_surrender among the confirm-gated writes and only-reads exceptions', () => {
+    const gated = readme.slice(readme.indexOf('confirmation-gated') - 200, readme.indexOf('confirmation-gated'));
+    expect(gated).toContain('warapp_surrender');
+    const reads = readme.slice(readme.indexOf('Everything except'), readme.indexOf('only reads'));
+    expect(reads).toContain('warapp_surrender');
+  });
+
+  it('the skill names warapp_surrender as a confirm-gated write in the change group', () => {
+    const head = skill.slice(skill.indexOf('tools write'), skill.indexOf('tools write') + 300);
+    expect(head).toContain('warapp_surrender');
+    expect(skill).toMatch(/warapp_surrender[^\n]*\*\*change\*\*|\*\*change\*\*[^.]*warapp_surrender/s);
+  });
+
+  it('WEB-PROTOCOL.md documents Surrender (67): parameters, errors and the multi-player pending rule', () => {
+    const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
+    expect(methods).toMatch(/\| 67 \| \*\*Surrender\*\*/);
+    expect(methods).toMatch(/\| 68 \| AcceptSurrender/);
+    const start = protocol.indexOf('## Surrender');
+    expect(start).toBeGreaterThan(-1);
+    const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
+    expect(section).toMatch(/verified/i);
+    expect(section).toContain('m=Surrender&js=1');
+    expect(section).toMatch(/int32[^\n]*game id/);
+    for (const s of ['bool', 'vacation', 'false', 'AcceptSurrender', 'GameFeed']) expect(section, s).toContain(s);
+    for (const code of ['**4**', '**7**', '**230**']) expect(section, code).toContain(code);
+    expect(section).toMatch(/pending/i);
+    expect(section).toMatch(/more than two players/);
   });
 });

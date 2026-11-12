@@ -94,6 +94,8 @@ string email                  the signed-in account's email
 | 62 | AcceptOpenAutoGame | not used |
 | 63 | GetOpenAutoGame | not used |
 | 64 | DeclineGame | not used |
+| 67 | **Surrender** | params: int32 gameId, bool surrender, bool false — see [Surrender](#surrender) |
+| 68 | AcceptSurrender | accept another player's pending surrender (not used) |
 | 73 | GetMapDetails | no auth; params: int32 mapId |
 | 74 | **SendOrders** | the turn commit — not yet captured |
 | 75 | SendInProgressOrders | draft save of orders |
@@ -296,6 +298,30 @@ joined is no longer available (these three are in the RPC error table); also 4 a
 7 removed by the host, 15 full, 120 seat no longer available, 227 on the creator's block list,
 239 prerequisites not met, and **121** already in the game (the client treats it as joined).
 The encoder is pinned by a golden test built from synthetic ids.
+
+## Surrender
+
+**Verified live 2026-11-12 (issue #30).** Surrendering — and taking back a pending surrender — is
+`Surrender` (67), `POST /Services?m=Surrender&js=1` through `WarappRpc` like every other method.
+Parameters after the auth block, in the client writer's order:
+
+1. `int32` game id;
+2. `bool` surrender — `true` surrenders, `false` takes back a pending surrender;
+3. the per-method trailing `bool`, the same "ends vacation" flag `AcceptOpenSeat` sends — sent
+   `false`.
+
+There is **no result payload** on success, so the reply proves nothing about the account's state:
+`warapp_surrender` re-reads GameFeed afterwards and reports what the feed shows (surrendered,
+pending, taken back, or unchanged). A transport failure after the send is reported as unknown — the
+surrender may already have gone through — and is never retried. Error codes, with the client's
+meaning: **4** the game is over; **7** and **230** you are no longer in the game.
+
+**In a game of more than two players a surrender is not immediate.** It waits for the others to
+accept it ("Pending surrender"; accepting is `AcceptSurrender`, 68, not used): the player stays
+`Playing` in GameFeed until then, so the tool reports `pending`, not surrendered, and a pending
+surrender is what `surrender = false` takes back. With two players a surrender ends the game at once
+(GameFeed shows `SurrenderAccepted`), so there is nothing to take back. The encoder is pinned by a
+golden test built from synthetic ids.
 
 ## Push channel (socket.io)
 
