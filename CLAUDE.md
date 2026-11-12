@@ -72,11 +72,14 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
   the game id, so `warapp_wait_for_turn` re-reads GameFeed on each one. One listener per process
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
   Tests drive it against a scripted fake bridge, never a socket.
-- **Threat model.** The planner assumes an enemy deploys max(5, round(0.75 × the largest visible
-  enemy stack)) (`enemyDeploy` / `enemy_deploy`), because enemy income is unseen — live, 13
-  visible armies broke a 12-army border.
+- **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
+  separately: base income + the bonuses it visibly holds in full, at least 5 and at most
+  round(0.75 × its largest stack next to me) (`enemyDeploy` / `enemy_deploy` overrides all of
+  them). On the opening board (every visible territory holds the same count) every opponent gets
+  5 — live, the old 0.75 × 15 guess made every base-income opponent look like ~11. A warning
+  states each estimate and its basis.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
-  border's threat to movable + max(enemyDeploy, growth). `warapp_plan_turn` gets it from
+  border's threat to movable + max(that opponent's deploy, growth). `warapp_plan_turn` gets it from
   GameFeed `GetHistory` (unverified in progress, parsed loosely in `src/trend.ts`), else from
   `<dataDir>/boards/<gameId>.json`, written after each plan (newest two turns kept, so re-planning a
   turn keeps the trend); it reports `trendSource`.
@@ -108,6 +111,20 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
     next to it" rule picked the hopeless border).
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
     the threat (see the threat model above), and warns "is building".
+  - **Lessons from three more lost games** (`tests/analysis/lessons-defensibility.test.ts`):
+    - **Border value after captures (#18).** Triage runs before captures are known, so after
+      the capture passes a conceded border in a bonus this turn's captures complete is kept —
+      never withdrawn from, garrisoned from the leftover, warned when that still cannot hold.
+    - **Defensibility (#19).** A capture that completes a bonus is checked against the frontier
+      it leaves: when holding the members a visible enemy could take next turn needs more than
+      the next income, `balanced`/`defend` refuse it ("… indefensible …: not completed") and
+      keep the armies for defence; `expand`/`complete-bonus` complete it with a warning. A
+      completion's score is discounted by that defence cost (`DEFENSE_DISCOUNT`).
+    - **Combined attacks (#17).** A target no single source can afford may be taken by two or
+      more of my start-of-turn stacks in a fixed order (the first attacks only wear it down),
+      with exact arithmetic — only at 0% luck under straight rounding (else skipped with a
+      warning), and only for a target the passes already chose. `warapp_plan_turn` lists them
+      in `multiSourceCaptures`.
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it

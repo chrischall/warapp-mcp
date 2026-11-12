@@ -1534,6 +1534,7 @@ describe('planTurn — multi-source attacks (R4)', () => {
       expect.objectContaining({ from: 1, to: 3, armies: 11 }),
     ]);
     expect(p.expected.captures).toEqual([3]);
+    expect(p.multiSourceCaptures).toEqual([3]);
     expect(deploySum(p)).toBe(5);
     expect(p.rationale.join('\n')).toMatch(/T3 \(#3\).*2 attacks/);
     // The attacks must run in this order.
@@ -1587,6 +1588,7 @@ describe('planTurn — multi-source attacks (R4)', () => {
     const s = board([mine(1, 25), mine(2, 15), neutral(3, 15)]);
     const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD });
     expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 25 })]);
+    expect(p.multiSourceCaptures).toEqual([]);
   });
 
   it('is not used for an uneconomic target', () => {

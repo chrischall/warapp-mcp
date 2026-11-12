@@ -72,6 +72,7 @@ interface PlanPayload {
   trendSource: 'history' | 'cache' | null;
   conceded: Named[];
   cardAdvice: 'order-priority' | null;
+  multiSourceCaptures: Named[];
   untrusted_content?: boolean;
 }
 
@@ -195,6 +196,32 @@ describe('warapp_plan_turn', () => {
     });
     expect(p.deploys.some((d) => d.territory.id === 161)).toBe(false);
     expect(p.warnings.join('\n')).toContain(`play Order Priority so it goes first`);
+  });
+
+  it('reports a combined (multi-source) capture by name, with its attack order (R4)', async () => {
+    // Widow's Watch (12 neutrals) borders Sheepshead Hills and Ramsgate, and needs 20: either's
+    // 10 movable + 5 income fall short alone. Ramsgate's 10 kill 6 first (and fail by design);
+    // Sheepshead Hills then takes the last 6 with 10.
+    const multi: SyntheticTerritory[] = [
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 11 },
+      { id: 1567, fogLevel: 1, owner: ANN.inGame, armies: 11 },
+      { id: 157, fogLevel: 2, owner: 0, armies: 12 },
+      { id: 158, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+      { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+    ];
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(multi) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', focus: [118] }));
+    expect(p.multiSourceCaptures).toEqual([{ id: 157, name: mapName(157) }]);
+    expect(p.moves.filter((m) => m.kind === 'attack').map((m) => [m.from.id, m.to.id, m.armies])).toEqual([
+      [1567, 157, 10],
+      [161, 157, 10],
+    ]);
+    expect(p.warnings.join('\n')).toMatch(/combines 2 attacks that must run in this order/);
+    // A plan with no combined capture reports an empty list.
+    await h.harness.close();
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const q = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(q.multiSourceCaptures).toEqual([]);
   });
 
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {

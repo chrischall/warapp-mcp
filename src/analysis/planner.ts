@@ -76,7 +76,8 @@
 //     shortfall. Fewest sources first. Exact only under straight rounding at 0%
 //     luck: otherwise it is skipped with a warning. It is a fallback inside every
 //     pass, so it only ever takes a target the passes already chose (economic by
-//     the same scoring), and only when no single source suffices.
+//     the same scoring), and only when no single source suffices. The plan lists
+//     such targets in `multiSourceCaptures`.
 //  4. Bonuses (value > 0) are scored by value / remaining capture cost, ties by
 //     fewest external borders, then id; focused bonuses come first. A bonus whose
 //     remaining cost exceeds PAYBACK_TURNS × value, or with one remaining
@@ -246,6 +247,11 @@ export interface TurnPlan {
   conceded: number[];
   /** `'order-priority'` when a withdrawal is planned (it must run before the border falls). */
   cardAdvice: CardAdvice | null;
+  /**
+   * Captures made by a combined (multi-source) attack sequence (rule 3a), sorted:
+   * their attacks must run in the planned order, and only at 0% luck.
+   */
+  multiSourceCaptures: number[];
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -445,6 +451,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       enemyDeploy,
       conceded: [],
       cardAdvice: null,
+      multiSourceCaptures: [],
     };
   }
 
@@ -455,6 +462,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   const avail = new Map(mine.map((id) => [id, armiesOf(id) - guard]));
   const locked = new Set<number>();
   const captured = new Set<number>();
+  /** Targets taken by a combined (multi-source) capture. */
+  const combined = new Set<number>();
   const moves: PlannedMove[] = [];
   /** Armies that occupy each capture this turn (its finishing attack's survivors). */
   const survivorsAt = new Map<number, number>();
@@ -1100,6 +1109,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       return false;
     }
     survivorsAt.set(t, plan.survivors);
+    combined.add(t);
     for (const x of plan.softeners)
       moves.push({
         from: x.from,
@@ -1473,5 +1483,6 @@ export function planTurn(input: PlanInput): TurnPlan {
     enemyDeploy,
     conceded: [...conceded].sort(byNum),
     cardAdvice,
+    multiSourceCaptures: [...combined].sort(byNum),
   };
 }
