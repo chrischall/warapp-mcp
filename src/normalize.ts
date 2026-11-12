@@ -153,6 +153,11 @@ export interface Player {
   isAI: boolean;
   humanTurnedIntoAI: boolean;
   hasCommittedOrders: boolean;
+  /**
+   * The id exactly as GameFeed sent it, kept only when the number loses
+   * something (leading zeros) — the in-game id is cut from its digits.
+   */
+  feedId?: string;
   color?: string;
   /** e.g. `Playing`, `Invited`, `Eliminated`, `Booted`, `Won`. */
   state?: string;
@@ -167,6 +172,7 @@ export function normalizePlayer(raw: unknown): Player {
     humanTurnedIntoAI: asBool(r.humanTurnedIntoAI) ?? false,
     hasCommittedOrders: asBool(r.hasCommittedOrders) ?? false,
   };
+  if (typeof r.id === 'string' && r.id.trim() !== String(p.id)) p.feedId = r.id.trim();
   const color = asStr(r.color);
   if (color !== undefined) p.color = color;
   const state = asStr(r.state);

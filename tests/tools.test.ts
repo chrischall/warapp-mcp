@@ -188,12 +188,13 @@ describe('warapp_get_map', () => {
 });
 
 describe('warapp_analyze_board', () => {
-  it('errors clearly when the feed sends no board for the game', async () => {
+  it('errors clearly when neither the feed nor the live board has one for the game', async () => {
     h = await harnessFor();
     const res = await h.call('warapp_analyze_board', { game_id: GAME, player: 1000 });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toMatch(/board state (is )?not available from the API for this game yet/i);
+    expect(textOf(res)).toMatch(/war\.app has no board for game 12345678 yet/i);
     expect(textOf(res)).toMatch(/WaitingForPlayers/);
+    expect(h.exchanges.map((e) => e.request.method)).toEqual([40]);
   });
 
   it('asks which player when none is given, listing them', async () => {

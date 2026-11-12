@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { envFilePath, readCredentials, readEmail, WarappConfigError } from '../src/config.js';
+import { dataDir, envFilePath, readCredentials, readEmail, WarappConfigError } from '../src/config.js';
 
 describe('envFilePath', () => {
   it('defaults to ~/.config/warapp-mcp/.env', () => {
@@ -65,5 +65,12 @@ describe('readEmail', () => {
       expect((err as Error).message).toContain('WARAPP_EMAIL');
       expect((err as Error).message).not.toContain('user_config');
     }
+  });
+});
+
+describe('dataDir', () => {
+  it('prefers MCP_DATA_DIR, else ~/.config/warapp-mcp', () => {
+    expect(dataDir({ MCP_DATA_DIR: '/data/warapp' })).toBe('/data/warapp');
+    expect(dataDir({})).toBe(join(homedir(), '.config', 'warapp-mcp'));
   });
 });

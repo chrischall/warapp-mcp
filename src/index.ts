@@ -32,6 +32,6 @@ await runMcp({
   tools: [(server) => registerAllTools(server, { bridge })],
   shutdown: { onSignal: () => bridge.transport().close() },
   banner:
-    `[warapp-mcp] v${VERSION} — war.app GameFeed advisor (read-only). Set WARAPP_EMAIL and WARAPP_API_TOKEN. ` +
+    `[warapp-mcp] v${VERSION} — war.app (Warzone) advisor; picks and chat are confirm-gated. Set WARAPP_EMAIL and WARAPP_API_TOKEN. ` +
     'This project was developed and is maintained by AI (Claude). Use at your own discretion.',
 });

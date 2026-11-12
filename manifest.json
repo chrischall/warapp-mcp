@@ -74,11 +74,31 @@
     },
     {
       "name": "warapp_analyze_board",
-      "description": "Advise a player from the board: income, closest bonuses, armies needed, threats"
+      "description": "Advise a player from the board (GameFeed or live): income, closest bonuses, armies needed, threats"
     },
     {
       "name": "warapp_plan_route",
       "description": "Shortest path between two territories on a game's map"
+    },
+    {
+      "name": "warapp_get_live_board",
+      "description": "The live board through your war.app tab: owners, armies, fog, pickable territories"
+    },
+    {
+      "name": "warapp_get_my_picks",
+      "description": "Your submitted territory picks in priority order"
+    },
+    {
+      "name": "warapp_submit_picks",
+      "description": "Submit territory picks (confirm-gated), verified by reading them back"
+    },
+    {
+      "name": "warapp_get_chat",
+      "description": "Read a game's chat"
+    },
+    {
+      "name": "warapp_send_chat",
+      "description": "Post a game chat message, public or private (confirm-gated)"
     }
   ]
 }

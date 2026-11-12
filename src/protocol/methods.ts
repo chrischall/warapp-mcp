@@ -2,7 +2,7 @@
 // parameter writers this server uses. The name is also the `m=` query value of
 // https://war.app/Services?m=<name>&js=1.
 
-import type { Writer } from './codec.js';
+import type { Reader, Writer } from './codec.js';
 
 export const Method = {
   GameRefresh: 39,
@@ -38,6 +38,63 @@ export function writeGetMapDetailsParams(w: Writer, mapId: number): void {
 /** GetTerritoryPicks(auth, gameId, playerId) — the parameters after the auth block. */
 export function writeGetTerritoryPicksParams(w: Writer, gameId: number, playerId: number): void {
   w.int32(gameId).int32(playerId);
+}
+
+/** GetLatestGameInfo(auth, gameId) — the parameters after the auth block. */
+export function writeGetLatestGameInfoParams(w: Writer, gameId: number): void {
+  w.int32(gameId);
+}
+
+/**
+ * SendTerritoryPicks(auth, gameId, picks) — verified through the bridge: the
+ * game id, a present int list of territory ids in priority order, then two
+ * bools the client sends as false.
+ */
+export function writeSendTerritoryPicksParams(w: Writer, gameId: number, territoryIds: readonly number[]): void {
+  w.int32(gameId)
+    .bool(true)
+    .list(territoryIds, (ww, id) => ww.int32(id))
+    .bool(false)
+    .bool(false);
+}
+
+/**
+ * A GetTerritoryPicks result: the result-present flag, then an int32-count list
+ * of territory ids in priority order. Absent or null is "no picks".
+ */
+export function readTerritoryPicks(body: Reader): number[] {
+  if (!body.bool()) return [];
+  return body.list((r) => r.int32()) ?? [];
+}
+
+/** SendChat channel for the whole game (any other value is a team channel). */
+export const CHAT_CHANNEL_PUBLIC = -1;
+
+export interface SendChatParams {
+  gameId: number;
+  text: string;
+  /** Team channel; default {@link CHAT_CHANNEL_PUBLIC}. */
+  channel?: number;
+  /** In-game player id of a private recipient. */
+  recipient?: number;
+}
+
+/**
+ * SendChat(auth, …) per docs/WEB-PROTOCOL.md (read from the client's
+ * serializer; the owner verifies it live): game id, text, channel, optional
+ * private recipient, optional game-group id (absent), two marker strings
+ * (absent), two optional "last seen" dicts (absent). An optional int32 is a
+ * present flag then the value.
+ */
+export function writeSendChatParams(w: Writer, p: SendChatParams): void {
+  w.int32(p.gameId).string(p.text).int32(p.channel ?? CHAT_CHANNEL_PUBLIC);
+  if (p.recipient === undefined) w.bool(false);
+  else w.bool(true).int32(p.recipient);
+  w.bool(false) // game-group id
+    .string(null)
+    .string(null)
+    .bool(false)
+    .bool(false);
 }
 
 // ---------------------------------------------------------------------------

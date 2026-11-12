@@ -1,18 +1,19 @@
-import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { analyzePlayer } from '../analysis/index.js';
 import type { TerritoryOwner } from '../board.js';
 import type { WarappClient } from '../client.js';
+import { toBoardState } from '../live.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
+import { loadLiveTerritories, type LiveContext } from './live-context.js';
 import { mapOf } from './map.js';
 import { resolvePlayer } from './resolve.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const COMPACT_THREATS = 15;
 
-export function registerBoardTool(server: McpServer, client: WarappClient): void {
+export function registerBoardTool(server: McpServer, client: WarappClient, live: LiveContext): void {
   server.registerTool(
     'warapp_analyze_board',
     {
@@ -21,7 +22,8 @@ export function registerBoardTool(server: McpServer, client: WarappClient): void
         'Advise one player in an in-progress war.app (Warzone) game from the current board: their territories and ' +
           'armies, income (base + held bonuses), the bonuses they are closest to completing (missing territories, ' +
           'who holds them, armies needed at the game\'s kill rates), and visible enemy threats on their borders, ' +
-          'with the assumptions behind the numbers. Needs a board from the API — a lobby has none. For map-only ' +
+          'with the assumptions behind the numbers. Uses GameFeed\'s board when it sends one, else the live board ' +
+          'read through your signed-in war.app tab (as warapp_get_live_board) — a lobby has none. For map-only ' +
           'analysis use warapp_get_map. Read-only; it never submits orders.',
       ),
       _meta: lookupMeta(['warzone advice', 'analyze my board', 'what should i attack', 'my income']),
@@ -42,19 +44,10 @@ export function registerBoardTool(server: McpServer, client: WarappClient): void
     },
     async ({ game_id, player, limit, view }) => {
       const game = await client.getGame(game_id, { settings: true });
-      if (!game.standing) {
-        throw new McpToolError(
-          `Board state is not available from the API for this game yet (game state: ${game.state}).`,
-          {
-            hint:
-              'war.app\'s GameFeed has not sent a board for this game (a lobby or territory pick has none). ' +
-              'warapp_get_map (bonuses, chokepoints) and warapp_plan_route work without one.',
-          },
-        );
-      }
       const map = mapOf(game);
       const me = resolvePlayer(game.players, player);
-      const a = analyzePlayer(graphOf(map), game.standing, me.id, game.settings, limit !== undefined ? { limit } : {});
+      const standing = game.standing ?? toBoardState(await loadLiveTerritories(live, game), game.players);
+      const a = analyzePlayer(graphOf(map), standing, me.id, game.settings, limit !== undefined ? { limit } : {});
       const nameOf = (id: number) => game.players.find((p) => p.id === id)?.name ?? `player ${id}`;
       const ownerLabel = (o: TerritoryOwner): string =>
         o.kind === 'player' ? nameOf(o.playerId) : o.kind === 'unknown' ? 'unknown' : o.kind;

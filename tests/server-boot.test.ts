@@ -87,10 +87,15 @@ describe('server boot (bundled artifact, no node_modules)', () => {
 
     expect(tools).toEqual([
       'warapp_analyze_board',
+      'warapp_get_chat',
       'warapp_get_game',
+      'warapp_get_live_board',
       'warapp_get_map',
+      'warapp_get_my_picks',
       'warapp_healthcheck',
       'warapp_plan_route',
+      'warapp_send_chat',
+      'warapp_submit_picks',
     ]);
     expect(nonJson).toEqual([]);
   });

@@ -60,3 +60,12 @@ export function readEmail(env: EnvSource = process.env): string {
       'with each request, alongside the session of your signed-in war.app tab.',
   );
 }
+
+/**
+ * Where state that should survive a restart lives (the cached client bundle):
+ * `MCP_DATA_DIR` (set by mcp-host for a registration with `state.dataDir`),
+ * else `~/.config/warapp-mcp`.
+ */
+export function dataDir(env: EnvSource = process.env): string {
+  return readEnvVar('MCP_DATA_DIR', { env }) ?? join(homedir(), '.config', 'warapp-mcp');
+}
