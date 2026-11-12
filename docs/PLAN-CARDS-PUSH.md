@@ -75,9 +75,8 @@ armies in Tennessee broke a 12-army Florida (needs ≥20) — they deployed far 
   replies, packet framing, reconnect with backoff, and a `Subscribe` sender.
 - `src/push/listener.ts`: one per process, started lazily on first use, subscribes to
   `Game.<id>` for the given games, emits `{ gameId, at }` on `GameUpdated`.
-- Tool `warapp_wait_for_turn` (read): game_ids (default: all games the signed-in account is
-  in, from GameFeed? — use the provided ids or the games named in the call; do not invent
-  discovery). Resolves as soon as GameFeed shows one of them waiting on me (my player Playing,
+- Tool `warapp_wait_for_turn` (read): `game_ids` (required, 1–20; game discovery arrives with
+  `warapp_my_games` on another branch and will be wired in after both merge). Resolves as soon as GameFeed shows one of them waiting on me (my player Playing,
   not committed, game Playing or DistributingTerritories) — checking once at start and again on
   every GameUpdated — or at `timeout_seconds` (default 300, max 1800). Honours cancellation
   (`currentCallSignal`) and sends progress notifications when the caller wants them.
