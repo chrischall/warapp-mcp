@@ -72,6 +72,8 @@ function surrenderable(game: Game, me: number, undo: boolean): Player {
       'Check warapp_get_game.',
     );
   }
+  // GameFeed exposes no pending-surrender flag, so this can only refuse the two-player
+  // case (where a surrender ends the game at once); with more players `undo` is sent.
   if (undo && activePlayers(game).length <= 2) {
     refuse(
       `There is no pending surrender to take back in game ${game.id}: with two players a surrender ends the game at once.`,
@@ -195,7 +197,12 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                 status: 'pending' as const,
                 game,
                 ...state,
-                message: 'Your surrender is pending: the other players must accept it before it ends your game.',
+                // GameFeed has no pending-surrender state: war.app accepted the request
+                // and the seat is still Playing, which is what a pending surrender looks like.
+                message:
+                  'war.app accepted the surrender and you are still playing, so it should be pending: the other ' +
+                  'players must accept it before it ends your game. (GameFeed shows no pending state, so this is ' +
+                  'inferred, not read.)',
               };
             }
             return {
