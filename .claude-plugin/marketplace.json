@@ -6,7 +6,7 @@
     "email": "chris.c.hall@gmail.com"
   },
   "metadata": {
-    "description": "MCP server for war.app (Warzone) — your games, players, settings, map bonuses and chokepoints, board analysis and route planning through war.app's per-player GameFeed API, plus the live board, territory picks and game chat through your signed-in war.app tab (picks and chat sends are confirm-gated).",
+    "description": "MCP server for war.app (Warzone) — your games, players, settings, map bonuses and chokepoints, board analysis and route planning through war.app's per-player GameFeed API, plus the live board, territory picks, cards, turn planning and submission, turn notifications and game chat through your signed-in war.app tab (picks, turn orders and chat sends are confirm-gated).",
     "version": "0.0.0"
   },
   "plugins": [
@@ -14,7 +14,7 @@
       "name": "warapp-mcp",
       "displayName": "war.app (Warzone)",
       "source": "./",
-      "description": "war.app (Warzone) game advisor for Claude — games, maps, bonuses, routes, live board, picks and chat",
+      "description": "war.app (Warzone) game advisor for Claude — games, maps, bonuses, routes, live board, picks, turns, cards and chat",
       "version": "0.0.0",
       "author": {
         "name": "Chris Hall"

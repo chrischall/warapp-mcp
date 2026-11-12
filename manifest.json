@@ -4,7 +4,7 @@
   "name": "warapp-mcp",
   "display_name": "war.app (Warzone)",
   "version": "0.0.0",
-  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus the live board, territory picks, turn planning and submission, and chat through your signed-in war.app tab (ContextMint Bridge). Picks, turn orders and chat sends are confirm-gated.",
+  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Picks, turn orders and chat sends are confirm-gated.",
   "author": {
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com",
