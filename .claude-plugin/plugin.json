@@ -1,0 +1,21 @@
+{
+  "name": "warapp-mcp",
+  "displayName": "war.app (Warzone)",
+  "version": "0.0.0",
+  "description": "Read-only war.app (Warzone) game advisor for Claude — games, maps, bonuses and route planning",
+  "author": {
+    "name": "Chris Hall",
+    "email": "chris.c.hall@gmail.com"
+  },
+  "homepage": "https://github.com/chrischall/warapp-mcp",
+  "repository": "https://github.com/chrischall/warapp-mcp",
+  "license": "MIT",
+  "keywords": [
+    "warzone",
+    "war.app",
+    "strategy-game",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

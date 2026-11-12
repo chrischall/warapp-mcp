@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chrischall/warapp-mcp",
+  "description": "Read-only war.app (Warzone) game advisor — games, maps, bonuses and route planning",
+  "repository": {
+    "url": "https://github.com/chrischall/warapp-mcp",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@chrischall/warapp-mcp",
+      "version": "0.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "WARAPP_EMAIL",
+          "description": "The email address you sign in to war.app with.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "WARAPP_API_TOKEN",
+          "description": "Your war.app API token, from https://war.app/API/GetAPIToken while signed in.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "warapp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@chrischall/warapp-mcp"
+      ]
+    }
+  }
+}

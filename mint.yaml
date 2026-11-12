@@ -1,0 +1,53 @@
+version: 1
+name: war.app (Warzone)
+slug: warapp
+summary: >-
+  Read-only war.app (Warzone) game advisor — your games, players and settings,
+  map bonuses and chokepoints, board analysis and route planning, through
+  war.app's per-player GameFeed API.
+examples:
+  - prompt: Which bonuses on the map of my war.app game 12345678 are easiest to take and hold?
+    note: Ranks bonuses by value per territory and per border.
+  - prompt: Who is still to commit their turn in my war.app game 12345678, and what are its settings?
+    note: Summarises the game's state, players and settings.
+  - prompt: What's the shortest path from Alaska to Kamchatka on my game's map?
+    note: Plans a route between two territories by name.
+
+identity:
+  # One child per caller: GameFeed answers AS the player whose email + token
+  # are presented, so two people sharing one child would share one player's
+  # view of every game (fog included). Required for `auth` below.
+  perUserChild: true
+
+auth:
+  # Collected once on the connector's authorize page. There is no `flow`:
+  # GameFeed takes the email + token on every request (form body), with no
+  # login exchange, MFA or session to mint. Every auth field is stored as a
+  # per-user secret (the field schema has no separate `secret` flag).
+  fields:
+    - name: WARAPP_EMAIL
+      label: war.app email
+      type: text
+      required: true
+      help: The email address you sign in to war.app with.
+    - name: WARAPP_API_TOKEN
+      label: war.app API token
+      type: password
+      required: true
+      help: >-
+        Your API token, shown at https://war.app/API/GetAPIToken while signed
+        in to war.app. Stored as a per-user secret and never shown again.
+        Changing your war.app password rotates it — reconnect with the new one.
+
+# No `env` block: WARAPP_EMAIL / WARAPP_API_TOKEN are collected per user above,
+# and an auth field may not name a host-set variable. Set them in the
+# environment (or ~/.config/warapp-mcp/.env, or the file WARAPP_ENV_FILE names)
+# only for a local, single-user install.
+
+# No `state` block: nothing needs to persist. The per-map cache lives in memory
+# and is rebuilt on demand after a cold start.
+
+egress:
+  allow:
+    # The only host the server fetches: POST /API/GameFeed (src/tools/healthcheck.ts).
+    - war.app

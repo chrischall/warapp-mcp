@@ -1,0 +1,61 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/mcpb-manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "warapp-mcp",
+  "display_name": "war.app (Warzone)",
+  "version": "0.0.0",
+  "description": "Read-only war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and route planning via the GameFeed API",
+  "author": {
+    "name": "Chris Hall",
+    "email": "chris.c.hall@gmail.com",
+    "url": "https://github.com/chrischall"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrischall/warapp-mcp"
+  },
+  "homepage": "https://github.com/chrischall/warapp-mcp",
+  "support": "https://github.com/chrischall/warapp-mcp/issues",
+  "license": "MIT",
+  "keywords": [
+    "warzone",
+    "war.app",
+    "strategy-game",
+    "risk"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/bundle.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/bundle.js"
+      ],
+      "env": {
+        "WARAPP_EMAIL": "${user_config.email}",
+        "WARAPP_API_TOKEN": "${user_config.api_token}"
+      }
+    }
+  },
+  "user_config": {
+    "email": {
+      "type": "string",
+      "title": "war.app email",
+      "description": "The email address you sign in to war.app with.",
+      "required": true
+    },
+    "api_token": {
+      "type": "string",
+      "title": "war.app API token",
+      "description": "Your API token, shown at https://war.app/API/GetAPIToken while signed in. Changing your password rotates it.",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "tools": [
+    {
+      "name": "warapp_healthcheck",
+      "description": "Check that war.app accepts your email and API token"
+    }
+  ]
+}

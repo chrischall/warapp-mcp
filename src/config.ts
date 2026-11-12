@@ -1,0 +1,39 @@
+// Credential and env-file resolution. Deferred-config pattern: nothing here
+// runs at import time, and a missing credential is an error on the first call
+// that needs it, never a boot failure.
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
+
+/** Where a regenerated token comes from (signed in to war.app in a browser). */
+export const TOKEN_URL = 'https://war.app/API/GetAPIToken';
+
+export class WarappConfigError extends Error {
+  override name = 'WarappConfigError';
+}
+
+export interface WarappCredentials {
+  email: string;
+  token: string;
+}
+
+/** The optional dotenv file: `WARAPP_ENV_FILE`, else `~/.config/warapp-mcp/.env`. */
+export function envFilePath(env: EnvSource = process.env): string {
+  return readEnvVar('WARAPP_ENV_FILE', { env }) ?? join(homedir(), '.config', 'warapp-mcp', '.env');
+}
+
+/**
+ * Read `WARAPP_EMAIL` + `WARAPP_API_TOKEN`. Throws a {@link WarappConfigError}
+ * naming every missing variable — and never a value, so a leaked placeholder is
+ * not echoed back.
+ */
+export function readCredentials(env: EnvSource = process.env): WarappCredentials {
+  const email = readEnvVar('WARAPP_EMAIL', { env });
+  const token = readEnvVar('WARAPP_API_TOKEN', { env });
+  if (email && token) return { email, token };
+  const missing = [email ? null : 'WARAPP_EMAIL', token ? null : 'WARAPP_API_TOKEN'].filter(Boolean);
+  throw new WarappConfigError(
+    `${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not set. Set WARAPP_EMAIL to your war.app ` +
+      `sign-in email and WARAPP_API_TOKEN to the API token shown at ${TOKEN_URL} while signed in.`,
+  );
+}

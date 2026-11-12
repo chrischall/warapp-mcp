@@ -1,0 +1,148 @@
+import { readFileSync } from 'node:fs';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createTestHarness, type TestHarness } from '@chrischall/mcp-utils/test';
+import { registerAllTools } from '../src/tools/index.js';
+
+/**
+ * Things that otherwise fail only once a tag exists: provenance needs
+ * `repository.url`; a scoped name needs `publishConfig.access: public`; `files`
+ * must ship the skills and mint.yaml (an npm-sourced mcp-host registration
+ * reads the TARBALL); manifest.json's tool roster must match what the server
+ * registers, or an mcpb host never shows the missing tool; every version file
+ * release-please bumps must be registered in extra-files.
+ */
+const read = (p: string) => JSON.parse(readFileSync(new URL(p, import.meta.url), 'utf8'));
+const pkg = read('../package.json') as {
+  name: string;
+  version: string;
+  mcpName: string;
+  repository: { url: string };
+  publishConfig?: { access?: string };
+  files: string[];
+  bin: Record<string, string>;
+  allowScripts?: Record<string, boolean>;
+};
+
+let registered: Array<{ name: string; description?: string }>;
+let harness: TestHarness;
+beforeAll(async () => {
+  harness = await createTestHarness((s) => registerAllTools(s, { env: {} }));
+  registered = (await harness.client.listTools()).tools;
+});
+afterAll(async () => {
+  await harness?.close();
+});
+
+describe('packaging', () => {
+  it('declares the repository for npm provenance', () => {
+    expect(pkg.repository.url).toBe('git+https://github.com/chrischall/warapp-mcp.git');
+  });
+
+  it('is published under the @chrischall scope, publicly', () => {
+    expect(pkg.name).toBe('@chrischall/warapp-mcp');
+    expect(pkg.publishConfig?.access).toBe('public');
+    expect(pkg.mcpName).toBe('io.github.chrischall/warapp-mcp');
+  });
+
+  it('ships the skills and mint.yaml in the npm tarball', () => {
+    expect(pkg.files).toEqual(
+      expect.arrayContaining(['dist', 'skills', 'mint.yaml', 'server.json', 'manifest.json', '.claude-plugin', '.mcp.json']),
+    );
+  });
+
+  it('has a single bin pointing at the bundle', () => {
+    expect(pkg.bin).toEqual({ 'warapp-mcp': 'dist/bundle.js' });
+  });
+
+  it('blocks install scripts it does not need', () => {
+    expect(pkg.allowScripts).toEqual({ esbuild: false, fsevents: false });
+  });
+
+  it('manifest.json lists exactly the registered tools, each with a description', () => {
+    const manifest = read('../manifest.json') as { tools: Array<{ name: string; description: string }> };
+    expect(manifest.tools.map((t) => t.name).sort()).toEqual(registered.map((t) => t.name).sort());
+    expect(manifest.tools.filter((t) => !t.description.trim())).toEqual([]);
+  });
+
+  it('every registered tool has a description and the warapp_ prefix', () => {
+    expect(registered.filter((t) => !t.description?.trim()).map((t) => t.name)).toEqual([]);
+    expect(registered.filter((t) => !t.name.startsWith('warapp_')).map((t) => t.name)).toEqual([]);
+  });
+
+  it('server.json description fits the registry limit and names the scoped package', () => {
+    const server = read('../server.json') as {
+      name: string;
+      description: string;
+      packages: Array<{ identifier: string; version: string }>;
+    };
+    expect(server.description.length).toBeLessThanOrEqual(100);
+    expect(server.name).toBe(pkg.mcpName);
+    expect(server.packages.map((p) => p.identifier)).toEqual([pkg.name]);
+  });
+
+  it('every version file agrees with package.json', () => {
+    const manifest = read('../manifest.json') as { version: string };
+    const server = read('../server.json') as { version: string; packages: Array<{ version: string }> };
+    const plugin = read('../.claude-plugin/plugin.json') as { version: string };
+    const market = read('../.claude-plugin/marketplace.json') as {
+      metadata: { version: string };
+      plugins: Array<{ version: string }>;
+    };
+    const rpManifest = read('../.release-please-manifest.json') as Record<string, string>;
+    const versions = [
+      manifest.version,
+      server.version,
+      ...server.packages.map((p) => p.version),
+      plugin.version,
+      market.metadata.version,
+      ...market.plugins.map((p) => p.version),
+      rpManifest['.'],
+    ];
+    expect(new Set(versions)).toEqual(new Set([pkg.version]));
+  });
+
+  it('release-please bumps every version file', () => {
+    const cfg = read('../release-please-config.json') as {
+      packages: Record<
+        string,
+        {
+          'package-name': string;
+          'initial-version': string;
+          'bump-minor-pre-major': boolean;
+          'extra-files': Array<string | { path: string; jsonpath: string }>;
+        }
+      >;
+    };
+    const root = cfg.packages['.']!;
+    expect(root['package-name']).toBe(pkg.name);
+    expect(root['initial-version']).toBe('0.1.0');
+    expect(root['bump-minor-pre-major']).toBe(true);
+    const keys = root['extra-files'].map((f) => (typeof f === 'string' ? f : `${f.path}#${f.jsonpath}`));
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        'manifest.json#$.version',
+        'server.json#$.version',
+        'server.json#$.packages[*].version',
+        '.claude-plugin/plugin.json#$.version',
+        '.claude-plugin/marketplace.json#$.plugins[*].version',
+        '.claude-plugin/marketplace.json#$.metadata.version',
+        'src/version.ts',
+      ]),
+    );
+  });
+
+  it('.mcp.json launches the scoped package', () => {
+    const mcp = read('../.mcp.json') as { mcpServers: Record<string, { command: string; args: string[] }> };
+    expect(mcp.mcpServers.warapp).toEqual({ command: 'npx', args: ['-y', '@chrischall/warapp-mcp'] });
+  });
+
+  it('mint.yaml collects both credentials per user and allows only war.app egress', () => {
+    const text = readFileSync(new URL('../mint.yaml', import.meta.url), 'utf8');
+    expect(text).toMatch(/perUserChild: true/);
+    expect(text).toMatch(/name: WARAPP_EMAIL/);
+    expect(text).toMatch(/name: WARAPP_API_TOKEN/);
+    const egress = text.slice(text.indexOf('\negress:'));
+    const hosts = [...egress.matchAll(/^\s+-\s+([a-z0-9.-]+)\s*$/gm)].map((m) => m[1]);
+    expect(hosts).toEqual(['war.app']);
+  });
+});
