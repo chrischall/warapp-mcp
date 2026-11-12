@@ -83,9 +83,9 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   deploy-total refusal even when nobody is sanctioned; the check is a preview warning and war.app's
   error 11 is the backstop. Decoding the active cards would let the warning (and the soft check)
   apply only when I am sanctioned this turn.
-  war.app's error 11 is the backstop; its hint names the modelled number. The live
-  board (`GetLatestGameInfo`) carries no income figure — the client computes it from the
-  standing — so the authoritative number is the game's "armies per turn".
+- **Error 11 hint:** when war.app refuses a deploy total (error 11), the hint names the modelled
+  number. The live board (`GetLatestGameInfo`) carries no income figure — the client computes it
+  from the standing — so the authoritative number is the game's "armies per turn".
 
 ## Local Deployment — key verified, pool rules UNVERIFIED
 

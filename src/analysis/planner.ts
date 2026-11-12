@@ -407,7 +407,7 @@ export function defaultEnemyDeploy(
   );
 }
 
-/** This turn's income from the existing income code (base + per-territory + held bonuses). */
+/** This turn's income from the existing income code (max(base, per-territory) + held bonuses). */
 export function incomeFor(g: MapGraph, board: BoardState, me: number, settings?: GameSettings): number {
   return analyzePlayer(g, board, me, settings).income.total;
 }
