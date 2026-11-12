@@ -81,9 +81,66 @@ describe('readHand', () => {
     expect(readHand(null, ME)).toEqual([]);
   });
 
+  // A decoded LatestGameInfo in the live field order (#20): pending orders, the CURRENT
+  // GameStanding, the last GameTurn, the PREVIOUS GameStanding, then the turn number. Only the
+  // current standing is the hand — the rest still carries stale, already-played instances.
+  const GA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const GB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const GC = 'cccccccccccccccccccccccccccccccc';
+  const GD = 'dddddddddddddddddddddddddddddddd';
+  const GE = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  const GF = 'ffffffffffffffffffffffffffffffff';
+  const inst = (id: string, type: number, armies?: number) =>
+    armies !== undefined
+      ? { $type: 'warlight.shared.ReinforcementCardInstance', c1: id, c2: armies, c3: type }
+      : { $type: 'warlight.shared.NoParameterCardInstance', c1: id, c2: type };
+  const standing = (hands: Record<number, Array<ReturnType<typeof inst>>>) => ({
+    $type: 'warlight.shared.GameStanding',
+    q1: Object.entries(hands).map(([pid, cards]) => [
+      Number(pid),
+      { $type: 'x.PlayerCards', z1: 0, z2: cards.map((c) => [c.c1, c]) },
+    ]),
+    q2: [],
+  });
+  const liveInfo = (current: unknown) => ({
+    $type: 'warlight.shared.LatestGameInfo',
+    a: [{ $type: 'warlight.shared.GameOrderPlayCardReinforcement', p: ME, card: GE }, inst(GE, 1, 5)],
+    b: current,
+    c: {
+      $type: 'warlight.shared.GameTurn',
+      o: [
+        { $type: 'warlight.shared.GameOrderReceiveCard', p: ME, l: [[ME, [inst(GB, 1, 5), inst(GC, 4)]]] },
+        { $type: 'warlight.shared.GameOrderPlayCardBlockade', p: ME, card: inst(GD, 12) },
+      ],
+    },
+    d: standing({ [ME]: [inst(GA, 5), inst(GD, 12), inst(GE, 1, 5)] }),
+    e: 7,
+  });
+
+  it('reads the hand from the current standing only, never stale instances (#20)', () => {
+    const hand = readHand(liveInfo(standing({ [ME]: [inst(GA, 5), inst(GB, 1, 5), inst(GC, 4)] })), ME);
+    expect(hand).toEqual<Card[]>([
+      { id: GA, type: 5, name: 'Order Delay' },
+      { id: GB, type: 1, name: 'Reinforcement', armies: 5 },
+      { id: GC, type: 4, name: 'Order Priority' },
+    ]);
+  });
+
+  it("still excludes another player's cards in the current standing", () => {
+    const hand = readHand(liveInfo(standing({ [ME]: [inst(GA, 5)], [OTHER]: [inst(GF, 12)] })), ME);
+    expect(hand.map((c) => c.id)).toEqual([GA]);
+  });
+
+  it('is empty when the info carries no GameStanding', () => {
+    const noStanding = { ...liveInfo(null), b: null, d: null };
+    expect(readHand(noStanding, ME)).toEqual([]);
+    expect(readHand({ $type: 'warlight.shared.LatestGameInfo', a: [[ME, inst(GA, 5)]] }, ME)).toEqual([]);
+  });
+
   it('names an unknown card type by its id and never throws on odd shapes', () => {
     expect(readHand(info({ [ME]: [{ id: G1, type: 99 }] }), ME)).toEqual([{ id: G1, type: 99, name: 'Card 99' }]);
-    expect(readHand({ $type: 'x', a: [[1, { $type: 'warlight.shared.NoParameterCardInstance', b: 'nope' }]] }, 1)).toEqual([]);
+    const odd = { $type: 'warlight.shared.GameStanding', a: [[1, { $type: 'warlight.shared.NoParameterCardInstance', b: 'nope' }]] };
+    expect(readHand({ $type: 'x', s: odd }, 1)).toEqual([]);
   });
 });
 
