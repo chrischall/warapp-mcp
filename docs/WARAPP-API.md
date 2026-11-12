@@ -82,6 +82,19 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `BoardState` with `verified: false`, or `undefined` when the parser can't use it.
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
   through raw. `GetChat` is passed through raw too, and it is third-party text.
+- **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a
+  second, best-effort GameFeed call) to find the previous turn's standing for the threat
+  trend. `boardFromHistory` (`src/trend.ts`) reads `game.history` loosely and never throws:
+  an array of turns (number from `turnNumber` / `turn` / `number`, else the position), a
+  `{ turns: [...] }` wrapper, or an object keyed `turn<N>` / `standing<N>` / `<N>`; each
+  entry is a standing itself or carries one under `standing` / `standings` /
+  `latestStanding`. **Assumed:** an entry's number is the count of completed turns its
+  standing reflects (so the previous board of turn T is entry T − 2), and owners may be
+  GameFeed or in-game player ids (both are mapped). When the feed sends nothing usable
+  (or errors), the planner falls back to the board it last planned on, cached at
+  `<dataDir>/boards/<gameId>.json` (the player's own fogged view, used only when cached
+  on exactly the previous turn). When a live in-progress history is seen, record its
+  shape here and tighten the parser.
 
 When an in-progress game is captured live, record its shape here, add an anonymized fixture,
 tighten `boardFromStanding`, and set `verified: true`.

@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createTestHarness, parseToolResult, type TestHarness } from '@chrischall/mcp-utils/test';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { MapCache } from '../src/client.js';
@@ -37,6 +39,8 @@ export function stubFetch(...bodies: unknown[]) {
 
 export interface Harness {
   harness: TestHarness;
+  /** The server's data directory (a temporary one unless the test chose it). */
+  dataDir: string;
   /** GameFeed calls. */
   calls: Call[];
   /** Web-client frames the fake war.app answered (through the mock bridge). */
@@ -58,8 +62,16 @@ const NO_RESULT: WarappReply = () => ({ body: (w) => w.bool(false) });
  * network.
  */
 export async function liveHarness(
-  opts: { feed?: unknown[]; warapp?: WarappReply; pages?: Record<string, string>; socket?: FakeSocketIo } = {},
+  opts: {
+    feed?: unknown[];
+    warapp?: WarappReply;
+    pages?: Record<string, string>;
+    socket?: FakeSocketIo;
+    /** The server's data directory (`MCP_DATA_DIR`); default a fresh temporary one, never the real one. */
+    dataDir?: string;
+  } = {},
 ): Promise<Harness> {
+  const dataDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'warapp-mcp-test-'));
   const feed = opts.feed?.length ? opts.feed : [lobbyFixture()];
   const { calls, fetchImpl } = stubFetch(...feed);
   const fake = fakeWarapp(opts.warapp ?? NO_RESULT, opts.pages);
@@ -67,7 +79,7 @@ export async function liveHarness(
   const bundle = new WarappBundle(`${LIVE_BUNDLE}\n${MY_GAMES_BUNDLE}`, 'test');
   const harness = await createTestHarness((s) =>
     registerAllTools(s, {
-      env: CREDS,
+      env: { ...CREDS, MCP_DATA_DIR: dataDir },
       fetchImpl,
       sleep: async () => {},
       mapCache: new MapCache(),
@@ -77,6 +89,7 @@ export async function liveHarness(
   );
   return {
     harness,
+    dataDir,
     calls,
     exchanges: fake.exchanges,
     bridge: mock,

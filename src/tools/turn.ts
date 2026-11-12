@@ -32,6 +32,8 @@ import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
+import { boardFromHistory, readBoardCache, writeBoardCache, type TrendSource } from '../trend.js';
+import type { BoardState } from '../board.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
@@ -347,6 +349,32 @@ function mustPlayCard(hand: readonly Card[], rules: CardRules): McpToolError {
 
 const cardView = (c: Card) => ({ id: c.id, name: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}) });
 
+/**
+ * My view of the board one turn ago, for the planner's threat trend, best effort:
+ * GameFeed's `GetHistory` standing for the previous turn if the feed sends one
+ * (unverified for games in progress), else this server's cached board when it
+ * was planned on exactly the previous turn. `undefined` otherwise; never throws.
+ */
+async function previousBoard(
+  ctx: LiveContext,
+  game: Game,
+  me: Player,
+  turn: number | null,
+): Promise<{ source: TrendSource; board: BoardState } | undefined> {
+  if (turn === null || turn < 2) return undefined;
+  try {
+    const withHistory = await ctx.client.getGame(game.id, { history: true });
+    // `turn` is being played, so turn − 1 are done and the previous board is the one after turn − 2.
+    const board = boardFromHistory(withHistory.history, turn - 2, game.players);
+    if (board) return { source: 'history', board };
+  } catch {
+    // History is optional: fall through to the cache.
+  }
+  if (!ctx.dataDir) return undefined;
+  const board = await readBoardCache(ctx.dataDir, game.id, me.id, turn - 1);
+  return board ? { source: 'cache', board } : undefined;
+}
+
 export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_plan_turn',
@@ -364,7 +392,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'cheap bonuses, breaking enemy bonuses — with at least 30% on expansion; "expand" takes neutrals and never ' +
           'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
           'borders worth holding before anything else. Hopeless borders are conceded (and, under balanced/defend, ' +
-          `withdrawn from). Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only; it never submits orders.`,
+          'withdrawn from). Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
+          'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
+          'server last planned on (`trendSource` says which, or null). ' +
+          `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
       annotations: readAnnotations('Plan a war.app turn'),
@@ -420,6 +451,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const cards = chooseCardPlays(hand, rules);
       const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
       const chosen: PlanGoal = goal ?? 'balanced';
+      const turn = currentTurn(game);
+      const trend = await previousBoard(ctx, game, me, turn);
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
       const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
       const plan = planTurn({
@@ -428,6 +461,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         me: me.id,
         income,
         settings,
+        ...(trend ? { previousBoard: trend.board } : {}),
         options: {
           goal: chosen,
           focusBonusIds,
@@ -436,6 +470,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
         },
       });
+      if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
       const name = namer(map);
       const warnings = [
         ...(me.hasCommittedOrders
@@ -456,6 +491,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         goal: chosen,
         income,
         enemyDeploy: plan.enemyDeploy,
+        trendSource: trend?.source ?? null,
         cards: {
           hand: hand.map(cardView),
           maxCardsHold: rules.maxCardsHold ?? null,

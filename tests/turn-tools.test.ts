@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
@@ -67,6 +69,7 @@ interface PlanPayload {
   rationale: string[];
   orders: Array<Record<string, unknown>>;
   settings?: Record<string, unknown>;
+  trendSource: 'history' | 'cache' | null;
   untrusted_content?: boolean;
 }
 
@@ -223,6 +226,89 @@ describe('warapp_plan_turn', () => {
     h = await liveHarness({ feed: [g], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.game.turn).toBeNull();
+  });
+});
+
+describe('warapp_plan_turn — threat trend', () => {
+  // The previous turn's standing (turn 3 is being played, so 2 turns are done
+  // and the previous board is the one after 1). Bob's Bolton Moors grew 3 → 7.
+  const previous = [
+    { terrID: 159, ownedBy: ANN.feed, armies: 6, fogLevel: 'Visible' },
+    { terrID: 161, ownedBy: ANN.feed, armies: 3, fogLevel: 'Visible' },
+    { terrID: 158, ownedBy: String(BOB.inGame), armies: 3, fogLevel: 'Visible' },
+  ];
+  const building = (from: number, to: number) =>
+    new RegExp(`${mapName(158)} \\(#158\\) is building: \\+${to - from}/turn \\(${from} → ${to}\\)`);
+  const cacheFile = (dir: string) => join(dir, 'boards', `${GAME}.json`);
+
+  it('(h) uses GetHistory\'s standing for the previous turn when present', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { history: [{ turn: 0, standing: [] }, { turn: 1, standing: previous }] })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBe('history');
+    expect(p.warnings.join('\n')).toMatch(building(3, 7));
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(true);
+  });
+
+  it('(h) falls back to the cached board of the previous turn, and caches each planned board', async () => {
+    // Turn 3: no history, no cache. The board is cached as turn 3.
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const first = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(first.trendSource).toBeNull();
+    expect(first.warnings.join('\n')).not.toMatch(/is building/);
+    const cached = JSON.parse(readFileSync(cacheFile(h.dataDir), 'utf8')) as { turn: number; playerId: number };
+    expect(cached).toMatchObject({ gameId: GAME, turn: 3, playerId: Number(ANN.feed) });
+    const dir = h.dataDir;
+    await h.harness.close();
+
+    // Turn 4: Bob's stack grew 7 → 12; the cache (turn 3) is exactly the previous turn.
+    const grown = BOARD.map((t) => (t.id === 158 ? { ...t, armies: 12 } : t));
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(grown) }),
+    });
+    const second = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(second.trendSource).toBe('cache');
+    expect(second.warnings.join('\n')).toMatch(building(7, 12));
+    expect(JSON.parse(readFileSync(cacheFile(dir), 'utf8'))).toMatchObject({ turn: 4 });
+  });
+
+  it('(h) ignores a cache from any turn but the previous one', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    const dir = h.dataDir;
+    await h.harness.close();
+    // Turn 5 is being played: the cached turn 3 is two turns old.
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '4' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBeNull();
+  });
+
+  it('(h) neither history nor cache, or a failing history read: trendSource null, no throw', async () => {
+    h = await liveHarness({
+      feed: [game('Playing'), { termsOfUse: 'x', error: 'Something broke' }],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBeNull();
+    expect(p.moves.length).toBeGreaterThan(0);
+    expect(existsSync(cacheFile(h.dataDir))).toBe(true);
+  });
+
+  it('(h) an unusable history standing is ignored', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { history: { turn1: 'garbage' } })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBeNull();
   });
 });
 
