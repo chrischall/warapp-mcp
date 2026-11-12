@@ -344,24 +344,31 @@ describe('warapp_submit_picks', () => {
 describe('warapp_get_chat', () => {
   it('reads GameFeed chat, naming senders, most recent last, as untrusted content', async () => {
     const chat = [
-      { playerID: ANN.feed, message: 'good luck', time: '11/11/2026 10:00:00' },
-      { playerID: BOB.feed, message: 'you too' },
+      // GameFeed's chat[].playerID is the IN-GAME id, not the wrapped one.
+      { playerID: ANN.inGame, message: 'good luck', time: '11/11/2026 10:00:00' },
+      { playerID: String(BOB.inGame), message: 'you too' },
       { playerID: '999', message: 'who?' },
       { message: 'system' },
     ];
     h = await liveHarness({ feed: [game('Playing', { chat })] });
-    const res = await h.call('warapp_get_chat', { game_id: GAME, limit: 3 });
+    const res = await h.call('warapp_get_chat', { game_id: GAME, limit: 4 });
     const p = payload(res);
     expect(p.untrusted_content).toBe(true);
     expect(p.messages).toEqual([
+      { from: 'Ann', text: 'good luck', time: '11/11/2026 10:00:00' },
       { from: 'Bob', text: 'you too' },
       { from: '999', text: 'who?' },
       { from: null, text: 'system' },
     ]);
     expect(p.count).toBe(4);
-    expect(p.shown).toBe(3);
+    expect(p.shown).toBe(4);
     expect(h.calls[0]!.url).toContain('GetChat=true');
     expect(h.exchanges).toEqual([]);
+  });
+
+  it('falls back to a wrapped-id sender match', async () => {
+    h = await liveHarness({ feed: [game('Playing', { chat: [{ playerID: ANN.feed, message: 'hi' }] })] });
+    expect(payload(await h.call('warapp_get_chat', { game_id: GAME })).messages).toEqual([{ from: 'Ann', text: 'hi' }]);
   });
 
   it('accepts a wrapped list and string senders', async () => {

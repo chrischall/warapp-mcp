@@ -10,7 +10,7 @@ import {
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
-import { inGameId } from '../live.js';
+import { inGameId, playersByInGameId } from '../live.js';
 import type { Player } from '../normalize.js';
 import { CHAT_CHANNEL_PUBLIC, Method, writeSendChatParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
@@ -51,10 +51,13 @@ export function normalizeChat(raw: unknown, players: readonly Player[]): ChatMes
   let list: unknown = raw;
   if (isRec(list)) list = pick(list, LIST_KEYS);
   if (!Array.isArray(list)) return undefined;
+  // GameFeed's chat[].playerID is the in-game id (WEB-PROTOCOL.md, Chat), not
+  // the check-digit-wrapped player id; a wrapped match is only a fallback.
+  const byInGame = playersByInGameId(players);
   const nameOf = (v: unknown): string | null => {
     if (v === undefined || v === null || v === '') return null;
     const id = asInt(v);
-    if (id !== undefined) return players.find((p) => p.id === id)?.name ?? String(v);
+    if (id !== undefined) return (byInGame.get(id) ?? players.find((p) => p.id === id))?.name ?? String(v);
     return typeof v === 'string' ? v : null;
   };
   const out: ChatMessage[] = [];
