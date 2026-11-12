@@ -55,7 +55,10 @@ cards, turn notifications, threat-aware planner).
   so `warapp_submit_turn` refuses up front. The planner always plays Reinforcement (its armies
   join the income) and, only when a play is required, Order Priority, else Order Delay — never
   Blockade (it gives a territory away). Card plays must come in war.app's turn-phase order or
-  the server answers **error 10 `OrdersInIncorrectOrder`**; Order Delay's phase is unverified.
+  the server answers **error 10 `OrdersInIncorrectOrder`**, so `writeSendOrdersParams` sorts
+  every order by `TurnPhase` (Order Priority 12, Reinforcement 20, deploys 25, moves 50,
+  Blockade 60). Order Delay's phase is unverified, so `warapp_submit_turn` refuses it alongside
+  other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
 - **Turn notifications are a socket.io v0.9 xhr-polling client over the bridge**
   (`src/push/socketio.ts`): handshake GET, then the first poll must return the connect packet

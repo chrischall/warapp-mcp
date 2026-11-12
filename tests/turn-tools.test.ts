@@ -689,8 +689,8 @@ describe('cards in the turn tools', () => {
       expectedBytes(
         [
           { kind: 'card', card: 'OrderPriority', cardId: OP },
-          { kind: 'card', card: 'Blockade', cardId: BL, target: 161 },
           { kind: 'deploy', territoryId: 159, armies: 5 },
+          { kind: 'card', card: 'Blockade', cardId: BL, target: 161 },
         ],
         3,
       ),
@@ -705,6 +705,7 @@ describe('cards in the turn tools', () => {
     ['an unsupported card', [{ id: AL, type: 6 }], [{ kind: 'card', card: AL }, { kind: 'deploy', territory: 159, armies: 5 }], /Airlift.*not supported/],
     ['a Blockade without a target', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL }, { kind: 'deploy', territory: 159, armies: 5 }], /Blockade needs a `target`/],
     ['a Blockade on a territory not mine', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL, target: 158 }, { kind: 'deploy', territory: 159, armies: 5 }], /not yours/],
+    ['Order Delay mixed with another card play', [{ id: OP, type: 4 }, { id: OD, type: 5 }], [{ kind: 'card', card: 'Order Delay' }, { kind: 'card', card: OP }, { kind: 'deploy', territory: 159, armies: 5 }], /Order Delay.*on its own/],
     ['a target on a card that takes none', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP, target: 159 }, { kind: 'deploy', territory: 159, armies: 5 }], /takes no target/],
     ['deploys that leave out the Reinforcement armies', [{ id: R1, type: 1, armies: 5 }], [{ kind: 'card', card: R1 }, { kind: 'deploy', territory: 159, armies: 5 }], /income is 10/],
     [

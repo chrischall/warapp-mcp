@@ -143,6 +143,51 @@ describe('SendOrders params', () => {
     ).toBe('39300000' + '01' + '02000000' + '01' + play + '01' + deploy + '02000000' + '0000');
   });
 
+  it('sorts card plays into turn-phase order: Order Priority before Reinforcement', () => {
+    const r = '00112233445566778899aabbccddeeff';
+    const op = '0a0b0c0d0e0f10111213141516171819';
+    const playR = '0533221100554477668899AABBCCDDEEFF090300000000';
+    const playOp = '0A' + '0D0C0B0A0F0E1110' + '1213141516171819' + '090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'card', card: 'Reinforcement', cardId: r },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'card', card: 'OrderPriority', cardId: op },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '03000000' + '01' + playOp + '01' + playR + '01' + deploy + '02000000' + '0000');
+  });
+
+  it('writes a Blockade (phase 60) after deploys and moves', () => {
+    const bl = '00112233445566778899aabbccddeeff';
+    const deploy = '0209000000000500000009030000' + '0000';
+    const move = '010003000600000000010000000004000000090300000000';
+    const blockade = '12' + '9F000000' + '33221100554477668899AABBCCDDEEFF090300000000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'card', card: 'Blockade', cardId: bl, target: 159 },
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '03000000' + '01' + deploy + '01' + move + '01' + blockade + '02000000' + '0000');
+  });
+
   it('writes an empty order list', () => {
     expect(hex((w) => writeSendOrdersParams(w, 1, 777, [], 0))).toBe('01000000' + '01' + '00000000' + '00000000' + '0000');
   });

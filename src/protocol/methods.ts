@@ -227,12 +227,43 @@ export type TurnOrder =
   | { kind: 'card'; card: CardPlayKind; cardId: string; target?: number };
 
 /**
+ * The `warlight.shared.TurnPhase` each order runs in. war.app refuses a turn
+ * whose orders are out of phase order with error 10 `OrdersInIncorrectOrder`
+ * (VERIFIED live 2026-11-12: `[OrderPriority, Reinforcement, deploys]` was
+ * accepted, `[Reinforcement, OrderPriority, …]` refused). Order Delay's phase is
+ * unverified; it is placed with Order Priority, and submit_turn refuses to mix
+ * it with other card plays.
+ */
+export const TurnPhase = {
+  OrderPriorityCards: 12,
+  ReinforcementCards: 20,
+  Deploys: 25,
+  Attacks: 50,
+  BlockadeCards: 60,
+} as const;
+
+const CARD_PHASE: Readonly<Record<CardPlayKind, number>> = {
+  OrderPriority: TurnPhase.OrderPriorityCards,
+  OrderDelay: TurnPhase.OrderPriorityCards,
+  Reinforcement: TurnPhase.ReinforcementCards,
+  Blockade: TurnPhase.BlockadeCards,
+};
+
+/** The turn phase an order runs in. */
+export function turnPhaseOf(o: TurnOrder): number {
+  if (o.kind === 'deploy') return TurnPhase.Deploys;
+  if (o.kind === 'move') return TurnPhase.Attacks;
+  return CARD_PHASE[o.card];
+}
+
+/**
  * SendOrders(auth, …) — verified against a live turn commit: the game id, a
  * present order list (int32 count, then per order a present flag and the
  * order), the turn number (GameFeed `numberOfTurns` + 1), then two bools the
- * client sends as false. Card plays are written first (that order was accepted
- * live), then every deploy, then the moves in the given order; a move is an
- * ordinary AttackTransfer (mode 3).
+ * client sends as false. Orders are written in turn-phase order (a stable
+ * sort, so orders of one phase keep their given order): Order Priority and
+ * Reinforcement plays, then every deploy, then the moves (ordinary
+ * AttackTransfers, mode 3), then any Blockade plays.
  */
 export function writeSendOrdersParams(
   w: Writer,
@@ -241,21 +272,17 @@ export function writeSendOrdersParams(
   orders: readonly TurnOrder[],
   turnNumber: number,
 ): void {
-  const deploys = orders.filter((o): o is Extract<TurnOrder, { kind: 'deploy' }> => o.kind === 'deploy');
-  const moves = orders.filter((o): o is Extract<TurnOrder, { kind: 'move' }> => o.kind === 'move');
-  const cards = orders.filter((o): o is Extract<TurnOrder, { kind: 'card' }> => o.kind === 'card');
-  w.int32(gameId).bool(true).int32(cards.length + deploys.length + moves.length);
-  for (const c of cards) {
+  const sorted = [...orders].sort((a, b) => turnPhaseOf(a) - turnPhaseOf(b));
+  w.int32(gameId).bool(true).int32(sorted.length);
+  for (const o of sorted) {
     w.bool(true);
-    writeCardPlayOrder(w, { playerId, card: c.card, cardId: c.cardId, ...(c.target !== undefined ? { target: c.target } : {}) });
-  }
-  for (const d of deploys) {
-    w.bool(true);
-    writeDeployOrder(w, { playerId, territoryId: d.territoryId, armies: d.armies });
-  }
-  for (const m of moves) {
-    w.bool(true);
-    writeAttackTransferOrder(w, { playerId, from: m.from, to: m.to, armies: m.armies });
+    if (o.kind === 'card') {
+      writeCardPlayOrder(w, { playerId, card: o.card, cardId: o.cardId, ...(o.target !== undefined ? { target: o.target } : {}) });
+    } else if (o.kind === 'deploy') {
+      writeDeployOrder(w, { playerId, territoryId: o.territoryId, armies: o.armies });
+    } else {
+      writeAttackTransferOrder(w, { playerId, from: o.from, to: o.to, armies: o.armies });
+    }
   }
   w.int32(turnNumber).bool(false).bool(false);
 }

@@ -93,3 +93,15 @@ armies in Tennessee broke a 12-army Florida (needs ≥20) — they deployed far 
 ### K4 — Docs and packaging
 README, CLAUDE.md, skills, manifest roster, hints table (wait_for_turn: intent `whats-new`),
 strict surface lint 0 warnings (same recipe as docs/PLAN-TURN.md T4).
+
+## Late fact (live, 2026-11-12, turn 13)
+
+- **Card plays must be in turn-phase order, else server error 10 `OrdersInIncorrectOrder`.**
+  `warlight.shared.TurnPhase`: 0 Purchase, 5 CardsWearOff, 10 Discards, 12 OrderPriorityCards,
+  15 SpyingCards, 20 ReinforcementCards, 25 Deploys, 30 BombCards, 37 EmergencyBlockadeCards,
+  43 Airlift, 47 Gift, 50 Attacks, 60 BlockadeCards, 75 DiplomacyCards, 80 SanctionCards,
+  100 ReceiveCards. `[OrderPriority, Reinforcement, deploys…]` was accepted; `[Reinforcement,
+  OrderPriority, OrderDelay, deploys]` and `[OrderPriority, OrderDelay, Reinforcement, deploys]`
+  were both refused with error 10, so Order Delay's phase is unverified — never auto-play it
+  alongside other cards. Sort plays by phase in `writeSendOrdersParams`, map error 10 in the RPC
+  error table ("war.app refused the order sequence — card plays must come in turn-phase order").
