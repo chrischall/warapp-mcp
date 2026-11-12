@@ -9,7 +9,8 @@ client `v6.07.0.1`, protocol version 242) and checked against captured traffic.
 **Status (2026-11-12):** request framing fully decoded — 7/7 captured requests rebuilt
 byte-identical from decoded fields; reply payloads decode generically (every byte consumed on
 all captured replies); `SendOrders` layout read from the client's serializers, awaiting a
-live capture to verify. Nothing here is a captured value; no captures are committed.
+live capture to verify; picks verified end to end through the bridge (below). Nothing here
+is a captured value; no captures are committed.
 
 ## Transport
 
@@ -139,6 +140,37 @@ PlayCard*       byte <card tag> (18 = Blockade), card fields, GUID cardInstanceI
 
 Server checks seen in the client: error 11 (deployments ≠ income) and 208 (turn already
 advanced). The encoder must be verified byte-for-byte against a real turn commit before use.
+
+## Verified end to end through the browser bridge
+
+Frames built outside the browser (by this project's encoder) and sent through the
+fetchproxy bridge, so the request runs inside the signed-in tab:
+
+| Call | Result |
+|---|---|
+| `GetMapDetails` (no auth) | full 14869-byte `MapDetails`, our message number echoed |
+| `GetLatestGameInfo` (auth) | `LatestGameInfo` → `GameStanding` with one `TerritoryStanding` per territory (129), every byte consumed |
+| `SendTerritoryPicks` (auth, write) | accepted; result bool `false` — the same value the real client got on a successful commit, i.e. "this did not advance the game" |
+| `GetTerritoryPicks` (auth) | read back exactly the submitted ids in priority order |
+
+`TerritoryStanding`: territory id, owner, `Armies { count, fogged, specialUnits }`, fog level.
+Owner `0` = neutral, `-2` = available to pick, otherwise an in-game player id.
+
+**Player ids.** The in-game player id is the public invite token without its `64…16`
+wrapper: invite token `64XXXXXXX16` → player id `XXXXXXX`. `GetTerritoryPicks` takes
+(gameId, playerId); `GameStanding` keys players by it.
+
+**Gotcha.** A war.app tab that is blocked (e.g. waiting on a browser permission prompt) makes
+bridged POSTs time out while GETs still work; reloading the tab clears it.
+
+## Chat
+
+- **Read:** the official `GameFeed` answers `GetChat=true` with a `chat` list — use that.
+- **Send:** `SendChat` (42): auth, int32 gameId, string text, int32 channel (`-1` = public,
+  otherwise a team), optional int32 private recipient, optional int32 game-group id, two
+  marker strings, two optional "last seen" dicts. Reply: the updated message list
+  (`uv` objects). Server errors the client names: 36 rate-limited, 33 too long, 88 game
+  deleted, 333 game archived. A send reaches other people, so it is always confirm-gated.
 
 ## Data handling
 
