@@ -153,7 +153,7 @@ describe('packaging for the browser bridge (phase 2)', () => {
   const mint = readFileSync(new URL('../mint.yaml', import.meta.url), 'utf8');
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
-  const WRITES = ['warapp_submit_picks', 'warapp_submit_turn', 'warapp_send_chat'];
+  const WRITES = ['warapp_submit_picks', 'warapp_submit_turn', 'warapp_send_chat', 'warapp_join_game'];
   const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
 
   it('mint.yaml persists a data dir and says why (bridge identity + bundle cache)', () => {
@@ -212,7 +212,7 @@ describe('packaging for the browser bridge (phase 2)', () => {
   });
 
   it('no doc still says turn orders cannot be submitted', () => {
-    const NOT_SUPPORTED = /(never submits (turn )?orders|nothing submits orders|turn orders[^.]*not supported|only two tools write|two tools write)/i;
+    const NOT_SUPPORTED = /(never submits (turn )?orders|nothing submits orders|turn orders[^.]*not supported|only two tools write|(two|three) tools write)/i;
     for (const [file, text] of [
       ['README.md', readme],
       ['CLAUDE.md', claude],
@@ -329,5 +329,37 @@ describe('packaging for the smarter planner (phase 6)', () => {
 
   it('WARAPP-API.md marks GetHistory for a game in progress as unverified', () => {
     expect(api).toMatch(/GetHistory` for a game in progress — UNVERIFIED/);
+  });
+});
+
+describe('packaging for open games (phase 10)', () => {
+  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const protocol = readFileSync(new URL('../docs/WEB-PROTOCOL.md', import.meta.url), 'utf8');
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+
+  it('CLAUDE.md says open games come from the page payload and joining is AcceptOpenSeat, confirm-gated', () => {
+    const line = claude.split('\n').find((l) => l.includes('AllOpenGamesData')) ?? '';
+    expect(line).toMatch(/\/MultiPlayer\/OpenGames/);
+    expect(claude).toMatch(/AcceptOpenSeat/);
+    expect(claude).toMatch(/warapp_join_game[^\n]*confirm|confirm[^\n]*warapp_join_game/i);
+  });
+
+  it('WEB-PROTOCOL.md documents the open-games payload and AcceptOpenSeat', () => {
+    const section = protocol.slice(protocol.indexOf('## Open games'));
+    expect(protocol.indexOf('## Open games')).toBeGreaterThan(-1);
+    for (const s of ['AllOpenGamesData', 'warlight.shared.GameInfo', 'GameOpenSeat', 'AcceptOpenSeatReturn', 'prerequisites']) {
+      expect(section, s).toContain(s);
+    }
+    for (const code of ['254', '473', '750']) expect(section, code).toContain(code);
+    const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
+    for (const m of ['GetOpenGames', 'AcceptGame', 'AcceptOpenSeat', 'AcceptOpenAutoGame', 'GetOpenAutoGame', 'DeclineGame', 'GetGameSettings']) {
+      expect(methods, m).toContain(m);
+    }
+  });
+
+  it('README counts warapp_join_game among the confirm-gated writes', () => {
+    expect(readme).toMatch(/confirmation-gated/);
+    const gated = readme.slice(readme.indexOf('confirmation-gated') - 200, readme.indexOf('confirmation-gated'));
+    expect(gated).toContain('warapp_join_game');
   });
 });
