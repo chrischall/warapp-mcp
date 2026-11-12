@@ -77,7 +77,7 @@ describe('warapp_plan_turn', () => {
     expect(p.untrusted_content).toBe(true);
     expect(p.game).toEqual({ id: GAME, name: 'Synthetic lobby game', turn: 3 });
     expect(p.player).toEqual({ id: Number(ANN.feed), name: 'Ann' });
-    expect(p.goal).toBe('expand');
+    expect(p.goal).toBe('balanced');
     expect(p.income).toBe(5);
 
     // Widow's Watch (2 neutrals) completes bonus 118: 3 armies at 60% from Sheepshead Hills (3, guard 1).
@@ -120,6 +120,20 @@ describe('warapp_plan_turn', () => {
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
     expect(p.player).toEqual({ id: Number(ANN.feed), name: 'Ann' });
     expect(p.moves.length).toBeGreaterThan(0);
+  });
+
+  it('accepts each goal and describes all four', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    for (const goal of ['balanced', 'expand', 'complete-bonus', 'defend']) {
+      const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal }));
+      expect(p.goal).toBe(goal);
+    }
+    const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_plan_turn')!;
+    expect(tool.description).toMatch(/"balanced" \(default\)/);
+    for (const goal of ['expand', 'complete-bonus', 'defend']) expect(tool.description).toContain(`"${goal}"`);
+    const props = (tool.inputSchema as { properties: Record<string, { enum?: string[]; description?: string }> }).properties;
+    expect(props.goal!.enum).toEqual(['balanced', 'expand', 'complete-bonus', 'defend']);
+    expect(props.goal!.description).toMatch(/balanced \(default\)/);
   });
 
   it('goal defend triages the threatened border by the income it protects', async () => {

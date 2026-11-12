@@ -47,8 +47,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   completion with armies needed at the game's kill rates, and visible threats. When GameFeed
   sends no board it reads the live board through the user's signed-in war.app tab; a lobby
   has none — fall back to `warapp_get_map`. Pass its `assumptions` on with the advice.
-- **"Plan my turn"** → `warapp_plan_turn` (defaults to the signed-in account; `goal` expand /
-  complete-bonus / defend, `focus` bonuses, `reserve`, `enemy_deploy`): deploys and moves by
+- **"Plan my turn"** → `warapp_plan_turn` (defaults to the signed-in account; `goal` balanced
+  (default) / expand / complete-bonus / defend, `focus` bonuses, `reserve`, `enemy_deploy`): deploys and moves by
   name and id, the expected captures, bonuses and next income, warnings and reasoning, plus an
   `orders` array. It is read-only and refuses outside a turn phase. Review the plan and its
   warnings with the user before anything is submitted.

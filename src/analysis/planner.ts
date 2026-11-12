@@ -29,15 +29,18 @@
 //     Under other goals a conceded border is only kept out of the leftover deploy:
 //     it may still attack out (and get that capture's shortfall deployed), since its
 //     armies are lost anyway if they stay.
-//  1b. Withdraw (under `defend`). A conceded border's movable armies move first
+//     Under `balanced` a hold is not deployed here: it competes in the greedy
+//     step (rule 4a), and a threatened border it might hold makes no attacks.
+//  1b. Withdraw (under `defend` and `balanced`). A conceded border's movable armies move first
 //     to the adjacent territory of mine nearest a border that holds (then the
 //     one protecting the most value, then id); the plan advises Order Priority
 //     (`cardAdvice`), because a withdrawal only executes while the border is mine.
 //  2. Targets: visible neutrals adjacent to a territory I held at the start of
-//     the turn (plus visible enemy territories under `goal: 'complete-bonus'` —
-//     deliberately not under `expand`/`defend`: attacking a player is a choice the
-//     caller makes, never a default). Fogged or unknown neighbours are never
-//     attacked — they produce a warning.
+//     the turn (plus visible enemy territories under `goal: 'complete-bonus'`, and
+//     under `balanced` only enemy territories in a breakable bonus — one whose
+//     every territory is visible and held by a single enemy; never under
+//     `expand`/`defend`). Fogged or unknown neighbours are never attacked — they
+//     produce a warning.
 //  3. Capture cost: `armiesToTake` (0% luck, straight round). With luck L > 0
 //     the cost becomes `ceil(cost / (1 − L))`, i.e. the luck-free share of the
 //     attack alone still takes the territory.
@@ -50,7 +53,18 @@
 //     never captures into it (completing one would cut income).
 //     Pass 1 completes bonuses that can be finished this turn (all or nothing);
 //     pass 2 advances bonuses one capture at a time, cheapest first; pass 3
-//     (not under `complete-bonus`) takes any other affordable target.
+//     (not under `complete-bonus`) takes any other affordable target (never an
+//     enemy one under `balanced`).
+//  4a. Balanced (the default goal). Instead of passes 1–2, every candidate is
+//     scored as income per army and taken greedily (focus first, then score, then
+//     cheaper, fewer bonus borders, id): a hold (protected value / hold cost),
+//     completing or advancing a bonus (value / remaining cost), breaking an enemy
+//     bonus (BREAK_WEIGHT / opponents × value / capture cost, aimed at the member
+//     whose survivors would hold against the counter-attack if any, else the
+//     cheapest, warning when it can be retaken). While expansion candidates
+//     remain, a hold protecting less than the best expansion's value may not dip
+//     into the first MIN_EXPANSION_SHARE of income not yet spent on expansion; it
+//     is deferred and funded afterwards if the budget allows, else conceded.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border: it goes to the held border with the highest
 //     protected value still short of COMFORT_MARGIN × its threat (counting armies
@@ -85,7 +99,12 @@ export const CONCEDE_FACTOR = 3;
 /** A held border is comfortable once taking it needs more than this many times its threat. */
 export const COMFORT_MARGIN = 1.25;
 
-export type PlanGoal = 'expand' | 'complete-bonus' | 'defend';
+/** Denying +V to the opponent is worth this many times gaining +V yourself (per opponent: divided among them). */
+export const BREAK_WEIGHT = 1.0;
+/** Under `balanced`, at least this share of income goes to expansion/breaking before holds protecting less than it. */
+export const MIN_EXPANSION_SHARE = 0.3;
+
+export type PlanGoal = 'balanced' | 'expand' | 'complete-bonus' | 'defend';
 
 export interface PlannerSettings {
   offensiveKillRate?: number;
@@ -103,7 +122,7 @@ export interface PlannerSettings {
 }
 
 export interface PlanOptions {
-  /** Default `expand`. */
+  /** Default `balanced`. */
   goal?: PlanGoal;
   /** Bonuses to work on first, even when uneconomic. */
   focusBonusIds?: number[];
@@ -111,6 +130,11 @@ export interface PlanOptions {
   reserve?: number;
   /** Assumed enemy deploy next turn when judging threats (default {@link defaultEnemyDeploy}). */
   enemyDeploy?: number;
+  /**
+   * Other players still in the game (divides {@link BREAK_WEIGHT}); default the
+   * number of enemy players visible on the board, at least 1.
+   */
+  opponents?: number;
 }
 
 export interface PlanInput {
@@ -221,7 +245,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   const { graph: g, board, me } = input;
   const s = input.settings ?? {};
   const opts = input.options ?? {};
-  const goal: PlanGoal = opts.goal ?? 'expand';
+  const goal: PlanGoal = opts.goal ?? 'balanced';
+  const balanced = goal === 'balanced';
   const focus = new Set(opts.focusBonusIds ?? []);
   const income = Math.max(0, Math.floor(input.income));
   const reserve = Math.min(income, Math.max(0, Math.floor(opts.reserve ?? 0)));
@@ -366,6 +391,21 @@ export function planTurn(input: PlanInput): TurnPlan {
 
   const acting = goal === 'defend';
   const conceded = new Set<number>();
+  const concedeUnaffordable = (t: Threatened, left: number) => {
+    conceded.add(t.id);
+    warnings.push(
+      `${label(t.id)} cannot be held with the ${left} armies left to deploy (needs ${t.holdCost}, protects +${t.value}): conceded`,
+    );
+  };
+  const hold = (t: Threatened) => {
+    deploy(t.id, t.holdCost);
+    locked.add(t.id);
+    rationale.push(
+      `Deploy ${t.holdCost} to ${label(t.id)} so it holds (protects +${t.value}): ${t.have + t.holdCost} armies need ${armiesToTake(t.have + t.holdCost, rates)} to take, above the ~${t.threat} threat.`,
+    );
+  };
+  // Under `balanced`, holds worth paying for compete with expansion in the greedy step below.
+  const holds: Threatened[] = [];
   let triageBudget = budget;
   for (const t of threatened) {
     const left = acting ? budget : triageBudget;
@@ -374,27 +414,27 @@ export function planTurn(input: PlanInput): TurnPlan {
       warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
       continue;
     }
+    if (balanced) {
+      // Its armies stay put until the greedy step decides: holding assumes they are all there.
+      holds.push(t);
+      locked.add(t.id);
+      continue;
+    }
     if (t.holdCost > left) {
-      conceded.add(t.id);
-      warnings.push(
-        `${label(t.id)} cannot be held with the ${left} armies left to deploy (needs ${t.holdCost}, protects +${t.value}): conceded`,
-      );
+      concedeUnaffordable(t, left);
       continue;
     }
     triageBudget -= t.holdCost;
-    if (!acting) continue;
-    deploy(t.id, t.holdCost);
-    locked.add(t.id);
-    rationale.push(
-      `Deploy ${t.holdCost} to ${label(t.id)} so it holds (protects +${t.value}): ${t.have + t.holdCost} armies need ${armiesToTake(t.have + t.holdCost, rates)} to take, above the ~${t.threat} threat.`,
-    );
+    if (acting) hold(t);
   }
 
   // ---- 1b. withdraw from conceded borders ----
   let cardAdvice: CardAdvice | null = null;
   // Armies withdrawn into each territory this turn (they stay there: armies never move twice).
   const incoming = new Map<number, number>();
-  if (acting && conceded.size) {
+  const withdraw = () => {
+    if (!conceded.size) return;
+    const withdrawals: PlannedMove[] = [];
     const keep = (id: number) => mineSet.has(id) && !conceded.has(id);
     // Borders that can hold: mine, not conceded, next to something not mine.
     const holding = mine.filter((id) => keep(id) && neighborsOf(g, id).some((n) => !mineSet.has(n)));
@@ -423,13 +463,42 @@ export function planTurn(input: PlanInput): TurnPlan {
       avail.set(t, 0);
       locked.add(t);
       const reason = 'withdraws from a conceded border';
-      moves.push({ from: t, to: to.id, armies: n, kind: 'transfer', reason });
+      withdrawals.push({ from: t, to: to.id, armies: n, kind: 'transfer', reason });
       incoming.set(to.id, (incoming.get(to.id) ?? 0) + n);
       rationale.push(`Withdraw ${n} from ${label(t)} to ${label(to.id)}: ${reason}, toward a border that holds.`);
       warnings.push(
         `The withdrawal from ${label(t)} only executes if ${label(t)} is still mine when the order runs; play Order Priority so it goes first.`,
       );
       cardAdvice = 'order-priority';
+    }
+    // Withdrawals go first: they only execute while the border is still mine.
+    moves.unshift(...withdrawals);
+  };
+  if (acting) withdraw();
+
+  // ---- enemy bonuses I could break (under `balanced`) ----
+  // A bonus is breakable when every territory in it is visible and held by one enemy.
+  interface Breakable {
+    bonusId: number;
+    value: number;
+    player: number;
+  }
+  const breakable: Breakable[] = [];
+  const breakMember = new Set<number>();
+  if (balanced) {
+    for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
+      const ts = bonusTerritories(g, b.id);
+      if (b.value <= 0 || !ts.length) continue;
+      const owners = new Set<number>();
+      let visible = true;
+      for (const t of ts) {
+        const st = state.get(t);
+        if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) visible = false;
+        else owners.add(st.owner.playerId);
+      }
+      if (!visible || owners.size !== 1) continue;
+      breakable.push({ bonusId: b.id, value: b.value, player: [...owners][0]! });
+      for (const t of ts) breakMember.add(t);
     }
   }
 
@@ -448,11 +517,14 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     if (st.owner.kind === 'available') continue;
     const enemy = st.owner.kind === 'player';
-    if (enemy && goal !== 'complete-bonus') continue;
+    if (enemy && goal !== 'complete-bonus' && !(balanced && breakMember.has(t))) continue;
     const cost = captureCost(st.armies, s);
     if (cost === null) continue;
     targets.set(t, { id: t, cost, enemy, sources });
   }
+
+  // Bonus passes work toward my own bonuses; under `balanced` enemy targets are only break candidates.
+  const bonusTarget = (t: number) => targets.has(t) && !(balanced && targets.get(t)!.enemy);
 
   // ---- bonus scoring ----
   const plans: BonusPlan[] = [];
@@ -481,7 +553,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     const economic = isFocus || (cost <= PAYBACK_TURNS * b.value && worst <= WASTELAND_FACTOR * b.value);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
-    if (!remaining.some((t) => targets.has(t))) continue;
+    if (!remaining.some(bonusTarget)) continue;
     if (!economic) {
       rationale.push(
         `Skip bonus ${b.name} (#${b.id}): uneconomic for +${b.value} (${cost} armies to finish, ${worst} for its costliest territory).`,
@@ -493,7 +565,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       value: b.value,
       focus: isFocus,
       remaining,
-      completable: remaining.every((t) => targets.has(t)),
+      completable: remaining.every(bonusTarget),
       cost,
       borders: analyzeBonus(g, b.id)!.borderTerritoryIds.length,
     });
@@ -529,13 +601,13 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
   if (reserve) rationale.push(`Hold a reserve of ${reserve} out of captures.`);
 
-  // ---- pass 1: complete bonuses this turn (all or nothing) ----
-  for (const p of plans) {
-    if (!p.completable) continue;
+  // ---- pass 1: complete a bonus this turn (all or nothing) ----
+  const complete = (p: BonusPlan) => {
+    if (!p.completable) return;
     const todo = p.remaining
       .filter((t) => !captured.has(t))
       .sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
-    if (!todo.length) continue;
+    if (!todo.length) return;
     const snap = {
       budget,
       deployed: new Map(deployed),
@@ -547,7 +619,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const ok = todo.every((t) => tryCapture(t, `completes bonus ${bonusName(p.bonusId)} (+${p.value})`));
     if (ok) {
       anchor ??= moves[snap.moves]?.from;
-      continue;
+      return;
     }
     budget = snap.budget;
     deployed.clear();
@@ -556,23 +628,159 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const m of moves.splice(snap.moves)) captured.delete(m.to);
     rationale.length = snap.rationale;
     warnings.length = snap.warnings;
-  }
+  };
 
-  // ---- pass 2: advance bonuses ----
-  for (const p of plans) {
+  // ---- pass 2: advance a bonus one capture at a time ----
+  const advance = (p: BonusPlan) => {
     const todo = p.remaining
-      .filter((t) => targets.has(t) && !captured.has(t))
+      .filter((t) => bonusTarget(t) && !captured.has(t))
       .sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
     for (const t of todo) {
       if (tryCapture(t, `advances bonus ${bonusName(p.bonusId)} (+${p.value}, ${p.cost} to finish)`))
         anchor ??= moves[moves.length - 1]!.from;
     }
+  };
+
+  if (balanced) {
+    // ---- balanced: greedy by income per army ----
+    const opponents = Math.max(
+      1,
+      Math.floor(
+        opts.opponents ??
+          new Set(
+            board.territories.flatMap((t) =>
+              t.owner.kind === 'player' && t.owner.playerId !== me ? [t.owner.playerId] : [],
+            ),
+          ).size,
+      ),
+    );
+    const weight = BREAK_WEIGHT / opponents;
+    // Enemy armies that could hit `t` next turn once it is mine (its own armies excluded).
+    const counterThreat = (t: number) => {
+      const byPlayer = new Map<number, number>();
+      for (const n of neighborsOf(g, t)) {
+        const st = state.get(n);
+        if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+        byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard));
+      }
+      return Math.max(0, ...byPlayer.values()) + enemyDeploy;
+    };
+    interface Candidate {
+      kind: 'hold' | 'complete' | 'advance' | 'break';
+      score: number;
+      cost: number;
+      id: number;
+      value: number;
+      focus: boolean;
+      /** External borders of the bonus (fewer is easier to keep); 0 for holds. */
+      borders: number;
+      run: () => void;
+    }
+    const rank = { hold: 0, complete: 1, advance: 2, break: 3 } as const;
+    const candidates: Candidate[] = [];
+    const deferred: Threatened[] = [];
+    let expansionLeft = 0;
+    let expansionSpent = 0;
+    let topValue = 0;
+    const spend = (f: () => void) => () => {
+      const before = budget;
+      f();
+      expansionSpent += before - budget;
+      expansionLeft--;
+    };
+    for (const p of plans) {
+      const score = ratio(p);
+      if (p.completable)
+        candidates.push({ kind: 'complete', score, cost: p.cost, id: p.bonusId, value: p.value, focus: p.focus, borders: p.borders, run: spend(() => complete(p)) });
+      candidates.push({ kind: 'advance', score, cost: p.cost, id: p.bonusId, value: p.value, focus: p.focus, borders: p.borders, run: spend(() => advance(p)) });
+    }
+    for (const b of breakable) {
+      const options = bonusTerritories(g, b.bonusId)
+        .filter((t) => targets.has(t))
+        .map((t) => {
+          const cost = targets.get(t)!.cost;
+          const survivors = cost - Math.round((armiesOf(t) * rates.defensiveKillRate) / 100);
+          const counter = counterThreat(t);
+          const take = armiesToTake(survivors, rates);
+          return { t, cost, survivors, counter, take, survives: take === null || take > counter };
+        })
+        .sort((a, b) => Number(b.survives) - Number(a.survives) || a.cost - b.cost || a.t - b.t);
+      const o = options[0];
+      if (!o) continue;
+      const name = bonusName(b.bonusId);
+      candidates.push({
+        kind: 'break',
+        score: (weight * b.value) / Math.max(1, o.cost),
+        cost: o.cost,
+        id: b.bonusId,
+        value: b.value,
+        focus: false,
+        borders: analyzeBonus(g, b.bonusId)!.borderTerritoryIds.length,
+        run: spend(() => {
+          if (captured.has(o.t)) return;
+          if (!tryCapture(o.t, `breaks enemy bonus ${name} (+${b.value} from player ${b.player})`)) return;
+          anchor ??= moves[moves.length - 1]!.from;
+          if (!o.survives)
+            warnings.push(
+              `${label(o.t)} can be retaken after it breaks ${name}: ${o.survivors} survivors need ${o.take} to take, against ~${o.counter} next turn.`,
+            );
+        }),
+      });
+    }
+    expansionLeft = candidates.length;
+    topValue = Math.max(0, ...candidates.map((c) => c.value));
+    const floor = expansionLeft ? Math.ceil(MIN_EXPANSION_SHARE * income) : 0;
+    for (const t of holds)
+      candidates.push({
+        kind: 'hold',
+        score: t.value / t.holdCost,
+        cost: t.holdCost,
+        id: t.id,
+        value: t.value,
+        focus: false,
+        borders: 0,
+        run: () => {
+          const pending = expansionLeft > 0 && t.value < topValue ? Math.max(0, floor - expansionSpent) : 0;
+          if (t.holdCost > budget) return concedeUnaffordable(t, budget);
+          if (t.holdCost > budget - pending) {
+            deferred.push(t);
+            rationale.push(
+              `Hold ${label(t.id)} later (needs ${t.holdCost}, protects +${t.value}): at least ${floor} of income (${MIN_EXPANSION_SHARE * 100}%) goes to expansion first, worth up to +${topValue}.`,
+            );
+            return;
+          }
+          hold(t);
+        },
+      });
+    candidates.sort(
+      (a, b) =>
+        Number(b.focus) - Number(a.focus) ||
+        b.score - a.score ||
+        a.cost - b.cost ||
+        a.borders - b.borders ||
+        rank[a.kind] - rank[b.kind] ||
+        a.id - b.id,
+    );
+    for (const c of candidates) c.run();
+    for (const t of deferred) {
+      if (t.holdCost > budget) concedeUnaffordable(t, budget);
+      else hold(t);
+    }
+    withdraw();
+  } else {
+    for (const p of plans) complete(p);
+    for (const p of plans) advance(p);
   }
 
   // ---- pass 3: other expansion ----
   if (goal !== 'complete-bonus') {
     const rest = [...targets.values()]
-      .filter((t) => !captured.has(t.id) && (economicMember.has(t.id) || !uneconomicMember.has(t.id)))
+      .filter(
+        (t) =>
+          !captured.has(t.id) &&
+          !(balanced && t.enemy) &&
+          (economicMember.has(t.id) || !uneconomicMember.has(t.id)),
+      )
       .sort((a, b) => a.cost - b.cost || a.id - b.id);
     for (const t of rest) tryCapture(t.id, 'expands territory');
   }

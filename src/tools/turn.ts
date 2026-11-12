@@ -34,7 +34,7 @@ import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 
 const VIEWS = ['compact', 'full'] as const;
-const GOALS = ['expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
+const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
 /** The only GameFeed state in which turns are played. */
 export const TURN_PHASE_STATE = 'Playing';
 const MAX_ORDERS = 500;
@@ -359,9 +359,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'checks assume each enemy deploys `enemy_deploy` (default from the largest visible enemy stack). It reports ' +
           'your cards and whether you must play one (hand at the hold limit), and plays Reinforcement cards (their ' +
           'armies are planned) and, when a play is required, Order Priority or Order Delay — never Blockade. Its ' +
-          '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Goal "expand" ' +
-          '(default) takes neutrals; "complete-bonus" also attacks players to finish bonuses; "defend" first ' +
-          `reinforces threatened borders. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only; it never submits orders.`,
+          '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Goals: "balanced" ' +
+          '(default) spends income where it earns most per army — holding borders that protect income, completing ' +
+          'cheap bonuses, breaking enemy bonuses — with at least 30% on expansion; "expand" takes neutrals and never ' +
+          'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
+          'borders worth holding before anything else. Hopeless borders are conceded (and, under balanced/defend, ' +
+          `withdrawn from). Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
       annotations: readAnnotations('Plan a war.app turn'),
@@ -371,7 +374,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         goal: z
           .enum(GOALS)
           .optional()
-          .describe('expand (default): take neutrals; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first.'),
+          .describe(
+            'balanced (default): best income per army across holds, bonuses and breaking enemy bonuses; expand: take ' +
+              'neutrals only; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first.',
+          ),
         focus: z
           .array(z.union([z.string(), z.number()]))
           .max(MAX_FOCUS)
@@ -413,7 +419,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const hand = readHand(info, inGameId(me));
       const cards = chooseCardPlays(hand, rules);
       const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
-      const chosen: PlanGoal = goal ?? 'expand';
+      const chosen: PlanGoal = goal ?? 'balanced';
+      // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
+      const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
       const plan = planTurn({
         graph,
         board,
@@ -423,6 +431,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         options: {
           goal: chosen,
           focusBonusIds,
+          ...(opponents > 0 ? { opponents } : {}),
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
         },
