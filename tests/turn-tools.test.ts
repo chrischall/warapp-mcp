@@ -793,6 +793,8 @@ describe('cards in the turn tools', () => {
   const BL = 'aaaaaaaabbbbbbbbccccccccdddddddd';
   const BL2 = 'aaaaaaaabbbbbbbbccccccccddddddde';
   const AL = '55555555666666667777777788888888';
+  const SP = '12121212343434345656565678787878';
+  const GF = '9a9a9a9a8b8b8b8b7c7c7c7c6d6d6d6d';
   const withHand = (hand: SyntheticCard[]) => () =>
     ({ body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], { [ANN.inGame]: hand }) }) satisfies Partial<ReplyFrame>;
 
@@ -802,6 +804,7 @@ describe('cards in the turn tools', () => {
       maxCardsHold: number | null;
       playRequired: boolean;
       plays: Array<{ id: string; name: string; armies?: number }>;
+      discards: Array<{ id: string; name: string; armies?: number }>;
       armiesFromCards: number;
     };
   }
@@ -851,11 +854,33 @@ describe('cards in the turn tools', () => {
   it('plan_turn with no cards reports an empty hand and plays nothing', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    expect(p.cards).toEqual({ hand: [], maxCardsHold: 5, playRequired: false, plays: [], armiesFromCards: 0 });
+    expect(p.cards).toEqual({ hand: [], maxCardsHold: 5, playRequired: false, plays: [], discards: [], armiesFromCards: 0 });
     expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
   });
 
-  it('plan_turn at the hold limit plays Order Priority, else Order Delay, never Blockade', async () => {
+  it('plan_turn over the hold limit (6/5) plays Order Priority, never Blockade or Order Delay', async () => {
+    h = await liveHarness({
+      feed: [game('Playing')],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: withHand([
+          { id: BL, type: 12 },
+          { id: OD, type: 5 },
+          { id: OP, type: 4 },
+          { id: BL2, type: 12 },
+          { id: AL, type: 6 },
+          { id: SP, type: 2 },
+        ]),
+      }),
+    });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cards.playRequired).toBe(true);
+    expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
+    expect(p.cards.discards).toEqual([]);
+    expect(p.orders[0]).toEqual({ kind: 'card', card: OP });
+    expect(p.income).toBe(5);
+  });
+
+  it('plan_turn AT the hold limit (5/5) requires nothing', async () => {
     h = await liveHarness({
       feed: [game('Playing')],
       warapp: routes({
@@ -869,13 +894,13 @@ describe('cards in the turn tools', () => {
       }),
     });
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    expect(p.cards.playRequired).toBe(true);
-    expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
-    expect(p.orders[0]).toEqual({ kind: 'card', card: OP });
-    expect(p.income).toBe(5);
+    expect(p.cards.playRequired).toBe(false);
+    expect(p.cards.plays).toEqual([]);
+    expect(p.cards.discards).toEqual([]);
+    expect(p.orders.some((o) => o.kind === 'card' || o.kind === 'discard')).toBe(false);
   });
 
-  it('plan_turn warns when a play is required and only Blockade-like cards are held', async () => {
+  it('plan_turn over the limit with no useful play discards the lowest-value card', async () => {
     h = await liveHarness({
       feed: [game('Playing')],
       warapp: routes({
@@ -883,7 +908,9 @@ describe('cards in the turn tools', () => {
           { id: BL, type: 12 },
           { id: BL2, type: 12 },
           { id: AL, type: 6 },
-          { id: OD.replace(/1/g, '9'), type: 6 },
+          { id: GF, type: 7 },
+          { id: OD, type: 5 },
+          { id: SP, type: 2 },
           { id: OP.replace(/f/g, '0'), type: 8 },
         ]),
       }),
@@ -891,7 +918,62 @@ describe('cards in the turn tools', () => {
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.cards.playRequired).toBe(true);
     expect(p.cards.plays).toEqual([]);
-    expect(p.warnings.join('\n')).toMatch(/must play a card/);
+    expect(p.cards.discards).toEqual([
+      { id: OD, name: 'Order Delay' },
+      { id: SP, name: 'Spy' },
+    ]);
+    expect(p.orders.slice(0, 2)).toEqual([
+      { kind: 'discard', card: OD },
+      { kind: 'discard', card: SP },
+    ]);
+    expect(p.warnings.join('\n')).toMatch(/Discarding Order Delay, Spy/);
+    expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
+  });
+
+  it('submit_turn sends a discard first (phase 10), satisfying the hold limit', async () => {
+    const hand: SyntheticCard[] = [
+      { id: BL, type: 12 },
+      { id: BL2, type: 12 },
+      { id: AL, type: 6 },
+      { id: GF, type: 7 },
+      { id: OD, type: 5 },
+      { id: SP, type: 2 },
+    ];
+    const s = ordersServer(hand);
+    h = await liveHarness({ feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    const args = {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'discard', card: 'order delay' },
+      ],
+    };
+    const preview = payload(await h.call('warapp_submit_turn', args));
+    expect(JSON.stringify(preview)).toMatch(/"kind":"discard","card":\{"id":"11111111222222223333333344444444","name":"Order Delay"\}/);
+    const p = payload(await h.call('warapp_submit_turn', { ...args, confirmToken: preview.confirmToken }));
+    expect(p).toMatchObject({ status: 'resolved' });
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes(
+        [
+          { kind: 'discard', cardId: OD },
+          { kind: 'deploy', territoryId: 159, armies: 5 },
+        ],
+        3,
+      ),
+    );
+  });
+
+  it('submit_turn accepts no card play AT the hold limit (5/5)', async () => {
+    const s = ordersServer([
+      { id: OP, type: 4 },
+      { id: OD, type: 5 },
+      { id: BL, type: 12 },
+      { id: BL2, type: 12 },
+      { id: AL, type: 6 },
+    ]);
+    h = await liveHarness({ feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    await confirmed({ game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
+    expect(Array.from(s.sent[0]!)).toEqual(expectedBytes([{ kind: 'deploy', territoryId: 159, armies: 5 }], 3));
   });
 
   it('submit_turn plays a card by GUID first, counting Reinforcement armies into income', async () => {
@@ -992,17 +1074,34 @@ describe('cards in the turn tools', () => {
     ['a target on a card that takes none', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP, target: 159 }, { kind: 'deploy', territory: 159, armies: 5 }], /takes no target/],
     ['deploys that leave out the Reinforcement armies', [{ id: R1, type: 1, armies: 5 }], [{ kind: 'card', card: R1 }, { kind: 'deploy', territory: 159, armies: 5 }], /income is 10/],
     [
-      'no card play at the hold limit',
+      'no card play over the hold limit (6/5)',
       [
         { id: OP, type: 4 },
         { id: OD, type: 5 },
         { id: BL, type: 12 },
         { id: BL2, type: 12 },
         { id: AL, type: 6 },
+        { id: SP, type: 2 },
       ],
       [{ kind: 'deploy', territory: 159, armies: 5 }],
-      /You hold the maximum number of cards, so war\.app requires you to play one this turn/,
+      /You hold more cards than this game allows, so war\.app requires you to play or discard one this turn/,
     ],
+    [
+      'one discard when two cards are over the limit (7/5)',
+      [
+        { id: OP, type: 4 },
+        { id: OD, type: 5 },
+        { id: BL, type: 12 },
+        { id: BL2, type: 12 },
+        { id: AL, type: 6 },
+        { id: SP, type: 2 },
+        { id: GF, type: 7 },
+      ],
+      [{ kind: 'discard', card: SP }, { kind: 'deploy', territory: 159, armies: 5 }],
+      /2 cards must be played or discarded/,
+    ],
+    ['a discard not in the hand', [{ id: OP, type: 4 }], [{ kind: 'discard', card: R1 }, { kind: 'deploy', territory: 159, armies: 5 }], /not in your hand/],
+    ['a card both played and discarded', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP }, { kind: 'discard', card: OP }, { kind: 'deploy', territory: 159, armies: 5 }], /used twice/],
   ];
 
   it.each(refusals)('submit_turn refuses %s, sending nothing', async (_name, hand, orders, message) => {

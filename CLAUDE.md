@@ -65,14 +65,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   integer field** (the base reader sets it last) and a Reinforcement card's armies are `tc`, the
   first integer (its subclass prepends it) — reading the type from the first integer mislabels a
   Reinforcement whose armies equal another type id; the rules from GameFeed settings
-  (`MaxCardsHold`, `ReinforcementCard.FixedArmies`; a card set to `'none'` is not in play). At
-  the hold limit war.app refuses a `SendOrders` with no card play (**error 51 `MustUseCard`**),
-  so `warapp_submit_turn` refuses up front. The planner always plays Reinforcement (its armies
-  join the income) and, only when a play is required, Order Priority, else Order Delay — never
-  Blockade (it gives a territory away). Card plays must come in war.app's turn-phase order or
-  the server answers **error 10 `OrdersInIncorrectOrder`**, so `writeSendOrdersParams` sorts
-  every order by `TurnPhase` (Order Priority 12, Reinforcement 20, deploys 25, moves 50,
-  Order Delay 50, Blockade 60). Order Delay (tag 11) runs in phase 50, verified live 2026-11-12
+  (`MaxCardsHold`, `ReinforcementCard.FixedArmies`; a card set to `'none'` is not in play).
+  Holding **more** whole cards than `MaxCardsHold` (not equal — live: 4/4 accepted, 5/4 refused;
+  the bundle's check is `remaining > MaxCardsHold` after removing every played and discarded
+  card) war.app refuses a `SendOrders` (**error 51 `MustUseCard`**), so `cardsToShed` cards must
+  be played or discarded and `warapp_submit_turn` refuses up front. The planner always plays
+  Reinforcement (its armies join the income) and, only when cards must go, one Order Priority,
+  then discards the lowest-value cards — never playing Blockade (it gives a territory away) or
+  Order Delay (it holds back my attacks). A discard (`GameOrderDiscard`) is tag 9, the GUID, the
+  base — from the bundle's writer, not yet live-verified. Card plays must come in war.app's
+  turn-phase order or the server answers **error 10 `OrdersInIncorrectOrder`**, so
+  `writeSendOrdersParams` sorts every order by `TurnPhase` (discards 10, Order Priority 12,
+  Reinforcement 20, deploys 25, moves 50, Order Delay 50, Blockade 60). Order Delay (tag 11) runs in phase 50, verified live 2026-11-12
   (sent in phase 12 it drew error 10). Within a phase, card plays are written after the moves —
   that position is unverified. Order Delay may be combined with other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.

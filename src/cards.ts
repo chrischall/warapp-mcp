@@ -130,7 +130,7 @@ export function readHand(info: unknown, myInGameId: number): Card[] {
 
 /** The game's card rules, from GameFeed settings. */
 export interface CardRules {
-  /** At this many cards held, war.app requires a play (error 51). */
+  /** Holding more whole cards than this, war.app requires a play or discard (error 51). */
   maxCardsHold?: number;
   cardsPerTurn?: number;
   /** Armies a Reinforcement card adds (`ReinforcementCard.FixedArmies`). */
@@ -165,30 +165,65 @@ export function reinforcementArmies(card: Card, rules: CardRules): number | unde
 }
 
 /**
- * Whether the hand is at the hold limit, so war.app requires a card play (error 51).
- * Counts only the real hand (the current standing, see `readHand`). UNVERIFIED: the
- * threshold direction — whether a play is required AT `maxCardsHold` cards (as assumed
- * here) or only above it — has not been confirmed live.
+ * How many cards must leave the hand this turn (played or discarded) for war.app to
+ * accept the orders: the whole cards held beyond `maxCardsHold`; 0 without a known limit.
+ *
+ * VERIFIED 2026-11-12 (#20): live, a turn with no card play was accepted at 4/4 whole
+ * cards and refused (error 51) at 5/4; the client bundle's `GameValidateOrders` removes
+ * every played or discarded instance from a copy of the hand and refuses while what is
+ * left is still `> MaxCardsHold`. So the limit is strictly "over", and each card over it
+ * needs its own play or discard. Counts only the real hand (see `readHand`).
  */
-export const playRequired = (hand: readonly Card[], rules: CardRules): boolean =>
-  rules.maxCardsHold !== undefined && rules.maxCardsHold > 0 && hand.length >= rules.maxCardsHold;
+export const cardsToShed = (hand: readonly Card[], rules: CardRules): number =>
+  rules.maxCardsHold !== undefined && rules.maxCardsHold > 0 ? Math.max(0, hand.length - rules.maxCardsHold) : 0;
+
+/** Whether war.app requires a card play or discard this turn (error 51 otherwise): the hand is over the limit. */
+export const playRequired = (hand: readonly Card[], rules: CardRules): boolean => cardsToShed(hand, rules) > 0;
+
+/**
+ * How much a card is worth keeping, for choosing a discard (lowest goes first). A
+ * heuristic: Order Delay holds back my own attacks and the information cards are
+ * cheap; Reinforcement (only kept when its armies are unknown) is the last resort.
+ */
+const KEEP_VALUE: Readonly<Record<number, number>> = {
+  5: 0, // Order Delay
+  2: 1, // Spy
+  10: 2, // Reconnaissance
+  11: 3, // Surveillance
+  8: 4, // Diplomacy
+  9: 5, // Sanctions
+  7: 6, // Gift
+  3: 7, // Emergency Blockade
+  12: 8, // Blockade
+  13: 9, // Bomb
+  6: 10, // Airlift
+  4: 11, // Order Priority
+  1: 12, // Reinforcement
+};
+const keepValue = (c: Card): number => KEEP_VALUE[c.type] ?? 5;
 
 export interface CardChoice {
+  /** The hand is over the hold limit, so cards must be played or discarded. */
   required: boolean;
   plays: Card[];
+  /** Cards to discard (lowest value first) to get under the hold limit when no play is useful. */
+  discards: Card[];
   /** Armies the Reinforcement plays add to this turn's deploys. */
   extraArmies: number;
   warnings: string[];
 }
 
 /**
- * The cards the planner plays: every Reinforcement card (it only adds armies);
- * at the hold limit with none of those, Order Priority, else Order Delay.
- * Blockade is never auto-played (it gives a territory away).
+ * The cards the planner plays: every Reinforcement card (it only adds armies). Over
+ * the hold limit, with plays still short of what must leave the hand, one Order
+ * Priority (my moves go first), then discards of the lowest-value cards. Order Delay
+ * (it holds back my own attacks) and Blockade (it gives a territory away) are never
+ * auto-played — discarding one costs nothing this turn.
  */
 export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardChoice {
-  const required = playRequired(hand, rules);
+  const shed = cardsToShed(hand, rules);
   const plays: Card[] = [];
+  const discards: Card[] = [];
   const warnings: string[] = [];
   let extraArmies = 0;
   for (const c of hand) {
@@ -201,15 +236,21 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
     plays.push(c);
     extraArmies += armies;
   }
-  if (required && plays.length === 0) {
-    const pick = hand.find((c) => c.type === CARD_ORDER_PRIORITY) ?? hand.find((c) => c.type === CARD_ORDER_DELAY);
-    if (pick) plays.push(pick);
-    else {
-      warnings.push(
-        `You hold ${hand.length} cards (the limit is ${rules.maxCardsHold}), so you must play a card this turn, ` +
-          'but none can be played automatically (Blockade gives a territory away). Add a card play to the orders.',
-      );
-    }
+  if (plays.length < shed) {
+    const op = hand.find((c) => c.type === CARD_ORDER_PRIORITY);
+    if (op) plays.push(op);
   }
-  return { required, plays, extraArmies, warnings };
+  if (plays.length < shed) {
+    const used = new Set(plays.map((c) => c.id));
+    const rest = hand.filter((c) => !used.has(c.id));
+    // A stable sort: equal-value cards are discarded in hand order.
+    const byValue = rest.map((c, i) => ({ c, i })).sort((a, b) => keepValue(a.c) - keepValue(b.c) || a.i - b.i);
+    for (const { c } of byValue.slice(0, shed - plays.length)) discards.push(c);
+    warnings.push(
+      `You hold ${hand.length} cards (the limit is ${rules.maxCardsHold}), so ${shed} must be played or discarded this ` +
+        `turn. Discarding ${discards.map((c) => c.name).join(', ')} — no play of ${discards.length === 1 ? 'it' : 'them'} ` +
+        'is useful (Blockade gives a territory away, Order Delay holds back your own attacks). Swap in a card play if you prefer.',
+    );
+  }
+  return { required: shed > 0, plays, discards, extraArmies, warnings };
 }
