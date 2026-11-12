@@ -77,8 +77,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   submitted list.
 - **Chat** → `warapp_get_chat` reads it (GameFeed); `warapp_send_chat` posts publicly or
   privately to one player. Confirm-gated — a message reaches other players and cannot be unsent.
-- **"Tell me when it's my turn"** → `warapp_wait_for_turn` with the game ids to watch (1–20,
-  `timeout_seconds` default 300, max 1800): it returns as soon as one is waiting on the user
+- **"Tell me when it's my turn"** → `warapp_wait_for_turn` with the game ids to watch (1–20; omit
+  them to watch every game of the user's being played or picked; `timeout_seconds` default 300, max 1800): it returns as soon as one is waiting on the user
   (or at the timeout), woken by war.app's push notifications through the signed-in war.app tab.
   `warapp_recent_events` lists the pushes this server has seen and whether the socket is
   connected. When it returns a game, go on to `warapp_plan_turn` (or picks).
@@ -110,7 +110,7 @@ and `warapp_submit_turn` with **change**, and
   user. It accepts `view: "brief"` — one line per game, `name — turn N (or the state) —
   waiting on you | waiting on others`. warapp answers neither "what's due" nor "what's on".
 - `warapp_wait_for_turn` answers "is it my turn" ("whats-new", not canonical) for the games it
-  is given, reached by its aliases ("is it my turn", "wait for my turn", …).
+  is given (or all of the user's games in play), reached by its aliases ("is it my turn", "wait for my turn", …).
 - No read takes a subject from the group: the player to advise or scout is an argument
   (`player`) of `warapp_analyze_board` and `warapp_scout_player`, not a listable set of people.
 

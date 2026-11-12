@@ -100,7 +100,7 @@ restart the server and pair again.
 | `warapp_submit_turn` | **Writes.** Commit your turn's orders (e.g. `warapp_plan_turn`'s `orders`) as the signed-in account: card plays (Reinforcement, Order Priority, Order Delay, Blockade), deploys and moves. Confirm-gated; validated on the live board (cards in your hand, your territories, adjacent moves, armies available, deploys = income + played Reinforcement armies; a card play when your hand is full); confirmed from game state (`resolved` / `committed` / `unknown`). Other players see the results. |
 | `warapp_get_chat` | A game's chat, from GameFeed. |
 | `warapp_send_chat` | **Writes.** Post a chat message to the whole game or privately to one player. Confirm-gated; a message reaches other players and cannot be unsent. |
-| `warapp_wait_for_turn` | Wait until one of the given games (`game_ids`, 1–20) is waiting on you, woken by war.app's push notifications through your war.app tab; returns at once if one already is, else at `timeout_seconds` (default 300, max 1800). Reports progress; honours cancellation. |
+| `warapp_wait_for_turn` | Wait until one of the given games (`game_ids`, 1–20; omitted, every game of yours being played or picked) is waiting on you, woken by war.app's push notifications through your war.app tab; returns at once if one already is, else at `timeout_seconds` (default 300, max 1800). Reports progress; honours cancellation. |
 | `warapp_recent_events` | The game-update pushes this server process has received (newest first), and whether the push socket is connected. |
 
 Everything except `warapp_submit_picks`, `warapp_submit_turn` and `warapp_send_chat` only reads. Player, game, map
@@ -118,7 +118,7 @@ and chat text comes back marked as untrusted third-party content.
 
 ## Playing a turn
 
-0. **Wait (optional).** `warapp_wait_for_turn` with the games to watch returns as soon as one is
+0. **Wait (optional).** `warapp_wait_for_turn` (all your games in play, or the ones you name) returns as soon as one is
    waiting on you, woken by war.app's push notifications through your war.app tab.
 1. **Plan.** `warapp_plan_turn` reads the live board and proposes deploys and moves by name and
    id, with the expected captures, bonuses and next income, warnings and its reasoning. It

@@ -6,6 +6,9 @@ import { checkOf, isWaitingOn, waitForTurn, type GameCheck } from '../src/tools/
 import { normalizeGame } from '../src/normalize.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { fakeSocketIo, framed, gameUpdatedHex, type FakeSocketIo } from './push/fake-socket.js';
+import { writeMyGamesReturn, type SyntheticGame } from './protocol/my-games-bundle.js';
+import type { Writer } from '../src/protocol/codec.js';
+import { Method } from '../src/protocol/methods.js';
 
 const GAME = 12345678;
 const ANN = '3312345644';
@@ -48,11 +51,33 @@ const subscribes = (s: FakeSocketIo) =>
       return req.body.list((r) => r.string());
     });
 
-async function setup(feed: unknown[], pages: Record<string, string> = ME_PAGE) {
+async function setup(feed: unknown[], pages: Record<string, string> = ME_PAGE, myGames?: SyntheticGame[]) {
   socket = fakeSocketIo();
-  h = await liveHarness({ feed, pages, socket });
+  h = await liveHarness({
+    feed,
+    pages,
+    socket,
+    ...(myGames
+      ? {
+          warapp: (req: { method: number }) => {
+            if (req.method !== Method.GetMyGames) throw new Error(`unexpected method ${req.method}`);
+            return { body: (w: Writer) => writeMyGamesReturn(w, myGames) };
+          },
+        }
+      : {}),
+  });
   return { h, socket };
 }
+
+// In-game id of ANN: the invite token minus two check digits each end.
+const ANN_IN_GAME = 123456;
+const mine = (id: number, state: number, myState = 2, committed = false): SyntheticGame => ({
+  id,
+  name: `G${id}`,
+  lastTurn: state === 3 ? 1 : -1,
+  state,
+  players: [{ id: ANN_IN_GAME, name: 'Ann', state: myState, committed }],
+});
 
 const call = (name: string, args: Record<string, unknown>, options?: Parameters<Harness['harness']['client']['callTool']>[1]) =>
   h!.harness.client.callTool({ name, arguments: args }, options) as Promise<CallToolResult>;
@@ -120,6 +145,25 @@ describe('warapp_wait_for_turn', () => {
     const r2 = await call('warapp_wait_for_turn', { game_ids: [GAME] });
     expect(r2.isError).toBe(true);
     expect(textOf(r2)).toMatch(/not a player in game 12345678/);
+  });
+
+  it('without game_ids, watches every game of mine being played or picked, from GetMyGames', async () => {
+    const games = [mine(GAME, 3), mine(23456789, 5, 2, true), mine(34567890, 4), mine(45678901, 2), mine(56789012, 3, 3)];
+    const other = game('Playing', { hasCommittedOrders: 'True' }, { id: '23456789' });
+    const { socket } = await setup([READY(), other], ME_PAGE, games);
+    const p = payload(await call('warapp_wait_for_turn', {}));
+    expect(p.status).toBe('your_turn');
+    expect(p.ready).toEqual([GAME]);
+    expect(p.watching).toEqual([GAME, 23456789]);
+    await until(() => subscribes(socket).length === 1, 'subscribe');
+    expect(subscribes(socket)[0]!.sort()).toEqual([`Game.${GAME}`, 'Game.23456789']);
+  });
+
+  it('without game_ids, refuses when none of my games is in play', async () => {
+    await setup([READY()], ME_PAGE, [mine(34567890, 4), mine(45678901, 2), mine(56789012, 3, 3)]);
+    const r = await call('warapp_wait_for_turn', {});
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toMatch(/none of your war\.app games is being played/i);
   });
 
   it('validates its inputs', async () => {

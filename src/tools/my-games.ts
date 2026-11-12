@@ -5,7 +5,7 @@ import { McpToolError, untrustedEnvelope } from '@chrischall/mcp-utils';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { inGameId } from '../live.js';
-import { briefGameLine, readMyGames, summarizeMyGames, type MyGame } from '../my-games.js';
+import { briefGameLine, readMyGames, summarizeMyGames, type MyGame, type RawMyGame } from '../my-games.js';
 import { Method, writeGetMyGamesParams } from '../protocol/methods.js';
 import { readAnnotations, respond, untrustedDescription, WARAPP_UNTRUSTED_NOTE } from './common.js';
 import { canonicalMeta } from './hints.js';
@@ -28,6 +28,15 @@ async function myInGameId(ctx: LiveContext): Promise<number> {
     });
   }
   return inGameId({ id: token });
+}
+
+/** The signed-in account's in-game id and its games, through GetMyGames. */
+export async function fetchMyGames(ctx: LiveContext): Promise<{ me: number; games: RawMyGame[] }> {
+  const [me, env] = await Promise.all([
+    myInGameId(ctx),
+    ctx.rpc.call('GetMyGames', Method.GetMyGames, (w) => writeGetMyGamesParams(w)),
+  ]);
+  return { me, games: readMyGames(await ctx.bundle(), env.body) };
 }
 
 export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
@@ -56,11 +65,8 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
       }),
     },
     async ({ view }) => {
-      const [me, env] = await Promise.all([
-        myInGameId(ctx),
-        ctx.rpc.call('GetMyGames', Method.GetMyGames, (w) => writeGetMyGamesParams(w)),
-      ]);
-      const games = summarizeMyGames(readMyGames(await ctx.bundle(), env.body), me);
+      const { me, games: raw } = await fetchMyGames(ctx);
+      const games = summarizeMyGames(raw, me);
       if (view === 'brief') return briefResult(games);
       return respond(undefined, ['compact'], () => ({
         games,

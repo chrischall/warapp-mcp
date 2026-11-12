@@ -5,11 +5,13 @@ import { callerWantsProgress, currentCallSignal, McpToolError, reportProgress } 
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
+import { activeGameIds } from '../my-games.js';
 import type { Game } from '../normalize.js';
 import type { PushListener } from '../push/listener.js';
 import { gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
+import { fetchMyGames } from './my-games.js';
 
 /** Game states in which a player has something to submit (picks or orders). */
 export const ACTION_STATES: ReadonlySet<string> = new Set(['Playing', 'DistributingTerritories']);
@@ -170,7 +172,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           'territories picked, you are still playing, and you have not committed — and return as soon as it is, ' +
           'or at the timeout (default 300 s, max 1800 s). It checks each game once at the start, then listens to ' +
           "war.app's push notifications through your signed-in war.app tab (ContextMint Bridge) and re-checks a " +
-          'game whenever war.app says it changed. Pass the game ids to watch (1–20). Reports progress while it ' +
+          'game whenever war.app says it changed. Pass the game ids to watch (1–20), or omit them to watch every game ' +
+          'of yours being played or picked (the first 20, as warapp_my_games lists them). Reports progress while it ' +
           'waits and stops when the call is cancelled. Then plan with warapp_plan_turn (or pick with ' +
           'warapp_submit_picks). Read-only.',
       ),
@@ -181,7 +184,11 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           .array(gameIdArg)
           .min(1)
           .max(MAX_WAIT_GAMES)
-          .describe('The war.app game ids to watch (the number after GameID= in each game URL).'),
+          .optional()
+          .describe(
+            'The war.app game ids to watch (the number after GameID= in each game URL). Omit to watch every game ' +
+              'of yours being played or picked.',
+          ),
         timeout_seconds: z.coerce
           .number()
           .int()
@@ -192,7 +199,18 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
       }),
     },
     async ({ game_ids, timeout_seconds }) => {
-      const ids = [...new Set(game_ids.map((g) => parseGameId(g)))];
+      let ids: number[];
+      if (game_ids) {
+        ids = [...new Set(game_ids.map((g) => parseGameId(g)))];
+      } else {
+        const { me, games } = await fetchMyGames(ctx);
+        ids = activeGameIds(games, me).slice(0, MAX_WAIT_GAMES);
+        if (!ids.length) {
+          throw new McpToolError('None of your war.app games is being played or picked right now, so there is no turn to wait for.', {
+            hint: 'warapp_my_games lists your games and their states; a lobby starts once enough players join.',
+          });
+        }
+      }
       const token = await ctx.myInviteToken();
       if (token === undefined) {
         throw new McpToolError('Could not tell which war.app account is signed in, so there is no turn to wait for.', {
@@ -230,6 +248,7 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
       const st = push.status();
       return respond(undefined, VIEWS, () => ({
         status: out.status,
+        watching: ids,
         ...(out.status === 'your_turn' ? { ready: out.games.filter((g) => g.waitingOnYou).map((g) => g.id) } : {}),
         games: out.games,
         waited_seconds: Math.round(out.waitedMs / 1000),
