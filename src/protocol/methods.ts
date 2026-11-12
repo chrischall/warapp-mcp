@@ -319,11 +319,31 @@ export function writeCardPlayOrder(w: Writer, o: CardPlayOrder): void {
   writeOrderBase(w, o.playerId);
 }
 
+const ORDER_TAG_DISCARD = 9;
+
+export interface DiscardOrder {
+  playerId: number;
+  /** The card instance GUID (32 hex digits; dashes allowed). */
+  cardId: string;
+}
+
+/**
+ * Encode a discard order (`GameOrderDiscard`): tag 9, the card instance GUID in
+ * .NET byte order, then the order base. VERIFIED against the client bundle's
+ * writer (the tag, the GUID, the order base), not yet against a live commit.
+ */
+export function writeDiscardOrder(w: Writer, o: DiscardOrder): void {
+  w.u8(ORDER_TAG_DISCARD);
+  w.guid(o.cardId);
+  writeOrderBase(w, o.playerId);
+}
+
 /** One order of a turn, as a tool builds it (the player id is supplied per turn). */
 export type TurnOrder =
   | { kind: 'deploy'; territoryId: number; armies: number }
   | { kind: 'move'; from: number; to: number; armies: number }
-  | { kind: 'card'; card: CardPlayKind; cardId: string; target?: number };
+  | { kind: 'card'; card: CardPlayKind; cardId: string; target?: number }
+  | { kind: 'discard'; cardId: string };
 
 /**
  * The `warlight.shared.TurnPhase` each order runs in. war.app refuses a turn
@@ -331,9 +351,11 @@ export type TurnOrder =
  * (VERIFIED live 2026-11-12: `[OrderPriority, Reinforcement, deploys]` was
  * accepted, `[Reinforcement, OrderPriority, …]` refused). Order Delay runs in
  * the attack/transfer phase (50) — VERIFIED live 2026-11-12: placed with Order
- * Priority (phase 12) it was refused with error 10.
+ * Priority (phase 12) it was refused with error 10. Discards run first (phase 10,
+ * from the bundle's `GameOrderDiscard.Vd`).
  */
 export const TurnPhase = {
+  Discards: 10,
   OrderPriorityCards: 12,
   ReinforcementCards: 20,
   Deploys: 25,
@@ -352,6 +374,7 @@ const CARD_PHASE: Readonly<Record<CardPlayKind, number>> = {
 export function turnPhaseOf(o: TurnOrder): number {
   if (o.kind === 'deploy') return TurnPhase.Deploys;
   if (o.kind === 'move') return TurnPhase.Attacks;
+  if (o.kind === 'discard') return TurnPhase.Discards;
   return CARD_PHASE[o.card];
 }
 
@@ -370,7 +393,7 @@ function compareTurnOrders(a: TurnOrder, b: TurnOrder): number {
  * order), the turn number (GameFeed `numberOfTurns` + 1), then two bools the
  * client sends as false. Orders are written in turn-phase order (a stable
  * sort, so orders of one phase keep their given order, card plays after
- * the rest): Order Priority and Reinforcement plays, then every deploy, then
+ * the rest): discards, Order Priority and Reinforcement plays, then every deploy, then
  * the moves (ordinary AttackTransfers, mode 3) followed by any Order Delay
  * plays, then any Blockade plays.
  */
@@ -387,6 +410,8 @@ export function writeSendOrdersParams(
     w.bool(true);
     if (o.kind === 'card') {
       writeCardPlayOrder(w, { playerId, card: o.card, cardId: o.cardId, ...(o.target !== undefined ? { target: o.target } : {}) });
+    } else if (o.kind === 'discard') {
+      writeDiscardOrder(w, { playerId, cardId: o.cardId });
     } else if (o.kind === 'deploy') {
       writeDeployOrder(w, { playerId, territoryId: o.territoryId, armies: o.armies });
     } else {
