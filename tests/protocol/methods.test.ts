@@ -8,6 +8,9 @@ import {
   writeAttackTransferOrder,
   writeDeployOrder,
   writeCardPlayOrder,
+  writeDiscardOrder,
+  turnPhaseOf,
+  TurnPhase,
   writeSendOrdersParams,
   writeSendTerritoryPicksParams,
 } from '../../src/protocol/methods.js';
@@ -236,6 +239,55 @@ describe('SendOrders params', () => {
     );
   });
 
+  it('writes discards (phase 10) before everything else, Order Priority next', () => {
+    // Bundle: GameOrderDiscard.Vd() is TurnPhase 10 (Discards), ahead of Order Priority (12).
+    const d = '00112233445566778899aabbccddeeff';
+    const op = '0a0b0c0d0e0f10111213141516171819';
+    const discard = '09' + '33221100554477668899AABBCCDDEEFF' + '090300000000';
+    const playOp = '0A' + '0D0C0B0A0F0E1110' + '1213141516171819' + '090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    const move = '010003000600000000010000000004000000090300000000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+            { kind: 'card', card: 'OrderPriority', cardId: op },
+            { kind: 'discard', cardId: d },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '04000000' + '01' + discard + '01' + playOp + '01' + deploy + '01' + move + '02000000' + '0000');
+  });
+
+  it('keeps several discards in their given order', () => {
+    const a = '00112233445566778899aabbccddeeff';
+    const b = 'ffeeddccbbaa99887766554433221100';
+    const da = '09' + '33221100554477668899AABBCCDDEEFF' + '090300000000';
+    const db = '09' + 'CCDDEEFFAABB88997766554433221100' + '090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'discard', cardId: b },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'discard', cardId: a },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '03000000' + '01' + db + '01' + da + '01' + deploy + '02000000' + '0000');
+  });
+
   it('writes an empty order list', () => {
     expect(hex((w) => writeSendOrdersParams(w, 1, 777, [], 0))).toBe('01000000' + '01' + '00000000' + '00000000' + '0000');
   });
@@ -364,5 +416,20 @@ describe('Surrender (method 67)', () => {
     const { writeSurrenderParams } = await import('../../src/protocol/methods.js');
     expect(hex((w) => writeSurrenderParams(w, { gameId: 0x00bc614e, surrender: false }))).toBe('4E61BC00' + '00' + '00');
     expect(hex((w) => writeSurrenderParams(w, { gameId: 7, surrender: false }))).toBe('07000000' + '0000');
+  });
+});
+
+describe('discard orders', () => {
+  it('match the bundle writer: tag 9, the GUID in .NET order, then the order base', () => {
+    // From the bundle's GameOrderDiscard writer: tag 9, the GUID, the order base (playerId, no result, no updates).
+    expect(hex((w) => writeDiscardOrder(w, { cardId: '00112233-4455-6677-8899-aabbccddeeff', playerId: 777 }))).toBe(
+      '09' + '33221100554477668899AABBCCDDEEFF' + '09030000' + '00' + '00',
+    );
+  });
+
+  it('run in the Discards phase (10), before Order Priority', () => {
+    expect(TurnPhase.Discards).toBe(10);
+    expect(turnPhaseOf({ kind: 'discard', cardId: '00112233445566778899aabbccddeeff' })).toBe(10);
+    expect(TurnPhase.Discards).toBeLessThan(TurnPhase.OrderPriorityCards);
   });
 });

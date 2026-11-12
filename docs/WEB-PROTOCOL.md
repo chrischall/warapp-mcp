@@ -157,6 +157,7 @@ AttackTransfer  byte 01, bool attackTeammates, byte mode (1 Attack, 2 Transfer,
                 int32 to, base
 PlayCard*       byte <card tag> (5 Reinforcement, 10 Order Priority, 11 Order Delay,
                 18 Blockade), card fields, GUID cardInstanceId, base
+Discard         byte 09, GUID cardInstanceId, base
 ```
 
 **Verified 2026-11-12** against a real turn-1 commit (1 deploy + 4 attacks): the captured
@@ -185,6 +186,7 @@ advanced).
 
 | Card play | Order tag | Phase |
 |---|---|---|
+| Discard | 9 | 10 — from the bundle (`GameOrderDiscard`'s writer: tag 9, GUID, base; its phase is 10); **not yet live-verified** |
 | Order Priority | 10 | 12 |
 | Reinforcement | 5 | 20 |
 | (deploys) | 2 | 25 |
@@ -194,6 +196,12 @@ advanced).
 
 Within one phase the encoder writes card plays after the other orders (an Order Delay after
 every AttackTransfer); that within-phase position is unverified.
+
+**The hold limit (#20).** A play or discard is required only when the hand holds **more** whole
+cards than `MaxCardsHold`: live, a commit with no card was accepted at 4/4 and refused with error
+51 at 5/4. The bundle's `GameValidateOrders` agrees: it removes every played and discarded
+instance from a copy of the hand, then answers 51 while `remaining > MaxCardsHold` — so each card
+over the limit needs its own play or discard.
 
 **The hand is the current `GameStanding`'s.** `LatestGameInfo` holds the pending orders, the
 current `GameStanding`, the last `GameTurn` and the previous `GameStanding`, and card instances

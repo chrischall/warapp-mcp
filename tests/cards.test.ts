@@ -3,7 +3,9 @@ import {
   CARD_TYPES,
   cardRules,
   cardTypeByName,
+  cardsToShed,
   chooseCardPlays,
+  playRequired,
   readHand,
   type Card,
 } from '../src/cards.js';
@@ -187,25 +189,82 @@ describe('chooseCardPlays', () => {
     expect(c.warnings.join('\n')).toMatch(/armies/);
   });
 
-  it('at the hold limit plays Order Priority, else Order Delay', () => {
-    expect(chooseCardPlays([op, od, bl], { maxCardsHold: 3, inPlay: [] }).plays).toEqual([op]);
-    expect(chooseCardPlays([bl, od], { maxCardsHold: 2, inPlay: [] }).plays).toEqual([od]);
-    expect(chooseCardPlays([bl, od], { maxCardsHold: 2, inPlay: [] }).required).toBe(true);
+  const sp: Card = { id: '88888888888888888888888888888888', type: 2, name: 'Spy' };
+  const al: Card = { id: '77777777777777777777777777777777', type: 6, name: 'Airlift' };
+  const bl2: Card = { ...bl, id: '99999999999999999999999999999998' };
+
+  it('over the hold limit plays Order Priority rather than discarding', () => {
+    const c = chooseCardPlays([op, od, bl, sp, al], { maxCardsHold: 4, inPlay: [] });
+    expect(c.required).toBe(true);
+    expect(c.plays).toEqual([op]);
+    expect(c.discards).toEqual([]);
   });
 
   it('a Reinforcement play satisfies the hold limit', () => {
-    expect(chooseCardPlays([op, r(5)], { maxCardsHold: 2, inPlay: [] }).plays).toEqual([r(5)]);
+    const c = chooseCardPlays([op, r(5), bl], { maxCardsHold: 2, inPlay: [] });
+    expect(c.plays).toEqual([r(5)]);
+    expect(c.discards).toEqual([]);
   });
 
-  it('never auto-plays Blockade; warns when a play is required and none can be chosen', () => {
-    const c = chooseCardPlays([bl, bl], { maxCardsHold: 2, inPlay: [] });
+  it('discards the lowest-value card when no play is useful (only Blockade, Order Delay, …)', () => {
+    // Order Delay would hold back my own attacks, Blockade gives a territory away: discard instead.
+    const c = chooseCardPlays([bl, od, bl2, al, sp], { maxCardsHold: 4, inPlay: [] });
     expect(c.required).toBe(true);
     expect(c.plays).toEqual([]);
-    expect(c.warnings.join('\n')).toMatch(/must play a card/);
+    expect(c.discards).toEqual([od]);
+    expect(c.warnings.join('\n')).toMatch(/Discarding Order Delay/);
+    expect(c.warnings.join('\n')).not.toMatch(/must play a card/);
+  });
+
+  it('discards a Blockade when Blockades are all it holds', () => {
+    const c = chooseCardPlays([bl, bl2], { maxCardsHold: 1, inPlay: [] });
+    expect(c.plays).toEqual([]);
+    expect(c.discards).toEqual([bl]);
+  });
+
+  it('sheds as many cards as the hand is over the limit: plays first, then the lowest-value discards', () => {
+    expect(chooseCardPlays([bl, al, od, sp, bl2, op], { maxCardsHold: 3, inPlay: [] })).toMatchObject({
+      plays: [op],
+      discards: [od, sp],
+    });
+    expect(chooseCardPlays([r(5), op, bl, al, sp, bl2], { maxCardsHold: 4, inPlay: [] })).toMatchObject({
+      plays: [r(5), op],
+      discards: [],
+    });
+  });
+
+  it('discards a Reinforcement whose armies are unknown only as a last resort', () => {
+    const c = chooseCardPlays([r(), al], { maxCardsHold: 1, inPlay: [] });
+    expect(c.discards).toEqual([al]);
   });
 
   it('no play needed below the limit with no Reinforcement', () => {
     const c = chooseCardPlays([op], { maxCardsHold: 4, inPlay: [] });
-    expect(c).toEqual({ required: false, plays: [], extraArmies: 0, warnings: [] });
+    expect(c).toEqual({ required: false, plays: [], discards: [], extraArmies: 0, warnings: [] });
+  });
+});
+
+describe('the must-play threshold', () => {
+  // Live (#20): no card was accepted at 4/4 whole cards and refused at 5/4. The bundle's
+  // GameValidateOrders removes every played or discarded instance from the hand, then
+  // refuses (error 51) while what is left is still > MaxCardsHold.
+  const hand = (n: number): Card[] =>
+    Array.from({ length: n }, (_, i) => ({ id: String(i).padStart(32, '0'), type: 12, name: 'Blockade' }));
+  const rules = { maxCardsHold: 4, inPlay: [] };
+
+  it('is not reached AT the limit (4/4)', () => {
+    expect(playRequired(hand(4), rules)).toBe(false);
+    expect(cardsToShed(hand(4), rules)).toBe(0);
+  });
+
+  it('is reached OVER the limit (5/4), one card per card over', () => {
+    expect(playRequired(hand(5), rules)).toBe(true);
+    expect(cardsToShed(hand(5), rules)).toBe(1);
+    expect(cardsToShed(hand(7), rules)).toBe(3);
+  });
+
+  it('never applies without a known limit', () => {
+    expect(cardsToShed(hand(9), { inPlay: [] })).toBe(0);
+    expect(playRequired(hand(9), { inPlay: [] })).toBe(false);
   });
 });

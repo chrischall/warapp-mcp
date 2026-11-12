@@ -49,7 +49,7 @@ export function methodTakesAuth(methodId: number): boolean {
 export const SERVER_ERROR_MESSAGES: Readonly<Record<number, string>> = {
   10: 'war.app refused the order sequence — card plays must come in turn-phase order.',
   11: 'Your orders deploy more or fewer armies than you are receiving this turn. Please verify your orders deploy the correct number.',
-  51: 'You hold the maximum number of cards, so war.app requires you to play one this turn.',
+  51: 'You hold more cards than this game allows, so war.app requires you to play or discard one this turn.',
   33: 'Oops! This message is too long. Try breaking it into multiple smaller messages.',
   36: 'Your message was not sent because you have been sending too many messages to this game. Please try again later.',
   88: 'This game has been deleted.',

@@ -14,7 +14,7 @@ import {
   cardTypeName,
   chooseCardPlays,
   normalizeGuid,
-  playRequired,
+  cardsToShed,
   readHand,
   reinforcementArmies,
   type Card,
@@ -78,6 +78,14 @@ export const turnOrderArg = z.discriminatedUnion('kind', [
     target: territoryRef
       .optional()
       .describe('Blockade only: your territory to blockade (id or name).'),
+  }),
+  z.object({
+    kind: z.literal('discard'),
+    card: z
+      .string()
+      .min(1)
+      .max(64)
+      .describe('Card to discard from your hand (any type): its id (GUID) or its type name, e.g. "Order Delay".'),
   }),
 ]);
 
@@ -162,7 +170,7 @@ export async function requireSignedInMe(
 }
 
 interface NamedOrder {
-  kind: 'deploy' | 'move' | 'card';
+  kind: 'deploy' | 'move' | 'card' | 'discard';
   card?: { id: string; name: string; armies?: number };
   target?: { id: number; name: string };
   territory?: { id: number; name: string };
@@ -345,6 +353,60 @@ export interface ResolvedCardPlay {
   armies: number;
 }
 
+const handHint = (hand: readonly Card[], ids: boolean) =>
+  `Your hand: ${hand.length ? hand.map((c) => (ids ? `${c.name} (${c.id})` : c.name)).join(', ') : 'no cards'}.`;
+
+/**
+ * Find one card of my hand by GUID or type name, skipping cards already `used`
+ * (played or discarded) when matching by type; refuses a card not held and, by
+ * GUID, one already used (`twice` names the clash).
+ */
+function findCard(hand: readonly Card[], ref: string, used: ReadonlySet<string>, twice: string): Card {
+  const guid = normalizeGuid(ref.trim());
+  if (guid !== undefined) {
+    const card = hand.find((c) => c.id === guid);
+    if (!card) throw new McpToolError(`Card ${guid} is not in your hand.`, { hint: handHint(hand, true) });
+    if (used.has(card.id)) {
+      throw new McpToolError(`The ${card.name} card ${card.id} is ${twice}.`, {
+        hint: 'Each card can be played or discarded once.',
+      });
+    }
+    return card;
+  }
+  const type = cardTypeByName(ref);
+  if (type === undefined) {
+    throw new McpToolError(`No card type matches "${ref}".`, {
+      hint: 'Name a card by its id (GUID) or its type, e.g. "Reinforcement" or "Order Priority".',
+    });
+  }
+  const card = hand.find((c) => c.type === type && !used.has(c.id));
+  if (!card) {
+    throw new McpToolError(`You hold no ${cardTypeName(type)} card${hand.some((c) => c.type === type) ? ' left to use' : ''}.`, {
+      hint: handHint(hand, false),
+    });
+  }
+  return card;
+}
+
+/**
+ * Resolve discards (by GUID or type name) against my hand, after the plays: any
+ * card type may be discarded, but not one that is also played or discarded twice.
+ */
+export function resolveDiscards(
+  hand: readonly Card[],
+  plays: readonly ResolvedCardPlay[],
+  inputs: ReadonlyArray<{ card: string }>,
+): Card[] {
+  const used = new Set(plays.map((p) => p.card.id));
+  const out: Card[] = [];
+  for (const input of inputs) {
+    const card = findCard(hand, input.card, used, 'used twice (played or discarded)');
+    used.add(card.id);
+    out.push(card);
+  }
+  return out;
+}
+
 /**
  * Resolve card plays (by GUID or type name) against my hand. Refuses a card not
  * held, the same card twice, a card this server cannot play, a Blockade with no
@@ -359,32 +421,7 @@ export function resolveCardPlays(
   const used = new Set<string>();
   const out: ResolvedCardPlay[] = [];
   for (const input of inputs) {
-    const guid = normalizeGuid(input.card.trim());
-    let card: Card | undefined;
-    if (guid !== undefined) {
-      card = hand.find((c) => c.id === guid);
-      if (!card) {
-        throw new McpToolError(`Card ${guid} is not in your hand.`, {
-          hint: `Your hand: ${hand.length ? hand.map((c) => `${c.name} (${c.id})`).join(', ') : 'no cards'}.`,
-        });
-      }
-      if (used.has(card.id)) {
-        throw new McpToolError(`The ${card.name} card ${card.id} is played twice.`, { hint: 'Each card can be played once.' });
-      }
-    } else {
-      const type = cardTypeByName(input.card);
-      if (type === undefined) {
-        throw new McpToolError(`No card type matches "${input.card}".`, {
-          hint: 'Name a card by its id (GUID) or its type, e.g. "Reinforcement" or "Order Priority".',
-        });
-      }
-      card = hand.find((c) => c.type === type && !used.has(c.id));
-      if (!card) {
-        throw new McpToolError(`You hold no ${cardTypeName(type)} card${hand.some((c) => c.type === type) ? ' left to play' : ''}.`, {
-          hint: `Your hand: ${hand.length ? hand.map((c) => c.name).join(', ') : 'no cards'}.`,
-        });
-      }
-    }
+    const card = findCard(hand, input.card, used, 'played twice');
     used.add(card.id);
     const kind = PLAYABLE[card.type];
     if (!kind) {
@@ -422,12 +459,18 @@ export function resolveCardPlays(
 }
 
 /** The required-play refusal (war.app's error 51, `MustUseCard`), raised before anything is sent. */
-function mustPlayCard(hand: readonly Card[], rules: CardRules): McpToolError {
-  return new McpToolError(`${SERVER_ERROR_MESSAGES[51]} (You hold ${hand.length}; the limit is ${rules.maxCardsHold}.)`, {
-    hint: `Add a card play to the orders, e.g. { "kind": "card", "card": "${hand[0]?.name ?? 'Reinforcement'}" }. Your hand: ${hand
-      .map((c) => `${c.name} (${c.id})`)
-      .join(', ')}.`,
-  });
+function mustPlayCard(hand: readonly Card[], rules: CardRules, shed: number, given: number): McpToolError {
+  return new McpToolError(
+    `${SERVER_ERROR_MESSAGES[51]} (You hold ${hand.length}; the limit is ${rules.maxCardsHold}, so ${shed} card${
+      shed === 1 ? '' : 's'
+    } must be played or discarded; these orders use ${given}.)`,
+    {
+      hint: `Add card plays or discards, e.g. { "kind": "discard", "card": "${hand[0]?.name ?? 'Order Delay'}" } (warapp_plan_turn suggests which). ${handHint(
+        hand,
+        true,
+      )}`,
+    },
+  );
 }
 
 const cardView = (c: Card) => ({ id: c.id, name: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}) });
@@ -468,8 +511,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
           'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. Threat ' +
           'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you). It reports ' +
-          'your cards and whether you must play one (hand at the hold limit), and plays Reinforcement cards (their ' +
-          'armies are planned) and, when a play is required, Order Priority or Order Delay — never Blockade. Its ' +
+          'your cards and whether you must play or discard (more whole cards than the hold limit), and plays ' +
+          'Reinforcement cards (their armies are planned) and, when cards must go, Order Priority, else discards the ' +
+          'lowest-value cards — never playing Blockade or Order Delay. Its ' +
           '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Goals: "balanced" ' +
           '(default) spends income where it earns most per army — holding borders that protect income, completing ' +
           'cheap bonuses, breaking enemy bonuses — with at least 30% on expansion; "expand" takes neutrals and never ' +
@@ -571,6 +615,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...plan.warnings,
       ];
       const orders = [
+        ...cards.discards.map((c) => ({ kind: 'discard' as const, card: c.id })),
         ...cards.plays.map((c) => ({ kind: 'card' as const, card: c.id })),
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
         ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
@@ -591,6 +636,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           maxCardsHold: rules.maxCardsHold ?? null,
           playRequired: cards.required,
           plays: cards.plays.map(cardView),
+          discards: cards.discards.map(cardView),
           armiesFromCards: cards.extraArmies,
         },
         deploys: plan.deploys.map((d) => ({ territory: name(d.territoryId), armies: d.armies })),
@@ -629,7 +675,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
     game_id: gameIdArg,
     player: playerArg,
     orders: turnOrdersArg.describe(
-      'The turn\'s orders (card plays, deploys and attacks/transfers), territories by id or name, cards by id or type ' +
+      'The turn\'s orders (card plays and discards, deploys and attacks/transfers), territories by id or name, cards by id or type ' +
         'name — e.g. the `orders` array warapp_plan_turn returns. Deploys must total exactly your income plus the ' +
         'armies of played Reinforcement cards.',
     ),
@@ -650,7 +696,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Commit your orders for the current turn of a war.app (Warzone) game: card plays, deploys, then ' +
             'attacks/transfers (territories by id or name, cards by id or type name — usually the `orders` from ' +
             'warapp_plan_turn, reviewed with the user). Plays Reinforcement, Order Priority, Order Delay and Blockade ' +
-            '(with a `target` of yours) from your hand; refuses with no card play when your hand is at the hold limit. The ' +
+            '(with a `target` of yours) from your hand, and discards any card (`{ kind: "discard", card }`); refuses ' +
+            'when your hand is over the hold limit and the orders do not play or discard enough cards. The ' +
             'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
             'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
             'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
@@ -687,9 +734,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const deploys: Array<{ territory: { id: number; name: string }; armies: number }> = [];
             const moves: Array<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }> = [];
             const cardInputs: Array<{ card: string; target?: string | number | undefined }> = [];
+            const discardInputs: Array<{ card: string }> = [];
             for (const o of orders) {
               if (o.kind === 'card') {
                 cardInputs.push({ card: o.card, target: o.target });
+              } else if (o.kind === 'discard') {
+                discardInputs.push({ card: o.card });
               } else if (o.kind === 'deploy') {
                 const t = resolveTerritory(map, o.territory);
                 deploys.push({ territory: { id: t.id, name: t.name }, armies: o.armies });
@@ -705,7 +755,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const rules = cardRules(game.settings);
             const hand = readHand(info, playerId);
             const plays = resolveCardPlays(map, hand, rules, cardInputs);
-            if (plays.length === 0 && playRequired(hand, rules)) throw mustPlayCard(hand, rules);
+            const discards = resolveDiscards(hand, plays, discardInputs);
+            // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
+            // than MaxCardsHold remain (verified, #20).
+            const shed = cardsToShed(hand, rules);
+            if (plays.length + discards.length < shed) throw mustPlayCard(hand, rules, shed, plays.length + discards.length);
             for (const p of plays) {
               const t = p.target && territories.find((x) => x.territoryId === p.target!.id);
               if (p.target && (!t || t.fogged || t.owner !== playerId)) {
@@ -736,6 +790,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               else merged.set(d.territory.id, { ...d });
             }
             const send: TurnOrder[] = [
+              ...discards.map((c) => ({ kind: 'discard' as const, cardId: c.id })),
               ...plays.map((p) => ({
                 kind: 'card' as const,
                 card: p.kind,
@@ -746,6 +801,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               ...moves.map((m) => ({ kind: 'move' as const, from: m.from.id, to: m.to.id, armies: m.armies })),
             ];
             const named: NamedOrder[] = [
+              ...discards.map((c) => ({ kind: 'discard' as const, card: cardView(c) })),
               ...plays.map((p) => ({ kind: 'card' as const, card: cardView(p.card), ...(p.target ? { target: p.target } : {}) })),
               ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territory: d.territory, armies: d.armies })),
               ...moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
