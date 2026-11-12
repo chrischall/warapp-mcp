@@ -210,6 +210,32 @@ describe('parseOpenGamesPage', () => {
     expect(g.plannerGaps).not.toContain('Multi-attack');
   });
 
+  it('flags an extra army per N territories as a planner gap (income model unverified, #38)', () => {
+    const g = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { bonusArmiesPer: 3 } }])), bundle)
+      .games[0]!;
+    expect(g.rules).toContain('Extra army for every 3 territories');
+    expect(g.plannerGaps).toEqual(['Extra army per 3 territories — income model unverified, see #38']);
+  });
+
+  it('flags a non-zero luck modifier or non-straight rounding as a planner gap', () => {
+    const gap = 'Luck or rounding — attack sizing assumes straight rounding and adds only a luck margin';
+    const luck = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { luck: 0.75 } }])), bundle).games[0]!;
+    expect(luck.plannerGaps).toEqual([gap]);
+    const rounding = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { roundingMode: 0 } }])), bundle)
+      .games[0]!;
+    expect(rounding.plannerGaps).toEqual([gap]);
+    const both = parseOpenGamesPage(
+      page(payloadHex([{ ...GAMES[0]!, settings: { luck: 0.75, roundingMode: 0 } }])),
+      bundle,
+    ).games[0]!;
+    expect(both.plannerGaps).toEqual([gap]);
+    const straight = parseOpenGamesPage(
+      page(payloadHex([{ ...GAMES[0]!, settings: { luck: 0, roundingMode: 1 } }])),
+      bundle,
+    ).games[0]!;
+    expect(straight.plannerGaps).toEqual([]);
+  });
+
   it('reports no rules it cannot read: a game without a settings record has none', () => {
     const g = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: null }])), bundle).games[0]!;
     expect(g.rules).toEqual([]);
