@@ -321,6 +321,18 @@ describe('warapp_list_open_games', () => {
     ]);
   });
 
+  it('still lists the lobbies (marking nothing) when the invite token is too short to be a player id', async () => {
+    const me = { id: 123456, name: 'Me', state: P_PLAYING, committed: false };
+    h = await liveHarness({
+      pages: {
+        [OPEN_GAMES_URL]: page(payloadHex([{ ...GAMES[0]!, players: [me] }])),
+        'https://war.app/InviteToken': '<p>Your invite token is 1234</p>',
+      },
+    });
+    const p = payload(await h.call('warapp_list_open_games'));
+    expect((p.games as OpenGame[])[0]!.joined).toBeUndefined();
+  });
+
   it('marks nothing when the signed-in account cannot be told', async () => {
     const me = { id: 123456, name: 'Me', state: P_PLAYING, committed: false };
     h = await liveHarness({ pages: { [OPEN_GAMES_URL]: page(payloadHex([{ ...GAMES[0]!, players: [me] }])) } });

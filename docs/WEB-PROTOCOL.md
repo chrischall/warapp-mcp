@@ -299,8 +299,8 @@ like every other method. Parameters after the auth block, in the client writer's
 1. `int32` game id;
 2. the colour: a present flag, then a `warlight.shared.GameColor` record — **required**: sent
    absent, war.app refuses the join with server error 1, `AssertFailedException: color is null`
-   (**verified live**, 2026-11-12). The record is a single `int32` colour index (0–435, verified
-   from the bundle's writer); 0–23 are the standard colours, the rest need an unlock;
+   (**verified live**, 2026-11-12). The record is a single `int32` colour index (the writer writes one
+   `int32`; the 436-colour range, 0–435, comes from the bundle's colour-count getter); 0–23 are the standard colours, the rest need an unlock;
 3. `int32` team — the open seat's team from the `GameInfo` record (`-1` in a no-team game);
 4. an optional `int32` start slot (present flag + value) — sent **absent**; custom-scenario games
    need one, so they are refused;
