@@ -73,22 +73,33 @@ export function writeGetMyGamesParams(w: Writer, filters: MyGamesFilters = DEFAU
   w.bool(false).int32(0).bool(false).bool(false);
 }
 
+/** How many colours war.app's colour list has (`warlight.shared.GameColor` indices 0..435). */
+export const GAME_COLOR_COUNT = 436;
+
 export interface AcceptOpenSeatParams {
   gameId: number;
   /** The team of the open seat being taken, as its record carries it (-1: a no-team seat). */
   team: number;
+  /** The colour to play as: a `warlight.shared.GameColor` index (0..435). */
+  color: number;
 }
 
 /**
- * AcceptOpenSeat(auth, …) — read from the client's writer (docs/PLAN-OPEN-GAMES.md;
- * the owner verifies it live): the game id, an optional colour preference
- * (absent), the open seat's team, an optional custom-scenario start slot
- * (absent — scenario games are refused), then a bool the client sets when one
- * of the game's mods hooks the join (false: mod games are refused).
+ * AcceptOpenSeat(auth, …) — read from the client's writer (docs/WEB-PROTOCOL.md,
+ * open games): the game id, the colour (a present flag, then the GameColor
+ * record — one int32 colour index; war.app refuses an absent colour, verified
+ * live as server error 1 "color is null"), the open seat's team, an optional
+ * custom-scenario start slot (absent — scenario games are refused), then a bool
+ * the client sets when one of the game's mods hooks the join (false: mod games
+ * are refused).
  */
 export function writeAcceptOpenSeatParams(w: Writer, p: AcceptOpenSeatParams): void {
+  if (!Number.isInteger(p.color) || p.color < 0 || p.color >= GAME_COLOR_COUNT) {
+    throw new RangeError(`war.app colour index out of range: ${p.color} (0..${GAME_COLOR_COUNT - 1})`);
+  }
   w.int32(p.gameId)
-    .bool(false) // colour preference
+    .bool(true) // colour present
+    .int32(p.color) // GameColor: the colour index
     .int32(p.team)
     .bool(false) // start slot
     .bool(false); // a mod hooks this join

@@ -13,6 +13,7 @@
 // Whatever the record does not carry reliably is omitted, never guessed.
 
 import { cardTypeName } from './cards.js';
+import { colorIndexOf } from './join-color.js';
 import type { ClassReader } from './live.js';
 import { Reader } from './protocol/codec.js';
 
@@ -37,8 +38,8 @@ const GI = {
   settings: 21,
 } as const;
 const GI_MIN_FIELDS = 23;
-/** GameInfoPlayer: the state (GamePlayerState) and the team. */
-const GP = { state: 7, team: 8 } as const;
+/** GameInfoPlayer: the colour (an optional GameColor), the in-game id, the state (GamePlayerState) and the team. */
+const GP = { color: 0, id: 6, state: 7, team: 8 } as const;
 const GP_MIN_FIELDS = 9;
 /** Player states not holding a seat: Declined, RemovedByHost. */
 const NOT_SEATED = new Set([5, 6]);
@@ -99,6 +100,8 @@ export interface OpenGame {
   /** A mega game's player cap. */
   maxPlayers?: number;
   teamGame: boolean;
+  /** The signed-in account already holds a seat (set by the list tool; absent otherwise). */
+  joined?: boolean;
   /** Random teams of this size. */
   randomTeamsOf?: number;
   /** The team of each open seat (team games only). */
@@ -114,8 +117,18 @@ export interface OpenGame {
   plannerGaps: string[];
 }
 
+/** What a join needs from a lobby but the list does not show. */
+export interface OpenLobby {
+  /** The in-game ids of the players holding a seat. */
+  seatedPlayerIds: number[];
+  /** The GameColor indices the lobby's players hold (declined and removed players included, as the client counts them). */
+  colorsTaken: number[];
+}
+
 export interface OpenGamesPage {
   games: OpenGame[];
+  /** Per game id: its seated players and the colours taken. */
+  lobbies: Map<number, OpenLobby>;
   /** "N games are being hidden due to prerequisites", when the page says so. */
   hiddenByPrerequisites?: number;
   /** Why the list is empty or partial. */
@@ -246,18 +259,32 @@ function readSettings(v: unknown): SettingsRead | undefined {
   return { rules, gaps, ...(cards ? { cards } : {}) };
 }
 
-/** A seated player's team, or `undefined` for a player not holding a seat or an unreadable record. */
-function seatedTeam(p: unknown): number | undefined {
+interface LobbyPlayer {
+  id: number;
+  team: number;
+  seated: boolean;
+  /** The GameColor index, or null when the player has none. */
+  color: number | null;
+}
+
+/** One GameInfoPlayer record, or `undefined` when it does not fit. */
+function lobbyPlayer(p: unknown): LobbyPlayer | undefined {
   if (!isObj(p) || p.$type !== GAME_INFO_PLAYER) return undefined;
   const f = fields(p);
+  const id = f[GP.id];
   const state = f[GP.state];
   const team = f[GP.team];
-  if (f.length < GP_MIN_FIELDS || !isInt(state) || !isInt(team) || NOT_SEATED.has(state)) return undefined;
-  return team;
+  const color = colorIndexOf(f[GP.color]);
+  if (f.length < GP_MIN_FIELDS || !isInt(id) || !isInt(state) || !isInt(team)) return undefined;
+  return { id, team, seated: !NOT_SEATED.has(state), color: color ?? null };
 }
 
 /** One decoded GameInfo as an open game; `undefined` when the record does not fit. */
 export function openGameOf(record: unknown): OpenGame | undefined {
+  return readOpenGame(record)?.game;
+}
+
+function readOpenGame(record: unknown): { game: OpenGame; lobby: OpenLobby } | undefined {
   if (!isObj(record) || record.$type !== GAME_INFO) return undefined;
   const f = fields(record);
   if (f.length < GI_MIN_FIELDS) return undefined;
@@ -271,10 +298,13 @@ export function openGameOf(record: unknown): OpenGame | undefined {
   if (!(seats === null || isIntList(seats)) || !(players === null || Array.isArray(players))) return undefined;
 
   const openSeatTeams = seats ?? [];
-  const teams = (players ?? []).map(seatedTeam).filter((t): t is number => t !== undefined);
+  const all = (players ?? []).map(lobbyPlayer).filter((p): p is LobbyPlayer => p !== undefined);
+  const seated = all.filter((p) => p.seated);
   const randomTeamsOf = f[GI.randomTeamsOf];
   const random = isInt(randomTeamsOf) && randomTeamsOf > 0 ? randomTeamsOf : undefined;
-  const teamGame = random !== undefined || teams.some((t) => t !== NO_TEAM) || openSeatTeams.some((t) => t !== NO_TEAM);
+  // The client's own test (its "Team Game" settings icon): random teams, or any player
+  // record — whatever its state — or open seat carrying a team.
+  const teamGame = random !== undefined || all.some((p) => p.team !== NO_TEAM) || openSeatTeams.some((t) => t !== NO_TEAM);
   const settings = readSettings(f[GI.settings]);
   const rules = [...(settings?.rules ?? [])];
   if (teamGame) rules.push(random !== undefined ? `Team game (random teams of ${random})` : 'Team game');
@@ -284,9 +314,9 @@ export function openGameOf(record: unknown): OpenGame | undefined {
     name: name ?? '',
     url: `https://war.app/MultiPlayer?GameID=${id}`,
     pace: realTime ? 'real-time' : 'multi-day',
-    players: teams.length,
+    players: seated.length,
     openSeats: openSeatTeams.length,
-    seats: teams.length + openSeatTeams.length,
+    seats: seated.length + openSeatTeams.length,
     teamGame,
     mapId,
     entryFeeCoins: isInt(f[GI.entryFee]) ? (f[GI.entryFee] as number) : 0,
@@ -304,12 +334,18 @@ export function openGameOf(record: unknown): OpenGame | undefined {
   if (random !== undefined) game.randomTeamsOf = random;
   if (teamGame) game.openSeatTeams = openSeatTeams;
   if (settings?.cards) game.cards = settings.cards;
-  return orderKeys(game);
+  const colorsTaken = [...new Set(all.map((p) => p.color).filter((c): c is number => c !== null))];
+  return { game: orderKeys(game), lobby: { seatedPlayerIds: seated.map((p) => p.id), colorsTaken } };
+}
+
+/** `games` with `joined: true` on each lobby where the in-game id `me` holds a seat. */
+export function markJoined(games: readonly OpenGame[], lobbies: ReadonlyMap<number, OpenLobby>, me: number): OpenGame[] {
+  return games.map((g) => (lobbies.get(g.id)?.seatedPlayerIds.includes(me) ? orderKeys({ ...g, joined: true }) : g));
 }
 
 const KEY_ORDER: Array<keyof OpenGame> = [
   'id', 'name', 'url', 'pace', 'bootTime', 'bootTimeMinutes', 'players', 'openSeats', 'seats', 'maxPlayers',
-  'teamGame', 'randomTeamsOf', 'openSeatTeams', 'mapId', 'entryFeeCoins', 'prizeCoins', 'cards', 'rules', 'plannerGaps',
+  'teamGame', 'joined', 'randomTeamsOf', 'openSeatTeams', 'mapId', 'entryFeeCoins', 'prizeCoins', 'cards', 'rules', 'plannerGaps',
 ];
 function orderKeys(g: OpenGame): OpenGame {
   const out: Record<string, unknown> = {};
@@ -332,7 +368,7 @@ const UNREADABLE = "war.app's open-games data could not be read (the client may 
 
 /** The open games a signed-in OpenGames page lists; never throws. */
 export function parseOpenGamesPage(html: string, bundle: ClassReader): OpenGamesPage {
-  const out: OpenGamesPage = { games: [] };
+  const out: OpenGamesPage = { games: [], lobbies: new Map() };
   const hidden = HIDDEN_RE.exec(html);
   if (hidden) out.hiddenByPrerequisites = Number(hidden[1]);
   const m = PAYLOAD_RE.exec(html);
@@ -360,8 +396,11 @@ export function parseOpenGamesPage(html: string, bundle: ClassReader): OpenGames
   let read = 0;
   try {
     for (; read < count; read++) {
-      const game = openGameOf(bundle.readClass(GAME_INFO, reader));
-      if (game) out.games.push(game);
+      const read = readOpenGame(bundle.readClass(GAME_INFO, reader));
+      if (read) {
+        out.games.push(read.game);
+        out.lobbies.set(read.game.id, read.lobby);
+      }
     }
   } catch (e) {
     // Records are back to back with no lengths: after a failed one the rest cannot be found.

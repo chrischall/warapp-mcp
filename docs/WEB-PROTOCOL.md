@@ -265,8 +265,9 @@ client never calls it.
 
 `GameInfo` fields are minified, so they are identified by read order and checked by type, never by
 name: random-teams size, entry fee and prize (coins), boot time (a float64 TimeSpan in ms), game id,
-map id, the mega-game player cap, name, the open seats, the seated players
-(`warlight.shared.GameInfoPlayer`, each with a player state and a team), a real-time flag, and a
+map id, the mega-game player cap, name, the open seats, the players
+(`warlight.shared.GameInfoPlayer`: an optional `GameColor` first, the in-game player id 7th, the
+player state 8th and the team 9th), a real-time flag, and a
 `warlight.shared.GameInfoSettings` record (distribution — custom scenario included — commanders,
 commerce, kill rates, local deployments, luck, wastelands, army cap, ranked, and a settings string
 whose fields carry the card ids and a mods marker). The plan expected the open seats as
@@ -275,6 +276,20 @@ whose fields carry the card ids and a mods marker). The plan expected the open s
 cannot place is omitted, never guessed; a record that does not fit is skipped and a payload that
 stops decoding keeps what was read. A missing tag or bad hex is an empty list with a note.
 
+**Team games** (verified from the bundle; the live "…-Teams V4" lobby that read as no-team is not
+yet explained). The client's own "Team Game" test, the one behind its settings icon, uses exactly
+three signals of `GameInfo`: the random-teams size (first field) above zero, **any** player record
+carrying a team other than `-1` (whatever its state — declined and removed players count), or any
+open seat carrying one. There is no other team field: neither `GameInfo` nor `GameInfoSettings`
+has a teams-per-game or team-size field besides the random-teams size. A random-teams lobby's seats
+carry `-1` until the game starts, so the random-teams size is what marks it. `src/open-games.ts`
+applies the same test (it used to skip declined players' teams).
+
+**Already joined.** `warapp_list_open_games` marks `joined: true` on a lobby where the signed-in
+account (its invite token, minus the check digits — as every live tool finds "me") holds a seat
+(a player record with its in-game id, not declined or removed); `warapp_join_game` refuses such a
+lobby up front.
+
 The page hides games the account fails the prerequisites for and says so in its text
 ("N games are being hidden due to prerequisites"); that count is reported when present.
 
@@ -282,7 +297,10 @@ The page hides games the account fails the prerequisites for and says so in its 
 like every other method. Parameters after the auth block, in the client writer's order:
 
 1. `int32` game id;
-2. an optional colour preference (present flag + record) — sent **absent**;
+2. the colour: a present flag, then a `warlight.shared.GameColor` record — **required**: sent
+   absent, war.app refuses the join with server error 1, `AssertFailedException: color is null`
+   (**verified live**, 2026-11-12). The record is a single `int32` colour index (the writer writes one
+   `int32`; the 436-colour range, 0–435, comes from the bundle's colour-count getter); 0–23 are the standard colours, the rest need an unlock;
 3. `int32` team — the open seat's team from the `GameInfo` record (`-1` in a no-team game);
 4. an optional `int32` start slot (present flag + value) — sent **absent**; custom-scenario games
    need one, so they are refused;
@@ -297,7 +315,30 @@ was assigned to someone else by the game creator, **473** not enough coins, **75
 joined is no longer available (these three are in the RPC error table); also 4 already begun,
 7 removed by the host, 15 full, 120 seat no longer available, 227 on the creator's block list,
 239 prerequisites not met, and **121** already in the game (the client treats it as joined).
-The encoder is pinned by a golden test built from synthetic ids.
+The encoder is pinned by a golden test built from synthetic ids. The client also handles 8, 75 and
+390 ("That color is not available. Please pick a different color"), and 88 (the game was deleted).
+Error 1 with "color is null" is named as a missing colour.
+
+**Which colour** (verified from the bundle). Before joining, the web client resolves a colour: the
+account's **preferred** colour if no player record in the lobby has it, else its **secondary**
+colour on the same condition, else it asks the player to pick from the colours still free (the
+standard colours 0–23 that no lobby player holds, plus unlocked ones). `warapp_join_game` does the
+same without the prompt: preferred, else secondary, else the lowest standard colour no lobby
+player holds — or the `color` index the caller passes (refused when a lobby player holds it). The
+lobby players' colours are the `GameColor` of each `GameInfoPlayer` in the open-games payload.
+
+**Where the account's colours come from** (verified from the bundle; not yet seen in a live
+page). Every page that runs the client starts it with its startup parameters,
+`warlight.shared.InitParameters`, passed to the client's init function as one string of two
+characters per byte: each character minus 62 (`>`) is a nibble, the first carrying the byte's
+even bits (0, 2, 4, 6) and the second its odd bits (1, 3, 5, 7). Among the parameters is the
+signed-in `warlight.shared.Player` record, whose two `GameColor` fields are the colours: the 19th
+field in read order is the **secondary** colour, the 33rd the **preferred** (each optional). The
+parameters also carry the session's auth string, so only those two fields are read out.
+`src/join-color.ts` scans the OpenGames page (already fetched for the list) for runs of that
+alphabet, decodes them with the bundle's InitParameters reader, and falls back to a free standard
+colour when none reads (the client, or the page, changed). The same Player record is what the
+client's `SignIn` (66) refresh returns; that method is not used.
 
 ## Surrender
 

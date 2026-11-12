@@ -36,7 +36,8 @@ a reader's field order; describe what they find in prose in `docs/WEB-PROTOCOL.m
 method (through `WarappRpc`). Parameters after the frame header, in order (from the client's writer):
 1. the auth block (as every authenticated method writes it),
 2. `int32 gameId`,
-3. an optional colour preference: present flag + record — send **absent** (`false`),
+3. the colour: present flag + `GameColor` record — **corrected 2026-11-12 (#37)**: war.app refuses an
+   absent colour ("color is null", server error 1); send the account's colour (docs/WEB-PROTOCOL.md),
 4. `int32 team` — the team of the open seat being taken (from that seat's `GameOpenSeat` record; a
    non-team game's open seats carry the no-team value — read it from the record, don't hard-code),
 5. an optional `int32` start slot: present flag + value — send **absent** (custom-scenario games
