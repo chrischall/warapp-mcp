@@ -15,6 +15,7 @@ const GAME = 12345678;
 // that differ per player (all synthetic).
 const ANN = { feed: '3312345644', inGame: 123456 };
 const BOB = { feed: '7176543229', inGame: 765432 };
+const SIGNED_IN_ANN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
 
 /** The lobby fixture with two wrapped player ids, in a given state. */
 function game(state: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
@@ -256,6 +257,29 @@ describe('warapp_get_my_picks', () => {
 });
 
 describe('warapp_submit_picks', () => {
+  // Issue #7: SendTerritoryPicks always runs as the bridge's signed-in account, so the gate
+  // must never preview picks "for" anyone else.
+  it('refuses a player who is not the signed-in account, before any preview or send', async () => {
+    h = await liveHarness({
+      feed: [game('DistributingTerritories')],
+      pages: { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` },
+    });
+    const res = await h.call('warapp_submit_picks', { game_id: GAME, player: 'Bob', territories: [161] });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/signed-in account/i);
+    expect(textOf(res)).not.toMatch(/confirmToken/);
+    expect(h.exchanges).toEqual([]);
+  });
+
+  it('refuses when the signed-in account cannot be determined, even with a player named', async () => {
+    h = await liveHarness({ feed: [game('DistributingTerritories')] });
+    const res = await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161] });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/signed-in account/i);
+    expect(h.exchanges).toEqual([]);
+  });
+
+
   function picksServer(readBack?: number[]) {
     const sent: Array<{ gameId: number; ids: number[] | null; tail: boolean[] }> = [];
     const warapp = routes({
@@ -273,7 +297,8 @@ describe('warapp_submit_picks', () => {
 
   it('previews the picks by name and sends nothing until confirmed', async () => {
     const s = picksServer();
-    h = await liveHarness({ feed: [game('DistributingTerritories')], warapp: s.warapp });
+    h = await liveHarness({
+      pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
     const preview = payload(await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, mapName(159)] }));
     expect(preview.confirmToken).toEqual(expect.any(String));
     const text = JSON.stringify(preview);
@@ -285,7 +310,8 @@ describe('warapp_submit_picks', () => {
 
   it('sends SendTerritoryPicks in priority order, reads them back, and reports verified', async () => {
     const s = picksServer();
-    h = await liveHarness({ feed: [game('DistributingTerritories')], warapp: s.warapp });
+    h = await liveHarness({
+      pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
     const res = await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159, 135] });
     const p = payload(res);
     expect(s.sent).toEqual([{ gameId: GAME, ids: [161, 159, 135], tail: [false, false] }]);
@@ -302,7 +328,8 @@ describe('warapp_submit_picks', () => {
 
   it('a read-back that differs (even in order) is not verified', async () => {
     const s = picksServer([159, 161]);
-    h = await liveHarness({ feed: [game('DistributingTerritories')], warapp: s.warapp });
+    h = await liveHarness({
+      pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
     const p = payload(await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159] }));
     expect(p.verified).toBe(false);
     expect(p.readBack).toEqual([159, 161]);
@@ -311,14 +338,16 @@ describe('warapp_submit_picks', () => {
 
   it('a shorter read-back is not verified', async () => {
     const s = picksServer([161]);
-    h = await liveHarness({ feed: [game('DistributingTerritories')], warapp: s.warapp });
+    h = await liveHarness({
+      pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
     const p = payload(await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159] }));
     expect(p.verified).toBe(false);
   });
 
   it('refuses a territory that is not pickable on the live board', async () => {
     const s = picksServer();
-    h = await liveHarness({ feed: [game('DistributingTerritories')], warapp: s.warapp });
+    h = await liveHarness({
+      pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
     const res = await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 158] });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/Not pickable on the live board: .*\(158\)/);
@@ -327,7 +356,8 @@ describe('warapp_submit_picks', () => {
   });
 
   it('refuses territories missing from the board, and says picks are closed outside distribution', async () => {
-    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(MID_BOARD) }) });
+    h = await liveHarness({
+      pages: SIGNED_IN_ANN, feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(MID_BOARD) }) });
     const res = await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [157, 1] });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/\(157\).*\(1\)/);
@@ -335,7 +365,8 @@ describe('warapp_submit_picks', () => {
   });
 
   it('refuses more than twice the territory limit before reading the board', async () => {
-    h = await liveHarness({ feed: [game('DistributingTerritories')] });
+    h = await liveHarness({
+      pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')] });
     const res = await h.call('warapp_submit_picks', {
       game_id: GAME,
       player: 'Ann',
@@ -347,7 +378,8 @@ describe('warapp_submit_picks', () => {
   });
 
   it('refuses a territory listed twice', async () => {
-    h = await liveHarness({ feed: [game('DistributingTerritories')] });
+    h = await liveHarness({
+      pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')] });
     const res = await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [159, mapName(159)] });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/listed twice/);
@@ -355,7 +387,8 @@ describe('warapp_submit_picks', () => {
 
   it('a changed pick list between preview and confirm is refused', async () => {
     const s = picksServer();
-    h = await liveHarness({ feed: [game('DistributingTerritories')], warapp: s.warapp });
+    h = await liveHarness({
+      pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
     const preview = payload(await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161] }));
     const res = await h.call('warapp_submit_picks', {
       game_id: GAME,
