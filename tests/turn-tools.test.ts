@@ -859,6 +859,38 @@ describe('cards in the turn tools', () => {
     );
   });
 
+  it('submit_turn plays Order Delay alongside another card play, writing it after the moves (phase 50)', async () => {
+    const s = ordersServer([
+      { id: OP, type: 4 },
+      { id: OD, type: 5 },
+    ]);
+    h = await liveHarness({ feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    const args = {
+      game_id: GAME,
+      orders: [
+        { kind: 'card', card: 'Order Delay' },
+        { kind: 'card', card: OP },
+        { kind: 'deploy', territory: 159, armies: 5 },
+      ],
+    };
+    const preview = payload(await h.call('warapp_submit_turn', args));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    const text = JSON.stringify(preview);
+    expect(text).toContain('Order Delay');
+    expect(text).toContain('Order Priority');
+    await h.call('warapp_submit_turn', { ...args, confirmToken: preview.confirmToken });
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes(
+        [
+          { kind: 'card', card: 'OrderPriority', cardId: OP },
+          { kind: 'deploy', territoryId: 159, armies: 5 },
+          { kind: 'card', card: 'OrderDelay', cardId: OD },
+        ],
+        3,
+      ),
+    );
+  });
+
   const refusals: Array<[string, SyntheticCard[], Array<Record<string, unknown>>, RegExp]> = [
     ['a card not in the hand', [{ id: OP, type: 4 }], [{ kind: 'card', card: R1 }, { kind: 'deploy', territory: 159, armies: 5 }], /not in your hand/],
     ['a card type not held', [{ id: OP, type: 4 }], [{ kind: 'card', card: 'Order Delay' }, { kind: 'deploy', territory: 159, armies: 5 }], /hold no Order Delay card/],
@@ -867,7 +899,6 @@ describe('cards in the turn tools', () => {
     ['an unsupported card', [{ id: AL, type: 6 }], [{ kind: 'card', card: AL }, { kind: 'deploy', territory: 159, armies: 5 }], /Airlift.*not supported/],
     ['a Blockade without a target', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL }, { kind: 'deploy', territory: 159, armies: 5 }], /Blockade needs a `target`/],
     ['a Blockade on a territory not mine', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL, target: 158 }, { kind: 'deploy', territory: 159, armies: 5 }], /not yours/],
-    ['Order Delay mixed with another card play', [{ id: OP, type: 4 }, { id: OD, type: 5 }], [{ kind: 'card', card: 'Order Delay' }, { kind: 'card', card: OP }, { kind: 'deploy', territory: 159, armies: 5 }], /Order Delay.*on its own/],
     ['a target on a card that takes none', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP, target: 159 }, { kind: 'deploy', territory: 159, armies: 5 }], /takes no target/],
     ['deploys that leave out the Reinforcement armies', [{ id: R1, type: 1, armies: 5 }], [{ kind: 'card', card: R1 }, { kind: 'deploy', territory: 159, armies: 5 }], /income is 10/],
     [

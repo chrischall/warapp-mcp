@@ -259,8 +259,7 @@ export interface ResolvedCardPlay {
 /**
  * Resolve card plays (by GUID or type name) against my hand. Refuses a card not
  * held, the same card twice, a card this server cannot play, a Blockade with no
- * target, a target on any other card, a Reinforcement whose armies are unknown,
- * and an Order Delay played alongside other cards (its turn phase is unverified).
+ * target, a target on any other card, and a Reinforcement whose armies are unknown.
  */
 export function resolveCardPlays(
   map: GameMap,
@@ -329,11 +328,6 @@ export function resolveCardPlays(
       play.target = { id: t.id, name: t.name };
     }
     out.push(play);
-  }
-  if (out.length > 1 && out.some((p) => p.kind === 'OrderDelay')) {
-    throw new McpToolError('Play an Order Delay card on its own: its turn phase is unverified, so war.app may refuse it alongside other card plays (error 10).', {
-      hint: 'Submit the Order Delay play without other card plays, or drop it and play the others.',
-    });
   }
   return out;
 }
