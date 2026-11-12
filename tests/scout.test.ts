@@ -148,7 +148,7 @@ describe('warapp_scout_player', () => {
     const res = await h.call('warapp_scout_player', { game_id: GAME, player: 'bob' });
     const p = payload(res);
     expect(p.untrusted_content).toBe(true);
-    expect(p.player).toEqual({ id: Number(BOB.token), name: 'Bob & Co' });
+    expect(p.player).toEqual({ id: BOB.token, name: 'Bob & Co' });
     expect(p.profile).toMatchObject({ level: 55, boots: 200, bootRatePct: 14 });
     expect(p.headToHead).toMatchObject({ count: 4, wins: 1, losses: 2, inProgress: 1 });
     expect(textOf(res)).not.toMatch(/Springfield|Nowhereland|Location|example\.com/i);
@@ -162,8 +162,27 @@ describe('warapp_scout_player', () => {
   it('scouts by a raw invite token without a game', async () => {
     h = await liveHarness({ pages: PAGES });
     const p = payload(await h.call('warapp_scout_player', { player: BOB.token }));
-    expect(p.player).toEqual({ id: Number(BOB.token), name: 'Bob & Co' });
+    expect(p.player).toEqual({ id: BOB.token, name: 'Bob & Co' });
     expect(h.calls).toEqual([]);
+  });
+
+  it('reports the id as the exact token string, leading zeros kept, so it can be passed back', async () => {
+    const ZED = '0412345601';
+    const pages = {
+      [`https://war.app/Profile?p=${ZED}`]: PROFILE_HTML,
+      [`https://war.app/CommonGames?p=${ZED}`]: COMMON_HTML,
+    };
+    h = await liveHarness({ pages });
+    const first = payload(await h.call('warapp_scout_player', { player: ZED }));
+    expect((first.player as { id: unknown }).id).toBe(ZED);
+    const again = payload(await h.call('warapp_scout_player', { player: (first.player as { id: string }).id }));
+    expect((again.player as { id: unknown }).id).toBe(ZED);
+    expect(h.bridge.requests.map((r) => r.path)).toEqual([
+      `https://war.app/Profile?p=${ZED}`,
+      `https://war.app/CommonGames?p=${ZED}`,
+      `https://war.app/Profile?p=${ZED}`,
+      `https://war.app/CommonGames?p=${ZED}`,
+    ]);
   });
 
   it('refuses a name without a game to look it up in', async () => {
