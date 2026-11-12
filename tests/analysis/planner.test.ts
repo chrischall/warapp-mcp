@@ -951,6 +951,105 @@ describe('enemy deploy estimate', () => {
   });
 });
 
+describe('planTurn — threat trend', () => {
+  // (g) A growing enemy stack: T2 went 51 → 76 last turn, next to my 55 on T1
+  // (a held +5 bonus). With a caller estimate of ~10 deploy, 75 movable + 10 = 85
+  // stays under the 91 it takes to break 55, so the border looks safe. The trend
+  // (+25/turn) projects 75 + 25 = 100, which breaks it: holding needs 61 armies
+  // (61 need 101 to take), and the turn after 75 + 25 + 25 = 125 needs 76.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3],
+      [
+        [1, 2],
+        [1, 3],
+      ],
+      [
+        [701, 5, [1]],
+        [702, 1, [3]],
+      ],
+    ),
+  );
+  const now = board([mine(1, 55), enemy(2, 76), neutral(3, 30)]);
+  const then = board([mine(1, 55), enemy(2, 51), neutral(3, 30)]);
+  const base = { graph: g, board: now, me: ME, settings: STD } as const;
+
+  it('(g) without the previous board the border looks safe', () => {
+    expect(armiesToTake(55)).toBe(91);
+    const p = planTurn({ ...base, income: 10, options: { goal: 'defend', enemyDeploy: 10 } });
+    expect(p.warnings.join('\n')).not.toMatch(/could be taken|is building/);
+    expect(p.rationale.join('\n')).not.toMatch(/so it holds/);
+  });
+
+  it('(g) with the previous board the projected threat breaks it, and defend deploys enough to hold', () => {
+    const p = planTurn({ ...base, income: 10, previousBoard: then, options: { goal: 'defend', enemyDeploy: 10 } });
+    const w = p.warnings.join('\n');
+    expect(w).toContain(
+      'T2 (#2) is building: +25/turn (51 → 76); at this rate T1 (#1) needs 61 to hold next turn and 76 the turn after',
+    );
+    expect(w).toMatch(/T1 \(#1\) \(55 armies\) could be taken next turn: player 20 has 75 movable armies next to it plus ~25/);
+    const d = p.deploys.find((x) => x.territoryId === 1)?.armies ?? 0;
+    expect(d).toBeGreaterThanOrEqual(6);
+    expect(armiesToTake(55 + d)).toBeGreaterThan(100);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 6 to T1 \(#1\) so it holds/);
+    expect(p.rationale.join('\n')).toMatch(/T1 \(#1\).*trend.*\+25\/turn/);
+    expect(p.conceded).toEqual([]);
+  });
+
+  it('(g) concedes per L1 when the projected hold is unaffordable', () => {
+    const p = planTurn({ ...base, income: 5, previousBoard: then, options: { goal: 'defend', enemyDeploy: 10 } });
+    expect(p.conceded).toEqual([1]);
+    expect(p.warnings.join('\n')).toMatch(/T1 \(#1\) cannot be held with the 5 armies left to deploy \(needs 6, protects \+5\)/);
+  });
+
+  it('(g) balanced uses the projected threat too', () => {
+    const p = planTurn({ ...base, income: 10, previousBoard: then, options: { enemyDeploy: 10 } });
+    expect(p.rationale.join('\n')).toMatch(/Deploy 6 to T1 \(#1\) so it holds/);
+  });
+
+  it('growth below the deploy estimate warns but leaves the threat at the estimate', () => {
+    const p = planTurn({ ...base, income: 10, previousBoard: then, options: { goal: 'defend', enemyDeploy: 30 } });
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/T2 \(#2\) is building: \+25\/turn/);
+    expect(w).toMatch(/plus ~30 deploy/);
+    expect(p.rationale.join('\n')).not.toMatch(/trend/);
+  });
+
+  it('ignores a territory that was fogged, changed owner or shrank', () => {
+    const fog = board([mine(1, 55), fogged(2), neutral(3, 30)]);
+    const other = board([mine(1, 55), enemy(2, 51, 30), neutral(3, 30)]);
+    const bigger = board([mine(1, 55), enemy(2, 90), neutral(3, 30)]);
+    for (const previousBoard of [fog, other, bigger, board([mine(1, 55)])]) {
+      const p = planTurn({ ...base, income: 10, previousBoard, options: { goal: 'defend', enemyDeploy: 10 } });
+      expect(p.warnings.join('\n')).not.toMatch(/is building|could be taken/);
+    }
+  });
+
+  it('only watches enemy territories next to mine', () => {
+    // T3 grows far from me (behind T2): no warning.
+    const g2 = buildGraph(
+      makeMap(
+        [1, 2, 3],
+        [
+          [1, 2],
+          [2, 3],
+        ],
+        [[701, 5, [1]]],
+      ),
+    );
+    const p = planTurn({
+      graph: g2,
+      board: board([mine(1, 55), enemy(2, 3), enemy(3, 80)]),
+      previousBoard: board([mine(1, 55), enemy(2, 3), enemy(3, 10)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      options: { enemyDeploy: 10 },
+    });
+    expect(p.warnings.join('\n')).not.toMatch(/is building/);
+  });
+});
+
 describe('planTurn — transfers', () => {
   // 1 is interior (only next to my 2); 2 borders neutral 3 (wasteland).
   const g = buildGraph(

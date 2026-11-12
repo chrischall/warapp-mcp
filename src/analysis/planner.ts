@@ -10,6 +10,13 @@
 //     stack)): an opponent's income is unseen, and a big visible stack implies
 //     a big income (live, 13 showing next door broke a 12-army border).
 //     Always a warning.
+//  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
+//     enemy territory next to me that was visible then under the same owner and
+//     has grown is "building" at growth = armies now − armies then per turn (a
+//     warning naming my most exposed neighbour and the armies it needs to hold
+//     next turn and the turn after). A border's threat becomes movable +
+//     max(enemyDeploy, the owner's fastest growth next to it), so its hold cost
+//     and the leftover margin both use the projection (a rationale line says so).
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
 //     of my complete bonuses containing it, plus incomplete bonuses containing it
 //     that I would lose all access to without it, plus the per-territory
@@ -144,6 +151,11 @@ export interface PlanInput {
   me: number;
   /** Armies to deploy this turn (see {@link incomeFor}). */
   income: number;
+  /**
+   * The same player's view one turn earlier, when known: enemy stacks next to me
+   * that grew since then project their growth into next turn's threat.
+   */
+  previousBoard?: BoardState;
   settings?: PlannerSettings;
   options?: PlanOptions;
 }
@@ -339,25 +351,76 @@ export function planTurn(input: PlanInput): TurnPlan {
     return valueCache.get(t)!;
   };
 
+  // ---- 0. threat trend ----
+  // Growth of each visible enemy territory next to me since the previous board
+  // (visible both times, same owner, grown): its armies per turn of build-up.
+  interface Growth {
+    from: number;
+    to: number;
+    growth: number;
+  }
+  const growthOf = new Map<number, Growth>();
+  if (input.previousBoard) {
+    const before = new Map(input.previousBoard.territories.map((t) => [t.territoryId, t]));
+    for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
+      if (st.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      if (!neighborsOf(g, id).some((n) => mineSet.has(n))) continue;
+      const was = before.get(id);
+      if (was?.owner.kind !== 'player' || was.owner.playerId !== st.owner.playerId || was.armies === null) continue;
+      if (st.armies > was.armies) growthOf.set(id, { from: was.armies, to: st.armies, growth: st.armies - was.armies });
+    }
+  }
+  /** Fewest armies on a territory that hold against `threat` attackers. */
+  const holdArmies = (threat: number) => {
+    let a = 0;
+    while ((armiesToTake(a, rates) ?? Infinity) <= threat) a++;
+    return a;
+  };
+
   // ---- 1. defence ----
   interface Border {
     id: number;
     player: number;
     movable: number;
+    /** That player's fastest-growing stack next to this border (0 without a trend). */
+    growth: number;
+    /** movable + max(enemyDeploy, growth). */
     threat: number;
   }
   const borders = new Map<number, Border>();
   for (const t of mine) {
-    const byPlayer = new Map<number, number>();
+    const byPlayer = new Map<number, { movable: number; growth: number }>();
     for (const n of neighborsOf(g, t)) {
       const st = state.get(n);
       if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
-      byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard));
+      const p = byPlayer.get(st.owner.playerId) ?? { movable: 0, growth: 0 };
+      p.movable += Math.max(0, st.armies - guard);
+      p.growth = Math.max(p.growth, growthOf.get(n)?.growth ?? 0);
+      byPlayer.set(st.owner.playerId, p);
     }
     if (!byPlayer.size) continue;
-    const [player, movable] = [...byPlayer].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]!;
-    borders.set(t, { id: t, player, movable, threat: movable + enemyDeploy });
+    const [player, { movable, growth }] = [...byPlayer]
+      .map(([id, p]) => [id, p, p.movable + Math.max(enemyDeploy, p.growth)] as const)
+      .sort((a, b) => b[2] - a[2] || a[0] - b[0])[0]!;
+    borders.set(t, { id: t, player, movable, growth, threat: movable + Math.max(enemyDeploy, growth) });
   }
+  for (const [e, gr] of growthOf) {
+    // Name the most exposed of my territories next to it (fewest armies, then id).
+    const t = neighborsOf(g, e)
+      .filter((n) => mineSet.has(n))
+      .sort((a, b) => armiesOf(a) - armiesOf(b) || a - b)[0]!;
+    const b = borders.get(t)!;
+    const next = b.movable + Math.max(enemyDeploy, b.growth);
+    const after = b.movable + b.growth + Math.max(enemyDeploy, b.growth);
+    warnings.push(
+      `${label(e)} is building: +${gr.growth}/turn (${gr.from} → ${gr.to}); at this rate ${label(t)} needs ${holdArmies(next)} to hold next turn and ${holdArmies(after)} the turn after`,
+    );
+  }
+  for (const b of borders.values())
+    if (b.growth > enemyDeploy)
+      rationale.push(
+        `Threat on ${label(b.id)} uses the trend: player ${b.player}'s stack next to it grows +${b.growth}/turn, more than the ~${enemyDeploy} deploy estimate, so ~${b.threat}.`,
+      );
   if (borders.size)
     warnings.push(
       custom
@@ -378,7 +441,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const take = armiesToTake(have, rates);
     if (take === null || take > b.threat) continue;
     warnings.push(
-      `${label(b.id)} (${have} armies) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${enemyDeploy} deploy, and ${take} would do.`,
+      `${label(b.id)} (${have} armies) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > enemyDeploy ? `${b.growth} (its growth per turn)` : `${enemyDeploy} deploy`}, and ${take} would do.`,
     );
     // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.
     let d = 1;
