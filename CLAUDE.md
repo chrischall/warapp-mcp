@@ -66,13 +66,21 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
   (sent in phase 12 it drew error 10). Within a phase, card plays are written after the moves —
   that position is unverified. Order Delay may be combined with other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
-- **Turn notifications are a socket.io v0.9 xhr-polling client over the bridge**
-  (`src/push/socketio.ts`): handshake GET, then the first poll must return the connect packet
-  `1::` before any POST (a POST first is HTTP 400); heartbeats `2::` are answered; `Subscribe`
+- **Turn notifications are a socket.io v0.9 client with two transports.** While the active
+  transport is the direct leg, a **WebSocket** (`src/push/websocket.ts`): handshake GET with the
+  `AuthToken` cookie (host-locked to war.app), then `wss://war.app/socket.io/1/websocket/<sid>`
+  with the same `Cookie` header. Otherwise — and as the fallback when the WebSocket cannot come up
+  (no session, signed out, no `websocket` transport, failed upgrade) — **xhr-polling over the
+  bridge** (`src/push/socketio.ts`): the first poll must return the connect packet `1::` before
+  any POST (a POST first is HTTP 400). Both answer `2::` heartbeats and send `Subscribe`
   (method 238, no auth block) to `Game.<id>`. A push is method 241 `GameUpdated` carrying only
-  the game id, so `warapp_wait_for_turn` re-reads GameFeed on each one. One listener per process
+  the game id, so `warapp_wait_for_turn` re-reads GameFeed on each one. **A reconnect loses the
+  pushes sent during the gap** (war.app has closed a healthy socket after ~60 s): close, error
+  or a missed heartbeat reconnects (new handshake, new sid, re-subscribe) and `onReconnect`
+  fires, on which `warapp_wait_for_turn` re-reads every watched game. The push transport shows
+  in `warapp_session_status` (`pushTransport`) and the push tools. One listener per process
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
-  Tests drive it against a scripted fake bridge, never a socket.
+  Tests drive a scripted fake bridge and a fake WebSocket, never a real socket.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, at most round(0.75 × its
   largest stack next to me) but never below the game's base income (at least 5)

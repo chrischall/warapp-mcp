@@ -104,10 +104,24 @@ describe('warapp_wait_for_turn', () => {
     const p = payload(await pending);
     expect(p.status).toBe('your_turn');
     expect(p.updates).toBe(1);
-    expect(p.push).toEqual({ connected: true });
+    expect(p.push).toEqual({ connected: true, transport: 'xhr-polling' });
     expect(h.calls).toHaveLength(2);
     expect(h.calls[1]!.url).toContain(`GameID=${GAME}`);
   });
+
+  it('re-reads GameFeed after the push socket reconnects, so a turn that came in the gap is not missed', async () => {
+    const { h, socket } = await setup([COMMITTED(), READY()]);
+    const pending = call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 30 });
+    await until(() => subscribes(socket).length === 1 && h.calls.length === 1, 'subscribe + first check');
+    // The server drops the session; no GameUpdated for the turn ever arrives.
+    socket.push('0::');
+    const p = payload(await pending);
+    expect(p.status).toBe('your_turn');
+    expect(p.updates).toBe(0);
+    expect(p.reconnects).toBe(1);
+    expect(h.calls).toHaveLength(2);
+    expect(socket.handshakes()).toBe(2);
+  }, 5000);
 
   it('keeps waiting when an update is not my turn, then times out', async () => {
     const { h, socket } = await setup([COMMITTED()]);
@@ -209,7 +223,7 @@ describe('warapp_recent_events', () => {
     const events = p.events as Array<{ game_id: number; at: string }>;
     expect(events.map((e) => e.game_id)).toEqual([GAME, 77, GAME]);
     expect(events[0]!.at).toMatch(/^\d{4}-\d\d-\d\dT/);
-    expect(p.listening).toEqual({ started: true, connected: true, watching: [GAME] });
+    expect(p.listening).toEqual({ started: true, connected: true, watching: [GAME], transport: 'xhr-polling' });
     p = payload(await call('warapp_recent_events', { game_id: 77 }));
     expect((p.events as Array<{ game_id: number }>).map((e) => e.game_id)).toEqual([77]);
     p = payload(await call('warapp_recent_events', { limit: 1 }));
@@ -220,6 +234,7 @@ describe('warapp_recent_events', () => {
 describe('waitForTurn', () => {
   function fakePush() {
     const fns = new Set<(u: GameUpdate) => void>();
+    const reconnectFns = new Set<() => void>();
     const watched: number[][] = [];
     return {
       watched,
@@ -233,7 +248,13 @@ describe('waitForTurn', () => {
           fns.add(f);
           return () => fns.delete(f);
         },
+        onReconnect: (f: () => void) => {
+          reconnectFns.add(f);
+          return () => reconnectFns.delete(f);
+        },
       },
+      reconnect: () => reconnectFns.forEach((f) => f()),
+      reconnectListeners: () => reconnectFns.size,
     };
   }
   const notReady = (id: number): GameCheck => ({ id, name: null, state: 'Playing', turn: 1, waitingOnYou: false });
@@ -267,6 +288,58 @@ describe('waitForTurn', () => {
     expect(out.updates).toBe(2);
     expect(out.games.map((g) => g.waitingOnYou)).toEqual([false, true]);
     expect(fp.listeners()).toBe(0);
+  });
+
+  it('re-reads every game after a push-socket reconnect (pushes in the gap are lost), then resolves', async () => {
+    const fp = fakePush();
+    const checks: number[] = [];
+    let turnArrived = false;
+    const messages: string[] = [];
+    const pending = waitForTurn({
+      gameIds: [1, 2],
+      timeoutMs: 5000,
+      push: fp.push,
+      progress: (_ms, m) => messages.push(m),
+      check: async (id) => {
+        checks.push(id);
+        return id === 2 && turnArrived ? { ...notReady(id), waitingOnYou: true } : notReady(id);
+      },
+    });
+    await until(() => checks.length === 2, 'initial checks');
+    // Game 2's turn came during the gap: no push for it ever arrives.
+    turnArrived = true;
+    fp.reconnect();
+    const out = await pending;
+    expect(out.status).toBe('your_turn');
+    expect(checks.slice(2).sort()).toEqual([1, 2]);
+    expect(out.updates).toBe(0);
+    expect(out.reconnects).toBe(1);
+    expect(messages.some((m) => /reconnected/i.test(m))).toBe(true);
+    expect(fp.listeners()).toBe(0);
+    expect(fp.reconnectListeners()).toBe(0);
+  });
+
+  it('does not queue a game twice when a reconnect and a push for it overlap, and keeps waiting', async () => {
+    const fp = fakePush();
+    const checks: number[] = [];
+    const pending = waitForTurn({
+      gameIds: [1],
+      timeoutMs: 50,
+      push: fp.push,
+      check: async (id) => {
+        checks.push(id);
+        return notReady(id);
+      },
+    });
+    await until(() => checks.length === 1, 'initial check');
+    fp.emit(1);
+    fp.reconnect();
+    fp.reconnect();
+    const out = await pending;
+    expect(out.status).toBe('timed_out');
+    expect(out.reconnects).toBe(2);
+    // The initial read, then one re-read: the push and both reconnects collapse while queued.
+    expect(checks).toEqual([1, 1]);
   });
 
   it('rejects at once for an already-aborted signal', async () => {

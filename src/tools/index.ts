@@ -73,14 +73,6 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerScoutTool(server, live);
   registerTurnTools(server, live);
   registerChatTools(server, live);
-  registerSessionTools(server, {
-    transport: {
-      activeLeg: () => bridge.status().transport,
-      sessionStale: () => bridge.sessionStale(),
-      sessionLinked: () => bridge.sessionLinked(),
-    },
-    ...(env ? { env } : {}),
-  });
   // One push socket per process: keyed on the shared fetchproxy bridge so
   // connections share it, with requests routed through the direct-first bridge.
   // While the direct leg is active the push rides a direct WebSocket (the
@@ -93,5 +85,14 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
       webSocket: pushWebSocketLeg(bridge, () => readSession(deps.env)),
       extras: () => live.rpc.extras,
     });
+  registerSessionTools(server, {
+    transport: {
+      activeLeg: () => bridge.status().transport,
+      sessionStale: () => bridge.sessionStale(),
+      sessionLinked: () => bridge.sessionLinked(),
+    },
+    pushTransport: () => push.status().transport,
+    ...(env ? { env } : {}),
+  });
   registerPushTools(server, live, push);
 }

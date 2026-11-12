@@ -17,6 +17,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { linkSession, type LinkResult, type LinkSessionOptions } from '../direct/link.js';
 import { readSession, SESSION_HOST, type Session } from '../direct/session.js';
+import type { PushTransportName } from '../push/socketio.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
 
@@ -40,6 +41,8 @@ export interface SessionToolsDeps {
   read?: () => Promise<Session | null>;
   /** Test seam: capture + store a session. Defaults to {@link linkSession}. */
   link?: (opts?: LinkSessionOptions) => Promise<LinkResult>;
+  /** The push socket's transport (websocket / xhr-polling); undefined before it has run. */
+  pushTransport?: () => PushTransportName | undefined;
   /** Clock for age. Defaults to `Date.now`. */
   now?: () => number;
 }
@@ -62,7 +65,8 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
       title: 'war.app direct-transport session status',
       description: untrustedDescription(
         'Report whether a signed-in war.app session is linked for the direct (no-browser) transport, when it was ' +
-          'captured and how old it is, and which transport is currently active (direct, or the browser bridge). ' +
+          'captured and how old it is, which transport is currently active (direct, or the browser bridge), and ' +
+          'which transport the turn-notification push socket rides (websocket or xhr-polling) once it has run. ' +
           'Never shows the session cookie. Read-only; use warapp_link_session to link or relink.',
       ),
       _meta: lookupMeta(['war.app session', 'is war.app linked', 'direct transport status']),
@@ -72,10 +76,12 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
     async () => {
       const session = await read();
       const activeTransport = deps.transport.activeLeg();
+      const pt = deps.pushTransport?.();
+      const push = pt ? { pushTransport: pt } : {};
       return respond(undefined, ['compact'], () => {
-        if (!session) return { linked: false, activeTransport, hint: HINT_NOT_LINKED };
+        if (!session) return { linked: false, activeTransport, ...push, hint: HINT_NOT_LINKED };
         const ageSeconds = Math.max(0, Math.round((now() - Date.parse(session.capturedAt)) / 1000));
-        const base = { linked: true, host: session.host, capturedAt: session.capturedAt, ageSeconds, activeTransport };
+        const base = { linked: true, host: session.host, capturedAt: session.capturedAt, ageSeconds, activeTransport, ...push };
         return deps.transport.sessionStale() ? { ...base, sessionExpired: true, hint: HINT_EXPIRED } : base;
       });
     },
