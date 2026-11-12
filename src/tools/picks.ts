@@ -66,7 +66,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           "game's settings (starting armies, neutral sizes, kill rates, base income) and the live board's " +
           'pickable territories: a list in priority order by name and id, split into a primary group ' +
           '(the territory limit: what you are granted if nobody takes them first; compact with 3+ players, ' +
-          'allowed to spread over bonuses in a 1v1, with maxHops between its two farthest picks) and a disjoint fallback group ' +
+          'allowed a bounded spread over bonuses in a 1v1, with maxHops between its two farthest picks) and a disjoint fallback group ' +
           '(granted in order when another player picked first), each pick with its score and reasons (bonus, ' +
           'value, turns to complete, first-turn bonus, entry points, contested), the bonuses each group completes, ' +
           'warnings (assumed settings) and the reasoning. Its `submitPicks` is exactly what warapp_submit_picks ' +

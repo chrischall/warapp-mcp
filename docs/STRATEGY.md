@@ -21,14 +21,16 @@ A game allows twice its territory limit in picks, but grants only the territory 
 order, skipping territories another player was granted first. So the list is two plans: the
 first `TerritoryLimit` picks are the plan you want, the rest a fallback that still makes sense
 when some of the first ones are lost. **Encoded:** the primary group is exactly the territory
-limit and the fallback is disjoint from it, each group compact on its own.
+limit and the fallback is disjoint from it, each group built by the same rule on its own (compact
+with three or more players, bounded spread in a 1v1 — both relaxed, with a warning, when the
+remaining picks allow nothing tighter). A fallback that outscores the primary is warned about.
 
 ## Heuristics
 
 1. **Safety and room to grow before greed.** A pick set should not lose outright to one bad
    draw, and every pick should have neutral territory to expand into. **Encoded in part:** with three
-   or more players each group is compact (every pick within two hops of another, measured on the
-   map graph `warapp_plan_route` uses) so its armies can support each other; when no compact group
+   or more players each group is compact (one cluster whose picks link up in steps of at most two
+   hops, measured on the map graph `warapp_plan_route` uses) so its armies can support each other; when no compact group
    of the territory limit exists the limit relaxes one hop at a time, with a warning. A pick is
    only worth what its own armies can capture next to it. **Not encoded:** judging whether a
    specific opponent's likely picks would trap yours (counter-picking needs their history).
@@ -59,7 +61,9 @@ limit and the fallback is disjoint from it, each group compact on its own.
 6. **1v1: do not put everything in one basket.** With one opponent, spreading picks over
    different bonuses keeps a single counter-pick from wiping the plan. **Encoded:** in a 1v1 a pick
    may join the primary group by anchoring a bonus no other pick anchors, even when it is not
-   within two hops — but only within four, and the rationale states the group's real spread (the
-   hops between its two farthest picks) instead of calling it compact.
+   within two hops — but only within four, unless a group spread farther scores at least 1.5× as
+   much (or no bounded group exists), which is warned about, so the bound never quietly sends the
+   best picks to the fallback. The rationale states the group's real spread (the hops between its
+   two farthest picks and the longest step linking them) instead of calling it compact.
 7. **Read the opponent.** Strong picks depend on what the other player is likely to pick and
    where they will start. **Not encoded** — a later strategy phase (it needs their history).

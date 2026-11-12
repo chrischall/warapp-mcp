@@ -40,9 +40,19 @@ const scoreOf = (p: PickPlan, id: number) => p.picks.find((x) => x.territoryId =
 const reasonsOf = (p: PickPlan, id: number) => p.picks.find((x) => x.territoryId === id)!.reasons.join(' | ');
 
 /** Every territory in `ids` has another in `ids` within 2 hops (trivially true for one). */
+/** One cluster whose picks link up in steps of at most 2 hops. */
 function compact(g: MapGraph, ids: number[]): boolean {
   if (ids.length < 2) return true;
-  return ids.every((a) => ids.some((b) => b !== a && (distance(g, a, b) ?? 99) <= 2));
+  const seen = new Set([ids[0]!]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const a of ids)
+      if (!seen.has(a) && [...seen].some((b) => (distance(g, a, b) ?? 99) <= 2)) {
+        seen.add(a);
+        grew = true;
+      }
+  }
+  return seen.size === ids.length;
 }
 
 describe('planPicks — scoring', () => {
@@ -64,7 +74,7 @@ describe('planPicks — scoring', () => {
     expect(reasonsOf(p, 4)).toMatch(/Long \(\+10\).*not complete within 3 turns/);
     // The 7 members besides the pick, 2 neutrals each: captureCost(2) at 60/70 = 3 → 21
     // (the pick itself is held, so it is not counted).
-    expect(reasonsOf(p, 4)).toMatch(/~21 armies to take the rest/);
+    expect(reasonsOf(p, 4)).toMatch(/~21 armies to take all of it from this pick/);
   });
 
   it('(b) with 0-army neutrals a territory next to many small bonuses scores high', () => {
@@ -309,21 +319,56 @@ describe('planPicks — compactness (#47)', () => {
     expect(p.warnings.join(' ')).toMatch(/no compact primary group.*within 3 hops/i);
     expect(p.rationale.join(' ')).not.toMatch(/compact primary group \(each within 2/);
     expect(p.rationale.join(' ')).toMatch(/3 hops/);
+    expect(p.rationale.join(' ')).not.toMatch(/each group must be compact/);
+    expect(p.rationale.join(' ')).toMatch(/relaxed/);
   });
 
-  it('in a 1v1 the rationale reports the real distances and never claims compactness it lacks', () => {
-    const g = spreadMap();
-    const p = plan({ graph: g, pickable, players: 2, territoryLimit: 3, maxPicks: 6 });
+  it('in a 1v1 a spread group is never called compact, even when each pick has a mate within 2 hops', () => {
+    // Two tight pairs, {1,2} and {10,11}, joined only by 2-3-4-10: each pick has a group-mate
+    // within 2 hops, but the pairs are 3 hops apart, so the group is not one compact cluster.
+    const g = mkGraph(
+      [[1, 2], [2, 3], [3, 4], [4, 10], [10, 11], [1, 51], [2, 52], [10, 53], [11, 54]],
+      [
+        { id: 811, name: 'P1', value: 3, territoryIds: [1, 51] },
+        { id: 812, name: 'P2', value: 3, territoryIds: [2, 52] },
+        { id: 813, name: 'P10', value: 3, territoryIds: [10, 53] },
+        { id: 814, name: 'P11', value: 3, territoryIds: [11, 54] },
+      ],
+    );
+    const p = plan({ graph: g, pickable: [1, 2, 10, 11], players: 2, territoryLimit: 4, maxPicks: 4 });
     const primary = primaryOf(p);
-    expect(primary).toHaveLength(3);
-    const far = farthest(g, primary);
-    const text = p.rationale.join(' ');
-    expect(text).toContain(`farthest two ${far} hops apart`);
-    if (!compact(g, primary)) expect(text).not.toMatch(/compact/);
+    expect([...primary].sort((a, b) => a - b)).toEqual([1, 2, 10, 11]);
+    expect(compact(g, primary)).toBe(false);
+    expect(p.groups.primary.maxHops).toBe(5);
+    const line = p.rationale.find((r) => r.includes('primary group'))!;
+    expect(line).toContain(
+      'the primary group, spread: its picks link up only in steps of up to 3 hops, the farthest two 5 hops apart (T1 and T11)',
+    );
+    expect(line).not.toMatch(/compact/);
     // Spreading is bounded: every pick within SPREAD_DISTANCE of another group pick.
     for (const a of primary)
       expect(Math.min(...primary.filter((b) => b !== a).map((b) => distance(g, a, b)!))).toBeLessThanOrEqual(SPREAD_DISTANCE);
-    expect(p.groups.primary.maxHops).toBe(far);
+  });
+
+  it('in a 1v1 the hop bound does not send a far better group to the fallback', () => {
+    // Within 4 hops only the weak cluster forms a group of 3; the three +5 first-turn picks lie
+    // 6 hops apart and score several times more, so the primary spreads to them, with a warning.
+    const g = spreadMap();
+    const p = plan({ graph: g, pickable, players: 2, territoryLimit: 3, maxPicks: 6 });
+    expect([...primaryOf(p)].sort((a, b) => a - b)).toEqual([1, 11, 21]);
+    expect(p.picks.filter((x) => x.group === 'fallback').map((x) => x.territoryId).sort((a, b) => a - b)).toEqual([
+      31, 33, 35,
+    ]);
+    expect(p.groups.primary.score).toBeGreaterThan(p.groups.fallback.score);
+    expect(p.warnings.join(' ')).toMatch(/1v1.*primary group spreads to within 6 hops/);
+    expect(p.groups.primary.maxHops).toBe(12);
+    expect(p.rationale.join(' ')).toContain('farthest two 12 hops apart');
+  });
+
+  it('with ≥ 3 players a fallback that outscores the compact primary is flagged', () => {
+    const p = plan({ graph: spreadMap(), pickable, players: 4, territoryLimit: 3, maxPicks: 6 });
+    expect(p.groups.fallback.score).toBeGreaterThan(p.groups.primary.score);
+    expect(p.warnings.join(' ')).toMatch(/fallback group scores more than the primary/i);
   });
 });
 
@@ -376,6 +421,26 @@ describe('planPicks — opening simulation (#47)', () => {
   });
 });
 
+describe('planPicks — opening simulation, idle armies (#47)', () => {
+  it('when the best bonus cannot be paid for, armies elsewhere still take a cheaper one', () => {
+    // Big (+20) = {1,2}: 2 holds 20 neutrals (34 armies; the best ratio), far beyond pick 1's 4 movable + 5 income.
+    // Small (+1) = {5,6}: pick 5's own 4 movable armies take 6 (2 neutrals) on turn 1,
+    // while the income is saved on pick 1 for Big.
+    const g = mkGraph([[1, 2], [5, 6]], [
+      { id: 971, name: 'Big', value: 20, territoryIds: [1, 2] },
+      { id: 972, name: 'Small', value: 1, territoryIds: [5, 6] },
+    ]);
+    const p = plan({
+      graph: g,
+      pickable: [1, 5],
+      territoryLimit: 2,
+      maxPicks: 2,
+      neutralArmies: new Map([[2, 20], [6, 2]]),
+    });
+    expect(p.groups.primary.bonuses.find((b) => b.name === 'Small')?.turn).toBe(1);
+  });
+});
+
 describe('planPicks — reasons lead with the point (#47)', () => {
   it("reasons[0] names the bonus the pick anchors and when it completes; negatives come after", () => {
     // Pick 1 anchors Duo (+3, first-turn) and touches Mire (+4) with a 20-army wasteland.
@@ -399,7 +464,7 @@ describe('planPicks — reasons lead with the point (#47)', () => {
     );
     const p = plan({ graph: g, pickable: [4], territoryLimit: 1, maxPicks: 1 });
     const r = p.picks[0]!.reasons;
-    expect(r[0]).toMatch(/^Advances Long \(\+10\): \d of 8 territories by turn 3/);
+    expect(r[0]).toMatch(/^Advances Long \(\+10\): \d of 8 territories by turn 3, ~\d+ armies to take all of it from this pick/);
     expect(r.slice(1).join(' | ')).toMatch(/not complete within 3 turns/);
   });
 });

@@ -20,7 +20,8 @@
 //     cheapest such member from one bordering start-of-turn territory (the one with the
 //     most movable armies, i.e. above the guard), topped up by the turn's unspent income
 //     (deployed there). When that cannot afford it, the rest of the income is deployed on
-//     that source and saved for the next turn. A capture's survivors stay on the captured
+//     that source and saved for the next turn, and the next-best bonuses are still tried
+//     with the movable armies of other sources alone. A capture's survivors stay on the captured
 //     territory and attack from there next turn (captured armies never attack the turn
 //     they capture). A bonus held in full by the picks themselves (a single-territory
 //     bonus) completes on turn 0; one completed on turn 1 is a first-turn bonus (FTB).
@@ -43,11 +44,15 @@
 //     a 1v1, anchoring a bonus no group pick anchors and within SPREAD_DISTANCE hops
 //     (spreading against one counter-pick, bounded). Ties: individual score, then id.
 //     Seeds are tried best score first; when none grows a full group, the hop limit
-//     relaxes by one, with a warning, until one does. The fallback group is built the
-//     same way from the remaining pickables, up to maxPicks in total. Each group is
-//     listed by score; its maxHops and the rationale state its real spread (farthest
-//     pair, and how far each pick lies from its nearest group-mate) and call it compact
-//     only when every pick is within COMPACT_DISTANCE of another.
+//     relaxes by one, with a warning, until one does. In a 1v1 the bound also gives way,
+//     with a warning, at the smallest hop limit where a group scores SPREAD_RELAX_GAIN
+//     times the bounded one — the bound must not quietly hand the best picks to the
+//     fallback. The fallback group is built the same way from the remaining pickables,
+//     up to maxPicks in total; a fallback that still outscores the primary is warned
+//     about. Each group is listed by score; its maxHops and the rationale state its real
+//     spread (farthest pair, and the longest step linking its picks into one cluster) and
+//     call it compact only when that step is at most COMPACT_DISTANCE: one cluster, not
+//     merely each pick with a group-mate nearby.
 //  6. Reasons. reasons[0] is the bonus the pick anchors (worth most to it alone) and its
 //     completion turn and the income it adds, or how much of it is held by the horizon;
 //     then the other bonuses it completes or advances; negatives (shortfalls,
@@ -74,6 +79,8 @@ export const CONTEST_MAX = 0.5;
 export const COMPACT_DISTANCE = 2;
 /** …or, in a 1v1, within this many when it anchors a bonus no other group pick anchors. */
 export const SPREAD_DISTANCE = 4;
+/** A 1v1 group spreads past SPREAD_DISTANCE only when that scores at least this many times as much. */
+export const SPREAD_RELAX_GAIN = 1.5;
 /** Defaults when the settings are missing (war.app's usual values). */
 export const DEFAULT_PICK_ARMIES = 5;
 export const DEFAULT_NEUTRALS_IN_DISTRIBUTION = 4;
@@ -211,11 +218,14 @@ function simulate(ctx: Ctx, start: readonly number[]): SimResult {
     const avail = new Map(startHeld.map((t) => [t, Math.max(0, armiesOn.get(t)! - ctx.guard)]));
     const captured = new Set<number>();
     // Where this turn's unspent deploys go: the source of the attack it is saving for.
+    // Once set, the deploys are reserved for it; other sources still attack with their own armies.
     let saveAt: number | null = null;
+    // Bonuses whose next capture cannot be paid for this turn.
+    const skipped = new Set<number>();
     for (;;) {
       let best: { id: number; ratio: number; rem: number; target: number; cost: number } | null = null;
       for (const id of relevant(startHeld)) {
-        if (completions.has(id)) continue;
+        if (completions.has(id) || skipped.has(id)) continue;
         const b = ctx.bonuses.get(id)!;
         let rem = 0;
         let target: number | null = null;
@@ -242,16 +252,20 @@ function simulate(ctx: Ctx, start: readonly number[]): SimResult {
       }
       if (!best) break;
       // The attack comes from one bordering territory held at the start of the turn —
-      // the one with the most movable armies (then id) — topped up by this turn's deploys.
+      // the one with the most movable armies (then id) — topped up by this turn's deploys
+      // unless they are already reserved for an attack saved for next turn.
       let source = -1;
       for (const n of neighborsOf(ctx.g, best.target)) {
-        if (!startSet.has(n)) continue;
+        if (!startSet.has(n) || n === saveAt) continue;
         if (source < 0 || avail.get(n)! > avail.get(source)!) source = n;
       }
-      const own = avail.get(source)!;
-      if (own + budget < best.cost) {
-        saveAt = source;
-        break;
+      const own = source < 0 ? 0 : avail.get(source)!;
+      const deploy = saveAt === null ? budget : 0;
+      if (source < 0 || own + deploy < best.cost) {
+        // Save the deploys for the best bonus; try the next one with what else stands idle.
+        if (saveAt === null && source >= 0) saveAt = source;
+        skipped.add(best.id);
+        continue;
       }
       const fromOwn = Math.min(own, best.cost);
       avail.set(source, own - fromOwn);
@@ -446,14 +460,14 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       } else {
         const share = sim.progress.get(id)!;
         const have = Math.round(share * b.members.length);
-        point = `${head}: ${have} of ${b.members.length} territories by turn ${PICK_HORIZON}; ${entries}`;
         // The pick itself is held; the rest are captured. A member that cannot be
         // taken at these kill rates makes the bonus unreachable, not cheaper.
         const rest = b.members.filter((m) => m !== t).map((m) => cost.get(m));
         const left = rest.some((c) => c === null || c === undefined)
           ? 'a member cannot be taken at these kill rates'
-          : `~${rest.reduce((acc: number, c) => acc + (c as number), 0)} armies to take the rest`;
-        negatives.push(`${head}: not complete within ${PICK_HORIZON} turns (${left})`);
+          : `~${rest.reduce((acc: number, c) => acc + (c as number), 0)} armies to take all of it from this pick`;
+        point = `${head}: ${have} of ${b.members.length} territories by turn ${PICK_HORIZON}, ${left}; ${entries}`;
+        negatives.push(`${head}: not complete within ${PICK_HORIZON} turns`);
         worth = PROGRESS_WEIGHT * b.value * share;
       }
       worth *= b.defense;
@@ -523,6 +537,16 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     }
     return group;
   };
+  const groupScore = (ids: number[]) => simulate(ctx, ids).score;
+  /** The hop limit each group was relaxed to (absent: not relaxed; Infinity: until every pick could join). */
+  const relaxedTo = new Map<string, number>();
+  const firstGroup = (pool: number[], size: number, seeds: number[], hop: number) => {
+    for (const seed of seeds) {
+      const group = tryGroup(pool, size, seed, hop);
+      if (group) return group;
+    }
+    return null;
+  };
   const buildGroup = (pool: number[], size: number, label: string): number[] => {
     if (size <= 0 || !pool.length) return [];
     const seeds = [...pool].sort(byScore);
@@ -531,18 +555,45 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     for (const a of pool) for (const b of pool) if (a < b && hops(a, b) < Infinity) widest = Math.max(widest, hops(a, b));
     for (let hop = COMPACT_DISTANCE; ; hop++) {
       const last = hop > widest;
-      const h = last ? Infinity : hop;
-      for (const seed of seeds) {
-        const group = tryGroup(pool, size, seed, h);
-        if (!group) continue;
-        if (hop > COMPACT_DISTANCE)
-          warnings.push(
-            `No compact ${label} group of ${size} picks (each within ${COMPACT_DISTANCE} hops of another) exists among the pickable territories; ` +
-              (last ? 'relaxed until every pick could join (some are not connected).' : `relaxed to within ${hop} hops.`),
-          );
-        return group.sort(byScore);
+      const group = firstGroup(pool, size, seeds, last ? Infinity : hop);
+      if (!group) {
+        if (last) return seeds.slice(0, size).sort(byScore);
+        continue;
       }
-      if (last) return seeds.slice(0, size).sort(byScore);
+      if (hop > COMPACT_DISTANCE) {
+        relaxedTo.set(label, last ? Infinity : hop);
+        warnings.push(
+          `No compact ${label} group of ${size} picks (each within ${COMPACT_DISTANCE} hops of another) exists among the pickable territories; ` +
+            (last ? 'relaxed until every pick could join (some are not connected).' : `relaxed to within ${hop} hops.`),
+        );
+      }
+      // In a 1v1 the hop bound must not quietly hand a far better group to the fallback:
+      // spread past it when that scores SPREAD_RELAX_GAIN times as much, at the smallest
+      // hop limit that does.
+      const bound = Math.max(hop, SPREAD_DISTANCE);
+      if (spread && !last && bound < widest) {
+        const bounded = groupScore(group);
+        const better = (g2: number[] | null) => {
+          const sc = g2 ? groupScore(g2) : -Infinity;
+          return sc > bounded && sc >= SPREAD_RELAX_GAIN * bounded ? sc : null;
+        };
+        if (better(firstGroup(pool, size, seeds, Infinity)) !== null) {
+          for (let h = bound + 1; h <= widest + 1; h++) {
+            const limit = h > widest ? Infinity : h;
+            const wide = firstGroup(pool, size, seeds, limit);
+            const sc = better(wide);
+            if (sc === null) continue;
+            relaxedTo.set(label, limit);
+            const within = Number.isFinite(limit) ? `within ${limit} hops` : 'any distance';
+            warnings.push(
+              `In a 1v1 the best ${label} group within ${bound} hops scores ${round2(bounded)}, but one spread to ${within} scores ${round2(sc)} ` +
+                `(at least ${SPREAD_RELAX_GAIN}× as much): the ${label} group spreads to ${within}, so its picks can support each other less.`,
+            );
+            return wide!.sort(byScore);
+          }
+        }
+      }
+      return group.sort(byScore);
     }
   };
 
@@ -557,25 +608,41 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   const rest = pickable.filter((t) => !primary.includes(t));
   const fallback = buildGroup(rest, Math.min(maxPicks - primary.length, rest.length), 'fallback');
 
-  /** Farthest pair (hops) and the largest distance from a pick to its nearest group-mate. */
+  /** Farthest pair (hops) and the longest step that links the picks into one cluster. */
   const spreadOf = (ids: number[]) => {
     let far = 0;
     let pair: [number, number] | null = null;
-    let near = 0;
-    for (const a of ids) {
-      let nearest = Infinity;
+    for (const a of ids)
       for (const b of ids) {
-        if (b === a) continue;
+        if (a >= b) continue;
         const d = hops(a, b);
-        nearest = Math.min(nearest, d);
-        if (a < b && (pair === null || d > far)) {
+        if (pair === null || d > far) {
           far = d;
           pair = [a, b];
         }
       }
-      if (ids.length > 1) near = Math.max(near, nearest);
+    // The longest step needed to link every pick into one cluster (minimax spanning tree).
+    let link = 0;
+    if (ids.length > 1) {
+      const inTree = new Set([ids[0]!]);
+      while (inTree.size < ids.length) {
+        let step = Infinity;
+        let next = -1;
+        for (const a of ids) {
+          if (inTree.has(a)) continue;
+          for (const b of inTree) {
+            const d = hops(a, b);
+            if (next < 0 || d < step) {
+              step = d;
+              next = a;
+            }
+          }
+        }
+        inTree.add(next);
+        link = Math.max(link, step);
+      }
     }
-    return { far, pair, near };
+    return { far, pair, link };
   };
 
   const groupOf = (ids: number[]): PickGroup => {
@@ -594,14 +661,19 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   ];
 
   const hopsText = (n: number) => (Number.isFinite(n) ? `${n} hop${n === 1 ? '' : 's'}` : 'unconnected');
+  // Compact means one cluster whose picks link up in steps of at most COMPACT_DISTANCE
+  // hops — not merely each pick having a group-mate that close (two tight pairs far
+  // apart pass that test).
   const describe = (ids: number[]): string => {
     if (ids.length < 2) return 'a single pick';
-    const { far, pair, near } = spreadOf(ids);
-    const between = `the farthest two ${hopsText(far)} apart (${terrName(pair![0])} and ${terrName(pair![1])})`;
-    return near <= COMPACT_DISTANCE
-      ? `compact: each within ${COMPACT_DISTANCE} hops of another, ${between}`
-      : `not compact: each within ${hopsText(near)} of another, ${between}`;
+    const { far, pair, link } = spreadOf(ids);
+    const names = `${terrName(pair![0])} and ${terrName(pair![1])}`;
+    const between = Number.isFinite(far) ? `the farthest two ${hopsText(far)} apart (${names})` : `${names} not connected`;
+    if (link <= COMPACT_DISTANCE) return `compact: one cluster, each pick within ${COMPACT_DISTANCE} hops of another, ${between}`;
+    if (!Number.isFinite(link)) return `spread: some picks are not connected to the others, ${between}`;
+    return `spread: its picks link up only in steps of up to ${hopsText(link)}, ${between}`;
   };
+  const relaxed = relaxedTo.size > 0;
 
   rationale.push(
     `Each pick is scored by the bonus armies it earns through turn ${PICK_HORIZON + 1} in a ${PICK_HORIZON}-turn opening simulation: ` +
@@ -610,11 +682,24 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       `armies attack only from a territory held at the start of the turn that borders the target, topped up by that turn's deploys.`,
     `Bonuses are weighted by defensibility (fewer entry points is better${hardness > 1 ? '; attacks here are dearer than at 60/70, so this weighs more' : ''}).`,
     contestWeight > 0
-      ? `With ${players} players central picks are likely contested: scores drop by up to ${Math.round(contestWeight * 100)}% with centrality, and each group must be compact (each pick within ${COMPACT_DISTANCE} hops of another).`
-      : `In a 1v1 centrality is not penalised; a pick may join a group within ${SPREAD_DISTANCE} hops when it anchors a different bonus, so one counter-pick cannot wipe them.`,
+      ? `With ${players} players central picks are likely contested: scores drop by up to ${Math.round(contestWeight * 100)}% with centrality, and ` +
+          (relaxed
+            ? `each group is kept as compact as the map allows (no group of the needed size forms one cluster with each pick within ${COMPACT_DISTANCE} hops of another, so the hop limit was relaxed; see the warnings).`
+            : `each group is compact (one cluster, each pick within ${COMPACT_DISTANCE} hops of another).`)
+      : `In a 1v1 centrality is not penalised; a pick may join a group within ${SPREAD_DISTANCE} hops when it anchors a different bonus, so one counter-pick cannot wipe them` +
+          (relaxed ? `; a group spreads farther only when no bounded group exists or spreading scores ${SPREAD_RELAX_GAIN}× as much (see the warnings).` : '.'),
     `The first ${primary.length} picks are the primary group, ${describe(primary)}; ` +
       `the rest are a disjoint fallback${fallback.length ? ` (${describe(fallback)})` : ''}, granted in order when another player picks first.`,
   );
 
-  return { picks, groups: { primary: groupOf(primary), fallback: groupOf(fallback) }, warnings, rationale };
+  const groups = { primary: groupOf(primary), fallback: groupOf(fallback) };
+  if (groups.fallback.score > groups.primary.score)
+    warnings.push(
+      `The fallback group scores more than the primary (${groups.fallback.score} vs ${groups.primary.score}): the primary keeps to ` +
+        (players > 2
+          ? `one compact cluster, since with ${players} players spread picks are likely contested.`
+          : `within ${SPREAD_DISTANCE} hops unless spreading scores ${SPREAD_RELAX_GAIN}× as much.`) +
+        ' Weigh the trade before submitting.',
+    );
+  return { picks, groups, warnings, rationale };
 }
