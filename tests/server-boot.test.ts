@@ -6,7 +6,7 @@
 // Runs WITHOUT credentials (deferred-config pattern: the server must still
 // boot and answer tools/list) and with WARAPP_ENV_FILE pointed at a file that
 // does not exist, so the developer's real ~/.config/warapp-mcp/.env is never
-// read.
+// read. The fetchproxy identity the bridge loads at boot goes in the temp dir.
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, copyFileSync, existsSync } from 'node:fs';
@@ -33,7 +33,13 @@ describe('server boot (bundled artifact, no node_modules)', () => {
     const bundleCopy = join(dir, 'bundle.js');
     copyFileSync(BUNDLE, bundleCopy);
 
-    const env: NodeJS.ProcessEnv = { ...process.env, WARAPP_ENV_FILE: join(dir, 'absent.env') };
+    // The bridge starts at boot and loads (or creates) its fetchproxy identity:
+    // keep that inside the temp dir, never the developer's ~/.fetchproxy.
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      WARAPP_ENV_FILE: join(dir, 'absent.env'),
+      FETCHPROXY_IDENTITY_DIR: join(dir, 'identity'),
+    };
     delete env.WARAPP_EMAIL;
     delete env.WARAPP_API_TOKEN;
     const child = spawn(process.execPath, [bundleCopy], { cwd: dir, env, stdio: ['pipe', 'pipe', 'pipe'] });

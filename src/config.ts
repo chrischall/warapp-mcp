@@ -46,3 +46,17 @@ export function readCredentials(env: EnvSource = process.env): WarappCredentials
       `sign-in email and WARAPP_API_TOKEN to the API token shown at ${TOKEN_URL} while signed in.`,
   );
 }
+
+/**
+ * Read `WARAPP_EMAIL` alone — the web-client protocol's auth block carries the
+ * account email and nothing else (the browser's cookies authenticate the
+ * request). Throws a value-free {@link WarappConfigError} when it is unset.
+ */
+export function readEmail(env: EnvSource = process.env): string {
+  const email = readEnvVar('WARAPP_EMAIL', { env });
+  if (email) return email;
+  throw new WarappConfigError(
+    'WARAPP_EMAIL is not set. Set it to the email you sign in to war.app with — the live-game tools send it ' +
+      'with each request, alongside the session of your signed-in war.app tab.',
+  );
+}

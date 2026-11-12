@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { envFilePath, readCredentials, WarappConfigError } from '../src/config.js';
+import { envFilePath, readCredentials, readEmail, WarappConfigError } from '../src/config.js';
 
 describe('envFilePath', () => {
   it('defaults to ~/.config/warapp-mcp/.env', () => {
@@ -45,5 +45,25 @@ describe('readCredentials', () => {
   it('names only the missing one', () => {
     expect(() => readCredentials({ WARAPP_EMAIL: 'me@example.com' })).toThrow(/^WARAPP_API_TOKEN is not set\./);
     expect(() => readCredentials({ WARAPP_API_TOKEN: 'abc123' })).toThrow(/^WARAPP_EMAIL is not set\./);
+  });
+});
+
+describe('readEmail', () => {
+  it('returns WARAPP_EMAIL without needing the API token', () => {
+    expect(readEmail({ WARAPP_EMAIL: ' me@example.com ' })).toBe('me@example.com');
+  });
+
+  it('throws a value-free config error when WARAPP_EMAIL is missing or a placeholder', () => {
+    for (const env of [{}, { WARAPP_EMAIL: '${user_config.email}' }]) {
+      let err: unknown;
+      try {
+        readEmail(env);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(WarappConfigError);
+      expect((err as Error).message).toContain('WARAPP_EMAIL');
+      expect((err as Error).message).not.toContain('user_config');
+    }
   });
 });
