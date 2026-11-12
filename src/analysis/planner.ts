@@ -888,7 +888,12 @@ export function planTurn(input: PlanInput): TurnPlan {
   const bonusName = (id: number) => `${g.bonusById.get(id)!.name} (#${id})`;
 
   // ---- R3: a completion must leave a frontier I can hold ----
-  /** "Not completed" warning and rationale, by bonus: kept outside `warnings`/`rationale` so a rolled-back pass cannot drop them. */
+  /**
+   * "Not completed" warning and rationale, by bonus: kept outside `warnings`/`rationale`
+   * so a rolled-back pass cannot drop them. A refusal is not final — the next income
+   * grows as other bonuses complete — so they are emitted at the end only for bonuses
+   * the plan did not complete after all.
+   */
   const notCompleted = new Map<number, { warning: string; why: string }>();
   /**
    * Called with `t` just captured (with `sent` armies): for every bonus this
@@ -896,6 +901,9 @@ export function planTurn(input: PlanInput): TurnPlan {
    * hold must fit my projected next income (plus this turn's leftover, for members
    * I held at the start: a fresh capture cannot be deployed to). Otherwise the
    * bonus is lost immediately: refused under `balanced`/`defend`, warned otherwise.
+   * The total need is checked, not each member alone: holding the bonus needs every
+   * exposed member held. The leftover is as of this check; a later capture this turn
+   * may still spend it (defence funds held borders first, so this is rarely material).
    */
   const defensible = (t: number, sent: number): boolean => {
     const after = new Set([...mine, ...captured]);
@@ -1309,11 +1317,6 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
   }
 
-  for (const id of [...notCompleted.keys()].sort(byNum)) {
-    warnings.push(notCompleted.get(id)!.warning);
-    rationale.push(notCompleted.get(id)!.why);
-  }
-
   // ---- expected ----
   const after = new Set([...mine, ...captured]);
   const completed = g.map.bonuses
@@ -1323,6 +1326,12 @@ export function planTurn(input: PlanInput): TurnPlan {
     })
     .map((b) => b.id)
     .sort(byNum);
+  // A bonus refused in one pass but completed by a later one is not reported as refused.
+  for (const id of [...notCompleted.keys()].sort(byNum)) {
+    if (completed.includes(id)) continue;
+    warnings.push(notCompleted.get(id)!.warning);
+    rationale.push(notCompleted.get(id)!.why);
+  }
   const gained = completed.reduce((sum, id) => sum + g.bonusById.get(id)!.value, 0);
 
   return {

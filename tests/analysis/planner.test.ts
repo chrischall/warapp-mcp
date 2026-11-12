@@ -1468,6 +1468,42 @@ describe('planTurn — defensibility-aware bonus completion (R3)', () => {
     expect(p.conceded).toEqual([]);
     expect(deploySum(p)).toBe(10);
   });
+
+  it('drops a "not completed" warning when a later pass does complete the bonus', () => {
+    // B901 (+2) = {1, 3}; B902 (+6) = {5, 6}. Focused B901 is judged first, with the
+    // next income at 2 + 2: T3 faces T9 and is refused. Completing B902 then raises
+    // the next income to 2 + 2 + 6, so a later pass takes T3 after all. The plan
+    // must not warn that B901 is "not completed" while it completes it.
+    //   T1 ─ T3(neutral) ─ T9(enemy)      T5 ─ T6(neutral)
+    const g4 = buildGraph(
+      makeMap(
+        [1, 3, 5, 6, 9],
+        [
+          [1, 3],
+          [3, 9],
+          [5, 6],
+        ],
+        [
+          [901, 2, [1, 3]],
+          [902, 6, [5, 6]],
+        ],
+      ),
+    );
+    for (const e of [6, 7, 8, 9]) {
+      const s = board([mine(1, 10), neutral(3, 2), mine(5, 4), neutral(6, 2), enemy(9, e)]);
+      const p = planTurn({
+        graph: g4,
+        board: s,
+        me: ME,
+        income: 2,
+        settings: STD,
+        options: { goal: 'balanced', focusBonusIds: [901] },
+      });
+      expect(p.expected.bonusesCompleted, `T9 ${e}`).toEqual([901, 902]);
+      expect(p.warnings.join('\n'), `T9 ${e}`).not.toMatch(/B901 \(#901\).*not completed/);
+      expect(p.rationale.join('\n'), `T9 ${e}`).not.toMatch(/Do not complete bonus B901/);
+    }
+  });
 });
 
 describe('planTurn — threat trend', () => {
