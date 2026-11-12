@@ -122,6 +122,9 @@
 //     only into territories held at the start of the turn and never into, or
 //     measured through, a conceded border
 //     (only when transfer-only orders are allowed).
+// Kill rates: every combat computation above (capture cost, threats and holds,
+// survivors, R3's frontier, R4's kills) uses the game's offensive/defensive kill
+// rates; only when the settings carry none does it assume 60/70, with a warning.
 // Accounting: a territory's outgoing armies never exceed its armies after deploy
 // minus the guard. Armies never move twice and captured armies never attack, so
 // the plan is valid with or without multi-attack.
@@ -434,6 +437,10 @@ export function planTurn(input: PlanInput): TurnPlan {
   if (luck > 0)
     warnings.push(
       `Luck is ${Math.round(luck * 100)}%: each attack carries a margin (armies = ceil(cost / (1 − luck))) and can still fail.`,
+    );
+  if (s.offensiveKillRate === undefined || s.defensiveKillRate === undefined)
+    warnings.push(
+      `Kill rates missing from the game settings; assuming ${rates.offensiveKillRate}% offense, ${rates.defensiveKillRate}% defense.`,
     );
   if (s.roundingMode !== undefined && s.roundingMode !== 'StraightRound')
     warnings.push(`Capture costs assume straight rounding; this game uses ${s.roundingMode}.`);

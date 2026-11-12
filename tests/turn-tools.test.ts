@@ -281,6 +281,26 @@ describe('warapp_plan_turn', () => {
     });
   });
 
+  it('sizes attacks and threats at the game\'s kill rates (20/80), not 60/70 (G1, issue #28)', async () => {
+    const f = lobbyFixture();
+    const settings = { ...(f.settings as Record<string, unknown>), OffensiveKillRate: 20, DefensiveKillRate: 80 };
+    // Sheepshead Hills holds 8 (7 movable): Widow's Watch's 2 neutrals cost
+    // armiesToTake(2) = max(ceil(150 / 20) = 8, round(1.6) + 1 = 3) = 8 at 20/80 (3 at 60/70).
+    const b = BOARD.map((t) => (t.id === 161 ? { ...t, armies: 8 } : t));
+    h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(b) }) });
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand', view: 'full' }),
+    );
+    expect(p.settings).toMatchObject({ offensiveKillRate: 20, defensiveKillRate: 80 });
+    expect(p.moves.filter((m) => m.kind === 'attack')).toEqual([
+      expect.objectContaining({ from: { id: 161, name: mapName(161) }, to: { id: 157, name: mapName(157) }, armies: 8 }),
+    ]);
+    expect(p.deploys.find((d) => d.territory.id === 161)?.armies).toBeGreaterThanOrEqual(1);
+    expect(p.orders).toContainEqual({ kind: 'move', from: 161, to: 157, armies: 8 });
+    // Bob's ~11 next door cannot take Hornwood's 6 at 20/80 (it needs 28), nor Sheepshead Hills.
+    expect(p.warnings.join('\n')).not.toMatch(/could be taken next turn/);
+  });
+
   it('warns when my orders are already committed this turn', async () => {
     h = await liveHarness({
       feed: [game('Playing', {}, { hasCommittedOrders: 'True' })],

@@ -210,6 +210,15 @@ describe('normalizeSettings', () => {
     expect(t.oneArmyStandsGuard).toBe(false);
     expect(t.armyCap).toBe(100);
   });
+
+  it('reads kill rates sent as decimals, so a supplied rate never falls back to 60/70 (G1)', () => {
+    const t = normalizeSettings({ OffensiveKillRate: '20.0', DefensiveKillRate: '80.0' });
+    expect(t.offensiveKillRate).toBe(20);
+    expect(t.defensiveKillRate).toBe(80);
+    const u = normalizeSettings({ OffensiveKillRate: 30.0, DefensiveKillRate: 75 });
+    expect([u.offensiveKillRate, u.defensiveKillRate]).toEqual([30, 75]);
+    expect(normalizeSettings({ OffensiveKillRate: 'x' }).offensiveKillRate).toBeUndefined();
+  });
 });
 
 describe('normalizeGame (lobby fixture)', () => {
