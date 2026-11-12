@@ -183,10 +183,12 @@ describe('warapp_plan_turn', () => {
 
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    // Bob shows 7: max(5, round(0.75 × 7)) = 5.
+    // Bob shows 7 next to Ann and holds no visible bonus: clamp(5 + 0, 5, round(0.75 × 7)) = 5.
     const def = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(def.enemyDeploy).toBe(5);
-    expect(def.warnings.join('\n')).toMatch(/Enemy deploy estimate: .*~5 .*largest visible enemy stack \(7\).*unknown/);
+    expect(def.warnings.join('\n')).toMatch(
+      /Enemy deploy estimate for player \d+: ~5 \(base 5 \+ visible bonuses \+0 = 5.*largest stack next to me \(7\).*unknown/,
+    );
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', enemy_deploy: 0 }));
     expect(p.enemyDeploy).toBe(0);
     expect(p.warnings.join('\n')).toMatch(/~0 \(your estimate\)/);
@@ -229,6 +231,7 @@ describe('warapp_plan_turn', () => {
       roundingMode: 'StraightRound',
       oneArmyStandsGuard: true,
       multiAttack: false,
+      baseIncome: 5,
       allowTransferOnly: true,
     });
   });
@@ -378,6 +381,8 @@ describe('plannerSettings', () => {
     // Per-territory income feeds a border's protected value; 0 means off.
     expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 3 })).toEqual({ bonusArmyPer: 3 });
     expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 0 })).toEqual({});
+    // The base income feeds each opponent's deploy estimate.
+    expect(plannerSettings({ cards: [], raw: {}, minimumArmyBonus: 3 })).toEqual({ baseIncome: 3 });
   });
 });
 

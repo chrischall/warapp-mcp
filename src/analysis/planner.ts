@@ -6,10 +6,14 @@
 //  1. Defence. A visible enemy next to my territory T threatens it when
 //     `armiesToTake(armies(T)) ≤ E + enemyDeploy`, where E is that player's
 //     movable armies (minus the guard) summed over its territories bordering T.
-//     enemyDeploy defaults to max(5, round(0.75 × the largest visible enemy
-//     stack)): an opponent's income is unseen, and a big visible stack implies
-//     a big income (live, 13 showing next door broke a 12-army border).
-//     Always a warning.
+//     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
+//     income plus the bonuses that player visibly holds in full, clamped below
+//     by MIN_ENEMY_DEPLOY and above by round(ENEMY_STACK_SHARE × its largest
+//     stack next to me) — a big stack implies it *can* move a lot, never that
+//     its income is big (live, a 0.75 × 15 guess on an all-15 opening board made
+//     every base-income opponent look like ~11). On the opening board (every
+//     visible territory still holds the same count) every opponent gets the
+//     floor. `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
 //     enemy territory next to me that was visible then under the same owner and
 //     has grown is "building" at growth = armies now − armies then per turn (a
@@ -106,7 +110,7 @@ export const PAYBACK_TURNS = 10;
 export const WASTELAND_FACTOR = 5;
 /** Floor of the default enemy deploy estimate (a player's base income). */
 export const MIN_ENEMY_DEPLOY = DEFAULT_BASE_INCOME;
-/** The default estimate is this share of the largest visible enemy stack. */
+/** The default estimate is capped at this share of the opponent's largest stack next to me. */
 export const ENEMY_STACK_SHARE = 0.75;
 /** A border is conceded when holding it costs more than this many times the income it protects. */
 export const CONCEDE_FACTOR = 3;
@@ -133,6 +137,8 @@ export interface PlannerSettings {
   allowTransferOnly?: boolean;
   /** One army of income per this many territories held (0 or absent: off). */
   bonusArmyPer?: number;
+  /** Every player's base income (the game's MinimumArmyBonus; default {@link DEFAULT_BASE_INCOME}). */
+  baseIncome?: number;
 }
 
 export interface PlanOptions {
@@ -196,7 +202,11 @@ export interface TurnPlan {
   };
   warnings: string[];
   rationale: string[];
-  /** The enemy deploy the threat checks assumed. */
+  /**
+   * The enemy deploy the threat checks assumed: the caller's override, else the
+   * largest per-opponent estimate among the players next to me (at least
+   * {@link MIN_ENEMY_DEPLOY}).
+   */
   enemyDeploy: number;
   /** Threatened borders not worth (or not affordable) holding this turn, sorted. */
   conceded: number[];
@@ -223,19 +233,100 @@ export function captureCost(defenders: number, settings: PlannerSettings = {}): 
   return luck > 0 ? Math.ceil(base / (1 - luck)) : base;
 }
 
-function largestEnemyStack(board: BoardState, me: number): number {
-  let max = 0;
+/** One visible opponent's estimated deploy next turn and how it was reached. */
+export interface EnemyDeployEstimate {
+  playerId: number;
+  /** clamp(base + bonusIncome, MIN_ENEMY_DEPLOY, stackCap); MIN_ENEMY_DEPLOY on the opening board. */
+  estimate: number;
+  base: number;
+  /** Value of the bonuses this player visibly holds in full. */
+  bonusIncome: number;
+  /** Its largest visible stack next to one of my territories (else its largest visible stack). */
+  largestStack: number;
+  /** round(ENEMY_STACK_SHARE × largestStack). */
+  stackCap: number;
+  /** Every visible territory holds the same army count: no one has deployed yet. */
+  opening: boolean;
+}
+
+/** The army count every visible territory holds, when they all hold the same one (the initial allotment). */
+function openingArmies(g: MapGraph, board: BoardState): number | null {
+  const counts = new Set<number>();
   for (const t of board.territories)
-    if (t.owner.kind === 'player' && t.owner.playerId !== me && t.armies !== null) max = Math.max(max, t.armies);
-  return max;
+    if (g.territoryById.has(t.territoryId) && t.armies !== null && t.owner.kind !== 'unknown') counts.add(t.armies);
+  return counts.size === 1 ? [...counts][0]! : null;
 }
 
 /**
- * Default enemy deploy estimate: max(5, round(0.75 × the largest visible enemy
- * stack)). Unseen income is unknown; a big visible stack implies a big one.
+ * Per-opponent enemy deploy estimates, one per visible enemy player (sorted by
+ * id): base income plus the bonuses that player visibly holds in full, clamped
+ * below by {@link MIN_ENEMY_DEPLOY} and above by round({@link ENEMY_STACK_SHARE}
+ * × its largest stack next to me). Bonuses in the fog are unseen, so this is
+ * what the visible board supports. On the opening board (every visible
+ * territory holds the same count) every opponent gets the floor.
  */
-export function defaultEnemyDeploy(board: BoardState, me: number): number {
-  return Math.max(MIN_ENEMY_DEPLOY, Math.round(ENEMY_STACK_SHARE * largestEnemyStack(board, me)));
+export function enemyDeployEstimates(
+  g: MapGraph,
+  board: BoardState,
+  me: number,
+  settings: PlannerSettings = {},
+): EnemyDeployEstimate[] {
+  const owner = new Map<number, number>();
+  const armies = new Map<number, number>();
+  for (const t of board.territories) {
+    if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player' || t.armies === null) continue;
+    owner.set(t.territoryId, t.owner.playerId);
+    armies.set(t.territoryId, t.armies);
+  }
+  const players = [...new Set([...owner.values()].filter((p) => p !== me))].sort(byNum);
+  const opening = openingArmies(g, board) !== null;
+  const base = Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME));
+  return players.map((playerId) => {
+    let bonusIncome = 0;
+    for (const b of g.map.bonuses) {
+      const ts = bonusTerritories(g, b.id);
+      if (ts.length && ts.every((t) => owner.get(t) === playerId)) bonusIncome += b.value;
+    }
+    let adjacent = 0;
+    let any = 0;
+    for (const [t, p] of owner) {
+      if (p !== playerId) continue;
+      const a = armies.get(t)!;
+      any = Math.max(any, a);
+      if (neighborsOf(g, t).some((n) => owner.get(n) === me)) adjacent = Math.max(adjacent, a);
+    }
+    const largestStack = adjacent || any;
+    const stackCap = Math.round(ENEMY_STACK_SHARE * largestStack);
+    const estimate = opening
+      ? MIN_ENEMY_DEPLOY
+      : Math.max(MIN_ENEMY_DEPLOY, Math.min(base + bonusIncome, stackCap));
+    return { playerId, estimate, base, bonusIncome, largestStack, stackCap, opening };
+  });
+}
+
+/**
+ * Default enemy deploy: the largest {@link enemyDeployEstimates} figure among the
+ * players with a visible stack next to me, at least {@link MIN_ENEMY_DEPLOY}.
+ */
+export function defaultEnemyDeploy(
+  g: MapGraph,
+  board: BoardState,
+  me: number,
+  settings: PlannerSettings = {},
+): number {
+  const mineIds = new Set(
+    board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me ? [t.territoryId] : [])),
+  );
+  const next = new Set<number>();
+  for (const t of board.territories) {
+    if (t.owner.kind !== 'player' || t.owner.playerId === me || t.armies === null) continue;
+    if (!g.territoryById.has(t.territoryId)) continue;
+    if (neighborsOf(g, t.territoryId).some((n) => mineIds.has(n))) next.add(t.owner.playerId);
+  }
+  return enemyDeployEstimates(g, board, me, settings).reduce(
+    (m, e) => (next.has(e.playerId) ? Math.max(m, e.estimate) : m),
+    MIN_ENEMY_DEPLOY,
+  );
 }
 
 /** This turn's income from the existing income code (base + per-territory + held bonuses). */
@@ -270,7 +361,10 @@ export function planTurn(input: PlanInput): TurnPlan {
   const income = Math.max(0, Math.floor(input.income));
   const reserve = Math.min(income, Math.max(0, Math.floor(opts.reserve ?? 0)));
   const custom = opts.enemyDeploy !== undefined;
-  const enemyDeploy = custom ? Math.max(0, Math.floor(opts.enemyDeploy!)) : defaultEnemyDeploy(board, me);
+  const enemyDeploy = custom ? Math.max(0, Math.floor(opts.enemyDeploy!)) : defaultEnemyDeploy(g, board, me, s);
+  const estimates = new Map(enemyDeployEstimates(g, board, me, s).map((e) => [e.playerId, e]));
+  /** The deploy assumed for one opponent's threat: the override, else its own estimate. */
+  const deployOf = (player: number) => (custom ? enemyDeploy : (estimates.get(player)?.estimate ?? MIN_ENEMY_DEPLOY));
   const guard = (s.oneArmyStandsGuard ?? true) ? 1 : 0;
   const rates = {
     offensiveKillRate: s.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
@@ -391,10 +485,14 @@ export function planTurn(input: PlanInput): TurnPlan {
     movable: number;
     /** That player's fastest-growing stack next to this border (0 without a trend). */
     growth: number;
-    /** movable + max(enemyDeploy, growth). */
+    /** That player's deploy estimate (or the override). */
+    deploy: number;
+    /** movable + max(deploy, growth). */
     threat: number;
   }
   const borders = new Map<number, Border>();
+  /** Every visible enemy player with a stack next to one of my territories. */
+  const facing = new Set<number>();
   for (const t of mine) {
     const byPlayer = new Map<number, { movable: number; growth: number }>();
     for (const n of neighborsOf(g, t)) {
@@ -406,10 +504,12 @@ export function planTurn(input: PlanInput): TurnPlan {
       byPlayer.set(st.owner.playerId, p);
     }
     if (!byPlayer.size) continue;
+    for (const p of byPlayer.keys()) facing.add(p);
     const [player, { movable, growth }] = [...byPlayer]
-      .map(([id, p]) => [id, p, p.movable + Math.max(enemyDeploy, p.growth)] as const)
+      .map(([id, p]) => [id, p, p.movable + Math.max(deployOf(id), p.growth)] as const)
       .sort((a, b) => b[2] - a[2] || a[0] - b[0])[0]!;
-    borders.set(t, { id: t, player, movable, growth, threat: movable + Math.max(enemyDeploy, growth) });
+    const deploy = deployOf(player);
+    borders.set(t, { id: t, player, movable, growth, deploy, threat: movable + Math.max(deploy, growth) });
   }
   for (const [e, gr] of growthOf) {
     // Name the most exposed of my territories next to it (fewest armies, then id).
@@ -417,23 +517,34 @@ export function planTurn(input: PlanInput): TurnPlan {
       .filter((n) => mineSet.has(n))
       .sort((a, b) => armiesOf(a) - armiesOf(b) || a - b)[0]!;
     const b = borders.get(t)!;
-    const next = b.movable + Math.max(enemyDeploy, b.growth);
-    const after = b.movable + b.growth + Math.max(enemyDeploy, b.growth);
+    const next = b.movable + Math.max(b.deploy, b.growth);
+    const after = b.movable + b.growth + Math.max(b.deploy, b.growth);
     warnings.push(
       `${label(e)} is building: +${gr.growth}/turn (${gr.from} → ${gr.to}); at this rate ${label(t)} needs ${holdArmies(next)} to hold next turn and ${holdArmies(after)} the turn after`,
     );
   }
   for (const b of borders.values())
-    if (b.growth > enemyDeploy)
+    if (b.growth > b.deploy)
       rationale.push(
-        `Threat on ${label(b.id)} uses the trend: player ${b.player}'s stack next to it grows +${b.growth}/turn, more than the ~${enemyDeploy} deploy estimate, so ~${b.threat}.`,
+        `Threat on ${label(b.id)} uses the trend: player ${b.player}'s stack next to it grows +${b.growth}/turn, more than the ~${b.deploy} deploy estimate, so ~${b.threat}.`,
       );
-  if (borders.size)
-    warnings.push(
-      custom
-        ? `Enemy deploy estimate: threat checks assume ~${enemyDeploy} (your estimate); enemy income is unknown, so they could deploy more.`
-        : `Enemy deploy estimate: threat checks assume ~${enemyDeploy} (max(${MIN_ENEMY_DEPLOY}, ${ENEMY_STACK_SHARE * 100}% of the largest visible enemy stack (${largestEnemyStack(board, me)}))); enemy income is unknown, so they could deploy more.`,
-    );
+  if (borders.size) {
+    if (custom)
+      warnings.push(
+        `Enemy deploy estimate: threat checks assume ~${enemyDeploy} (your estimate); enemy income is unknown, so they could deploy more.`,
+      );
+    else {
+      const opening = openingArmies(g, board);
+      for (const p of [...facing].sort(byNum)) {
+        const e = estimates.get(p)!;
+        warnings.push(
+          opening !== null
+            ? `Enemy deploy estimate for player ${p}: ~${e.estimate} (opening board: every visible territory holds ${opening}, so no one has deployed yet and every opponent gets the ${MIN_ENEMY_DEPLOY} minimum); enemy income is unknown, so they could deploy more.`
+            : `Enemy deploy estimate for player ${p}: ~${e.estimate} (base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}, at least ${MIN_ENEMY_DEPLOY} and at most ${ENEMY_STACK_SHARE * 100}% of its largest stack next to me (${e.largestStack}) = ${e.stackCap}); enemy income beyond its visible bonuses is unknown, so they could deploy more.`,
+        );
+      }
+    }
+  }
 
   interface Threatened {
     id: number;
@@ -450,7 +561,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const take = armiesToTake(have, rates);
     if (take === null || take > b.threat) continue;
     warnings.push(
-      `${label(b.id)} (${have} armies) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > enemyDeploy ? `${b.growth} (its growth per turn)` : `${enemyDeploy} deploy`}, and ${take} would do.`,
+      `${label(b.id)} (${have} armies) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${take} would do.`,
     );
     // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.
     let d = 1;
@@ -749,7 +860,9 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
         byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard));
       }
-      return Math.max(0, ...byPlayer.values()) + enemyDeploy;
+      // Each opponent's movable armies plus its own deploy estimate; with none next to it, the reported estimate.
+      if (!byPlayer.size) return enemyDeploy;
+      return Math.max(...[...byPlayer].map(([p, movable]) => movable + deployOf(p)));
     };
     interface Candidate {
       kind: 'hold' | 'complete' | 'advance' | 'break';

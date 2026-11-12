@@ -87,6 +87,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.oneArmyStandsGuard !== undefined) out.oneArmyStandsGuard = s.oneArmyStandsGuard;
   if (s.multiAttack !== undefined) out.multiAttack = s.multiAttack;
   if (s.bonusArmyPer !== undefined && s.bonusArmyPer > 0) out.bonusArmyPer = s.bonusArmyPer;
+  if (s.minimumArmyBonus !== undefined) out.baseIncome = s.minimumArmyBonus;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game.
@@ -378,7 +379,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
           "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
           'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. Threat ' +
-          'checks assume each enemy deploys `enemy_deploy` (default from the largest visible enemy stack). It reports ' +
+          'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you). It reports ' +
           'your cards and whether you must play one (hand at the hold limit), and plays Reinforcement cards (their ' +
           'armies are planned) and, when a play is required, Order Priority or Order Delay — never Blockade. Its ' +
           '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Goals: "balanced" ' +
@@ -422,8 +423,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .max(MAX_ENEMY_DEPLOY)
           .optional()
           .describe(
-            'Armies an enemy is assumed to deploy next turn when judging threats. Default max(5, 75% of the largest ' +
-              'visible enemy stack) — enemy income is unseen, so raise it if you know they earn more.',
+            'Armies every enemy is assumed to deploy next turn when judging threats. Default, per opponent: base ' +
+              'income plus the bonuses it visibly holds in full, at least 5 and at most 75% of its largest stack ' +
+              'next to you (5 each on an untouched opening board) — income in the fog is unseen, so raise it if ' +
+              'you know they earn more.',
           ),
         view: viewArg(
           VIEWS,
