@@ -27,6 +27,14 @@ function game(state: string, extra: Record<string, unknown> = {}, ann: Record<st
   return { ...f, state, numberOfTurns: state === 'Playing' ? '2' : '-1', players, ...extra };
 }
 
+/**
+ * The lobby fixture's settings with the Sanctions card off: with it on, the income model is
+ * uncertain (#38) and a wrong deploy total warns instead of being refused.
+ */
+function modelledSettings(): Record<string, unknown> {
+  return { ...(lobbyFixture().settings as Record<string, unknown>), SanctionsCard: 'none' };
+}
+
 function mapName(id: number): string {
   const map = lobbyFixture().map as { territories: Array<{ id: string; name: string }> };
   return map.territories.find((t) => Number(t.id) === id)!.name;
@@ -649,6 +657,18 @@ describe('warapp_submit_turn', () => {
     expect(s.sent).toEqual([]);
   });
 
+  it('when the Sanctions card is on, a deploy total below the model warns instead of refusing (#38)', async () => {
+    const s = ordersServer();
+    // The lobby fixture enables SanctionsCard (Percentage 0.6): a sanctioned player is paid less.
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    const preview = payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 2 }] }));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    const text = JSON.stringify(preview);
+    expect(text).toMatch(/deploy 2 armies.*modelled income is 5/);
+    expect(text).toMatch(/Sanctions card.*60%/);
+    expect(s.sent).toEqual([]);
+  });
+
   it('refuses an explicit player who is not the signed-in account, before any preview', async () => {
     const s = ordersServer();
     h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
@@ -703,7 +723,7 @@ describe('warapp_submit_turn', () => {
   });
 
   it('refuses deploys that do not total the income, giving both numbers', async () => {
-    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const res = await h.call('warapp_submit_turn', {
       game_id: GAME,
       orders: [{ kind: 'deploy', territory: 159, armies: 4 }],
@@ -1037,7 +1057,7 @@ describe('cards in the turn tools', () => {
 
   it.each(refusals)('submit_turn refuses %s, sending nothing', async (_name, hand, orders, message) => {
     const s = ordersServer(hand);
-    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });
     const res = await h.call('warapp_submit_turn', { game_id: GAME, orders });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(message);

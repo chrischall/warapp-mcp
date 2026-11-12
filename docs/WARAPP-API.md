@@ -66,10 +66,16 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `incomeFor`, the planner's protected value of a border, and the per-opponent enemy deploy
   base (from that opponent's visible territories, a lower bound).
 - **Not modelled** (the same bundle function has these terms): an army cap (`ArmyCap`, can cut
-  income), overridden bonus values (`OverriddenBonuses`), cities and per-player income mods.
-  `incomeUncertainties` names the ones a game's settings switch on; then `warapp_plan_turn`
-  warns and `warapp_submit_turn`'s deploy-total check becomes a preview warning instead of a
-  refusal. war.app's error 11 is the backstop; its hint names the modelled number. The live
+  income), overridden bonus values (`OverriddenBonuses`), the Sanctions card (cuts a sanctioned
+  player's income by its `Percentage`), income from cities, and per-player income mods.
+  `incomeUncertainties` names the army cap, overridden bonuses and an enabled Sanctions card
+  (`SanctionsCard` present in the settings — the model cannot see whether I am sanctioned this
+  turn) when a game's settings switch them on; then `warapp_plan_turn` warns and
+  `warapp_submit_turn`'s deploy-total check becomes a preview warning instead of a refusal.
+  Cities and per-player income mods are **not detected** (no known settings key says they
+  pay income; the `Commerce` key is present, as `{}`, even in a plain lobby game), so a game
+  using them still gets the hard refusal and the owner must fall back to the in-game number.
+  war.app's error 11 is the backstop; its hint names the modelled number. The live
   board (`GetLatestGameInfo`) carries no income figure — the client computes it from the
   standing — so the authoritative number is the game's "armies per turn".
 

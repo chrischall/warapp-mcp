@@ -140,4 +140,13 @@ describe('incomeUncertainties', () => {
     expect(incomeUncertainties(settings({})).join('\n')).toMatch(/base income/i);
     expect(incomeUncertainties(undefined).join('\n')).toMatch(/base income/i);
   });
+  it('names an enabled Sanctions card, which can cut my income below the model', () => {
+    const r = incomeUncertainties(
+      settings({ minimumArmyBonus: 5, cards: ['Sanctions'], raw: { SanctionsCard: { Duration: 1, Percentage: 0.6 } } }),
+    ).join('\n');
+    expect(r).toMatch(/sanctions/i);
+    expect(r).toMatch(/60%/);
+    expect(incomeUncertainties(settings({ minimumArmyBonus: 5, cards: ['Sanctions'] })).join('\n')).toMatch(/sanctions/i);
+    expect(incomeUncertainties(settings({ minimumArmyBonus: 5, cards: ['Reinforcement', 'Spy'] }))).toEqual([]);
+  });
 });

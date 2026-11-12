@@ -8,8 +8,9 @@
 //     movable armies (minus the guard) summed over its territories bordering T.
 //     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
 //     income (the larger of MinimumArmyBonus and, with BonusArmyPer on, its
-//     visible territories / BonusArmyPer) plus the bonuses that player visibly holds in full, clamped below
-//     by max(MIN_ENEMY_DEPLOY, base income) and above by round(ENEMY_STACK_SHARE × its largest
+//     visible territories / BonusArmyPer) plus the bonuses that player
+//     visibly holds in full, clamped below by max(MIN_ENEMY_DEPLOY, base
+//     income) and above by round(ENEMY_STACK_SHARE × its largest
 //     stack next to me) — a big stack implies it *can* move a lot, never that
 //     its income is big (live, a 0.75 × 15 guess on an all-15 opening board made
 //     every base-income opponent look like ~11). On the opening board (every
@@ -38,8 +39,8 @@
 //     Scope of "protected value", deliberately narrow: only bonuses containing T
 //     count (not a bonus T merely borders), and an incomplete one counts in full
 //     when T is my only foothold, however much of it the enemy holds. So with no
-//     complete bonus and no per-territory income (`bonusArmyPer` off, or its armies
-//     still below the base income they replace), a threatened
+//     complete bonus and no per-territory income (`bonusArmyPer` off, or its
+//     armies still below the base income they replace), a threatened
 //     border protects +0 and is conceded: early in a game `defend` holds nothing
 //     and withdraws from every threatened border, keeping armies for expansion.
 //     A conceded border is never deployed to (unless every territory I hold is
@@ -305,7 +306,10 @@ export interface EnemyDeployEstimate {
   playerId: number;
   /** clamp(base + bonusIncome, max(MIN_ENEMY_DEPLOY, base), stackCap); that floor on the opening board. */
   estimate: number;
-  /** Its base income: MinimumArmyBonus, or (BonusArmyPer on) its visible territories / BonusArmyPer when larger. */
+  /**
+   * Its base income: MinimumArmyBonus, or (BonusArmyPer on) its visible
+   * territories / BonusArmyPer when larger.
+   */
   base: number;
   /** Value of the bonuses this player visibly holds in full. */
   bonusIncome: number;
@@ -351,7 +355,8 @@ export function enemyDeployEstimates(
   const minimum = Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME));
   const per = settings.bonusArmyPer ?? 0;
   return players.map((playerId) => {
-    // Its visible territories are a lower bound on what it holds, so on its per-territory income too.
+    // Its visible territories are a lower bound on what it holds, so on its
+    // per-territory income too.
     let held = 0;
     for (const p of owner.values()) if (p === playerId) held++;
     const base = territoryIncome(held, minimum, per);
@@ -583,7 +588,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         ts.some((x) => has(x) || neighborsOf(g, x).some(has));
       if (!access(mineWithout)) v += b.value;
     }
-    // Per-territory income replaces the base only when larger, so losing T costs an army only above it.
+    // Per-territory income replaces the base only when larger, so losing T
+    // costs an army only above it.
     const per = s.bonusArmyPer ?? 0;
     if (per > 0) v += territoryIncome(mine.length, baseIncome, per) - territoryIncome(mine.length - 1, baseIncome, per);
     return v;

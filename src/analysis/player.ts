@@ -38,6 +38,8 @@ export function territoryIncome(territories: number, base: number, per: number):
  * Settings that make the income model uncertain, each as a reason: war.app's
  * income has a term the model does not compute. Empty when every income rule
  * the game uses is modelled (base, BonusArmyPer, held bonuses, card armies).
+ * Cities and per-player income mods have no known settings key, so they are
+ * not detected: those games still get the hard deploy-total check.
  */
 export function incomeUncertainties(settings: GameSettings | undefined): string[] {
   const out: string[] = [];
@@ -48,7 +50,16 @@ export function incomeUncertainties(settings: GameSettings | undefined): string[
   const overridden = settings?.raw?.OverriddenBonuses;
   if (Array.isArray(overridden) && overridden.length > 0)
     out.push("This game has overridden bonus values; the model uses the map's own values.");
+  if (settings?.cards.includes('Sanctions')) {
+    const pct = settings.raw?.SanctionsCard;
+    const p = isRecord(pct) && typeof pct.Percentage === 'number' ? ` by ${Math.round(pct.Percentage * 100)}%` : '';
+    out.push(`This game has the Sanctions card, which cuts a sanctioned player's income${p}; the model does not apply it.`);
+  }
   return out;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 export interface MissingTerritory {
