@@ -28,6 +28,13 @@
           "isRequired": true,
           "isSecret": true,
           "format": "string"
+        },
+        {
+          "name": "WARAPP_ENV_FILE",
+          "description": "Optional dotenv file with WARAPP_EMAIL / WARAPP_API_TOKEN (default ~/.config/warapp-mcp/.env)",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
         }
       ]
     }

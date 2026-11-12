@@ -33,7 +33,8 @@
       ],
       "env": {
         "WARAPP_EMAIL": "${user_config.email}",
-        "WARAPP_API_TOKEN": "${user_config.api_token}"
+        "WARAPP_API_TOKEN": "${user_config.api_token}",
+        "WARAPP_ENV_FILE": "${user_config.env_file}"
       }
     }
   },
@@ -50,6 +51,12 @@
       "description": "Your API token, shown at https://war.app/API/GetAPIToken while signed in. Changing your password rotates it.",
       "sensitive": true,
       "required": true
+    },
+    "env_file": {
+      "type": "string",
+      "title": "Credentials file (optional)",
+      "description": "Optional dotenv file holding WARAPP_EMAIL / WARAPP_API_TOKEN. Defaults to ~/.config/warapp-mcp/.env.",
+      "required": false
     }
   },
   "tools": [
