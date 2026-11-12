@@ -48,6 +48,22 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `<Name>Card` value is an object and disabled when the value is the string `"none"`.
   `ArmyCap` is the string `"null"` when there is no cap. `Map` is the map id.
 
+## Local Deployment — key verified, pool rules UNVERIFIED
+
+- `settings.LocalDeployments` (boolean, `GetSettings=true`) is read into
+  `GameSettings.localDeployments` (verified key: the lobby fixture sends `false`).
+- When it is on, armies earned from a bonus must be deployed inside that bonus. **Unverified
+  assumptions** the planner (`src/analysis/local-deploy.ts`) and `warapp_submit_turn`'s
+  validation make about the rest:
+  - only fully held bonuses worth more than 0 form a pool, worth the bonus's value;
+  - a superbonus's armies go anywhere inside the superbonus (all of its member territories),
+    beside its member bonuses' own pools;
+  - base income (`MinimumArmyBonus`), per-territory income (`BonusArmyPer`) and card armies
+    (Reinforcement) may be deployed anywhere;
+  - a negative bonus only lowers the income; it has no pool.
+  A territory in several held bonuses may draw on each; deploys are charged innermost bonus
+  first. war.app's own refusal of a broken split has not been observed.
+
 ## Map — verified
 
 - `map: { id, name, territories[], bonuses[], distributionModes[] }`. Territory and bonus

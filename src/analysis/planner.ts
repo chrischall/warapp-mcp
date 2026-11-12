@@ -122,6 +122,13 @@
 //     only into territories held at the start of the turn and never into, or
 //     measured through, a conceded border
 //     (only when transfer-only orders are allowed).
+// Local Deployment (`localDeployments`): a held bonus's value is a pool deployable
+// only on that bonus's territories (a superbonus's on all of its territories, beside
+// its member bonuses' pools); the rest of the income (base, per-territory, card
+// armies) may go anywhere. Every affordability check above uses the armies
+// deployable at that territory; leftover bonus pools are still deployed inside their
+// bonus, on its most threatened member (not conceded first; ties by id). A rationale
+// line names each pool. Off (the default), plans are unchanged.
 // Kill rates: every combat computation above (capture cost, threats and holds,
 // survivors, R3's frontier, R4's kills) uses the game's offensive/defensive kill
 // rates; only when the settings carry none does it assume 60/70, with a warning.
@@ -134,6 +141,7 @@ import type { GameSettings } from '../normalize.js';
 import { analyzeBonus, bonusTerritories } from './bonuses.js';
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
+import { chargeDeploys, deployPools } from './local-deploy.js';
 import { analyzePlayer, DEFAULT_BASE_INCOME } from './player.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
@@ -177,6 +185,8 @@ export interface PlannerSettings {
   bonusArmyPer?: number;
   /** Every player's base income (the game's MinimumArmyBonus; default {@link DEFAULT_BASE_INCOME}). */
   baseIncome?: number;
+  /** Local Deployment: a held bonus's armies are deployed only inside that bonus. Default `false`. */
+  localDeployments?: boolean;
 }
 
 export interface PlanOptions {
@@ -481,6 +491,42 @@ export function planTurn(input: PlanInput): TurnPlan {
     budget -= n;
   };
 
+  // ---- Local Deployment pools ----
+  const pools = s.localDeployments ? deployPools(g, mineSet, income) : null;
+  const local = pools !== null && pools.bonuses.length > 0;
+  /** Armies that may still be deployed on `id` (pools respected; with Local Deployment off, the budget). */
+  const roomAt = (id: number): number => {
+    if (!local || budget <= 0) return budget;
+    const fits = (n: number) => {
+      const next = new Map(deployed);
+      next.set(id, (next.get(id) ?? 0) + n);
+      return chargeDeploys(pools, next).anywhereUsed <= pools.anywhere;
+    };
+    let lo = 0;
+    let hi = budget;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (fits(mid)) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+  /** Armies a capture may still deploy on `id`: its room, less the reserve. */
+  const spareAt = (id: number) => Math.min(budget - reserve, roomAt(id));
+  if (local) {
+    rationale.push(
+      `Local Deployment: ${pools.anywhere} of the ${income} income may be deployed anywhere; each held bonus's armies stay inside it.`,
+    );
+    for (const p of pools.bonuses)
+      rationale.push(
+        `Local Deployment: bonus ${p.name} (#${p.bonusId})'s +${p.value} may only be deployed on its territories (${p.territoryIds.map(label).join(', ')}).`,
+      );
+    if (pools.trimmed)
+      warnings.push(
+        `Local Deployment: the income of ${income} is less than the held bonuses are worth; ${pools.trimmed} pooled armies were dropped from the plan's pools.`,
+      );
+  }
+
   // ---- protected value ----
   // Judged against my holdings at the start of the turn until the capture passes
   // have run; then against those holdings plus this turn's captures (R2).
@@ -694,7 +740,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const holds: Threatened[] = [];
   let triageBudget = budget;
   for (const t of threatened) {
-    const left = acting ? budget : triageBudget;
+    const left = Math.min(acting ? budget : triageBudget, local ? roomAt(t.id) : Infinity);
     if (t.holdCost > CONCEDE_FACTOR * t.worth) {
       conceded.add(t.id);
       warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
@@ -1000,10 +1046,13 @@ export function planTurn(input: PlanInput): TurnPlan {
               (!conceded.has(x) || avail.get(x)! >= tg.cost || mine.every((id) => conceded.has(id))),
           )
           .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
-    const src = sources[0];
-    const need = src === undefined ? Infinity : Math.max(0, tg.cost - spare(src));
+    const needAt = (x: number) => Math.max(0, tg.cost - spare(x));
+    // Sorted by armies, the first source needs the fewest deploys; under Local Deployment
+    // another may have more room (its bonus pool), so take the first that can afford it.
+    const src = local ? (sources.find((x) => needAt(x) <= spareAt(x)) ?? sources[0]) : sources[0];
+    const need = src === undefined ? Infinity : needAt(src);
     // No single source can afford it: try a combined capture (never for a forced source).
-    if (src === undefined || budget - need < reserve) return force ? false : tryCombined(t, reason);
+    if (src === undefined || need > spareAt(src)) return force ? false : tryCombined(t, reason);
     deploy(src, need);
     avail.set(src, avail.get(src)! - tg.cost);
     captured.add(t);
@@ -1061,7 +1110,6 @@ export function planTurn(input: PlanInput): TurnPlan {
       .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
     const off = rates.offensiveKillRate;
     const def = rates.defensiveKillRate;
-    const spareBudget = budget - reserve;
     for (let k = 2; k <= eligible.length; k++) {
       const finisher = eligible[0]!;
       let left = armiesOf(t);
@@ -1080,7 +1128,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const armies = armiesToTake(left, rates);
       if (armies === null) return null;
       const need = Math.max(0, armies - avail.get(finisher)!);
-      if (need > spareBudget) continue;
+      if (need > spareAt(finisher)) continue;
       const survivors = armies - Math.round((left * def) / 100);
       return { softeners, finisher, armies, need, left, survivors };
     }
@@ -1279,7 +1327,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const b = breakOf.get(n);
       if (!b || !targets.has(n) || broken(b)) return false;
       const o = breakOption(n);
-      if (t.holdCost + o.cost > budget - reserve) return false;
+      if (t.holdCost + o.cost > spareAt(t.id)) return false;
       const before = budget;
       deploy(t.id, t.holdCost);
       if (!tryCapture(n, breakReason(b), { from: t.id, keep: avail.get(t.id)! })) {
@@ -1337,8 +1385,9 @@ export function planTurn(input: PlanInput): TurnPlan {
         run: () => {
           if (holdAndBreak(t)) return;
           const pending = expansionLeft > 0 && t.worth < topValue ? Math.max(0, floor - expansionSpent) : 0;
-          if (t.holdCost > budget) return concedeUnaffordable(t, budget);
-          if (t.holdCost > budget - pending) {
+          const room = roomAt(t.id);
+          if (t.holdCost > room) return concedeUnaffordable(t, room);
+          if (t.holdCost > room - pending) {
             deferred.push(t);
             rationale.push(
               `Hold ${label(t.id)} later (needs ${t.holdCost}, protects +${t.value}): at least ${floor} of income (${MIN_EXPANSION_SHARE * 100}%) goes to expansion first, worth up to +${topValue}.`,
@@ -1359,7 +1408,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     );
     for (const c of candidates) c.run();
     for (const t of deferred) {
-      if (t.holdCost > budget) concedeUnaffordable(t, budget);
+      const room = roomAt(t.id);
+      if (t.holdCost > room) concedeUnaffordable(t, room);
       else hold(t);
     }
     reconsider();
@@ -1427,8 +1477,36 @@ export function planTurn(input: PlanInput): TurnPlan {
         warnings.push(`Every territory I hold is conceded; the leftover ${budget} goes to ${label(where)} anyway.`);
       }
     }
-    rationale.push(`Deploy the leftover ${budget} to ${label(where)}: ${why}.`);
-    deploy(where, budget);
+    const n = roomAt(where);
+    if (n > 0) {
+      rationale.push(`Deploy the leftover ${n} to ${label(where)}: ${why}.`);
+      deploy(where, n);
+    }
+    // Local Deployment: what is left of each bonus pool stays inside its bonus, on its
+    // most threatened member (not conceded first; ties by id).
+    if (local && budget > 0) {
+      const danger = (id: number) => {
+        const b = borders.get(id);
+        if (!b) return -Infinity;
+        return b.threat - (armiesToTake(stays(id), rates) ?? Infinity);
+      };
+      for (const p of pools.bonuses) {
+        const left = p.value - (chargeDeploys(pools, deployed).used.get(p.bonusId) ?? 0);
+        if (left <= 0) continue;
+        const m = [...p.territoryIds].sort(
+          (a, b) => Number(conceded.has(a)) - Number(conceded.has(b)) || danger(b) - danger(a) || a - b,
+        )[0]!;
+        rationale.push(
+          `Deploy bonus ${p.name} (#${p.bonusId})'s ${left} to ${label(m)}: Local Deployment keeps them inside the bonus, and it is its most threatened member.`,
+        );
+        deploy(m, left);
+      }
+    }
+    if (budget > 0) {
+      // Unreachable while the pools sum to the income; never leave income undeployed.
+      warnings.push(`Local Deployment: ${budget} armies could not be placed within the pools; they go to ${label(where)}.`);
+      deploy(where, budget);
+    }
   }
 
   // A kept border the leftover could not make safe: the completed bonus can fall with it.

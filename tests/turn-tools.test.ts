@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
-import { plannerSettings, turnOrdersArg } from '../src/tools/turn.js';
+import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
+import { normalizeMap } from '../src/normalize.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
@@ -448,6 +449,8 @@ describe('plannerSettings', () => {
     expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 0 })).toEqual({});
     // The base income feeds each opponent's deploy estimate.
     expect(plannerSettings({ cards: [], raw: {}, minimumArmyBonus: 3 })).toEqual({ baseIncome: 3 });
+    // Local Deployment (G2): passed through when on.
+    expect(plannerSettings({ cards: [], raw: {}, localDeployments: true })).toEqual({ localDeployments: true });
   });
 });
 
@@ -992,5 +995,111 @@ describe('cards in the turn tools', () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(message);
     expect(s.sent).toEqual([]);
+  });
+});
+
+describe('Local Deployment in the turn tools (G2, issue #29)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  // Ann holds bonus 118 (+2: 159, 161, 157) and Oldcastle 453745 (outside it): income 5 + 2 = 7,
+  // of which 5 may go anywhere and 2 only inside bonus 118.
+  const BONUS = [159, 161, 157];
+  const LOCAL_BOARD: SyntheticTerritory[] = [
+    { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+    { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+    { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+    { id: 453745, fogLevel: 1, owner: ANN.inGame, armies: 1 },
+    { id: 1567, fogLevel: 1, owner: 0, armies: 2 },
+    { id: 23473, fogLevel: 1, owner: 0, armies: 3 },
+    { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 7 },
+  ];
+  const localSettings = () => ({ ...(lobbyFixture().settings as Record<string, unknown>), LocalDeployments: true });
+
+  it('(f) warapp_plan_turn keeps bonus armies inside the bonus when LocalDeployments is on', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: localSettings() })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(LOCAL_BOARD) }),
+    });
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand', view: 'full' }),
+    );
+    expect(p.income).toBe(7);
+    expect(p.settings).toMatchObject({ localDeployments: true });
+    const sum = (ids: number[] | null) =>
+      p.deploys.filter((d) => (ids ? ids.includes(d.territory.id) : true)).reduce((s, d) => s + d.armies, 0);
+    expect(sum(null)).toBe(7);
+    expect(sum(BONUS)).toBeGreaterThanOrEqual(2);
+    expect(7 - sum(BONUS)).toBeLessThanOrEqual(5);
+    expect(p.rationale.join('\n')).toMatch(
+      /Local Deployment: bonus Broken Branch Riverlords \(#118\)'s \+2 may only be deployed on its territories/,
+    );
+  });
+
+  it('(e) warapp_submit_turn refuses bonus armies deployed outside the bonus, sending nothing', async () => {
+    const sent: unknown[] = [];
+    const warapp = routes({
+      [Method.GetLatestGameInfo]: board(LOCAL_BOARD),
+      [Method.SendOrders]: () => {
+        sent.push(1);
+        return { body: (w) => w.bool(true).bool(false) };
+      },
+    });
+    h = await liveHarness({ feed: [game('Playing', { settings: localSettings() })], pages: ME_PAGE, warapp });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [{ kind: 'deploy', territory: 453745, armies: 7 }],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Local Deployment/);
+    expect(textOf(res)).toMatch(/Broken Branch Riverlords \(bonus 118\)/);
+    expect(textOf(res)).toMatch(/2 too many/);
+    expect(sent).toEqual([]);
+    // The correct split is accepted.
+    const ok = payload(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 453745, armies: 5 },
+          { kind: 'deploy', territory: 161, armies: 2 },
+        ],
+      }),
+    );
+    expect(ok.confirmToken).toEqual(expect.any(String));
+    expect(sent).toEqual([]);
+  });
+
+  describe('validateTurn', () => {
+    const map = normalizeMap(lobbyFixture().map);
+    const live = LOCAL_BOARD.map((t) => ({
+      territoryId: t.id,
+      fogLevel: t.fogLevel,
+      fogged: t.fogged ?? false,
+      owner: t.owner,
+      armies: t.armies,
+    }));
+    const T = (id: number) => ({ id, name: mapName(id) });
+    const run = (deploys: Array<[number, number]>, localDeployments?: boolean) =>
+      validateTurn({
+        map,
+        board: live,
+        myInGameId: ANN.inGame,
+        income: 7,
+        guard: true,
+        deploys: deploys.map(([id, armies]) => ({ territory: T(id), armies })),
+        moves: [],
+        ...(localDeployments !== undefined ? { localDeployments } : {}),
+      });
+
+    it('refuses a pooled-income deploy that spends bonus armies outside the bonus, naming it and the overspend', () => {
+      expect(() => run([[453745, 6], [159, 1]], true)).toThrow(
+        /Local Deployment: these orders deploy 6 armies outside the held bonuses' own pools, but only 5 may go anywhere this turn \(1 too many\)\. Broken Branch Riverlords \(bonus 118\): \+2 earned, only 1 deployed inside it/,
+      );
+    });
+
+    it('accepts the correct split, and any split when the flag is off', () => {
+      expect(() => run([[453745, 5], [159, 1], [157, 1]], true)).not.toThrow();
+      expect(() => run([[161, 7]], true)).not.toThrow();
+      expect(() => run([[453745, 7]], false)).not.toThrow();
+      expect(() => run([[453745, 7]])).not.toThrow();
+    });
   });
 });

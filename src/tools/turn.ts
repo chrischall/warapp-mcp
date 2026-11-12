@@ -20,7 +20,15 @@ import {
   type Card,
   type CardRules,
 } from '../cards.js';
-import { incomeFor, neighborsOf, planTurn, type PlanGoal, type PlannerSettings } from '../analysis/index.js';
+import {
+  chargeDeploys,
+  deployPools,
+  incomeFor,
+  neighborsOf,
+  planTurn,
+  type PlanGoal,
+  type PlannerSettings,
+} from '../analysis/index.js';
 import { parseGameId } from '../client.js';
 import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
 import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
@@ -88,6 +96,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.multiAttack !== undefined) out.multiAttack = s.multiAttack;
   if (s.bonusArmyPer !== undefined && s.bonusArmyPer > 0) out.bonusArmyPer = s.bonusArmyPer;
   if (s.minimumArmyBonus !== undefined) out.baseIncome = s.minimumArmyBonus;
+  if (s.localDeployments) out.localDeployments = true;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game.
@@ -184,6 +193,8 @@ export function validateTurn(args: {
   guard: boolean;
   deploys: Array<{ territory: { id: number; name: string }; armies: number }>;
   moves: Array<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }>;
+  /** Local Deployment: each held bonus's armies must be deployed inside that bonus. */
+  localDeployments?: boolean;
 }): void {
   const { map, board, myInGameId, income, deploys, moves } = args;
   const graph = graphOf(map);
@@ -222,6 +233,26 @@ export function validateTurn(args: {
   }
   const deployedOn = new Map<number, number>();
   for (const d of deploys) deployedOn.set(d.territory.id, (deployedOn.get(d.territory.id) ?? 0) + d.armies);
+  if (args.localDeployments) {
+    const held = new Set(board.filter((t) => mine(t.territoryId)).map((t) => t.territoryId));
+    const pools = deployPools(graph, held, income);
+    const use = chargeDeploys(pools, deployedOn);
+    if (use.anywhereUsed > pools.anywhere) {
+      const short = pools.bonuses
+        .map((p) => ({ p, used: use.used.get(p.bonusId) ?? 0 }))
+        .filter(({ p, used }) => used < p.value)
+        .map(({ p, used }) => `${p.name} (bonus ${p.bonusId}): +${p.value} earned, only ${used} deployed inside it`);
+      throw new McpToolError(
+        `Local Deployment: these orders deploy ${use.anywhereUsed} armies outside the held bonuses' own pools, but only ` +
+          `${pools.anywhere} may go anywhere this turn (${use.anywhereUsed - pools.anywhere} too many). ${short.join('; ')}.`,
+        {
+          hint:
+            "This game uses Local Deployment: deploy each held bonus's armies on that bonus's own territories; only " +
+            'the rest of your income (base income and card armies) may go anywhere.',
+        },
+      );
+    }
+  }
   const out = new Map<number, { from: { id: number; name: string }; armies: number }>();
   for (const m of moves) {
     const o = out.get(m.from.id) ?? { from: m.from, armies: 0 };
@@ -621,6 +652,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               guard: game.settings?.oneArmyStandsGuard ?? true,
               deploys,
               moves,
+              localDeployments: game.settings?.localDeployments ?? false,
             });
             // Deploys first (as the client sends them), merged per territory.
             const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
