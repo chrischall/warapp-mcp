@@ -151,6 +151,9 @@ not need.
 (GameFeed `numberOfTurns` 1 → 2) and every planned capture happened. The reply's result bool
 was `false` even though the commit advanced the game, so it is **not** a success signal:
 confirm a commit from game state (turn count, the committed flag in `GetMyGames`, the board).
+A controlled check with the real client (opponent already committed, so the commit resolved
+the turn) also got `false`. The client's commit callback uses that value only to show "This
+action has ended your vacation" — it is a **vacation-ended flag**, `false` in normal play.
 
 Server checks seen in the client: error 11 (deployments ≠ income) and 208 (turn already
 advanced).
@@ -196,7 +199,9 @@ bridged POSTs time out while GETs still work; reloading the tab clears it.
 
 ## Chat
 
-- **Read:** the official `GameFeed` answers `GetChat=true` with a `chat` list — use that.
+- **Read:** the official `GameFeed` answers `GetChat=true` with a `chat` list of
+  `{ playerID, date, turn, message }` — use that. `playerID` there is the **in-game id**, not
+  the check-digit-wrapped id GameFeed uses for players.
 - **Send:** `SendChat` (42): auth, int32 gameId, string text, int32 channel (`-1` = public,
   otherwise a team), optional int32 private recipient, optional int32 game-group id, two
   marker strings, two optional "last seen" dicts. Reply: the updated message list
