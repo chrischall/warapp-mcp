@@ -50,7 +50,10 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
   `numberOfTurns` advanced → `resolved`; my `hasCommittedOrders` true → `committed`; neither,
   or a transport failure after sending → `unknown` (never suggest resending blindly).
 - **Cards (`src/cards.ts`).** The hand is read from the live board (`LatestGameInfo` standing →
-  my in-game id → GUID → card instance, by bundle type name); the rules from GameFeed settings
+  my in-game id → GUID → card instance, by bundle type name); the card **type is `Gb`, the LAST
+  integer field** (the base reader sets it last) and a Reinforcement card's armies are `tc`, the
+  first integer (its subclass prepends it) — reading the type from the first integer mislabels a
+  Reinforcement whose armies equal another type id; the rules from GameFeed settings
   (`MaxCardsHold`, `ReinforcementCard.FixedArmies`; a card set to `'none'` is not in play). At
   the hold limit war.app refuses a `SendOrders` with no card play (**error 51 `MustUseCard`**),
   so `warapp_submit_turn` refuses up front. The planner always plays Reinforcement (its armies

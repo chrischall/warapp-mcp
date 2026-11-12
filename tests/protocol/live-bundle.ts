@@ -74,7 +74,9 @@ export function writeLatestGameInfo(
       }
       ww.bool(true).list(hand, (cw, c) => {
         cw.guid(c.id).bool(true);
-        if (c.armies !== undefined) cw.u8(1).guid(c.id).int32(c.type).int32(c.armies);
+        // ReinforcementCardInstance reads tc (armies) in its subclass, THEN the base reads Gb (type):
+        // the live wire carries armies before the type, so the decoded integer fields are [armies, type].
+        if (c.armies !== undefined) cw.u8(1).guid(c.id).int32(c.armies).int32(c.type);
         else cw.u8(2).guid(c.id).int32(c.type);
       });
     });

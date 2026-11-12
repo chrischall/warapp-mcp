@@ -73,9 +73,14 @@ function cardOf(o: Obj, key: unknown): Card | undefined {
     .map(([, v]) => v);
   const id = values.map(normalizeGuid).find((g) => g !== undefined) ?? normalizeGuid(key);
   const ints = values.filter((v): v is number => typeof v === 'number' && Number.isInteger(v));
-  if (id === undefined || ints[0] === undefined) return undefined;
-  const card: Card = { id, type: ints[0], name: cardTypeName(ints[0]) };
-  if (ints[1] !== undefined && ints[0] === CARD_REINFORCEMENT) card.armies = ints[1];
+  // The card-instance base reader sets `Gb` (the card type) last among the integer fields; a
+  // ReinforcementCardInstance prepends `tc` (its armies) in its subclass. So the TYPE is the last
+  // integer and the Reinforcement armies are the first — never read the type from `ints[0]`, which
+  // is `tc` for a Reinforcement card and collides with Order Delay's type id (5).
+  const type = ints[ints.length - 1];
+  if (id === undefined || type === undefined) return undefined;
+  const card: Card = { id, type, name: cardTypeName(type) };
+  if (type === CARD_REINFORCEMENT && ints.length >= 2) card.armies = ints[0];
   return card;
 }
 
