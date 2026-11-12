@@ -144,7 +144,13 @@ are byte-identical (132/132). Observed values: `mode` 3 (AttackTransfer) is what
 sends for an ordinary attack; `turnNumber` is the turn being submitted (GameFeed
 `numberOfTurns` + 1 — it was 0 before turn 1); the trailing two bools were `false`; the
 client also sends `SendInProgressOrders` (75) drafts as orders are built, which a tool does
-not need. The reply's result bool is `false` when the commit did not advance the game.
+not need.
+
+**Sent from code, 2026-11-12:** a turn built entirely by this project's encoder (3 deploys +
+3 attacks, `turnNumber` 2) and delivered through the bridge was accepted, resolved the turn
+(GameFeed `numberOfTurns` 1 → 2) and every planned capture happened. The reply's result bool
+was `false` even though the commit advanced the game, so it is **not** a success signal:
+confirm a commit from game state (turn count, the committed flag in `GetMyGames`, the board).
 
 Server checks seen in the client: error 11 (deployments ≠ income) and 208 (turn already
 advanced).
@@ -158,7 +164,8 @@ fetchproxy bridge, so the request runs inside the signed-in tab:
 |---|---|
 | `GetMapDetails` (no auth) | full 14869-byte `MapDetails`, our message number echoed |
 | `GetLatestGameInfo` (auth) | `LatestGameInfo` → `GameStanding` with one `TerritoryStanding` per territory (129), every byte consumed |
-| `SendTerritoryPicks` (auth, write) | accepted; result bool `false` — the same value the real client got on a successful commit, i.e. "this did not advance the game" |
+| `SendTerritoryPicks` (auth, write) | accepted; result bool `false` (also what the real client got) — not a success signal |
+| `SendOrders` (auth, write) | accepted, turn resolved, captures happened — see Orders |
 | `GetTerritoryPicks` (auth) | read back exactly the submitted ids in priority order |
 
 `TerritoryStanding`: territory id, owner, `Armies { count, fogged, specialUnits }`, fog level.
