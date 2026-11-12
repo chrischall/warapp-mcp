@@ -7,8 +7,9 @@ that protocol as read from the client bundle (`warappcdn.com/js/Release/ujs.js`,
 client `v6.07.0.1`, protocol version 242) and checked against captured traffic.
 
 **Status (2026-11-12):** request framing fully decoded — 7/7 captured requests rebuilt
-byte-identical from decoded fields. Reply payloads (the board) and `SendOrders` are not
-yet decoded. Nothing here is a captured value; no captures are committed.
+byte-identical from decoded fields; reply payloads decode generically (every byte consumed on
+all captured replies); `SendOrders` layout read from the client's serializers, awaiting a
+live capture to verify. Nothing here is a captured value; no captures are committed.
 
 ## Transport
 
@@ -87,6 +88,57 @@ string email                  the signed-in account's email
 
 Server error codes seen in the client: 11 = deployed armies ≠ income, 208 = game already
 advanced to the next turn, 88 = game deleted, 483 = game started without you.
+
+## Replies
+
+```
+frame header (flags F2 80)
+byte    1 → MessageExtrasDown follows (warlight.shared.MessageExtrasDown)
+        MessageExtrasDown carries ServerInfo { serverInfoVersionA, serverInfoVersionB, … } —
+        the values the next request's MessageExtrasUp should echo
+byte    5 → ServerException { code, message } follows instead of a result
+        anything else → bool present, then the method's result class
+```
+
+Result classes are the client's generated readers (`<Class>.Ha` in the bundle). Rather than
+transcribe each one, they are decoded by **interpreting the bundle's own reader functions**
+against the bytes (a ~250-line evaluator over the small JS subset those readers use: primitive
+reads, present-flag ternaries, lists/dicts of nested classes, version checks, `switch` on a
+type tag). Verified on captured replies, every byte consumed:
+
+| Method | Result class | Bytes |
+|---|---|---|
+| GetMapDetails | `warlight.shared.MapDetails` (27 bonuses, 129 territories, map 79472) | 14869/14869 |
+| GameRefresh | `warlight.shared.GameDetailsAndChat` → `GameWL` summary | 358/358, 362/362 |
+
+Reader primitives (`P.*`): `Ya` int32 · `wc` string · `Yc` bool · `uq` byte · `Z5` uint16 ·
+`Ao` float32 · `ak`/`uy` int64 · `Td` datetime · `tL` GUID (16 bytes, .NET order:
+3,2,1,0,5,4,7,6,8…15) · `sL` int32-length bytes · `Sd`/`ms`/`uL` int32-count list (-1 = null) ·
+`ef` int32-count dict (-1 = null).
+
+The project does not redistribute the bundle: the decoder loads it from War.app's CDN at
+runtime, so class layouts track the live client. Field names in the bundle are minified and
+change between releases; semantic mapping is by class name (`W["warlight.shared.*"]`, stable)
+and field read order.
+
+## Orders (`SendOrders`, method 74) — read from the client's serializers, not yet captured
+
+```
+params: auth, int32 gameId,
+        bool present, int32 count, then per order: bool present + order,
+        int32 turnNumber, bool, bool
+GameOrder base (after each order's own fields):
+        int32 playerId (in-game id), bool hasResult (00), bool hasStandingUpdates (00)
+Deploy          byte 02, int32 territoryId, bool flag, int32 armies, base
+AttackTransfer  byte 01, bool attackTeammates, byte mode (1 Attack, 2 Transfer,
+                3 AttackTransfer), bool byPercent, int32 from,
+                Armies { bool fogged, int32 count, byte specialUnitCount, units… },
+                int32 to, base
+PlayCard*       byte <card tag> (18 = Blockade), card fields, GUID cardInstanceId, base
+```
+
+Server checks seen in the client: error 11 (deployments ≠ income) and 208 (turn already
+advanced). The encoder must be verified byte-for-byte against a real turn commit before use.
 
 ## Data handling
 
