@@ -14,85 +14,15 @@
 import type { FetchproxyFetchInit, FetchproxyFetchResult } from '@chrischall/mcp-utils/fetchproxy';
 import { decodeReplyEnvelope, encodeRequest, fromHex, Reader, readExtrasUp, readHeader, toHex, type ExtrasUp } from '../protocol/codec.js';
 import { Method, readSubscribeResult, writeSubscribeParams } from '../protocol/methods.js';
+import { parseHandshake, parsePacket, SOCKET_URL, splitPayload } from './packets.js';
+import { realSetTimer, runWebSocketSession, WebSocketUnavailableError, type SetTimer, type WebSocketLeg } from './websocket.js';
 
-export const SOCKET_URL = 'https://war.app/socket.io/1/';
+export { parseHandshake, parsePacket, SOCKET_URL, splitPayload, type Handshake, type Packet } from './packets.js';
 export const POST_CONTENT_TYPE = 'text/plain;charset=UTF-8';
 
 /** The part of the bridge transport the socket uses. */
 export interface SocketTransport {
   fetch(init: FetchproxyFetchInit): Promise<FetchproxyFetchResult>;
-}
-
-export interface Handshake {
-  sid: string;
-  heartbeatMs: number;
-  closeMs: number;
-  transports: string[];
-}
-
-/** Parse a handshake reply `sid:heartbeat:close:transports`; throws on anything else. */
-export function parseHandshake(body: string): Handshake {
-  const parts = body.trim().split(':');
-  const [sid, hb, close, transports] = parts;
-  if (parts.length !== 4 || !sid || !/^[A-Za-z0-9_-]+$/.test(sid) || transports === undefined) {
-    throw new Error('war.app did not answer the socket handshake with a session.');
-  }
-  return {
-    sid,
-    heartbeatMs: (Number(hb) || 0) * 1000,
-    closeMs: (Number(close) || 0) * 1000,
-    transports: transports.split(','),
-  };
-}
-
-/** Split a poll body into packets (one bare packet, or the `�<len>�` framing). */
-export function splitPayload(body: string): string[] {
-  if (!body.startsWith('�')) return body === '' ? [] : [body];
-  const out: string[] = [];
-  let i = 0;
-  while (i < body.length && body[i] === '�') {
-    const end = body.indexOf('�', i + 1);
-    if (end < 0) break;
-    const len = Number(body.slice(i + 1, end));
-    if (!Number.isInteger(len) || len < 0) break;
-    out.push(body.slice(end + 1, end + 1 + len));
-    i = end + 1 + len;
-  }
-  return out;
-}
-
-export type Packet =
-  | { type: 'disconnect' }
-  | { type: 'connect' }
-  | { type: 'heartbeat' }
-  | { type: 'message'; data: string }
-  | { type: 'noop' }
-  | { type: 'other'; raw: string };
-
-/** Parse one packet `type:id:endpoint[:data]`. */
-export function parsePacket(raw: string): Packet {
-  const type = raw.split(':', 1)[0];
-  switch (type) {
-    case '0':
-      return { type: 'disconnect' };
-    case '1':
-      return { type: 'connect' };
-    case '2':
-      return { type: 'heartbeat' };
-    case '8':
-      return { type: 'noop' };
-    case '3': {
-      // Data follows the third colon.
-      let at = -1;
-      for (let n = 0; n < 3; n++) {
-        at = raw.indexOf(':', at + 1);
-        if (at < 0) return { type: 'other', raw };
-      }
-      return { type: 'message', data: raw.slice(at + 1) };
-    }
-    default:
-      return { type: 'other', raw };
-  }
 }
 
 /** A Subscribe frame (method 238, no auth block) as the uppercase hex a message packet carries. */
@@ -146,6 +76,19 @@ export interface SocketIoClientOptions {
   onConnect?: () => void | Promise<void>;
   /** Called with each session failure, before the backoff. */
   onError?: (error: Error) => void;
+  /**
+   * Called after every connect but the first (after `onConnect`): pushes sent
+   * during the gap were lost, so a consumer re-reads GameFeed.
+   */
+  onReconnect?: () => void;
+  /**
+   * The direct WebSocket leg. When present and `select()` is true, each
+   * session tries the WebSocket first and falls back to xhr-polling over
+   * `transport` when it cannot be brought up. Absent: xhr-polling only.
+   */
+  webSocket?: WebSocketLeg;
+  /** The WebSocket heartbeat timer (tests). */
+  setTimer?: SetTimer;
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -165,9 +108,14 @@ const realSleep = (ms: number) =>
 
 class Disconnected extends Error {}
 
+/** Which socket.io transport a session runs on. */
+export type PushTransportName = 'websocket' | 'xhr-polling';
+
 /**
- * A long-lived xhr-polling socket.io client. `start()` runs the poll loop in
- * the background; failures reconnect with backoff until `stop()`.
+ * A long-lived socket.io client: the direct WebSocket when its leg is selected
+ * and comes up, otherwise xhr-polling over the bridge. `start()` runs the
+ * session loop in the background; failures reconnect with backoff (a new
+ * handshake, a new sid, `onConnect` re-subscribes) until `stop()`.
  */
 export class SocketIoClient {
   private readonly opts: SocketIoClientOptions;
@@ -180,6 +128,9 @@ export class SocketIoClient {
   private failures = 0;
   private lastErrorMessage: string | undefined;
   private connects = 0;
+  private sender: ((packet: string) => Promise<void>) | undefined;
+  private closeSession: (() => void) | undefined;
+  private active: PushTransportName | undefined;
 
   constructor(opts: SocketIoClientOptions) {
     this.opts = opts;
@@ -204,15 +155,23 @@ export class SocketIoClient {
     return this.lastErrorMessage;
   }
 
+  /** The transport of the current (or last) session; undefined before the first. */
+  get transport(): PushTransportName | undefined {
+    return this.active;
+  }
+
   start(): void {
     if (this.running) return;
     this.running = true;
     void this.run();
   }
 
-  /** Stop polling. An in-flight poll is abandoned, not awaited. */
+  /** Stop. An in-flight poll is abandoned, not awaited; an open WebSocket is closed. */
   stop(): void {
     this.running = false;
+    const close = this.closeSession;
+    this.closeSession = undefined;
+    close?.();
     this.disconnect();
   }
 
@@ -224,7 +183,8 @@ export class SocketIoClient {
 
   /** Send a message packet carrying a hex frame. Only once connected. */
   async sendMessage(hex: string): Promise<void> {
-    await this.post(`3:::${hex}`);
+    if (!this.isConnected || !this.sender) throw new Error('The war.app push socket is not connected.');
+    await this.sender(`3:::${hex}`);
   }
 
   private url(): string {
@@ -248,15 +208,20 @@ export class SocketIoClient {
   private disconnect(): void {
     this.isConnected = false;
     this.sid = undefined;
+    this.sender = undefined;
   }
 
-  private markConnected(): void {
+  /** A session saw its connect packet: record it, (re)subscribe, then signal a reconnect. */
+  private async markConnected(send: (packet: string) => Promise<void>): Promise<void> {
+    this.sender = send;
     this.isConnected = true;
     this.failures = 0;
     this.connects++;
     const w = this.waiters;
     this.waiters = [];
     w.forEach((f) => f());
+    await this.opts.onConnect?.();
+    if (this.connects > 1) this.opts.onReconnect?.();
   }
 
   private backoffMs(): number {
@@ -282,8 +247,36 @@ export class SocketIoClient {
     }
   }
 
-  /** One session: handshake, then poll until it fails or the client stops. */
+  /** One session: the WebSocket when selected and available, else xhr-polling. */
   private async session(): Promise<void> {
+    const leg = this.opts.webSocket;
+    if (leg && (await leg.select())) {
+      this.active = 'websocket';
+      try {
+        await runWebSocketSession(leg, {
+          running: () => this.running,
+          now: this.now,
+          setTimer: this.opts.setTimer ?? realSetTimer,
+          onConnected: (send) => this.markConnected(send),
+          onMessage: (data) => this.opts.onMessage(data),
+          setCloser: (close) => {
+            this.closeSession = close;
+          },
+        });
+        return;
+      } catch (e) {
+        if (!(e instanceof WebSocketUnavailableError)) throw e;
+        // Fall back to xhr-polling over the bridge for this session.
+        this.lastErrorMessage = e.message;
+      }
+    }
+    if (!this.running) return;
+    this.active = 'xhr-polling';
+    await this.pollSession();
+  }
+
+  /** One xhr-polling session: handshake, then poll until it fails or the client stops. */
+  private async pollSession(): Promise<void> {
     const t = await this.opts.transport();
     const hs = await t.fetch({ method: 'GET', path: `${SOCKET_URL}?t=${this.now()}`, retryOnTimeout: false });
     if (hs.status !== 200) throw new Error(`war.app answered HTTP ${hs.status} to the socket handshake.`);
@@ -306,10 +299,7 @@ export class SocketIoClient {
       for (const p of packets) {
         switch (p.type) {
           case 'connect':
-            if (!this.isConnected) {
-              this.markConnected();
-              await this.opts.onConnect?.();
-            }
+            if (!this.isConnected) await this.markConnected((packet) => this.post(packet));
             break;
           case 'heartbeat':
             await this.post('2::');

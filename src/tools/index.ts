@@ -17,6 +17,7 @@ import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
 import { registerTurnTools } from './turn.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
+import { pushWebSocketLeg } from '../push/websocket.js';
 import { readSession } from '../direct/session.js';
 import { createDirectFirstBridge } from '../direct/transport.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
@@ -82,7 +83,15 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   });
   // One push socket per process: keyed on the shared fetchproxy bridge so
   // connections share it, with requests routed through the direct-first bridge.
+  // While the direct leg is active the push rides a direct WebSocket (the
+  // cookie goes only to war.app); otherwise, or when the WebSocket cannot come
+  // up, it keeps xhr-polling over the bridge.
   const push =
-    deps.push ?? pushListenerFor(fetchproxy, { transport: () => bridge.ready(), extras: () => live.rpc.extras });
+    deps.push ??
+    pushListenerFor(fetchproxy, {
+      transport: () => bridge.ready(),
+      webSocket: pushWebSocketLeg(bridge, () => readSession(deps.env)),
+      extras: () => live.rpc.extras,
+    });
   registerPushTools(server, live, push);
 }
