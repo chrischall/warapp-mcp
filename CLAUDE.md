@@ -81,9 +81,10 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
   capture with the exact combat model (`armiesToTake`, `captureCost`). Its rules, learnt from
   a lost game (`tests/analysis/lessons.test.ts` replays each lesson in miniature):
   - **Triage by protected value.** A threatened border's protected value is my complete
-    bonuses containing it, plus bonuses I'd lose all access to, plus per-territory income;
-    holds go in order of protected value per army of hold cost. A border is **conceded** when
-    holding costs more than `CONCEDE_FACTOR` (3) × its protected value or than the income left
+    bonuses containing it, plus bonuses I'd lose all access to, plus per-territory income; its
+    **worth** adds the armies a hold saves as income (armies / `PAYBACK_TURNS`), so a big stack
+    is topped up rather than abandoned. Holds go in order of worth per army of hold cost. A
+    border is **conceded** when holding costs more than `CONCEDE_FACTOR` (3) × its worth or than the income left
     (a warning either way): it is never deployed to (unless every territory I hold is
     conceded), it attacks out only with the armies already on it, and idle armies never move
     into it.

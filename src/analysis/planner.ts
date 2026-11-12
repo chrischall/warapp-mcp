@@ -20,11 +20,14 @@
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
 //     of my complete bonuses containing it, plus incomplete bonuses containing it
 //     that I would lose all access to without it, plus the per-territory
-//     income it carries (each bonus counted once). Its hold cost is the fewest
+//     income it carries (each bonus counted once). Its worth adds the armies a
+//     hold saves, in income terms (armies / PAYBACK_TURNS): a top-up that keeps a
+//     big stack is worth paying even for a small bonus (live, a 60-army border
+//     protecting +4 needed 20 and held against 105). Its hold cost is the fewest
 //     deploys making `armiesToTake(armies + d) > threat`. Borders are taken in
-//     order of protected value per army of hold cost (ties: lower hold cost, then
-//     id); a border is conceded when its hold cost exceeds the budget left or
-//     CONCEDE_FACTOR × its protected value (so a border protecting nothing is
+//     order of worth per army of hold cost (ties: lower hold cost, then id); a
+//     border is conceded when its hold cost exceeds the budget left or
+//     CONCEDE_FACTOR × its worth (so a thin border protecting nothing is
 //     conceded). Under `goal: 'defend'` the plan deploys each hold, and a held
 //     border then makes no moves.
 //     Scope of "protected value", deliberately narrow: only bonuses containing T
@@ -438,6 +441,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     threat: number;
     holdCost: number;
     value: number;
+    /** Protected value plus the armies a hold saves, in income terms (armies / PAYBACK_TURNS). */
+    worth: number;
   }
   const threatened: Threatened[] = [];
   for (const b of borders.values()) {
@@ -450,10 +455,11 @@ export function planTurn(input: PlanInput): TurnPlan {
     // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.
     let d = 1;
     while ((armiesToTake(have + d, rates) ?? Infinity) <= b.threat) d++;
-    threatened.push({ id: b.id, have, threat: b.threat, holdCost: d, value: valueOf(b.id) });
+    const value = valueOf(b.id);
+    threatened.push({ id: b.id, have, threat: b.threat, holdCost: d, value, worth: value + have / PAYBACK_TURNS });
   }
   threatened.sort(
-    (a, b) => b.value / b.holdCost - a.value / a.holdCost || a.holdCost - b.holdCost || a.id - b.id,
+    (a, b) => b.worth / b.holdCost - a.worth / a.holdCost || a.holdCost - b.holdCost || a.id - b.id,
   );
 
   const acting = goal === 'defend';
@@ -476,7 +482,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   let triageBudget = budget;
   for (const t of threatened) {
     const left = acting ? budget : triageBudget;
-    if (t.holdCost > CONCEDE_FACTOR * t.value) {
+    if (t.holdCost > CONCEDE_FACTOR * t.worth) {
       conceded.add(t.id);
       warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
       continue;
@@ -853,7 +859,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const t of holds)
       candidates.push({
         kind: 'hold',
-        score: t.value / t.holdCost,
+        score: t.worth / t.holdCost,
         cost: t.holdCost,
         id: t.id,
         value: t.value,
@@ -861,7 +867,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         borders: 0,
         run: () => {
           if (holdAndBreak(t)) return;
-          const pending = expansionLeft > 0 && t.value < topValue ? Math.max(0, floor - expansionSpent) : 0;
+          const pending = expansionLeft > 0 && t.worth < topValue ? Math.max(0, floor - expansionSpent) : 0;
           if (t.holdCost > budget) return concedeUnaffordable(t, budget);
           if (t.holdCost > budget - pending) {
             deferred.push(t);

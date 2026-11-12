@@ -527,6 +527,26 @@ describe('planTurn — value-aware defence', () => {
     expect(p.deploys).toEqual([{ territoryId: 3, armies: 6 }]);
   });
 
+  it('holds a big stack for a modest top-up: the armies it saves count toward its worth', () => {
+    // T1 has 60 armies and protects +4; ~132 threaten it (59 movable + 73 deploy), so
+    // holding needs 20 more. 20 > 3 × 4, but the 60 armies at stake are worth
+    // 60 / PAYBACK_TURNS = +6 of income: 20 ≤ 3 × (4 + 6), so it is held, not abandoned.
+    for (const goal of ['defend', 'balanced'] as const) {
+      const p = planTurn({
+        graph: ag,
+        board: aBoard(60),
+        me: ME,
+        income: 35,
+        settings: STD,
+        options: { goal, enemyDeploy: 73 },
+      });
+      expect(p.conceded, goal).toEqual([]);
+      expect(p.deploys.find((d) => d.territoryId === 1)?.armies, goal).toBeGreaterThanOrEqual(20);
+      expect(p.moves.filter((m) => m.from === 1 && m.kind === 'transfer'), goal).toEqual([]);
+      expect(p.cardAdvice, goal).toBeNull();
+    }
+  });
+
   it('(a) under expand it still warns of the concession but neither withdraws nor advises a card', () => {
     const p = planTurn({ graph: ag, board: aBoard(15), me: ME, income: 35, settings: STD, options: { goal: 'expand' } });
     expect(p.warnings).toContain('T1 (#1) cannot be held economically (needs 38, protects +4): conceded');
