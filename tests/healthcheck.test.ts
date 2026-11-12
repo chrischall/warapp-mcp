@@ -33,11 +33,12 @@ async function check(env: Record<string, string>, fetchImpl: typeof fetch) {
 }
 
 describe('warapp_healthcheck', () => {
-  it('is registered (and is the only tool in the scaffold)', async () => {
+  it('is registered, read-only', async () => {
     harness = await createTestHarness((s) => registerAllTools(s, { env: {} }));
     const { tools } = await harness.client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(['warapp_healthcheck']);
-    expect(tools[0]!.annotations?.readOnlyHint).toBe(true);
+    const hc = tools.find((t) => t.name === 'warapp_healthcheck');
+    expect(hc).toBeDefined();
+    expect(hc!.annotations?.readOnlyHint).toBe(true);
   });
 
   it('skips the probe and reports no_credential without credentials', async () => {

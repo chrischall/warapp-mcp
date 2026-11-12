@@ -44,6 +44,12 @@ that needs them.
 | Tool | |
 |---|---|
 | `warapp_healthcheck` | Check that war.app accepts your email and API token. |
+| `warapp_get_game` | A game's state, turn, players (and who has committed orders), settings digest and map. `view`: compact / full / raw. |
+| `warapp_get_map` | The game map's bonuses ranked easiest first, plus chokepoints. Filter by `bonus` name to see one bonus's territories, borders and entry points. |
+| `warapp_analyze_board` | Advice for one `player` from the current board: income, the bonuses closest to completion with armies needed, and visible threats. Needs a board; lobbies have none. The board parser is unverified, so the advice states its assumptions. |
+| `warapp_plan_route` | Shortest path between two territories, given by name or id. |
+
+All tools are read-only. Player, game, map and chat text comes back marked as untrusted third-party content.
 
 ## Development
 

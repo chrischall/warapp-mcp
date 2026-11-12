@@ -79,7 +79,13 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       child.stdin.write(rpc(2, 'tools/list', {}));
     });
 
-    expect(tools).toContain('warapp_healthcheck');
+    expect(tools).toEqual([
+      'warapp_analyze_board',
+      'warapp_get_game',
+      'warapp_get_map',
+      'warapp_healthcheck',
+      'warapp_plan_route',
+    ]);
     expect(nonJson).toEqual([]);
   });
 });

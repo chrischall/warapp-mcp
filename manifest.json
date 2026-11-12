@@ -56,6 +56,22 @@
     {
       "name": "warapp_healthcheck",
       "description": "Check that war.app accepts your email and API token"
+    },
+    {
+      "name": "warapp_get_game",
+      "description": "Look up a war.app game: state, turn, players and who has committed, settings digest"
+    },
+    {
+      "name": "warapp_get_map",
+      "description": "Rank a game map's bonuses (easiest first) and find its chokepoints"
+    },
+    {
+      "name": "warapp_analyze_board",
+      "description": "Advise a player from the board: income, closest bonuses, armies needed, threats"
+    },
+    {
+      "name": "warapp_plan_route",
+      "description": "Shortest path between two territories on a game's map"
     }
   ]
 }
