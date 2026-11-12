@@ -3,7 +3,7 @@ import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/co
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { plannerSettings, turnOrdersArg } from '../src/tools/turn.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
-import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -514,6 +514,205 @@ describe('warapp_submit_turn', () => {
     });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/DRAFT_CHANGED/);
+    expect(s.sent).toEqual([]);
+  });
+});
+
+describe('cards in the turn tools', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  // Synthetic card GUIDs.
+  const R1 = '0123456789abcdef0123456789abcdef';
+  const OP = 'fedcba9876543210fedcba9876543210';
+  const OD = '11111111222222223333333344444444';
+  const BL = 'aaaaaaaabbbbbbbbccccccccdddddddd';
+  const BL2 = 'aaaaaaaabbbbbbbbccccccccddddddde';
+  const AL = '55555555666666667777777788888888';
+  const withHand = (hand: SyntheticCard[]) => () =>
+    ({ body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], { [ANN.inGame]: hand }) }) satisfies Partial<ReplyFrame>;
+
+  interface CardsPayload extends PlanPayload {
+    cards: {
+      hand: Array<{ id: string; name: string; armies?: number }>;
+      maxCardsHold: number | null;
+      playRequired: boolean;
+      plays: Array<{ id: string; name: string; armies?: number }>;
+      armiesFromCards: number;
+    };
+  }
+
+  function ordersServer(hand: SyntheticCard[]) {
+    const sent: Uint8Array[] = [];
+    const warapp = routes({
+      [Method.GetLatestGameInfo]: withHand(hand),
+      [Method.SendOrders]: (req) => {
+        sent.push(req.body.raw(req.body.remaining));
+        return { body: (w) => w.bool(true).bool(false) };
+      },
+    });
+    return { sent, warapp };
+  }
+
+  const expectedBytes = (orders: TurnOrder[], turn: number) => {
+    const w = new Writer();
+    writeSendOrdersParams(w, GAME, ANN.inGame, orders, turn);
+    return Array.from(w.bytes());
+  };
+
+  async function confirmed(args: Record<string, unknown>) {
+    const preview = payload(await h!.call('warapp_submit_turn', args));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    return h!.call('warapp_submit_turn', { ...args, confirmToken: preview.confirmToken });
+  }
+
+  it('plan_turn reports the hand, plays Reinforcement first and plans with its armies', async () => {
+    h = await liveHarness({
+      feed: [game('Playing')],
+      warapp: routes({ [Method.GetLatestGameInfo]: withHand([{ id: R1, type: 1, armies: 5 }, { id: OP, type: 4 }]) }),
+    });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cards.hand.map((c) => c.name)).toEqual(['Reinforcement', 'Order Priority']);
+    expect(p.cards.maxCardsHold).toBe(5);
+    expect(p.cards.playRequired).toBe(false);
+    expect(p.cards.plays).toEqual([{ id: R1, name: 'Reinforcement', armies: 5 }]);
+    expect(p.cards.armiesFromCards).toBe(5);
+    expect(p.income).toBe(10);
+    expect(p.deploys.reduce((s, d) => s + d.armies, 0)).toBe(10);
+    expect(p.orders[0]).toEqual({ kind: 'card', card: R1 });
+    expect(p.orders.filter((o) => o.kind === 'card')).toHaveLength(1);
+    expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
+  });
+
+  it('plan_turn with no cards reports an empty hand and plays nothing', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cards).toEqual({ hand: [], maxCardsHold: 5, playRequired: false, plays: [], armiesFromCards: 0 });
+    expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
+  });
+
+  it('plan_turn at the hold limit plays Order Priority, else Order Delay, never Blockade', async () => {
+    h = await liveHarness({
+      feed: [game('Playing')],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: withHand([
+          { id: BL, type: 12 },
+          { id: OD, type: 5 },
+          { id: OP, type: 4 },
+          { id: BL2, type: 12 },
+          { id: AL, type: 6 },
+        ]),
+      }),
+    });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cards.playRequired).toBe(true);
+    expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
+    expect(p.orders[0]).toEqual({ kind: 'card', card: OP });
+    expect(p.income).toBe(5);
+  });
+
+  it('plan_turn warns when a play is required and only Blockade-like cards are held', async () => {
+    h = await liveHarness({
+      feed: [game('Playing')],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: withHand([
+          { id: BL, type: 12 },
+          { id: BL2, type: 12 },
+          { id: AL, type: 6 },
+          { id: OD.replace(/1/g, '9'), type: 6 },
+          { id: OP.replace(/f/g, '0'), type: 8 },
+        ]),
+      }),
+    });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cards.playRequired).toBe(true);
+    expect(p.cards.plays).toEqual([]);
+    expect(p.warnings.join('\n')).toMatch(/must play a card/);
+  });
+
+  it('submit_turn plays a card by GUID first, counting Reinforcement armies into income', async () => {
+    const s = ordersServer([{ id: R1, type: 1, armies: 5 }]);
+    h = await liveHarness({
+      feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' })],
+      pages: ME_PAGE,
+      warapp: s.warapp,
+    });
+    const p = payload(
+      await confirmed({
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 159, armies: 10 },
+          { kind: 'card', card: R1.toUpperCase() },
+        ],
+      }),
+    );
+    expect(p).toMatchObject({ status: 'resolved' });
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes(
+        [
+          { kind: 'card', card: 'Reinforcement', cardId: R1 },
+          { kind: 'deploy', territoryId: 159, armies: 10 },
+        ],
+        3,
+      ),
+    );
+    expect(JSON.stringify(p)).toContain('Reinforcement');
+  });
+
+  it('submit_turn takes a card by type name and a Blockade on my own territory', async () => {
+    const s = ordersServer([
+      { id: OP, type: 4 },
+      { id: BL, type: 12 },
+    ]);
+    h = await liveHarness({ feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    await confirmed({
+      game_id: GAME,
+      orders: [
+        { kind: 'card', card: 'order priority' },
+        { kind: 'card', card: 'Blockade', target: 'Sheepshead Hills' },
+        { kind: 'deploy', territory: 159, armies: 5 },
+      ],
+    });
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes(
+        [
+          { kind: 'card', card: 'OrderPriority', cardId: OP },
+          { kind: 'card', card: 'Blockade', cardId: BL, target: 161 },
+          { kind: 'deploy', territoryId: 159, armies: 5 },
+        ],
+        3,
+      ),
+    );
+  });
+
+  const refusals: Array<[string, SyntheticCard[], Array<Record<string, unknown>>, RegExp]> = [
+    ['a card not in the hand', [{ id: OP, type: 4 }], [{ kind: 'card', card: R1 }, { kind: 'deploy', territory: 159, armies: 5 }], /not in your hand/],
+    ['a card type not held', [{ id: OP, type: 4 }], [{ kind: 'card', card: 'Order Delay' }, { kind: 'deploy', territory: 159, armies: 5 }], /hold no Order Delay card/],
+    ['an unknown card name', [], [{ kind: 'card', card: 'Joker' }, { kind: 'deploy', territory: 159, armies: 5 }], /No card type matches "Joker"/],
+    ['the same card twice', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP }, { kind: 'card', card: OP }, { kind: 'deploy', territory: 159, armies: 5 }], /played twice/],
+    ['an unsupported card', [{ id: AL, type: 6 }], [{ kind: 'card', card: AL }, { kind: 'deploy', territory: 159, armies: 5 }], /Airlift.*not supported/],
+    ['a Blockade without a target', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL }, { kind: 'deploy', territory: 159, armies: 5 }], /Blockade needs a `target`/],
+    ['a Blockade on a territory not mine', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL, target: 158 }, { kind: 'deploy', territory: 159, armies: 5 }], /not yours/],
+    ['a target on a card that takes none', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP, target: 159 }, { kind: 'deploy', territory: 159, armies: 5 }], /takes no target/],
+    ['deploys that leave out the Reinforcement armies', [{ id: R1, type: 1, armies: 5 }], [{ kind: 'card', card: R1 }, { kind: 'deploy', territory: 159, armies: 5 }], /income is 10/],
+    [
+      'no card play at the hold limit',
+      [
+        { id: OP, type: 4 },
+        { id: OD, type: 5 },
+        { id: BL, type: 12 },
+        { id: BL2, type: 12 },
+        { id: AL, type: 6 },
+      ],
+      [{ kind: 'deploy', territory: 159, armies: 5 }],
+      /You hold the maximum number of cards, so war\.app requires you to play one this turn/,
+    ],
+  ];
+
+  it.each(refusals)('submit_turn refuses %s, sending nothing', async (_name, hand, orders, message) => {
+    const s = ordersServer(hand);
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(message);
     expect(s.sent).toEqual([]);
   });
 });

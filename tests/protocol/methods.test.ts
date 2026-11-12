@@ -7,6 +7,7 @@ import {
   writeSendChatParams,
   writeAttackTransferOrder,
   writeDeployOrder,
+  writeCardPlayOrder,
   writeSendOrdersParams,
   writeSendTerritoryPicksParams,
 } from '../../src/protocol/methods.js';
@@ -122,7 +123,65 @@ describe('SendOrders params', () => {
     );
   });
 
+  it('writes card plays first, then deploys, then moves', () => {
+    const card = '00112233445566778899aabbccddeeff';
+    const play = '0533221100554477668899AABBCCDDEEFF090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'card', card: 'Reinforcement', cardId: card },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '02000000' + '01' + play + '01' + deploy + '02000000' + '0000');
+  });
+
   it('writes an empty order list', () => {
     expect(hex((w) => writeSendOrdersParams(w, 1, 777, [], 0))).toBe('01000000' + '01' + '00000000' + '00000000' + '0000');
+  });
+});
+
+describe('card play orders', () => {
+  const card = '00112233445566778899aabbccddeeff';
+
+  it('Reinforcement matches the live-verified golden bytes', () => {
+    // Live 2026-11-12: tag 5, the card GUID in .NET order, player id, two false bools.
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Reinforcement', cardId: card, playerId: 777 }))).toBe(
+      '0533221100554477668899AABBCCDDEEFF090300000000',
+    );
+  });
+
+  it('accepts a dashed, upper-case GUID', () => {
+    expect(
+      hex((w) =>
+        writeCardPlayOrder(w, { card: 'Reinforcement', cardId: '00112233-4455-6677-8899-AABBCCDDEEFF', playerId: 777 }),
+      ),
+    ).toBe('0533221100554477668899AABBCCDDEEFF090300000000');
+  });
+
+  it('Order Priority (10) and Order Delay (11) carry no fields', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'OrderPriority', cardId: card, playerId: 777 }))).toBe(
+      '0A33221100554477668899AABBCCDDEEFF090300000000',
+    );
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'OrderDelay', cardId: card, playerId: 777 }))).toBe(
+      '0B33221100554477668899AABBCCDDEEFF090300000000',
+    );
+  });
+
+  it('Blockade (18) writes its target territory before the GUID', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Blockade', cardId: card, playerId: 777, target: 42 }))).toBe(
+      '122A00000033221100554477668899AABBCCDDEEFF090300000000',
+    );
+  });
+
+  it('Blockade without a target is refused', () => {
+    expect(() => hex((w) => writeCardPlayOrder(w, { card: 'Blockade', cardId: card, playerId: 777 }))).toThrow(/target/);
   });
 });

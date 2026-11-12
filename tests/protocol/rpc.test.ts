@@ -189,6 +189,7 @@ describe('WarappRpc.call', () => {
 describe('WarappRpc server errors', () => {
   const cases: Array<[number, string]> = [
     [11, 'Your orders deploy more or fewer armies than you are receiving this turn.'],
+    [51, 'You hold the maximum number of cards, so war.app requires you to play one this turn.'],
     [33, 'This message is too long.'],
     [36, 'sending too many messages to this game'],
     [88, 'This game has been deleted.'],

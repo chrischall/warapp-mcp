@@ -158,17 +158,51 @@ export function writeAttackTransferOrder(w: Writer, o: AttackTransferOrder): voi
   writeOrderBase(w, o.playerId);
 }
 
+/**
+ * The card plays this server can encode, by order tag. VERIFIED 2026-11-12
+ * (docs/PLAN-CARDS-PUSH.md): Reinforcement (5) live, golden-pinned; the others
+ * follow the same layout with the fields read from the client.
+ */
+export const CardPlayTag = { Reinforcement: 5, OrderPriority: 10, OrderDelay: 11, Blockade: 18 } as const;
+export type CardPlayKind = keyof typeof CardPlayTag;
+
+export interface CardPlayOrder {
+  playerId: number;
+  card: CardPlayKind;
+  /** The card instance GUID (32 hex digits; dashes allowed). */
+  cardId: string;
+  /** Blockade only: the territory to blockade. */
+  target?: number;
+}
+
+/**
+ * Encode a play-card order: the tag, the card's own fields (Blockade: the
+ * target territory), the card instance GUID in .NET byte order, then the
+ * player id and two false bools.
+ */
+export function writeCardPlayOrder(w: Writer, o: CardPlayOrder): void {
+  w.u8(CardPlayTag[o.card]);
+  if (o.card === 'Blockade') {
+    if (o.target === undefined) throw new Error('A Blockade card play needs a target territory.');
+    w.int32(o.target);
+  }
+  w.guid(o.cardId);
+  writeOrderBase(w, o.playerId);
+}
+
 /** One order of a turn, as a tool builds it (the player id is supplied per turn). */
 export type TurnOrder =
   | { kind: 'deploy'; territoryId: number; armies: number }
-  | { kind: 'move'; from: number; to: number; armies: number };
+  | { kind: 'move'; from: number; to: number; armies: number }
+  | { kind: 'card'; card: CardPlayKind; cardId: string; target?: number };
 
 /**
  * SendOrders(auth, …) — verified against a live turn commit: the game id, a
  * present order list (int32 count, then per order a present flag and the
  * order), the turn number (GameFeed `numberOfTurns` + 1), then two bools the
- * client sends as false. Like the client, every deploy is written first, then
- * the moves in the given order; a move is an ordinary AttackTransfer (mode 3).
+ * client sends as false. Card plays are written first (that order was accepted
+ * live), then every deploy, then the moves in the given order; a move is an
+ * ordinary AttackTransfer (mode 3).
  */
 export function writeSendOrdersParams(
   w: Writer,
@@ -179,7 +213,12 @@ export function writeSendOrdersParams(
 ): void {
   const deploys = orders.filter((o): o is Extract<TurnOrder, { kind: 'deploy' }> => o.kind === 'deploy');
   const moves = orders.filter((o): o is Extract<TurnOrder, { kind: 'move' }> => o.kind === 'move');
-  w.int32(gameId).bool(true).int32(deploys.length + moves.length);
+  const cards = orders.filter((o): o is Extract<TurnOrder, { kind: 'card' }> => o.kind === 'card');
+  w.int32(gameId).bool(true).int32(cards.length + deploys.length + moves.length);
+  for (const c of cards) {
+    w.bool(true);
+    writeCardPlayOrder(w, { playerId, card: c.card, cardId: c.cardId, ...(c.target !== undefined ? { target: c.target } : {}) });
+  }
   for (const d of deploys) {
     w.bool(true);
     writeDeployOrder(w, { playerId, territoryId: d.territoryId, armies: d.armies });
