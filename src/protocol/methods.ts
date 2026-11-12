@@ -102,7 +102,7 @@ export function writeSendChatParams(w: Writer, p: SendChatParams): void {
 //
 // VERIFIED 2026-11-12: these layouts match a live client turn commit byte for byte
 // (docs/WEB-PROTOCOL.md, Orders; pinned by golden tests in tests/protocol/methods.test.ts).
-// No tool sends them yet — turn submission arrives with its own confirm-gated tool.
+// writeSendOrdersParams assembles a whole turn commit from them.
 
 /** AttackTransfer mode byte. */
 export const AttackTransferMode = { Attack: 1, Transfer: 2, AttackTransfer: 3 } as const;
@@ -156,4 +156,37 @@ export function writeAttackTransferOrder(w: Writer, o: AttackTransferOrder): voi
     .u8(0)
     .int32(o.to);
   writeOrderBase(w, o.playerId);
+}
+
+/** One order of a turn, as a tool builds it (the player id is supplied per turn). */
+export type TurnOrder =
+  | { kind: 'deploy'; territoryId: number; armies: number }
+  | { kind: 'move'; from: number; to: number; armies: number };
+
+/**
+ * SendOrders(auth, …) — verified against a live turn commit: the game id, a
+ * present order list (int32 count, then per order a present flag and the
+ * order), the turn number (GameFeed `numberOfTurns` + 1), then two bools the
+ * client sends as false. Like the client, every deploy is written first, then
+ * the moves in the given order; a move is an ordinary AttackTransfer (mode 3).
+ */
+export function writeSendOrdersParams(
+  w: Writer,
+  gameId: number,
+  playerId: number,
+  orders: readonly TurnOrder[],
+  turnNumber: number,
+): void {
+  const deploys = orders.filter((o): o is Extract<TurnOrder, { kind: 'deploy' }> => o.kind === 'deploy');
+  const moves = orders.filter((o): o is Extract<TurnOrder, { kind: 'move' }> => o.kind === 'move');
+  w.int32(gameId).bool(true).int32(deploys.length + moves.length);
+  for (const d of deploys) {
+    w.bool(true);
+    writeDeployOrder(w, { playerId, territoryId: d.territoryId, armies: d.armies });
+  }
+  for (const m of moves) {
+    w.bool(true);
+    writeAttackTransferOrder(w, { playerId, from: m.from, to: m.to, armies: m.armies });
+  }
+  w.int32(turnNumber).bool(false).bool(false);
 }

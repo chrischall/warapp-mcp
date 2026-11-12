@@ -161,3 +161,17 @@ export function toBoardState(territories: readonly LiveTerritory[], players: rea
     })),
   };
 }
+
+/**
+ * The live standing as the analysis `BoardState`, seen by `me`: my territories
+ * are keyed by my GameFeed id (the id the planner takes as `me`), other known
+ * players by theirs, unknown players by their in-game id. Fogged territories
+ * are owner `unknown` with `null` armies.
+ */
+export function boardStateFromLive(
+  territories: readonly LiveTerritory[],
+  me: Player,
+  players: readonly Player[] = [],
+): BoardState {
+  return toBoardState(territories, [...players.filter((p) => p.id !== me.id), me]);
+}
