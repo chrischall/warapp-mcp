@@ -72,17 +72,20 @@ interface PlanPayload {
   trendSource: 'history' | 'cache' | null;
   conceded: Named[];
   cardAdvice: 'order-priority' | null;
+  multiSourceCaptures: Named[];
   untrusted_content?: boolean;
 }
 
 describe('warapp_plan_turn', () => {
   it('plans from the live board: deploys and moves by name and id, expected bonuses, and submit-shaped orders', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    // R3: completing bonus 118 leaves all three members facing Bob's ~11 with a next income
+    // of 7, so `balanced` refuses it (see below); `expand` ignores defence and completes it.
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' }));
     expect(p.untrusted_content).toBe(true);
     expect(p.game).toEqual({ id: GAME, name: 'Synthetic lobby game', turn: 3 });
     expect(p.player).toEqual({ id: Number(ANN.feed), name: 'Ann' });
-    expect(p.goal).toBe('balanced');
+    expect(p.goal).toBe('expand');
     expect(p.income).toBe(5);
     expect(p.trendSource).toBeNull();
     expect(p).toHaveProperty('conceded');
@@ -119,13 +122,25 @@ describe('warapp_plan_turn', () => {
     expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
   });
 
+  it('the default goal (balanced) does not complete a bonus it cannot hold next turn (R3)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.goal).toBe('balanced');
+    expect(p.expected.bonusesCompleted).toEqual([]);
+    expect(p.moves.some((m) => m.kind === 'attack')).toBe(false);
+    expect(p.warnings.join('\n')).toMatch(
+      /completing Broken Branch Riverlords \(#118\) leaves .* \(#\d+\) indefensible \(player \d+ can take it for \d+; next income 7\): not completed/,
+    );
+    expect(p.rationale.join('\n')).toMatch(/Do not complete bonus Broken Branch Riverlords \(#118\)/);
+  });
+
   it('defaults to the signed-in account, found by its invite token', async () => {
     h = await liveHarness({
       feed: [game('Playing')],
       pages: { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` },
       warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
     });
-    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, goal: 'expand' }));
     expect(p.player).toEqual({ id: Number(ANN.feed), name: 'Ann' });
     expect(p.moves.length).toBeGreaterThan(0);
   });
@@ -144,22 +159,24 @@ describe('warapp_plan_turn', () => {
     expect(props.goal!.description).toMatch(/balanced \(default\)/);
   });
 
-  it('goal defend triages the threatened border by the income it protects', async () => {
+  it('keeps the borders of the bonus this turn completes (R2), warning they can still fall', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }));
-    expect(p.goal).toBe('defend');
-    // Ann's threatened border is in no held bonus: it protects +0, so it is conceded, not held.
-    expect(p.warnings.join('\n')).toMatch(/cannot be held economically \(needs \d+, protects \+0\): conceded/);
-    expect(p.rationale.join('\n')).not.toMatch(/so it holds/);
-    // The conceded border, by name and id, and the card the withdrawal from it needs.
-    expect(p.conceded.length).toBeGreaterThan(0);
-    for (const c of p.conceded) {
-      expect(c.name).toBe(mapName(c.id));
-      expect(p.warnings.join('\n')).toContain(`${c.name} (#${c.id}) cannot be held`);
-    }
-    // Every territory Ann holds is conceded, so there is nowhere to withdraw to: no card advice.
-    expect(p.warnings.join('\n')).toMatch(/is conceded and has nowhere to withdraw to/);
+    // R3: `defend` (like `balanced`) no longer completes this indefensible bonus; `expand`
+    // still does, and R2's re-valuation keeps its borders under every goal.
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' }));
+    expect(p.goal).toBe('expand');
+    // Both threatened borders protect +0 at the start of the turn, but capturing Widow's Watch
+    // completes bonus 118 around them: they are kept (not conceded, nothing withdrawn).
+    expect(p.expected.bonusesCompleted).toEqual([{ id: 118, name: 'Broken Branch Riverlords', value: 2 }]);
+    expect(p.conceded).toEqual([]);
+    expect(p.warnings.join('\n')).not.toMatch(/: conceded/);
+    expect(p.moves.every((m) => m.kind === 'attack')).toBe(true);
     expect(p.cardAdvice).toBeNull();
+    for (const id of [159, 161]) {
+      expect(p.rationale.join('\n')).toContain(`Keep ${mapName(id)} (#${id}) (not conceded)`);
+      // The 5 income cannot make both safe against Bob's ~11: each says the bonus can fall.
+      expect(p.warnings.join('\n')).toContain(`${mapName(id)} (#${id}) is kept for the bonus this turn completes`);
+    }
   });
 
   it('reports a conceded border and the Order Priority advice its withdrawal needs', async () => {
@@ -181,12 +198,40 @@ describe('warapp_plan_turn', () => {
     expect(p.warnings.join('\n')).toContain(`play Order Priority so it goes first`);
   });
 
+  it('reports a combined (multi-source) capture by name, with its attack order (R4)', async () => {
+    // Widow's Watch (12 neutrals) borders Sheepshead Hills and Ramsgate, and needs 20: either's
+    // 10 movable + 5 income fall short alone. Ramsgate's 10 kill 6 first (and fail by design);
+    // Sheepshead Hills then takes the last 6 with 10.
+    const multi: SyntheticTerritory[] = [
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 11 },
+      { id: 1567, fogLevel: 1, owner: ANN.inGame, armies: 11 },
+      { id: 157, fogLevel: 2, owner: 0, armies: 12 },
+      { id: 158, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+      { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+    ];
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(multi) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', focus: [118] }));
+    expect(p.multiSourceCaptures).toEqual([{ id: 157, name: mapName(157) }]);
+    expect(p.moves.filter((m) => m.kind === 'attack').map((m) => [m.from.id, m.to.id, m.armies])).toEqual([
+      [1567, 157, 10],
+      [161, 157, 10],
+    ]);
+    expect(p.warnings.join('\n')).toMatch(/combines 2 attacks that must run in this order/);
+    // A plan with no combined capture reports an empty list.
+    await h.harness.close();
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const q = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(q.multiSourceCaptures).toEqual([]);
+  });
+
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    // Bob shows 7: max(5, round(0.75 × 7)) = 5.
+    // Bob shows 7 next to Ann and holds no visible bonus: clamp(5 + 0, 5, round(0.75 × 7)) = 5.
     const def = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(def.enemyDeploy).toBe(5);
-    expect(def.warnings.join('\n')).toMatch(/Enemy deploy estimate: .*~5 .*largest visible enemy stack \(7\).*unknown/);
+    expect(def.warnings.join('\n')).toMatch(
+      /Enemy deploy estimate for player \d+: ~5 \(base 5 \+ visible bonuses \+0 = 5.*largest stack next to me \(7\).*unknown/,
+    );
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', enemy_deploy: 0 }));
     expect(p.enemyDeploy).toBe(0);
     expect(p.warnings.join('\n')).toMatch(/~0 \(your estimate\)/);
@@ -220,7 +265,9 @@ describe('warapp_plan_turn', () => {
 
   it('full adds move reasons and the settings the plan assumed', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full', goal: 'expand' }),
+    );
     expect(p.moves[0]!.reason).toMatch(/completes bonus/);
     expect(p.settings).toEqual({
       offensiveKillRate: 60,
@@ -229,6 +276,7 @@ describe('warapp_plan_turn', () => {
       roundingMode: 'StraightRound',
       oneArmyStandsGuard: true,
       multiAttack: false,
+      baseIncome: 5,
       allowTransferOnly: true,
     });
   });
@@ -355,7 +403,7 @@ describe('warapp_plan_turn — threat trend', () => {
     });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.trendSource).toBeNull();
-    expect(p.moves.length).toBeGreaterThan(0);
+    expect(p.deploys.reduce((s, d) => s + d.armies, 0)).toBe(5);
     expect(existsSync(cacheFile(h.dataDir))).toBe(true);
   });
 
@@ -378,6 +426,8 @@ describe('plannerSettings', () => {
     // Per-territory income feeds a border's protected value; 0 means off.
     expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 3 })).toEqual({ bonusArmyPer: 3 });
     expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 0 })).toEqual({});
+    // The base income feeds each opponent's deploy estimate.
+    expect(plannerSettings({ cards: [], raw: {}, minimumArmyBonus: 3 })).toEqual({ baseIncome: 3 });
   });
 });
 

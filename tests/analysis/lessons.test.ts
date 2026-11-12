@@ -176,8 +176,9 @@ describe('lessons from a lost game', () => {
   it('3. a hopeless border is conceded and the income is not poured into it', () => {
     // T4 (15 armies) faces 50 movable + ~38 deploy: holding needs 39 more, against the +5
     // it protects. The old rule sent the leftover to the border with the most enemies next
-    // to it — exactly this one.
-    const p = plan(hopelessBoard, 20);
+    // to it — exactly this one. (R1: the opponent's visible income no longer supports ~38 —
+    // the old stack rule's round(0.75 × 51) — so the lesson passes it as the estimate.)
+    const p = plan(hopelessBoard, 20, { enemyDeploy: 38 });
     expect(p.conceded).toEqual([4]);
     expect(p.warnings).toContain('T4 (#4) cannot be held economically (needs 39, protects +5): conceded');
     expect(deployedTo(p, 4)).toBe(0);
@@ -188,8 +189,9 @@ describe('lessons from a lost game', () => {
     expect(p.rationale.join('\n')).toMatch(/Deploy the leftover \d+ to T3 \(#3\)/);
 
     // Nor does a conceded border become the source of a break: T3 faces 19 + ~15 = 34 and is
-    // conceded; it withdraws rather than taking 30 deploys to attack the 20 on T8.
-    const b = plan(hopelessBreakBoard, 40);
+    // conceded; it withdraws rather than taking 30 deploys to attack the 20 on T8. (R1: the
+    // ~15 — the old stack rule's round(0.75 × 20) — is passed explicitly, as above.)
+    const b = plan(hopelessBreakBoard, 40, { enemyDeploy: 15 });
     expect(b.conceded).toContain(3);
     expect(b.warnings).toContain('T3 (#3) cannot be held economically (needs 17, protects +5): conceded');
     expect(deployedTo(b, 3)).toBe(0);
