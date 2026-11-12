@@ -1,7 +1,7 @@
 // Pick advisor (K1, docs/PLAN-PICKS.md). Every map, id and name here is made up.
 import { describe, expect, it } from 'vitest';
 import { buildGraph, distance, type MapGraph } from '../../src/analysis/graph.js';
-import { planPicks, type PickPlan, type PickSettings, type PlanPicksInput } from '../../src/analysis/picks.js';
+import { planPicks, SPREAD_DISTANCE, type PickPlan, type PickSettings, type PlanPicksInput } from '../../src/analysis/picks.js';
 import type { GameMap } from '../../src/normalize.js';
 
 type Edge = [number, number];
@@ -247,5 +247,159 @@ describe('planPicks — income with Extra Armies for Territories (#38)', () => {
 
   it('a base that already pays for the capture takes Target on turn 1', () => {
     expect(targetTurn(run({ minimumArmyBonus: 6, bonusArmyPer: 1 }))).toBe(1);
+  });
+});
+
+const primaryOf = (p: PickPlan) => p.picks.filter((x) => x.group === 'primary').map((x) => x.territoryId);
+/** Largest hop distance between two picks of the group, on the route tool's graph. */
+function farthest(g: MapGraph, ids: number[]): number {
+  let m = 0;
+  for (const a of ids) for (const b of ids) if (a < b) m = Math.max(m, distance(g, a, b) ?? Infinity);
+  return m;
+}
+
+describe('planPicks — compactness (#47)', () => {
+  // Three strong picks (each next to its own +5 first-turn pair) sit 6 hops apart on a
+  // chain; a weaker cluster (+1 pairs) hangs together off it, each within 2 hops of another.
+  const spreadMap = () =>
+    mkGraph(
+      [
+        // Strong: 1-2, 11-12, 21-22 (+5 each); chain 1-3-4-5-6-7-11-13-14-15-16-17-21.
+        [1, 2], [11, 12], [21, 22],
+        [1, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 11],
+        [11, 13], [13, 14], [14, 15], [15, 16], [16, 17], [17, 21],
+        // Weak cluster off 5: 31-32, 33-34, 35-36 (+1 each); 31-33 and 33-35 adjacent.
+        [5, 40], [40, 41], [41, 42], [42, 43], [43, 31], [31, 32], [31, 33], [33, 34], [33, 35], [35, 36],
+      ],
+      [
+        { id: 701, name: 'StrongA', value: 5, territoryIds: [1, 2] },
+        { id: 702, name: 'StrongB', value: 5, territoryIds: [11, 12] },
+        { id: 703, name: 'StrongC', value: 5, territoryIds: [21, 22] },
+        { id: 711, name: 'WeakA', value: 1, territoryIds: [31, 32] },
+        { id: 712, name: 'WeakB', value: 1, territoryIds: [33, 34] },
+        { id: 713, name: 'WeakC', value: 1, territoryIds: [35, 36] },
+      ],
+    );
+  const pickable = [1, 11, 21, 31, 33, 35];
+
+  it('with ≥ 3 players and the top scores far apart, a compact primary group is chosen', () => {
+    const g = spreadMap();
+    const p = plan({ graph: g, pickable, players: 4, territoryLimit: 3, maxPicks: 6 });
+    // The strong picks really do score best, and lie far apart.
+    expect(scoreOf(p, 1)).toBeGreaterThan(scoreOf(p, 33));
+    expect(farthest(g, [1, 11, 21])).toBeGreaterThan(4);
+    const primary = primaryOf(p);
+    expect(primary).toHaveLength(3);
+    expect(compact(g, primary)).toBe(true);
+    expect(primary.sort((a, b) => a - b)).toEqual([31, 33, 35]);
+    expect(p.warnings.join(' ')).not.toMatch(/compact primary group/i);
+    expect(p.rationale.join(' ')).toMatch(/compact/);
+  });
+
+  it('with ≥ 3 players and no compact group, it warns and relaxes one hop at a time', () => {
+    // Pickables every 3 hops on a chain: no two within 2 hops.
+    const g = mkGraph(
+      Array.from({ length: 12 }, (_, i) => [i + 1, i + 2] as Edge),
+      [1, 4, 7, 10].map((a) => ({ id: 800 + a, name: `Pair${a}`, value: 2, territoryIds: [a, a + 1] })),
+    );
+    const p = plan({ graph: g, pickable: [1, 4, 7, 10], players: 4, territoryLimit: 2, maxPicks: 4 });
+    const primary = primaryOf(p);
+    expect(primary).toHaveLength(2);
+    expect(farthest(g, primary)).toBe(3);
+    expect(p.warnings.join(' ')).toMatch(/no compact primary group.*within 3 hops/i);
+    expect(p.rationale.join(' ')).not.toMatch(/compact primary group \(each within 2/);
+    expect(p.rationale.join(' ')).toMatch(/3 hops/);
+  });
+
+  it('in a 1v1 the rationale reports the real distances and never claims compactness it lacks', () => {
+    const g = spreadMap();
+    const p = plan({ graph: g, pickable, players: 2, territoryLimit: 3, maxPicks: 6 });
+    const primary = primaryOf(p);
+    expect(primary).toHaveLength(3);
+    const far = farthest(g, primary);
+    const text = p.rationale.join(' ');
+    expect(text).toContain(`farthest two ${far} hops apart`);
+    if (!compact(g, primary)) expect(text).not.toMatch(/compact/);
+    // Spreading is bounded: every pick within SPREAD_DISTANCE of another group pick.
+    for (const a of primary)
+      expect(Math.min(...primary.filter((b) => b !== a).map((b) => distance(g, a, b)!))).toBeLessThanOrEqual(SPREAD_DISTANCE);
+    expect(p.groups.primary.maxHops).toBe(far);
+  });
+});
+
+describe('planPicks — opening simulation (#47)', () => {
+  // Ice (+3) = {1,2,3,4}: pick 1 borders 2, 3, 4 (neutrals 2, 2, 2 → 3 armies each, 9 in all).
+  // Duo (+3) = {5,6}: pick 5 borders 6 (3 armies). Far (+2) = {9,10}: pick 9, far from both.
+  const map = () =>
+    mkGraph(
+      [[1, 2], [1, 3], [1, 4], [4, 20], [20, 21], [21, 22], [22, 5], [5, 6], [22, 23], [23, 24], [24, 25], [25, 9], [9, 10]],
+      [
+        { id: 901, name: 'Ice', value: 3, territoryIds: [1, 2, 3, 4] },
+        { id: 902, name: 'Duo', value: 3, territoryIds: [5, 6] },
+        { id: 903, name: 'Far', value: 2, territoryIds: [9, 10] },
+      ],
+    );
+  const four = { ...STD, minimumArmyBonus: 4 };
+
+  it('a bonus needing 9 armies is not claimed on turn 1 when only 8 can reach it', () => {
+    // Pick 1 has 4 movable + 4 income = 8 < 9 at Ice; the other picks' armies cannot reach it.
+    const g = map();
+    const p = plan({ graph: g, pickable: [1, 5, 9], players: 2, territoryLimit: 3, maxPicks: 3, settings: four });
+    const ice = p.groups.primary.bonuses.find((b) => b.name === 'Ice');
+    expect(ice?.turn).not.toBe(1);
+    expect(reasonsOf(p, 1)).not.toMatch(/Ice[^|]*first-turn/);
+  });
+
+  it('a genuine first-turn bonus still reports turn 1', () => {
+    const g = map();
+    const p = plan({ graph: g, pickable: [1, 5, 9], players: 2, territoryLimit: 3, maxPicks: 3, settings: four });
+    expect(p.groups.primary.bonuses.find((b) => b.name === 'Duo')?.turn).toBe(1);
+    expect(reasonsOf(p, 5)).toMatch(/Duo \(\+3\).*first-turn bonus/);
+    // With 5 base income pick 1 alone affords Ice's 9 on turn 1.
+    const five = plan({ graph: g, pickable: [1], players: 2, territoryLimit: 1, maxPicks: 1 });
+    expect(five.groups.primary.bonuses.find((b) => b.name === 'Ice')?.turn).toBe(1);
+  });
+
+  it('per-territory income is max(base, territories / BonusArmyPer), not their sum (#38)', () => {
+    // Ice needs 3 + 5 + 2 = 10: pick 1's 4 movable + max(5, 1) = 9 falls short (the sum would give 10).
+    const g = map();
+    const neutralArmies = new Map([[2, 2], [3, 3], [4, 1]]);
+    const p = plan({
+      graph: g,
+      pickable: [1],
+      territoryLimit: 1,
+      maxPicks: 1,
+      neutralArmies,
+      settings: { ...STD, bonusArmyPer: 1 },
+    });
+    expect(p.groups.primary.bonuses.find((b) => b.name === 'Ice')?.turn).not.toBe(1);
+  });
+});
+
+describe('planPicks — reasons lead with the point (#47)', () => {
+  it("reasons[0] names the bonus the pick anchors and when it completes; negatives come after", () => {
+    // Pick 1 anchors Duo (+3, first-turn) and touches Mire (+4) with a 20-army wasteland.
+    const g = mkGraph(
+      [[1, 2], [1, 3], [3, 4]],
+      [
+        { id: 951, name: 'Duo', value: 3, territoryIds: [1, 2] },
+        { id: 952, name: 'Mire', value: 4, territoryIds: [3, 4] },
+      ],
+    );
+    const p = plan({ graph: g, pickable: [1], territoryLimit: 1, maxPicks: 1, neutralArmies: new Map([[4, 20]]) });
+    const r = p.picks[0]!.reasons;
+    expect(r[0]).toMatch(/^Anchors Duo \(\+3\): first-turn bonus \(complete on turn 1\), \+3 income from turn 2/);
+    expect(r.slice(1).join(' | ')).toMatch(/wasteland/);
+  });
+
+  it('an incomplete anchor leads with the share it reaches, the shortfall after', () => {
+    const g = mkGraph(
+      [[4, 5], [5, 6], [6, 7], [7, 8], [8, 9], [9, 10], [10, 11]],
+      [{ id: 961, name: 'Long', value: 10, territoryIds: [4, 5, 6, 7, 8, 9, 10, 11] }],
+    );
+    const p = plan({ graph: g, pickable: [4], territoryLimit: 1, maxPicks: 1 });
+    const r = p.picks[0]!.reasons;
+    expect(r[0]).toMatch(/^Advances Long \(\+10\): \d of 8 territories by turn 3/);
+    expect(r.slice(1).join(' | ')).toMatch(/not complete within 3 turns/);
   });
 });

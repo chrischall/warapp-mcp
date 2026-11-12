@@ -68,7 +68,7 @@ interface PlanPicksPayload {
   territoryLimit: number;
   maxPicks: number;
   picks: Array<{ priority: number; territory: Named; group: 'primary' | 'fallback'; score: number; reasons: string[] }>;
-  groups: Record<'primary' | 'fallback', { territories: Named[]; score: number; bonuses: Array<Named & { value: number; turn: number }> }>;
+  groups: Record<'primary' | 'fallback', { territories: Named[]; score: number; maxHops: number | null; bonuses: Array<Named & { value: number; turn: number }> }>;
   warnings: string[];
   rationale: string[];
   submitPicks: { game_id: number; territories: number[] };
@@ -101,6 +101,9 @@ describe('warapp_plan_picks', () => {
     expect(p.groups.fallback.territories).toEqual(p.picks.slice(3).map((x) => x.territory));
     const primary = new Set(p.groups.primary.territories.map((t) => t.id));
     expect(p.groups.fallback.territories.some((t) => primary.has(t.id))).toBe(false);
+    // Each group states how far apart its two farthest picks are, in hops.
+    for (const grp of [p.groups.primary, p.groups.fallback]) expect(grp.maxHops === null || grp.maxHops >= 0).toBe(true);
+    expect(typeof p.groups.primary.maxHops).toBe('number');
     for (const b of [...p.groups.primary.bonuses, ...p.groups.fallback.bonuses]) {
       expect(b).toEqual({ id: expect.any(Number), name: expect.any(String), value: expect.any(Number), turn: expect.any(Number) });
     }

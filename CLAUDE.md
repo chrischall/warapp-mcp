@@ -42,6 +42,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **The pick advisor `warapp_plan_picks` is read-only** and refuses outside `DistributingTerritories` or when the
   live board has nothing pickable. Its scorer (`src/analysis/picks.ts`) is pure and deterministic like the turn
   planner; neutral sizes come from the live board when shown (wastelands at their real size), else the settings.
+  Its opening simulation keeps armies where they stand (an attack is funded by its bordering source plus that
+  turn's deploys, never by another pick's armies — pooling them made it promise first-turn bonuses `plan_turn`
+  could not deliver, #47). Groups are compact (each pick within 2 hops of another on the route tool's graph) with
+  3+ players; a 1v1 may spread within 4 hops, and the rationale reports real hop distances, never a compactness
+  the group lacks.
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes. `docs/STRATEGY.md` states the community
   heuristics in our own words with source links (cite, never copy) and marks which are encoded.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a

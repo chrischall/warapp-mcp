@@ -26,15 +26,20 @@ limit and the fallback is disjoint from it, each group compact on its own.
 ## Heuristics
 
 1. **Safety and room to grow before greed.** A pick set should not lose outright to one bad
-   draw, and every pick should have neutral territory to expand into. **Encoded in part:** each
-   group is compact (every pick within two hops of another) so its armies can support each other,
-   and a pick is only worth what it can capture next to it. **Not encoded:** judging whether a
+   draw, and every pick should have neutral territory to expand into. **Encoded in part:** with three
+   or more players each group is compact (every pick within two hops of another, measured on the
+   map graph `warapp_plan_route` uses) so its armies can support each other; when no compact group
+   of the territory limit exists the limit relaxes one hop at a time, with a warning. A pick is
+   only worth what its own armies can capture next to it. **Not encoded:** judging whether a
    specific opponent's likely picks would trap yours (counter-picking needs their history).
 2. **Income by turn.** Early income compounds: a bonus finished on turn 1 (a first-turn bonus,
    using the pick's starting armies plus base income) pays every turn after, and a pick that
    finishes a second bonus soon after is better still. A single-territory bonus pays at once.
    **Encoded:** a three-turn opening simulation credits each bonus by the turns it pays out,
-   flags first-turn bonuses and single-territory bonuses in the reasons.
+   flags first-turn bonuses and single-territory bonuses in the reasons. Armies attack only from
+   a territory held at the start of the turn that borders the target, plus that turn's deploys;
+   armies on another pick never help, and captured armies wait a turn. Each pick's first reason
+   names the bonus it anchors and when it completes (or how much of it is held by turn 3).
 3. **Efficient bonuses.** Prefer bonuses that give the most income for the armies it takes to
    finish them, and that have few territories outside them to watch (entry points) — they are
    cheaper to hold. **Encoded:** captures are costed exactly at the game's kill rates against the
@@ -43,7 +48,8 @@ limit and the fallback is disjoint from it, each group compact on its own.
    bordering many small bonuses is strong; a wasteland inside a bonus makes it slow or not worth
    taking; harsh kill rates (e.g. 30% offence / 75% defence) make attacking players expensive, so a
    defensible bonus beats a contested one; luck adds a margin to every capture; base income and
-   per-territory bonuses set the pace. **Encoded:** all of these feed the simulation (neutral sizes
+   per-territory bonuses set the pace (with per-territory income on, the base is a floor:
+   income is the larger of the two, plus bonuses). **Encoded:** all of these feed the simulation (neutral sizes
    from the live board when shown, else the settings), and assumed settings are stated as warnings.
    **Not encoded:** local deployments are modelled as pooled income (a warning says so).
 5. **Many players: stay off the middle.** In a free-for-all the central, high-value bonuses draw
@@ -53,6 +59,7 @@ limit and the fallback is disjoint from it, each group compact on its own.
 6. **1v1: do not put everything in one basket.** With one opponent, spreading picks over
    different bonuses keeps a single counter-pick from wiping the plan. **Encoded:** in a 1v1 a pick
    may join the primary group by anchoring a bonus no other pick anchors, even when it is not
-   within two hops.
+   within two hops — but only within four, and the rationale states the group's real spread (the
+   hops between its two farthest picks) instead of calling it compact.
 7. **Read the opponent.** Strong picks depend on what the other player is likely to pick and
    where they will start. **Not encoded** — a later strategy phase (it needs their history).
