@@ -4,7 +4,7 @@ import { harnessFor, type Harness } from './helpers.js';
 /**
  * Context-group hints (`_meta.mint`, mcp-host's mintHintSchema), read off the
  * served tools/list — what a host sees. Every warapp tool is in the `work`
- * group: reads are lookups, submitting picks a change, chat a send; none is
+ * group: reads are lookups, submitting picks or a turn a change, chat a send; none is
  * canonical (nothing here answers what's new / due / on).
  */
 const DOMAINS = ['school', 'home', 'work', 'family', 'health', 'money', 'travel', 'food'];
@@ -18,8 +18,10 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_plan_route: 'lookup',
   warapp_get_live_board: 'lookup',
   warapp_get_my_picks: 'lookup',
+  warapp_plan_turn: 'lookup',
   warapp_get_chat: 'lookup',
   warapp_submit_picks: 'change',
+  warapp_submit_turn: 'change',
   warapp_send_chat: 'send',
 };
 

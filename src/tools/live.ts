@@ -26,16 +26,16 @@ const VIEWS = ['compact', 'full'] as const;
 export const PICKS_PER_TERRITORY = 2;
 const MAX_PICK_ARGS = 200;
 
-const BRIDGE_NOTE =
+export const BRIDGE_NOTE =
   'Reads through your signed-in war.app tab (ContextMint Bridge), so it sees exactly what you see — fog included.';
 
-const playerArg = z
+export const playerArg = z
   .union([z.string(), z.number()])
   .optional()
   .describe('You in this game: your war.app name (or part of it) or GameFeed player id. Omit to use the signed-in account.');
 
 /** `player` when given; else the signed-in account (its invite token is its GameFeed id). */
-async function resolveMe(ctx: LiveContext, players: readonly Player[], input: string | number | undefined): Promise<Player> {
+export async function resolveMe(ctx: LiveContext, players: readonly Player[], input: string | number | undefined): Promise<Player> {
   if (input === undefined || String(input).trim() === '') {
     const token = await ctx.myInviteToken();
     const me = token === undefined ? undefined : players.find((p) => p.id === token);

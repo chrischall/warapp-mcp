@@ -7,10 +7,11 @@ Advisor MCP for war.app (Warzone) with two transports:
 - **Web-client protocol (browser bridge):** binary frames POSTed to
   `https://war.app/Services?m=<name>&js=1`, relayed through the user's signed-in war.app tab
   by the fetchproxy bridge (ContextMint Bridge), because they are authenticated by the
-  browser's cookies — the live board, territory picks and chat sends. The spec is
+  browser's cookies — the live board, territory picks, turn orders and chat sends. The spec is
   `docs/WEB-PROTOCOL.md`.
 
-Build plans: `docs/PLAN.md` (phase 1, GameFeed) and `docs/PLAN-LIVE.md` (phase 2, live board).
+Build plans: `docs/PLAN.md` (phase 1, GameFeed), `docs/PLAN-LIVE.md` (phase 2, live board) and
+`docs/PLAN-TURN.md` (phase 3, plan and submit a turn).
 
 ## What is true only of this repo
 
@@ -28,15 +29,23 @@ Build plans: `docs/PLAN.md` (phase 1, GameFeed) and `docs/PLAN-LIVE.md` (phase 2
   GameFeed answers as the player whose token is presented (fog of war included). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Two tools write, both confirm-gated:** `warapp_submit_picks` and `warapp_send_chat`,
-  registered with mcp-utils' `defineWrite` / `registerWrite` (`confirmWrite`: elicitation, or
-  a preview + single-use `confirmToken` per `MCP_CONFIRM_MODE`). `warapp_submit_picks`
-  validates against the live board and reports `verified` only when `GetTerritoryPicks` reads
-  back exactly what was sent. Every other tool is read-only. The Deploy/AttackTransfer
-  encoders in `src/protocol/methods.ts` are verified against a live turn commit (golden
-  tests pin them), but no tool sends `SendOrders` yet — that needs its own confirm-gated
-  tool, and its success must be read from game state: the commit reply's bool is the
-  "vacation ended" flag, not a success signal.
+- **Three tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn` and
+  `warapp_send_chat`, registered with mcp-utils' `defineWrite` / `registerWrite`
+  (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
+  `MCP_CONFIRM_MODE`). `warapp_submit_picks` validates against the live board and reports
+  `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
+  is read-only, `warapp_plan_turn` included.
+- **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (deploys first, then moves;
+  encoders in `src/protocol/methods.ts` are golden-pinned to a live commit), turn number =
+  GameFeed `numberOfTurns` + 1. It always acts as the signed-in account (refuses any other
+  `player`, and refuses when that account cannot be determined), validates on the live board
+  (own sources, adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
+  the server's error 11 otherwise), and refuses outside a turn phase or when my
+  `hasCommittedOrders` is already true (a second `SendOrders` replacing the first is
+  unverified; the client uses "Modify orders"). **Success is read from game state, never
+  from the reply:** its bool is the "vacation ended" flag. After sending, GameFeed is re-read:
+  `numberOfTurns` advanced → `resolved`; my `hasCommittedOrders` true → `committed`; neither,
+  or a transport failure after sending → `unknown` (never suggest resending blindly).
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it

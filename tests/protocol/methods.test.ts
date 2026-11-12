@@ -7,6 +7,7 @@ import {
   writeSendChatParams,
   writeAttackTransferOrder,
   writeDeployOrder,
+  writeSendOrdersParams,
   writeSendTerritoryPicksParams,
 } from '../../src/protocol/methods.js';
 
@@ -95,5 +96,33 @@ describe('order encoders match the live-verified layout', () => {
     expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 6, to: 4, armies: 1 }))).toBe(
       '010003000600000000010000000004000000090300000000',
     );
+  });
+});
+
+describe('SendOrders params', () => {
+  // Golden bytes from the encoder that matched a live client turn commit byte for byte.
+  // Synthetic: game 12345, player 777, turn 2.
+  it('writes deploys first, then moves in the given order, then the turn number', () => {
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'move', from: 9, to: 10, armies: 3 },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+          ],
+          2,
+        ),
+      ),
+    ).toBe(
+      '39300000010300000001020900000000050000000903000000000101000300090000000003000000000A00000009030000000001010003000600000000010000000004000000090300000000020000000000',
+    );
+  });
+
+  it('writes an empty order list', () => {
+    expect(hex((w) => writeSendOrdersParams(w, 1, 777, [], 0))).toBe('01000000' + '01' + '00000000' + '00000000' + '0000');
   });
 });

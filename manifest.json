@@ -4,7 +4,7 @@
   "name": "warapp-mcp",
   "display_name": "war.app (Warzone)",
   "version": "0.0.0",
-  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus the live board, territory picks and chat through your signed-in war.app tab (ContextMint Bridge). Picks and chat sends are confirm-gated.",
+  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus the live board, territory picks, turn planning and submission, and chat through your signed-in war.app tab (ContextMint Bridge). Picks, turn orders and chat sends are confirm-gated.",
   "author": {
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com",
@@ -96,8 +96,16 @@
       "description": "Your submitted territory picks in priority order"
     },
     {
+      "name": "warapp_plan_turn",
+      "description": "Plan your turn from the live board: deploys and moves by name, expected bonuses, and submit-ready orders"
+    },
+    {
       "name": "warapp_submit_picks",
       "description": "Submit territory picks (confirm-gated), verified by reading them back"
+    },
+    {
+      "name": "warapp_submit_turn",
+      "description": "Commit your turn's orders (confirm-gated), validated on the live board and confirmed from game state"
     },
     {
       "name": "warapp_get_chat",

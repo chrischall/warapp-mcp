@@ -2,7 +2,7 @@ version: 1
 name: war.app (Warzone)
 slug: warapp
 # Hosting: browser bridge. GameFeed is called directly with the API token, but
-# the live board, territory picks and chat sends go over war.app's web-client
+# the live board, territory picks, turn orders and chat sends go over war.app's web-client
 # protocol (/Services), which is authenticated by the browser's cookies, so the
 # fetchproxy bridge relays them through the user's signed-in war.app tab. The
 # registration therefore also needs `bridge: true` and
@@ -11,8 +11,9 @@ slug: warapp
 summary: >-
   war.app (Warzone) game advisor — your games, players and settings, map
   bonuses and chokepoints, board analysis and route planning through war.app's
-  GameFeed API, plus the live board, territory picks and game chat through your
-  signed-in war.app tab. Picks and chat messages are sent only after you confirm.
+  GameFeed API, plus the live board, territory picks, turn planning and game chat
+  through your signed-in war.app tab. Picks, turn orders and chat messages are sent
+  only after you confirm.
 examples:
   - prompt: Which bonuses on the map of my war.app game 12345678 are easiest to take and hold?
     note: Ranks bonuses by value per territory and per border.
@@ -22,6 +23,8 @@ examples:
     note: Plans a route between two territories by name.
   - prompt: Which territories can I still pick in game 12345678, and what have I picked so far?
     note: Reads the live board and your picks through your war.app tab.
+  - prompt: Plan my turn in war.app game 12345678 to complete a bonus, then submit it.
+    note: Plans deploys and moves from the live board; submits only after you confirm.
 
 identity:
   # One child per caller: GameFeed answers AS the player whose email + token

@@ -4,6 +4,7 @@ import {
   LiveBoardFormatError,
   playersByInGameId,
   readLiveStanding,
+  boardStateFromLive,
   toBoardState,
   type ClassReader,
 } from '../src/live.js';
@@ -145,5 +146,42 @@ describe('toBoardState', () => {
       { kind: 'unknown' },
     ]);
     expect(board.territories.map((t) => t.fogLevel)).toEqual(['Visible', 'OwnerOnly', 'OwnerOnly', 'Fogged', 'Visible', '3']);
+  });
+});
+
+describe('boardStateFromLive', () => {
+  const me = player('3312345644', 'Me');
+  const other = player('5576543288', 'Other');
+  const live = [
+    { territoryId: 1, fogLevel: 1, fogged: false, owner: 123456, armies: 5 },
+    { territoryId: 2, fogLevel: 1, fogged: false, owner: 765432, armies: 4 },
+    { territoryId: 3, fogLevel: 2, fogged: false, owner: 0, armies: 2 },
+    { territoryId: 4, fogLevel: 2, fogged: false, owner: -2, armies: 2 },
+    { territoryId: 5, fogLevel: 4, fogged: true, owner: 123456, armies: null },
+  ];
+
+  it('keys my territories by my GameFeed id and names every owner kind', () => {
+    const board = boardStateFromLive(live, me, [other]);
+    expect(board.source).toBe('browser');
+    expect(board.verified).toBe(true);
+    expect(board.territories.map((t) => t.owner)).toEqual([
+      { kind: 'player', playerId: 3312345644 },
+      { kind: 'player', playerId: 5576543288 },
+      { kind: 'neutral' },
+      { kind: 'available' },
+      { kind: 'unknown' },
+    ]);
+    expect(board.territories.map((t) => t.armies)).toEqual([5, 4, 2, 2, null]);
+  });
+
+  it('works with only me known, other players keeping their in-game id', () => {
+    const board = boardStateFromLive(live, me);
+    expect(board.territories[0]!.owner).toEqual({ kind: 'player', playerId: 3312345644 });
+    expect(board.territories[1]!.owner).toEqual({ kind: 'player', playerId: 765432 });
+  });
+
+  it('does not duplicate me when the player list already has me', () => {
+    const board = boardStateFromLive(live, me, [me, other]);
+    expect(board.territories[0]!.owner).toEqual({ kind: 'player', playerId: 3312345644 });
   });
 });

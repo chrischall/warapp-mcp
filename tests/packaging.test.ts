@@ -153,7 +153,8 @@ describe('packaging for the browser bridge (phase 2)', () => {
   const mint = readFileSync(new URL('../mint.yaml', import.meta.url), 'utf8');
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
-  const WRITES = ['warapp_submit_picks', 'warapp_send_chat'];
+  const WRITES = ['warapp_submit_picks', 'warapp_submit_turn', 'warapp_send_chat'];
+  const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
 
   it('mint.yaml persists a data dir and says why (bridge identity + bundle cache)', () => {
     const state = mint.slice(mint.indexOf('\nstate:'), mint.indexOf('\negress:'));
@@ -208,6 +209,42 @@ describe('packaging for the browser bridge (phase 2)', () => {
     expect(readme).toMatch(/ContextMint Bridge/);
     expect(readme).toMatch(/pair/i);
     expect(readme).toMatch(/WARAPP_WS_PORT/);
+  });
+
+  it('no doc still says turn orders cannot be submitted', () => {
+    const NOT_SUPPORTED = /(never submits (turn )?orders|nothing submits orders|turn orders[^.]*not supported|only two tools write|two tools write)/i;
+    for (const [file, text] of [
+      ['README.md', readme],
+      ['CLAUDE.md', claude],
+      ['skills/warapp-mcp/SKILL.md', skill],
+      ['mint.yaml', mint],
+    ] as const) {
+      expect(text, file).not.toMatch(NOT_SUPPORTED);
+    }
+  });
+
+  it('the store-facing descriptions mention turn submission and the confirmation gate', () => {
+    const manifest = read('../manifest.json') as { description: string };
+    expect(manifest.description).toMatch(/turn/i);
+    expect(manifest.description).toMatch(/confirm/i);
+    const summary = mint.slice(mint.indexOf('\nsummary:'), mint.indexOf('\nexamples:'));
+    expect(summary).toMatch(/turn/i);
+    expect(summary).toMatch(/confirm/i);
+  });
+
+  it('README and the skill describe the plan → review → submit flow', () => {
+    for (const [file, text] of [['README.md', readme], ['skills/warapp-mcp/SKILL.md', skill]] as const) {
+      expect(text.indexOf('warapp_plan_turn'), file).toBeGreaterThan(-1);
+      expect(text, file).toMatch(/review/i);
+      for (const s of ['resolved', 'committed', 'unknown']) expect(text, file).toContain(s);
+    }
+  });
+
+  it('CLAUDE.md says how a turn commit is confirmed (game state, never the reply bool)', () => {
+    expect(claude).toMatch(/SendOrders/);
+    expect(claude).toMatch(/numberOfTurns/);
+    expect(claude).toMatch(/hasCommittedOrders/);
+    expect(claude).toMatch(/vacation ended/i);
   });
 
   it('CLAUDE.md names the write tools and the bundle / capture rules', () => {
