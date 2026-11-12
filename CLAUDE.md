@@ -122,9 +122,15 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
 - **A chrome-less "direct" transport, LOCAL-ONLY** (`src/direct/`, phase 7 — `docs/PLAN-DIRECT.md`).
   The signed-in session is carried by a durable **`AuthToken`** cookie, and that cookie **alone**
   authenticates both the server-rendered pages and a `/Services` POST (**verified 2026-11-12**).
-  So the bridge has a direct-first router wrapped around it (`createWarappBridge`,
-  `createDirectFirstTransport`): the direct leg issues a plain server-side HTTPS request carrying
-  the cookie, falling back to the browser bridge when no session is linked or it has expired.
+  So the bridge has a direct-first router wrapped around it (`createDirectFirstBridge` in
+  `src/direct/transport.ts`, over mcp-utils `createDirectFirstTransport`; the fetchproxy bridge
+  itself is `createWarappBridge` in `src/transport-bridge.ts`): the direct leg issues a plain
+  server-side HTTPS request carrying the cookie, falling back to the browser bridge when no session
+  is linked or it has expired. Only a 200 non-frame `/Services` reply (or a sign-in page/redirect)
+  means signed out — a 5xx passes through as an `http` error. A non-GET that reached war.app on the
+  direct leg is **never re-sent over the bridge** (a write must not be sent twice); later calls use
+  the bridge. A relink (`warapp_link_session`, or a new `capturedAt` on disk) clears the stale flag
+  and returns `auto` to the direct leg.
   `WARAPP_TRANSPORT` = `auto` (default) | `direct` | `fetchproxy`; the session is stored at
   `WARAPP_SESSION_FILE` (default `<dataDir>/session.json`). One injection point: `index.ts` builds
   this one bridge and passes it to `WarappRpc`, the page fetches, the healthcheck and the push
@@ -136,7 +142,8 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
   **Direct mode is local-only — `mint.yaml` keeps the browser bridge and stores no token on the host.**
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
-  after a fallback; either way it reports the active leg and whether a direct session is linked and
+  only when this connection's router is on the bridge leg (the fetchproxy bridge is shared
+  process-wide, so its role alone is not enough; `WARAPP_TRANSPORT=direct` never probes it); either way it reports the active leg and whether a direct session is linked and
   its age (never the token). The bridge port is `WARAPP_WS_PORT` (default 37149); hosting needs
   `bridge: true` and `bridgePortEnv: WARAPP_WS_PORT` on the registration.
 - **A frozen war.app tab stalls bridged POSTs.** Chrome freezes background tabs; the bridge
