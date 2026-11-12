@@ -55,10 +55,12 @@ const NO_RESULT: WarappReply = () => ({ body: (w) => w.bool(false) });
  * answers with `warapp`, and the synthetic client bundle. Nothing reaches the
  * network.
  */
-export async function liveHarness(opts: { feed?: unknown[]; warapp?: WarappReply } = {}): Promise<Harness> {
+export async function liveHarness(
+  opts: { feed?: unknown[]; warapp?: WarappReply; pages?: Record<string, string> } = {},
+): Promise<Harness> {
   const feed = opts.feed?.length ? opts.feed : [lobbyFixture()];
   const { calls, fetchImpl } = stubFetch(...feed);
-  const fake = fakeWarapp(opts.warapp ?? NO_RESULT);
+  const fake = fakeWarapp(opts.warapp ?? NO_RESULT, opts.pages);
   const { bridge, mock } = mockWarappBridge(fake.handler);
   const bundle = new WarappBundle(LIVE_BUNDLE, 'test');
   const harness = await createTestHarness((s) =>

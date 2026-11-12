@@ -53,6 +53,14 @@ Build plans: `docs/PLAN.md` (phase 1, GameFeed) and `docs/PLAN-LIVE.md` (phase 2
   probe until the bridge has carried a request, the bridge probe after. The bridge port is
   `WARAPP_WS_PORT` (default 37149); hosting needs `bridge: true` and
   `bridgePortEnv: WARAPP_WS_PORT` on the registration.
+- **A frozen war.app tab stalls bridged POSTs.** Chrome freezes background tabs; the bridge
+  relays `/Services` POSTs through a page tab, so they time out ("did not respond within
+  30000ms") while GETs (run by the extension) still work. Reloading or focusing a war.app tab
+  clears it. Live verification found this repeatedly — say so in any timeout hint.
+- **"Me" is the signed-in account.** The live tools default `player` to the account whose
+  invite token (`https://war.app/InviteToken`, read through the bridge) matches a GameFeed
+  player id; the bundle is discovered from `https://war.app/MultiPlayer` (the homepage does
+  not load the game client).
 - **Every GameFeed scalar is a string** (ids, counts, booleans); normalize before use —
   see `docs/PLAN.md` "Facts". Fixtures under `tests/fixtures/` are anonymized.
 - **API facts live in `docs/WARAPP-API.md`**, each marked verified or unverified. The board

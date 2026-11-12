@@ -15,7 +15,8 @@ import { join } from 'node:path';
 import type { Reader } from './codec.js';
 import { BundleInterpreter, parseBundle, type InterpOptions } from './interp.js';
 
-export const DEFAULT_PAGE_URL = 'https://war.app/';
+/** A page that loads the game client (the homepage does not). */
+export const DEFAULT_PAGE_URL = 'https://war.app/MultiPlayer';
 /** Hosts a bundle may be served from (the host itself or any subdomain). */
 export const BUNDLE_HOSTS = ['war.app', 'warappcdn.com'];
 

@@ -111,10 +111,12 @@ describe('loadBundle', () => {
     expect(b.readClass('NE', new Reader(new Writer().int32(1).bytes()))).toMatchObject({ ver: 200 });
   });
 
-  it('defaults the page to war.app', async () => {
-    const f = fakeFetch({ 'https://war.app/': html(CDN), [CDN]: MINI_BUNDLE });
+  // war.app's homepage does not load the game client; /MultiPlayer (like every game
+  // page) carries the ujs.js script tag — observed live 2026-11-12.
+  it('defaults the page to war.app/MultiPlayer, which carries the client bundle', async () => {
+    const f = fakeFetch({ 'https://war.app/MultiPlayer': html(CDN), [CDN]: MINI_BUNDLE });
     await loadBundle({ dataDir: tempDir(), fetchText: f.fetchText });
-    expect(f.calls[0]).toBe('https://war.app/');
+    expect(f.calls[0]).toBe('https://war.app/MultiPlayer');
   });
 });
 

@@ -21,7 +21,22 @@ export interface LiveContext {
   rpc: WarappRpc;
   /** The loaded client bundle (cached per process). */
   bundle: () => Promise<ClassReader>;
+  /**
+   * The signed-in account's invite token (= its GameFeed player id), read once from
+   * war.app's InviteToken page through the bridge; `undefined` when it cannot be read.
+   */
+  myInviteToken: () => Promise<number | undefined>;
 }
+
+/** The token from war.app's `/InviteToken` page ("Your invite token is N"). */
+export function parseInviteToken(html: string): number | undefined {
+  const m = /Your invite token is\s*(\d{5,20})/.exec(html);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isSafeInteger(n) ? n : undefined;
+}
+
+export const INVITE_TOKEN_URL = 'https://war.app/InviteToken';
 
 export interface LiveContextOptions {
   client: WarappClient;
@@ -63,7 +78,21 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     fetchText: bundleFetcher(opts.bridge, opts.fetchImpl),
   });
   const load = opts.bundle ?? (() => provider.get());
+  const fetchText = bundleFetcher(opts.bridge, opts.fetchImpl);
+  let token: Promise<number | undefined> | undefined;
+  const myInviteToken = (): Promise<number | undefined> => {
+    // Cache a success; let a failure (bridge down, signed out) be retried next call.
+    token ??= fetchText(INVITE_TOKEN_URL)
+      .then(parseInviteToken)
+      .catch(() => undefined)
+      .then((t) => {
+        if (t === undefined) token = undefined;
+        return t;
+      });
+    return token;
+  };
   return {
+    myInviteToken,
     client: opts.client,
     rpc,
     bundle: async () => {

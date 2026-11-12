@@ -1,7 +1,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import { describe, expect, it } from 'vitest';
 import { MapCache, WarappClient } from '../src/client.js';
-import { bundleFetcher, createLiveContext } from '../src/tools/live-context.js';
+import { bundleFetcher, createLiveContext, parseInviteToken } from '../src/tools/live-context.js';
 import { withToolConfig } from '../src/tools/hints.js';
 import { mockWarappBridge } from './bridge-mock.js';
 
@@ -68,5 +68,29 @@ describe('withToolConfig', () => {
     });
     expect(seen).toEqual([{ a: 1, title: 'T' }]);
     expect(server.registerTool).toBe(own);
+  });
+});
+
+describe('invite token (the signed-in account)', () => {
+  it('parses the token from the InviteToken page, and nothing from anything else', () => {
+    expect(parseInviteToken('<div>Your invite token is 3312345644</div>')).toBe(3312345644);
+    expect(parseInviteToken('<html>Sign in</html>')).toBeUndefined();
+    expect(parseInviteToken('Your invite token is 99999999999999999999')).toBeUndefined();
+  });
+
+  it('caches a success and retries after a failure', async () => {
+    let n = 0;
+    const { bridge } = mockWarappBridge(() => {
+      n += 1;
+      return n === 1
+        ? { status: 500, body: '', url: 'https://war.app/InviteToken' }
+        : { status: 200, body: 'Your invite token is 3312345644', url: 'https://war.app/InviteToken' };
+    });
+    const client = new WarappClient({ env: {}, fetchImpl: async () => new Response('{}'), mapCache: new MapCache() });
+    const ctx = createLiveContext({ client, bridge, bundle: async () => { throw new Error('unused'); } });
+    expect(await ctx.myInviteToken()).toBeUndefined();
+    expect(await ctx.myInviteToken()).toBe(3312345644);
+    expect(await ctx.myInviteToken()).toBe(3312345644);
+    expect(n).toBe(2);
   });
 });

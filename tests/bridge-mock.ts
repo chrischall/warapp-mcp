@@ -136,9 +136,17 @@ export interface WarappExchange {
  */
 export function fakeWarapp(
   reply: (req: DecodedRequest, n: number) => Partial<ReplyFrame> | HttpResponse,
+  pages: Record<string, string> = {},
 ): { handler: BridgeHandler; exchanges: WarappExchange[] } {
   const exchanges: WarappExchange[] = [];
   const handler: BridgeHandler = (req) => {
+    // Page GETs (e.g. /InviteToken) are not RPC frames; answer from `pages` or 404.
+    if (req.method === 'GET') {
+      const html = pages[req.path];
+      return html === undefined
+        ? { status: 404, body: '', url: req.path }
+        : { status: 200, body: html, url: req.path };
+    }
     const decoded = decodeRequest(fromHex(req.body ?? ''), { hasAuth: !NO_AUTH.has(readMethod(req.body ?? '')) });
     exchanges.push({ path: req.path, headers: req.headers, request: decoded });
     const out = reply(decoded, exchanges.length);

@@ -32,7 +32,17 @@ const BRIDGE_NOTE =
 const playerArg = z
   .union([z.string(), z.number()])
   .optional()
-  .describe('You in this game: your war.app name (or part of it) or GameFeed player id. Omit to list the players.');
+  .describe('You in this game: your war.app name (or part of it) or GameFeed player id. Omit to use the signed-in account.');
+
+/** `player` when given; else the signed-in account (its invite token is its GameFeed id). */
+async function resolveMe(ctx: LiveContext, players: readonly Player[], input: string | number | undefined): Promise<Player> {
+  if (input === undefined || String(input).trim() === '') {
+    const token = await ctx.myInviteToken();
+    const me = token === undefined ? undefined : players.find((p) => p.id === token);
+    if (me) return me;
+  }
+  return resolvePlayer(players, input);
+}
 
 /** A territory's owner as a person reads it. */
 function ownerLabel(t: LiveTerritory, byInGame: ReadonlyMap<number, Player>): string {
@@ -163,7 +173,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
     },
     async ({ game_id, player }) => {
       const game = await ctx.client.getGame(game_id, { settings: true });
-      const me = resolvePlayer(game.players, player);
+      const me = await resolveMe(ctx, game.players, player);
       const picks = await loadPicks(ctx, game.id, inGameId(me));
       const name = nameIn(mapOf(game));
       return respond(undefined, ['compact'], () => ({
@@ -219,7 +229,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
           async plan({ game_id, player, territories }) {
             const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
             const map = mapOf(game);
-            const me = resolvePlayer(game.players, player);
+            const me = await resolveMe(ctx, game.players, player);
             const picks = territories.map((t) => resolveTerritory(map, t));
             const seen = new Set<number>();
             for (const t of picks) {

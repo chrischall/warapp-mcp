@@ -210,6 +210,34 @@ describe('warapp_get_my_picks', () => {
     expect(p.picks).toEqual([]);
   });
 
+  it('defaults to the signed-in account, found by its invite token', async () => {
+    let params: number[] = [];
+    h = await liveHarness({
+      feed: [game('DistributingTerritories')],
+      pages: { 'https://war.app/InviteToken': `<p>Your invite token is ${BOB.feed}</p>` },
+      warapp: routes({
+        [Method.GetTerritoryPicks]: (req) => {
+          params = [req.body.int32(), req.body.int32()];
+          return picksReply([158])();
+        },
+      }),
+    });
+    const p = payload(await h.call('warapp_get_my_picks', { game_id: GAME }));
+    expect(p.player).toEqual({ id: Number(BOB.feed), name: 'Bob' });
+    expect(params).toEqual([GAME, BOB.inGame]);
+  });
+
+  it('still asks when the signed-in account is not a player in that game', async () => {
+    h = await liveHarness({
+      feed: [game('DistributingTerritories')],
+      pages: { 'https://war.app/InviteToken': '<p>Your invite token is 9912345699</p>' },
+    });
+    const res = await h.call('warapp_get_my_picks', { game_id: GAME });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Say which player/);
+    expect(h.exchanges).toEqual([]);
+  });
+
   it('asks which player when none is given, and sends nothing', async () => {
     h = await liveHarness({ feed: [game('DistributingTerritories')] });
     const res = await h.call('warapp_get_my_picks', { game_id: GAME });
