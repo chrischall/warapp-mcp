@@ -11,9 +11,10 @@
 //     straight round, with a luck margin when luck > 0).
 //  2. Opening simulation (`simulate`), PICK_HORIZON turns from a set of picks, each
 //     starting with InitialPlayerArmiesPerTerritory. Movable armies (above the
-//     guard) are one pool; each turn adds base income + completed bonuses (+ one per
-//     BonusArmyPer territories). Within a turn it repeatedly picks the bonus (value
-//     > 0, not a superbonus, with a member in or next to the territories held) with
+//     guard) are one pool; each turn adds max(base income, floor(territories held /
+//     BonusArmyPer)) (`territoryIncome`: the territory armies replace the base, never
+//     add to it) + completed bonuses. Within a turn it repeatedly picks the bonus
+//     (value > 0, not a superbonus, with a member in or next to the territories held) with
 //     the best value / remaining capture cost that has a member next to a territory
 //     held at the start of the turn, and attacks that bonus's cheapest such member;
 //     when the pool cannot afford it, the armies are saved for the next turn. A
@@ -44,7 +45,7 @@ import { analyzeBonus } from './bonuses.js';
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { captureCost, WASTELAND_FACTOR } from './planner.js';
-import { DEFAULT_BASE_INCOME } from './player.js';
+import { DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
 
 /** Turns the opening simulation runs (income by turn 3). */
 export const PICK_HORIZON = 3;
@@ -184,9 +185,8 @@ function simulate(ctx: Ctx, start: readonly number[]): SimResult {
   };
   checkComplete(0);
   for (let turn = 1; turn <= PICK_HORIZON; turn++) {
-    let income = ctx.baseIncome;
+    let income = territoryIncome(held.size, ctx.baseIncome, ctx.bonusArmyPer);
     for (const id of completions.keys()) income += ctx.bonuses.get(id)!.value;
-    if (ctx.bonusArmyPer > 0) income += Math.floor(held.size / ctx.bonusArmyPer);
     pool += income;
     const startHeld = [...held];
     const frontier = new Set<number>();

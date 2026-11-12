@@ -28,7 +28,8 @@ export interface Income {
  * client income code, which adds floor(territories / BonusArmyPer) and then tops
  * it up to MinimumArmyBonus when smaller ("Bonus armies for N territories (if
  * more than base armies)"); live (#38): base 4, per 1, 1 territory paid 4, and
- * base 20, per 1, 164 territories paid 164. `per` 0 (or less) is off.
+ * base 20, per 1, 164 territories paid 164; base 2, per 1, 3 territories
+ * refused 5 and accepted 3. `per` 0 (or less) is off.
  */
 export function territoryIncome(territories: number, base: number, per: number): number {
   return per > 0 ? Math.max(base, Math.floor(territories / per)) : base;
@@ -39,7 +40,10 @@ export function territoryIncome(territories: number, base: number, per: number):
  * income has a term the model does not compute. Empty when every income rule
  * the game uses is modelled (base, BonusArmyPer, held bonuses, card armies).
  * Cities and per-player income mods have no known settings key, so they are
- * not detected: those games still get the hard deploy-total check.
+ * not detected: those games still get the hard deploy-total check. Sanctions is
+ * flagged when the card is merely enabled: the live board's active-card list is
+ * not decoded, so the model cannot tell whether I am sanctioned this turn
+ * (docs/WARAPP-API.md, the trade-off).
  */
 export function incomeUncertainties(settings: GameSettings | undefined): string[] {
   const out: string[] = [];

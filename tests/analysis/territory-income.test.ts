@@ -2,7 +2,8 @@
 // computes income as floor(territories / BonusArmyPer), topped up to
 // MinimumArmyBonus when smaller ("Bonus armies for N territories (if more than
 // base armies)"), then adds held bonuses. Live: base 4, per 1, 1 territory → 4;
-// base 20, per 1, 164 territories → 164. Synthetic maps and ids only.
+// base 20, per 1, 164 territories → 164; base 2, per 1, 3 territories → 3 (5 was
+// refused, 3 accepted). Synthetic maps and ids only.
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
@@ -40,6 +41,7 @@ describe('territoryIncome', () => {
   it('replaces the base when the territory armies are larger, never adds to it', () => {
     expect(territoryIncome(1, 4, 1)).toBe(4);
     expect(territoryIncome(164, 20, 1)).toBe(164);
+    expect(territoryIncome(3, 2, 1)).toBe(3);
     expect(territoryIncome(9, 3, 2)).toBe(4);
     expect(territoryIncome(5, 3, 2)).toBe(3);
   });
@@ -62,6 +64,14 @@ describe('income with Extra Armies for Territories (live cases, #38)', () => {
     const a = analyzePlayer(g, s, ME, settings({ minimumArmyBonus: 20, bonusArmyPer: 1 }));
     expect(a.income).toMatchObject({ base: 20, perTerritory: 164, total: 164 });
     expect(incomeFor(g, s, ME, settings({ minimumArmyBonus: 20, bonusArmyPer: 1 }))).toBe(164);
+  });
+
+  it('base 2, one army per territory, 3 territories held: 3 (not 5)', () => {
+    const g = buildGraph(lineMap(4));
+    const s = board([mine(1, 1), mine(2, 1), mine(3, 1), neutral(4, 2)]);
+    const a = analyzePlayer(g, s, ME, settings({ minimumArmyBonus: 2, bonusArmyPer: 1 }));
+    expect(a.income).toMatchObject({ base: 2, perTerritory: 3, total: 3 });
+    expect(incomeFor(g, s, ME, settings({ minimumArmyBonus: 2, bonusArmyPer: 1 }))).toBe(3);
   });
 
   it('adds held bonuses on top of the larger of the two', () => {

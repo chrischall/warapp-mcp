@@ -221,3 +221,31 @@ describe('planPicks — determinism', () => {
     expect(a.picks.map((x) => x.territoryId)).toEqual([3, 7]);
   });
 });
+
+describe('planPicks — income with Extra Armies for Territories (#38)', () => {
+  // Picks 1, 2, 3 each border 10, the one-territory Target (+5) on 4 neutrals:
+  // captureCost(4) at 60/70 = 6. One starting army each, all guarding → pool 0.
+  const g = mkGraph([[1, 10], [2, 10], [3, 10]], [{ id: 701, name: 'Target', value: 5, territoryIds: [10] }]);
+  const run = (extra: PickSettings) =>
+    plan({
+      graph: g,
+      pickable: [1, 2, 3],
+      territoryLimit: 3,
+      maxPicks: 3,
+      neutralArmies: new Map([[10, 4]]),
+      settings: { ...STD, initialPlayerArmiesPerTerritory: 1, ...extra },
+    });
+  const targetTurn = (p: PickPlan) => p.groups.primary.bonuses.find((b) => b.bonusId === 701)?.turn;
+
+  it('base 4, one army per territory, 3 picks: income is max(4, 3) = 4, not 7 — Target waits for turn 2', () => {
+    expect(targetTurn(run({ minimumArmyBonus: 4, bonusArmyPer: 1 }))).toBe(2);
+  });
+
+  it('the territory armies replace the base once larger: base 2, per 1, 3 picks → 3 (not 5), still turn 2', () => {
+    expect(targetTurn(run({ minimumArmyBonus: 2, bonusArmyPer: 1 }))).toBe(2);
+  });
+
+  it('a base that already pays for the capture takes Target on turn 1', () => {
+    expect(targetTurn(run({ minimumArmyBonus: 6, bonusArmyPer: 1 }))).toBe(1);
+  });
+});
