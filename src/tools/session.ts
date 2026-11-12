@@ -1,0 +1,141 @@
+// The direct-transport session tools:
+//
+// - `warapp_link_session` (write, confirm-gated, owner-only intent) captures
+//   the signed-in war.app session cookie once through the browser bridge and
+//   stores it, so later calls skip Chrome (src/direct/link.ts). It reports only
+//   success + when it was captured + the active transport — NEVER the token.
+// - `warapp_session_status` (read) reports whether a session is linked, when it
+//   was captured and how old it is, and which leg (direct vs the browser
+//   bridge) is serving calls now — again never the token. After a direct-leg
+//   `SessionExpiredError` forced the router to fall back, it surfaces
+//   "session expired — run warapp_link_session" so the owner relinks.
+//
+// SECURITY: the AuthToken is a full-account credential. Neither tool returns,
+// logs, or previews it; the status output carries only `capturedAt`/`host`/age.
+import { CONFIRM_INJECTION_RULE, defineWrite, registerWrite, toolAnnotations } from '@chrischall/mcp-utils';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
+import { linkSession, type LinkResult, type LinkSessionOptions } from '../direct/link.js';
+import { readSession, SESSION_HOST, type Session } from '../direct/session.js';
+import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
+import { readAnnotations, respond, untrustedDescription } from './common.js';
+
+/** Which leg serves calls now, and whether the linked token went stale this run. */
+export interface SessionTransportView {
+  /** The leg the next call rides. */
+  activeLeg(): 'direct' | 'fetchproxy';
+  /** True once a direct→bridge fallback happened — the linked token is expired. */
+  sessionStale(): boolean;
+}
+
+/** What {@link registerSessionTools} needs. */
+export interface SessionToolsDeps {
+  /** The active transport, for "which leg is serving calls". */
+  transport: SessionTransportView;
+  /** Env for the stored-file path and the capture port. Defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
+  /** Test seam: read the linked session. Defaults to M1's {@link readSession}. */
+  read?: () => Promise<Session | null>;
+  /** Test seam: capture + store a session. Defaults to {@link linkSession}. */
+  link?: (opts?: LinkSessionOptions) => Promise<LinkResult>;
+  /** Clock for age. Defaults to `Date.now`. */
+  now?: () => number;
+}
+
+const HINT_NOT_LINKED =
+  'No war.app session is linked. Run warapp_link_session to use the direct (no-browser) transport; the browser ' +
+  'bridge is used until then.';
+const HINT_EXPIRED =
+  'The linked war.app session expired this run, so the browser bridge is handling calls. Run warapp_link_session ' +
+  'to relink.';
+
+export function registerSessionTools(server: McpServer, deps: SessionToolsDeps): void {
+  const read = deps.read ?? (() => readSession(deps.env));
+  const link = deps.link ?? ((opts?: LinkSessionOptions) => linkSession({ ...(deps.env ? { env: deps.env } : {}), ...opts }));
+  const now = deps.now ?? Date.now;
+
+  server.registerTool(
+    'warapp_session_status',
+    {
+      title: 'war.app direct-transport session status',
+      description: untrustedDescription(
+        'Report whether a signed-in war.app session is linked for the direct (no-browser) transport, when it was ' +
+          'captured and how old it is, and which transport is currently active (direct, or the browser bridge). ' +
+          'Never shows the session cookie. Read-only; use warapp_link_session to link or relink.',
+      ),
+      _meta: lookupMeta(['war.app session', 'is war.app linked', 'direct transport status']),
+      annotations: readAnnotations('war.app session status'),
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const session = await read();
+      const activeTransport = deps.transport.activeLeg();
+      return respond(undefined, ['compact'], () => {
+        if (!session) return { linked: false, activeTransport, hint: HINT_NOT_LINKED };
+        const ageSeconds = Math.max(0, Math.round((now() - Date.parse(session.capturedAt)) / 1000));
+        const base = { linked: true, host: session.host, capturedAt: session.capturedAt, ageSeconds, activeTransport };
+        return deps.transport.sessionStale() ? { ...base, sessionExpired: true, hint: HINT_EXPIRED } : base;
+      });
+    },
+  );
+
+  withToolConfig(
+    server,
+    {
+      title: 'Link a war.app session (direct transport)',
+      _meta: mintMeta('change', ['link war.app', 'connect war.app session', 'relink war.app']),
+    },
+    () =>
+      registerWrite(
+        server,
+        defineWrite({
+          name: 'warapp_link_session',
+          description:
+            'Link your signed-in war.app session for the direct (no-browser) transport: capture the session cookie ' +
+            'from your signed-in war.app tab once and store it on THIS machine, so later war.app calls go straight ' +
+            'to war.app without the browser bridge. The stored cookie is a full-account credential kept locally ' +
+            `(file mode 0600); it is never shown here or sent anywhere but war.app. ${CONFIRM_INJECTION_RULE}`,
+          annotations: toolAnnotations({
+            title: 'Link a war.app session',
+            readOnly: false,
+            destructive: false,
+            idempotent: false,
+            openWorld: true,
+          }),
+          inputSchema: z.object({}),
+          plan() {
+            return {
+              gate: {
+                action: 'warapp.link_session',
+                summary: 'Capture your signed-in war.app session and store it locally for the direct transport',
+                account: undefined,
+                payload: {
+                  action: 'link-session',
+                  host: SESSION_HOST,
+                  stores: 'the war.app session cookie, locally (file mode 0600), for the no-browser transport',
+                },
+                preview: {
+                  note:
+                    'Captures the session cookie from your signed-in war.app tab and stores it on this machine ' +
+                    'only (file mode 0600). It is a full-account credential — it is never shown here or sent ' +
+                    'anywhere but war.app.',
+                },
+              },
+              state: {} as Record<string, never>,
+            };
+          },
+          async execute() {
+            const result = await link();
+            return {
+              status: 'linked' as const,
+              host: result.host,
+              capturedAt: result.capturedAt,
+              transport: deps.transport.activeLeg(),
+            };
+          },
+          render: (r) => respond(undefined, ['compact'], () => r),
+          batchable: false,
+        }),
+      ),
+  );
+}
