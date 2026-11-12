@@ -66,10 +66,13 @@ export function registerHealthcheckTool(
     server,
     prefix: 'warapp',
     hostLabel: 'war.app',
-    // The browser bridge is on the path once the direct-first router fell back
-    // to it (or was pinned to fetchproxy); until then the direct leg serves and
-    // the credential arm answers.
-    usingBridge: () => bridge.transport().role !== null,
+    // The browser bridge is on the path only when THIS connection's
+    // direct-first router is on its fetchproxy leg (it fell back, or is pinned
+    // to fetchproxy) AND the bridge has carried a request. The fetchproxy
+    // bridge is shared process-wide, so its role alone is not enough: another
+    // connection may have used it while this one rides the direct leg (always,
+    // under WARAPP_TRANSPORT=direct). Otherwise the credential arm answers.
+    usingBridge: () => direct.status().transport === 'fetchproxy' && bridge.transport().role !== null,
     bridge: {
       probePath: BRIDGE_PROBE_PATH,
       transport: () => bridge.transport(),

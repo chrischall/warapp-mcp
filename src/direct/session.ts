@@ -18,7 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
+import { McpToolError, readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import { stripBearer } from '@chrischall/mcp-utils/fetchproxy';
 import { dataDir } from '../config.js';
 
@@ -105,17 +105,66 @@ export async function clearSession(env: EnvSource = process.env): Promise<void> 
 const SCRUBBED = '[warapp-session]';
 
 /**
- * Remove `token` from `s` by value — both the raw value and its
+ * Remove `token` from `s` by value — the raw value, its
  * {@link stripBearer}-normalised form (so a `Cookie: AuthToken=…` or
- * `Bearer …` slice is caught). Wire this around any upstream string that could
- * carry the session, the way the GameFeed client scrubs the email and API
- * token. A falsy token leaves `s` unchanged.
+ * `Bearer …` slice is caught) and its URL-encoded form (so a token echoed in
+ * a URL or form body is caught). Wire this around any upstream string that
+ * could carry the session, the way the GameFeed client scrubs the email and
+ * API token. A falsy token leaves `s` unchanged.
  */
 export function scrubToken(s: string, token: string | null | undefined): string {
   if (!token) return s;
+  const bare = stripBearer(token);
+  // Longest first, so a longer form is never left half-scrubbed by a shorter one.
+  const values = [...new Set([token, bare, encodeURIComponent(token), encodeURIComponent(bare)])]
+    .filter((v) => v.length > 0)
+    .sort((a, b) => b.length - a.length);
   let out = s;
-  for (const value of new Set([token, stripBearer(token)])) {
-    if (value) out = out.split(value).join(SCRUBBED);
-  }
+  for (const value of values) out = out.split(value).join(SCRUBBED);
   return out;
+}
+
+/** Every string an error carries that could reach a caller: message, hint, stack, and its cause chain. */
+function errorStrings(err: unknown, depth = 0): string[] {
+  if (depth > 4 || typeof err !== 'object' || err === null) return typeof err === 'string' ? [err] : [];
+  const e = err as { message?: unknown; hint?: unknown; stack?: unknown; cause?: unknown };
+  const own = [e.message, e.hint, e.stack].filter((v): v is string => typeof v === 'string');
+  return [...own, ...errorStrings(e.cause, depth + 1)];
+}
+
+/**
+ * Whether any of `tokens` (in any {@link scrubToken} form) appears anywhere in
+ * `err` — its message, hint, stack, or a short `cause` chain.
+ */
+export function errorCarriesToken(err: unknown, tokens: ReadonlyArray<string | null | undefined>): boolean {
+  const strings = errorStrings(err);
+  return tokens.some((t) => !!t && strings.some((s) => scrubToken(s, t) !== s));
+}
+
+/**
+ * `err` with every form of each of `tokens` removed: returned unchanged when
+ * none appears anywhere in it (message, hint, stack, cause chain); otherwise
+ * rebuilt as an {@link McpToolError} carrying the scrubbed message and hint and
+ * the original `kind`/`status`, with NO `cause` (the cause is where a token
+ * could still hide) and a fresh stack.
+ */
+export function scrubError(err: unknown, tokens: ReadonlyArray<string | null | undefined>): unknown {
+  if (!errorCarriesToken(err, tokens)) return err;
+  // Longest first, so a token inside a longer one (the AuthToken inside the
+  // whole captured Cookie header) never leaves the longer one half-scrubbed.
+  const ordered = tokens.filter((t): t is string => !!t).sort((a, b) => b.length - a.length);
+  const scrub = (s: string) => ordered.reduce<string>((acc, t) => scrubToken(acc, t), s);
+  const e = (typeof err === 'object' && err !== null ? err : {}) as {
+    message?: unknown;
+    hint?: unknown;
+    kind?: unknown;
+    status?: unknown;
+  };
+  const message = scrub(typeof e.message === 'string' ? e.message : String(err));
+  const kind = err instanceof McpToolError && err.kind ? err.kind : 'transport';
+  return new McpToolError(message, {
+    kind,
+    ...(typeof e.status === 'number' ? { status: e.status } : {}),
+    ...(typeof e.hint === 'string' ? { hint: scrub(e.hint) } : {}),
+  });
 }

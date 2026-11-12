@@ -16,14 +16,18 @@
 // shares (WarappRpc, the page fetches, the healthcheck, the push socket) gains
 // direct mode at once.
 //
-// {@link createWarappBridge} wires the direct leg and the existing fetchproxy
-// bridge through mcp-utils `createDirectFirstTransport`: `auto` (default) tries
-// direct and falls back to the browser bridge when the session is absent or
-// expired; `fetchproxy` is today's behaviour; `direct` never falls back.
+// {@link createDirectFirstBridge} wires the direct leg and the existing
+// fetchproxy bridge (src/transport-bridge.ts `createWarappBridge`) through
+// mcp-utils `createDirectFirstTransport`: `auto` (default) tries direct and
+// falls back to the browser bridge when the session is absent or expired;
+// `fetchproxy` is today's behaviour; `direct` never falls back. A non-GET that
+// reached war.app on the direct leg is never replayed over the bridge (a write
+// must not be sent twice), and a relink returns `auto` to the direct leg.
 //
 // SECURITY: the AuthToken is a full-account credential. It is never logged,
 // never put in a tool result, never in an error or hint string — upstream
-// error strings are scrubbed BY VALUE ({@link scrubToken}). The direct leg
+// errors are scrubbed BY VALUE ({@link scrubError}: message, hint, stack and
+// cause chain). The direct leg
 // refuses to attach the cookie to any host but war.app, so the token can never
 // be sent elsewhere. Direct mode is LOCAL-ONLY — the hosted path keeps the
 // browser bridge and stores no token on the host.
@@ -40,7 +44,7 @@ import {
 } from '@chrischall/mcp-utils/fetchproxy';
 import { fetchPublic } from '@chrischall/mcp-utils/netguard';
 import type { WarappBridge } from '../transport-bridge.js';
-import { SESSION_HOST, scrubToken, type Session } from './session.js';
+import { SESSION_HOST, scrubError, type Session } from './session.js';
 
 /** The env var pinning the transport: `direct` | `fetchproxy` | `auto` (default). */
 export const TRANSPORT_ENV = 'WARAPP_TRANSPORT';
@@ -79,10 +83,18 @@ export class SessionNotLinkedError extends McpToolError {
 /** The linked session is no longer signed in — the router (in `auto`) falls back to the bridge. */
 export class SessionExpiredError extends McpToolError {
   override name = 'SessionExpiredError';
-  constructor() {
-    super('The linked war.app session is no longer signed in. Run warapp_link_session to relink.', {
-      kind: 'session_expired',
-    });
+  /** When the expired session was captured (non-secret), so a relink can be told apart. */
+  readonly capturedAt: string | undefined;
+  constructor(opts: { capturedAt?: string | undefined; notResent?: boolean } = {}) {
+    super(
+      'The linked war.app session is no longer signed in. ' +
+        (opts.notResent
+          ? 'The request had already reached war.app, so it was not re-sent over the browser bridge (a write must ' +
+            'never be sent twice); later calls use the bridge. Retry, or run warapp_link_session to relink.'
+          : 'Run warapp_link_session to relink.'),
+      { kind: 'session_expired' },
+    );
+    this.capturedAt = opts.capturedAt;
   }
 }
 
@@ -151,8 +163,12 @@ export function looksLikeHexFrame(body: string): boolean {
 }
 
 /**
- * Whether a direct reply shows the session is signed out: a login redirect, a
- * sign-in page body, or a `/Services` reply that is not a valid frame.
+ * Whether a direct reply shows the session is signed out: a login redirect
+ * (whatever the final status), or a 200 reply that is a sign-in page body or a
+ * `/Services` reply that is not a valid frame. Any other status — a 5xx error
+ * page above all — is NOT a sign-out: it passes through, so WarappRpc reports
+ * it as an `http` failure instead of the router replaying the call over the
+ * bridge and marking a good session stale.
  */
 export function looksSignedOut(requestedUrl: string, res: DirectFetchResult): boolean {
   let finalPath = '';
@@ -162,6 +178,7 @@ export function looksSignedOut(requestedUrl: string, res: DirectFetchResult): bo
     finalPath = '';
   }
   if (SIGNIN_PATH.test(finalPath)) return true;
+  if (res.status !== 200) return false;
   if (SIGNIN_BODY.test(res.body)) return true;
   let reqPath = '';
   try {
@@ -171,17 +188,6 @@ export function looksSignedOut(requestedUrl: string, res: DirectFetchResult): bo
   }
   if (/\/services\b/i.test(reqPath) && !looksLikeHexFrame(res.body)) return true;
   return false;
-}
-
-/** Scrub `token` from a thrown error's message (by value); leave token-free errors untouched. */
-function scrubThrown(err: unknown, token: string): unknown {
-  if (err instanceof Error) {
-    const scrubbed = scrubToken(err.message, token);
-    if (scrubbed !== err.message) {
-      return new McpToolError(scrubbed, { kind: err instanceof McpToolError ? (err.kind ?? 'transport') : 'transport' });
-    }
-  }
-  return err;
 }
 
 /**
@@ -210,9 +216,9 @@ export class DirectBridge {
         ...(signal ? { signal } : {}),
       });
     } catch (err) {
-      throw scrubThrown(err, token);
+      throw scrubError(err, [token]);
     }
-    if (looksSignedOut(url, res)) throw new SessionExpiredError();
+    if (looksSignedOut(url, res)) throw new SessionExpiredError({ capturedAt: sess.capturedAt });
     return { status: res.status, body: res.body, url: res.url };
   }
 }
@@ -225,21 +231,28 @@ export interface WarappDirectBridge {
   status(): DirectFirstStatus;
   /** The bridge's healthcheck slice once a bridge exists; `undefined` while on direct. */
   bridgeTransport(): BridgeHealthcheckTransport | undefined;
-  /** A snapshot of the request counters. */
+  /** A snapshot of the request counters (they restart when a relink rebuilds the router). */
   stats(): DirectFirstStats;
   /**
-   * True once a direct→bridge fallback happened this session: the linked token
-   * is stale/expired. (The router pins to the bridge after the first wall, so
-   * the dead token is not retried — this flag lets the status tool say so.)
+   * True while the linked token is known to be signed out: the direct leg's
+   * last answer was a {@link SessionExpiredError}. Cleared when the direct leg
+   * succeeds again or a new session is linked ({@link sessionLinked}, or a new
+   * `capturedAt` noticed on the next call).
    */
   sessionStale(): boolean;
+  /**
+   * A new session was just linked (warapp_link_session): clear the stale flag
+   * and, in `auto`, return to the direct leg — the router's wall was about the
+   * OLD session. An edge-block wall is kept (it is about this client, not the token).
+   */
+  sessionLinked(): void;
 }
 
-/** Options for {@link createWarappBridge}. */
-export interface CreateWarappBridgeOptions {
+/** Options for {@link createDirectFirstBridge}. */
+export interface CreateDirectFirstBridgeOptions {
   /** The session store (M1's `readSession`, wrapped). */
   store: SessionStore;
-  /** Build the existing fetchproxy bridge leg, lazily (called at most once). */
+  /** Build the existing fetchproxy bridge leg, lazily. */
   makeBridge: () => WarappBridge;
   /** The transport pin; defaults to {@link TRANSPORT_ENV} read from `env`. */
   mode?: TransportMode;
@@ -251,36 +264,102 @@ export interface CreateWarappBridgeOptions {
   log?: (message: string) => void;
 }
 
+/** Why the router left the direct leg: a session problem (lifted by a relink) or an edge block (sticky). */
+type Wall = { kind: 'session'; capturedAt: string | null } | { kind: 'edge' };
+
+/** Whether a request may be re-sent after it reached war.app (only a read-only GET/HEAD). */
+const isSafeToReplay = (method: string): boolean => /^(?:GET|HEAD)$/i.test(method);
+
 /**
  * Wire the direct leg and the fetchproxy bridge into a direct-first router,
  * returning an object shaped like today's bridge (`ready()` → `{ fetch }`) plus
- * the healthcheck slice. On a direct→bridge fallback the token is marked stale
- * and the router emits the standard switch notice (never printing the token).
+ * the healthcheck slice. On a direct→bridge fallback the router emits a switch
+ * notice (never printing the token). A non-GET whose direct attempt reached
+ * war.app is never replayed over the bridge. In `auto`, a session-caused wall
+ * is lifted when a NEW session is linked, so the direct leg is retried.
  */
-export function createWarappBridge(opts: CreateWarappBridgeOptions): WarappDirectBridge {
+export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): WarappDirectBridge {
   const mode = opts.mode ?? readTransportMode(TRANSPORT_ENV, opts.env ? { env: opts.env } : {});
   const direct = new DirectBridge(opts.store, opts.directFetch);
-  const legs = createDirectFirstTransport<DirectBridge, WarappBridge>({
-    direct,
-    bridge: opts.makeBridge,
-    mode,
-    serverName: 'warapp-mcp',
-    hostLabel: SESSION_HOST,
-    shouldFallBack: (err) =>
-      err instanceof SessionExpiredError || err instanceof SessionNotLinkedError || err instanceof EdgeBlockedError,
-    bridgeHealth: (b) => b.transport(),
-    ...(opts.log ? { log: opts.log } : {}),
-  });
+  const log = opts.log ?? ((m: string) => console.error(m));
 
+  let wall: Wall | null = null;
   let stale = false;
-  const runOne = async (init: FetchproxyFetchInit): Promise<FetchproxyFetchResult> => {
-    const wasDirect = legs.status().transport === 'direct';
-    const res = await legs.run((leg, ctx) =>
-      leg === direct ? direct.fetch(init, ctx.signal) : (leg as WarappBridge).ready().then((t) => t.fetch(init)),
+
+  const onFallback = ({ error }: { error: unknown }): void => {
+    const next: Wall =
+      error instanceof SessionExpiredError
+        ? { kind: 'session', capturedAt: error.capturedAt ?? null }
+        : error instanceof SessionNotLinkedError
+          ? { kind: 'session', capturedAt: null }
+          : { kind: 'edge' };
+    wall = next;
+    const why =
+      error instanceof SessionExpiredError
+        ? 'the linked war.app session is signed out'
+        : error instanceof SessionNotLinkedError
+          ? 'no war.app session is linked'
+          : 'the site edge refused the direct request';
+    log(
+      `[warapp-mcp] Direct transport unavailable (${why}) — switching to the ContextMint Bridge browser bridge. ` +
+        `Keep a ${SESSION_HOST} tab open and approve the pairing prompt in the extension if one appears` +
+        (next.kind === 'session' ? '; run warapp_link_session to return to the direct transport.' : '.'),
     );
-    // A direct→bridge switch on this call means the linked token is dead.
-    if (wasDirect && legs.status().transport === 'fetchproxy') stale = true;
-    return res;
+  };
+
+  const build = () =>
+    createDirectFirstTransport<DirectBridge, WarappBridge>({
+      direct,
+      bridge: opts.makeBridge,
+      mode,
+      serverName: 'warapp-mcp',
+      hostLabel: SESSION_HOST,
+      shouldFallBack: (err) =>
+        err instanceof SessionExpiredError || err instanceof SessionNotLinkedError || err instanceof EdgeBlockedError,
+      bridgeHealth: (b) => b.transport(),
+      onFallback,
+    });
+  let legs = build();
+
+  /** Lift a session-caused wall: a fresh router, back on the direct leg. An edge wall stays. */
+  const liftSessionWall = (): void => {
+    if (wall?.kind !== 'session') return;
+    wall = null;
+    legs = build();
+  };
+
+  /** Behind a session wall: has a DIFFERENT session been linked since (e.g. by another process)? */
+  const relinkedSinceWall = async (): Promise<boolean> => {
+    if (wall?.kind !== 'session') return false;
+    const sess = await opts.store.read();
+    return sess !== null && sess.capturedAt !== wall.capturedAt;
+  };
+
+  const runOne = async (init: FetchproxyFetchInit): Promise<FetchproxyFetchResult> => {
+    if (mode === 'auto' && (await relinkedSinceWall())) {
+      liftSessionWall();
+      stale = false;
+    }
+    // A non-GET whose direct attempt reached war.app (it answered signed-out)
+    // is never re-sent over the bridge: a write must never be sent twice.
+    let reached: SessionExpiredError | undefined;
+    return legs.run(async (leg, ctx) => {
+      if (leg === direct) {
+        try {
+          const res = await direct.fetch(init, ctx.signal);
+          stale = false;
+          return res;
+        } catch (err) {
+          if (err instanceof SessionExpiredError) {
+            stale = true;
+            if (!isSafeToReplay(init.method)) reached = err;
+          }
+          throw err;
+        }
+      }
+      if (reached) throw new SessionExpiredError({ capturedAt: reached.capturedAt, notResent: true });
+      return (leg as WarappBridge).ready().then((t) => t.fetch(init));
+    });
   };
 
   return {
@@ -289,5 +368,9 @@ export function createWarappBridge(opts: CreateWarappBridgeOptions): WarappDirec
     bridgeTransport: () => legs.bridgeTransport(),
     stats: () => legs.stats(),
     sessionStale: () => stale,
+    sessionLinked: () => {
+      stale = false;
+      if (mode === 'auto') liftSessionWall();
+    },
   };
 }

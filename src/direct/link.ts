@@ -19,7 +19,7 @@ import { McpToolError, readPortEnv } from '@chrischall/mcp-utils';
 import { captureBearerHeader, type CaptureBearerHeaderOptions } from '@chrischall/mcp-utils/fetchproxy';
 import { DEFAULT_WS_PORT, SERVER_NAME, WS_PORT_ENV } from '../transport-bridge.js';
 import { VERSION } from '../version.js';
-import { SESSION_HOST, writeSession, type Session } from './session.js';
+import { scrubError, SESSION_HOST, writeSession, type Session } from './session.js';
 
 /** The cookie that carries the signed-in war.app session. */
 export const AUTH_COOKIE = 'AuthToken';
@@ -118,6 +118,12 @@ export async function linkSession(opts: LinkSessionOptions = {}): Promise<LinkRe
   if (!authToken) throw new NoAuthTokenError();
   const capturedAt = (opts.now?.() ?? new Date()).toISOString();
   const session: Session = { authToken, capturedAt, host: SESSION_HOST };
-  await (opts.save ?? ((s: Session) => writeSession(s, opts.env)))(session);
+  try {
+    await (opts.save ?? ((s: Session) => writeSession(s, opts.env)))(session);
+  } catch (err) {
+    // Whatever failed after the capture never carries the token or the rest
+    // of the captured cookie (other session cookies) out in its error.
+    throw scrubError(err, [authToken, cookie]);
+  }
   return { capturedAt, host: SESSION_HOST };
 }

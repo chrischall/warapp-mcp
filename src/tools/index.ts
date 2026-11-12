@@ -16,8 +16,8 @@ import { registerSessionTools } from './session.js';
 import { registerTurnTools } from './turn.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { readSession } from '../direct/session.js';
-import { createWarappBridge as createDirectBridge } from '../direct/transport.js';
-import { createWarappBridge as createFetchproxyBridge, type WarappBridge } from '../transport-bridge.js';
+import { createDirectFirstBridge } from '../direct/transport.js';
+import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
 
 export type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCache'> & {
   /**
@@ -40,13 +40,13 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   const client = new WarappClient(deps);
   const env = deps.env as NodeJS.ProcessEnv | undefined;
   // The process's browser bridge (fetchproxy), shared across connections.
-  const fetchproxy = deps.bridge ?? createFetchproxyBridge(env ? { env } : {});
+  const fetchproxy = deps.bridge ?? createWarappBridge(env ? { env } : {});
   // Wrap it in the direct-first router: the chrome-less AuthToken leg
   // (src/direct/) serves calls when a session is linked and falls back to the
   // browser bridge otherwise (WARAPP_TRANSPORT: auto default | direct |
   // fetchproxy). WarappRpc, the page fetches, the healthcheck and the push
   // socket all take this one bridge, so they all gain direct mode at once.
-  const bridge = createDirectBridge({
+  const bridge = createDirectFirstBridge({
     store: { read: () => readSession(deps.env) },
     makeBridge: () => fetchproxy,
     ...(env ? { env } : {}),
@@ -69,7 +69,11 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerTurnTools(server, live);
   registerChatTools(server, live);
   registerSessionTools(server, {
-    transport: { activeLeg: () => bridge.status().transport, sessionStale: () => bridge.sessionStale() },
+    transport: {
+      activeLeg: () => bridge.status().transport,
+      sessionStale: () => bridge.sessionStale(),
+      sessionLinked: () => bridge.sessionLinked(),
+    },
     ...(env ? { env } : {}),
   });
   // One push socket per process: keyed on the shared fetchproxy bridge so

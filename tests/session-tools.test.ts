@@ -18,7 +18,7 @@ afterEach(async () => {
 
 async function harnessWith(deps: Partial<SessionToolsDeps> = {}): Promise<TestHarness> {
   const full: SessionToolsDeps = {
-    transport: { activeLeg: () => 'direct', sessionStale: () => false },
+    transport: { activeLeg: () => 'direct', sessionStale: () => false, sessionLinked: () => {} },
     read: async () => session,
     link: async () => ({ capturedAt: CAPTURED_AT, host: SESSION_HOST }),
     now: () => Date.parse('2026-11-12T10:01:00.000Z'),
@@ -57,7 +57,7 @@ describe('warapp_session_status', () => {
 
   it('surfaces "session expired — run warapp_link_session" after a direct→bridge fallback', async () => {
     h = await harnessWith({
-      transport: { activeLeg: () => 'fetchproxy', sessionStale: () => true },
+      transport: { activeLeg: () => 'fetchproxy', sessionStale: () => true, sessionLinked: () => {} },
     });
     const res = await call('warapp_session_status');
     const p = payload(res);
@@ -86,6 +86,35 @@ describe('warapp_link_session', () => {
     expect(link).toHaveBeenCalledTimes(1);
     expect(p).toMatchObject({ status: 'linked', capturedAt: CAPTURED_AT, host: SESSION_HOST, transport: 'direct' });
     expect(textOf(res)).not.toContain(FAKE_TOKEN);
+  });
+
+  it('tells the transport a new session was linked, so a stale flag clears and direct is retried', async () => {
+    let stale = true;
+    let leg: 'direct' | 'fetchproxy' = 'fetchproxy';
+    const sessionLinked = vi.fn(() => {
+      stale = false;
+      leg = 'direct';
+    });
+    h = await harnessWith({ transport: { activeLeg: () => leg, sessionStale: () => stale, sessionLinked } });
+    const preview = payload(await call('warapp_link_session'));
+    const p = payload(await call('warapp_link_session', { confirmToken: preview.confirmToken as string }));
+    expect(sessionLinked).toHaveBeenCalledTimes(1);
+    expect(p.transport).toBe('direct');
+    const status = payload(await call('warapp_session_status'));
+    expect(status.sessionExpired).toBeUndefined();
+  });
+
+  it('does not reset the transport when the link fails', async () => {
+    const sessionLinked = vi.fn();
+    h = await harnessWith({
+      transport: { activeLeg: () => 'fetchproxy', sessionStale: () => true, sessionLinked },
+      link: async () => {
+        throw new NoAuthTokenError();
+      },
+    });
+    const preview = payload(await call('warapp_link_session'));
+    await call('warapp_link_session', { confirmToken: preview.confirmToken as string });
+    expect(sessionLinked).not.toHaveBeenCalled();
   });
 
   it('surfaces a NoAuthTokenError from the capture without leaking anything', async () => {
