@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -23,7 +23,11 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SKILLS = join(ROOT, 'skills');
 const HELPER = join(SKILLS, 'warapp-api', 'scripts', 'warapp.sh');
 const read = (p: string) => readFileSync(p, 'utf8');
-const SHELLS = ['bash', 'zsh'] as const;
+// zsh is not installed on the Ubuntu CI runner; the zsh run happens wherever it exists
+// (every dev Mac). The static zsh-safety check below runs everywhere regardless.
+const hasShell = (sh: string) => spawnSync(sh, ['-c', 'true']).status === 0;
+const SHELLS = (['bash', 'zsh'] as const).filter((sh) => sh === 'bash' || hasShell(sh));
+if (!SHELLS.includes('zsh' as never)) it.skip('zsh helper run (zsh is not installed here)', () => {});
 
 function frontmatter(md: string): Record<string, string> {
   const m = /^---\n([\s\S]*?)\n---\n/.exec(md);
