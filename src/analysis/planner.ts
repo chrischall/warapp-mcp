@@ -129,6 +129,13 @@
 // deployable at that territory; leftover bonus pools are still deployed inside their
 // bonus, on its most threatened member (not conceded first; ties by id). A rationale
 // line names each pool. Off (the default), plans are unchanged.
+// No-Split (`noSplit`): a territory issues at most one order (attack or transfer)
+// this turn. Orders are planned in decision order, so a territory's first order is
+// its best by the scoring above; any later attack, withdrawal or transfer from it is
+// not planned (a warning names it), and another source may take that target instead.
+// Combined captures (rule 3a) use only sources with no order yet: each still issues
+// one. The planned armies are kept (not forced all-in; whether No-Split also requires
+// all movable armies is unverified). Off (the default), plans are unchanged.
 // Kill rates: every combat computation above (capture cost, threats and holds,
 // survivors, R3's frontier, R4's kills) uses the game's offensive/defensive kill
 // rates; only when the settings carry none does it assume 60/70, with a warning.
@@ -187,6 +194,8 @@ export interface PlannerSettings {
   baseIncome?: number;
   /** Local Deployment: a held bonus's armies are deployed only inside that bonus. Default `false`. */
   localDeployments?: boolean;
+  /** No-Split: a territory issues at most one attack or transfer this turn. Default `false`. */
+  noSplit?: boolean;
 }
 
 export interface PlanOptions {
@@ -456,6 +465,15 @@ export function planTurn(input: PlanInput): TurnPlan {
     warnings.push(`Capture costs assume straight rounding; this game uses ${s.roundingMode}.`);
   if (s.multiAttack)
     rationale.push('Multi-attack is on, but the plan does not chain attacks from captured territories.');
+  const noSplit = s.noSplit === true;
+  if (noSplit) {
+    rationale.push(
+      'No-Split: each territory issues at most one attack or transfer this turn; a territory that would split keeps its first (best) order.',
+    );
+    warnings.push(
+      'No-Split is on: each order sends the planned armies, not every movable army; whether war.app also requires sending all movable armies from a territory is unverified.',
+    );
+  }
 
   if (!mine.length) {
     warnings.push(`Player ${me} holds no territories on this board, so there is nothing to deploy or move.`);
@@ -484,6 +502,15 @@ export function planTurn(input: PlanInput): TurnPlan {
   const moves: PlannedMove[] = [];
   /** Armies that occupy each capture this turn (its finishing attack's survivors). */
   const survivorsAt = new Map<number, number>();
+  /** Under No-Split, the order `x` already issues (its only one); otherwise always `undefined`. */
+  const orderOf = (x: number): PlannedMove | undefined => (noSplit ? moves.find((m) => m.from === x) : undefined);
+  const describeOrder = (m: PlannedMove) =>
+    m.kind === 'attack' ? `attacks ${label(m.to)}` : `transfers to ${label(m.to)}`;
+  /** A No-Split warning: `x` already issues an order, so `what` is not planned. Never repeated. */
+  const warnSplit = (x: number, what: string) => {
+    const w = `No-Split: ${label(x)} already ${describeOrder(orderOf(x)!)}, so ${what} (one attack or transfer per territory).`;
+    if (!warnings.includes(w)) warnings.push(w);
+  };
   const deploy = (id: number, n: number) => {
     if (n <= 0) return;
     deployed.set(id, (deployed.get(id) ?? 0) + n);
@@ -792,6 +819,11 @@ export function planTurn(input: PlanInput): TurnPlan {
         warnings.push(`${label(t)} is conceded and has nowhere to withdraw to: its ${n} movable armies stay.`);
         continue;
       }
+      if (orderOf(t)) {
+        warnSplit(t, `its ${n} remaining armies are not withdrawn to ${label(to.id)}`);
+        locked.add(t);
+        continue;
+      }
       avail.set(t, 0);
       locked.add(t);
       const reason = 'withdraws from a conceded border';
@@ -1037,22 +1069,26 @@ export function planTurn(input: PlanInput): TurnPlan {
   const tryCapture = (t: number, reason: string, force?: { from: number; keep: number }): boolean => {
     const tg = targets.get(t)!;
     const spare = (x: number) => avail.get(x)! - (force?.keep ?? 0);
+    if (force && orderOf(force.from)) return false;
+    const usable = (x: number) =>
+      !locked.has(x) && (!conceded.has(x) || avail.get(x)! >= tg.cost || mine.every((id) => conceded.has(id)));
     const sources = force
       ? [force.from]
-      : tg.sources
-          .filter(
-            (x) =>
-              !locked.has(x) &&
-              (!conceded.has(x) || avail.get(x)! >= tg.cost || mine.every((id) => conceded.has(id))),
-          )
-          .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
+      : tg.sources.filter((x) => usable(x) && !orderOf(x)).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
     const needAt = (x: number) => Math.max(0, tg.cost - spare(x));
     // Sorted by armies, the first source needs the fewest deploys; under Local Deployment
     // another may have more room (its bonus pool), so take the first that can afford it.
     const src = local ? (sources.find((x) => needAt(x) <= spareAt(x)) ?? sources[0]) : sources[0];
     const need = src === undefined ? Infinity : needAt(src);
     // No single source can afford it: try a combined capture (never for a forced source).
-    if (src === undefined || need > spareAt(src)) return force ? false : tryCombined(t, reason);
+    if (src === undefined || need > spareAt(src)) {
+      if (force) return false;
+      if (tryCombined(t, reason)) return true;
+      // No-Split: name a source that could have taken it alone but already issues an order.
+      const split = tg.sources.find((x) => usable(x) && orderOf(x) && needAt(x) <= spareAt(x));
+      if (split !== undefined) warnSplit(split, `the attack on ${label(t)} is not planned`);
+      return false;
+    }
     deploy(src, need);
     avail.set(src, avail.get(src)! - tg.cost);
     captured.add(t);
@@ -1106,7 +1142,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const combinedPlan = (t: number): Combined | null => {
     const tg = targets.get(t)!;
     const eligible = tg.sources
-      .filter((x) => !locked.has(x) && !conceded.has(x) && avail.get(x)! > 0)
+      .filter((x) => !locked.has(x) && !conceded.has(x) && avail.get(x)! > 0 && !orderOf(x))
       .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
     const off = rates.offensiveKillRate;
     const def = rates.defensiveKillRate;
@@ -1325,7 +1361,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (threats.length !== 1) return false;
       const n = threats[0]!;
       const b = breakOf.get(n);
-      if (!b || !targets.has(n) || broken(b)) return false;
+      if (!b || !targets.has(n) || broken(b) || orderOf(t.id)) return false;
       const o = breakOption(n);
       if (t.holdCost + o.cost > spareAt(t.id)) return false;
       const before = budget;
@@ -1545,6 +1581,10 @@ export function planTurn(input: PlanInput): TurnPlan {
         .filter((x) => mineSet.has(x) && !conceded.has(x) && (dist.get(x) ?? Infinity) < d)
         .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
       if (step === undefined) continue;
+      if (orderOf(t)) {
+        warnSplit(t, `its ${n} idle armies are not transferred to ${label(step)}`);
+        continue;
+      }
       avail.set(t, 0);
       const reason = 'moves idle interior armies toward the front';
       moves.push({ from: t, to: step, armies: n, kind: 'transfer', reason });

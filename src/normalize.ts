@@ -199,6 +199,8 @@ export interface GameSettings {
   armyCap?: number | null;
   multiAttack?: boolean;
   localDeployments?: boolean;
+  /** No-Split: a territory issues at most one attack or transfer per turn. */
+  noSplit?: boolean;
   commanders?: boolean;
   distributionMode?: number;
   territoryLimit?: number;
@@ -225,6 +227,7 @@ const BOOL_SETTINGS = {
   oneArmyStandsGuard: 'OneArmyStandsGuard',
   multiAttack: 'MultiAttack',
   localDeployments: 'LocalDeployments',
+  noSplit: 'NoSplit',
   commanders: 'Commanders',
 } as const;
 const STR_SETTINGS = { pace: 'Pace', fog: 'Fog', roundingMode: 'RoundingMode' } as const;

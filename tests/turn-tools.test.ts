@@ -451,6 +451,9 @@ describe('plannerSettings', () => {
     expect(plannerSettings({ cards: [], raw: {}, minimumArmyBonus: 3 })).toEqual({ baseIncome: 3 });
     // Local Deployment (G2): passed through when on.
     expect(plannerSettings({ cards: [], raw: {}, localDeployments: true })).toEqual({ localDeployments: true });
+    // No-Split (G3): passed through when on.
+    expect(plannerSettings({ cards: [], raw: {}, noSplit: true })).toEqual({ noSplit: true });
+    expect(plannerSettings({ cards: [], raw: {}, noSplit: false })).toEqual({});
   });
 });
 
@@ -1101,5 +1104,79 @@ describe('Local Deployment in the turn tools (G2, issue #29)', () => {
       expect(() => run([[453745, 7]], false)).not.toThrow();
       expect(() => run([[453745, 7]])).not.toThrow();
     });
+  });
+});
+
+describe('No-Split in the turn tools (G3, issue #31)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  // Ann holds only Oldcastle 453745 (12), which borders the neutrals White Harbor 23473 (1)
+  // and Ramsgate 1567 (1): without No-Split it attacks both from the one territory.
+  const SPLIT_BOARD: SyntheticTerritory[] = [
+    { id: 453745, fogLevel: 1, owner: ANN.inGame, armies: 12 },
+    { id: 23473, fogLevel: 1, owner: 0, armies: 1 },
+    { id: 1567, fogLevel: 1, owner: 0, armies: 1 },
+  ];
+  const settingsWith = (noSplit: boolean) => ({
+    ...(lobbyFixture().settings as Record<string, unknown>),
+    NoSplit: noSplit,
+  });
+  const plan = async (noSplit: boolean) => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: settingsWith(noSplit) })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(SPLIT_BOARD) }),
+    });
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand', view: 'full' }),
+    );
+    await h.harness.close();
+    h = undefined;
+    return p;
+  };
+
+  it('(g) warapp_plan_turn issues one attack per territory when NoSplit is on', async () => {
+    const off = await plan(false);
+    expect(off.moves.filter((m) => m.from.id === 453745 && m.kind === 'attack')).toHaveLength(2);
+    const on = await plan(true);
+    expect(on.settings).toMatchObject({ noSplit: true });
+    const fromOldcastle = on.moves.filter((m) => m.from.id === 453745);
+    expect(fromOldcastle).toHaveLength(1);
+    const dropped = [23473, 1567].find((id) => id !== fromOldcastle[0]!.to.id)!;
+    expect(on.warnings.join('\n')).toMatch(
+      new RegExp(`No-Split: ${mapName(453745)} \\(#453745\\) already attacks .*so the attack on ${mapName(dropped)} \\(#${dropped}\\) is not planned`),
+    );
+  });
+
+  it('(e) warapp_submit_turn refuses two orders from one territory, sending nothing', async () => {
+    const sent: unknown[] = [];
+    const warapp = routes({
+      [Method.GetLatestGameInfo]: board(SPLIT_BOARD),
+      [Method.SendOrders]: () => {
+        sent.push(1);
+        return { body: (w) => w.bool(true).bool(false) };
+      },
+    });
+    h = await liveHarness({ feed: [game('Playing', { settings: settingsWith(true) })], pages: ME_PAGE, warapp });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 453745, armies: 5 },
+        { kind: 'move', from: 453745, to: 23473, armies: 2 },
+        { kind: 'move', from: 453745, to: 1567, armies: 2 },
+      ],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(new RegExp(`No-Split: ${mapName(453745)} \\(453745\\) issues 2 attacks/transfers`));
+    expect(sent).toEqual([]);
+    const ok = payload(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 453745, armies: 5 },
+          { kind: 'move', from: 453745, to: 23473, armies: 2 },
+        ],
+      }),
+    );
+    expect(ok.confirmToken).toEqual(expect.any(String));
+    expect(sent).toEqual([]);
   });
 });

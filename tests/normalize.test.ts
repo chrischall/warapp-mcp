@@ -187,6 +187,7 @@ describe('normalizeSettings', () => {
       armyCap: null,
       multiAttack: false,
       localDeployments: false,
+      noSplit: false,
       commanders: false,
       distributionMode: 1,
       territoryLimit: 3,
@@ -209,6 +210,14 @@ describe('normalizeSettings', () => {
     expect(t.offensiveKillRate).toBe(50);
     expect(t.oneArmyStandsGuard).toBe(false);
     expect(t.armyCap).toBe(100);
+  });
+
+  it('reads NoSplit as a boolean, string-typed or not (G3)', () => {
+    expect(normalizeSettings({ NoSplit: 'True' }).noSplit).toBe(true);
+    expect(normalizeSettings({ NoSplit: true }).noSplit).toBe(true);
+    expect(normalizeSettings({ NoSplit: 'False' }).noSplit).toBe(false);
+    expect(normalizeSettings({ NoSplit: false }).noSplit).toBe(false);
+    expect(normalizeSettings({}).noSplit).toBeUndefined();
   });
 
   it('reads kill rates sent as decimals, so a supplied rate never falls back to 60/70 (G1)', () => {

@@ -97,6 +97,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.bonusArmyPer !== undefined && s.bonusArmyPer > 0) out.bonusArmyPer = s.bonusArmyPer;
   if (s.minimumArmyBonus !== undefined) out.baseIncome = s.minimumArmyBonus;
   if (s.localDeployments) out.localDeployments = true;
+  if (s.noSplit) out.noSplit = true;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game.
@@ -195,6 +196,8 @@ export function validateTurn(args: {
   moves: Array<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }>;
   /** Local Deployment: each held bonus's armies must be deployed inside that bonus. */
   localDeployments?: boolean;
+  /** No-Split: each territory issues at most one attack or transfer. */
+  noSplit?: boolean;
 }): void {
   const { map, board, myInGameId, income, deploys, moves } = args;
   const graph = graphOf(map);
@@ -224,6 +227,26 @@ export function validateTurn(args: {
       });
     }
     pairs.add(key);
+  }
+  if (args.noSplit) {
+    const bySource = new Map<number, { from: { id: number; name: string }; to: Array<{ id: number; name: string }> }>();
+    for (const m of moves) {
+      const o = bySource.get(m.from.id) ?? { from: m.from, to: [] };
+      o.to.push(m.to);
+      bySource.set(m.from.id, o);
+    }
+    const split = [...bySource.values()].find((o) => o.to.length > 1);
+    if (split) {
+      throw new McpToolError(
+        `No-Split: ${label(split.from)} issues ${split.to.length} attacks/transfers (to ${split.to.map(label).join(', ')}), ` +
+          'but this game allows one per territory.',
+        {
+          hint:
+            'This game uses No-Split: send at most one attack or transfer from each territory each turn; keep the ' +
+            'best one (with all the armies you want to move) and drop the others.',
+        },
+      );
+    }
   }
   const deployed = deploys.reduce((s, d) => s + d.armies, 0);
   if (deployed !== income) {
@@ -653,6 +676,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               deploys,
               moves,
               localDeployments: game.settings?.localDeployments ?? false,
+              noSplit: game.settings?.noSplit ?? false,
             });
             // Deploys first (as the client sends them), merged per territory.
             const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();

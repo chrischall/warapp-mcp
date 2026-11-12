@@ -66,6 +66,18 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   valid split is never refused — whether the bonuses nest (superbonuses) or overlap without
   nesting. war.app's own refusal of a broken split has not been observed.
 
+## No-Split — key verified, all-in rule UNVERIFIED
+
+- `settings.NoSplit` (boolean, `GetSettings=true`) is read into `GameSettings.noSplit`
+  (verified key: the lobby fixture sends `false`; string-typed `"True"`/`"False"` are read too).
+- When it is on, a territory issues at most one AttackTransfer (attack or transfer) per turn.
+  `warapp_plan_turn` keeps each territory's first (best) order and warns which it dropped;
+  `warapp_submit_turn` refuses two AttackTransfers from one territory before sending anything.
+- **Unverified:** whether No-Split also *requires* an order to send every movable army. A live
+  turn that sent all movable armies from each source in one attack was accepted, which is
+  consistent with either rule, so the planner keeps its planned amounts (not forced all-in)
+  and says so in a warning.
+
 ## Map — verified
 
 - `map: { id, name, territories[], bonuses[], distributionModes[] }`. Territory and bonus
