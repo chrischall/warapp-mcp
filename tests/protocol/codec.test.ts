@@ -382,6 +382,7 @@ describe('methods', () => {
       AcceptOpenAutoGame: 62,
       GetOpenAutoGame: 63,
       DeclineGame: 64,
+      Surrender: 67,
       GetMapDetails: 73,
       SendOrders: 74,
       SendInProgressOrders: 75,

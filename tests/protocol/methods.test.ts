@@ -336,3 +336,23 @@ describe('AcceptOpenSeat (join an open game)', () => {
     expect(read((w) => w.bool(true).bool(true).bool(true).int32(42))).toEqual({ vacationEnded: true, otherGameId: 42 });
   });
 });
+
+describe('Surrender (method 67)', () => {
+  it('has the client method-table id', async () => {
+    const { Method } = await import('../../src/protocol/methods.js');
+    expect(Method.Surrender).toBe(67);
+  });
+
+  // Hand-built: int32 LE game id 0x00BC614E = 4E 61 BC 00; bool surrender
+  // (01 = surrender, 00 = take back); then the trailing "ends vacation" bool 00.
+  it('writes game id, surrender=true, then the trailing flag false (golden)', async () => {
+    const { writeSurrenderParams } = await import('../../src/protocol/methods.js');
+    expect(hex((w) => writeSurrenderParams(w, { gameId: 0x00bc614e, surrender: true }))).toBe('4E61BC00' + '01' + '00');
+  });
+
+  it('writes game id, surrender=false (take back), then the trailing flag false (golden)', async () => {
+    const { writeSurrenderParams } = await import('../../src/protocol/methods.js');
+    expect(hex((w) => writeSurrenderParams(w, { gameId: 0x00bc614e, surrender: false }))).toBe('4E61BC00' + '00' + '00');
+    expect(hex((w) => writeSurrenderParams(w, { gameId: 7, surrender: false }))).toBe('07000000' + '0000');
+  });
+});

@@ -105,6 +105,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_session_status',
       'warapp_submit_picks',
       'warapp_submit_turn',
+      'warapp_surrender',
       'warapp_wait_for_turn',
     ]);
     expect(nonJson).toEqual([]);
