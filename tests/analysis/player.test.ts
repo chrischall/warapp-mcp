@@ -49,12 +49,16 @@ describe('analyzePlayer', () => {
     });
   });
 
-  it('adds the per-territory bonus and counts negative held bonuses', () => {
+  it('takes the larger of base and per-territory armies (never both), and counts negative held bonuses', () => {
     const map = tinyMap();
     map.bonuses.push({ id: 107, name: 'Cursed', value: -1, territoryIds: [1], bonusIds: [] });
     const a = analyzePlayer(buildGraph(map), state, 10, { cards: [], raw: {}, minimumArmyBonus: 3, bonusArmyPer: 2 });
     expect(a.income.perTerritory).toBe(2);
-    expect(a.income.total).toBe(3 + 2 + 3 - 1);
+    // max(3, floor(4 / 2)) = 3, + A (3) − Cursed (1).
+    expect(a.income.total).toBe(3 + 3 - 1);
+    const b = analyzePlayer(buildGraph(map), state, 10, { cards: [], raw: {}, minimumArmyBonus: 1, bonusArmyPer: 1 });
+    // max(1, floor(4 / 1)) = 4, + 3 − 1.
+    expect(b.income.total).toBe(4 + 3 - 1);
   });
 
   it('ranks the bonuses closest to completion with armies needed', () => {
