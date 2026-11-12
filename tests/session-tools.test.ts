@@ -47,6 +47,17 @@ describe('warapp_session_status', () => {
     expect(textOf(res)).not.toContain(FAKE_TOKEN);
   });
 
+  it('reports the push transport once the push socket has run, and omits it before', async () => {
+    h = await harnessWith({ pushTransport: () => 'websocket' });
+    expect(payload(await call('warapp_session_status')).pushTransport).toBe('websocket');
+    await h.close();
+    h = await harnessWith({ read: async () => null, pushTransport: () => 'xhr-polling' });
+    expect(payload(await call('warapp_session_status')).pushTransport).toBe('xhr-polling');
+    await h.close();
+    h = await harnessWith({ pushTransport: () => undefined });
+    expect(payload(await call('warapp_session_status'))).not.toHaveProperty('pushTransport');
+  });
+
   it('reports not-linked and points to warapp_link_session', async () => {
     h = await harnessWith({ read: async () => null });
     const p = payload(await call('warapp_session_status'));

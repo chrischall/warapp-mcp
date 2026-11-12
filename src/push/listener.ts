@@ -4,6 +4,12 @@
 // subscribed to `Game.<id>` for every game anyone has asked to watch. Each
 // GameUpdated push becomes `{ gameId, at }`; the push carries no detail, so a
 // consumer re-reads GameFeed for that game.
+//
+// Transport: the direct WebSocket while the active transport is the direct leg
+// (src/push/websocket.ts), else — and as the fallback when the WebSocket
+// cannot be brought up — xhr-polling over the bridge. After any reconnect,
+// pushes sent during the gap are lost: `onReconnect` tells consumers to
+// re-read GameFeed.
 import type { ExtrasUp } from '../protocol/codec.js';
 import { gameTopic } from '../protocol/methods.js';
 import {
@@ -12,7 +18,15 @@ import {
   INITIAL_SERVER_INFO_B,
   PLATFORM_WEBSITE,
 } from '../protocol/rpc.js';
-import { parsePushFrame, SocketIoClient, subscribeFrameHex, type SocketIoClientOptions, type SocketTransport } from './socketio.js';
+import {
+  parsePushFrame,
+  SocketIoClient,
+  subscribeFrameHex,
+  type PushTransportName,
+  type SocketIoClientOptions,
+  type SocketTransport,
+} from './socketio.js';
+import type { SetTimer, WebSocketLeg } from './websocket.js';
 
 export interface GameUpdate {
   gameId: number;
@@ -27,11 +41,17 @@ export interface PushStatus {
   watching: number[];
   /** Topics war.app refused, with its error code. */
   refused: Record<string, number>;
+  /** The push transport of the current (or last) session, once one has started. */
+  transport?: PushTransportName;
   lastError?: string;
 }
 
 export interface PushListenerOptions {
   transport: () => Promise<SocketTransport>;
+  /** The direct WebSocket leg (src/push/websocket.ts `pushWebSocketLeg`); absent: xhr-polling only. */
+  webSocket?: WebSocketLeg;
+  /** The WebSocket heartbeat timer (tests). */
+  setTimer?: SetTimer;
   /** MessageExtrasUp for Subscribe frames (default: the web client's values). */
   extras?: () => ExtrasUp;
   /** How many recent events to keep. Default 100. */
@@ -66,6 +86,7 @@ export class PushListener {
   private readonly refused = new Map<string, number>();
   private readonly events: GameUpdate[] = [];
   private readonly listeners = new Set<(u: GameUpdate) => void>();
+  private readonly reconnectListeners = new Set<() => void>();
   private nextMsgNum = 1;
 
   constructor(opts: PushListenerOptions) {
@@ -76,6 +97,11 @@ export class PushListener {
       transport: opts.transport,
       now: this.now,
       onMessage: (data) => this.onMessage(data),
+      onReconnect: () => {
+        for (const fn of this.reconnectListeners) fn();
+      },
+      ...(opts.webSocket ? { webSocket: opts.webSocket } : {}),
+      ...(opts.setTimer ? { setTimer: opts.setTimer } : {}),
       onConnect: async () => {
         this.subscribed = new Set();
         await this.subscribePending();
@@ -111,6 +137,17 @@ export class PushListener {
     };
   }
 
+  /**
+   * Listen for reconnects (every connect after the first, once re-subscribed):
+   * pushes during the gap were lost, so re-read GameFeed. Returns the unsubscribe.
+   */
+  onReconnect(fn: () => void): () => void {
+    this.reconnectListeners.add(fn);
+    return () => {
+      this.reconnectListeners.delete(fn);
+    };
+  }
+
   /** The most recent events, newest first. */
   recent(limit = this.maxEvents): GameUpdate[] {
     return this.events.slice(-limit).reverse();
@@ -123,6 +160,8 @@ export class PushListener {
       watching: [...this.games].sort((a, b) => a - b),
       refused: Object.fromEntries(this.refused),
     };
+    const transport = this.socket.transport;
+    if (transport !== undefined) s.transport = transport;
     const err = this.socket.lastError;
     if (err !== undefined) s.lastError = err;
     return s;

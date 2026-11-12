@@ -52,7 +52,8 @@ export function checkOf(game: Game, playerId: number): GameCheck {
 export interface WaitOptions {
   gameIds: readonly number[];
   timeoutMs: number;
-  push: Pick<PushListener, 'watch' | 'onUpdate'>;
+  /** `onReconnect` (when present): pushes in a reconnect gap are lost, so every game is re-read. */
+  push: Pick<PushListener, 'watch' | 'onUpdate'> & Partial<Pick<PushListener, 'onReconnect'>>;
   /** Read one game's current state from GameFeed. */
   check: (gameId: number) => Promise<GameCheck>;
   signal?: AbortSignal;
@@ -68,6 +69,8 @@ export interface WaitOutcome {
   games: GameCheck[];
   /** Pushes received for these games while waiting. */
   updates: number;
+  /** Push-socket reconnects while waiting (each re-read every game). */
+  reconnects: number;
   waitedMs: number;
   /** GameFeed re-reads that failed after a push (the wait carried on). */
   errors: string[];
@@ -75,8 +78,10 @@ export interface WaitOutcome {
 
 /**
  * Resolve as soon as one of `gameIds` is waiting on me — checked once at
- * start and again for a game on every GameUpdated push for it — or when
- * `timeoutMs` passes. A cancelled `signal` rejects with its reason.
+ * start, again for a game on every GameUpdated push for it, and again for
+ * every game after the push socket reconnects (pushes sent during the gap are
+ * lost) — or when `timeoutMs` passes. A cancelled `signal` rejects with its
+ * reason.
  */
 export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
   const now = opts.now ?? Date.now;
@@ -85,11 +90,20 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
   const queue: number[] = [];
   let wake: (() => void) | undefined;
   let updates = 0;
+  let reconnects = 0;
+  /** Set by a reconnect: report it once the loop resumes. */
+  let reconnectNote = false;
   const errors: string[] = [];
   const off = opts.push.onUpdate((u) => {
     if (!ids.has(u.gameId)) return;
     updates++;
     queue.push(u.gameId);
+    wake?.();
+  });
+  const offReconnect = opts.push.onReconnect?.(() => {
+    reconnects++;
+    reconnectNote = true;
+    for (const id of ids) if (!queue.includes(id)) queue.push(id);
     wake?.();
   });
   const timers: Array<ReturnType<typeof setTimeout>> = [];
@@ -104,6 +118,7 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
       status,
       games: [...ids].map((id) => latest.get(id)!),
       updates,
+      reconnects,
       waitedMs: now() - start,
       errors,
     });
@@ -137,6 +152,10 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
 
     for (;;) {
       if (aborted) opts.signal!.throwIfAborted();
+      if (reconnectNote) {
+        reconnectNote = false;
+        opts.progress?.(now() - start, 'Push socket reconnected; re-checking every game (pushes in the gap are lost).');
+      }
       const id = queue.shift();
       if (id !== undefined) {
         try {
@@ -157,6 +176,7 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
     }
   } finally {
     off();
+    offReconnect?.();
     timers.forEach((t) => clearTimeout(t));
     if (onAbort) opts.signal?.removeEventListener('abort', onAbort);
   }
@@ -171,8 +191,9 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         'Wait until one of the given war.app (Warzone) games is waiting on you — the game is being played or its ' +
           'territories picked, you are still playing, and you have not committed — and return as soon as it is, ' +
           'or at the timeout (default 300 s, max 1800 s). It checks each game once at the start, then listens to ' +
-          "war.app's push notifications through your signed-in war.app tab (ContextMint Bridge) and re-checks a " +
-          'game whenever war.app says it changed. Pass the game ids to watch (1–20), or omit them to watch every game ' +
+          "war.app's push notifications — over a direct WebSocket while a linked war.app session serves calls, else " +
+          'through your signed-in war.app tab (ContextMint Bridge) — and re-checks a game whenever war.app says it ' +
+          'changed, and every game after the push socket reconnects. Pass the game ids to watch (1–20), or omit them to watch every game ' +
           'of yours being played or picked (the first 20, as warapp_my_games lists them). Reports progress while it ' +
           'waits and stops when the call is cancelled. Then plan with warapp_plan_turn (or pick with ' +
           'warapp_submit_picks). Read-only.',
@@ -253,7 +274,12 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         games: out.games,
         waited_seconds: Math.round(out.waitedMs / 1000),
         updates: out.updates,
-        push: { connected: st.connected, ...(st.lastError ? { last_error: st.lastError } : {}) },
+        ...(out.reconnects ? { reconnects: out.reconnects } : {}),
+        push: {
+          connected: st.connected,
+          ...(st.transport ? { transport: st.transport } : {}),
+          ...(st.lastError ? { last_error: st.lastError } : {}),
+        },
         ...(out.errors.length ? { errors: out.errors } : {}),
         next:
           out.status === 'your_turn'
@@ -273,7 +299,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
       description:
         'List the war.app game-update pushes this server process has received (newest first): which game ' +
         'changed and when. Only games watched by warapp_wait_for_turn are listened to; a push says only that a ' +
-        'game changed, so re-read it with warapp_get_game. Also reports whether the push socket is connected. Read-only.',
+        'game changed, so re-read it with warapp_get_game. Also reports whether the push socket is connected and its ' +
+        'transport (websocket or xhr-polling). Read-only.',
       _meta: lookupMeta(['recent game updates', 'warzone notifications']),
       annotations: readAnnotations('Recent war.app push events'),
       inputSchema: z.object({
@@ -295,6 +322,7 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           started: st.started,
           connected: st.connected,
           watching: st.watching,
+          ...(st.transport ? { transport: st.transport } : {}),
           ...(Object.keys(st.refused).length ? { refused: st.refused } : {}),
           ...(st.lastError ? { last_error: st.lastError } : {}),
         },

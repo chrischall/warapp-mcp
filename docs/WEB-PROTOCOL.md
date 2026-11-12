@@ -325,9 +325,10 @@ golden test built from synthetic ids.
 
 ## Push channel (socket.io)
 
-Turn notifications arrive on war.app's **socket.io v0.9** channel over **xhr-polling** (the other
-advertised transport is `websocket`; xhr-polling is plain HTTP, so it rides the same browser
-bridge). Decoded from `src/push/socketio.ts` and verified live.
+Turn notifications arrive on war.app's **socket.io v0.9** channel. Two transports are advertised
+and both are used: **xhr-polling** (plain HTTP, so it rides the browser bridge —
+`src/push/socketio.ts`) and **websocket** (chrome-less, with the linked `AuthToken` cookie —
+`src/push/websocket.ts`, used while the direct leg is active). Both verified live.
 
 **Handshake.** `GET https://war.app/socket.io/1/?t=<ms>` → a colon-joined
 `sid:heartbeat:close:transports` (heartbeat/close in seconds; `15`/`10` observed). Then open a
@@ -354,6 +355,26 @@ no auth) with message number `0x80000000`, 61 bytes, that **starts with the game
 other detail**. On receipt, re-read the game from GameFeed — it arrives within ~1 s of the turn
 resolving. `src/push/listener.ts` holds one socket per process, (re)subscribes to every watched
 `Game.<id>` on each connect, answers heartbeats, and reconnects with backoff.
+
+### WebSocket transport (verified live 2026-11-12, GitHub issue #32)
+
+**Handshake.** The same `GET https://war.app/socket.io/1/?t=<ms>`, sent with the
+`Cookie: AuthToken=<token>` header instead of through the browser → `sid:heartbeat:close:transports`,
+whose transports include `websocket`.
+
+**Socket.** `wss://war.app/socket.io/1/websocket/<sid>` with the same `Cookie` header (Node's
+built-in `WebSocket` accepts a `headers` option). The server opens with `1::`.
+
+**Subscribe / heartbeat / push.** `3:::<UPPERCASE HEX Subscribe frame>` — the same method-238 frame
+as over xhr-polling — is acknowledged with a 238 reply. `2::` heartbeats must be answered with
+`2::`. Pushes arrive as `3:::<hex>`, method **241 `GameUpdated`** with the game id, within ~1 s.
+
+**Reconnect.** The server once closed a healthy socket after ~60 s; a reconnect (new handshake,
+new sid, re-subscribe) restored it. **Pushes sent during the gap are lost**, so after any
+reconnect a consumer must re-read GameFeed — `warapp_wait_for_turn` re-checks every watched game.
+The client treats a close, an error or a missed heartbeat (the handshake's heartbeat timeout) as a
+disconnect. If the handshake or upgrade fails (no session linked, signed out, `websocket` not
+offered) it falls back to xhr-polling over the bridge.
 
 ## Data handling
 
