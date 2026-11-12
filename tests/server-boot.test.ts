@@ -96,6 +96,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_my_games',
       'warapp_plan_route',
       'warapp_plan_turn',
+      'warapp_scout_player',
       'warapp_send_chat',
       'warapp_submit_picks',
       'warapp_submit_turn',

@@ -84,6 +84,7 @@ restart the server and pair again.
 |---|---|
 | `warapp_healthcheck` | Check that war.app accepts your email and API token. |
 | `warapp_my_games` | Your games (through your signed-in tab), games waiting on you first: state, turn, players and who has committed, and `waitingOnYou`. `view`: compact / brief. |
+| `warapp_scout_player` | Scout a player (through your signed-in tab): level, games played, last seen, boots, ranked records per format, and your head-to-head record. Never returns location or other personal details. |
 | `warapp_get_game` | A game's state, turn, players (and who has committed orders), settings digest and map. `view`: compact / full / raw. |
 | `warapp_get_map` | The game map's bonuses ranked easiest first, plus chokepoints. Filter by `bonus` name to see one bonus's territories, borders and entry points. |
 | `warapp_analyze_board` | Advice for one `player` from the current board: income, the bonuses closest to completion with armies needed, and visible threats. Needs a board; lobbies have none. The board parser is unverified, so the advice states its assumptions. |

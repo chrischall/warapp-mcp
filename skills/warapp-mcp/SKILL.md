@@ -25,6 +25,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"Which games need me?" / "is it my turn anywhere?"** → `warapp_my_games`: the signed-in
   account's games (through the bridge), games waiting on you first, each with its state, turn,
   players (who has committed) and `waitingOnYou`. `view: "brief"` gives one line per game.
+- **"Who am I up against?" / "scout this player"** → `warapp_scout_player` with `game_id` +
+  `player` (a name), or just the player's id: level, games played, last seen, boot rate,
+  ranked records per format and the user's head-to-head with them. It never returns the
+  player's location or other personal details.
 - **"What's going on in game N?" / "whose turn is it?"** → `warapp_get_game`. It returns the
   state, the turn, every player with whether they have committed orders (the ones who have
   not are who the game waits on), a settings digest (fog, kill rates, luck, rounding, base
@@ -80,7 +84,7 @@ with intent **lookup**, `warapp_submit_picks` and `warapp_submit_turn` with **ch
 `warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,
-  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_turn` and `warapp_get_chat` are lookups the group reaches by their aliases ("warzone game", "whose turn is it", "best
+  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_turn`, `warapp_get_chat` and `warapp_scout_player` are lookups the group reaches by their aliases ("warzone game", "whose turn is it", "best
   bonuses", "chokepoints", "analyze my board", "what should i attack", "warzone route", …).
 - **`warapp_my_games` is the canonical "what's new" read**: which games are waiting on the
   user. It accepts `view: "brief"` — one line per game, `name — turn N (or the state) —

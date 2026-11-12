@@ -10,6 +10,7 @@ import { registerLiveTools } from './live.js';
 import { registerMapTool } from './map.js';
 import { registerMyGamesTool } from './my-games.js';
 import { registerRouteTool } from './route.js';
+import { registerScoutTool } from './scout.js';
 import { registerTurnTools } from './turn.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
 
@@ -44,6 +45,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerRouteTool(server, client);
   registerLiveTools(server, live);
   registerMyGamesTool(server, live);
+  registerScoutTool(server, live);
   registerTurnTools(server, live);
   registerChatTools(server, live);
 }
