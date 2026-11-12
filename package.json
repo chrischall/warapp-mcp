@@ -36,7 +36,7 @@
     "mint.yaml"
   ],
   "scripts": {
-    "build": "tsc --noEmit && npm run bundle",
+    "build": "tsc && npm run bundle",
     "bundle": "node scripts/bundle.mjs",
     "dev": "node dist/bundle.js",
     "test": "npm run typecheck && vitest run",
@@ -50,6 +50,7 @@
     "@modelcontextprotocol/server": "^2.4.0",
     "acorn": "^8.19.0",
     "dotenv": "^18.0.1",
+    "undici": "^7.30.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {

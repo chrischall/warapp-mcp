@@ -21,6 +21,15 @@ is a captured value; no captures are committed.
 - **Authentication is the browser's cookies.** The request body carries the account
   email (below) but no token, so a frame is only honoured from a signed-in session —
   build frames anywhere, but send them from the signed-in tab.
+- **The `AuthToken` cookie alone authenticates — verified 2026-11-12.** The signed-in
+  session is carried by a durable `AuthToken` cookie, and that single cookie is enough to
+  authenticate both the server-rendered pages (InviteToken, Profile, CommonGames, MultiPlayer)
+  and a `/Services` POST, with no browser involved: a plain HTTPS `POST /Services?m=GetLatestGameInfo&js=1`
+  carrying only `Cookie: AuthToken=…` returned a valid reply frame. So a frame can be sent from a
+  server-side request too, as long as it carries that cookie — this is the "direct" transport
+  (`src/direct/`). `AuthToken` is a full-account credential: it is stored locally only (file mode
+  `0600`), never logged, and never returned. Direct mode is a local-runtime option; hosting keeps
+  the browser bridge and stores no token.
 - The `m=` query parameter is derived from the method id at byte 10 (`fb.WBb`); it is
   informational.
 

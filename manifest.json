@@ -35,6 +35,8 @@
         "WARAPP_EMAIL": "${user_config.email}",
         "WARAPP_API_TOKEN": "${user_config.api_token}",
         "WARAPP_WS_PORT": "${user_config.ws_port}",
+        "WARAPP_TRANSPORT": "${user_config.transport}",
+        "WARAPP_SESSION_FILE": "${user_config.session_file}",
         "WARAPP_ENV_FILE": "${user_config.env_file}"
       }
     }
@@ -63,6 +65,18 @@
       "type": "string",
       "title": "Credentials file (optional)",
       "description": "Optional dotenv file holding WARAPP_EMAIL / WARAPP_API_TOKEN. Defaults to ~/.config/warapp-mcp/.env.",
+      "required": false
+    },
+    "transport": {
+      "type": "string",
+      "title": "Transport (optional)",
+      "description": "How the live-game tools reach war.app: 'auto' (default — the chrome-less direct transport when a session is linked, else the browser bridge), 'direct', or 'fetchproxy' (browser bridge only).",
+      "required": false
+    },
+    "session_file": {
+      "type": "string",
+      "title": "Direct-transport session file (optional)",
+      "description": "Where the linked direct-transport session is stored (default <data dir>/session.json). Local-only; a full-account credential kept at file mode 0600.",
       "required": false
     }
   },
@@ -130,6 +144,14 @@
     {
       "name": "warapp_recent_events",
       "description": "List the game-update pushes this server has received"
+    },
+    {
+      "name": "warapp_session_status",
+      "description": "Report whether a war.app session is linked for the direct (no-browser) transport, its age, and the active transport (never the cookie)"
+    },
+    {
+      "name": "warapp_link_session",
+      "description": "Link your signed-in war.app session once for the direct (no-browser) transport, storing the cookie locally (confirm-gated)"
     }
   ]
 }

@@ -28,6 +28,8 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_send_chat: 'send',
   warapp_wait_for_turn: 'whats-new',
   warapp_recent_events: 'lookup',
+  warapp_session_status: 'lookup',
+  warapp_link_session: 'change',
 };
 
 interface Tool {

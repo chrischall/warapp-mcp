@@ -41,6 +41,18 @@
           "isRequired": false,
           "isSecret": false,
           "format": "string"
+        },
+        {
+          "name": "WARAPP_TRANSPORT",
+          "description": "How the live-game tools reach war.app: auto (default, direct when a session is linked else the browser bridge), direct, or fetchproxy.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "WARAPP_SESSION_FILE",
+          "description": "Where the linked direct-transport session is stored (default <data dir>/session.json). Local-only, file mode 0600.",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

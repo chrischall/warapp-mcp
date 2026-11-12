@@ -42,6 +42,8 @@ game chat.
 | `WARAPP_API_TOKEN` | yes | Your API token from <https://war.app/API/GetAPIToken>. |
 | `WARAPP_ENV_FILE` | no | A dotenv file to read the two above from (default `~/.config/warapp-mcp/.env`). Values already in the environment win. |
 | `WARAPP_WS_PORT` | no | The fetchproxy bridge port (default `37149`, shared by the whole fetchproxy fleet and ContextMint Bridge). Override it only for local testing, or when a host injects a per-registration port. |
+| `WARAPP_TRANSPORT` | no | How the live-game tools reach war.app: `auto` (default — try the chrome-less direct transport when a session is linked, else the browser bridge), `direct` (only direct), or `fetchproxy` (only the browser bridge, today's behaviour). See [Direct transport](#direct-transport-no-browser). |
+| `WARAPP_SESSION_FILE` | no | Where the linked direct-transport session is stored (default `<data dir>/session.json`). Local-only; a full-account credential, kept at file mode `0600`. |
 | `WARAPP_DEBUG` | no | Truthy logs the bridge's role and lifecycle to stderr. |
 | `MCP_DATA_DIR` | no | Where the downloaded war.app client bundle is cached (default `~/.config/warapp-mcp`). A host with persistent state sets it. |
 | `MCP_CONFIRM_MODE` | no | What a write does on a client that cannot show a confirmation prompt: `ask-user` (default), `auto` or `refuse`. See [Confirming writes](#confirming-writes). |
@@ -82,11 +84,34 @@ it per version under the data directory. Nothing from war.app is shipped in this
 `fpx trust clear warapp-mcp` (from [`@fetchproxy/cli`](https://www.npmjs.com/package/@fetchproxy/cli)),
 restart the server and pair again.
 
+## Direct transport (no browser)
+
+By default the live-game tools relay every request through your signed-in war.app tab. You can
+instead let them talk to war.app directly, with no browser involved, by **linking your session
+once**:
+
+1. Call `warapp_link_session` (confirm-gated). With a signed-in war.app tab paired to the bridge,
+   it captures your war.app session cookie once and stores it on **this machine only**
+   (`<data dir>/session.json`, file mode `0600`; `WARAPP_SESSION_FILE` overrides the path).
+2. After that, with `WARAPP_TRANSPORT=auto` (the default), every live call is a plain server-side
+   HTTPS request carrying that session — no Chrome tab needed, including the turn-notification
+   socket. If the session expires, the tools automatically fall back to the browser bridge for the
+   rest of the session and `warapp_session_status` tells you to run `warapp_link_session` again.
+
+`warapp_session_status` reports whether a session is linked, how old it is, and which transport is
+active. `warapp_healthcheck` reports the same.
+
+> **Security.** The stored session cookie is a **full-account credential** — anything your war.app
+> account can do, it can do. It never leaves this machine (it is sent only to war.app), is never
+> logged, and is never shown in a tool result. **Direct mode is local-only:** the hosted
+> (mcp-host) deployment always uses the browser bridge and stores no session token. Use direct
+> mode only on a machine you control; `rm` the session file (or let it expire) to unlink.
+
 ## Tools
 
 | Tool | |
 |---|---|
-| `warapp_healthcheck` | Check that war.app accepts your email and API token. |
+| `warapp_healthcheck` | Check that war.app accepts your email and API token; report the active transport and whether a direct session is linked. |
 | `warapp_my_games` | Your games (through your signed-in tab), games waiting on you first: state, turn, players and who has committed, and `waitingOnYou`. `view`: compact / brief. |
 | `warapp_scout_player` | Scout a player (through your signed-in tab): level, games played, last seen, boots, ranked records per format, and your head-to-head record. Never returns location or other personal details. |
 | `warapp_get_game` | A game's state, turn, players (and who has committed orders), settings digest and map. `view`: compact / full / raw. |
@@ -102,6 +127,8 @@ restart the server and pair again.
 | `warapp_send_chat` | **Writes.** Post a chat message to the whole game or privately to one player. Confirm-gated; a message reaches other players and cannot be unsent. |
 | `warapp_wait_for_turn` | Wait until one of the given games (`game_ids`, 1–20; omitted, every game of yours being played or picked) is waiting on you, woken by war.app's push notifications through your war.app tab; returns at once if one already is, else at `timeout_seconds` (default 300, max 1800). Reports progress; honours cancellation. |
 | `warapp_recent_events` | The game-update pushes this server process has received (newest first), and whether the push socket is connected. |
+| `warapp_session_status` | Whether a war.app session is linked for the [direct transport](#direct-transport-no-browser), when it was captured and how old it is, and which transport is active. Never shows the session cookie. |
+| `warapp_link_session` | **Writes (locally).** Capture your signed-in war.app session cookie once and store it on this machine for the direct transport. Confirm-gated; stores a full-account credential locally (file mode `0600`) and never shows or sends it anywhere but war.app. |
 
 Everything except `warapp_submit_picks`, `warapp_submit_turn` and `warapp_send_chat` only reads. Player, game, map
 and chat text comes back marked as untrusted third-party content.

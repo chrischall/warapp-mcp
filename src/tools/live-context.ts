@@ -14,7 +14,8 @@ import {
   writeGetTerritoryPicksParams,
 } from '../protocol/methods.js';
 import { WarappRpc } from '../protocol/rpc.js';
-import { BRIDGE_DOMAINS, type WarappBridge } from '../transport-bridge.js';
+import type { ReadyFetchBridge } from '../direct/transport.js';
+import { BRIDGE_DOMAINS } from '../transport-bridge.js';
 
 export interface LiveContext {
   client: WarappClient;
@@ -44,7 +45,7 @@ export const INVITE_TOKEN_URL = 'https://war.app/InviteToken';
 
 export interface LiveContextOptions {
   client: WarappClient;
-  bridge: WarappBridge;
+  bridge: ReadyFetchBridge;
   env?: EnvSource;
   /** Used for the bundle download from War.app's CDN (not a war.app page). */
   fetchImpl?: typeof fetch;
@@ -58,7 +59,7 @@ const onBridge = (url: URL) => BRIDGE_DOMAINS.some((d) => url.hostname === d || 
  * GET a URL as text: war.app pages through the signed-in tab (the bridge's
  * only domain), the CDN-hosted bundle directly.
  */
-export function bundleFetcher(bridge: WarappBridge, fetchImpl: typeof fetch = fetch) {
+export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch = fetch) {
   return async (url: string): Promise<string> => {
     const u = new URL(url);
     if (onBridge(u)) {
