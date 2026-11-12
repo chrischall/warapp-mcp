@@ -4,3 +4,4 @@ export * from './bonuses.js';
 export * from './chokepoints.js';
 export * from './combat.js';
 export * from './player.js';
+export * from './planner.js';
