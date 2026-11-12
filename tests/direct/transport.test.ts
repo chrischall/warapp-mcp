@@ -3,10 +3,11 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { FetchproxyFetchInit, FetchproxyFetchResult } from '@chrischall/mcp-utils/fetchproxy';
 import { SESSION_HOST, type Session } from '../../src/direct/session.js';
 import {
-  createWarappBridge,
+  createDirectFirstBridge,
   DirectBridge,
   looksLikeHexFrame,
   looksSignedOut,
+  RELINK_CHECK_MS,
   SessionExpiredError,
   SessionNotLinkedError,
   toDirectResult,
@@ -142,6 +143,30 @@ describe('DirectBridge.fetch', () => {
     expect((err as Error).message).toContain('war.app refused');
   });
 
+  it('scrubs the token when it hides in the error cause or stack, keeping the http status', async () => {
+    const inner = new Error(`socket closed; header cookie=AuthToken=${FAKE_TOKEN}`);
+    const outer = new McpToolError('fetch failed', { kind: 'http', status: 503, cause: inner });
+    const direct = new DirectBridge(linkedStore(), async () => {
+      throw outer;
+    });
+    const err = (await direct.fetch(servicesPost).catch((e: unknown) => e)) as McpToolError;
+    expect(err).toBeInstanceOf(McpToolError);
+    const seen = JSON.stringify([err.message, err.stack, String((err as { cause?: unknown }).cause ?? '')]);
+    expect(seen).not.toContain(FAKE_TOKEN);
+    expect(err.message).toContain('fetch failed');
+    expect(err.status).toBe(503);
+  });
+
+  it('scrubs the URL-encoded form of the token', async () => {
+    const odd = 'tok/en+=value';
+    const direct = new DirectBridge(linkedStore(odd), async () => {
+      throw new Error(`bad request to /x?t=${encodeURIComponent(odd)}`);
+    });
+    const err = (await direct.fetch(servicesPost).catch((e: unknown) => e)) as Error;
+    expect(err.message).not.toContain(encodeURIComponent(odd));
+    expect(err.message).not.toContain(odd);
+  });
+
   it('never names the token in the typed session errors', async () => {
     const notLinked = new SessionNotLinkedError();
     const expired = new SessionExpiredError();
@@ -184,6 +209,16 @@ describe('direct-transport helpers', () => {
     expect(looksLikeHexFrame('')).toBe(false);
   });
 
+  it('looksSignedOut: only a 200 non-frame /Services reply or a sign-in redirect means signed out', () => {
+    const svc = 'https://war.app/Services?m=x&js=1';
+    expect(looksSignedOut(svc, { status: 200, body: '<html>x</html>', url: 'https://war.app/Services' })).toBe(true);
+    expect(looksSignedOut(svc, { status: 502, body: '<html>Bad Gateway</html>', url: 'https://war.app/Services' })).toBe(false);
+    expect(looksSignedOut(svc, { status: 503, body: '', url: 'https://war.app/Services' })).toBe(false);
+    expect(looksSignedOut(svc, { status: 500, body: '<input type="password">', url: 'https://war.app/Services' })).toBe(false);
+    // A sign-in redirect is signed out whatever the final status.
+    expect(looksSignedOut(svc, { status: 404, body: '', url: 'https://war.app/SignIn' })).toBe(true);
+  });
+
   it('looksSignedOut tolerates unparseable urls and a healthy page', () => {
     expect(looksSignedOut('', { status: 200, body: HEX_FRAME, url: '' })).toBe(false);
     expect(looksSignedOut('https://war.app/InviteToken', { status: 200, body: 'Your invite token is 123', url: 'https://war.app/InviteToken' })).toBe(false);
@@ -211,13 +246,13 @@ function fakeFetchproxy(body = BRIDGE_FRAME) {
   return { calls, bridge: bridge as never };
 }
 
-describe('createWarappBridge router', () => {
+describe('createDirectFirstBridge router', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('in auto mode, serves from the direct leg while the session is valid', async () => {
     const stub = stubFetch({ status: 200, body: HEX_FRAME, url: 'https://war.app/Services' });
     const fp = fakeFetchproxy();
-    const bridge = createWarappBridge({
+    const bridge = createDirectFirstBridge({
       store: linkedStore(),
       makeBridge: () => fp.bridge,
       mode: 'auto',
@@ -231,12 +266,12 @@ describe('createWarappBridge router', () => {
     expect(bridge.sessionStale()).toBe(false);
   });
 
-  it('in auto mode, a SessionExpiredError falls back to the bridge and marks the token stale', async () => {
-    // Direct answers a signed-out page; the bridge answers the frame.
-    const stub = stubFetch({ status: 200, body: '<html>signed out</html>', url: 'https://war.app/Services' });
-    const fp = fakeFetchproxy();
+  it('in auto mode, a signed-out GET falls back to the bridge (re-sent there) and marks the token stale', async () => {
+    // Direct answers a sign-in redirect; the bridge answers the page.
+    const stub = stubFetch({ status: 200, body: '<html>sign in</html>', url: 'https://war.app/SignIn' });
+    const fp = fakeFetchproxy('<html>invite</html>');
     const log = vi.fn();
-    const bridge = createWarappBridge({
+    const bridge = createDirectFirstBridge({
       store: linkedStore(),
       makeBridge: () => fp.bridge,
       mode: 'auto',
@@ -244,25 +279,201 @@ describe('createWarappBridge router', () => {
       log,
     });
 
-    const res = await (await bridge.ready()).fetch(servicesPost);
+    const res = await (await bridge.ready()).fetch({ method: 'GET', path: '/InviteToken' });
 
-    expect(res.body).toBe(BRIDGE_FRAME);
+    expect(res.body).toBe('<html>invite</html>');
     expect(fp.calls).toHaveLength(1);
     expect(bridge.status().transport).toBe('fetchproxy');
     expect(bridge.sessionStale()).toBe(true);
-    expect(bridge.stats().requests.fetchproxy).toBe(1);
     // A later call goes straight to the bridge — the dead token is not retried.
     await (await bridge.ready()).fetch(servicesPost);
     expect(stub.calls).toHaveLength(1);
     expect(fp.calls).toHaveLength(2);
-    // The switch notice never prints the token.
+    // The switch notice is emitted and never prints the token.
+    expect(log).toHaveBeenCalled();
     for (const [msg] of log.mock.calls) expect(String(msg)).not.toContain(FAKE_TOKEN);
+  });
+
+  it('in auto mode, a signed-out POST that reached war.app is NOT re-sent over the bridge', async () => {
+    // A write (SendOrders/chat) must never be sent twice: the direct POST got
+    // a reply, so war.app saw it — the router pins later calls to the bridge,
+    // but THIS call surfaces the expired session instead of replaying.
+    const stub = stubFetch({ status: 200, body: '<html>signed out</html>', url: 'https://war.app/Services' });
+    const fp = fakeFetchproxy();
+    const bridge = createDirectFirstBridge({
+      store: linkedStore(),
+      makeBridge: () => fp.bridge,
+      mode: 'auto',
+      directFetch: stub.fn,
+      log: () => {},
+    });
+
+    const err = await (await bridge.ready()).fetch(servicesPost).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(SessionExpiredError);
+    expect((err as Error).message).toMatch(/not re-sent/i);
+    expect((err as Error).message).not.toContain(FAKE_TOKEN);
+    expect(fp.calls).toHaveLength(0);
+    expect(bridge.sessionStale()).toBe(true);
+    // The NEXT call rides the bridge.
+    const res = await (await bridge.ready()).fetch(servicesPost);
+    expect(res.body).toBe(BRIDGE_FRAME);
+    expect(stub.calls).toHaveLength(1);
+    expect(fp.calls).toHaveLength(1);
+  });
+
+  it('in auto mode, a POST with no linked session (never sent) still falls back to the bridge', async () => {
+    const stub = stubFetch({ status: 200, body: HEX_FRAME, url: 'https://war.app/Services' });
+    const fp = fakeFetchproxy();
+    const bridge = createDirectFirstBridge({
+      store: emptyStore,
+      makeBridge: () => fp.bridge,
+      mode: 'auto',
+      directFetch: stub.fn,
+      log: () => {},
+    });
+    const res = await (await bridge.ready()).fetch(servicesPost);
+    expect(res.body).toBe(BRIDGE_FRAME);
+    expect(stub.calls).toHaveLength(0);
+    expect(fp.calls).toHaveLength(1);
+    // Not linked is not "expired".
+    expect(bridge.sessionStale()).toBe(false);
+  });
+
+  it('in auto mode, a 5xx error page passes through: no fallback, no stale flag, an http status', async () => {
+    const stub = stubFetch({ status: 502, body: '<html>Bad Gateway</html>', url: 'https://war.app/Services' });
+    const fp = fakeFetchproxy();
+    const bridge = createDirectFirstBridge({
+      store: linkedStore(),
+      makeBridge: () => fp.bridge,
+      mode: 'auto',
+      directFetch: stub.fn,
+      log: () => {},
+    });
+    const res = await (await bridge.ready()).fetch(servicesPost);
+    expect(res.status).toBe(502);
+    expect(fp.calls).toHaveLength(0);
+    expect(bridge.status().transport).toBe('direct');
+    expect(bridge.sessionStale()).toBe(false);
+  });
+
+  it('clears the stale flag when the direct leg succeeds again (direct mode)', async () => {
+    let signedIn = false;
+    const stub = stubFetch(() =>
+      signedIn
+        ? { status: 200, body: HEX_FRAME, url: 'https://war.app/Services' }
+        : { status: 200, body: '<html>signed out</html>', url: 'https://war.app/Services' },
+    );
+    const bridge = createDirectFirstBridge({
+      store: linkedStore(),
+      makeBridge: () => fakeFetchproxy().bridge,
+      mode: 'direct',
+      directFetch: stub.fn,
+    });
+    await expect((await bridge.ready()).fetch(servicesPost)).rejects.toBeInstanceOf(SessionExpiredError);
+    expect(bridge.sessionStale()).toBe(true);
+    signedIn = true;
+    await (await bridge.ready()).fetch(servicesPost);
+    expect(bridge.sessionStale()).toBe(false);
+  });
+
+  it('a 5xx after a signed-out reply does not clear the stale flag (it proves nothing about the session)', async () => {
+    let reply = { status: 200, body: '<html>signed out</html>', url: 'https://war.app/Services' };
+    const stub = stubFetch(() => reply);
+    const bridge = createDirectFirstBridge({
+      store: linkedStore(),
+      makeBridge: () => fakeFetchproxy().bridge,
+      mode: 'direct',
+      directFetch: stub.fn,
+    });
+    await expect((await bridge.ready()).fetch(servicesPost)).rejects.toBeInstanceOf(SessionExpiredError);
+    expect(bridge.sessionStale()).toBe(true);
+    reply = { status: 502, body: '<html>Bad Gateway</html>', url: 'https://war.app/Services' };
+    const res = await (await bridge.ready()).fetch(servicesPost);
+    expect(res.status).toBe(502);
+    expect(bridge.sessionStale()).toBe(true);
+  });
+
+  it('behind a session wall, re-reads the session file at most once per RELINK_CHECK_MS', async () => {
+    let reads = 0;
+    const store: SessionStore = {
+      read: async () => {
+        reads++;
+        return null;
+      },
+    };
+    let t = 1_000_000;
+    const fp = fakeFetchproxy();
+    const bridge = createDirectFirstBridge({
+      store,
+      makeBridge: () => fp.bridge,
+      mode: 'auto',
+      directFetch: stubFetch({ status: 200, body: HEX_FRAME, url: 'https://war.app/Services' }).fn,
+      log: () => {},
+      now: () => t,
+    });
+    await (await bridge.ready()).fetch(servicesPost); // no session: walled onto the bridge
+    const afterWall = reads;
+    await (await bridge.ready()).fetch(servicesPost); // first check behind the wall
+    await (await bridge.ready()).fetch(servicesPost); // throttled
+    await (await bridge.ready()).fetch(servicesPost); // throttled
+    expect(reads - afterWall).toBe(1);
+    t += RELINK_CHECK_MS;
+    await (await bridge.ready()).fetch(servicesPost);
+    expect(reads - afterWall).toBe(2);
+    expect(fp.calls).toHaveLength(5);
+  });
+
+  it('after a relink (sessionLinked), auto mode returns to the direct leg and clears the stale flag', async () => {
+    let token = FAKE_TOKEN;
+    let capturedAt = '2026-11-12T00:00:00.000Z';
+    const store: SessionStore = { read: async () => ({ ...session, authToken: token, capturedAt }) };
+    const stub = stubFetch((n) =>
+      n === 1
+        ? { status: 200, body: '<html>sign in</html>', url: 'https://war.app/SignIn' }
+        : { status: 200, body: HEX_FRAME, url: 'https://war.app/Services' },
+    );
+    const fp = fakeFetchproxy();
+    const bridge = createDirectFirstBridge({ store, makeBridge: () => fp.bridge, mode: 'auto', directFetch: stub.fn, log: () => {} });
+    await (await bridge.ready()).fetch({ method: 'GET', path: '/InviteToken' });
+    expect(bridge.status().transport).toBe('fetchproxy');
+    expect(bridge.sessionStale()).toBe(true);
+
+    token = 'test-auth-token-2';
+    capturedAt = '2026-11-12T01:00:00.000Z';
+    bridge.sessionLinked();
+
+    expect(bridge.sessionStale()).toBe(false);
+    expect(bridge.status().transport).toBe('direct');
+    const res = await (await bridge.ready()).fetch(servicesPost);
+    expect(res.body).toBe(HEX_FRAME);
+    expect(stub.calls).toHaveLength(2);
+    expect(stub.calls[1]!.headers.cookie).toBe('AuthToken=test-auth-token-2');
+  });
+
+  it('notices a session relinked elsewhere (a new capturedAt) and returns to the direct leg', async () => {
+    let current: Session | null = null;
+    const store: SessionStore = { read: async () => current };
+    const stub = stubFetch({ status: 200, body: HEX_FRAME, url: 'https://war.app/Services' });
+    const fp = fakeFetchproxy();
+    const bridge = createDirectFirstBridge({ store, makeBridge: () => fp.bridge, mode: 'auto', directFetch: stub.fn, log: () => {} });
+    // No session at first: falls back to the bridge.
+    await (await bridge.ready()).fetch(servicesPost);
+    expect(bridge.status().transport).toBe('fetchproxy');
+    expect(fp.calls).toHaveLength(1);
+    // Linked by another process (the file changed): the next call is direct.
+    current = { ...session };
+    const res = await (await bridge.ready()).fetch(servicesPost);
+    expect(res.body).toBe(HEX_FRAME);
+    expect(stub.calls).toHaveLength(1);
+    expect(fp.calls).toHaveLength(1);
+    expect(bridge.status().transport).toBe('direct');
   });
 
   it('in fetchproxy mode, never touches the direct leg', async () => {
     const stub = stubFetch({ status: 200, body: HEX_FRAME, url: 'https://war.app/Services' });
     const fp = fakeFetchproxy();
-    const bridge = createWarappBridge({
+    const bridge = createDirectFirstBridge({
       store: linkedStore(),
       makeBridge: () => fp.bridge,
       mode: 'fetchproxy',
@@ -278,7 +489,7 @@ describe('createWarappBridge router', () => {
   it('in direct mode, a SessionExpiredError propagates and the bridge is never built', async () => {
     const stub = stubFetch({ status: 200, body: '<html>signed out</html>', url: 'https://war.app/Services' });
     const fp = fakeFetchproxy();
-    const bridge = createWarappBridge({
+    const bridge = createDirectFirstBridge({
       store: linkedStore(),
       makeBridge: () => fp.bridge,
       mode: 'direct',
@@ -292,7 +503,7 @@ describe('createWarappBridge router', () => {
   it('reads the mode from WARAPP_TRANSPORT when none is passed', async () => {
     const stub = stubFetch({ status: 200, body: HEX_FRAME, url: 'https://war.app/Services' });
     const fp = fakeFetchproxy();
-    const bridge = createWarappBridge({
+    const bridge = createDirectFirstBridge({
       store: linkedStore(),
       makeBridge: () => fp.bridge,
       directFetch: stub.fn,
@@ -306,7 +517,7 @@ describe('createWarappBridge router', () => {
 
   it('exposes the bridge healthcheck slice once a bridge exists', async () => {
     const fp = fakeFetchproxy();
-    const bridge = createWarappBridge({ store: linkedStore(), makeBridge: () => fp.bridge, mode: 'fetchproxy' });
+    const bridge = createDirectFirstBridge({ store: linkedStore(), makeBridge: () => fp.bridge, mode: 'fetchproxy' });
     const slice = bridge.bridgeTransport();
     expect(slice).toBeDefined();
     expect(typeof slice!.status).toBe('function');

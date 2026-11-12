@@ -71,7 +71,7 @@ capture (or re-capture) the token.
 - Detect an expired/absent session: a login redirect, a sign-in page body, or a `/Services`
   reply that is not a valid reply frame when one was expected → throw a typed
   `SessionExpiredError`. Both typed errors feed `shouldFallBack`.
-- `createWarappBridge({ store, makeBridge, mode })`: wires `createDirectFirstTransport({ direct:
+- `createDirectFirstBridge({ store, makeBridge, mode })` (named `createWarappBridge` when planned; renamed so it no longer collides with the fetchproxy `createWarappBridge` in `src/transport-bridge.ts`): wires `createDirectFirstTransport({ direct:
   new DirectBridge(store), bridge: makeBridge, mode: readTransportMode('WARAPP_TRANSPORT'),
   serverName: 'warapp-mcp', hostLabel: 'war.app', shouldFallBack: <SessionExpired|SessionNotLinked
   |default edge-block> })` and returns an object shaped like today's bridge

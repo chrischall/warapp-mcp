@@ -57,6 +57,20 @@ describe('linkSession', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it('scrubs the token and the whole captured cookie from a failure after the capture', async () => {
+    const err = (await linkSession({
+      capture: async () => COOKIE,
+      save: async () => {
+        throw new Error(`EACCES writing {"authToken":"${FAKE_TOKEN}"} from ${COOKIE}`);
+      },
+    }).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain('EACCES');
+    expect(err.message).not.toContain(FAKE_TOKEN);
+    expect(err.message).not.toContain('AWSELB=y');
+    expect(String(err.stack)).not.toContain(FAKE_TOKEN);
+  });
+
   it('captures the Cookie header on a war.app request through the bridge capture seam', async () => {
     const decls: CaptureHeaderDecl[] = [];
     let started = false;

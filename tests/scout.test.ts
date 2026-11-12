@@ -177,12 +177,15 @@ describe('warapp_scout_player', () => {
     expect((first.player as { id: unknown }).id).toBe(ZED);
     const again = payload(await h.call('warapp_scout_player', { player: (first.player as { id: string }).id }));
     expect((again.player as { id: unknown }).id).toBe(ZED);
-    expect(h.bridge.requests.map((r) => r.path)).toEqual([
-      `https://war.app/Profile?p=${ZED}`,
-      `https://war.app/CommonGames?p=${ZED}`,
-      `https://war.app/Profile?p=${ZED}`,
-      `https://war.app/CommonGames?p=${ZED}`,
-    ]);
+    // The two pages are fetched concurrently, so their order is not fixed.
+    expect(h.bridge.requests.map((r) => r.path).sort()).toEqual(
+      [
+        `https://war.app/Profile?p=${ZED}`,
+        `https://war.app/CommonGames?p=${ZED}`,
+        `https://war.app/Profile?p=${ZED}`,
+        `https://war.app/CommonGames?p=${ZED}`,
+      ].sort(),
+    );
   });
 
   it('refuses a name without a game to look it up in', async () => {

@@ -6,9 +6,9 @@
 //   success + when it was captured + the active transport — NEVER the token.
 // - `warapp_session_status` (read) reports whether a session is linked, when it
 //   was captured and how old it is, and which leg (direct vs the browser
-//   bridge) is serving calls now — again never the token. After a direct-leg
-//   `SessionExpiredError` forced the router to fall back, it surfaces
-//   "session expired — run warapp_link_session" so the owner relinks.
+//   bridge) is serving calls now — again never the token. While the direct leg's
+//   last answer was a `SessionExpiredError`, it surfaces "session expired — run
+//   warapp_link_session" so the owner relinks; a relink clears it.
 //
 // SECURITY: the AuthToken is a full-account credential. Neither tool returns,
 // logs, or previews it; the status output carries only `capturedAt`/`host`/age.
@@ -24,8 +24,10 @@ import { readAnnotations, respond, untrustedDescription } from './common.js';
 export interface SessionTransportView {
   /** The leg the next call rides. */
   activeLeg(): 'direct' | 'fetchproxy';
-  /** True once a direct→bridge fallback happened — the linked token is expired. */
+  /** True while the linked token is known to be signed out (cleared by a direct success or a relink). */
   sessionStale(): boolean;
+  /** A new session was linked: clear the stale flag and let `auto` retry the direct leg. */
+  sessionLinked(): void;
 }
 
 /** What {@link registerSessionTools} needs. */
@@ -46,8 +48,8 @@ const HINT_NOT_LINKED =
   'No war.app session is linked. Run warapp_link_session to use the direct (no-browser) transport; the browser ' +
   'bridge is used until then.';
 const HINT_EXPIRED =
-  'The linked war.app session expired this run, so the browser bridge is handling calls. Run warapp_link_session ' +
-  'to relink.';
+  'The linked war.app session is signed out (war.app answered a direct call signed-out this run). Run ' +
+  'warapp_link_session to relink.';
 
 export function registerSessionTools(server: McpServer, deps: SessionToolsDeps): void {
   const read = deps.read ?? (() => readSession(deps.env));
@@ -126,6 +128,9 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
           },
           async execute() {
             const result = await link();
+            // The old token's stale flag and the router's fallback were about
+            // the OLD session: reset them so the direct leg is tried again.
+            deps.transport.sessionLinked();
             return {
               status: 'linked' as const,
               host: result.host,

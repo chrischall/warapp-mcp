@@ -127,6 +127,9 @@ describe('warapp_healthcheck', () => {
   });
 });
 
+// Pin this connection's router to the browser bridge.
+const ON_BRIDGE = { WARAPP_TRANSPORT: 'fetchproxy' };
+
 describe('warapp_healthcheck with the browser bridge', () => {
   const page = () => ({ status: 200, body: '<html>war.app</html>', url: 'https://war.app/' });
 
@@ -156,7 +159,9 @@ describe('warapp_healthcheck with the browser bridge', () => {
     const { bridge, mock } = mockWarappBridge(page);
     await (await bridge.ready()).fetch({ method: 'GET', path: '/x' });
     const { calls, fetchImpl } = stubFetch({});
-    harness = await createTestHarness((s) => registerAllTools(s, { env: { ...CREDS, ...NO_SESSION }, fetchImpl, bridge }));
+    harness = await createTestHarness((s) =>
+      registerAllTools(s, { env: { ...CREDS, ...NO_SESSION, ...ON_BRIDGE }, fetchImpl, bridge }),
+    );
     const res = await harness.client.callTool({ name: 'warapp_healthcheck', arguments: {} });
     const body = parseToolResult<{ ok: boolean; bridge?: { role: string } }>(res as never);
     expect(body.ok).toBe(true);
@@ -165,12 +170,53 @@ describe('warapp_healthcheck with the browser bridge', () => {
     expect(mock.requests.at(-1)).toMatchObject({ method: 'GET', path: BRIDGE_PROBE_PATH });
   });
 
+  it('in direct mode, answers from the credential arm even though the shared bridge carried a request', async () => {
+    // The process-wide fetchproxy bridge is shared across connections; another
+    // connection (or an earlier pin) used it, but THIS connection rides the
+    // direct leg — so the bridge must not be probed or reported as its path.
+    const { bridge, mock } = mockWarappBridge(page);
+    await (await bridge.ready()).fetch({ method: 'GET', path: '/x' });
+    const before = mock.requests.length;
+    const { calls, fetchImpl } = stubFetch({ error: 'Loading the game produced an error: ServerGameKeyNotFound' });
+    harness = await createTestHarness((s) =>
+      registerAllTools(s, {
+        env: { ...CREDS, ...NO_SESSION, WARAPP_TRANSPORT: 'direct' },
+        fetchImpl,
+        sleep: async () => {},
+        bridge,
+      }),
+    );
+    const res = await harness.client.callTool({ name: 'warapp_healthcheck', arguments: {} });
+    const body = parseToolResult<CredentialBody>(res as never);
+    expect(body.ok).toBe(true);
+    expect(body.credential.detail?.transport).toBe('direct');
+    expect(body.credential.detail?.mode).toBe('direct');
+    expect(calls).toHaveLength(1);
+    expect(mock.requests).toHaveLength(before);
+  });
+
+  it('in auto mode, stays on the credential arm until THIS connection falls back to the bridge', async () => {
+    const { bridge, mock } = mockWarappBridge(page);
+    await (await bridge.ready()).fetch({ method: 'GET', path: '/x' });
+    const before = mock.requests.length;
+    const { calls, fetchImpl } = stubFetch({ error: 'Loading the game produced an error: ServerGameKeyNotFound' });
+    harness = await createTestHarness((s) =>
+      registerAllTools(s, { env: { ...CREDS, ...NO_SESSION }, fetchImpl, sleep: async () => {}, bridge }),
+    );
+    const res = await harness.client.callTool({ name: 'warapp_healthcheck', arguments: {} });
+    const body = parseToolResult<CredentialBody>(res as never);
+    expect(body.ok).toBe(true);
+    expect(body.credential.detail?.transport).toBe('direct');
+    expect(calls).toHaveLength(1);
+    expect(mock.requests).toHaveLength(before);
+  });
+
   it('reports a failing bridge probe on an HTTP error page', async () => {
     const { bridge } = mockWarappBridge((req) =>
       req.path === BRIDGE_PROBE_PATH ? { status: 503, body: 'down', url: 'https://war.app/' } : page(),
     );
     await (await bridge.ready()).fetch({ method: 'GET', path: '/x' });
-    harness = await createTestHarness((s) => registerAllTools(s, { env: { ...CREDS, ...NO_SESSION }, bridge }));
+    harness = await createTestHarness((s) => registerAllTools(s, { env: { ...CREDS, ...NO_SESSION, ...ON_BRIDGE }, bridge }));
     const res = await harness.client.callTool({ name: 'warapp_healthcheck', arguments: {} });
     const body = parseToolResult<{ ok: boolean; error?: { message: string } }>(res as never);
     expect(body.ok).toBe(false);
