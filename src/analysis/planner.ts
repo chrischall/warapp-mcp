@@ -45,7 +45,14 @@
 //     are lost anyway if they stay, but no capture is funded there.
 //     Under `balanced` a hold is not deployed here: it competes in the greedy
 //     step (rule 4a), and a threatened border it might hold makes no attacks.
-//  1b. Withdraw (under `defend` and `balanced`). A conceded border's movable armies move first
+//  1c. Reconsider (every goal, after the capture passes). Triage runs before
+//     captures are known, so a border in a bonus this turn's captures complete
+//     protected +0 and was conceded. Protected value is then re-judged against my
+//     holdings plus this turn's captures: a conceded border in a bonus completed
+//     this turn is kept (its concession warning dropped, a rationale line added),
+//     never withdrawn from, and garrisoned from the leftover (rule 5); a warning
+//     says so when the leftover still cannot make it hold.
+//  1b. Withdraw (under `defend` and `balanced`, after 1c). A conceded border's movable armies move first
 //     to the adjacent territory of mine nearest a border that holds (then the
 //     one protecting the most value, then id); the plan advises Order Priority
 //     (`cardAdvice`), because a withdrawal only executes while the border is mine.
@@ -426,14 +433,17 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
 
   // ---- protected value ----
+  // Judged against my holdings at the start of the turn until the capture passes
+  // have run; then against those holdings plus this turn's captures (R2).
+  let holdings: Set<number> = mineSet;
   const protectedValue = (t: number): number => {
     // Each bonus is visited once, so it counts once however many of its borders are threatened.
     let v = 0;
-    const mineWithout = (x: number) => x !== t && mineSet.has(x);
+    const mineWithout = (x: number) => x !== t && holdings.has(x);
     for (const b of g.map.bonuses) {
       const ts = bonusTerritories(g, b.id);
       if (b.value <= 0 || !ts.includes(t)) continue;
-      if (ts.every((x) => mineSet.has(x))) {
+      if (ts.every((x) => holdings.has(x))) {
         v += b.value;
         continue;
       }
@@ -658,7 +668,41 @@ export function planTurn(input: PlanInput): TurnPlan {
     // Withdrawals go first: they only execute while the border is still mine.
     moves.unshift(...withdrawals);
   };
-  if (acting) withdraw();
+
+  // ---- 1c. reconsider concessions after the capture passes (R2) ----
+  // Triage ran before captures were known, so a border in a bonus this turn's
+  // captures complete was valued +0 and conceded. Re-value every border against
+  // the holdings after the captures; a conceded border in a bonus completed this
+  // turn is kept (never withdrawn from) and garrisoned from the leftover.
+  /** Conceded borders kept because this turn's captures complete a bonus they protect. */
+  const kept = new Set<number>();
+  const reconsider = () => {
+    if (!captured.size) return;
+    holdings = new Set([...mine, ...captured]);
+    valueCache.clear();
+    if (!conceded.size) return;
+    for (const t of [...conceded].sort(byNum)) {
+      const completes = g.map.bonuses
+        .filter((b) => {
+          const ts = bonusTerritories(g, b.id);
+          return b.value > 0 && ts.includes(t) && ts.every((x) => holdings.has(x)) && !ts.every((x) => mineSet.has(x));
+        })
+        .sort((a, b) => a.id - b.id);
+      if (!completes.length) continue;
+      conceded.delete(t);
+      kept.add(t);
+      locked.add(t);
+      // Drop its concession warning: it is no longer conceded.
+      const conceding = `${label(t)} cannot be held `;
+      for (let i = warnings.length - 1; i >= 0; i--)
+        if (warnings[i]!.startsWith(conceding) && warnings[i]!.endsWith(': conceded')) warnings.splice(i, 1);
+      rationale.push(
+        `Keep ${label(t)} (not conceded): this turn's captures complete ${completes.map((b) => `bonus ${b.name} (#${b.id}) (+${b.value})`).join(', ')}, so it protects +${valueOf(t)}.`,
+      );
+    }
+  };
+  // (Under `defend` the withdrawal runs after the capture passes, once `reconsider` has
+  // kept any border this turn's captures make valuable; it still goes first in the orders.)
 
   // ---- enemy bonuses I could break (under `balanced`) ----
   // A bonus is breakable when every territory in it is visible and held by one enemy.
@@ -1006,10 +1050,13 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (t.holdCost > budget) concedeUnaffordable(t, budget);
       else hold(t);
     }
+    reconsider();
     withdraw();
   } else {
     for (const p of plans) complete(p);
     for (const p of plans) advance(p);
+    reconsider();
+    if (acting) withdraw();
   }
 
   // ---- pass 3: other expansion ----
@@ -1070,6 +1117,17 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     rationale.push(`Deploy the leftover ${budget} to ${label(where)}: ${why}.`);
     deploy(where, budget);
+  }
+
+  // A kept border the leftover could not make safe: the completed bonus can fall with it.
+  for (const t of [...kept].sort(byNum)) {
+    const b = borders.get(t)!;
+    const stays = avail.get(t)! + guard + (incoming.get(t) ?? 0);
+    const take = armiesToTake(stays, rates);
+    if (take !== null && take <= b.threat)
+      warnings.push(
+        `${label(t)} is kept for the bonus this turn completes, but its ${stays} armies need only ${take} to take against the ~${b.threat} threat: the bonus can fall next turn.`,
+      );
   }
 
   // ---- transfers ----

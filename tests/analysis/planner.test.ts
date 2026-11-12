@@ -1241,6 +1241,104 @@ describe('enemy deploy estimate — per opponent, income-aware (R1)', () => {
   });
 });
 
+describe('planTurn — border value after this turn\'s captures (R2)', () => {
+  // I hold T1, T2, T3 of the +5 bonus {1, 2, 3, 4}; T4 is a cheap 2-army neutral
+  // next to T3 (3 to take, which T3's 4 armies fund with no deploy). T1 borders
+  // a visible 6-army enemy T9: threat 5 movable + 5 deploy (floor) = 10, and T1's
+  // 4 armies need only 6 to take, so holding needs 3 (7 armies need 11).
+  // Judged from the start-of-turn holdings T1 protects +0 (the bonus is incomplete
+  // and T2/T3 keep me in it), so it was conceded and withdrawn — defeating the
+  // capture that completes the bonus this turn.
+  //   T9(enemy) ─ T1 ─ T2 ─ T3 ─ T4(neutral)
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 9],
+      [
+        [1, 9],
+        [1, 2],
+        [2, 3],
+        [3, 4],
+      ],
+      [[801, 5, [1, 2, 3, 4]]],
+    ),
+  );
+  const at = (t3: number, t4: number) =>
+    board([mine(1, 4), mine(2, 1), mine(3, t3), neutral(4, t4), enemy(9, 6)]);
+
+  for (const goal of ['balanced', 'defend'] as const)
+    it(`(${goal}) completes the bonus AND keeps the bordering member it protects`, () => {
+      expect(armiesToTake(4, STD)).toBe(6);
+      expect(armiesToTake(7, STD)).toBe(11);
+      const p = planTurn({ graph: g, board: at(4, 2), me: ME, income: 5, settings: STD, options: { goal } });
+      expect(p.expected.bonusesCompleted).toEqual([801]);
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 3, to: 4, armies: 3 })]);
+      // T1 is kept: not conceded, never withdrawn from, and garrisoned so it holds.
+      expect(p.conceded).toEqual([]);
+      expect(p.moves.some((m) => m.from === 1)).toBe(false);
+      expect(p.cardAdvice).toBeNull();
+      expect(deployedTo(p, 1)).toBeGreaterThanOrEqual(3);
+      expect(deploySum(p)).toBe(5);
+      expect(p.warnings.join('\n')).not.toMatch(/T1 \(#1\).*conceded/);
+      expect(p.rationale.join('\n')).toMatch(
+        /Keep T1 \(#1\) \(not conceded\): this turn's captures complete bonus B801 \(#801\) \(\+5\), so it protects \+5/,
+      );
+      // The garrison makes it safe: no warning that the completed bonus can fall.
+      expect(p.warnings.join('\n')).not.toMatch(/is kept for the bonus/);
+    });
+
+  it('control: a bonus this turn cannot complete leaves the border at +0, conceded as before', () => {
+    // T4 is a 30-army neutral: far beyond this turn's income (and a wasteland).
+    const p = planTurn({ graph: g, board: at(4, 30), me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    expect(p.conceded).toEqual([1]);
+    expect(p.warnings).toContain('T1 (#1) cannot be held economically (needs 3, protects +0): conceded');
+    expect(p.expected.bonusesCompleted).toEqual([]);
+  });
+
+  it('keeps the border but warns when the leftover cannot make it hold', () => {
+    // T3 has 1 army, so the 3-army capture needs 3 deployed: only 2 are left for T1,
+    // whose 6 armies need only 10 to take against the ~10 threat.
+    const p = planTurn({ graph: g, board: at(1, 2), me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    expect(p.expected.bonusesCompleted).toEqual([801]);
+    expect(p.conceded).toEqual([]);
+    expect(p.moves.some((m) => m.from === 1)).toBe(false);
+    expect(deployedTo(p, 1)).toBe(2);
+    expect(p.warnings).toContain(
+      'T1 (#1) is kept for the bonus this turn completes, but its 6 armies need only 10 to take against the ~10 threat: the bonus can fall next turn.',
+    );
+  });
+
+  it('keeps a conceded border only for a bonus completed this turn, not for any capture', () => {
+    // T4 sits outside the bonus here: capturing it completes nothing, so T1 stays conceded.
+    const g2 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 9],
+        [
+          [1, 9],
+          [1, 2],
+          [2, 3],
+          [3, 4],
+          [2, 5],
+        ],
+        // T5 is fogged (absent from the board), so B801 cannot complete this turn.
+        [[801, 5, [1, 2, 3, 5]], [802, 1, [4]]],
+      ),
+    );
+    const p = planTurn({ graph: g2, board: at(4, 2), me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    expect(p.expected.captures).toEqual([4]);
+    expect(p.conceded).toEqual([1]);
+    expect(p.warnings).toContain('T1 (#1) cannot be held economically (needs 3, protects +0): conceded');
+  });
+
+  it('never counts a completion that needs an enemy territory or a fogged one', () => {
+    const withEnemy = board([mine(1, 4), mine(2, 1), mine(3, 4), enemy(4, 2), enemy(9, 6)]);
+    const p = planTurn({ graph: g, board: withEnemy, me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    expect(p.conceded).toEqual([1]);
+    const withFog = board([mine(1, 4), mine(2, 1), mine(3, 4), fogged(4), enemy(9, 6)]);
+    const q = planTurn({ graph: g, board: withFog, me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    expect(q.conceded).toEqual([1]);
+  });
+});
+
 describe('planTurn — threat trend', () => {
   // (g) A growing enemy stack: T2 went 51 → 76 last turn, next to my 55 on T1
   // (a held +5 bonus). With a caller estimate of ~10 deploy, 75 movable + 10 = 85

@@ -144,22 +144,22 @@ describe('warapp_plan_turn', () => {
     expect(props.goal!.description).toMatch(/balanced \(default\)/);
   });
 
-  it('goal defend triages the threatened border by the income it protects', async () => {
+  it('goal defend keeps the borders of the bonus this turn completes (R2), warning they can still fall', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }));
     expect(p.goal).toBe('defend');
-    // Ann's threatened border is in no held bonus: it protects +0, so it is conceded, not held.
-    expect(p.warnings.join('\n')).toMatch(/cannot be held economically \(needs \d+, protects \+0\): conceded/);
-    expect(p.rationale.join('\n')).not.toMatch(/so it holds/);
-    // The conceded border, by name and id, and the card the withdrawal from it needs.
-    expect(p.conceded.length).toBeGreaterThan(0);
-    for (const c of p.conceded) {
-      expect(c.name).toBe(mapName(c.id));
-      expect(p.warnings.join('\n')).toContain(`${c.name} (#${c.id}) cannot be held`);
-    }
-    // Every territory Ann holds is conceded, so there is nowhere to withdraw to: no card advice.
-    expect(p.warnings.join('\n')).toMatch(/is conceded and has nowhere to withdraw to/);
+    // Both threatened borders protect +0 at the start of the turn, but capturing Widow's Watch
+    // completes bonus 118 around them: they are kept (not conceded, nothing withdrawn).
+    expect(p.expected.bonusesCompleted).toEqual([{ id: 118, name: 'Broken Branch Riverlords', value: 2 }]);
+    expect(p.conceded).toEqual([]);
+    expect(p.warnings.join('\n')).not.toMatch(/: conceded/);
+    expect(p.moves.every((m) => m.kind === 'attack')).toBe(true);
     expect(p.cardAdvice).toBeNull();
+    for (const id of [159, 161]) {
+      expect(p.rationale.join('\n')).toContain(`Keep ${mapName(id)} (#${id}) (not conceded)`);
+      // The 5 income cannot make both safe against Bob's ~11: each says the bonus can fall.
+      expect(p.warnings.join('\n')).toContain(`${mapName(id)} (#${id}) is kept for the bonus this turn completes`);
+    }
   });
 
   it('reports a conceded border and the Order Priority advice its withdrawal needs', async () => {
