@@ -473,9 +473,6 @@ export function planTurn(input: PlanInput): TurnPlan {
     rationale.push(
       'No-Split: each territory issues at most one attack or transfer this turn; a territory that would split keeps its first (best) order.',
     );
-    warnings.push(
-      'No-Split is on: each order sends the planned armies, not every movable army; whether war.app also requires sending all movable armies from a territory is unverified.',
-    );
   }
 
   if (!mine.length) {
@@ -1612,6 +1609,10 @@ export function planTurn(input: PlanInput): TurnPlan {
   }
   const gained = completed.reduce((sum, id) => sum + g.bonusById.get(id)!.value, 0);
 
+  if (noSplit && moves.length)
+    warnings.push(
+      'No-Split is on: each order sends the planned armies, not every movable army; whether war.app also requires sending all movable armies from a territory is unverified.',
+    );
   return {
     deploys: [...deployed]
       .filter(([, n]) => n > 0)

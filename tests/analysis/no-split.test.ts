@@ -68,6 +68,12 @@ describe('planTurn — No-Split (G3)', () => {
     expect(today.rationale.join('\n')).not.toMatch(/No-Split/);
   });
 
+  it('does not add the all-in warning when the plan has no moves', () => {
+    const p = planTurn({ graph: g, board: board([mine(1, 1), neutral(2, 9), neutral(3, 9)]), me: ME, income: 0, settings: NOSPLIT });
+    expect(p.moves).toEqual([]);
+    expect(p.warnings.join('\n')).not.toMatch(/No-Split is on/);
+  });
+
   it('(b) flag on: one attack only (the better one: it completes the bonus); a warning names the dropped one', () => {
     const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: NOSPLIT });
     // armiesToTake(2) at 60/70 = max(ceil(150 / 60) = 3, round(1.4) + 1 = 2) = 3.

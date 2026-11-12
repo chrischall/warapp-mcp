@@ -79,7 +79,7 @@ describe('planTurn — kill rates (G1)', () => {
   });
 
   it('at 20/80 the plan deploys the shortfall to afford the 8', () => {
-    // 4 movable + 4 deployed = 8.
+    // 4 movable + 4 deployed = 8 is enough; the plan puts all 5 of its income on T1.
     const p = planTurn({ graph: g, board: board([mine(1, 5), neutral(2, 2)]), me: ME, income: 5, settings: R20_80, options: { goal: 'expand' } });
     expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 2, armies: 8 })]);
     expect(p.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
