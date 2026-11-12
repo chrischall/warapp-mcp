@@ -69,8 +69,9 @@ credential check and the bridge status are one tool. Tests with an injected mock
 - `warapp_get_live_board` (read): `GetLatestGameInfo` → normalized territories (id, name from
   the map, owner as player name / "neutral" / "pickable", armies, fogged) + players; works in
   the pick phase and mid-game; `view` compact/full; untrusted framing for names.
-- `warapp_get_my_picks` (read): `GetTerritoryPicks(gameId, myPlayerId)`; the player id is the
-  GameFeed player id with its `64…16` wrapper removed (derive, test the derivation).
+- `warapp_get_my_picks` (read): `GetTerritoryPicks(gameId, myPlayerId)`; the in-game player id is the
+  GameFeed player id with its two leading and two trailing check digits removed
+  (`id.slice(2, -2)`; the digits vary per player — NOT a fixed `64…16`; derive, test it).
 - `warapp_submit_picks` (write): confirm-gated with `confirmWrite` (`defineWrite` /
   `registerWrite`); validates ids are pickable on the live board and the count ≤ 2×TerritoryLimit;
   after sending, re-reads `GetTerritoryPicks` and reports verified only on an exact match.
