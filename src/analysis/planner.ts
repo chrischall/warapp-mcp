@@ -8,7 +8,7 @@
 //     movable armies (minus the guard) summed over its territories bordering T.
 //     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
 //     income plus the bonuses that player visibly holds in full, clamped below
-//     by MIN_ENEMY_DEPLOY and above by round(ENEMY_STACK_SHARE × its largest
+//     by max(MIN_ENEMY_DEPLOY, base income) and above by round(ENEMY_STACK_SHARE × its largest
 //     stack next to me) — a big stack implies it *can* move a lot, never that
 //     its income is big (live, a 0.75 × 15 guess on an all-15 opening board made
 //     every base-income opponent look like ~11). On the opening board (every
@@ -276,7 +276,7 @@ export function captureCost(defenders: number, settings: PlannerSettings = {}): 
 /** One visible opponent's estimated deploy next turn and how it was reached. */
 export interface EnemyDeployEstimate {
   playerId: number;
-  /** clamp(base + bonusIncome, MIN_ENEMY_DEPLOY, stackCap); MIN_ENEMY_DEPLOY on the opening board. */
+  /** clamp(base + bonusIncome, max(MIN_ENEMY_DEPLOY, base), stackCap); that floor on the opening board. */
   estimate: number;
   base: number;
   /** Value of the bonuses this player visibly holds in full. */
@@ -300,7 +300,7 @@ function openingArmies(g: MapGraph, board: BoardState): number | null {
 /**
  * Per-opponent enemy deploy estimates, one per visible enemy player (sorted by
  * id): base income plus the bonuses that player visibly holds in full, clamped
- * below by {@link MIN_ENEMY_DEPLOY} and above by round({@link ENEMY_STACK_SHARE}
+ * below by max({@link MIN_ENEMY_DEPLOY}, base income) — the floor wins over the cap — and above by round({@link ENEMY_STACK_SHARE}
  * × its largest stack next to me). Bonuses in the fog are unseen, so this is
  * what the visible board supports. On the opening board (every visible
  * territory holds the same count) every opponent gets the floor.
@@ -337,9 +337,9 @@ export function enemyDeployEstimates(
     }
     const largestStack = adjacent || any;
     const stackCap = Math.round(ENEMY_STACK_SHARE * largestStack);
-    const estimate = opening
-      ? MIN_ENEMY_DEPLOY
-      : Math.max(MIN_ENEMY_DEPLOY, Math.min(base + bonusIncome, stackCap));
+    // Every opponent earns at least the game's base income (never below the 5 minimum).
+    const floor = Math.max(MIN_ENEMY_DEPLOY, base);
+    const estimate = opening ? floor : Math.max(floor, Math.min(base + bonusIncome, stackCap));
     return { playerId, estimate, base, bonusIncome, largestStack, stackCap, opening };
   });
 }
@@ -634,8 +634,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         const e = estimates.get(p)!;
         warnings.push(
           opening !== null
-            ? `Enemy deploy estimate for player ${p}: ~${e.estimate} (opening board: every visible territory holds ${opening}, so no one has deployed yet and every opponent gets the ${MIN_ENEMY_DEPLOY} minimum); enemy income is unknown, so they could deploy more.`
-            : `Enemy deploy estimate for player ${p}: ~${e.estimate} (base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}, at least ${MIN_ENEMY_DEPLOY} and at most ${ENEMY_STACK_SHARE * 100}% of its largest stack next to me (${e.largestStack}) = ${e.stackCap}); enemy income beyond its visible bonuses is unknown, so they could deploy more.`,
+            ? `Enemy deploy estimate for player ${p}: ~${e.estimate} (opening board: every visible territory holds ${opening}, so no one has deployed yet and every opponent gets its base income, at least ${MIN_ENEMY_DEPLOY}); enemy income is unknown, so they could deploy more.`
+            : `Enemy deploy estimate for player ${p}: ~${e.estimate} (base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}, at least max(${MIN_ENEMY_DEPLOY}, base) and at most ${ENEMY_STACK_SHARE * 100}% of its largest stack next to me (${e.largestStack}) = ${e.stackCap}); enemy income beyond its visible bonuses is unknown, so they could deploy more.`,
         );
       }
     }

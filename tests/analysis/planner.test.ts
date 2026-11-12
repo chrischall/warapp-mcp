@@ -1128,6 +1128,19 @@ describe('enemy deploy estimate — per opponent, income-aware (R1)', () => {
     expect(p.warnings.join('\n')).toMatch(/Enemy deploy estimate for player 20: ~5 \(base 5 \+ visible bonuses \+0 = 5/);
   });
 
+  it('the floor is the game\'s base income when that exceeds MIN_ENEMY_DEPLOY (opening board too)', () => {
+    const rich = { baseIncome: 8 };
+    // Mid-game, no visible bonus, a big adjacent stack: base 8, not the 5 minimum.
+    const [mid] = enemyDeployEstimates(g, board([mine(1, 15), enemy(2, 15), neutral(3, 2), neutral(4, 2)]), ME, rich);
+    expect(mid).toMatchObject({ estimate: 8, base: 8, stackCap: 11 });
+    // A small adjacent stack caps the bonus estimate but never below the base income.
+    const [small] = enemyDeployEstimates(g, board([mine(1, 15), enemy(2, 2), neutral(3, 2), neutral(4, 2)]), ME, rich);
+    expect(small).toMatchObject({ estimate: 8, stackCap: 2 });
+    // Opening board (every territory holds the same count): base income, not 5.
+    const [open] = enemyDeployEstimates(g, board([mine(1, 4), enemy(2, 4), neutral(3, 4), neutral(4, 4)]), ME, rich);
+    expect(open).toMatchObject({ estimate: 8, opening: true });
+  });
+
   it('(b) an opponent visibly holding a +5 bonus is estimated at base + 5', () => {
     const s = board([mine(1, 15), enemy(2, 15), neutral(3, 2), enemy(4, 3)]);
     const [e] = enemyDeployEstimates(g, s, ME);

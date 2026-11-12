@@ -73,10 +73,10 @@ threat-aware planner) and `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, 
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
   Tests drive it against a scripted fake bridge, never a socket.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
-  separately: base income + the bonuses it visibly holds in full, at least 5 and at most
-  round(0.75 × its largest stack next to me) (`enemyDeploy` / `enemy_deploy` overrides all of
-  them). On the opening board (every visible territory holds the same count) every opponent gets
-  5 — live, the old 0.75 × 15 guess made every base-income opponent look like ~11. A warning
+  separately: base income + the bonuses it visibly holds in full, at most round(0.75 × its
+  largest stack next to me) but never below the game's base income (at least 5)
+  (`enemyDeploy` / `enemy_deploy` overrides all of them). On the opening board (every visible
+  territory holds the same count) every opponent gets that floor — live, the old 0.75 × 15 guess made every base-income opponent look like ~11. A warning
   states each estimate and its basis.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
   border's threat to movable + max(that opponent's deploy, growth). `warapp_plan_turn` gets it from
