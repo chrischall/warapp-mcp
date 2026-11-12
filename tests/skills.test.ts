@@ -27,7 +27,7 @@ const read = (p: string) => readFileSync(p, 'utf8');
 // (every dev Mac). The static zsh-safety check below runs everywhere regardless.
 const hasShell = (sh: string) => spawnSync(sh, ['-c', 'true']).status === 0;
 const SHELLS = (['bash', 'zsh'] as const).filter((sh) => sh === 'bash' || hasShell(sh));
-it.skipIf(SHELLS.includes('zsh' as never))('zsh helper run (skipped: zsh is not installed here)', () => {});
+if (!SHELLS.includes('zsh' as never)) it.skip('zsh helper run (zsh is not installed here)', () => {});
 
 function frontmatter(md: string): Record<string, string> {
   const m = /^---\n([\s\S]*?)\n---\n/.exec(md);
