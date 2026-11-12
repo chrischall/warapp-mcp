@@ -5,8 +5,9 @@
  * it is restated here rather than imported.
  *
  * Every warapp tool is in the `work` group: reads are lookups, picks and turn
- * orders are a change, chat is a send. None is canonical: nothing here answers what's new,
- * due or on.
+ * orders are a change, chat is a send. One is canonical: `warapp_my_games`
+ * answers what's new (which games need me) and, like every canonical read,
+ * offers `view: 'brief'`.
  */
 import type { McpServer } from '@modelcontextprotocol/server';
 
@@ -16,6 +17,8 @@ export type MintIntent =
 export interface MintHint {
   domain: 'work';
   intent: MintIntent;
+  /** The one tool that answers this intent for the group. */
+  canonical?: true;
   /** Words a person says — lowercase, at most 8, each at most 40 chars. */
   aliases?: string[];
 }
@@ -23,6 +26,11 @@ export interface MintHint {
 /** `_meta` for a war.app tool, with optional spoken aliases. */
 export function mintMeta(intent: MintIntent, aliases?: string[]): { mint: MintHint } {
   return { mint: aliases ? { domain: 'work', intent, aliases } : { domain: 'work', intent } };
+}
+
+/** `_meta` for the group's canonical tool for `intent` (it must accept `view: 'brief'`). */
+export function canonicalMeta(intent: MintIntent, aliases: string[]): { mint: MintHint } {
+  return { mint: { domain: 'work', intent, canonical: true, aliases } };
 }
 
 /** `_meta` for a war.app lookup, with optional spoken aliases. */

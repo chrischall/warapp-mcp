@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -22,6 +22,8 @@ import { EMAIL, TOKEN, lobbyFixture } from './helpers.js';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SKILLS = join(ROOT, 'skills');
 const HELPER = join(SKILLS, 'warapp-api', 'scripts', 'warapp.sh');
+const SCOUT = join(SKILLS, 'warapp-api', 'references', 'scout.mjs');
+const FIXTURES = join(ROOT, 'tests', 'fixtures');
 const read = (p: string) => readFileSync(p, 'utf8');
 // zsh is not installed on the Ubuntu CI runner; the zsh run happens wherever it exists
 // (every dev Mac). The static zsh-safety check below runs everywhere regardless.
@@ -84,6 +86,8 @@ let base: string;
 let seen: Seen[] = [];
 let answer: (s: Seen) => unknown = () => lobbyFixture();
 let scratch: string;
+/** A stand-in `fpx` on PATH: serves the synthetic scout pages, logs its argv. */
+let stubBin: string;
 
 function body(req: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -105,6 +109,23 @@ function gamefeed(s: Seen): unknown {
 }
 
 beforeAll(async () => {
+  stubBin = mkdtempSync(join(tmpdir(), 'warapp-fpx-'));
+  const fpx = join(stubBin, 'fpx');
+  writeFileSync(
+    fpx,
+    `#!/bin/sh
+# fpx stand-in: GET only, profile warapp only, war.app pages from the synthetic fixtures.
+printf '%s\\n' "$*" >> "$FPX_LOG"
+[ "$1" = get ] || { echo "stub fpx: only get" >&2; exit 1; }
+case " $* " in *" -p warapp "*) ;; *) echo "stub fpx: needs -p warapp" >&2; exit 1 ;; esac
+case "$2" in
+  https://war.app/Profile\\?p=[0-9]*) cat "${join(FIXTURES, 'scout-profile.html')}" ;;
+  https://war.app/CommonGames\\?p=[0-9]*) cat "${join(FIXTURES, 'scout-common.html')}" ;;
+  *) echo "stub fpx: unexpected url $2" >&2; exit 4 ;;
+esac
+`,
+  );
+  chmodSync(fpx, 0o755);
   server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
     const s: Seen = { query: url.searchParams, form: new URLSearchParams(await body(req)) };
@@ -121,6 +142,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await new Promise<void>((r) => server.close(() => r()));
+  rmSync(stubBin, { recursive: true, force: true });
 });
 afterEach(() => {
   seen = [];
@@ -139,8 +161,11 @@ interface Run {
 function run(shell: string, script: string, env: Record<string, string | undefined> = {}): Promise<Run> {
   scratch ||= mkdtempSync(join(tmpdir(), 'warapp-skill-'));
   const fullEnv: Record<string, string> = {
-    PATH: process.env.PATH ?? '',
+    PATH: `${stubBin}:${process.env.PATH ?? ''}`,
     HOME: scratch,
+    FPX_LOG: join(scratch, 'fpx.log'),
+    SCOUT,
+    PLAYER: '7176543229',
     WARAPP_BASE_URL: base,
     WARAPP_EMAIL: EMAIL,
     WARAPP_API_TOKEN: TOKEN,
@@ -333,6 +358,21 @@ describe('documented recipes', () => {
     for (const want of ['players', 'bonuses', 'standing']) expect(names.join(' ')).toContain(want);
   });
 
+  it('documents bridge recipes for the profile and common-games pages through fpx profile warapp', () => {
+    const md = read(join(SKILLS, 'warapp-api', 'SKILL.md'));
+    const scouting = recipes.filter((r) => /\bfpx get\b/.test(r.script));
+    expect(scouting.map((r) => r.script).join('\n')).toMatch(/war\.app\/Profile\?p=/);
+    expect(scouting.map((r) => r.script).join('\n')).toMatch(/war\.app\/CommonGames\?p=/);
+    for (const r of scouting) {
+      expect(r.script, r.name).toMatch(/-p warapp\b/);
+      expect(r.script, r.name).toMatch(/node "\$SCOUT" (profile|common)/);
+    }
+    expect(md).toContain('fpx profile add warapp --domain war.app');
+    expect(md).toMatch(/fpx pair -p warapp/);
+    expect(md).toMatch(/frozen/i);
+    expect(md).toMatch(/no bridge/i);
+  });
+
   it('every sh block in the skill is a marked recipe (none escapes the run below)', () => {
     const md = read(join(SKILLS, 'warapp-api', 'SKILL.md'));
     const blocks = [...md.matchAll(/```sh\n/g)].length;
@@ -347,6 +387,8 @@ describe('documented recipes', () => {
       expect(r.stdout.trim().length).toBeGreaterThan(0);
       expect(r.stdout).not.toMatch(/^null$/m);
       noToken(r);
+      // Scouting output is an allowlist: the fixture's personal lines never surface.
+      expect(r.stdout).not.toMatch(/Springfield|Nowhereland|Location|Joined|example\.com/i);
     });
   });
 });

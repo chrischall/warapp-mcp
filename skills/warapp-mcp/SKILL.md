@@ -1,12 +1,13 @@
 ---
 name: warapp-mcp
-description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "submit my picks", "plan my turn", "submit my turn", "commit my orders", "what did they say in chat", "send a message in my game", or a war.app game link.
+description: This skill should be used when the user asks about a war.app (Warzone) multiplayer strategy game through the warapp-mcp server's warapp_* tools. Triggers on "my Warzone game", "war.app game <id>", "which games need me", "is it my turn anywhere", "whose turn is it", "who hasn't committed", "what are the best bonuses on this map", "easiest bonus", "chokepoints", "analyze my board", "what should I attack", "my income", "how far is <territory> from <territory>", "show me the live board", "what can I pick", "scout this player", "who am I up against", "my record against <player>", "submit my picks", "plan my turn", "submit my turn", "commit my orders", "what did they say in chat", "send a message in my game", or a war.app game link.
 ---
 
 # war.app / Warzone (warapp-mcp)
 
 An advisor. The tools read war.app as the signed-in player (fog of war applies): GameFeed
-for games, maps and chat, and the user's signed-in war.app tab for the live board and picks.
+for games, maps and chat, and the user's signed-in war.app tab for their games list, player
+scouting, the live board and picks.
 Three tools write, all confirm-gated: `warapp_submit_picks`, `warapp_submit_turn` and
 `warapp_send_chat`. A turn goes plan → review → submit: `warapp_plan_turn` proposes it,
 the user reviews it, and only then does `warapp_submit_turn` commit it.
@@ -16,12 +17,21 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **Something broken?** `warapp_healthcheck` says whether war.app accepts the email and
   API token. A rejected token is fixed at <https://war.app/API/GetAPIToken> while signed in
   (changing the password rotates it).
-- **Live tools failing?** The live board, picks and chat sends need the ContextMint Bridge
-  extension and a war.app tab signed in to the same account. The first live call may answer
-  with a pair code: ask the user to approve it in the ContextMint Bridge popup, then retry.
+- **Live tools failing?** The games list, scouting, the live board, picks and chat sends need
+  the ContextMint Bridge extension and a war.app tab signed in to the same account. The first
+  live call may answer with a pair code: ask the user to approve it in the ContextMint Bridge
+  popup, then retry. A call that times out usually means Chrome froze a background war.app
+  tab: ask the user to focus or reload it.
 - **Every game tool takes `game_id`** — the number in the game's URL
-  (`…/MultiPlayer?GameID=45670418`). Ask for it if the user has not given one; there is no
-  "list my games" call in the API.
+  (`…/MultiPlayer?GameID=45670418`). If the user has not given one, `warapp_my_games` lists
+  their games with ids.
+- **"Which games need me?" / "is it my turn anywhere?"** → `warapp_my_games`: the signed-in
+  account's games (through the bridge), games waiting on you first, each with its state, turn,
+  players (who has committed) and `waitingOnYou`. `view: "brief"` gives one line per game.
+- **"Who am I up against?" / "scout this player"** → `warapp_scout_player` with `game_id` +
+  `player` (a name), or just the player's id: level, games played, last seen, boot rate,
+  ranked records per format and the user's head-to-head with them. It never returns the
+  player's location or other personal details.
 - **"What's going on in game N?" / "whose turn is it?"** → `warapp_get_game`. It returns the
   state, the turn, every player with whether they have committed orders (the ones who have
   not are who the game waits on), a settings digest (fog, kill rates, luck, rounding, base
@@ -72,18 +82,23 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 ## In context groups
 
 On a host that serves context groups (mcp-host), every tool here except `warapp_healthcheck`
-is in the **work** group: the reads with intent **lookup**, `warapp_submit_picks` and
-`warapp_submit_turn` with **change**, and `warapp_send_chat` with **send**:
+is in the **work** group: `warapp_my_games` with **whats-new** (canonical), the other reads
+with intent **lookup**, `warapp_submit_picks` and `warapp_submit_turn` with **change**, and
+`warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,
-  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_turn` and `warapp_get_chat` are lookups the group reaches by their aliases ("warzone game", "whose turn is it", "best
-  bonuses", "chokepoints", "analyze my board", "what should i attack", "warzone route", …).
-- **None is a canonical read.** GameFeed answers about one game id at a time and has no
-  list of the player's games or notifications, so warapp answers neither "what's new", "what's
-  due" nor "what's on"; the group asks its other members for those.
-- No read takes a subject from the group: the player to advise is an argument
-  (`player`) of `warapp_analyze_board`, not a listable set of people.
+  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_turn`, `warapp_get_chat` and
+  `warapp_scout_player` are lookups the group reaches by their aliases ("warzone game", "whose
+  turn is it", "best bonuses", "chokepoints", "analyze my board", "what should i attack",
+  "warzone route", "scout player", "head to head", …).
+- **`warapp_my_games` is the canonical "what's new" read**: which games are waiting on the
+  user. It accepts `view: "brief"` — one line per game, `name — turn N (or the state) —
+  waiting on you | waiting on others`. warapp answers neither "what's due" nor "what's on".
+- No read takes a subject from the group: the player to advise or scout is an argument
+  (`player`) of `warapp_analyze_board` and `warapp_scout_player`, not a listable set of people.
 
 A compound ask looks like "is it my turn in game 45670418, and what should I attack?" — the
 host answers with `warapp_get_game` (committed flags) and then `warapp_analyze_board` for the
-user's player name.
+user's player name. "Which games need me, and who am I playing in the first one?" is
+`warapp_my_games` (`view: "brief"`) and then `warapp_scout_player` with that game's id and an
+opponent's name.

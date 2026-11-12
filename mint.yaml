@@ -11,16 +11,17 @@ slug: warapp
 summary: >-
   war.app (Warzone) game advisor — your games, players and settings, map
   bonuses and chokepoints, board analysis and route planning through war.app's
-  GameFeed API, plus the live board, territory picks, turn planning and game chat
+  GameFeed API, plus the games waiting on you, opponent scouting (their record and
+  your head-to-head), the live board, territory picks, turn planning and game chat
   through your signed-in war.app tab. Picks, turn orders and chat messages are sent
   only after you confirm.
 examples:
+  - prompt: Which of my war.app games are waiting on me?
+    note: Lists your games through your war.app tab, the ones waiting on you first.
+  - prompt: Scout the other players in my war.app game 12345678 — how good are they, and how have I done against them?
+    note: Level, games played, boot rate and ranked records, plus the games you have played together.
   - prompt: Which bonuses on the map of my war.app game 12345678 are easiest to take and hold?
     note: Ranks bonuses by value per territory and per border.
-  - prompt: Who is still to commit their turn in my war.app game 12345678, and what are its settings?
-    note: Summarises the game's state, players and settings.
-  - prompt: What's the shortest path from Alaska to Kamchatka on my game's map?
-    note: Plans a route between two territories by name.
   - prompt: Which territories can I still pick in game 12345678, and what have I picked so far?
     note: Reads the live board and your picks through your war.app tab.
   - prompt: Plan my turn in war.app game 12345678 to complete a bonus, then submit it.

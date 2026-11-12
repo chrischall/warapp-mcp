@@ -26,6 +26,8 @@ export interface LiveContext {
    * war.app's InviteToken page through the bridge; `undefined` when it cannot be read.
    */
   myInviteToken: () => Promise<number | undefined>;
+  /** GET a war.app page as text through the signed-in tab. */
+  fetchPage: (url: string) => Promise<string>;
 }
 
 /** The token from war.app's `/InviteToken` page ("Your invite token is N"). */
@@ -93,6 +95,7 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
   };
   return {
     myInviteToken,
+    fetchPage: fetchText,
     client: opts.client,
     rpc,
     bundle: async () => {

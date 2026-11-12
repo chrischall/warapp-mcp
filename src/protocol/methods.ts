@@ -8,6 +8,7 @@ export const Method = {
   GameRefresh: 39,
   GetLatestGameInfo: 40,
   SendChat: 42,
+  GetMyGames: 50,
   GetMapDetails: 73,
   SendOrders: 74,
   SendInProgressOrders: 75,
@@ -38,6 +39,26 @@ export function writeGetMapDetailsParams(w: Writer, mapId: number): void {
 /** GetTerritoryPicks(auth, gameId, playerId) — the parameters after the auth block. */
 export function writeGetTerritoryPicksParams(w: Writer, gameId: number, playerId: number): void {
   w.int32(gameId).int32(playerId);
+}
+
+/** GetMyGames filters (`MyGamesFilters`); the server throws when they are absent. */
+export interface MyGamesFilters {
+  filterType: number;
+  count: number;
+  sort: number;
+}
+
+/** The web client's default filters, verified through the bridge. */
+export const DEFAULT_MY_GAMES_FILTERS: Readonly<MyGamesFilters> = { filterType: 4, count: 10, sort: 2 };
+
+/**
+ * GetMyGames(auth, …) — verified through the bridge: present + MyGamesFilters
+ * { byte filterType, int32 count, byte sort } (required), then bool false,
+ * int32 0, bool false, bool false.
+ */
+export function writeGetMyGamesParams(w: Writer, filters: MyGamesFilters = DEFAULT_MY_GAMES_FILTERS): void {
+  w.bool(true).u8(filters.filterType).int32(filters.count).u8(filters.sort);
+  w.bool(false).int32(0).bool(false).bool(false);
 }
 
 /** GetLatestGameInfo(auth, gameId) — the parameters after the auth block. */
