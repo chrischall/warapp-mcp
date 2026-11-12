@@ -372,6 +372,16 @@ describe('planPicks — compactness (#47)', () => {
   });
 });
 
+describe('planPicks — disconnected pickables (#47 review)', () => {
+  it('never calls a group compact when it had to take a pick that is not connected', () => {
+    // Pickables 1–2 are adjacent; 9 sits on its own island. A group of 3 must include 9.
+    const g = mkGraph([[1, 2]], [{ id: 501, name: 'Pair', value: 2, territoryIds: [1, 2] }], [9]);
+    const p = plan({ graph: g, pickable: [1, 2, 9], players: 4, territoryLimit: 3, maxPicks: 3 });
+    expect(p.warnings.join('\n')).toMatch(/some are not connected/);
+    expect(p.rationale.join('\n')).not.toMatch(/each group is compact/);
+  });
+});
+
 describe('planPicks — opening simulation (#47)', () => {
   // Ice (+3) = {1,2,3,4}: pick 1 borders 2, 3, 4 (neutrals 2, 2, 2 → 3 armies each, 9 in all).
   // Duo (+3) = {5,6}: pick 5 borders 6 (3 armies). Far (+2) = {9,10}: pick 9, far from both.

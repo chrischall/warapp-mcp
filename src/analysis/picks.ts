@@ -554,7 +554,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     let widest = 0;
     for (const a of pool) for (const b of pool) if (a < b && hops(a, b) < Infinity) widest = Math.max(widest, hops(a, b));
     for (let hop = COMPACT_DISTANCE; ; hop++) {
-      const last = hop > widest;
+      // Past every connected distance (and never at the compact limit itself): the
+      // last try allows any distance, so it is a recorded relaxation, not "compact".
+      const last = hop > Math.max(widest, COMPACT_DISTANCE);
       const group = firstGroup(pool, size, seeds, last ? Infinity : hop);
       if (!group) {
         if (last) return seeds.slice(0, size).sort(byScore);
