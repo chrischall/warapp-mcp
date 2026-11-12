@@ -305,3 +305,29 @@ describe('packaging for my games and scouting (phase 4)', () => {
     expect(examples).not.toMatch(/note: .*location/i);
   });
 });
+
+describe('packaging for the smarter planner (phase 6)', () => {
+  const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const readme = doc('../README.md');
+  const claude = doc('../CLAUDE.md');
+  const skill = doc('../skills/warapp-mcp/SKILL.md');
+  const api = doc('../docs/WARAPP-API.md');
+
+  it('README and the skill explain the balanced plan, concessions, card advice and the trend', () => {
+    for (const [file, text] of [['README.md', readme], ['skills/warapp-mcp/SKILL.md', skill]] as const) {
+      for (const s of ['balanced', 'conceded', 'cardAdvice', 'trendSource', 'Order Priority']) expect(text, file).toContain(s);
+    }
+    // The skill says when to pick defend over the default.
+    expect(skill).toMatch(/pick `?defend`? when/i);
+  });
+
+  it('CLAUDE.md summarizes the planner rules, concede/withdraw and the trend', () => {
+    expect(claude).toMatch(/PLAN-PLANNER-2\.md/);
+    for (const s of ['protected value', 'CONCEDE_FACTOR', 'withdraw', 'Order Priority', 'MIN_EXPANSION_SHARE', 'BREAK_WEIGHT', 'previousBoard'])
+      expect(claude).toContain(s);
+  });
+
+  it('WARAPP-API.md marks GetHistory for a game in progress as unverified', () => {
+    expect(api).toMatch(/GetHistory` for a game in progress — UNVERIFIED/);
+  });
+});

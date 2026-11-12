@@ -47,8 +47,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   completion with armies needed at the game's kill rates, and visible threats. When GameFeed
   sends no board it reads the live board through the user's signed-in war.app tab; a lobby
   has none — fall back to `warapp_get_map`. Pass its `assumptions` on with the advice.
-- **"Plan my turn"** → `warapp_plan_turn` (defaults to the signed-in account; `goal` expand /
-  complete-bonus / defend, `focus` bonuses, `reserve`, `enemy_deploy`): deploys and moves by
+- **"Plan my turn"** → `warapp_plan_turn` (defaults to the signed-in account; `goal` balanced
+  (default) / expand / complete-bonus / defend, `focus` bonuses, `reserve`, `enemy_deploy`): deploys and moves by
   name and id, the expected captures, bonuses and next income, warnings and reasoning, plus an
   `orders` array. It is read-only and refuses outside a turn phase. Review the plan and its
   warnings with the user before anything is submitted.
@@ -58,7 +58,24 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   never plays Blockade, which gives a territory away — offer that only if the user asks.
 - **Threats** assume each enemy deploys `enemy_deploy` armies (default max(5, 75% of the
   largest visible enemy stack)). Enemy income is unseen: say so, and raise it when the user
-  knows an opponent earns more.
+  knows an opponent earns more. An enemy stack next to the user that grew since last turn
+  ("is building: +G/turn") raises that border's threat by its growth; `trendSource` says where
+  last turn's board came from (`history`, `cache`, or null when there was none).
+- **Reading a balanced plan** (the default goal): income goes where it earns most per army —
+  holds of borders that protect bonus income, completing or advancing cheap bonuses, and
+  breaking an enemy bonus ("breaks enemy bonus …" in the reasoning). At least 30% of income
+  goes to expansion before holds that protect less than it ("Hold … later"). A border in
+  `conceded` costs more to hold than it is worth (or than the income left): nothing is
+  deployed there (unless every territory the user holds is conceded) and no attack from it
+  is funded — it attacks out only with the armies already on it — and its armies withdraw
+  toward a border that holds. When `cardAdvice` is
+  `"order-priority"`, tell the user a withdrawal only runs if the border is still theirs when
+  it executes, and suggest adding Order Priority to the `orders` if they hold one (the planner
+  only plays it when a card play is required).
+- **Pick `defend` when** the user wants to hold everything worth holding before any expansion
+  — e.g. they are ahead on income and only need to survive, or a bonus they hold is under
+  attack from several sides. It still concedes hopeless borders. Pick `expand` to never attack
+  a player, `complete-bonus` to fight for a specific bonus (with `focus`).
 - **"Submit my turn"** → `warapp_submit_turn` with the reviewed `orders` (territories by id or
   name, card plays `{ "kind": "card", "card": <id or type name>, "target"? }`; confirm-gated,
   always as the signed-in account — it refuses another `player`). It validates the orders on

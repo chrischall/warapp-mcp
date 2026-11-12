@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
@@ -67,6 +69,9 @@ interface PlanPayload {
   rationale: string[];
   orders: Array<Record<string, unknown>>;
   settings?: Record<string, unknown>;
+  trendSource: 'history' | 'cache' | null;
+  conceded: Named[];
+  cardAdvice: 'order-priority' | null;
   untrusted_content?: boolean;
 }
 
@@ -77,8 +82,11 @@ describe('warapp_plan_turn', () => {
     expect(p.untrusted_content).toBe(true);
     expect(p.game).toEqual({ id: GAME, name: 'Synthetic lobby game', turn: 3 });
     expect(p.player).toEqual({ id: Number(ANN.feed), name: 'Ann' });
-    expect(p.goal).toBe('expand');
+    expect(p.goal).toBe('balanced');
     expect(p.income).toBe(5);
+    expect(p.trendSource).toBeNull();
+    expect(p).toHaveProperty('conceded');
+    expect(p).toHaveProperty('cardAdvice');
 
     // Widow's Watch (2 neutrals) completes bonus 118: 3 armies at 60% from Sheepshead Hills (3, guard 1).
     expect(p.moves[0]).toEqual({
@@ -122,11 +130,55 @@ describe('warapp_plan_turn', () => {
     expect(p.moves.length).toBeGreaterThan(0);
   });
 
-  it('goal defend holds the threatened border first', async () => {
+  it('accepts each goal and describes all four', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    for (const goal of ['balanced', 'expand', 'complete-bonus', 'defend']) {
+      const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal }));
+      expect(p.goal).toBe(goal);
+    }
+    const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_plan_turn')!;
+    expect(tool.description).toMatch(/"balanced" \(default\)/);
+    for (const goal of ['expand', 'complete-bonus', 'defend']) expect(tool.description).toContain(`"${goal}"`);
+    const props = (tool.inputSchema as { properties: Record<string, { enum?: string[]; description?: string }> }).properties;
+    expect(props.goal!.enum).toEqual(['balanced', 'expand', 'complete-bonus', 'defend']);
+    expect(props.goal!.description).toMatch(/balanced \(default\)/);
+  });
+
+  it('goal defend triages the threatened border by the income it protects', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }));
     expect(p.goal).toBe('defend');
-    expect(p.rationale.join('\n')).toMatch(/so it holds/);
+    // Ann's threatened border is in no held bonus: it protects +0, so it is conceded, not held.
+    expect(p.warnings.join('\n')).toMatch(/cannot be held economically \(needs \d+, protects \+0\): conceded/);
+    expect(p.rationale.join('\n')).not.toMatch(/so it holds/);
+    // The conceded border, by name and id, and the card the withdrawal from it needs.
+    expect(p.conceded.length).toBeGreaterThan(0);
+    for (const c of p.conceded) {
+      expect(c.name).toBe(mapName(c.id));
+      expect(p.warnings.join('\n')).toContain(`${c.name} (#${c.id}) cannot be held`);
+    }
+    // Every territory Ann holds is conceded, so there is nowhere to withdraw to: no card advice.
+    expect(p.warnings.join('\n')).toMatch(/is conceded and has nowhere to withdraw to/);
+    expect(p.cardAdvice).toBeNull();
+  });
+
+  it('reports a conceded border and the Order Priority advice its withdrawal needs', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    // With no enemy deploy, Bob's 6 movable threaten only Sheepshead Hills (3): it protects +0,
+    // so it is conceded, and its 2 movable armies withdraw to Hornwood (6), which holds.
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend', enemy_deploy: 0 }),
+    );
+    expect(p.conceded).toEqual([{ id: 161, name: mapName(161) }]);
+    expect(p.cardAdvice).toBe('order-priority');
+    expect(p.moves[0]).toEqual({
+      from: { id: 161, name: mapName(161) },
+      to: { id: 159, name: mapName(159) },
+      armies: 2,
+      kind: 'transfer',
+    });
+    expect(p.deploys.some((d) => d.territory.id === 161)).toBe(false);
+    expect(p.warnings.join('\n')).toContain(`play Order Priority so it goes first`);
   });
 
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {
@@ -210,12 +262,122 @@ describe('warapp_plan_turn', () => {
   });
 });
 
+describe('warapp_plan_turn — threat trend', () => {
+  // The previous turn's standing (turn 3 is being played, so 2 turns are done
+  // and the previous board is the one after 1). Bob's Bolton Moors grew 3 → 7.
+  const previous = [
+    { terrID: 159, ownedBy: ANN.feed, armies: 6, fogLevel: 'Visible' },
+    { terrID: 161, ownedBy: ANN.feed, armies: 3, fogLevel: 'Visible' },
+    { terrID: 158, ownedBy: String(BOB.inGame), armies: 3, fogLevel: 'Visible' },
+  ];
+  const building = (from: number, to: number) =>
+    new RegExp(`${mapName(158)} \\(#158\\) is building: \\+${to - from}/turn \\(${from} → ${to}\\)`);
+  const cacheFile = (dir: string) => join(dir, 'boards', `${GAME}.json`);
+
+  it('(h) uses GetHistory\'s standing for the previous turn when present', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { history: [{ turn: 0, standing: [] }, { turn: 1, standing: previous }] })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBe('history');
+    expect(p.warnings.join('\n')).toMatch(building(3, 7));
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(true);
+  });
+
+  it('(h) falls back to the cached board of the previous turn, and caches each planned board', async () => {
+    // Turn 3: no history, no cache. The board is cached as turn 3.
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const first = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(first.trendSource).toBeNull();
+    expect(first.warnings.join('\n')).not.toMatch(/is building/);
+    const cached = JSON.parse(readFileSync(cacheFile(h.dataDir), 'utf8')) as { turns: object; playerId: number };
+    expect(cached).toMatchObject({ gameId: GAME, playerId: Number(ANN.feed) });
+    expect(Object.keys(cached.turns)).toEqual(['3']);
+    const dir = h.dataDir;
+    await h.harness.close();
+
+    // Turn 4: Bob's stack grew 7 → 12; the cache (turn 3) is exactly the previous turn.
+    const grown = BOARD.map((t) => (t.id === 158 ? { ...t, armies: 12 } : t));
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(grown) }),
+    });
+    const second = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(second.trendSource).toBe('cache');
+    expect(second.warnings.join('\n')).toMatch(building(7, 12));
+    expect(Object.keys((JSON.parse(readFileSync(cacheFile(dir), 'utf8')) as { turns: object }).turns)).toEqual(['3', '4']);
+  });
+
+  it('(h) planning the same turn twice keeps the trend (the previous turn stays cached)', async () => {
+    // Turn 3 planned and cached.
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    const dir = h.dataDir;
+    await h.harness.close();
+
+    // Turn 4, planned twice (another goal, then again after a hand override).
+    const grown = BOARD.map((t) => (t.id === 158 ? { ...t, armies: 12 } : t));
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3' }), game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(grown) }),
+    });
+    const once = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    const twice = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }),
+    );
+    expect(once.trendSource).toBe('cache');
+    expect(twice.trendSource).toBe('cache');
+    expect(twice.warnings.join('\n')).toMatch(building(7, 12));
+  });
+
+  it('(h) ignores a cache from any turn but the previous one', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    const dir = h.dataDir;
+    await h.harness.close();
+    // Turn 5 is being played: the cached turn 3 is two turns old.
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '4' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBeNull();
+  });
+
+  it('(h) neither history nor cache, or a failing history read: trendSource null, no throw', async () => {
+    h = await liveHarness({
+      feed: [game('Playing'), { termsOfUse: 'x', error: 'Something broke' }],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBeNull();
+    expect(p.moves.length).toBeGreaterThan(0);
+    expect(existsSync(cacheFile(h.dataDir))).toBe(true);
+  });
+
+  it('(h) an unusable history standing is ignored', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { history: { turn1: 'garbage' } })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBeNull();
+  });
+});
+
 describe('plannerSettings', () => {
   it('maps game settings; AllowTransferOnly (the per-order mode toggle) never turns transfers off', () => {
     expect(plannerSettings(undefined)).toEqual({});
     expect(
       plannerSettings({ cards: [], raw: { AllowTransferOnly: false }, offensiveKillRate: 50, luckModifier: 0.16 }),
     ).toEqual({ offensiveKillRate: 50, luckModifier: 0.16 });
+    // Per-territory income feeds a border's protected value; 0 means off.
+    expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 3 })).toEqual({ bonusArmyPer: 3 });
+    expect(plannerSettings({ cards: [], raw: {}, bonusArmyPer: 0 })).toEqual({});
   });
 });
 

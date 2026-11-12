@@ -28,6 +28,8 @@ export interface LiveContext {
   myInviteToken: () => Promise<number | undefined>;
   /** GET a war.app page as text through the signed-in tab. */
   fetchPage: (url: string) => Promise<string>;
+  /** Where state that survives a restart lives (bundle cache, last planned boards); none: nothing is cached. */
+  dataDir?: string;
 }
 
 /** The token from war.app's `/InviteToken` page ("Your invite token is N"). */
@@ -75,8 +77,9 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     bridge: () => opts.bridge.ready(),
     ...(opts.env ? { env: opts.env as NodeJS.ProcessEnv } : {}),
   });
+  const dir = dataDir(opts.env);
   const provider = new BundleProvider({
-    dataDir: dataDir(opts.env),
+    dataDir: dir,
     fetchText: bundleFetcher(opts.bridge, opts.fetchImpl),
   });
   const load = opts.bundle ?? (() => provider.get());
@@ -96,6 +99,7 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
   return {
     myInviteToken,
     fetchPage: fetchText,
+    dataDir: dir,
     client: opts.client,
     rpc,
     bundle: async () => {

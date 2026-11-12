@@ -32,9 +32,11 @@ import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
+import { boardFromHistory, readBoardCache, writeBoardCache, type TrendSource } from '../trend.js';
+import type { BoardState } from '../board.js';
 
 const VIEWS = ['compact', 'full'] as const;
-const GOALS = ['expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
+const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
 /** The only GameFeed state in which turns are played. */
 export const TURN_PHASE_STATE = 'Playing';
 const MAX_ORDERS = 500;
@@ -84,6 +86,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.roundingMode !== undefined) out.roundingMode = s.roundingMode;
   if (s.oneArmyStandsGuard !== undefined) out.oneArmyStandsGuard = s.oneArmyStandsGuard;
   if (s.multiAttack !== undefined) out.multiAttack = s.multiAttack;
+  if (s.bonusArmyPer !== undefined && s.bonusArmyPer > 0) out.bonusArmyPer = s.bonusArmyPer;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game.
@@ -346,6 +349,32 @@ function mustPlayCard(hand: readonly Card[], rules: CardRules): McpToolError {
 
 const cardView = (c: Card) => ({ id: c.id, name: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}) });
 
+/**
+ * My view of the board one turn ago, for the planner's threat trend, best effort:
+ * GameFeed's `GetHistory` standing for the previous turn if the feed sends one
+ * (unverified for games in progress), else this server's cached board when it
+ * was planned on exactly the previous turn. `undefined` otherwise; never throws.
+ */
+async function previousBoard(
+  ctx: LiveContext,
+  game: Game,
+  me: Player,
+  turn: number | null,
+): Promise<{ source: TrendSource; board: BoardState } | undefined> {
+  if (turn === null || turn < 2) return undefined;
+  try {
+    const withHistory = await ctx.client.getGame(game.id, { history: true });
+    // `turn` is being played, so turn − 1 are done and the previous board is the one after turn − 2.
+    const board = boardFromHistory(withHistory.history, turn - 2, game.players);
+    if (board) return { source: 'history', board };
+  } catch {
+    // History is optional: fall through to the cache.
+  }
+  if (!ctx.dataDir) return undefined;
+  const board = await readBoardCache(ctx.dataDir, game.id, me.id, turn - 1);
+  return board ? { source: 'cache', board } : undefined;
+}
+
 export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_plan_turn',
@@ -358,9 +387,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'checks assume each enemy deploys `enemy_deploy` (default from the largest visible enemy stack). It reports ' +
           'your cards and whether you must play one (hand at the hold limit), and plays Reinforcement cards (their ' +
           'armies are planned) and, when a play is required, Order Priority or Order Delay — never Blockade. Its ' +
-          '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Goal "expand" ' +
-          '(default) takes neutrals; "complete-bonus" also attacks players to finish bonuses; "defend" first ' +
-          `reinforces threatened borders. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only; it never submits orders.`,
+          '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Goals: "balanced" ' +
+          '(default) spends income where it earns most per army — holding borders that protect income, completing ' +
+          'cheap bonuses, breaking enemy bonuses — with at least 30% on expansion; "expand" takes neutrals and never ' +
+          'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
+          'borders worth holding before anything else. Hopeless borders are listed in `conceded` and get no ' +
+          'deploys (unless every territory you hold is conceded); under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
+          'Priority so the withdrawal runs before the border falls. Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
+          'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
+          'server last planned on (`trendSource` says which, or null). ' +
+          `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
       annotations: readAnnotations('Plan a war.app turn'),
@@ -370,7 +406,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         goal: z
           .enum(GOALS)
           .optional()
-          .describe('expand (default): take neutrals; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first.'),
+          .describe(
+            'balanced (default): best income per army across holds, bonuses and breaking enemy bonuses; expand: take ' +
+              'neutrals only; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first.',
+          ),
         focus: z
           .array(z.union([z.string(), z.number()]))
           .max(MAX_FOCUS)
@@ -412,20 +451,27 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const hand = readHand(info, inGameId(me));
       const cards = chooseCardPlays(hand, rules);
       const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
-      const chosen: PlanGoal = goal ?? 'expand';
+      const chosen: PlanGoal = goal ?? 'balanced';
+      const turn = currentTurn(game);
+      const trend = await previousBoard(ctx, game, me, turn);
+      // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
+      const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
       const plan = planTurn({
         graph,
         board,
         me: me.id,
         income,
         settings,
+        ...(trend ? { previousBoard: trend.board } : {}),
         options: {
           goal: chosen,
           focusBonusIds,
+          ...(opponents > 0 ? { opponents } : {}),
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
         },
       });
+      if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
       const name = namer(map);
       const warnings = [
         ...(me.hasCommittedOrders
@@ -446,6 +492,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         goal: chosen,
         income,
         enemyDeploy: plan.enemyDeploy,
+        trendSource: trend?.source ?? null,
+        conceded: plan.conceded.map(name),
+        cardAdvice: plan.cardAdvice,
         cards: {
           hand: hand.map(cardView),
           maxCardsHold: rules.maxCardsHold ?? null,

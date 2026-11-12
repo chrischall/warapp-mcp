@@ -95,7 +95,7 @@ restart the server and pair again.
 | `warapp_plan_route` | Shortest path between two territories, given by name or id. |
 | `warapp_get_live_board` | The live board through your war.app tab: every territory with its owner (player, `neutral`, or `pickable` during picks), armies and fog. Works in the pick phase and mid-game. `view`: compact / full. |
 | `warapp_get_my_picks` | Your submitted territory picks in priority order, and how many the game allows. |
-| `warapp_plan_turn` | A plan for your turn from the live board (defaults to the signed-in account): income, your cards and whether you must play one, deploys and moves by name and id, expected captures, bonuses and next income, warnings and reasoning, and an `orders` array (card plays included). `goal`: expand / complete-bonus / defend; `focus` bonuses; `reserve`; `enemy_deploy` (armies an enemy is assumed to deploy; default from the largest visible enemy stack). Read-only; refuses outside a turn phase. |
+| `warapp_plan_turn` | A plan for your turn from the live board (defaults to the signed-in account): income, your cards and whether you must play one, deploys and moves by name and id, expected captures, bonuses and next income, warnings and reasoning, and an `orders` array (card plays included). `goal`: balanced (default: best income per army across holds, bonuses and breaking enemy bonuses, with at least 30% on expansion) / expand / complete-bonus / defend; `focus` bonuses; `reserve`; `enemy_deploy` (armies an enemy is assumed to deploy; default from the largest visible enemy stack). Reports the borders it gives up (`conceded`: not worth or not affordable to hold, never deployed to unless every territory you hold is conceded; it may still attack out with the armies already on it), `cardAdvice` (`order-priority` when a withdrawal from a conceded border must run first) and `trendSource` (where last turn's board came from — `history`, `cache` or null — for growing enemy stacks). Read-only; refuses outside a turn phase. |
 | `warapp_submit_picks` | **Writes.** Replace your territory picks (priority order, pickable territories only, at most twice the territory limit). Confirm-gated; reads the picks back and reports `verified` only on an exact match. |
 | `warapp_submit_turn` | **Writes.** Commit your turn's orders (e.g. `warapp_plan_turn`'s `orders`) as the signed-in account: card plays (Reinforcement, Order Priority, Order Delay, Blockade), deploys and moves. Confirm-gated; validated on the live board (cards in your hand, your territories, adjacent moves, armies available, deploys = income + played Reinforcement armies; a card play when your hand is full); confirmed from game state (`resolved` / `committed` / `unknown`). Other players see the results. |
 | `warapp_get_chat` | A game's chat, from GameFeed. |
@@ -126,7 +126,15 @@ and chat text comes back marked as untrusted third-party content.
    are planned), and when your hand is at the hold limit — war.app then requires a play — it
    plays Order Priority or Order Delay. It never plays Blockade (that gives a territory away).
    Threat warnings assume each enemy deploys `enemy_deploy` armies; enemy income is unseen, so
-   raise it if you know better.
+   raise it if you know better. An enemy stack that grew since last turn raises the threat by
+   its growth (`trendSource` says where last turn's board came from).
+   Under the default `balanced` goal the plan spends income where it earns most per army:
+   holding borders that protect bonuses, completing cheap bonuses (at least 30% of income goes
+   to expansion), and breaking an enemy bonus you can reach. A border too costly to hold for
+   what it protects is `conceded`: nothing is deployed there (unless every territory you hold
+   is conceded) and no attack from it is funded, its armies withdraw to a border
+   that holds, and `cardAdvice: "order-priority"` says to play Order Priority (add it to the
+   `orders` if you hold one) so the withdrawal runs before the border falls.
 2. **Review.** Go through the plan and its warnings; edit the `orders` if you want something
    different (territories by id or name, cards by id or type name).
 3. **Submit.** `warapp_submit_turn` with those `orders`. It always acts as the account signed in
