@@ -44,6 +44,25 @@ async function resolveMe(ctx: LiveContext, players: readonly Player[], input: st
   return resolvePlayer(players, input);
 }
 
+/**
+ * A write through the bridge always acts as the signed-in account, whatever `player` says
+ * (issue #7) — so refuse a different player, and refuse when the account is unknown.
+ */
+async function assertSignedInAccount(ctx: LiveContext, player: Player): Promise<void> {
+  const token = await ctx.myInviteToken();
+  if (token === undefined) {
+    throw new McpToolError('Could not tell which account is signed in to war.app, so nothing was sent.', {
+      hint: 'Writes always act as the signed-in account. Make sure a signed-in war.app tab is open and paired, then retry.',
+    });
+  }
+  if (player.id !== token) {
+    throw new McpToolError(
+      `${player.name} is not the signed-in war.app account, so nothing was sent: writes always act as the signed-in account.`,
+      { hint: 'Omit `player` (it defaults to the signed-in account), or sign in to war.app as that player.' },
+    );
+  }
+}
+
 /** A territory's owner as a person reads it. */
 function ownerLabel(t: LiveTerritory, byInGame: ReadonlyMap<number, Player>): string {
   if (t.fogged) return 'fogged';
@@ -230,6 +249,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
             const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
             const map = mapOf(game);
             const me = await resolveMe(ctx, game.players, player);
+            await assertSignedInAccount(ctx, me);
             const picks = territories.map((t) => resolveTerritory(map, t));
             const seen = new Set<number>();
             for (const t of picks) {
