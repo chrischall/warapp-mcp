@@ -175,6 +175,55 @@ describe('finishing off a weak opponent (#45)', () => {
     expect(() => validate(p, live, 25, map)).not.toThrow();
   });
 
+  it('a 3-player game: a hold facing a third player that attacks nothing is reserved before finishing off', () => {
+    // 2 is in Home (+5) and faces the other player's 10 (12 armies): 11 movable + ~6 deploy = 17,
+    // so it needs 7 more to hold. It is not a source against the weak opponent, so finishing that
+    // opponent off (22 needed) must not spend the income that hold is worth paying for.
+    const map = mapOf(
+      [...EDGES, [2, 10]],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      [{ id: 501, name: 'Home', value: 5, territoryIds: [1, 2], bonusIds: [] }, BONUSES[1]!],
+    );
+    const base: LiveTerritory[] = [
+      t(1, ME, 5), t(2, ME, 4), t(3, ME, 3), t(4, ME, 3),
+      t(7, OWNER_NEUTRAL, 2), t(8, OWNER_NEUTRAL, 2), t(9, OWNER_NEUTRAL, 2),
+      t(10, OTHER, 12),
+    ];
+    // Without the weak opponent the same board holds 2 with 7.
+    const alone = [...base, t(5, OWNER_NEUTRAL, 2), t(6, OWNER_NEUTRAL, 2)];
+    const q = plan(alone, 22, {}, map);
+    expect(q.conceded).not.toContain(2);
+    expect(armiesToTake(4 + deployedTo(q, 2), STD)!).toBeGreaterThan(17);
+    expect(armiesToTake(4 + 6, STD)!).toBeLessThanOrEqual(17);
+
+    const live = [...base, t(5, THEM, 2), t(6, THEM, 2)];
+    for (const goal of ['balanced', 'defend'] as const) {
+      const p = plan(live, 22, { options: { goal } }, map);
+      expect(p.conceded).not.toContain(2);
+      expect(outOf(p, 2)).toBe(0);
+      const stays = 4 + deployedTo(p, 2);
+      expect(armiesToTake(stays, STD)!).toBeGreaterThan(17);
+      expect(p.warnings.join('\n')).not.toMatch(/T2 \(#2\) cannot be held/);
+      expect(deploySum(p)).toBe(22);
+      expect(() => validate(p, live, 22, map)).not.toThrow();
+    }
+  });
+
+  it('hedges the elimination when anything on the board is fogged, even away from the opponent', () => {
+    // 10 is fogged, next to the neutral 8 only: the opponent may hold it, out of sight.
+    const map = mapOf([...EDGES, [8, 10]], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], BONUSES);
+    const live = [...ENDGAME, fog(10)];
+    const p = plan(live, 22, {}, map);
+    expect(p.expected.captures).toEqual(expect.arrayContaining([5, 6]));
+    const why = p.rationale.join('\n');
+    expect(why).toMatch(/Finish off player 22567833/);
+    expect(why).not.toMatch(/so it is eliminated even if it reinforces/);
+    expect(why).toMatch(/eliminated if it holds nothing in the fog/);
+    expect(p.warnings.join('\n')).toMatch(/player 22567833 could still hold territories in the fog/);
+    // A fully visible board keeps the plain wording.
+    expect(plan(ENDGAME, 22).rationale.join('\n')).toMatch(/so it is eliminated even if it reinforces/);
+  });
+
   it('takes most of a weak opponent when the borders it frees no longer need holding', () => {
     // A third territory, 10, borders only my 1 and holds 20: too strong to take even
     // with everything. Taking 5 and 6 still leaves it 1 of 3, and neither 3 nor 4

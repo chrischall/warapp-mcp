@@ -29,12 +29,17 @@
 //     "attack every one of its territories this turn", each target assumed to hold
 //     its armies plus that opponent's full deploy estimate (the worst case), with the
 //     usual capture rules (single and combined attacks, kill rates, luck margin, R3).
-//     A softener in a combined capture never kills the defenders there now either. A
-//     source that also faces another player keeps what holds it there, when that hold
-//     passes rule 1a's CONCEDE_FACTOR test. Kept when it eliminates the opponent, or
-//     takes most (over half) of its territories with no attacking border facing the
-//     rest; else rolled back. An opponent bordering the fog is never attempted (a
-//     warning says so when its visible territories could all fall). Borders next to
+//     A softener in a combined capture never kills the defenders there now either.
+//     Every opponent in reach is tried, not only weak ones (the worst case sizes it).
+//     Holds against other players that pass rule 1a's CONCEDE_FACTOR test come first:
+//     a source keeps what holds it there, and the deploys a hold on any other border
+//     needs are reserved out of the budget (in triage order) while the captures are
+//     sized. Kept when it eliminates the opponent, or takes most (over half) of its
+//     territories with no attacking border facing the rest; else rolled back (a kept
+//     pressure plan leaves the untaken territories as they were). An opponent bordering
+//     the fog is never attempted (a warning says so when its visible territories could
+//     all fall); with fog anywhere else, the elimination is hedged ("if it holds nothing
+//     in the fog") and a warning says it may hold unseen territories. Borders next to
 //     the captures are then re-judged without them, and triage judges each border by
 //     the armies that stay on it. A border held last turn (per `previousBoard`) by a
 //     weak opponent (fully visible, fewer territories than mine, deploy below my
@@ -1353,13 +1358,15 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
   };
 
-  // ---- 0e. finish off a weak opponent (#45) ----
+  // ---- 1e. finish off an opponent (#45) ----
   // Before any border is conceded: for each visible opponent whose every territory is
-  // visible (none borders the fog) and borders mine, plan "attack every one of its
-  // territories this turn", each target assumed to receive that opponent's full deploy
-  // estimate (the worst case). Kept when it eliminates the opponent, or takes most of
-  // what it holds with every attacking border left facing none of the rest. A border
-  // that also faces a third player keeps what holds it there (when worth holding).
+  // visible (none borders the fog) and borders mine — any such opponent, however strong,
+  // fewest territories first — plan "attack every one of its territories this turn", each
+  // target assumed to receive that opponent's full deploy estimate (the worst case). Kept
+  // when it eliminates the opponent, or takes most of what it holds with every attacking
+  // border left facing none of the rest. Holds worth paying for against other players
+  // come first: an attacking border keeps what holds it, and the deploys a hold elsewhere
+  // needs are reserved out of the budget.
   /** Visible enemy territories by owner, sorted. */
   const ownedBy = new Map<number, number[]>();
   for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
@@ -1375,6 +1382,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     return !st || st.owner.kind === 'unknown' || st.armies === null;
   };
   /** Its territories with a fogged neighbour: it may hold more in the fog. */
+  /** Anything on the board hidden: an opponent may hold territories there no visible one borders. */
+  const fogAnywhere = [...g.territoryById.keys()].some(hidden);
   const fogEdge = (p: number) => ownedBy.get(p)!.filter((t) => neighborsOf(g, t).some(hidden));
   const inReach = (p: number) => ownedBy.get(p)!.every((t) => neighborsOf(g, t).some((n) => mineSet.has(n)));
   /** Fully visible, fewer territories than mine, and a deploy below my income. */
@@ -1449,21 +1458,38 @@ export function planTurn(input: PlanInput): TurnPlan {
       worstCase.set(t, defenders);
       targets.set(t, { id: t, cost, enemy: true, sources: neighborsOf(g, t).filter((n) => mineSet.has(n)) });
     }
-    // A source that also faces another player keeps what holds it there, when worth holding.
+    // Holds against other players worth paying for (rule 1a's CONCEDE_FACTOR test) come
+    // first. A source keeps what holds it there; a border that attacks nothing has the
+    // deploys its hold needs reserved out of the budget (in triage order, while it lasts).
+    const sources = new Set(ts.flatMap((t) => targets.get(t)!.sources));
     const keepAt = new Map<number, number>();
-    for (const x of [...new Set(ts.flatMap((t) => targets.get(t)!.sources))].sort(byNum)) {
+    const elsewhere: { x: number; cost: number; worth: number }[] = [];
+    for (const x of mine) {
       const rest = borderAt(x, (n) => ownerOf(n) === p);
       if (!rest) continue;
       const need = holdArmies(rest.threat);
-      if (need - armiesOf(x) > CONCEDE_FACTOR * (valueOf(x) + armiesOf(x) / PAYBACK_TURNS)) continue;
-      const keep = Math.max(0, need - guard);
-      keepAt.set(x, keep);
-      avail.set(x, avail.get(x)! - keep);
+      const cost = Math.max(0, need - armiesOf(x));
+      const worth = valueOf(x) + armiesOf(x) / PAYBACK_TURNS;
+      if (cost > CONCEDE_FACTOR * worth) continue;
+      if (sources.has(x)) {
+        const keep = Math.max(0, need - guard);
+        keepAt.set(x, keep);
+        avail.set(x, avail.get(x)! - keep);
+      } else if (cost > 0) elsewhere.push({ x, cost, worth });
+    }
+    let reserved = 0;
+    elsewhere.sort((a, b) => b.worth / b.cost - a.worth / a.cost || a.cost - b.cost || a.x - b.x);
+    for (const h of elsewhere) {
+      const room = local ? Math.min(budget, roomAt(h.x)) : budget;
+      if (h.cost > room) continue;
+      budget -= h.cost;
+      reserved += h.cost;
     }
     const reason = `takes player ${p}'s territory, sized for its full ~${deployP} deploy landing there`;
     const order = [...ts].sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
     const taken = order.filter((t) => tryCapture(t, reason));
     for (const [x, k] of keepAt) avail.set(x, avail.get(x)! + k);
+    budget += reserved;
     const all = taken.length === ts.length;
     if (probe) {
       rollback();
@@ -1478,14 +1504,25 @@ export function planTurn(input: PlanInput): TurnPlan {
       rollback();
       return false;
     }
+    // The territories left stay ordinary (non-worst-case) targets, as before this attempt.
+    for (const t of left) {
+      worstCase.delete(t);
+      const tg = snap.targets.get(t);
+      if (tg) targets.set(t, tg);
+      else targets.delete(t);
+    }
     const names = taken.sort(byNum).map(label).join(', ');
     if (all) {
       rationale.push(
-        `Finish off player ${p}: attack all ${ts.length} of its territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there, so it is eliminated even if it reinforces; the borders facing it need no holding.`,
+        `Finish off player ${p}: attack all ${ts.length} of its territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there, so it is eliminated ${fogAnywhere ? 'if it holds nothing in the fog, ' : ''}even if it reinforces; the borders facing it need no holding.`,
       );
       warnings.push(
         `Eliminating player ${p} assumes it deploys at most ~${deployP} (its estimate); more income than that (unseen bonuses, cards) could still save one of its territories.`,
       );
+      if (fogAnywhere)
+        warnings.push(
+          `player ${p} could still hold territories in the fog that border none of its visible ones: taking all ${ts.length} visible ones may not eliminate it.`,
+        );
     } else {
       rationale.push(
         `Pressure player ${p}: take ${taken.length} of its ${ts.length} territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there; ${left.map(label).join(', ')} stay${left.length === 1 ? 's' : ''} theirs, and no attacking border faces ${left.length === 1 ? 'it' : 'them'}.`,

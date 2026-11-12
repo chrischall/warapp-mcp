@@ -77,8 +77,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   goes to expansion before holds that protect less than it ("Hold … later"). Under
   `balanced`/`defend`, an opponent whose every territory is visible and borders the user's is
   attacked everywhere at once when that eliminates it ("Finish off player …") or takes most of
-  it ("Pressure player …"), each attack sized for its whole estimated deploy landing there; a
-  border taken from such a weak opponent last turn is never conceded. A border in
+  it ("Pressure player …"), each attack sized for its whole estimated deploy landing there. Any
+  such opponent is tried, strong or weak; holds worth paying for against other players come
+  first, and fog anywhere on the board hedges the elimination. A border taken last turn from a
+  weak opponent (fewer territories, smaller deploy) is never conceded. A border in
   `conceded` costs more to hold than it is worth (or than the income left): nothing is
   deployed there (unless every territory the user holds is conceded) and no attack from it
   is funded — it attacks out only with the armies already on it — and its armies withdraw

@@ -165,7 +165,10 @@ and chat text comes back marked as untrusted third-party content.
    to expansion), and breaking an enemy bonus you can reach. Under `balanced` and `defend`, an
    opponent whose every territory is visible and borders yours is attacked everywhere at once
    when that eliminates it (or takes most of it) even if it deploys its whole estimated income
-   on each ("Finish off player …"); a border just taken from such a weak opponent is never
+   on each ("Finish off player …"). Any such opponent is tried, strong or weak, fewest
+   territories first; holds worth paying for against other players are funded first, and with
+   fog anywhere on the board the elimination is hedged (it may hold unseen territories). A
+   border just taken last turn from a weak opponent (fewer territories, smaller deploy) is never
    conceded. A border too costly to hold for
    what it protects is `conceded`: nothing is deployed there (unless every territory you hold
    is conceded) and no attack from it is funded, its armies withdraw to a border

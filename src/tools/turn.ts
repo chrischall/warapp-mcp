@@ -520,7 +520,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
           'borders worth holding before anything else. Under balanced/defend, an opponent whose every territory is ' +
           'visible and borders yours is attacked everywhere at once when that eliminates it (or takes most of it) even ' +
-          'if it deploys its whole estimated income on each, before any border facing it is conceded. Hopeless borders are listed in `conceded` and get no ' +
+          'if it deploys its whole estimated income on each, before any border facing it is conceded (holds worth ' +
+          'paying for against other players are funded first). Hopeless borders are listed in `conceded` and get no ' +
           'deploys (unless every territory you hold is conceded); under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
           'Priority so the withdrawal runs before the border falls. A bonus whose new frontier would fall next turn is ' +
           'not completed under balanced/defend (a warning says so). A neutral no single stack can afford may be taken by ' +
