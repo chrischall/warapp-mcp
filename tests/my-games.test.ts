@@ -243,6 +243,27 @@ describe('readMyGames / summarizeMyGames', () => {
     expect(g).toMatchObject({ state: '42', turn: 1, players: [{ name: 'Zed', state: '77', committed: false }] });
   });
 
+  it('keeps minified field names that start with "$", dropping only the interpreter metadata', () => {
+    // The live bundle names two GameInfoPlayer fields `$c` and `$a`; only `$type` and
+    // `$ctorError` are the interpreter's own keys.
+    const live: Obj = {
+      $type: GAME_INFO_PLAYER,
+      $c: null,
+      GG: false,
+      lh: true,
+      pF: 0,
+      ep: false,
+      Wa: 'Ann',
+      $a: 123456,
+      Xa: 2,
+      Re: 0,
+      VF: false,
+      $ctorError: 'ignored',
+    };
+    const [g] = readMyGames(stub(ordered(MY_GAMES_RETURN, [[info({ 16: [live] })], 0])), reader(true));
+    expect(g!.players).toEqual([{ id: 123456, name: 'Ann', stateCode: 2, committed: true }]);
+  });
+
   it('treats a null player list as no players and a null name as empty', () => {
     const [g] = readMyGames(stub(ordered(MY_GAMES_RETURN, [[info({ 16: null, 13: null })], 0])), reader(true));
     expect(g).toMatchObject({ name: '', players: [] });
