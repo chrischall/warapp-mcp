@@ -2,7 +2,7 @@
 // (case-insensitive), or a unique part of a name.
 
 import { McpToolError } from '@chrischall/mcp-utils';
-import type { GameMap, Player, Territory } from '../normalize.js';
+import type { Bonus, GameMap, Player, Territory } from '../normalize.js';
 
 const SHOW = 10;
 
@@ -25,7 +25,7 @@ function pick<T extends { id: number; name: string }>(items: readonly T[], input
   }
   const shown = hits.slice(0, SHOW).map(label).join(', ');
   throw new McpToolError(
-    `${JSON.stringify(raw)} matches ${hits.length} ${what === 'territory' ? 'territories' : `${what}s`}: ${shown}` +
+    `${JSON.stringify(raw)} matches ${hits.length} ${what === 'territory' ? 'territories' : `${what}${what.endsWith('s') ? 'es' : 's'}`}: ${shown}` +
       `${hits.length > SHOW ? ', …' : ''}.`,
     { hint: `Pass the id of the one you mean.` },
   );
@@ -33,6 +33,10 @@ function pick<T extends { id: number; name: string }>(items: readonly T[], input
 
 export function resolveTerritory(map: GameMap, input: string | number): Territory {
   return pick(map.territories, input, 'territory');
+}
+
+export function resolveBonus(map: GameMap, input: string | number): Bonus {
+  return pick(map.bonuses, input, 'bonus');
 }
 
 /** A player by id or name; with no input, an error listing who to choose from. */

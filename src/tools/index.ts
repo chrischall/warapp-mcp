@@ -9,6 +9,7 @@ import { createLiveContext } from './live-context.js';
 import { registerLiveTools } from './live.js';
 import { registerMapTool } from './map.js';
 import { registerRouteTool } from './route.js';
+import { registerTurnTools } from './turn.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
 
 export type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCache'> & {
@@ -41,5 +42,6 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerBoardTool(server, client, live);
   registerRouteTool(server, client);
   registerLiveTools(server, live);
+  registerTurnTools(server, live);
   registerChatTools(server, live);
 }

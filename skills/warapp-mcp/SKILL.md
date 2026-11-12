@@ -37,6 +37,11 @@ them to enter instead.
   completion with armies needed at the game's kill rates, and visible threats. When GameFeed
   sends no board it reads the live board through the user's signed-in war.app tab; a lobby
   has none — fall back to `warapp_get_map`. Pass its `assumptions` on with the advice.
+- **"Plan my turn"** → `warapp_plan_turn` (defaults to the signed-in account; `goal` expand /
+  complete-bonus / defend, `focus` bonuses, `reserve`): deploys and moves by name and id, the
+  expected captures, bonuses and next income, warnings and reasoning, plus an `orders` array.
+  It is read-only and refuses outside a turn phase. Review the plan and its warnings with the
+  user before anything is submitted.
 - **"Show me the board" / "what can I pick?"** → `warapp_get_live_board`: every territory with
   its owner (player name, `neutral`, or `pickable` during picks), armies and fog, read through
   the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game.
@@ -64,7 +69,7 @@ is in the **work** group: the reads with intent **lookup**, `warapp_submit_picks
 **change** and `warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,
-  `warapp_get_live_board`, `warapp_get_my_picks` and `warapp_get_chat` are lookups the group reaches by their aliases ("warzone game", "whose turn is it", "best
+  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_turn` and `warapp_get_chat` are lookups the group reaches by their aliases ("warzone game", "whose turn is it", "best
   bonuses", "chokepoints", "analyze my board", "what should i attack", "warzone route", …).
 - **None is a canonical read.** GameFeed answers about one game id at a time and has no
   list of the player's games or notifications, so warapp answers neither "what's new", "what's

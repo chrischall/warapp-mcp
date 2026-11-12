@@ -96,6 +96,10 @@
       "description": "Your submitted territory picks in priority order"
     },
     {
+      "name": "warapp_plan_turn",
+      "description": "Plan your turn from the live board: deploys and moves by name, expected bonuses, and submit-ready orders"
+    },
+    {
       "name": "warapp_submit_picks",
       "description": "Submit territory picks (confirm-gated), verified by reading them back"
     },
