@@ -69,7 +69,7 @@ export function registerScoutTool(server: McpServer, ctx: LiveContext): void {
       const headToHead = parseCommonGames(commonHtml);
       const { name, ...stats } = profile;
       return respond(undefined, ['compact'], () => ({
-        player: { id: Number(token), name },
+        player: { id: token, name },
         profile: stats,
         headToHead,
       }));
