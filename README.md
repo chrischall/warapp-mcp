@@ -172,7 +172,8 @@ and chat text comes back marked as untrusted third-party content.
    to your war.app tab, and refuses another `player`. It validates the orders on the live board
    (cards in your hand, your territories at the start of the turn, adjacent moves, armies
    available with one left behind, deploys equal to your income plus played Reinforcement
-   armies), refuses with no card play when your hand is full, refuses outside a turn phase or
+   armies — a preview warning instead when a setting such as an army cap makes the modelled
+   income uncertain), refuses with no card play when your hand is full, refuses outside a turn phase or
    when you have already committed this turn (modify orders in the game instead), and shows the
    orders and the turn number before anything is sent.
 
