@@ -655,14 +655,15 @@ describe('planTurn — value-aware defence', () => {
     expect(p.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
     expect(p.rationale.join('\n')).toMatch(/Deploy 5 to T1 \(#1\).*protects \+3/);
 
-    // With one army per territory held, losing T1 also costs that army of income.
+    // With one army per territory held (and no base income it would fall back to),
+    // losing T1 also costs that army of income.
     const lone = buildGraph(makeMap([1, 8], [[1, 8]], []));
     const q = planTurn({
       graph: lone,
       board: board([mine(1, 2), enemy(8, 6)]),
       me: ME,
       income: 5,
-      settings: { ...STD, bonusArmyPer: 1 },
+      settings: { ...STD, bonusArmyPer: 1, baseIncome: 0 },
       options: { goal: 'defend' },
     });
     expect(q.warnings).toContain('T1 (#1) cannot be held economically (needs 5, protects +1): conceded');

@@ -48,6 +48,45 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `<Name>Card` value is an object and disabled when the value is the string `"none"`.
   `ArmyCap` is the string `"null"` when there is no cap. `Map` is the map id.
 
+## Income and "Extra Armies for Territories" (`BonusArmyPer`) — verified (#38)
+
+- Rule: **income = max(`MinimumArmyBonus`, floor(territories held / `BonusArmyPer`)) + held
+  bonuses** (+ card armies). The per-territory armies *replace* the base when larger; they never
+  add to it. `BonusArmyPer` 0 is off (income = `MinimumArmyBonus` + held bonuses).
+- Evidence, from the client bundle's income computation (read-only): it adds
+  `floor(territories / BonusArmyPer)` (labelled "Bonus armies for N territories (if more than base
+  armies)"), then, if the running total is below `MinimumArmyBonus`, tops it up to it; held
+  bonuses are added after. The in-game help agrees: "If you control BonusArmyPer × (MinimumArmyBonus
+  + 1) territories or more, then you'll receive [territory armies] instead", and the settings
+  summary says "Extra army for every N territories, once base income exceeded".
+- Live: `MinimumArmyBonus 4, BonusArmyPer 1`, 1 territory → war.app paid **4**;
+  `MinimumArmyBonus 20, BonusArmyPer 1`, 164 territories → war.app paid **164**;
+  `MinimumArmyBonus 2, BonusArmyPer 1`, 3 territories → war.app refused a deploy of 5 and accepted
+  **3**. The old additive model said 5, 184 and 5.
+- Implemented in `territoryIncome` (`src/analysis/player.ts`) and used by `analyzePlayer` /
+  `incomeFor`, the planner's protected value of a border, the per-opponent enemy deploy
+  base (from that opponent's visible territories, a lower bound), and the pick advisor's
+  opening simulation (`src/analysis/picks.ts`).
+- **Not modelled** (the same bundle function has these terms): an army cap (`ArmyCap`, can cut
+  income), overridden bonus values (`OverriddenBonuses`), the Sanctions card (cuts a sanctioned
+  player's income by its `Percentage`), income from cities, and per-player income mods.
+  `incomeUncertainties` names the army cap, overridden bonuses and an enabled Sanctions card
+  (`SanctionsCard` present in the settings) when a game's settings switch them on; then `warapp_plan_turn` warns and
+  `warapp_submit_turn`'s deploy-total check becomes a preview warning instead of a refusal.
+  Cities and per-player income mods are **not detected** (no known settings key says they
+  pay income; the `Commerce` key is present, as `{}`, even in a plain lobby game), so a game
+  using them still gets the hard refusal and the owner must fall back to the in-game number.
+- **Trade-off — Sanctions:** the bundle cuts income only when a Sanctions card is actually
+  *active* against the player, but this repo does not decode the live board's active-card list
+  (its shape in `GetLatestGameInfo` is unverified), so the warning fires whenever the card is
+  merely *enabled* — and the lobby settings enable it in many games. Those games lose the hard
+  deploy-total refusal even when nobody is sanctioned; the check is a preview warning and war.app's
+  error 11 is the backstop. Decoding the active cards would let the warning (and the soft check)
+  apply only when I am sanctioned this turn.
+- **Error 11 hint:** when war.app refuses a deploy total (error 11), the hint names the modelled
+  number. The live board (`GetLatestGameInfo`) carries no income figure — the client computes it
+  from the standing — so the authoritative number is the game's "armies per turn".
+
 ## Local Deployment — key verified, pool rules UNVERIFIED
 
 - `settings.LocalDeployments` (boolean, `GetSettings=true`) is read into

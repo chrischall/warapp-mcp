@@ -54,7 +54,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GameFeed `numberOfTurns` + 1. It always acts as the signed-in account (refuses any other
   `player`, and refuses when that account cannot be determined), validates on the live board
   (own sources, adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
-  the server's error 11 otherwise), and refuses outside a turn phase or when my
+  the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a
+  setting the income model does not compute, e.g. an army cap), and refuses outside a turn phase or when my
   `hasCommittedOrders` is already true (a second `SendOrders` replacing the first is
   unverified; the client uses "Modify orders"). **Success is read from game state, never
   from the reply:** its bool is the "vacation ended" flag. After sending, GameFeed is re-read:

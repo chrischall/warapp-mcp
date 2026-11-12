@@ -24,6 +24,7 @@ import {
   chargeDeploys,
   deployPools,
   incomeFor,
+  incomeUncertainties,
   neighborsOf,
   planTurn,
   type PlanGoal,
@@ -181,11 +182,34 @@ interface TurnState {
   turnNumber: number;
   orders: TurnOrder[];
   named: NamedOrder[];
+  /** The modelled income the deploys were checked against. */
+  income: number;
+}
+
+/**
+ * war.app's error 11 (deploys ≠ its income), with a hint naming the modelled
+ * number. The live board carries no income figure — war.app's client computes it
+ * from the standing — so its own number is the "armies per turn" the game shows.
+ */
+function incomeRefused(e: WarappServerError, income: number): McpToolError {
+  return new McpToolError(e.message, {
+    kind: 'unknown',
+    cause: e,
+    hint:
+      `The modelled income was ${income}, and war.app counts differently this turn. Deploy exactly the "armies per ` +
+      'turn" the game shows (the deploy panel); nothing was committed, so resend with that total.',
+  });
 }
 
 const label = (t: { id: number; name: string }) => `${t.name} (${t.id})`;
 
-/** Validate resolved orders against the live board and income; throws a clear refusal on the first problem. */
+/**
+ * Validate resolved orders against the live board and income; throws a clear
+ * refusal on the first problem. A deploy total that differs from the income is
+ * refused only when the income model is certain: with `incomeUncertain` reasons
+ * (see `incomeUncertainties`) it is returned as a warning instead, and war.app
+ * itself has the last word (error 11).
+ */
 export function validateTurn(args: {
   map: GameMap;
   board: readonly LiveTerritory[];
@@ -198,7 +222,10 @@ export function validateTurn(args: {
   localDeployments?: boolean;
   /** No-Split: each territory issues at most one attack or transfer. */
   noSplit?: boolean;
-}): void {
+  /** Why the modelled income may be wrong; non-empty makes the deploy-total check a warning. */
+  incomeUncertain?: readonly string[];
+}): { warnings: string[] } {
+  const warnings: string[] = [];
   const { map, board, myInGameId, income, deploys, moves } = args;
   const graph = graphOf(map);
   const standing = new Map(board.map((t) => [t.territoryId, t]));
@@ -249,7 +276,13 @@ export function validateTurn(args: {
     }
   }
   const deployed = deploys.reduce((s, d) => s + d.armies, 0);
-  if (deployed !== income) {
+  if (deployed !== income && args.incomeUncertain?.length) {
+    warnings.push(
+      `These orders deploy ${deployed} armies, but the modelled income is ${income} this turn. The model may be off ` +
+        `(${args.incomeUncertain.join(' ')}), so they are not refused here: check the "armies per turn" the game ` +
+        'shows — war.app refuses any other total (error 11).',
+    );
+  } else if (deployed !== income) {
     throw new McpToolError(`These orders deploy ${deployed} armies, but your income is ${income} this turn.`, {
       hint: `Deploy exactly ${income} armies — war.app refuses any other total (error 11).`,
     });
@@ -292,6 +325,7 @@ export function validateTurn(args: {
       );
     }
   }
+  return { warnings };
 }
 
 /** The card types warapp_submit_turn can play, by the encoder's name. */
@@ -533,6 +567,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ? ['You have already committed orders this turn; warapp_submit_turn will refuse — modify orders in the game instead.']
           : []),
         ...cards.warnings,
+        ...incomeUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
         ...plan.warnings,
       ];
       const orders = [
@@ -619,7 +654,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
             'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
             'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
-            'Reinforcement armies; under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
+            'Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
+            'income uncertain); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
             'No-Split, at most one attack or transfer per territory (warapp_plan_turn obeys these and the kill rates). ' +
             'Always sent as ' +
             'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
@@ -680,7 +716,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             }
             const income =
               incomeFor(graphOf(map), board, me.id, game.settings) + plays.reduce((sum, p) => sum + p.armies, 0);
-            validateTurn({
+            const { warnings } = validateTurn({
               map,
               board: territories,
               myInGameId: playerId,
@@ -690,6 +726,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               moves,
               localDeployments: game.settings?.localDeployments ?? false,
               noSplit: game.settings?.noSplit ?? false,
+              incomeUncertain: incomeUncertainties(game.settings),
             });
             // Deploys first (as the client sends them), merged per territory.
             const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
@@ -723,6 +760,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 willSend: { game: game.id, player: me.name, turn: turnNumber, income, orders: named },
                 preview: {
                   note: 'These orders reach the game; once the turn resolves, other players see the results.',
+                  ...(warnings.length ? { warnings } : {}),
                 },
               },
               state: {
@@ -733,6 +771,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 turnNumber,
                 orders: send,
                 named,
+                income,
               } satisfies TurnState,
             };
           },
@@ -748,6 +787,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               );
             } catch (e) {
               // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.
+              if (e instanceof WarappServerError && e.code === 11) throw incomeRefused(e, st.income);
               if (e instanceof WarappServerError) throw e;
               return {
                 status: 'unknown' as const,

@@ -27,6 +27,14 @@ function game(state: string, extra: Record<string, unknown> = {}, ann: Record<st
   return { ...f, state, numberOfTurns: state === 'Playing' ? '2' : '-1', players, ...extra };
 }
 
+/**
+ * The lobby fixture's settings with the Sanctions card off: with it on, the income model is
+ * uncertain (#38) and a wrong deploy total warns instead of being refused.
+ */
+function modelledSettings(): Record<string, unknown> {
+  return { ...(lobbyFixture().settings as Record<string, unknown>), SanctionsCard: 'none' };
+}
+
 function mapName(id: number): string {
   const map = lobbyFixture().map as { territories: Array<{ id: string; name: string }> };
   return map.territories.find((t) => Number(t.id) === id)!.name;
@@ -78,6 +86,13 @@ interface PlanPayload {
 }
 
 describe('warapp_plan_turn', () => {
+  it('warns that the income may be off when a setting the model does not compute is on (#38)', async () => {
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 3 };
+    h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.warnings.join('\n')).toMatch(/income 5 may be off.*army cap/i);
+  });
+
   it('plans from the live board: deploys and moves by name and id, expected bonuses, and submit-shaped orders', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     // R3: completing bonus 118 leaves all three members facing Bob's ~11 with a next income
@@ -619,6 +634,41 @@ describe('warapp_submit_turn', () => {
     expect(textOf(res)).toMatch(/war\.app error 11/);
   });
 
+  it('error 11 names the modelled income and where to read war.app\'s own number (#38)', async () => {
+    const s = ordersServer({ error: { code: 11, message: 'x' } });
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    const res = await confirmed({ game_id: GAME, orders: GOOD });
+    expect(res.isError).toBe(true);
+    const all = JSON.stringify(res);
+    expect(all).toMatch(/war\.app error 11/);
+    expect(all).toMatch(/modelled income was 5/);
+    expect(all).toMatch(/armies per turn/);
+  });
+
+  it('when the income model is uncertain (army cap), a deploy total that differs warns instead of refusing (#38)', async () => {
+    const s = ordersServer();
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 3 };
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: s.warapp });
+    const preview = payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 4 }] }));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    const text = JSON.stringify(preview);
+    expect(text).toMatch(/deploy 4 armies.*modelled income is 5/);
+    expect(text).toMatch(/army cap/i);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('when the Sanctions card is on, a deploy total below the model warns instead of refusing (#38)', async () => {
+    const s = ordersServer();
+    // The lobby fixture enables SanctionsCard (Percentage 0.6): a sanctioned player is paid less.
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    const preview = payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 2 }] }));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    const text = JSON.stringify(preview);
+    expect(text).toMatch(/deploy 2 armies.*modelled income is 5/);
+    expect(text).toMatch(/Sanctions card.*60%/);
+    expect(s.sent).toEqual([]);
+  });
+
   it('refuses an explicit player who is not the signed-in account, before any preview', async () => {
     const s = ordersServer();
     h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
@@ -673,7 +723,7 @@ describe('warapp_submit_turn', () => {
   });
 
   it('refuses deploys that do not total the income, giving both numbers', async () => {
-    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const res = await h.call('warapp_submit_turn', {
       game_id: GAME,
       orders: [{ kind: 'deploy', territory: 159, armies: 4 }],
@@ -1007,7 +1057,7 @@ describe('cards in the turn tools', () => {
 
   it.each(refusals)('submit_turn refuses %s, sending nothing', async (_name, hand, orders, message) => {
     const s = ordersServer(hand);
-    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });
     const res = await h.call('warapp_submit_turn', { game_id: GAME, orders });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(message);
@@ -1110,6 +1160,23 @@ describe('Local Deployment in the turn tools (G2, issue #29)', () => {
       expect(() => run([[453745, 6], [159, 1]], true)).toThrow(
         /Local Deployment: these orders deploy 6 armies outside the held bonuses' own pools, but only 5 may go anywhere this turn \(1 too many\)\. Broken Branch Riverlords \(bonus 118\): \+2 earned, only 1 deployed inside it/,
       );
+    });
+
+    it('a deploy total that differs from a certain income is refused; an uncertain one returns a warning (#38)', () => {
+      const args = {
+        map,
+        board: live,
+        myInGameId: ANN.inGame,
+        income: 7,
+        guard: true,
+        deploys: [{ territory: T(161), armies: 6 }],
+        moves: [],
+      };
+      expect(() => validateTurn(args)).toThrow(/deploy 6 armies, but your income is 7/);
+      expect(validateTurn({ ...args, deploys: [{ territory: T(161), armies: 7 }] })).toEqual({ warnings: [] });
+      const r = validateTurn({ ...args, incomeUncertain: ['This game has an army cap, which can cut income; not modelled.'] });
+      expect(r.warnings).toHaveLength(1);
+      expect(r.warnings[0]).toMatch(/deploy 6 armies.*modelled income is 7.*army cap/i);
     });
 
     it('accepts the correct split, and any split when the flag is off', () => {

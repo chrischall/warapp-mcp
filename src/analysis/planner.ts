@@ -7,8 +7,10 @@
 //     `armiesToTake(armies(T)) ≤ E + enemyDeploy`, where E is that player's
 //     movable armies (minus the guard) summed over its territories bordering T.
 //     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
-//     income plus the bonuses that player visibly holds in full, clamped below
-//     by max(MIN_ENEMY_DEPLOY, base income) and above by round(ENEMY_STACK_SHARE × its largest
+//     income (the larger of MinimumArmyBonus and, with BonusArmyPer on, its
+//     visible territories / BonusArmyPer) plus the bonuses that player
+//     visibly holds in full, clamped below by max(MIN_ENEMY_DEPLOY, base
+//     income) and above by round(ENEMY_STACK_SHARE × its largest
 //     stack next to me) — a big stack implies it *can* move a lot, never that
 //     its income is big (live, a 0.75 × 15 guess on an all-15 opening board made
 //     every base-income opponent look like ~11). On the opening board (every
@@ -37,7 +39,8 @@
 //     Scope of "protected value", deliberately narrow: only bonuses containing T
 //     count (not a bonus T merely borders), and an incomplete one counts in full
 //     when T is my only foothold, however much of it the enemy holds. So with no
-//     complete bonus and no per-territory income (`bonusArmyPer` off), a threatened
+//     complete bonus and no per-territory income (`bonusArmyPer` off, or its
+//     armies still below the base income they replace), a threatened
 //     border protects +0 and is conceded: early in a game `defend` holds nothing
 //     and withdraws from every threatened border, keeping armies for expansion.
 //     A conceded border is never deployed to (unless every territory I hold is
@@ -152,7 +155,7 @@ import { analyzeBonus, bonusTerritories } from './bonuses.js';
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { chargeDeploys, deployPools } from './local-deploy.js';
-import { analyzePlayer, DEFAULT_BASE_INCOME } from './player.js';
+import { analyzePlayer, DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
@@ -303,6 +306,10 @@ export interface EnemyDeployEstimate {
   playerId: number;
   /** clamp(base + bonusIncome, max(MIN_ENEMY_DEPLOY, base), stackCap); that floor on the opening board. */
   estimate: number;
+  /**
+   * Its base income: MinimumArmyBonus, or (BonusArmyPer on) its visible
+   * territories / BonusArmyPer when larger.
+   */
   base: number;
   /** Value of the bonuses this player visibly holds in full. */
   bonusIncome: number;
@@ -345,8 +352,14 @@ export function enemyDeployEstimates(
   }
   const players = [...new Set([...owner.values()].filter((p) => p !== me))].sort(byNum);
   const opening = openingArmies(g, board) !== null;
-  const base = Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME));
+  const minimum = Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME));
+  const per = settings.bonusArmyPer ?? 0;
   return players.map((playerId) => {
+    // Its visible territories are a lower bound on what it holds, so on its
+    // per-territory income too.
+    let held = 0;
+    for (const p of owner.values()) if (p === playerId) held++;
+    const base = territoryIncome(held, minimum, per);
     let bonusIncome = 0;
     for (const b of g.map.bonuses) {
       const ts = bonusTerritories(g, b.id);
@@ -394,7 +407,7 @@ export function defaultEnemyDeploy(
   );
 }
 
-/** This turn's income from the existing income code (base + per-territory + held bonuses). */
+/** This turn's income from the existing income code (max(base, per-territory) + held bonuses). */
 export function incomeFor(g: MapGraph, board: BoardState, me: number, settings?: GameSettings): number {
   return analyzePlayer(g, board, me, settings).income.total;
 }
@@ -421,6 +434,7 @@ interface BonusPlan {
 export function planTurn(input: PlanInput): TurnPlan {
   const { graph: g, board, me } = input;
   const s = input.settings ?? {};
+  const baseIncome = Math.max(0, Math.floor(s.baseIncome ?? DEFAULT_BASE_INCOME));
   const opts = input.options ?? {};
   const goal: PlanGoal = opts.goal ?? 'balanced';
   const balanced = goal === 'balanced';
@@ -574,8 +588,10 @@ export function planTurn(input: PlanInput): TurnPlan {
         ts.some((x) => has(x) || neighborsOf(g, x).some(has));
       if (!access(mineWithout)) v += b.value;
     }
+    // Per-territory income replaces the base only when larger, so losing T
+    // costs an army only above it.
     const per = s.bonusArmyPer ?? 0;
-    if (per > 0) v += Math.floor(mine.length / per) - Math.floor((mine.length - 1) / per);
+    if (per > 0) v += territoryIncome(mine.length, baseIncome, per) - territoryIncome(mine.length - 1, baseIncome, per);
     return v;
   };
   const valueCache = new Map<number, number>();

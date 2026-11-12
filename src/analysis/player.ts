@@ -11,11 +11,59 @@ import { neighborsOf, type MapGraph } from './graph.js';
 export const DEFAULT_BASE_INCOME = 5;
 
 export interface Income {
+  /** The game's base income (MinimumArmyBonus). */
   base: number;
-  /** From the "one army per N territories" setting, when on. */
+  /**
+   * floor(territories / BonusArmyPer) when "Extra Armies for Territories" is on,
+   * else 0. It REPLACES the base when larger — never adds to it (see {@link territoryIncome}).
+   */
   perTerritory: number;
   bonuses: { bonusId: number; name: string; value: number }[];
   total: number;
+}
+
+/**
+ * Income before bonuses: the base, or floor(territories / per) when that is
+ * larger ("Extra Armies for Territories", BonusArmyPer). Read from war.app's
+ * client income code, which adds floor(territories / BonusArmyPer) and then tops
+ * it up to MinimumArmyBonus when smaller ("Bonus armies for N territories (if
+ * more than base armies)"); live (#38): base 4, per 1, 1 territory paid 4, and
+ * base 20, per 1, 164 territories paid 164; base 2, per 1, 3 territories
+ * refused 5 and accepted 3. `per` 0 (or less) is off.
+ */
+export function territoryIncome(territories: number, base: number, per: number): number {
+  return per > 0 ? Math.max(base, Math.floor(territories / per)) : base;
+}
+
+/**
+ * Settings that make the income model uncertain, each as a reason: war.app's
+ * income has a term the model does not compute. Empty when every income rule
+ * the game uses is modelled (base, BonusArmyPer, held bonuses, card armies).
+ * Cities and per-player income mods have no known settings key, so they are
+ * not detected: those games still get the hard deploy-total check. Sanctions is
+ * flagged when the card is merely enabled: the live board's active-card list is
+ * not decoded, so the model cannot tell whether I am sanctioned this turn
+ * (docs/WARAPP-API.md, the trade-off).
+ */
+export function incomeUncertainties(settings: GameSettings | undefined): string[] {
+  const out: string[] = [];
+  if (settings?.minimumArmyBonus === undefined)
+    out.push(`The game's base income is missing from its settings; the model assumes ${DEFAULT_BASE_INCOME}.`);
+  if (settings?.armyCap !== undefined && settings.armyCap !== null)
+    out.push(`This game has an army cap (${settings.armyCap}× income), which can cut income; the model does not apply it.`);
+  const overridden = settings?.raw?.OverriddenBonuses;
+  if (Array.isArray(overridden) && overridden.length > 0)
+    out.push("This game has overridden bonus values; the model uses the map's own values.");
+  if (settings?.cards.includes('Sanctions')) {
+    const pct = settings.raw?.SanctionsCard;
+    const p = isRecord(pct) && typeof pct.Percentage === 'number' ? ` by ${Math.round(pct.Percentage * 100)}%` : '';
+    out.push(`This game has the Sanctions card, which cuts a sanctioned player's income${p}; the model does not apply it.`);
+  }
+  return out;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 export interface MissingTerritory {
@@ -191,7 +239,7 @@ export function analyzePlayer(
     territoryCount: mineIds.length,
     armies,
     heldBonusIds: held.map((b) => b.bonusId),
-    income: { base, perTerritory, bonuses: held, total: base + perTerritory + heldTotal },
+    income: { base, perTerritory, bonuses: held, total: territoryIncome(mineIds.length, base, per) + heldTotal },
     closestBonuses: progress.slice(0, limit),
     threats,
     assumptions,
