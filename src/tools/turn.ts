@@ -446,7 +446,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'not completed under balanced/defend (a warning says so). A neutral no single stack can afford may be taken by ' +
           'several attacks in a fixed order (`multiSourceCaptures`; 0% luck only). Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
           'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
-          'server last planned on (`trendSource` says which, or null). ' +
+          'server last planned on (`trendSource` says which, or null). Obeys the game\'s rules: every attack and ' +
+          "threat is sized at the game's kill rates; under Local Deployment a held bonus's armies are deployed only " +
+          'inside that bonus; under No-Split each territory issues at most one attack or transfer. ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -575,7 +577,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         warnings,
         rationale: plan.rationale,
         orders,
-        ...(rung === 'full' ? { settings: { ...settings, allowTransferOnly: settings.allowTransferOnly ?? true } } : {}),
+        ...(rung === 'full'
+          ? {
+              settings: {
+                ...settings,
+                allowTransferOnly: settings.allowTransferOnly ?? true,
+                localDeployments: settings.localDeployments ?? false,
+                noSplit: settings.noSplit ?? false,
+              },
+            }
+          : {}),
       }));
     },
   );
@@ -608,7 +619,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
             'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
             'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
-            'Reinforcement armies. Always sent as ' +
+            'Reinforcement armies; under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
+            'No-Split, at most one attack or transfer per territory (warapp_plan_turn obeys these and the kill rates). ' +
+            'Always sent as ' +
             'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
             `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({

@@ -279,7 +279,21 @@ describe('warapp_plan_turn', () => {
       multiAttack: false,
       baseIncome: 5,
       allowTransferOnly: true,
+      // G4: the rules the planner obeys are always echoed, off or on.
+      localDeployments: false,
+      noSplit: false,
     });
+  });
+
+  it('the plan and submit descriptions say kill rates, Local Deployment and No-Split are obeyed (G4)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({}) });
+    const { tools } = await h.harness.client.listTools();
+    for (const name of ['warapp_plan_turn', 'warapp_submit_turn']) {
+      const d = tools.find((t) => t.name === name)!.description!;
+      expect(d, name).toMatch(/kill rates/);
+      expect(d, name).toMatch(/Local Deployment/);
+      expect(d, name).toMatch(/No-Split/);
+    }
   });
 
   it('sizes attacks and threats at the game\'s kill rates (20/80), not 60/70 (G1, issue #28)', async () => {

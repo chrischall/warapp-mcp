@@ -139,6 +139,9 @@
 // Kill rates: every combat computation above (capture cost, threats and holds,
 // survivors, R3's frontier, R4's kills) uses the game's offensive/defensive kill
 // rates; only when the settings carry none does it assume 60/70, with a warning.
+// Every combination of these rules is planned and then checked by
+// warapp_submit_turn's validator (`validateTurn`) in the lessons suite: the planner
+// never proposes a turn the validator refuses.
 // Accounting: a territory's outgoing armies never exceed its armies after deploy
 // minus the guard. Armies never move twice and captured armies never attack, so
 // the plan is valid with or without multi-attack.
