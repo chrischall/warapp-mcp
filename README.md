@@ -162,7 +162,11 @@ and chat text comes back marked as untrusted third-party content.
    its growth (`trendSource` says where last turn's board came from).
    Under the default `balanced` goal the plan spends income where it earns most per army:
    holding borders that protect bonuses, completing cheap bonuses (at least 30% of income goes
-   to expansion), and breaking an enemy bonus you can reach. A border too costly to hold for
+   to expansion), and breaking an enemy bonus you can reach. Under `balanced` and `defend`, an
+   opponent whose every territory is visible and borders yours is attacked everywhere at once
+   when that eliminates it (or takes most of it) even if it deploys its whole estimated income
+   on each ("Finish off player …"); a border just taken from such a weak opponent is never
+   conceded. A border too costly to hold for
    what it protects is `conceded`: nothing is deployed there (unless every territory you hold
    is conceded) and no attack from it is funded, its armies withdraw to a border
    that holds, and `cardAdvice: "order-priority"` says to play Order Priority (add it to the
