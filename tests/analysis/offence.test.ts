@@ -652,3 +652,30 @@ describe('a kept or falling border is garrisoned before the strike stack', () =>
     expect(why(p)).toMatch(/Deploy the leftover 2 to T3 \(#3\): one strike stack/);
   });
 });
+
+// #97: under heavy fog the profile's standing comes from the tracked income, so a 1v1 that is
+// clearly ahead or behind engages the offence rules instead of staying 'unknown'.
+describe('standing from tracked income under fog (#97)', () => {
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7, 8], [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8]]));
+  const s = board([mine(1, 10), mine(2, 10), enemy(3, 4), fogged(4), fogged(5), fogged(6), fogged(7), fogged(8)]);
+  const input = (income: number, trackedIncome: number): PlanInput => ({
+    graph: g,
+    board: s,
+    me: ME,
+    income,
+    settings: STD,
+    tracks: [track(ENEMY, trackedIncome)],
+    game: { players: [{ id: ME }, { id: ENEMY }] },
+    options: { adapt: true },
+  });
+
+  it('behind on tracked income: standing behind (tracked), not unknown', () => {
+    const p = planTurn(input(5, 13));
+    expect(p.profile).toMatchObject({ format: '1v1', standing: 'behind', standingSource: 'tracked' });
+  });
+
+  it('without a trusted track the fog still leaves it unknown', () => {
+    const p = planTurn({ ...input(5, 13), tracks: [] });
+    expect(p.profile).toMatchObject({ standing: 'unknown', standingSource: null });
+  });
+});

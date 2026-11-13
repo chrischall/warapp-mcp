@@ -52,8 +52,12 @@ export interface ProfileInput {
   picking?: boolean;
   /** My income this turn. */
   income: number;
-  /** Each visible opponent's estimated income (the planner's per-opponent deploy estimate). */
-  estimates: ReadonlyArray<{ playerId: number; estimate: number }>;
+  /**
+   * Each visible opponent's estimated income (the planner's per-opponent deploy estimate);
+   * `tracked` is its income tracked over several turns (`trackOpponents`), `null` / absent when
+   * its track is too short to trust.
+   */
+  estimates: ReadonlyArray<{ playerId: number; estimate: number; tracked?: number | null }>;
   /**
    * Opponents with no territory in view (#94, `trackOpponents`): for how many turns, and the
    * armies they must have received since the game started (a lower bound). The 'unknown'
@@ -78,6 +82,11 @@ export interface GameProfile {
   };
   phase: GamePhase;
   standing: GameStanding;
+  /**
+   * What the standing rests on: `visible` (most of the board is in view), `tracked` (the fog hides
+   * most of it, but every opponent's income is tracked over several turns, #97), `null` when unknown.
+   */
+  standingSource: 'visible' | 'tracked' | null;
   notes: string[];
 }
 
@@ -159,9 +168,26 @@ export function gameProfile(input: ProfileInput): GameProfile {
         ` Player ${u.playerId} has been out of sight for ${u.turnsUnseenAtLeast ? 'at least ' : ''}${u.turnsUnseen} turn${u.turnsUnseen === 1 ? '' : 's'} and has received at least ${u.earnedAtLeast} armies: it could be banking up to roughly that, minus what its expansion cost.`,
     )
     .join('');
+  let standingSource: GameProfile['standingSource'] = null;
+  // #97: under fog, a standing from tracked income needs every opponent still playing to be in
+  // sight with a trusted track (an unseen one could be anything).
+  const unseenEnemies = (input.unseen ?? []).filter((u) => !ally(u.playerId));
+  const trackedAll =
+    enemies.length > 0 && enemies.length >= opponents && !unseenEnemies.length && enemies.every((e) => e.tracked !== undefined && e.tracked !== null);
   if (!strongest) {
     standing = 'unknown';
     notes.push(`Standing unknown: no opponent is in sight, so its income cannot be estimated.${unseen}`);
+  } else if (notMine.length && foggedCount > notMine.length / 2 && trackedAll) {
+    // #97: the fog hides most of the board, but every opponent in the game is in sight with an
+    // income tracked over several turns — compare against that, and say it is a tracked figure.
+    const ratio = strongest.estimate > 0 ? input.income / strongest.estimate : Infinity;
+    standing = ratio >= AHEAD_RATIO ? 'ahead' : ratio <= BEHIND_RATIO ? 'behind' : 'even';
+    standingSource = 'tracked';
+    notes.push(
+      `Standing ${standing} (tracked): my income ${input.income} against the strongest opponent, player ${strongest.playerId} (~${strongest.estimate} tracked over several turns)${
+        standing === 'ahead' ? `, at least ${AHEAD_RATIO}×` : standing === 'behind' ? `, at most ${BEHIND_RATIO}×` : ''
+      }. ${foggedCount} of the ${notMine.length} territories I do not hold are in the fog, so income it hides from its observed deploys is not counted.`,
+    );
   } else if (notMine.length && foggedCount > notMine.length / 2) {
     standing = 'unknown';
     notes.push(
@@ -170,6 +196,7 @@ export function gameProfile(input: ProfileInput): GameProfile {
   } else {
     const ratio = strongest.estimate > 0 ? input.income / strongest.estimate : Infinity;
     standing = ratio >= AHEAD_RATIO ? 'ahead' : ratio <= BEHIND_RATIO ? 'behind' : 'even';
+    standingSource = 'visible';
     notes.push(
       `Standing ${standing}: my income ${input.income} against the strongest opponent, player ${strongest.playerId} (~${strongest.estimate} estimated)${
         standing === 'ahead' ? `, at least ${AHEAD_RATIO}×` : standing === 'behind' ? `, at most ${BEHIND_RATIO}×` : ''
@@ -191,6 +218,7 @@ export function gameProfile(input: ProfileInput): GameProfile {
     },
     phase,
     standing,
+    standingSource,
     notes,
   };
 }

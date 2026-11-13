@@ -179,6 +179,52 @@ describe('gameProfile: standing', () => {
     expect(p.notes.join('\n')).toMatch(/fog/i);
   });
 
+  it('fogged, but every visible opponent has a tracked income (#97): standing from tracked income, marked tracked', () => {
+    const foggy = board([mine(1, 5), mine(2, 5), neutral(3, 2), fogged(4), fogged(5), fogged(6), fogged(7), enemy(8, 5, 20)]);
+    const p = gameProfile(base({ board: foggy, income: 23, estimates: [{ playerId: 20, estimate: 13, tracked: 13 }] }));
+    expect(p.standing).toBe('ahead');
+    expect(p.standingSource).toBe('tracked');
+    expect(p.notes.join('\n')).toMatch(/Standing ahead \(tracked\): my income 23 against .*player 20 \(~13 tracked over several turns\).*fog/);
+  });
+
+  it('fogged with a tracked opponent behind me (#97): behind (tracked)', () => {
+    const foggy = board([mine(1, 5), mine(2, 5), neutral(3, 2), fogged(4), fogged(5), fogged(6), fogged(7), enemy(8, 5, 20)]);
+    const p = gameProfile(base({ board: foggy, income: 8, estimates: [{ playerId: 20, estimate: 13, tracked: 13 }] }));
+    expect(p).toMatchObject({ standing: 'behind', standingSource: 'tracked' });
+  });
+
+  it('fogged, a tracked opponent but another one out of sight (#97): still unknown', () => {
+    const foggy = board([mine(1, 5), mine(2, 5), neutral(3, 2), fogged(4), fogged(5), fogged(6), fogged(7), enemy(8, 5, 20)]);
+    const p = gameProfile(
+      base({
+        board: foggy,
+        income: 23,
+        players: [{ id: ME }, { id: 20 }, { id: 30 }],
+        estimates: [{ playerId: 20, estimate: 13, tracked: 13 }],
+        unseen: [{ playerId: 30, turnsUnseen: 4, earnedAtLeast: 30 }],
+      }),
+    );
+    expect(p).toMatchObject({ standing: 'unknown', standingSource: null });
+  });
+
+  it('fogged, a tracked opponent, but a third player is neither seen nor reported (#97): still unknown', () => {
+    const foggy = board([mine(1, 5), mine(2, 5), neutral(3, 2), fogged(4), fogged(5), fogged(6), fogged(7), enemy(8, 5, 20)]);
+    const p = gameProfile(
+      base({ board: foggy, income: 23, players: [{ id: ME }, { id: 20 }, { id: 30 }], estimates: [{ playerId: 20, estimate: 13, tracked: 13 }] }),
+    );
+    expect(p).toMatchObject({ standing: 'unknown', standingSource: null });
+  });
+
+  it('fogged and an untracked opponent (#97): still unknown', () => {
+    const foggy = board([mine(1, 5), mine(2, 5), neutral(3, 2), fogged(4), fogged(5), fogged(6), fogged(7), enemy(8, 5, 20)]);
+    const p = gameProfile(base({ board: foggy, income: 23, estimates: [{ playerId: 20, estimate: 13, tracked: null }] }));
+    expect(p).toMatchObject({ standing: 'unknown', standingSource: null });
+  });
+
+  it('a mostly visible board keeps the visible standing source', () => {
+    expect(gameProfile(base()).standingSource).toBe('visible');
+  });
+
   it('unknown when no opponent is in sight', () => {
     const p = gameProfile(base({ estimates: [] }));
     expect(p.standing).toBe('unknown');

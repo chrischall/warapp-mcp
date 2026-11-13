@@ -579,7 +579,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'lowest-value cards — never playing Blockade or Order Delay. Its ' +
           '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Every plan reads ' +
           'the game profile (`profile`: format 1v1/ffa/teams, phase opening/expansion/contact/late, standing ' +
-          'ahead/even/behind/unknown by your income against the strongest opponent\'s estimate; `full` adds the ' +
+          'ahead/even/behind/unknown by your income against the strongest opponent\'s estimate — under heavy fog, its tracked ' +
+          'income when every opponent has one (`standingSource` "tracked"); `full` adds the ' +
           'settings and notes). With no `goal`, the profile picks it (`goalSource` "profile"): defend when behind on income in an FFA or team game, ' +
           'else balanced (behind on income in a 1v1 means strike: break their bonuses before expansion that completes nothing), tuned — in a 1v1 in contact breaking an enemy bonus counts like completing one and ' +
           'expansion that completes nothing ranks below holds and breaks; in an FFA with two or more opponents left ' +
@@ -770,7 +771,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         profile:
           rung === 'full'
             ? plan.profile
-            : { format: plan.profile.format, phase: plan.profile.phase, standing: plan.profile.standing },
+            : {
+                format: plan.profile.format,
+                phase: plan.profile.phase,
+                standing: plan.profile.standing,
+                ...(plan.profile.standingSource === 'tracked' ? { standingSource: 'tracked' as const } : {}),
+              },
         income,
         enemyDeploy: plan.enemyDeploy,
         trendSource: trend?.source ?? null,

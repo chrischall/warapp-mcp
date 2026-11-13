@@ -20,6 +20,7 @@ const profile = (over: Partial<GameProfile> = {}, settings: Partial<GameProfile[
   opponents: 1,
   phase: 'expansion',
   standing: 'even',
+  standingSource: 'visible',
   notes: [],
   ...over,
   settings: {
