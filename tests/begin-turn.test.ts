@@ -113,6 +113,17 @@ describe('warapp_begin_turn', () => {
     expect(p.status).toBe('begun');
   });
 
+  it('error 4 with the board still hidden is not begun, never "probably running" (#130)', async () => {
+    const s = server([null], { error: { code: 4, message: 'x' } });
+    h = await liveHarness({ pages: SIGNED_IN, feed: [feedGame()], warapp: s.warapp });
+    const res = await confirmed({ game_id: GAME_ID });
+    expect(res.isError).toBeFalsy();
+    const p = payload(res);
+    expect(p.status).toBe('not_begun');
+    expect(String(p.warning)).toMatch(/error 4/);
+    expect(String(p.warning)).not.toMatch(/probably running/);
+  });
+
   it('surfaces any other war.app error', async () => {
     const s = server([null], { error: { code: 88, message: 'x' } });
     h = await liveHarness({ pages: SIGNED_IN, feed: [feedGame()], warapp: s.warapp });

@@ -4,6 +4,7 @@
 import {
   CONFIRM_INJECTION_RULE,
   defineWrite,
+  McpToolError,
   registerWrite,
   toolAnnotations,
 } from '@chrischall/mcp-utils';
@@ -147,10 +148,16 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
           }),
           async plan({ game_id, message, to }) {
             const gameId = parseGameId(game_id);
+            // Read the game for every message (#130): one GameFeed does not know is refused here.
+            const game = await ctx.client.getGame(gameId);
             let recipient: ChatState['recipient'];
             if (to !== undefined && String(to).trim() !== '') {
-              const game = await ctx.client.getGame(gameId);
               const p = resolvePlayer(game.players, to);
+              if (p.id === (await ctx.myInviteToken())) {
+                throw new McpToolError(`${p.name} is you: a private message to yourself was not sent.`, {
+                  hint: 'Name another player in `to`, or omit it to post to the whole game.',
+                });
+              }
               recipient = { id: inGameId(p), name: p.name };
             }
             return {
@@ -169,7 +176,10 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
                   recipient: recipient?.id ?? null,
                 },
                 willSend: { game: gameId, to: recipient?.name ?? 'everyone in the game', message },
-                preview: { note: 'Other players will see this message; it cannot be unsent.' },
+                preview: {
+                  note: 'Other players will see this message; it cannot be unsent.',
+                  game: { id: game.id, name: game.name ?? null, state: game.state },
+                },
               },
               state: { gameId, text: message, ...(recipient ? { recipient } : {}) } satisfies ChatState,
             };

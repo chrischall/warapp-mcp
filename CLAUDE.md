@@ -67,7 +67,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'
-  acceptance — / `taken_back` / `unchanged`), never from the reply, which has no result.
+  acceptance — / `still_playing` after an undo — GameFeed has no pending state — / `unchanged`; lobbies refused), never from the reply, which has no result.
 - **A speed first turn hides the board until Begin.** With MoveOrder `NoLuckCycle` war.app sends
   no standing on turn 1 (or while picking) until the player presses Begin, which starts their
   turn timer; the live tools say so instead of the lobby error. `warapp_begin_turn` sends

@@ -425,7 +425,7 @@ Parameters after the auth block, in the client writer's order:
 
 There is **no result payload** on success, so the reply proves nothing about the account's state:
 `warapp_surrender` re-reads GameFeed afterwards and reports what the feed shows (surrendered,
-pending, taken back, or unchanged). A transport failure after the send is reported as unknown — the
+pending, still playing after an undo — GameFeed has no pending-surrender state, so a take-back is never confirmed — or unchanged). A transport failure after the send is reported as unknown — the
 surrender may already have gone through — and is never retried. Error codes, with the client's
 meaning: **4** the game is over; **7** and **230** you are no longer in the game.
 
@@ -456,7 +456,8 @@ latest standing). The client ignores server error **4** and refreshes as on succ
 error is thrown. `warapp_begin_turn` (confirm-gated) refuses games past turn 1, games whose move
 order is known and not `NoLuckCycle`, seats not `Playing`, and games whose board is already
 visible; after the send it reads the board back with `GetLatestGameInfo` and reports `begun` only
-when a standing arrives (`unconfirmed` otherwise; a transport failure is `unknown` and never
+when a standing arrives (`unconfirmed` otherwise; after an error 4 with the board still hidden,
+`not_begun` — what error 4 means is unverified, so the board alone decides; a transport failure is `unknown` and never
 retried). The encoder is pinned by a golden test built from synthetic ids; the owner verifies it
 live.
 

@@ -623,7 +623,26 @@ describe('warapp_send_chat', () => {
     const preview = payload(await h.call('warapp_send_chat', { game_id: GAME, message: 'gl hf' }));
     expect(JSON.stringify(preview)).toContain('everyone in the game');
     expect(s.sent).toEqual([]);
-    expect(h.calls).toEqual([]);
+    // #130: the game is read even for a public message, so a game that does not exist is refused.
+    expect(h.calls).toHaveLength(1);
+    expect(JSON.stringify(preview)).toContain('Synthetic lobby game');
+  });
+
+  it('refuses a game GameFeed does not know, before anything is sent (#130)', async () => {
+    const s = chatServer();
+    h = await liveHarness({ feed: [{ termsOfUse: 'x', error: 'ServerGameKeyNotFound' }], warapp: s.warapp });
+    const res = await h.call('warapp_send_chat', { game_id: 999, message: 'gl hf' });
+    expect(res.isError).toBe(true);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('refuses a private message to the signed-in account itself (#130)', async () => {
+    const s = chatServer();
+    h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp: s.warapp });
+    const res = await h.call('warapp_send_chat', { game_id: GAME, message: 'note to self', to: 'Ann' });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/yourself/);
+    expect(s.sent).toEqual([]);
   });
 
   it('posts publicly on channel -1 with no recipient', async () => {

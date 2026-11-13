@@ -160,12 +160,15 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
           },
           async execute({ gameId, name, picking }: BeginState) {
             const game = { id: gameId, name };
+            let ignored = false;
             try {
               await ctx.rpc.call('BeginFirstTurn', Method.BeginFirstTurn, (w) => writeBeginFirstTurnParams(w, gameId));
             } catch (e) {
               if (e instanceof WarappServerError) {
                 if (e.code !== IGNORED_ERROR) throw e;
-                // The web client ignores this error and refreshes as on success: read the board back.
+                // The web client ignores this error and refreshes as on success: read the board back,
+                // and judge from it alone (#130).
+                ignored = true;
               } else {
                 return {
                   status: 'unknown' as const,
@@ -183,6 +186,16 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
               territories = await liveBoard(ctx, gameId);
             } catch {
               territories = undefined;
+            }
+            if (!territories && ignored) {
+              return {
+                status: 'not_begun' as const,
+                game,
+                warning:
+                  `war.app answered Begin with error ${IGNORED_ERROR} (the web client ignores it; its meaning is not ` +
+                  'verified) and the board is still hidden, so Begin did not take effect as far as can be read. ' +
+                  'Check warapp_get_live_board before pressing Begin again.',
+              };
             }
             if (!territories) {
               return {
