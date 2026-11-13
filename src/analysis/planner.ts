@@ -1849,6 +1849,31 @@ export function alliesOf(me: number, players: readonly ProfilePlayer[] | undefin
   return new Set((players ?? []).filter((p) => p.id !== me && p.team === team).map((p) => p.id));
 }
 
+/**
+ * The per-opponent deploy estimates a plan works from: {@link enemyDeployEstimates} with the fog
+ * prior (#119, {@link fogPrior}) when the game context allows it, and the turn being played (the
+ * opening board is the first turn's only, #128). {@link planTurn} and warapp_check_plan both use
+ * it, so they work from the same figures. `income` is my board income, card armies left out.
+ * Every visible player is listed, teammates included (the caller filters them).
+ */
+export function planEnemyEstimates(input: {
+  graph: MapGraph;
+  board: BoardState;
+  me: number;
+  income: number;
+  settings?: PlannerSettings;
+  previousBoard?: BoardState;
+  tracks?: readonly OpponentTrack[];
+  game?: PlanGameContext;
+  turn?: number | null;
+}): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined } {
+  const ctx = input.game ?? {};
+  const prior = fogPrior(input.board, input.me, ctx, input.income);
+  const turn = input.turn ?? ctx.turn ?? null;
+  const estimates = enemyDeployEstimates(input.graph, input.board, input.me, input.settings ?? {}, input.previousBoard, input.tracks, prior, { turn });
+  return { estimates, prior };
+}
+
 export function planTurn(input: PlanInput): TurnPlan {
   const { graph: g, board, me } = input;
   const s = input.settings ?? {};
@@ -1856,16 +1881,24 @@ export function planTurn(input: PlanInput): TurnPlan {
   const opts = input.options ?? {};
   const income = Math.max(0, Math.floor(input.income));
   const ctx = input.game ?? {};
-  const incomePrior = fogPrior(board, me, ctx, income - Math.max(0, Math.floor(input.cardArmies ?? 0)));
   /** My teammates (#128): players on my team, never a threat, a target or an estimate. */
   const allies = alliesOf(me, ctx.players);
   /** A player whose stacks threaten me and whose territories I may attack: not me, not a teammate. */
   const foe = (p: number) => p !== me && !allies.has(p);
   /** The turn being planned, when known (the opening board is the first turn's only, #128). */
   const turnNow = input.turn ?? ctx.turn ?? null;
-  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard, input.tracks, incomePrior, { turn: turnNow }).filter((e) =>
-    foe(e.playerId),
-  );
+  const { estimates: allEstimates, prior: incomePrior } = planEnemyEstimates({
+    graph: g,
+    board,
+    me,
+    income: income - Math.max(0, Math.floor(input.cardArmies ?? 0)),
+    settings: s,
+    ...(input.previousBoard ? { previousBoard: input.previousBoard } : {}),
+    ...(input.tracks ? { tracks: input.tracks } : {}),
+    game: ctx,
+    turn: turnNow,
+  });
+  const estimateList = allEstimates.filter((e) => foe(e.playerId));
   // ---- 0p. the game profile ----
   const profile = gameProfile({
     graph: g,

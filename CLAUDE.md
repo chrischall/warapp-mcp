@@ -175,10 +175,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn-phase order or the server answers **error 10 `OrdersInIncorrectOrder`**, so
   `writeSendOrdersParams` sorts every order by `TurnPhase` (discards 10, Order Priority 12,
   Reinforcement 20, deploys 25, moves 50, Order Delay 50, Blockade 60). Order Delay (tag 11) runs
-  in phase 50, verified live 2026-11-12 (sent in phase 12 it drew error 10). Within a phase the
-  orders keep their given order (#127): an Order Delay delays only the orders listed after it, so
-  it stays where it is listed among the moves — that war.app accepts it ahead of a move is
-  unverified. Order Delay may be combined with other card plays.
+  in phase 50, verified live 2026-11-12 (sent in phase 12 it drew error 10). Within a phase,
+  card plays are written after the other orders (an Order Delay after every move, wherever it
+  was listed: the live-verified shape); that war.app accepts it ahead of a move is unverified.
+  Order Delay may be combined with other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
 - **Turn notifications are a socket.io v0.9 client with two transports.** While the active
   transport is the direct leg, a **WebSocket** (`src/push/websocket.ts`): handshake GET with the

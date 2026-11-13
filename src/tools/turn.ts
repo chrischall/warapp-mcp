@@ -861,13 +861,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               'captures a bonus still needs reach it together. Attacks sized for a worst case (finishing a player off, ' +
               'fog pressure, commander strikes) stay certain.',
           ),
-        moves_first: z
-          .boolean()
+        first_mover: z
+          .enum(['me', 'opponent'])
           .optional()
           .describe(
-            'Whether you move first this turn, when you know it (Cycle and No-Luck Cycle move orders swap the first ' +
-              'mover every turn: whoever moved second last turn moves first now). Moving first, your first order already ' +
-              'runs before the opponent\'s, so Order Priority is not advised. Default unknown.',
+            'Who moves first this turn, when you know (as warapp_check_plan takes it; Cycle and No-Luck Cycle move ' +
+              'orders swap the first mover every turn: whoever moved second last turn moves first now). When you move ' +
+              "first, your first order already runs before the opponent's, so Order Priority is not advised. Default unknown.",
           ),
         view: viewArg(
           VIEWS,
@@ -876,7 +876,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ),
       }),
     },
-    async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, moves_first, view }) => {
+    async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, first_mover, view }) => {
       const game = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(game);
       const map = mapOf(game);
@@ -950,7 +950,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
-          ...(moves_first !== undefined ? { movesFirst: moves_first } : {}),
+          ...(first_mover !== undefined ? { movesFirst: first_mover === 'me' } : {}),
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);

@@ -1406,9 +1406,13 @@ describe('cards in the turn tools', () => {
     expect(p.cardAdvice).toBe('order-priority');
     expect(p.moves[0]).toEqual(expect.objectContaining({ from: { id: 158, name: mapName(158) }, kind: 'attack' }));
     // Moving first this turn (#127), the card is not needed: it stays in hand.
-    const first = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', moves_first: true }));
+    // first_mover is named and shaped as warapp_check_plan's argument.
+    const first = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', first_mover: 'me' }));
     expect(first.cardAdvice).toBeNull();
     expect(first.orders.some((o) => o.kind === 'card')).toBe(false);
+    // Moving second, the card is advised as when unknown.
+    const second = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', first_mover: 'opponent' }));
+    expect(second.cardAdvice).toBe('order-priority');
     expect(p.cards.playRequired).toBe(false);
     expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
     expect(p.orders[0]).toEqual({ kind: 'card', card: OP });

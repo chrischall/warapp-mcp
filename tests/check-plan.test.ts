@@ -439,6 +439,43 @@ describe('warapp_check_plan', () => {
     expect(p.atRisk.bonusesMore).toBeUndefined();
   });
 
+  it('works from the estimates warapp_plan_turn uses: the fog prior in an even-start 1v1', async () => {
+    // A 1v1 (only Ann and Bob) that started even: Bob borders the fog (135), so he is assumed to
+    // earn at least my own income, 5 + bonus 118's 2 = 7, not only the 5 he visibly earns.
+    const f = lobbyFixture();
+    const players = (f.players as Array<Record<string, string>>)
+      .slice(0, 2)
+      .map((p, i) => (i === 0 ? { ...p, id: ANN.feed, name: 'Ann' } : { ...p, id: BOB.feed, name: 'Bob' }));
+    const territories: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 20 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 20 },
+      { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 20 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 3 },
+      { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+    ];
+    h = await liveHarness({
+      feed: [{ ...f, state: 'Playing', numberOfTurns: '2', players }],
+      warapp: () => ({ body: (w) => writeLatestGameInfo(w, territories, [ANN.inGame]) }),
+    });
+    const p = await check({ orders: [{ kind: 'deploy', territory: 159, armies: 7 }] });
+    expect(p.income).toBe(7);
+    expect(p.enemyDeploy).toEqual([{ player: { id: Number(BOB.feed), name: 'Bob' }, deploy: 7, source: 'estimate' }]);
+  });
+
+  it('reads the opening board on the first turn only: equal stacks mid-game are not the opening (#128)', async () => {
+    // Turn 3, no earlier board cached: every visible player stack holds 4, but Bob visibly holds
+    // bonus 118 (+2), so he earns 7, not the opening floor of 5.
+    h = await live([
+      { id: 159, fogLevel: 1, owner: BOB.inGame, armies: 4 },
+      { id: 161, fogLevel: 1, owner: BOB.inGame, armies: 4 },
+      { id: 157, fogLevel: 1, owner: BOB.inGame, armies: 4 },
+      { id: 158, fogLevel: 1, owner: ANN.inGame, armies: 4 },
+    ]);
+    const p = await check({ orders: [{ kind: 'deploy', territory: 158, armies: 5 }] });
+    expect(p.game.turn).toBeGreaterThan(1);
+    expect(p.enemyDeploy).toEqual([{ player: { id: Number(BOB.feed), name: 'Bob' }, deploy: 7, source: 'estimate' }]);
+  });
+
   it('refuses outside a turn phase', async () => {
     h = await live(at(20, 20, 3), 'DistributingTerritories');
     const res = await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
