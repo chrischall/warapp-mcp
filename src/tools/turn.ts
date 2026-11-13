@@ -211,8 +211,9 @@ function incomeRefused(e: WarappServerError, income: number): McpToolError {
     kind: 'unknown',
     cause: e,
     hint:
-      `The modelled income was ${income}, and war.app counts differently this turn. Deploy exactly the "armies per ` +
-      'turn" the game shows (the deploy panel); nothing was committed, so resend with that total.',
+      `The modelled income was ${income}, and war.app counts differently this turn. Nothing was committed: read the ` +
+      '"armies per turn" the game shows (the deploy panel), deploy exactly that, and resend with it as `income` — ' +
+      'the deploy-total check then uses that number instead of the model.',
   });
 }
 
@@ -884,6 +885,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
   const submitSchema = z.object({
     game_id: gameIdArg,
     player: playerArg,
+    income: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_ENEMY_DEPLOY)
+      .optional()
+      .describe(
+        'Only after war.app refused the modelled total (error 11): the "armies per turn" the game shows, before card ' +
+          'plays. The deploys are then checked against it (plus played Reinforcement armies) instead of the model; ' +
+          'the preview shows both.',
+      ),
     orders: turnOrdersArg.describe(
       'The turn\'s orders (card plays and discards, deploys and attacks/transfers), territories by id or name, cards by id or type ' +
         'name — e.g. the `orders` array warapp_plan_turn returns. Deploys must total exactly your income plus the ' +
@@ -912,7 +924,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
             'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
             'Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
-            'income uncertain); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
+            'income uncertain; after war.app\'s error 11, resend with the game\'s own number as `income`); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
             'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
             'stack, which war.app moves anyway; warapp_plan_turn obeys these and the kill rates). ' +
             'Always sent as ' +
@@ -926,7 +938,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             openWorld: true,
           }),
           inputSchema: submitSchema,
-          async plan({ game_id, player, orders }) {
+          async plan({ game_id, player, orders, income: givenIncome }) {
             const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
             requireTurnPhase(game);
             const me = await requireSignedInMe(ctx, game, player);
@@ -981,8 +993,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 });
               }
             }
-            const income =
-              incomeFor(graphOf(map), board, me.id, game.settings) + plays.reduce((sum, p) => sum + p.armies, 0);
+            const modelled = incomeFor(graphOf(map), board, me.id, game.settings);
+            const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
+            // #130: war.app's own number, given after an error 11, replaces the model for the check.
+            const income = (givenIncome ?? modelled) + cardArmies;
+            const overridden =
+              givenIncome !== undefined && givenIncome !== modelled
+                ? `income ${givenIncome} given (the game's armies per turn), modelled ${modelled}`
+                : undefined;
             const { warnings } = validateTurn({
               map,
               board: territories,
@@ -998,9 +1016,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 const armies = reinforcementArmies(c, rules);
                 return armies === undefined ? [] : [{ id: c.id, armies }];
               }),
-              incomeUncertain: deployCheckUncertainties(game.settings),
-              poolsUncertain: overrideUncertainties(game.settings),
+              incomeUncertain: givenIncome !== undefined ? [] : deployCheckUncertainties(game.settings),
+              poolsUncertain: [
+                ...overrideUncertainties(game.settings),
+                ...(overridden ? [`The ${overridden}, so the bonus pools may differ too.`] : []),
+              ],
             });
+            if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
             // Deploys first (as the client sends them), merged per territory.
             const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
             for (const d of deploys) {

@@ -86,7 +86,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `player`, and refuses when that account cannot be determined), validates on the live board
   (own sources, adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
   the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a
-  setting the income model does not compute, e.g. an army cap), and refuses outside a turn phase or when my
+  setting the income model does not compute, e.g. an army cap; after an error 11 the caller passes
+  the game's own number as `income`, which replaces the model for the check), and refuses outside a turn phase or when my
   `hasCommittedOrders` is already true (a second `SendOrders` replacing the first is
   unverified; the client uses "Modify orders" = `UnCommit`, which `warapp_uncommit_turn` sends). **Success is read from game state, never
   from the reply:** its bool is the "vacation ended" flag. After sending, GameFeed is re-read:

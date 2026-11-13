@@ -899,6 +899,40 @@ describe('warapp_submit_turn', () => {
     expect(all).toMatch(/armies per turn/);
   });
 
+  it('after error 11 the hint says to resend with the game\'s own number as `income` (#130)', async () => {
+    const s = ordersServer({ error: { code: 11, message: 'x' } });
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });
+    const res = await confirmed({ game_id: GAME, orders: GOOD });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res)).toMatch(/`income`/);
+  });
+
+  it('`income` overrides the modelled income: the deploy total war.app shows is accepted and previewed (#130)', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });
+    const SEVEN = [
+      { kind: 'deploy', territory: 159, armies: 7 },
+      { kind: 'move', from: 159, to: 158, armies: 8 },
+    ];
+    // Without the override the modelled 5 refuses it.
+    const refused = await h.call('warapp_submit_turn', { game_id: GAME, orders: SEVEN });
+    expect(refused.isError).toBe(true);
+    expect(textOf(refused)).toMatch(/deploy 7 armies.*income is 5/);
+    const preview = payload<{ confirmToken: string }>(
+      await h.call('warapp_submit_turn', { game_id: GAME, orders: SEVEN, income: 7 }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    expect(JSON.stringify(preview)).toMatch(/"income":7\b/);
+    expect(JSON.stringify(preview)).toMatch(/income 7 given.*modelled 5/);
+    // The override is still a check: another total is refused against it.
+    const off = await h.call('warapp_submit_turn', { game_id: GAME, orders: SEVEN, income: 6 });
+    expect(off.isError).toBe(true);
+    expect(textOf(off)).toMatch(/deploy 7 armies.*income is 6/);
+    const p = payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: SEVEN, income: 7, confirmToken: preview.confirmToken }));
+    expect(s.sent).toHaveLength(1);
+    expect(p.status).toBeDefined();
+  });
+
   it('when the income model is uncertain (army cap), a deploy total that differs warns instead of refusing (#38)', async () => {
     const s = ordersServer();
     const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 3 };

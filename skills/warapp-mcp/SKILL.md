@@ -176,7 +176,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   name, card plays `{ "kind": "card", "card": <id or type name>, "target"? }`; confirm-gated,
   always as the signed-in account — it refuses another `player`). It validates the orders on
   the live board (cards in the hand, the user's territories, adjacent moves, armies available,
-  deploys = income + played Reinforcement armies), refuses when the hand is over the hold
+  deploys = income + played Reinforcement armies; when war.app refuses the modelled total with
+  error 11, read the "armies per turn" the game shows and resend with it as `income`), refuses when the hand is over the hold
   limit and too few cards are played or discarded, and refuses outside a turn phase or when the user has already
   committed this turn (withdraw them first with `warapp_uncommit_turn`, or modify orders in the game). Report its `status`: `resolved` (the
   turn advanced), `committed` (orders in, waiting on others) or `unknown` — then check
