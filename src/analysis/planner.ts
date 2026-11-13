@@ -256,8 +256,8 @@
 //     would lower income. A capture that lowers income this turn (it completes a negative
 //     bonus) is taken only when (a) it is part of completing a positive bonus this turn,
 //     (b) it is in a focused bonus, or (c) it stages a bonus: with k = ceil(the capture
-//     cost of the bonus's other missing members / this turn's income) turns to finish (≥ 1;
-//     unknown under fog: refused), k ≤ PAYBACK_TURNS and k × every penalty its missing
+//     cost of the bonus's other missing members / the income left after this step) turns
+//     to finish (≥ 1; unknown under fog, or no income left: refused), k ≤ PAYBACK_TURNS and k × every penalty its missing
 //     members carry ≤ PAYBACK_TURNS × its net worth; the reason then says "stages", never
 //     "advances". Pass 3 never takes one. Guard: after the capture passes, while next income
 //     is below this turn's, the latest capture that completes a negative bonus is dropped
@@ -2458,7 +2458,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   /**
    * Rule 4c(c): capturing `t` toward `p` lowers income this turn. It is a staging step, taken
    * only when the bonus completes within PAYBACK_TURNS (k turns: its other missing members'
-   * capture cost / this turn's income, rounded up, at least 1) and the penalties until then —
+   * capture cost / the income left after this step, rounded up, at least 1; none left:
+   * refused) and the penalties until then —
    * at most k × every penalty its missing members carry — are repaid by its net worth within
    * PAYBACK_TURNS turns of completion. Returns the capture's reason and rationale line, or
    * `null` when refused.
@@ -2471,12 +2472,15 @@ export function planTurn(input: PlanInput): TurnPlan {
       restCost += !st || st.owner.kind === 'unknown' || st.armies === null ? Infinity : (captureCost(defenceAt(x), s) ?? Infinity);
     }
     const penalty = p.value - p.net;
-    const turns = income > 0 ? Math.max(1, Math.ceil(restCost / income)) : Infinity;
-    const interim = turns * penalty;
     const step = gainWith([t]);
+    // The income left once this step (and this turn's other captures) lands: the staging
+    // capture itself lowers it, so the turns to finish are counted at that income (#70).
+    const after = income + incomeGain(new Set([...heldNow(), t]));
+    const turns = after > 0 ? Math.max(1, Math.ceil(restCost / after)) : Infinity;
+    const interim = turns * penalty;
     if (turns <= PAYBACK_TURNS && interim <= PAYBACK_TURNS * p.net) {
       return {
-        note: `Stage bonus ${bonusName(p.bonusId)} with ${label(t)} (${step} income until it completes): its other ${rest.length} missing member${rest.length === 1 ? '' : 's'} cost ${restCost}, ~${turns} turns at income ${income}; ${turns} turns × ${penalty} = ${interim} of penalties at most, repaid within ${PAYBACK_TURNS} turns of completion (${PAYBACK_TURNS} × +${p.net} = ${PAYBACK_TURNS * p.net}).`,
+        note: `Stage bonus ${bonusName(p.bonusId)} with ${label(t)} (${step} income until it completes): its other ${rest.length} missing member${rest.length === 1 ? '' : 's'} cost ${restCost}, ~${turns} turns at income ${after} (after this step); ${turns} turns × ${penalty} = ${interim} of penalties at most, repaid within ${PAYBACK_TURNS} turns of completion (${PAYBACK_TURNS} × +${p.net} = ${PAYBACK_TURNS * p.net}).`,
         reason: `stages bonus ${bonusName(p.bonusId)} (+${p.value}, net +${p.net} once complete; ${step} income until then)`,
       };
     }
@@ -2486,7 +2490,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         `Do not take ${label(t)} toward bonus ${bonusName(p.bonusId)}: it costs ${step} income until the bonus completes, ${
           restCost === Infinity
             ? 'and the rest of the bonus cannot be costed (fog)'
-            : `~${turns} turns away (${restCost} armies at income ${income}); ${turns} × ${penalty} = ${interim} of penalties is not repaid by ${PAYBACK_TURNS} × +${p.net}`
+            : `~${turns} turns away (${restCost} armies at income ${after} after this step); ${turns} × ${penalty} = ${interim} of penalties is not repaid by ${PAYBACK_TURNS} × +${p.net}`
         }.`,
       );
     }

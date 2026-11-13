@@ -65,8 +65,8 @@ const SEA = buildGraph(
 describe('negative bonuses (#70): captures are scored by their net effect on income', () => {
   it('(a) only one sea tile affordable: no sea capture, income unchanged', () => {
     // Sea tiles hold 4 (6 to take each); 2 armies movable on 1 + 5 income = 7: one tile.
-    // Staging it (rule c): the other three cost 18, ceil(18 / 5) = 4 turns to finish, and
-    // 4 turns × the cluster's −16 interim penalty = 64 > 10 × the +6 net: refused.
+    // Staging it (rule c) drops income to 1: the other three cost 18, ceil(18 / 1) = 18
+    // turns to finish > PAYBACK_TURNS: refused.
     // Land 2 is held by a big stack so it is out of reach too.
     for (const goal of ['balanced', 'expand', 'complete-bonus'] as PlanGoal[]) {
       const p = planTurn({
@@ -114,8 +114,27 @@ describe('negative bonuses (#70): captures are scored by their net effect on inc
   });
 
   it('stages one tile only when the cluster is repaid within PAYBACK_TURNS (rule c), and says so', () => {
-    // Sea tiles hold 2 (3 each). 5 income: one tile now; the other three cost 9,
-    // ceil(9 / 5) = 2 turns to finish, 2 × 16 = 32 ≤ 10 × 6 = 60: staged.
+    // Sea tiles hold 4 (6 each). 10 income: one tile now, and it drops income to 6. The other
+    // three cost 18 at that income: ceil(18 / 6) = 3 turns, 3 × 16 = 48 ≤ 10 × 6 = 60: staged.
+    const p = planTurn({
+      graph: SEA,
+      board: board([mine(1, 1), neutral(2, 40), neutral(11, 4), neutral(12, 4), neutral(13, 4), neutral(14, 4)]),
+      me: ME,
+      income: 10,
+      settings: STD,
+    });
+    expect(attacks(p).map((m) => m.to)).toEqual([11]);
+    expect(attacks(p)[0]!.reason).toMatch(/^stages bonus/);
+    expect(attacks(p)[0]!.reason).not.toMatch(/advances/);
+    expect(p.expected.nextIncome).toBe(6);
+    expect(p.rationale.join('\n')).toMatch(/~3 turns at income 6 \(after this step\); 3 turns × 16 = 48.*60/);
+    expect(p.warnings.join('\n')).toMatch(/lowers next income from 10 to 6: .*T11 \(#11\).*stages bonus/);
+  });
+
+  it('staging counts turns-to-finish at the income left after the step, not before it', () => {
+    // Sea tiles hold 2 (3 each). 5 income affords one, but it drops income to 1: the other
+    // three (9) take ceil(9 / 1) = 9 turns, 9 × 16 = 144 > 60: refused. (At this turn's
+    // income it would look like 2 turns, 32 ≤ 60, and stall the next turn at income 1.)
     const p = planTurn({
       graph: SEA,
       board: board([mine(1, 1), neutral(2, 40), neutral(11, 2), neutral(12, 2), neutral(13, 2), neutral(14, 2)]),
@@ -123,12 +142,9 @@ describe('negative bonuses (#70): captures are scored by their net effect on inc
       income: 5,
       settings: STD,
     });
-    expect(attacks(p).map((m) => m.to)).toEqual([11]);
-    expect(attacks(p)[0]!.reason).toMatch(/^stages bonus/);
-    expect(attacks(p)[0]!.reason).not.toMatch(/advances/);
-    expect(p.expected.nextIncome).toBe(1);
-    expect(p.rationale.join('\n')).toMatch(/2 turns.*32.*60/);
-    expect(p.warnings.join('\n')).toMatch(/lowers next income from 5 to 1: .*T11 \(#11\).*stages bonus/);
+    expect(attacks(p)).toEqual([]);
+    expect(p.expected.nextIncome).toBe(5);
+    expect(p.rationale.join('\n')).toMatch(/~9 turns away \(9 armies at income 1 after this step\); 9 × 16 = 144/);
   });
 
   it('(d) a plain negative tile next to my land is never taken unless focused, under any goal', () => {
@@ -187,6 +203,51 @@ describe('negative bonuses (#70): captures are scored by their net effect on inc
     expect(attacks(f).map((m) => m.to)).toEqual([21]);
     expect(f.expected.nextIncome).toBe(1);
     expect(f.warnings.join('\n')).toMatch(/lowers next income from 5 to 1/);
+  });
+
+  it('(e) the guard takes back a combined (multi-source) capture whole: softener and finisher', () => {
+    // 1 (12) and 3 (10) both border enemy 21 (10), a lone −4 bonus and part of the enemy's
+    // +5 pair. Neither alone can take it, so the break is a combined capture (3 softens,
+    // 1 finishes); it would complete my −4, so the guard drops both attacks.
+    const cg = buildGraph(
+      makeMap(
+        [1, 3, 21, 22],
+        [
+          [1, 3],
+          [1, 21],
+          [3, 21],
+          [21, 22],
+        ],
+        [
+          [900, 'Enemy pair', 5, [21, 22]],
+          [901, 'Swamp', -4, [21]],
+        ],
+      ),
+    );
+    const s = board([mine(1, 12), mine(3, 10), enemy(21, 10), enemy(22, 1)]);
+    const f = planTurn({ graph: cg, board: s, me: ME, income: 3, settings: STD, options: { focusBonusIds: [901] } });
+    expect(f.multiSourceCaptures.length).toBe(1);
+    expect(attacks(f).map((m) => m.from).sort()).toEqual([1, 3]);
+    const p = planTurn({ graph: cg, board: s, me: ME, income: 3, settings: STD });
+    expect(p.moves).toEqual([]);
+    expect(p.multiSourceCaptures).toEqual([]);
+    expect(p.expected.captures).toEqual([]);
+    expect(p.expected.nextIncome).toBe(3);
+    expect(p.rationale.join('\n')).toMatch(/Drop the attack on T21 \(#21\): it completes Swamp \(#901\) -4.*next income -1 → 3/);
+    expect(p.rationale.join('\n')).not.toMatch(/Attack T21|wears T21/);
+    expect(p.warnings.join('\n')).not.toMatch(/The capture of T21 \(#21\) combines/);
+    // Both stacks are whole again (the softener's armies back, its survivors' return undone),
+    // so the leftover goes to the weaker border, T3 (10 against T1's 12).
+    expect(p.deploys).toEqual([{ territoryId: 3, armies: 3 }]);
+    // Equal stacks (10 and 10, income 5): if the softener's armies stayed spent, T3 would look
+    // weaker and take the leftover; whole again, the tie goes to the lower id, T1.
+    const even = board([mine(1, 10), mine(3, 10), enemy(21, 10), enemy(22, 1)]);
+    const fe = planTurn({ graph: cg, board: even, me: ME, income: 5, settings: STD, options: { focusBonusIds: [901] } });
+    expect(fe.multiSourceCaptures.length).toBe(1);
+    const e = planTurn({ graph: cg, board: even, me: ME, income: 5, settings: STD });
+    expect(e.moves).toEqual([]);
+    expect(e.expected.nextIncome).toBe(5);
+    expect(e.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
   });
 
   it('the planner counts every bonus, "(hidden)" names and negative values included', () => {

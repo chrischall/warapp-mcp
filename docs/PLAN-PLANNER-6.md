@@ -28,7 +28,11 @@ complete negative bonuses while "advancing" a far-off positive one: nextIncome f
   adds penalties is never "advances bonus …".
 - **Guard:** after planning, if `expected.nextIncome` < current income because of negative
   bonuses completed by planned captures, drop the offending captures (latest-added first) unless
-  focused; if one remains (focused), warn loudly with the numbers.
+  focused; if one remains (focused), warn loudly with the numbers. *As built (a deliberate
+  widening):* the guard also keeps staging steps (rule c already justified their cost), commander
+  strikes (they eliminate a player) and finishing-off captures; any it keeps is in the warning.
+  Rule c counts its turns-to-finish at the income left **after** the staging step, since the step
+  itself lowers income.
 - Check `(hidden)` bonuses: confirm the planner sees every bonus in the map data regardless of how
   `warapp_get_map`'s default view presents them; if the map tool hides them by default, say so in
   its output (a count of hidden bonuses) rather than changing the default.
