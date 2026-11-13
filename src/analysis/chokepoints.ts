@@ -110,8 +110,10 @@ export interface ChokepointOptions {
 /**
  * Chokepoints: articulation points; endpoints of bridge edges whose two ends
  * lie in different clusters; and territories of degree ≤ `maxConnectorDegree`
- * touching at least two distinct clusters (their own included). Ordered by
- * number of reasons desc, then degree asc, then id asc.
+ * touching at least two distinct clusters (their own included). A dead end (one
+ * neighbour or none) is never one: nothing passes through it, so holding it blocks
+ * nothing. True cut points (articulation) come first — a route cannot go around
+ * them — then by number of reasons desc, degree asc, id asc.
  */
 export function findChokepoints(g: MapGraph, opts: ChokepointOptions = {}): Chokepoint[] {
   const maxDeg = opts.maxConnectorDegree ?? 2;
@@ -129,6 +131,7 @@ export function findChokepoints(g: MapGraph, opts: ChokepointOptions = {}): Chok
   const out: Chokepoint[] = [];
   for (const id of [...g.territoryById.keys()].sort(byNum)) {
     const ns = neighborsOf(g, id);
+    if (ns.length < 2) continue;
     const own = primaryBonusOf(g, id);
     const others = new Set<number>();
     for (const n of ns) {
@@ -150,5 +153,8 @@ export function findChokepoints(g: MapGraph, opts: ChokepointOptions = {}): Chok
       connectsBonusIds: [...others].sort(byNum),
     });
   }
-  return out.sort((a, b) => b.reasons.length - a.reasons.length || a.degree - b.degree || a.territoryId - b.territoryId);
+  const cut = (c: Chokepoint) => Number(c.reasons[0] === 'articulation');
+  return out.sort(
+    (a, b) => cut(b) - cut(a) || b.reasons.length - a.reasons.length || a.degree - b.degree || a.territoryId - b.territoryId,
+  );
 }
