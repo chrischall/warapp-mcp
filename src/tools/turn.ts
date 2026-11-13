@@ -1195,6 +1195,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...plays.map((c) => ({ kind: 'card' as const, card: c.id })),
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
         ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
+        // #186: the advised Order Delay, placed above its move (war.app accepted the placement live;
+        // whether the later moves wait for the opponent's is not yet seen in a replay).
+        ...(advice.view.orderDelay && !cards.discards.some((c) => c.id === advice.view.orderDelay!.card)
+          ? [advice.view.orderDelay.order]
+          : []),
       ];
 
       return respond(view, VIEWS, (rung) => ({

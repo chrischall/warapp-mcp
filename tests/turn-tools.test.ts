@@ -1506,9 +1506,11 @@ describe('cards in the turn tools', () => {
     ).toEqual(p.moves.map((m) => [m.from.id, m.to.id]));
     expect(turnOrdersArg.safeParse([p.cards.advice!.orderDelay!.order, ...p.orders]).success).toBe(true);
     expect(p.warnings.join('\n')).toMatch(/Play Order Delay above move 1 \(Hornwood \(#159\) → Bolton Moors \(#158\)\)/);
-    expect(p.warnings.join('\n')).toMatch(/`before`.*UNVERIFIED/);
-    // Advice only (#186: until one live commit verifies the placement): the plan neither plays nor discards it.
-    expect(p.orders.some((o) => o.kind === 'card' || o.kind === 'discard')).toBe(false);
+    expect(p.warnings.join('\n')).toMatch(/accepts a card placed among the moves \(verified live\)/);
+    // #186: war.app accepted a placed card live, so the orders carry it, above its move; nothing is discarded.
+    expect(p.orders.filter((o) => o.kind === 'card')).toEqual([{ kind: 'card', card: OD, before: 1 }]);
+    expect(p.orders.some((o) => o.kind === 'discard')).toBe(false);
+    expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
   });
 
   it("plan_turn in a team game reads the team's hand and holds Reinforcement for the team (#163)", async () => {

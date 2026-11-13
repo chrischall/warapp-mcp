@@ -253,13 +253,13 @@ Within one phase the encoder writes card plays after the other orders (an Order 
 every AttackTransfer): the shape of the 2026-11-12 commit that verified phase 50, and still the
 default.
 
-**Order Delay placed among the moves (#186) — UNVERIFIED live.** `warapp_submit_turn` takes
+**Order Delay placed among the moves (#186) — accepted live (2026-11-13), ordering effect UNVERIFIED.** A live 1v1 commit with the card `before: 1` was accepted (no error 10), the card left the hand at resolution, and every order ran; whether the later moves waited for the opponent's was not observable (no opponent order touched them, and no tool reads a resolved turn's order list yet). `warapp_submit_turn` takes
 `before: <move>` on an Order Delay card order (1-based, counting the moves of the given list in
 order; one past the last move, or no `before`, is the default above). The encoder
 (`sendOrderSequence`, `beforeMove` 0-based) then writes the card just above that move — after
 every deploy, still in phase 50 — e.g. `[deploy, attack, OrderDelay, transfer]`; golden tests pin
-the bytes. `warapp_plan_turn` does not emit it: it advises the card in `cards.advice.orderDelay`
-with `before` and the ready card order (`order`) a caller can add to the orders as is. The preview
+the bytes. `warapp_plan_turn` emits it in `orders` (and in `cards.advice.orderDelay` with `before` and the
+ready card order) whenever it advises the card. The preview
 of a placed card says UNVERIFIED. **Reading the result back** after the first live commit that
 uses it: (1) a refusal with error 10 `OrdersInIncorrectOrder` means card plays must close the
 phase — nothing is committed, and the tool says to resend without `before`; (2) accepted, the card
