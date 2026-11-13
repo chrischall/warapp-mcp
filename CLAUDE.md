@@ -248,6 +248,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     - **Local Deployment (#29).** With `localDeployments`, a held bonus's value is a pool
       deployable only on its own territories and only the rest of the income goes anywhere
       (pool rules unverified, `docs/WARAPP-API.md`); `warapp_submit_turn` refuses a broken split.
+      A bonus's own pool defends it (#103): its hold cost is judged net of the pool, the pool
+      goes to its most threatened border and stays there, and a conceded bonus's garrisons are
+      withdrawn only when one of its borders needs more than its pools plus every free army.
     - **No-Split (#31).** With `noSplit`, a territory issues at most one attack or transfer (its
       best; the rest are dropped with a warning, planned amounts kept, not forced all-in);
       `warapp_submit_turn` refuses a split.

@@ -302,7 +302,9 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
       // Short by 3, past the near-miss margin of 2 (#59), and 6 armies still fall to 13.
       const p = local(9);
       expect(p.conceded).toEqual([1]);
-      expect(deployedTo(p, 1)).toBe(0);
+      // #103: T1 cannot be held even with all of Reef's 5 (nothing is free), so it is
+      // withdrawn from — but Reef's pool still defends it, on its threatened border.
+      expect(deployedTo(p, 1)).toBe(5);
       expect(deploySum(p)).toBe(9);
       expect(p.warnings).toContain('T1 (#1) cannot be held with the 5 armies left to deploy (needs 8, protects +5): conceded');
     });
@@ -316,7 +318,7 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
       expect(p.warnings.join('\n')).toMatch(/Bonus Reef \(#501\) \(\+5\) is held though short: its 1 threatened border needs 8, only 6 left to deploy/);
     });
 
-    it('rolls back a partly deployed unit: none of its borders keeps a deploy', () => {
+    it('rolls back a partly deployed unit: no border keeps a hold deploy (the leftover defends it, #103)', () => {
       // Case (b) plus Moat (+5) on 30 31 (mine, quiet): income 12 pools Keep 4 and Moat 5,
       // with 3 anywhere. T1 takes 4 (Keep's pool), then T2 has room for only 3 < 4.
       const kmap = keepMap(false);
@@ -335,7 +337,13 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
       for (const t of [1, 2, 3]) expect(deployedTo(plain, t)).toBe(4);
       const p = run(true);
       expect(p.conceded).toEqual([1, 2, 3]);
-      for (const t of [1, 2, 3]) expect(deployedTo(p, t)).toBe(0);
+      // #103: each border could still be held with Keep's 4 and the 3 free armies, so Keep
+      // might hold: its garrisons stay, and the leftover (Keep's 2 left + 3 free) goes to its
+      // border with the most at stake — not a rolled-back hold deploy.
+      expect(deployedTo(p, 1)).toBe(5);
+      for (const t of [2, 3]) expect(deployedTo(p, t)).toBe(0);
+      expect(p.moves.filter((m) => [1, 2, 3].includes(m.from))).toEqual([]);
+      expect(p.warnings.join('\n')).toMatch(/Bonus Keep \(#601\) \(\+4\) is conceded but might still hold/);
       expect(deploySum(p)).toBe(12);
     });
   });

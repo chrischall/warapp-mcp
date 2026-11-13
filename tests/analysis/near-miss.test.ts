@@ -147,11 +147,14 @@ describe('a near miss on a held bonus is funded, never withdrawn (#59)', () => {
     }
   });
 
-  it('Local Deployment, hopeless: the pool goes inside the bonus (the interior), the border is withdrawn', () => {
+  it('Local Deployment, hopeless: the pool stays inside the bonus on its border (#103), the garrison is withdrawn', () => {
     const b = boardWith(44, 69, 50);
     const p = plan(b, 12, { settings: { ...STD, localDeployments: true } });
     expect(p.conceded).toEqual([1]);
-    expect(deployedTo(p, 1)).toBe(0);
+    // #103: T1 needs 30, more than Mill's 7 and the 5 free armies: truly lost, so the 43
+    // withdraw; the pool still goes to the threatened border, never the interior.
+    expect(deployedTo(p, 1)).toBe(7);
+    expect(deployedTo(p, 2)).toBe(0);
     expect(deploySum(p)).toBe(12);
     expect(withdrawals(p, 1)).toHaveLength(1);
     expect(valid(p, b, 12, true)).toEqual([]);

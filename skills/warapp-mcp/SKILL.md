@@ -206,8 +206,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 `warapp_submit_turn`, and override it when one of these shows up:
 
 1. **A held bonus's border is conceded** (rationale "protects +N … conceded"). This is
-   especially costly when an existing garrison is pulled out after falling just short, or when a
-   Local Deployment pool is parked on interior territories. Check whether an adjacent stack can be
+   especially costly when an existing garrison is pulled out after falling just short. (Under
+   Local Deployment the bonus's own pool already defends its most threatened border and its
+   garrisons stay unless it truly cannot be held.) Check whether an adjacent stack can be
    moved in to hold. At default kill rates defenders kill 70% and attackers 60%, so a border is
    cheaper to hold than to take back.
 2. **The enemy income estimate looks wrong.** Check the "Enemy deploy estimate" line against

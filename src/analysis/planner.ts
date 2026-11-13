@@ -153,7 +153,9 @@
 //     units' feasibility, and is paid for once). A unit pays for itself when that cost
 //     ≤ PAYBACK_TURNS × its value and, as rule 1a asks of every border, ≤ CONCEDE_FACTOR
 //     × its worth (waived when a member was just taken from a weak opponent); one that
-//     does not is conceded whole. A unit that pays is funded before any capture that
+//     does not is conceded whole. Under Local Deployment (#103) those tests (and its score)
+//     use the cost net of the bonus's own pool, max(0, cost − pool): the pool can be
+//     deployed nowhere else. A unit that pays is funded before any capture that
 //     completes no bonus (advances, breaks, other expansion, unless focused): under `defend` with the
 //     other holds, by worth per army (worth = value + the armies its holds save /
 //     PAYBACK_TURNS); under `balanced` it competes on that score with holds and
@@ -227,7 +229,12 @@
 //     A conceded border of a bonus I hold in full whose armies staying still hold
 //     against the expected attack (movable + deploy estimate) is never withdrawn from
 //     (issue #59): its garrison stays, and under Local Deployment its bonus's leftover
-//     pool may go there as if it were not conceded.
+//     pool may go there as if it were not conceded. Under Local Deployment (#103) a border
+//     of a conceded held bonus also keeps its garrison unless the bonus truly cannot be held
+//     (one of its threatened borders needs more than the pools containing it plus every free
+//     army): withdrawing turns "might lose it" into "certainly loses it". A warning says which
+//     case applied ("… is conceded but might still hold" / "… cannot be held"); a kept border
+//     may also take the leftover deploy.
 //  2. Targets: visible neutrals adjacent to a territory I held at the start of
 //     the turn (plus visible enemy territories under `goal: 'complete-bonus'`, and
 //     under `balanced` only enemy territories in a breakable bonus — one whose
@@ -371,8 +378,10 @@
 // its member bonuses' pools); the rest of the income (base, per-territory, card
 // armies) may go anywhere. Every affordability check above uses the armies
 // deployable at that territory; leftover bonus pools are still deployed inside their
-// bonus, on its most threatened member (not conceded first; ties by id). A rationale
-// line names each pool. Off (the default), plans are unchanged.
+// bonus, on its most threatened member: a border next to an enemy always before an
+// interior member (#103), then not withdrawn from, then most threatened, then id. A
+// pool deployed on a border is never moved out the same turn. A rationale line names
+// each pool. Off (the default), plans are unchanged.
 // No-Split (`noSplit`): a territory issues at most one order (attack or transfer)
 // this turn. Orders are planned in decision order, so a territory's first order is
 // its best by the scoring above; any later attack, withdrawal or transfer from it is
@@ -1821,6 +1830,10 @@ export function planTurn(input: PlanInput): TurnPlan {
     members: Threatened[];
     /** Sum of its members' hold costs (a border shared with another unit counted in both). */
     cost: number;
+    /** Local Deployment (#103): its own pool, deployable nowhere else (0 with the flag off). */
+    pool: number;
+    /** What holding it costs beyond its own pool, judged against its worth: max(0, cost − pool). */
+    net: number;
     /** Its value plus the armies its holds save, in income terms. */
     worth: number;
     /** Why it does not pay for itself, if it does not (see {@link UnitLoss}). */
@@ -1832,6 +1845,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   const heldBorders = new Set<number>();
   /** My commander's borders whose whole hold rule 1k deployed. */
   const commanderHeld = new Set<number>();
+  /** Local Deployment: the armies bonus `id`'s own pool holds this turn (0 with the flag off). */
+  const poolOf = (id: number) => (local ? (pools.bonuses.find((p) => p.bonusId === id)?.value ?? 0) : 0);
   const buildUnits = () => {
     for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
       const ts = bonusTerritories(g, b.id);
@@ -1847,13 +1862,19 @@ export function planTurn(input: PlanInput): TurnPlan {
       // It pays back within PAYBACK_TURNS, and (as rule 1a asks of every border) costs at
       // most CONCEDE_FACTOR × its worth, unless a member was just taken from a weak opponent.
       const recent = members.some((m) => m.recentFrom !== undefined);
+      // Local Deployment (#103): the bonus's own armies can be deployed nowhere else, so
+      // spending them on its defence costs nothing — only what holding it needs beyond them.
+      const pool = poolOf(b.id);
+      const net = Math.max(0, cost - pool);
       units.push({
         bonusId: b.id,
         value: b.value,
         members,
         cost,
+        pool,
+        net,
         worth,
-        loss: cost > PAYBACK_TURNS * b.value ? 'payback' : !recent && cost > CONCEDE_FACTOR * worth ? 'factor' : null,
+        loss: net > PAYBACK_TURNS * b.value ? 'payback' : !recent && net > CONCEDE_FACTOR * worth ? 'factor' : null,
         conceded: false,
       });
     }
@@ -1895,12 +1916,24 @@ export function planTurn(input: PlanInput): TurnPlan {
         : loss.economic === 'payback'
           ? `more than it pays back in ${PAYBACK_TURNS} turns (${PAYBACK_TURNS} × +${u.value} = ${PAYBACK_TURNS * u.value})`
           : `more than ${CONCEDE_FACTOR} × its worth (~${Math.round(u.worth * 10) / 10})`;
+    const needs = u.pool > 0 && loss.economic ? `${u.cost} (${u.net} beyond its own ${Math.min(u.pool, u.cost)} local armies)` : `${u.cost}`;
     warnings.push(
-      `conceding bonus ${bonusName(u.bonusId)} (+${u.value}): holding all ${u.members.length} threatened borders (${u.members.map((m) => label(m.id)).join(', ')}) needs ${u.cost}, ${why}`,
+      `conceding bonus ${bonusName(u.bonusId)} (+${u.value}): holding all ${u.members.length} threatened borders (${u.members.map((m) => label(m.id)).join(', ')}) needs ${needs}, ${why}`,
     );
   };
   /** The armies `u` may still deploy, for its warning: a one-border unit's room (pools respected). */
-  const leftFor = (u: Unit) => (u.members.length === 1 ? roomAt(u.members[0]!.id) : budget);
+  const leftFor = (u: Unit) => {
+    if (u.members.length === 1) return roomAt(u.members[0]!.id);
+    if (!local) return budget;
+    // Local Deployment: what may be deployed on its borders together (pools respected).
+    const given = u.members.map((m) => {
+      const n = roomAt(m.id);
+      deploy(m.id, n);
+      return { id: m.id, n };
+    });
+    for (const x of given) undeploy(x.id, x.n);
+    return given.reduce((n, x) => n + x.n, 0);
+  };
   /**
    * Deploy every hold of `u` not yet funded, or nothing: false when they do not all fit.
    * `each` may take over one member's hold (attacking on top of it), given the deploys
@@ -2071,7 +2104,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     // `defend`: units and single borders by worth per army (a recent capture first).
     const key = (it: Item) =>
       'unit' in it
-        ? { recent: it.unit.members.some((m) => m.recentFrom !== undefined), ratio: it.unit.worth / it.unit.cost, cost: it.unit.cost, id: it.unit.members[0]!.id }
+        ? { recent: it.unit.members.some((m) => m.recentFrom !== undefined), ratio: it.unit.worth / it.unit.net, cost: it.unit.cost, id: it.unit.members[0]!.id }
         : { recent: it.border.recentFrom !== undefined, ratio: it.border.worth / it.border.holdCost, cost: it.border.holdCost, id: it.border.id };
     items.sort((a, b) => {
       const x = key(a);
@@ -2094,6 +2127,17 @@ export function planTurn(input: PlanInput): TurnPlan {
   const incoming = new Map<number, number>();
   /** Conceded borders of a held bonus whose garrison stays (it holds against the expected attack). */
   const stood = new Set<number>();
+  /** Bonuses whose Local Deployment concession warning (#103) is already given. */
+  const warnedLocal = new Set<number>();
+  /** Local Deployment (#103): conceded borders of a held bonus that might still hold; the leftover may go there. */
+  const mayHold = new Set<number>();
+  /** Local Deployment: the armies every pool containing `id` holds this turn. */
+  const poolsAt = (id: number) =>
+    local ? pools.bonuses.filter((p) => p.territoryIds.includes(id)).reduce((n, p) => n + p.value, 0) : 0;
+  /** A border no deploy this turn can hold: its hold needs more than its pools and every free army. */
+  const lostAnywayAt = (m: Threatened) => local && m.holdCost > poolsAt(m.id) + pools.anywhere;
+  /** A held bonus that falls whatever this turn deploys: one of its threatened borders cannot be held. */
+  const lostAnyway = (u: Unit) => u.members.some(lostAnywayAt);
   const withdraw = () => {
     if (!conceded.size) return;
     const withdrawals: PlannedMove[] = [];
@@ -2121,6 +2165,37 @@ export function planTurn(input: PlanInput): TurnPlan {
           `Keep the ${n} movable armies on ${label(t)} (not withdrawn): it is a border of held bonus ${held.map((b) => bonusName(b.id)).join(', ')}, and its ${stays} armies need ${take} to take, above the expected ~${expected} attack (movable + deploy estimate).`,
         );
         continue;
+      }
+      // Local Deployment (#103): a conceded held bonus keeps its garrisons unless it truly
+      // cannot be held — some threatened border needs more than its pools and every free army
+      // could give it. Withdrawing turns "might lose it" into "certainly loses it".
+      if (local && held.length) {
+        const mine1 = units.filter((u) => u.conceded && u.members.some((m) => m.id === t));
+        const maybe = mine1.filter((u) => !lostAnyway(u));
+        if (maybe.length) {
+          locked.add(t);
+          stood.add(t);
+          mayHold.add(t);
+          for (const u of maybe) {
+            if (warnedLocal.has(u.bonusId)) continue;
+            warnedLocal.add(u.bonusId);
+            warnings.push(
+              `Bonus ${bonusName(u.bonusId)} (+${u.value}) is conceded but might still hold: each of its ${unitBorders(u)} could be held with its own ${u.pool} local armies and the ${pools.anywhere} free ones, so its garrisons stay and its local armies defend it (withdrawing would make the loss certain); it may fall.`,
+            );
+          }
+          rationale.push(
+            `Keep the ${n} movable armies on ${label(t)} (not withdrawn): bonus ${maybe.map((u) => bonusName(u.bonusId)).join(', ')} might still hold under Local Deployment, and withdrawing would guarantee the loss.`,
+          );
+          continue;
+        }
+        for (const u of mine1) {
+          if (warnedLocal.has(u.bonusId)) continue;
+          warnedLocal.add(u.bonusId);
+          const worst = u.members.find((m) => lostAnywayAt(m))!;
+          warnings.push(
+            `Bonus ${bonusName(u.bonusId)} (+${u.value}) cannot be held: ${label(worst.id)} needs ${worst.holdCost}, more than its own ${poolsAt(worst.id)} local armies and all ${pools.anywhere} free ones could give it, so its garrisons withdraw (it is lost either way).`,
+          );
+        }
       }
       const options = neighborsOf(g, t)
         .filter(keep)
@@ -3944,7 +4019,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (u.conceded) continue;
       const c: Candidate = {
         kind: 'unit',
-        score: u.members.some((m) => m.recentFrom !== undefined) ? Infinity : u.worth / u.cost,
+        score: u.members.some((m) => m.recentFrom !== undefined) ? Infinity : u.worth / u.net,
         cost: u.cost,
         id: u.members[0]!.id,
         value: u.value,
@@ -4203,7 +4278,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const holdLocked = new Set(locked);
   // ---- leftover deploy ----
   if (budget > 0) {
-    const open = (id: number) => !conceded.has(id);
+    const open = (id: number) => !conceded.has(id) || mayHold.has(id);
     const foggedNext = (id: number) =>
       neighborsOf(g, id).filter((n) => {
         const st = state.get(n);
@@ -4333,13 +4408,21 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const p of pools.bonuses) {
         const left = p.value - (charged.get(p.bonusId) ?? 0);
         if (left <= 0) continue;
+        // #103: a member next to a threatening enemy always beats an interior one, even a
+        // border the plan gave up: the pool can be deployed nowhere else.
         const m = [...p.territoryIds].sort(
-          (a, b) => Number(lost(a)) - Number(lost(b)) || danger(b) - danger(a) || a - b,
+          (a, b) =>
+            Number(borders.has(b)) - Number(borders.has(a)) ||
+            Number(lost(a)) - Number(lost(b)) ||
+            danger(b) - danger(a) ||
+            a - b,
         )[0]!;
         rationale.push(
-          `Deploy bonus ${p.name} (#${p.bonusId})'s ${left} to ${label(m)}: Local Deployment keeps them inside the bonus, and it is its most threatened member.`,
+          `Deploy bonus ${p.name} (#${p.bonusId})'s ${left} to ${label(m)}: Local Deployment keeps them inside the bonus, and it is its most threatened ${borders.has(m) ? 'border' : 'member'}${borders.has(m) ? ' (they stay there this turn)' : ''}.`,
         );
         deploy(m, left);
+        // Armies deployed from a pool to defend its border are never moved out the same turn.
+        if (borders.has(m)) locked.add(m);
       }
     }
     if (budget > 0) {
