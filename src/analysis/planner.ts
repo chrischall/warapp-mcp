@@ -561,7 +561,9 @@
 //     (#132: one front leaves the rest of the map to expand into; the rationale says "neutrals in
 //     reach"), completions and advances keep the slots their scores give them (rules 4, 4a) but
 //     fill them closest to completion first: fewest turns to finish at
-//     this income (armies to finish, counting the members I hold, over the income), so a farther
+//     this income (armies to finish, counting the members I hold, over the income — and never
+//     fewer than its depth, #125: the farthest missing member's distance from what I hold, since
+//     a capture's armies attack no further this turn; "N turns (N layers deep)"), so a farther
 //     bonus gets only armies the closer ones cannot use; bonuses as close as each other keep the
 //     score order. Given `previousBoard`, a bonus advanced last turn (a member captured since) keeps
 //     priority unless another is strictly closer; the rationale lists the order and says which
@@ -3777,8 +3779,15 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (took) advancedLast.add(p.bonusId);
     }
   }
-  /** Turns to finish a bonus at this income (with no income, its armies to finish). */
-  const turnsOf = (p: BonusPlan) => (income > 0 ? Math.ceil(p.cost / income) : p.cost);
+  /**
+   * #125: the layers a bonus's missing members are reached in — the farthest one's distance from
+   * what I hold. A capture's armies attack no further this turn, so a chain takes a turn a layer
+   * however cheap its members are.
+   */
+  const fromMine = bfsDistances(g, mine);
+  const depthOf = (p: BonusPlan) => Math.max(0, ...p.remaining.map((t) => fromMine.get(t) ?? 0));
+  /** Turns to finish a bonus at this income, and at least its depth (with no income, its armies to finish). */
+  const turnsOf = (p: BonusPlan) => (income > 0 ? Math.max(Math.ceil(p.cost / income), depthOf(p)) : p.cost);
   const scoreRank = new Map(plans.map((p, i) => [p.bonusId, i]));
   /** Bonus plans closest to completion first (focus first; ties: advanced last turn, then the score order). */
   const byCloseness = committing
@@ -3792,7 +3801,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     : plans;
   const turnsText = (p: BonusPlan) => {
     const n = turnsOf(p);
-    return income > 0 ? `${n} turn${n === 1 ? '' : 's'}` : 'no income';
+    const deep = n > Math.ceil(p.cost / income) ? ` (${n} layers deep)` : '';
+    return income > 0 ? `${n} turn${n === 1 ? '' : 's'}${deep}` : 'no income';
   };
   if (committing && byCloseness.length > 1) {
     const why = holdsBonus

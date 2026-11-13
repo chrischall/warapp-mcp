@@ -188,3 +188,23 @@ describe('#125 per-territory income counts', () => {
     expect(p.rationale.join('\n')).not.toMatch(/Skip bonus B100/);
   });
 });
+
+describe('#125 turns to finish count the layers a chain needs', () => {
+  // Chain (+3): 2, 3, 4 in a line from my 1 — 2-army neutrals, 9 to finish, but one layer a turn:
+  // 3 turns. Pair (+3): 5, a 6-neutral beside my 1 — 10 to finish, 2 turns at income 5.
+  const sc: Scenario = {
+    edges: '1-2 2-3 3-4 1-5 1-9 9-10',
+    bonuses: [
+      [100, 3, [1, 2, 3, 4]],
+      [101, 3, [5, 9]],
+    ],
+    cells: { 1: 'M4', 2: 'n2', 3: 'n2', 4: 'n2', 5: 'n6', 9: 'M1', 10: 'E2' },
+    turn: 3,
+    income: 5,
+  };
+  it('a three-deep chain is three turns away, not one', () => {
+    const p = plan(sc);
+    const line = p.rationale.find((l) => l.includes('closest to completion first'));
+    expect(line).toMatch(/B101 \(#101\) 10 armies to finish, 2 turns at income 5, B100 \(#100\) 9, 3 turns/);
+  });
+});
