@@ -3447,7 +3447,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (!b || !targets.has(n) || broken(b) || orderOf(t.id)) return false;
       const o = breakOption(n);
       if (t.holdCost + o.cost > spareAt(t.id) - rest) return false;
-      if (secondFront(b, (weight * b.value) / Math.max(1, o.cost))) return false;
+      // Scored as the break candidates are: its armies plus the frontier it adds (#71).
+      if (secondFront(b, (weight * b.value) / Math.max(1, targetScoreCost(o.t)))) return false;
       const before = budget;
       noteRecent(t);
       deploy(t.id, t.holdCost);
