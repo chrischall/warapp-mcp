@@ -1,8 +1,8 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeRequest, fromHex } from '../src/protocol/codec.js';
 import type { GameUpdate } from '../src/push/listener.js';
-import { checkOf, isWaitingOn, waitForTurn, type GameCheck } from '../src/tools/push.js';
+import { checkOf, coalesced, isWaitingOn, waitForTurn, type GameCheck } from '../src/tools/push.js';
 import { normalizeGame } from '../src/normalize.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { fakeSocketIo, framed, gameUpdatedHex, type FakeSocketIo } from './push/fake-socket.js';
@@ -27,6 +27,7 @@ const COMMITTED = () => game('Playing', { hasCommittedOrders: 'True' });
 let h: Harness | undefined;
 let socket: FakeSocketIo | undefined;
 afterEach(async () => {
+  vi.useRealTimers();
   socket?.close();
   await h?.harness.close();
   h = undefined;
@@ -83,7 +84,7 @@ const call = (name: string, args: Record<string, unknown>, options?: Parameters<
   h!.harness.client.callTool({ name, arguments: args }, options) as Promise<CallToolResult>;
 
 describe('warapp_wait_for_turn', () => {
-  it('returns at once when a game is already waiting on me, and subscribes to it', async () => {
+  it('returns at once when a game is already waiting on me, without watching it', async () => {
     const { socket } = await setup([READY()]);
     const p = payload(await call('warapp_wait_for_turn', { game_ids: [GAME] }));
     expect(p.untrusted_content).toBe(true);
@@ -92,8 +93,10 @@ describe('warapp_wait_for_turn', () => {
     expect(p.games).toEqual([{ id: GAME, name: 'Synthetic lobby game', state: 'Playing', turn: 3, waitingOnYou: true }]);
     expect(p.updates).toBe(0);
     expect(p.next).toMatch(/warapp_plan_turn/);
-    await until(() => subscribes(socket).length === 1, 'subscribe');
-    expect(subscribes(socket)).toEqual([[`Game.${GAME}`]]);
+    // Nothing to wait for: the push socket is not started and nothing is subscribed (#131).
+    await flush();
+    expect(socket.handshakes()).toBe(0);
+    expect(subscribes(socket)).toEqual([]);
     // A turn check needs no map: never download one for it (#131).
     expect(h!.calls.every((c) => c.url.includes('GetMap=false'))).toBe(true);
   });
@@ -129,10 +132,23 @@ describe('warapp_wait_for_turn', () => {
 
   it('keeps waiting when an update is not my turn, then times out', async () => {
     const { h, socket } = await setup([COMMITTED()]);
+    // The wait's timeout is a fake timer: it fires only when the test advances it, never under load.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const tick = () => new Promise((r) => setImmediate(r));
     const pending = call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 1 });
     // The initial check, then a re-read when the socket first connects (#131).
-    await until(() => subscribes(socket).length === 1 && h.calls.length === 2, 'subscribe + first checks');
+    for (let i = 0; i < 500 && !(subscribes(socket).length === 1 && h.calls.length === 2); i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await tick();
+    }
+    expect(subscribes(socket)).toHaveLength(1);
     socket.push(`3:::${gameUpdatedHex(GAME)}`);
+    for (let i = 0; i < 500 && h.calls.length < 3; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await tick();
+    }
+    await vi.advanceTimersByTimeAsync(1000);
+    vi.useRealTimers();
     const p = payload(await pending);
     expect(p.status).toBe('timed_out');
     expect(p).not.toHaveProperty('ready');
@@ -164,6 +180,10 @@ describe('warapp_wait_for_turn', () => {
     const r2 = await call('warapp_wait_for_turn', { game_ids: [GAME] });
     expect(r2.isError).toBe(true);
     expect(textOf(r2)).toMatch(/not a player in game 12345678/);
+    // Membership is checked before watching: a game I do not play in is never subscribed (#131).
+    await flush();
+    expect(socket!.handshakes()).toBe(0);
+    expect(payload(await call('warapp_recent_events', {})).listening).toMatchObject({ started: false, watching: [] });
   });
 
   it('without game_ids, watches every game of mine being played or picked, from GetMyGames', async () => {
@@ -174,8 +194,9 @@ describe('warapp_wait_for_turn', () => {
     expect(p.status).toBe('your_turn');
     expect(p.ready).toEqual([GAME]);
     expect(p.watching).toEqual([GAME, 23456789]);
-    await until(() => subscribes(socket).length === 1, 'subscribe');
-    expect(subscribes(socket)[0]!.sort()).toEqual([`Game.${GAME}`, 'Game.23456789']);
+    // Checked first; one is ready, so neither is subscribed (#131).
+    expect(h!.calls.map((c) => new URL(c.url).searchParams.get('GameID')).sort()).toEqual([String(GAME), '23456789']);
+    expect(subscribes(socket)).toEqual([]);
   });
 
   it('without game_ids, refuses when none of my games is in play', async () => {
@@ -213,12 +234,13 @@ describe('warapp_wait_for_turn', () => {
 
 describe('warapp_recent_events', () => {
   it('lists pushes newest first, filtered and limited, with the socket state', async () => {
-    const { socket } = await setup([READY()]);
+    const { h, socket } = await setup([COMMITTED()]);
     let p = payload(await call('warapp_recent_events', {}));
     expect(p.events).toEqual([]);
     expect(p.listening).toEqual({ started: false, connected: false, watching: [] });
-    await call('warapp_wait_for_turn', { game_ids: [GAME] });
-    await until(() => subscribes(socket).length === 1, 'subscribe');
+    const ac = new AbortController();
+    const waiting = call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 600 }, { signal: ac.signal });
+    await until(() => subscribes(socket).length === 1 && h.calls.length === 2, 'subscribe + first checks');
     socket.push(framed(`3:::${gameUpdatedHex(GAME)}`, `3:::${gameUpdatedHex(77)}`, `3:::${gameUpdatedHex(GAME)}`));
     for (let i = 0; i < 50; i++) {
       p = payload(await call('warapp_recent_events', {}));
@@ -233,21 +255,52 @@ describe('warapp_recent_events', () => {
     expect((p.events as Array<{ game_id: number }>).map((e) => e.game_id)).toEqual([77]);
     p = payload(await call('warapp_recent_events', { limit: 1 }));
     expect(p.events).toHaveLength(1);
+    // Once the wait ends, its game is unwatched (#131); the events stay.
+    ac.abort();
+    await expect(waiting).rejects.toThrow();
+    for (let i = 0; i < 50; i++) {
+      p = payload(await call('warapp_recent_events', {}));
+      if (((p.listening as { watching: number[] }).watching).length === 0) break;
+      await flush();
+    }
+    expect((p.listening as { watching: number[] }).watching).toEqual([]);
+    expect(p.events).toHaveLength(3);
   });
 });
 
 describe('waitForTurn', () => {
-  function fakePush() {
+  // Fake timers: the wait's timeout and progress ticks never race the test (no wall-clock sleeps).
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  /** Run due timers and pending promise callbacks until `cond` holds (no time passes). */
+  async function settleUntil(cond: () => boolean, what: string): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      if (cond()) return;
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    throw new Error(`never reached: ${what}`);
+  }
+  function fakePush(subscribesNow = false) {
     const fns = new Set<(u: GameUpdate) => void>();
     const reconnectFns = new Set<(e: { reconnect: boolean }) => void>();
     const watched: number[][] = [];
+    const released: number[][] = [];
     return {
       watched,
+      released,
       emit: (gameId: number) => fns.forEach((f) => f({ gameId, at: 'now' })),
       listeners: () => fns.size,
       push: {
         watch: async (ids: readonly number[]) => {
           watched.push([...ids]);
+          return subscribesNow;
+        },
+        release: (ids: readonly number[]) => {
+          released.push([...ids]);
         },
         onUpdate: (f: (u: GameUpdate) => void) => {
           fns.add(f);
@@ -265,6 +318,14 @@ describe('waitForTurn', () => {
     };
   }
   const notReady = (id: number): GameCheck => ({ id, name: null, state: 'Playing', turn: 1, waitingOnYou: false });
+  /** A check whose reads the test resolves one at a time. */
+  function heldCheck() {
+    const reads: Array<{ id: number; resolve: (c: GameCheck) => void }> = [];
+    return {
+      reads,
+      check: (id: number) => new Promise<GameCheck>((resolve) => reads.push({ id, resolve })),
+    };
+  }
 
   it('records a failed re-read and keeps waiting; ticks progress; cleans up its listener', async () => {
     const fp = fakePush();
@@ -282,12 +343,12 @@ describe('waitForTurn', () => {
         return n >= 4 ? { ...notReady(id), waitingOnYou: true } : notReady(id);
       },
     });
-    await until(() => n === 2, 'initial checks');
+    await settleUntil(() => n === 2 && fp.watched.length === 1, 'initial checks');
     expect(fp.watched).toEqual([[1, 2]]);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(messages.filter((m) => /Still waiting/.test(m)).length).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(messages.filter((m) => /Still waiting/.test(m))).toHaveLength(4);
     fp.emit(2);
-    await until(() => n === 3, 'failed re-read');
+    await settleUntil(() => n === 3, 'failed re-read');
     fp.emit(2);
     const out = await pending;
     expect(out.status).toBe('your_turn');
@@ -312,7 +373,7 @@ describe('waitForTurn', () => {
         return id === 2 && turnArrived ? { ...notReady(id), waitingOnYou: true } : notReady(id);
       },
     });
-    await until(() => checks.length === 2, 'initial checks');
+    await settleUntil(() => checks.length === 2 && fp.watched.length === 1, 'initial checks');
     // Game 2's turn came during the gap: no push for it ever arrives.
     turnArrived = true;
     fp.reconnect();
@@ -338,16 +399,79 @@ describe('waitForTurn', () => {
         return notReady(id);
       },
     });
-    await until(() => checks.length === 1, 'initial check');
+    await settleUntil(() => checks.length === 1 && fp.watched.length === 1, 'initial check');
     fp.emit(1);
     fp.reconnect();
     fp.reconnect();
+    await vi.advanceTimersByTimeAsync(50);
     const out = await pending;
     expect(out.status).toBe('timed_out');
     expect(out.reconnects).toBe(2);
     // The initial read, then one re-read: the push and both reconnects collapse while queued.
     expect(checks).toEqual([1, 1]);
   });
+
+  it('debounces re-reads per game: a burst of pushes is one read in flight and one queued (#131)', async () => {
+    const fp = fakePush();
+    const { reads, check } = heldCheck();
+    const pending = waitForTurn({ gameIds: [1, 2], timeoutMs: 60_000, push: fp.push, check });
+    await settleUntil(() => reads.length === 2, 'initial reads');
+    reads.forEach((r) => r.resolve(notReady(r.id)));
+    await settleUntil(() => fp.watched.length === 1, 'watch');
+    for (let i = 0; i < 10; i++) fp.emit(1);
+    await settleUntil(() => reads.length === 3, 'first re-read');
+    // While game 1's re-read is in flight, a second burst queues one more read, and no more.
+    for (let i = 0; i < 10; i++) fp.emit(1);
+    fp.emit(2);
+    reads[2]!.resolve(notReady(1));
+    await settleUntil(() => reads.length === 4, 'queued re-read');
+    reads[3]!.resolve(notReady(reads[3]!.id));
+    await settleUntil(() => reads.length === 5, 'game 2 re-read');
+    reads[4]!.resolve(notReady(reads[4]!.id));
+    await vi.advanceTimersByTimeAsync(60_000);
+    const out = await pending;
+    expect(out.status).toBe('timed_out');
+    expect(out.updates).toBe(21);
+    expect(reads.map((r) => r.id)).toEqual([1, 2, 1, 1, 2]);
+  });
+
+  it('checks membership before watching: a game the check refuses is never watched (#131)', async () => {
+    const fp = fakePush();
+    const out = waitForTurn({
+      gameIds: [1, 2],
+      timeoutMs: 5000,
+      push: fp.push,
+      check: async (id) => {
+        if (id === 2) throw new Error('The signed-in war.app account is not a player in game 2.');
+        return notReady(id);
+      },
+    });
+    await expect(out).rejects.toThrow(/not a player in game 2/);
+    expect(fp.watched).toEqual([]);
+    expect(fp.released).toEqual([]);
+    expect(fp.listeners()).toBe(0);
+    expect(fp.connectListeners()).toBe(0);
+  });
+
+  it('re-reads every game when watch() subscribed them on a live session after the initial check (#131)', async () => {
+    // The socket was already connected: a turn that resolved between the check and the Subscribe
+    // sent no push here, and no connect event follows.
+    const fp = fakePush(true);
+    const checks: number[] = [];
+    const pending = waitForTurn({
+      gameIds: [1],
+      timeoutMs: 5000,
+      push: fp.push,
+      check: async (id) => {
+        checks.push(id);
+        return checks.length > 1 ? { ...notReady(id), waitingOnYou: true } : notReady(id);
+      },
+    });
+    const out = await pending;
+    expect(out.status).toBe('your_turn');
+    expect(checks).toEqual([1, 1]);
+  });
+
   it('re-reads every game when the socket first connects after the initial check (#131)', async () => {
     // The first wait of a process: watch() returns before the socket connects, the initial check
     // runs, and a turn that resolves before the first Subscribe sends no push to this process.
@@ -363,7 +487,7 @@ describe('waitForTurn', () => {
         return turnArrived ? { ...notReady(id), waitingOnYou: true } : notReady(id);
       },
     });
-    await until(() => checks.length === 1, 'initial check');
+    await settleUntil(() => checks.length === 1 && fp.watched.length === 1, 'initial check');
     turnArrived = true;
     fp.connect(false);
     const out = await pending;
@@ -373,22 +497,23 @@ describe('waitForTurn', () => {
     expect(fp.connectListeners()).toBe(0);
   });
 
-  it('releases its watch when done and forgets a game that has finished (#131)', async () => {
+  it('does not watch a game that has finished, forgets it, and releases its watch when done (#131)', async () => {
     const fp = fakePush();
-    const released: number[][] = [];
     const forgotten: number[][] = [];
-    const push = { ...fp.push, release: (ids: readonly number[]) => released.push([...ids]), forget: (ids: readonly number[]) => forgotten.push([...ids]) };
-    const out = await waitForTurn({
+    const push = { ...fp.push, forget: (ids: readonly number[]) => forgotten.push([...ids]) };
+    const pending = waitForTurn({
       gameIds: [1, 2],
       timeoutMs: 20,
       push,
       check: async (id) => (id === 1 ? { ...notReady(id), state: 'Finished' } : notReady(id)),
     });
+    await vi.advanceTimersByTimeAsync(20);
+    const out = await pending;
     expect(out.status).toBe('timed_out');
+    expect(fp.watched).toEqual([[2]]);
     expect(forgotten).toEqual([[1]]);
-    expect(released).toEqual([[1, 2]]);
+    expect(fp.released).toEqual([[2]]);
   });
-
 
   it('rejects at once for an already-aborted signal', async () => {
     const fp = fakePush();
@@ -398,6 +523,37 @@ describe('waitForTurn', () => {
       waitForTurn({ gameIds: [1], timeoutMs: 1000, push: fp.push, signal: ac.signal, check: async (id) => notReady(id) }),
     ).rejects.toThrow('gone');
     expect(fp.listeners()).toBe(0);
+  });
+});
+
+describe('coalesced', () => {
+  it('runs at most one read per key in flight and one queued; callers while one is queued share it (#131)', async () => {
+    const started: Array<{ key: number; resolve: (v: string) => void; reject: (e: Error) => void }> = [];
+    const read = coalesced(
+      (key: number) => new Promise<string>((resolve, reject) => started.push({ key, resolve, reject })),
+    );
+    const a = read(1);
+    const b = read(1);
+    const c = read(1);
+    const other = read(2);
+    expect(started.map((s) => s.key)).toEqual([1, 2]);
+    expect(b).toBe(c);
+    started[0]!.resolve('first');
+    expect(await a).toBe('first');
+    // The queued read starts once the first settles: b and c see data read after they asked.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(started.map((s) => s.key)).toEqual([1, 2, 1]);
+    started[2]!.reject(new Error('down'));
+    await expect(b).rejects.toThrow('down');
+    await expect(c).rejects.toThrow('down');
+    started[1]!.resolve('two');
+    expect(await other).toBe('two');
+    // Nothing in flight: the next call reads afresh.
+    const d = read(1);
+    expect(started).toHaveLength(4);
+    started[3]!.resolve('again');
+    expect(await d).toBe('again');
   });
 });
 

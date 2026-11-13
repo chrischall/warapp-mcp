@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { decodeRequest, encodeReply, fromHex, toHex } from '../../src/protocol/codec.js';
 import { Method } from '../../src/protocol/methods.js';
-import { MAX_SUBSCRIBE_RETRIES, PushListener } from '../../src/push/listener.js';
+import { MAX_SUBSCRIBE_RETRIES, MAX_WATCHED_GAMES, PushListener } from '../../src/push/listener.js';
 import { waitForTurn } from '../../src/tools/push.js';
 import {
   parseHandshake,
@@ -503,6 +503,54 @@ describe('PushListener', () => {
     expect(subscribedTopics(r)[1]).toEqual({ sid: 'sid2', topics: ['Game.6'] });
   });
 
+  it('unwatches a game once its last watch is released: it is not re-subscribed after a reconnect (#131)', async () => {
+    const r = rig();
+    const l = listener(r);
+    await l.watch([5, 6]);
+    await l.watch([6]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    l.release([5, 6]);
+    // Game 6 is still held by the second watch; game 5 is no longer watched.
+    expect(l.status().watching).toEqual([6]);
+    r.socket.push('0::');
+    await until(() => subscribedTopics(r).length === 2, 're-subscribe');
+    expect(subscribedTopics(r)[1]).toEqual({ sid: 'sid2', topics: ['Game.6'] });
+    // Watching it again on the same session needs no new Subscribe when it is still subscribed there.
+    expect(await l.watch([6])).toBe(false);
+    expect(await l.watch([5])).toBe(true);
+    expect(subscribedTopics(r)[2]).toEqual({ sid: 'sid2', topics: ['Game.5'] });
+  });
+
+  it('watch() says whether it sent a Subscribe on a live session (the caller re-reads for the gap) (#131)', async () => {
+    const r = rig();
+    const l = listener(r);
+    // Not connected yet: the connect subscribes (and tells the connect listeners).
+    expect(await l.watch([1])).toBe(false);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    expect(await l.watch([1])).toBe(false);
+    expect(await l.watch([2])).toBe(true);
+  });
+
+  it('caps the games watched at once: a watch past the cap throws before starting or subscribing anything (#131)', async () => {
+    const r = rig();
+    const l = new PushListener({ transport: r.transport, sleep: async () => {}, maxGames: 3 });
+    stoppers.push(() => {
+      l.stop();
+      r.socket.close();
+    });
+    await expect(l.watch([1, 2, 3, 4])).rejects.toThrow(/at most 3 games/);
+    expect(l.status()).toEqual({ started: false, connected: false, watching: [], refused: {} });
+    await l.watch([1, 2]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    await expect(l.watch([2, 3, 4])).rejects.toThrow(/at most 3 games/);
+    // Games already watched do not count twice; a released game frees its place.
+    await l.watch([2, 3]);
+    l.release([1]);
+    await l.watch([4]);
+    expect(l.status().watching).toEqual([2, 3, 4]);
+    expect(MAX_WATCHED_GAMES).toBeGreaterThanOrEqual(20);
+  });
+
   it('idles: once every watch is released, the socket stops after the idle delay (#131)', async () => {
     const r = rig();
     const timers: Array<{ ms: number; fn: () => void; cleared: boolean }> = [];
@@ -630,7 +678,7 @@ describe('PushListener', () => {
     await l.watch([1]);
     await until(() => subscribedTopics(r).length === 1, 'subscribe');
     failPosts = true;
-    await expect(l.watch([2])).resolves.toBeUndefined();
+    await expect(l.watch([2])).resolves.toBe(false);
     // The first try, then the retries on the live session (#131), all refused.
     await until(() => refusedPosts === 1 + MAX_SUBSCRIBE_RETRIES, 'retries');
     await flush();

@@ -1,7 +1,8 @@
 // The process's war.app turn-notification listener: one push socket per
 // process (many processes sharing the bridge port collide — it must live in
 // the MCP server's own long-lived process), started lazily on first use,
-// subscribed to `Game.<id>` for every game anyone has asked to watch. Each
+// subscribed to `Game.<id>` for every game a wait holds (released: unwatched;
+// at most MAX_WATCHED_GAMES at once). Each
 // GameUpdated push becomes `{ gameId, at }`; the push carries no detail, so a
 // consumer re-reads GameFeed for that game.
 //
@@ -80,12 +81,19 @@ export interface PushListenerOptions {
   idleMs?: number;
   /** The idle timer (tests). */
   idleTimer?: SetTimer;
+  /** The most games watched at once (default MAX_WATCHED_GAMES). */
+  maxGames?: number;
 }
 
 export const DEFAULT_MAX_EVENTS = 100;
 export const DEFAULT_IDLE_MS = 10 * 60_000;
 /** Failed Subscribes in a row retried on the live session before leaving it to the next reconnect. */
 export const MAX_SUBSCRIBE_RETRIES = 5;
+/**
+ * The most games watched at once, across every open wait (each wait watches at most 20): a bound
+ * on what the process subscribes to and re-subscribes on every reconnect (#131).
+ */
+export const MAX_WATCHED_GAMES = 100;
 
 const defaultExtras = (): ExtrasUp => ({
   dict: new Map(),
@@ -164,9 +172,24 @@ export class PushListener {
   /**
    * Watch these games: start the socket if needed and subscribe to any not
    * yet subscribed. Never throws for a socket failure — the socket keeps
-   * reconnecting in the background and subscribes on connect.
+   * reconnecting in the background and subscribes on connect. Throws, before
+   * changing anything, when it would watch more than `maxGames` games at once.
+   * Each watch is ended by one `release` (the unwatch).
+   *
+   * Resolves true when it sent a Subscribe on the live session: a push for those games before it
+   * was lost, so a caller that read them first re-reads them. False otherwise — already subscribed
+   * here, or not connected (the connect subscribes and tells the connect listeners), or the
+   * Subscribe failed (its retry tells the connect listeners once it goes through).
    */
-  async watch(gameIds: readonly number[]): Promise<void> {
+  async watch(gameIds: readonly number[]): Promise<boolean> {
+    const max = this.opts.maxGames ?? MAX_WATCHED_GAMES;
+    const total = new Set([...this.games, ...gameIds]).size;
+    if (total > max) {
+      throw new Error(
+        `Watching ${total} war.app games at once is over the limit: the push listener watches at most ${max} games. ` +
+          'Wait on fewer games, or let another wait finish first.',
+      );
+    }
     this.cancelIdle?.();
     this.cancelIdle = undefined;
     for (const id of gameIds) {
@@ -174,25 +197,32 @@ export class PushListener {
       this.holds.set(id, (this.holds.get(id) ?? 0) + 1);
     }
     this.socket.start();
-    if (this.socket.connected) {
-      try {
-        if (await this.subscribePending()) this.resubscribed();
-      } catch (e) {
-        // Retried on this session (with backoff); a reconnect re-subscribes everything anyway.
-        this.subscribeFailed(e);
-      }
+    if (!this.socket.connected) return false;
+    try {
+      if (!(await this.subscribePending())) return false;
+      this.resubscribed();
+      return true;
+    } catch (e) {
+      // Retried on this session (with backoff); a reconnect re-subscribes everything anyway.
+      this.subscribeFailed(e);
+      return false;
     }
   }
 
   /**
-   * End a watch (each `watch` is released once). When no watch is left, the socket stops after
-   * the idle delay — and forgets its games — unless a new watch comes first.
+   * End a watch (each `watch` is released once) — the unwatch. A game no watch holds any more is
+   * no longer watched: it is not re-subscribed on a reconnect and leaves room under the cap (#131).
+   * (No Unsubscribe is sent: a push for it on the current session is still recorded.) When no
+   * watch is left, the socket stops after the idle delay unless a new watch comes first.
    */
   release(gameIds: readonly number[]): void {
     for (const id of gameIds) {
       const n = (this.holds.get(id) ?? 0) - 1;
       if (n > 0) this.holds.set(id, n);
-      else this.holds.delete(id);
+      else {
+        this.holds.delete(id);
+        this.games.delete(id);
+      }
     }
     if (this.holds.size || this.cancelIdle || !this.socket.started) return;
     const timer = this.opts.idleTimer ?? realSetTimer;

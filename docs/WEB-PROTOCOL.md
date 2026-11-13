@@ -513,7 +513,9 @@ resolving. `src/push/listener.ts` holds one socket per process, (re)subscribes t
 `Game.<id>` on each connect, answers heartbeats, and reconnects with backoff. A Subscribe that fails
 (not sent, or answered with a server error) is retried on the same session; when the retry goes
 through, consumers are told to re-read GameFeed too, since a turn that resolved before it sent no
-push. Over xhr-polling, a poll answered at once with nothing to say is paced (doubling from the
+push. A game is watched only while a wait holds it and only after the wait has checked the account
+plays in it; no Unsubscribe is sent, so a released game stays subscribed until the session ends but
+is not re-subscribed. Over xhr-polling, a poll answered at once with nothing to say is paced (doubling from the
 initial backoff, capped at 5 s), so a push is at most a few seconds late.
 
 ### WebSocket transport (verified live 2026-11-12, GitHub issue #32)
