@@ -97,7 +97,28 @@ interface CheckPayload {
   income: number;
   deployed: number;
   warnings: string[];
-  atRisk: { commander: number; territories: Array<{ territory: Named; replies: number }>; territoriesMore?: number; captures: unknown[]; bonuses: unknown[] };
+  atRisk: {
+    commander: number;
+    territories: Array<{ territory: Named; replies: number }>;
+    territoriesMore?: number;
+    captures: Array<{ territory: Named; replies: number }>;
+    capturesMore?: number;
+    bonuses: unknown[];
+    bonusesMore?: number;
+  };
+  exposedNextTurn: Array<{
+    text: string;
+    territory: Named;
+    armies: number;
+    needs: number;
+    attackers: number;
+    from: Named;
+    via: Named;
+    opponent: Named;
+    bonusesLost: Array<Named & { value: number }>;
+    incomeLost: number;
+  }>;
+  exposedMore?: number;
   blindBorders: Named[];
   notCovered: string[];
   assumptions?: string[];
@@ -336,6 +357,66 @@ describe('warapp_check_plan', () => {
     expect(full.otherReplies.length).toBeGreaterThan(2);
     expect(full.harmful).toBe(compact.harmful);
     expect(full.otherReplies.slice(0, 2)).toEqual(compact.otherReplies);
+  });
+
+  it('looks one turn ahead: a territory two steps from a stack, behind one it can take this turn (#156)', async () => {
+    // Bob's 20 on Knife Hills touch Hornwood (1 army) but not Sheepshead Hills (1 army) behind it.
+    const two: SyntheticTerritory[] = [
+      { id: 135, fogLevel: 1, owner: BOB.inGame, armies: 20 },
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 1 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 1 },
+      { id: 158, fogLevel: 2, owner: 0, armies: 2 },
+      { id: 157, fogLevel: 2, owner: 0, armies: 2 },
+    ];
+    h = await live(two);
+    const p = await check({ orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
+    // Two ways through: Hornwood (6 after my deploy) or the 2-army neutral Bolton Moors. The neutral
+    // costs the stack less (23 survive, against 20), so that is the path reported: 23 + 5 − 1 = 27.
+    expect(p.exposedNextTurn).toEqual([
+      expect.objectContaining({
+        territory: { id: 161, name: 'Sheepshead Hills' },
+        armies: 1,
+        attackers: 27,
+        needs: 17,
+        from: { id: 135, name: 'Knife Hills' },
+        via: { id: 158, name: 'Bolton Moors' },
+        opponent: { id: Number(BOB.feed), name: 'Bob' },
+        bonusesLost: [],
+        incomeLost: 0,
+      }),
+    ]);
+    expect(p.exposedNextTurn[0]!.text).toBe(
+      `Next turn player ${BOB.feed} can reach territory 161 (1 there) with 27 from territory 135 by taking territory 158 this turn: it needs 17 to hold.`,
+    );
+    expect(p.summary).toMatch(/Next turn: 1 territory .* within reach/);
+    // Enough armies behind, and it is no longer listed.
+    const held = await check({ orders: [{ kind: 'deploy', territory: 161, armies: 60 }] });
+    expect(held.exposedNextTurn).toEqual([]);
+    expect(held.summary).not.toMatch(/Next turn/);
+  });
+
+  it('counts what every capped at-risk list leaves out (#154)', async () => {
+    // Twelve captures of 1-army neutrals around my stacks, all beside Bob's 60: each can be undone.
+    const targets = [157, 158];
+    h = await live([
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+      { id: 157, fogLevel: 2, owner: 0, armies: 1 },
+      { id: 158, fogLevel: 2, owner: 0, armies: 1 },
+      { id: 135, fogLevel: 1, owner: BOB.inGame, armies: 60 },
+      { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 60 },
+    ]);
+    const p = await check({
+      orders: [
+        { kind: 'move', from: 161, to: 157, armies: 2 },
+        { kind: 'move', from: 159, to: 158, armies: 2 },
+      ],
+    });
+    expect(p.plan.captures.map((t) => t.id).sort()).toEqual(targets);
+    // Both lists fit here, so nothing is left out and no count is given.
+    expect(p.atRisk.capturesMore).toBeUndefined();
+    expect(p.atRisk.bonusesMore).toBeUndefined();
+    expect(p.atRisk.captures.length).toBeGreaterThan(0);
   });
 
   it('refuses outside a turn phase', async () => {

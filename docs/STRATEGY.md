@@ -81,6 +81,14 @@ together, a chain of attacks under Multi-Attack, and cards other than my own Ord
 so "safe" only ever means safe against these, and when no reply could be tried the answer is
 "nothing tested" (`safe: null`), never "safe".
 
+**One turn ahead (`exposedNextTurn`, #156).** A territory no enemy stack touches today can be a
+border tomorrow. For each stack, each territory beside it that it can take this turn (mine or
+neutral) and each territory of mine beyond that one, both turns are carried out: the stack takes
+the one in between with its deploy, then attacks on with the survivors and its next deploy, while
+I add nothing. A territory that falls is listed with the armies it would need to hold and the
+bonuses that go with it, the costliest first; when two paths reach it, the one that brings the
+most armies is shown. It does not change this turn's `safe`.
+
 # Territory picks
 
 ## How picks are granted

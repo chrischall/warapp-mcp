@@ -62,7 +62,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   planner; the opponents are whoever holds a stack on the board, not only players GameFeed calls
   `Playing`. "Safe" means safe against those replies only: fog-hidden stacks (`blindBorders`,
   `unseenOpponents`), a deploy above the estimate, split deploys, Multi-Attack chains and cards
-  are not tried, and `safe` is `null` when nothing could be tried. Both modules are pure and
+  are not tried, and `safe` is `null` when nothing could be tried. It also looks one turn ahead
+  (`exposedNextTurn`, #156): a territory of mine that a stack two steps away could take next turn by
+  first taking the territory in between (mine or neutral), with the armies it would need to hold, on
+  the assumption that I add nothing next turn; this never changes `safe`. Both modules are pure and
   deterministic like the planner, and neither is called by it.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words with a source link from the researched war.app pages, marked

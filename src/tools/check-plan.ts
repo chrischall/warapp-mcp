@@ -7,7 +7,7 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { enemyDeployEstimates, incomeFor, trackGame, trackOpponents } from '../analysis/index.js';
-import { stressPlan, type StressReply } from '../analysis/stress.js';
+import { stressPlan, type StressExposure, type StressReply } from '../analysis/stress.js';
 import type { SimEvent } from '../analysis/turn-sim.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
 import { boardStateFromLive, inGameId } from '../live.js';
@@ -61,8 +61,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           '`otherReplies` that cost you something (territories `lost`, captures that fail or are `retaken`, ' +
           'bonuses and income lost, your commander), everything `atRisk` to some single reply (only one of them ' +
           'happens: one deploy, one place), what your orders do unanswered (`plan`: captures, attacks that fail, ' +
-          'orders that send fewer armies than ordered or none), and `blindBorders`: your territories next to the ' +
-          'fog, where nothing could be tested. Exact with no luck and ' +
+          'orders that send fewer armies than ordered or none), `blindBorders`: your territories next to the ' +
+          'fog, where nothing could be tested, and `exposedNextTurn`: territories no enemy stack touches today ' +
+          'that one could take next turn by first taking the territory in between (yours or neutral), each with ' +
+          'the armies it would need to hold, if you add nothing next turn. Exact with no luck and ' +
           'straight rounding; otherwise battles are resolved at their expectation and `exact` is false. It does not ' +
           `try: ${CHECK_PLAN_NOT_COVERED.join('; ')}. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on ` +
           'war.app; it never submits orders.',
@@ -236,6 +238,24 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         commanderLost: r.commanderLost,
         armies: { you: r.myArmies, opponent: r.theirArmies },
       });
+      /** One exposure in a sentence, by id. */
+      const exposure = (e: StressExposure): string =>
+        `Next turn player ${e.opponent} can reach territory ${e.territory} (${e.armies} there) with ${e.attackers} from territory ${e.from} ` +
+        `by taking territory ${e.via} this turn: it needs ${e.needs} to hold${
+          e.bonusesLost.length ? `, or bonus${e.bonusesLost.length === 1 ? '' : 'es'} ${e.bonusesLost.map((b) => `${b.id} (${signed(b.value)})`).join(', ')} goes with it` : ''
+        }.`;
+      const exposureView = (e: StressExposure) => ({
+        text: exposure(e),
+        territory: name(e.territory),
+        armies: e.armies,
+        needs: e.needs,
+        attackers: e.attackers,
+        from: name(e.from),
+        via: name(e.via),
+        opponent: { id: e.opponent, name: playerName.get(e.opponent) ?? String(e.opponent) },
+        bonusesLost: e.bonusesLost.map((b) => bonusOf(b.id)),
+        incomeLost: e.incomeLost,
+      });
       const orderView = (e: SimEvent) => ({
         order: e.index + 1,
         from: name(e.from),
@@ -251,12 +271,15 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ? ` ${report.blindBorders.length} of your territories border the fog and were not tested.`
         : '';
       const inexact = report.exact ? '' : ' Battles are not exact in this game (luck or weighted rounding): each was resolved at its expectation.';
+      const ahead = report.exposedNextTurn.length
+        ? ` Next turn: ${report.exposedNextTurn.length} ${plural(report.exposedNextTurn.length, 'territory is', 'territories are')} within reach of a stack two steps away if you add nothing (see exposedNextTurn). First: ${exposure(report.exposedNextTurn[0]!)}`
+        : '';
       const summary =
         report.safe === null
-          ? `Nothing could be tested: no opposing stack is in view.${blind}`
+          ? `Nothing could be tested this turn: no opposing stack in view touches you.${blind}${ahead}`
           : report.safe
-            ? `None of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried costs you a territory, a capture or a bonus.${blind}${inexact}`
-            : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${inexact}`;
+            ? `None of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried costs you a territory, a capture or a bonus.${blind}${inexact}${ahead}`
+            : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${inexact}${ahead}`;
       const income = incomeFor(graph, board, me.id, game.settings);
       const deployed = deploys.reduce((n, d) => n + d.armies, 0);
       const warnings = [
@@ -305,9 +328,14 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           territories: atRiskList(report.atRisk.territories).map((t) => ({ territory: name(t.id), replies: t.replies })),
           ...(report.atRisk.territories.length > LIST_MAX ? { territoriesMore: report.atRisk.territories.length - LIST_MAX } : {}),
           captures: atRiskList(report.atRisk.captures).map((t) => ({ territory: name(t.id), replies: t.replies })),
+          ...(report.atRisk.captures.length > LIST_MAX ? { capturesMore: report.atRisk.captures.length - LIST_MAX } : {}),
           bonuses: atRiskList(report.atRisk.bonuses).map((b) => ({ ...bonusOf(b.id), replies: b.replies })),
+          ...(report.atRisk.bonuses.length > LIST_MAX ? { bonusesMore: report.atRisk.bonuses.length - LIST_MAX } : {}),
         },
         blindBorders: report.blindBorders.map(name),
+        // One turn ahead (#156): what the orders leave within reach of a stack two steps away.
+        exposedNextTurn: report.exposedNextTurn.slice(0, LIST_MAX).map(exposureView),
+        ...(report.exposedNextTurn.length > LIST_MAX ? { exposedMore: report.exposedNextTurn.length - LIST_MAX } : {}),
         notCovered: [...CHECK_PLAN_NOT_COVERED, ...new Set(ignored)],
         ...(rung === 'full' ? { assumptions: report.assumptions } : {}),
       }));
