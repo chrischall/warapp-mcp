@@ -1534,6 +1534,29 @@ describe('cards in the turn tools', () => {
     );
   });
 
+  it('submit_turn refuses a Blockade on the territory holding my commander (#163)', async () => {
+    const CMDR = '0123456789abcdef0123456789abcdef';
+    const withCommander = BOARD.map((t) => (t.id === 161 ? { ...t, units: [{ kind: 'commander' as const, id: CMDR, owner: ANN.inGame }] } : t));
+    const sent: Uint8Array[] = [];
+    h = await liveHarness({
+      feed: [game('Playing'), game('Playing')],
+      pages: ME_PAGE,
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () => ({ body: (w) => writeLatestGameInfo(w, withCommander, [ANN.inGame, BOB.inGame], { [ANN.inGame]: [{ id: BL, type: 12 }] }) }),
+        [Method.SendOrders]: (req) => {
+          sent.push(req.body.raw(req.body.remaining));
+          return { body: (w) => w.bool(true).bool(false) };
+        },
+      }),
+    });
+    const r = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [{ kind: 'card', card: BL, target: 161 }, { kind: 'deploy', territory: 159, armies: 5 }],
+    });
+    expect(JSON.stringify(r)).toMatch(/holds your commander, so it cannot be blockaded/);
+    expect(sent).toEqual([]);
+  });
+
   it('submit_turn plays Order Delay alongside another card play, writing it after the moves (phase 50)', async () => {
     const s = ordersServer([
       { id: OP, type: 4 },
