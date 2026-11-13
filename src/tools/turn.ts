@@ -603,7 +603,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'miss (at most 2 armies or 15%), or still holding against the expected attack, is funded with everything left ' +
           'instead (a warning says it may fall) and never withdrawn. A bonus whose new frontier would fall next turn is ' +
           'not completed under balanced/defend (a warning says so). A neutral no single stack can afford may be taken by ' +
-          'several attacks in a fixed order (`multiSourceCaptures`; 0% luck only). Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
+          'several attacks in a fixed order (`multiSourceCaptures`; 0% luck only). Every capture pays for the borders it adds (those ' +
+          'facing an enemy at what they need to hold), so closing a gap beats opening a front; `frontier` reports the borders left, those facing an enemy, ' +
+          'what they need next turn to hold and the next income, and under balanced/defend expansion that adds enemy borders without completing a bonus ' +
+          'stops when that need outgrows the income. Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
           'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
           'server last planned on (`trendSource` says which, or null). Obeys the game\'s rules: every attack and ' +
           "threat is sized at the game's kill rates; every attack carries `winChance`, its exact probability of " +
@@ -767,6 +770,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         conceded: plan.conceded.map(name),
         cardAdvice: plan.cardAdvice,
         multiSourceCaptures: plan.multiSourceCaptures.map(name),
+        // #71: the frontier budget, one line on compact.
+        frontier:
+          rung === 'full'
+            ? plan.frontier
+            : `${plan.frontier.borders} borders (${plan.frontier.enemyBorders} facing an enemy): holding them next turn needs ${plan.frontier.holdCost}, next income ${plan.frontier.income}`,
         cards: {
           hand: hand.map(cardView),
           maxCardsHold: rules.maxCardsHold ?? null,

@@ -294,6 +294,20 @@
 //     refused (warning "… indefensible …: not completed"); under `expand` and
 //     `complete-bonus` it is made with a warning. Under `balanced`/`defend` a bonus's
 //     score is value / (capture cost + DEFENSE_DISCOUNT × that defence cost).
+//  4d. Frontier cost (#71). Every capture pays for the frontier it adds, in armies: for each
+//     territory it touches (the capture and its held neighbours), its border cost after minus
+//     before. A border (a territory of mine next to one I do not hold) costs
+//     NEUTRAL_BORDER_COST, plus, when it faces a visible enemy and the goal is guarded, the
+//     deploys it needs next turn to hold (R3's arithmetic; a capture holds its survivors).
+//     A capture that closes a gap lowers it, one that opens fronts raises it. A bonus's score
+//     is net / (cost + DEFENSE_DISCOUNT × defence cost + frontier) — its missing members' own
+//     hold need left out when R3 judged it, never counted twice — at least 1 army; advances,
+//     plain expansion (pass 3) and breaks order by capture cost + frontier. Budget: the plan
+//     reports `frontier` (borders, enemy-facing borders, their hold cost — conceded borders
+//     excluded — and the next income). Under a guarded goal, a capture that adds an enemy-
+//     facing border without completing a bonus (not focused) is undone when the hold cost
+//     would then exceed the next income and the start-of-turn hold cost; a warning ("Frontier
+//     grows faster than income") names it, and also fires when the plan's frontier ends so.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border: it goes to the held border with the highest
 //     protected value still short of COMFORT_MARGIN × its threat (counting armies
@@ -438,6 +452,12 @@ export const MIN_EXPANSION_SHARE = 0.3;
  * beat an indefensible big one.
  */
 export const DEFENSE_DISCOUNT = 1;
+/**
+ * Every capture pays for the frontier it adds (#71): each border it opens costs this many armies
+ * in its score (one it closes saves as much), plus, when the border faces a visible enemy, the
+ * deploys it needs next turn to hold. Small, so borders facing only neutrals barely matter.
+ */
+export const NEUTRAL_BORDER_COST = 0.25;
 
 export type PlanGoal = 'balanced' | 'expand' | 'complete-bonus' | 'defend';
 
@@ -604,6 +624,19 @@ export interface TurnPlan {
    * their attacks must run in the planned order, and only at 0% luck.
    */
   multiSourceCaptures: number[];
+  /**
+   * The frontier this plan leaves (rule 4d, #71): my territories (captures included) next to one
+   * I do not hold, those next to a visible enemy, the deploys those need next turn to hold at the
+   * expected enemy deploy, and the next income that pays for them.
+   */
+  frontier: FrontierBudget;
+}
+
+export interface FrontierBudget {
+  borders: number;
+  enemyBorders: number;
+  holdCost: number;
+  income: number;
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -1044,6 +1077,8 @@ interface BonusPlan {
    * bonus its missing members complete. Equal to `value` on a map without negative bonuses.
    */
   net: number;
+  /** The frontier its missing members add, in armies (rule 4d; negative when it closes gaps). */
+  frontier: number;
 }
 
 export function planTurn(input: PlanInput): TurnPlan {
@@ -1210,6 +1245,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       conceded: [],
       cardAdvice: null,
       multiSourceCaptures: [],
+      frontier: { borders: 0, enemyBorders: 0, holdCost: 0, income },
     };
   }
 
@@ -2089,6 +2125,84 @@ export function planTurn(input: PlanInput): TurnPlan {
   // Bonus passes work toward my own bonuses; under `balanced` enemy targets are only break candidates.
   const bonusTarget = (t: number) => targets.has(t) && !(balanced && targets.get(t)!.enemy);
 
+  // ---- 4d. frontier cost (#71) ----
+  /** Armies a capture of `t` leaves there: its attack's survivors. */
+  const survivorsOf = (t: number) => targets.get(t)!.cost - Math.round((defenceAt(t) * rates.defensiveKillRate) / 100);
+  /**
+   * `x` as a border when I hold `held` with `have` armies on it: a border when a neighbour is not
+   * held; facing an enemy when a visible enemy is next to it, and then `need` is the deploys it
+   * needs next turn to hold (the R3 arithmetic: threat = movable + max(deploy, growth) per player).
+   */
+  const borderOf = (x: number, held: ReadonlySet<number>, have: number) => {
+    if (neighborsOf(g, x).every((n) => held.has(n))) return { border: false, enemy: false, need: 0 };
+    const th = threatAt(x, (n) => held.has(n));
+    if (!th) return { border: true, enemy: false, need: 0 };
+    const units = mineSet.has(x) ? unitsAt(x) : 0;
+    return { border: true, enemy: true, need: Math.max(0, holdArmies(th.threat) - have - units) };
+  };
+  /**
+   * A border's cost in armies: {@link NEUTRAL_BORDER_COST}, plus its hold need when it faces an
+   * enemy under a guarded goal (`expand` and `complete-bonus` ignore defence, as in R3).
+   */
+  const borderCost = (b: ReturnType<typeof borderOf>, withNeed = true) =>
+    b.border ? NEUTRAL_BORDER_COST + (guarded && withNeed ? b.need : 0) : 0;
+  /**
+   * The marginal frontier of adding `adds` to `base` (#71), in armies: the cost of every border
+   * the capture touches after it (the captures and their held neighbours) minus their cost
+   * before. Borders it opens add, borders it closes (a neighbour whose last outside neighbour it
+   * takes) subtract. `haveOf` gives the armies on each territory (a capture: its survivors).
+   * `needOnAdds` false leaves the captures' own hold need out (R3's defence cost already counts it).
+   */
+  const frontierDelta = (
+    base: ReadonlySet<number>,
+    adds: readonly number[],
+    haveOf: (x: number) => number,
+    needOnAdds = true,
+  ) => {
+    const after = new Set([...base, ...adds]);
+    const touched = new Set(adds);
+    for (const t of adds) for (const n of neighborsOf(g, t)) if (base.has(n)) touched.add(n);
+    let armies = 0;
+    let enemy = 0;
+    for (const x of touched) {
+      const now = borderOf(x, after, haveOf(x));
+      armies += borderCost(now, needOnAdds || base.has(x));
+      enemy += Number(now.enemy);
+      if (!base.has(x)) continue;
+      const was = borderOf(x, base, haveOf(x));
+      armies -= borderCost(was);
+      enemy -= Number(was.enemy);
+    }
+    return { armies, enemy };
+  };
+  /** Each target's frontier cost captured alone from my holdings at the start of the turn. */
+  const edgeCost = new Map(
+    [...targets.keys()].map((t) => [t, frontierDelta(mineSet, [t], (x) => (x === t ? survivorsOf(t) : armiesOf(x))).armies]),
+  );
+  /** A capture's cost in a score: its armies plus its frontier, at least one army (a cost of 0 stays 0). */
+  const scoreCost = (cost: number, frontier: number) => (cost > 0 ? Math.max(1, cost + frontier) : 0);
+  /** A target's cost in a score: its capture cost plus the frontier it adds alone. */
+  const targetScoreCost = (t: number) => scoreCost(targets.get(t)!.cost, edgeCost.get(t)!);
+  /**
+   * The frontier when I hold `held`: borders, those facing an enemy, and the deploys they need next
+   * turn to hold. A conceded border counts as a border but not in the hold cost: the plan gives it
+   * up rather than pay for it (a garrison that still stands, #59, is held and counts).
+   */
+  const frontierOf = (held: ReadonlySet<number>, haveOf: (x: number) => number) => {
+    let borders = 0;
+    let enemyBorders = 0;
+    let holdCost = 0;
+    for (const x of [...held].sort(byNum)) {
+      const b = borderOf(x, held, haveOf(x));
+      borders += Number(b.border);
+      enemyBorders += Number(b.enemy);
+      if (!conceded.has(x) || stood.has(x)) holdCost += b.need;
+    }
+    return { borders, enemyBorders, holdCost };
+  };
+  /** The frontier's hold cost at the start of the turn (my armies then; today's concessions left out). */
+  const startHold = () => frontierOf(mineSet, armiesOf).holdCost;
+
   // ---- bonus scoring ----
   const plans: BonusPlan[] = [];
   const economicMember = new Set<number>();
@@ -2155,6 +2269,14 @@ export function planTurn(input: PlanInput): TurnPlan {
           `Bonus ${b.name} (#${b.id}) needs ~${defenseCost} more armies next turn to hold its frontier once completed (${exposed.map((e) => `${label(e.id)} ${e.need}`).join(', ')}): its score is +${b.value} / (${cost} + ${DEFENSE_DISCOUNT} × ${defenseCost}).`,
         );
     }
+    // #71: the frontier its missing members add (their hold need left out when R3 judged it).
+    const reach = remaining.filter((t) => targets.has(t));
+    const frontier = frontierDelta(
+      mineSet,
+      reach,
+      (x) => (mineSet.has(x) ? armiesOf(x) : survivorsOf(x)),
+      !(guarded && remaining.every(bonusTarget)),
+    ).armies;
     plans.push({
       bonusId: b.id,
       value: b.value,
@@ -2165,10 +2287,11 @@ export function planTurn(input: PlanInput): TurnPlan {
       borders: analyzeBonus(g, b.id)!.borderTerritoryIds.length,
       defenseCost,
       net,
+      frontier,
     });
   }
   const ratio = (p: BonusPlan) => {
-    const cost = p.cost + DEFENSE_DISCOUNT * p.defenseCost;
+    const cost = scoreCost(p.cost + DEFENSE_DISCOUNT * p.defenseCost, p.frontier);
     return cost > 0 ? p.net / cost : Infinity;
   };
   plans.sort(
@@ -2555,16 +2678,54 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     return null;
   };
+  /**
+   * Captures rule 4d's budget stopped, with the frontier they would have left (for the warning;
+   * dropped, with their rationale lines, if a later pass takes them after all).
+   */
+  const stopped: { t: number; holdCost: number; income: number }[] = [];
+  /** The start of rule 4d's rationale line for a stopped `t` (one per attempt that differed). */
+  const stoppedLine = (t: number) => `Do not take ${label(t)}: it adds a border facing an enemy without completing a bonus,`;
+  /**
+   * Rule 4d's frontier budget, judged with `t` just captured: under a guarded goal, a capture
+   * that adds a border facing an enemy without completing a bonus (and not focused) is stopped
+   * when holding the frontier next turn would then need more than the next income, and more than
+   * it needed at the start of the turn. Returns the rationale line when stopped, else `null`.
+   */
+  const outgrows = (t: number): string | null => {
+    if (!guarded || inFocus(t)) return null;
+    const held = heldNow();
+    if (completedBy(held).some((id) => g.bonusById.get(id)!.value > 0 && bonusTs.get(id)!.includes(t))) return null;
+    const stays = (x: number) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0));
+    const without = new Set([...held].filter((x) => x !== t));
+    if (frontierDelta(without, [t], stays).enemy <= 0) return null;
+    const f = frontierOf(held, stays);
+    const next = incomeAfter(held);
+    const start = startHold();
+    if (f.holdCost <= next || f.holdCost <= start) return null;
+    const why = `${stoppedLine(t)} and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.`;
+    if (!stopped.some((x) => x.t === t)) stopped.push({ t, holdCost: f.holdCost, income: next });
+    return why;
+  };
+  /** Capture `t` for expansion, unless rule 4d's frontier budget stops it (then everything is undone). */
+  const tryExpand = (t: number, reason: string): boolean => {
+    const restore = snapshot();
+    if (!tryCapture(t, reason)) return false;
+    const why = outgrows(t);
+    if (why === null) return true;
+    restore();
+    if (!rationale.includes(why)) rationale.push(why);
+    return false;
+  };
   const advance = (p: BonusPlan) => {
     const todo = p.remaining
       .filter((t) => bonusTarget(t) && !captured.has(t))
-      .sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
+      .sort((a, b) => targetScoreCost(a) - targetScoreCost(b) || targets.get(a)!.cost - targets.get(b)!.cost || a - b);
     for (const t of todo) {
       const stepping = !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
       if (stepping === null) continue;
       const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
       const reason = stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${p.cost} to finish)`;
-      if (tryCapture(t, reason)) {
+      if (tryExpand(t, reason)) {
         anchor ??= moves[moves.length - 1]!.from;
         if (stepping) {
           staged.set(t, p.bonusId);
@@ -3286,7 +3447,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (!b || !targets.has(n) || broken(b) || orderOf(t.id)) return false;
       const o = breakOption(n);
       if (t.holdCost + o.cost > spareAt(t.id) - rest) return false;
-      if (secondFront(b, (weight * b.value) / Math.max(1, o.cost))) return false;
+      // Scored as the break candidates are: its armies plus the frontier it adds (#71).
+      if (secondFront(b, (weight * b.value) / Math.max(1, targetScoreCost(o.t)))) return false;
       const before = budget;
       noteRecent(t);
       deploy(t.id, t.holdCost);
@@ -3313,7 +3475,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         .sort((a, b) => Number(b.survives) - Number(a.survives) || a.cost - b.cost || a.t - b.t);
       const o = options[0];
       if (!o) continue;
-      const score = (weight * b.value) / Math.max(1, o.cost);
+      const score = (weight * b.value) / Math.max(1, targetScoreCost(o.t));
       // An FFA skips a second-front break, but only one the plan could pay for is named as
       // skipped: an unaffordable one is dropped quietly (it could not run either way).
       if (opensSecondFront(b, score) && !affordable(o.t)) continue;
@@ -3518,9 +3680,9 @@ export function planTurn(input: PlanInput): TurnPlan {
           !(balanced && t.enemy) &&
           (economicMember.has(t.id) || !uneconomicMember.has(t.id)),
       )
-      .sort((a, b) => a.cost - b.cost || a.id - b.id);
+      .sort((a, b) => targetScoreCost(a.id) - targetScoreCost(b.id) || a.cost - b.cost || a.id - b.id);
     // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
-    for (const t of rest) if (gainWith([t.id]) >= 0 || inFocus(t.id)) tryCapture(t.id, 'expands territory');
+    for (const t of rest) if (gainWith([t.id]) >= 0 || inFocus(t.id)) tryExpand(t.id, 'expands territory');
   }
 
   // ---- rule 4c's guard: planned captures never lower next income (#70) ----
@@ -3815,6 +3977,36 @@ export function planTurn(input: PlanInput): TurnPlan {
     rationale.push(notCompleted.get(id)!.why);
   }
 
+  // Rule 4d's frontier budget (#71): the frontier this plan leaves against the next income.
+  const frontier: FrontierBudget = {
+    ...frontierOf(after, (x) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0))),
+    income: incomeAfter(after),
+  };
+  const startCost = startHold();
+  const outgrown = frontier.holdCost > frontier.income && frontier.holdCost > startCost;
+  // A capture stopped by one pass but taken by a later one (the next income grew in between) is
+  // in the orders: nothing may still say it was not taken.
+  const notTaken = stopped.filter((x) => !captured.has(x.t));
+  const takenAfterAll = stopped.filter((x) => captured.has(x.t)).map((x) => stoppedLine(x.t));
+  if (takenAfterAll.length) {
+    const kept = rationale.filter((r) => !takenAfterAll.some((line) => r.startsWith(line)));
+    rationale.splice(0, rationale.length, ...kept);
+  }
+  if (outgrown || notTaken.length) {
+    const stop = notTaken.length
+      ? ` Expansion that adds enemy borders without completing a bonus is stopped: ${notTaken.map((x) => `${label(x.t)} (the frontier would need ${x.holdCost}, next income ${x.income})`).join(', ')} not taken.`
+      : '';
+    warnings.push(
+      outgrown
+        ? `Frontier grows faster than income: holding its ${frontier.enemyBorders} enemy-facing borders next turn needs ${frontier.holdCost} at the expected deploy, more than the next income of ${frontier.income} (${startCost} at the start of the turn).${stop}`
+        : `Frontier grows faster than income.${stop}`,
+    );
+  }
+  if (frontier.enemyBorders)
+    rationale.push(
+      `Frontier after this plan: ${frontier.borders} borders, ${frontier.enemyBorders} facing an enemy, needing ${frontier.holdCost} next turn to hold at the expected deploy (next income ${frontier.income}); every capture's score paid for the borders it adds.`,
+    );
+
   // Issue #69, second point: several borders facing one opponent are each sized for its whole
   // deploy. That is each border's worst case — the opponent picks where to land after I
   // commit — so a sure hold of all of them needs every one sized for it; no army is counted
@@ -3846,5 +4038,6 @@ export function planTurn(input: PlanInput): TurnPlan {
     conceded: [...conceded].sort(byNum),
     cardAdvice,
     multiSourceCaptures: [...combined].sort(byNum),
+    frontier,
   };
 }

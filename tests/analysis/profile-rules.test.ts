@@ -204,7 +204,8 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
   });
 
   it('still breaks when no neutral capture of similar value exists', () => {
-    // The neutral is worth +1 (1 / 3 per army, under half of the break's 1.33).
+    // The neutral is worth +1 (1 / 3 per army). The break is worth +12 so that, after paying
+    // for the enemy-facing border T5 adds (#71), it still earns more than twice that.
     const g1 = buildGraph(
       makeMap(
         [1, 2, 5, 6, 9],
@@ -215,7 +216,7 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
         ],
         [
           [821, 1, [2]],
-          [822, 8, [5]],
+          [822, 12, [5]],
         ],
       ),
     );
@@ -232,6 +233,32 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
     const p = planTurn(input({ adapt: true }, heavy));
     expect(attacks(p).map((m) => m.to)).toEqual([2]);
     expect(why(p)).not.toMatch(/no second front/);
+  });
+
+  it('a threatened border attacking its only threat judges the break on the same cost (frontier included)', () => {
+    // T1 (4) is threatened only by T5, all of B822 (+14). Scored on its armies plus the
+    // enemy-facing border T5 adds (#71), the break earns 1.33 per army, under twice the
+    // neutral's 1.00: a second front. The border's own attack on its threat must use that same
+    // cost, not the armies alone (7 / 3 per army clears the bar), so it holds instead of breaking.
+    const g14 = buildGraph(
+      makeMap(
+        [1, 2, 5, 6, 9],
+        [
+          [1, 2],
+          [1, 5],
+          [5, 6],
+        ],
+        [
+          [821, 3, [2]],
+          [822, 14, [5]],
+        ],
+      ),
+    );
+    const thin = board([mine(1, 4), neutral(2, 2), enemy(5, 2), enemy(6, 2), enemy(9, 2, THIRD)]);
+    const p = planTurn({ ...input({ adapt: true }, thin), graph: g14 });
+    expect(why(p)).toMatch(/Not breaking B822 \(#822\) \(\+14 from player 20\): no second front in an FFA/);
+    expect(attacks(p).map((m) => m.to)).not.toContain(5);
+    expect(why(p)).not.toMatch(/only visible threat/);
   });
 
   it('does not fire in a 1v1', () => {

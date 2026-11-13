@@ -125,6 +125,18 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   `"order-priority"`, tell the user a withdrawal only runs if the border is still theirs when
   it executes; when they hold Order Priority the `orders` already play it (without one,
   nothing makes the withdrawal go first).
+- **`frontier`** (#71) is the plan's border budget: borders left, those facing an enemy, what
+  they need next turn to hold, and the next income. The budget only stops plain expansion and
+  bonus advances under `balanced`/`defend`: a capture that adds an enemy-facing border without
+  completing a positive bonus, outside a focused bonus, when the frontier would then need more
+  next turn than both the next income and what it needed at the start of the turn. Completions, breaks,
+  finishing off, presses, commander strikes and every capture under `expand`/`complete-bonus`
+  are never stopped. The warning "Frontier grows faster than income" appears when the plan's
+  own frontier needs more than both the next income and the start-of-turn need (it then gives
+  the numbers: those fronts are already in the orders), or when the budget stopped a capture
+  (it then ends "Expansion that adds enemy borders without completing a bonus is stopped: …
+  not taken"); a capture a later pass took after all is never listed. Either way, tell the user
+  the empire is getting too thin rather than pushing more expansion.
 - **Pick `defend` when** the user wants to hold everything worth holding before any expansion
   — e.g. they are ahead on income and only need to survive, or a bonus they hold is under
   attack from several sides. It still concedes hopeless borders. Pick `expand` to never attack
