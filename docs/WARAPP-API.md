@@ -291,7 +291,8 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   through raw. `GetChat` is passed through raw too, and it is third-party text.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a
   second, best-effort GameFeed call) to find the previous turn's standing for the threat
-  trend. `boardFromHistory` (`src/trend.ts`) reads `game.history` loosely and never throws:
+  trend — only when the previous turn is not cached, and it only fills turns the cache lacks:
+  a cached board is the verified live board, so it always wins (#131). `boardFromHistory` (`src/trend.ts`) reads `game.history` loosely and never throws:
   an array of turns (number from `turnNumber` / `turn` / `number`, else the position), a
   `{ turns: [...] }` wrapper, or an object keyed `turn<N>` / `standing<N>` / `<N>`; each
   entry is a standing itself or carries one under `standing` / `standings` /

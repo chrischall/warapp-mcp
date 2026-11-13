@@ -57,6 +57,9 @@ MessageExtrasUp             (below)
 params                      per method
 ```
 
+Every reader (the bundle's and `methods.ts`) reads protocol 242's layout, so `WarappRpc` refuses a
+reply whose header names another version rather than decode it into wrong values (#131).
+
 ### MessageExtrasUp (`warlight.shared.MessageExtrasUp`)
 
 ```
