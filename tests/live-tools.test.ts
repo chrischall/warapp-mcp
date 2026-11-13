@@ -134,7 +134,7 @@ describe('warapp_get_live_board', () => {
       ownerId: ANN.inGame,
       armies: 6,
       fogged: false,
-      fogLevel: 'Visible',
+      fogLevel: 'You',
       specialUnits: [],
     });
     expect(territories[4]).toMatchObject({ id: 135, owner: 'fogged', ownerId: -1, armies: null, fogged: true, fogLevel: 'Fogged' });

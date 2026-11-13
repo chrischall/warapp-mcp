@@ -186,6 +186,30 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   - fog: `fogLevel` / `fog`
 - A fogged entry's owner and armies are read as unknown. The result is a source-agnostic
   `BoardState` with `verified: false`, or `undefined` when the parser can't use it.
+- **How a hidden territory reads on each board (#69).** The fog level is war.app's
+  `StandingFogLevel` — 1 You, 2 Visible, 3 OwnerOnly, 4 Fogged (verified from the client
+  bundle, which refuses a deploy on 3 or 4 as "fogged" and builds a fully fogged standing as
+  fog level 4, owner −1, `Armies(0, fogged)`).
+  - *Live board and its cache* (`toBoardState`; the cache is the planned board as JSON):
+    fogged (level 4 or `Armies.fogged`) → owner `unknown`, armies `null`, `fogLevel: "Fogged"`;
+    owner-only (level 3) → the owner, armies `null`, `fogLevel: "OwnerOnly"`.
+  - *GameFeed standing / `GetHistory`* (`boardFromStanding`, unverified): a fog level matching
+    `fog` or `4` → owner `unknown`, armies `null`; `OwnerOnly` or `3` → armies `null`; an owner
+    of 0 is neutral, −2 pickable, any other negative (war.app's fogged −1) `unknown`. Without a
+    fog key the entry is taken at face value — a feed that sent fogged land as a plain neutral
+    would still read as visible.
+  - The planner's trend and observed deploy count a previous-board territory only when it shows
+    an owner (player or neutral) *and* armies under a fog level that does not hide them
+    (`visibleState`); anything else is a fog reveal. The enemy deploy estimate's base income
+    and visible bonuses still count an owner-only territory (its owner shows); only its stack
+    is unknown.
+  - *Upgrade transition:* a board cache written before #69 named fog level 2 (truly Visible)
+    `"OwnerOnly"` and kept its armies (level 3 went unnamed, as `"3"`). Current boards always
+    null an owner-only territory's armies, so `visibleState` reads an `"OwnerOnly"` entry that
+    still carries a count as that old level 2: visible, not a reveal.
+  - The observed-deploy cap counts a bonus out of reach when any of its territories shows
+    another owner (a player or a neutral) under a fog level that shows owners — owner-only
+    included, whatever its armies.
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
   through raw. `GetChat` is passed through raw too, and it is third-party text.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a

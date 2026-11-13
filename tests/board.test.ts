@@ -21,6 +21,28 @@ describe('boardFromStanding (loose — the live in-progress shape is unverified)
     });
   });
 
+  it('hides the armies of a territory under a numeric or owner-only fog level (#69)', () => {
+    // GameFeed scalars are strings, so a fog level may arrive as war.app's raw number
+    // (StandingFogLevel 1 You, 2 Visible, 3 OwnerOnly, 4 Fogged) over placeholder values.
+    const board = boardFromStanding([
+      { terrID: '1', ownedBy: '-1', armies: '0', fogLevel: '4' },
+      { terrID: '2', ownedBy: '1000', armies: '0', fogLevel: '3' },
+      { terrID: '3', ownedBy: '1000', armies: '0', fogLevel: 'OwnerOnly' },
+      { terrID: '4', ownedBy: '1000', armies: '6', fogLevel: '2' },
+      { terrID: '5', ownedBy: '-1', armies: '0' },
+      { terrID: '6', ownedBy: '0', armies: '2' },
+    ]);
+    expect(board?.territories).toEqual([
+      { territoryId: 1, owner: { kind: 'unknown' }, armies: null, fogLevel: '4' },
+      { territoryId: 2, owner: { kind: 'player', playerId: 1000 }, armies: null, fogLevel: '3' },
+      { territoryId: 3, owner: { kind: 'player', playerId: 1000 }, armies: null, fogLevel: 'OwnerOnly' },
+      { territoryId: 4, owner: { kind: 'player', playerId: 1000 }, armies: 6, fogLevel: '2' },
+      // A negative owner is no player (war.app's fogged owner is -1, its pickable owner -2); 0 is neutral.
+      { territoryId: 5, owner: { kind: 'unknown' }, armies: 0 },
+      { territoryId: 6, owner: { kind: 'neutral' }, armies: 2 },
+    ]);
+  });
+
   it('accepts alternative key spellings and a { territories } wrapper', () => {
     const board = boardFromStanding({
       territories: [

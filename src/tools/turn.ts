@@ -524,7 +524,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
           "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
           'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. Threat ' +
-          'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you, or what it was observed to deploy since the previous turn when larger). It reports ' +
+          'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you, or what it was observed to deploy since the previous turn when larger: territories visible both turns only, never more than it could earn). It reports ' +
           'your cards and whether you must play or discard (more whole cards than the hold limit), and plays ' +
           'Reinforcement cards (their armies are planned) and, when cards must go, Order Priority, else discards the ' +
           'lowest-value cards — never playing Blockade or Order Delay. Its ' +
@@ -587,7 +587,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               'income plus the bonuses it visibly holds in full, at most 75% of its largest stack next to you but ' +
               'never below the game\'s base income (at least 5); just that base income on an untouched opening ' +
               'board; when the previous turn\'s board is known, at least what that opponent was observed to deploy ' +
-              '(the net change of its visible armies plus what its captures cost it) — income in the fog is unseen, so raise it if you know they earn more.',
+              '(the net change of its armies on territories visible both turns plus what its captures cost it; a fog reveal is not income, and it never exceeds its base plus every bonus it could hold) — income in the fog is unseen, so raise it if you know they earn more.',
           ),
         view: viewArg(
           VIEWS,
@@ -621,6 +621,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         income,
         settings,
         ...(trend ? { previousBoard: trend.board } : {}),
+        ...(turn !== null ? { turn } : {}),
         options: {
           goal: chosen,
           focusBonusIds,

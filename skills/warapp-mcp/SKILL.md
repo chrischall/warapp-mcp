@@ -73,7 +73,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **Threats** assume each enemy deploys `enemy_deploy` armies (default per opponent: base
   income plus the bonuses it visibly holds, capped by 75% of its largest stack next to the
   user — or, when last turn's board is known and it is larger, what that opponent was observed
-  to deploy: "observed +N/turn"). Enemy income is unseen: say so, and raise it when the user
+  to deploy: "observed +N/turn", counted only over territories visible both turns — stacks that
+  just came out of the fog are reveals, not income — and capped at what it could earn). Enemy income is unseen: say so, and raise it when the user
   knows an opponent earns more. An enemy stack next to the user that grew since last turn
   ("is building: +G/turn") raises that border's threat by its growth; `trendSource` says where
   last turn's board came from (`history`, `cache`, or null when there was none).
@@ -162,9 +163,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
    moved in to hold. At default kill rates defenders kill 70% and attackers 60%, so a border is
    cheaper to hold than to take back.
 2. **The enemy income estimate looks wrong.** Check the "Enemy deploy estimate" line against
-   what the opponent can plausibly earn: its territory count and the bonuses it can hold.
-   Territories revealed from the fog have been counted as growth (#69). When the figure is off,
-   re-plan with `enemy_deploy`.
+   what the opponent can plausibly earn: its territory count and the bonuses it can hold. The
+   estimate only sees one previous turn and caps itself at what the opponent could earn, so it
+   can still miss income hidden in the fog. When the figure is off, re-plan with `enemy_deploy`.
 3. **Income drops.** Look for a negative-value bonus in `expected.bonusesCompleted`, or a
    `nextIncome` below this turn's income without a reason the user accepts.
 4. **A rule the plan may not model.** Compare the plan's income with the game's deploy panel,

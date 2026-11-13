@@ -404,6 +404,8 @@ describe('warapp_plan_turn — threat trend', () => {
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.trendSource).toBe('history');
     expect(p.warnings.join('\n')).toMatch(building(3, 7));
+    // The observed-deploy rationale names the two turns compared (#69).
+    expect(p.rationale.join('\n')).toMatch(/Observed deploy for player \d+, turn 2 → turn 3: \+\d+\/turn over \d+ territories visible on both boards/);
     expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(true);
   });
 

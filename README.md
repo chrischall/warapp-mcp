@@ -161,7 +161,8 @@ and chat text comes back marked as untrusted third-party content.
    never plays Blockade (that gives a territory away) or Order Delay (it holds back your attacks).
    Threat warnings assume each enemy deploys `enemy_deploy` armies; enemy income is unseen, so
    raise it if you know better. With last turn's board, an opponent's deploy is at least what it
-   was observed to deploy (the net change of its visible armies plus what its captures cost it). An enemy stack that grew since
+   was observed to deploy (the net change of its armies on territories visible both turns plus what its captures cost it;
+   stacks that only came out of the fog are not income, and the figure never exceeds its base plus every bonus it could hold). An enemy stack that grew since
    last turn raises the threat by its growth (`trendSource` says where last turn's board came from).
    Under the default `balanced` goal the plan spends income where it earns most per army:
    holding borders that protect bonuses, completing cheap bonuses (at least 30% of income goes

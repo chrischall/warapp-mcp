@@ -63,6 +63,11 @@ const FOG_KEYS = ['fogLevel', 'fog', 'FogLevel'] as const;
 
 function ownerOf(v: unknown): TerritoryOwner {
   const id = asInt(v);
+  // war.app's raw owner values (the live TerritoryStanding): 0 neutral, -2 pickable, and -1
+  // on a fogged territory; no player has an id of 0 or below.
+  if (id === 0) return { kind: 'neutral' };
+  if (id === -2) return { kind: 'available' };
+  if (id !== undefined && id < 0) return { kind: 'unknown' };
   if (id !== undefined) return { kind: 'player', playerId: id };
   if (typeof v === 'string') {
     const s = v.trim().toLowerCase();
@@ -89,14 +94,17 @@ function entryOf(raw: unknown, fallbackId?: number): TerritoryState | undefined 
     armies: armiesOf(pick(raw, ARMY_KEYS)),
   };
   const fog = pick(raw, FOG_KEYS);
-  if (typeof fog === 'string' && fog) {
-    entry.fogLevel = fog;
-    // A fogged territory's owner/armies are placeholders (war.app shows fogged
-    // land as neutral), so they are not evidence.
-    if (/fog/i.test(fog)) {
+  if ((typeof fog === 'string' && fog) || typeof fog === 'number') {
+    const level = String(fog).trim();
+    entry.fogLevel = level;
+    // war.app's StandingFogLevel: 1 You, 2 Visible, 3 OwnerOnly, 4 Fogged (every GameFeed
+    // scalar is a string, so the number may come spelled as one). A fogged territory's
+    // owner/armies are placeholders (war.app shows fogged land as neutral, or owner -1);
+    // an owner-only one shows its owner but not its armies (#69).
+    if (/fog/i.test(level) || level === '4') {
       entry.owner = { kind: 'unknown' };
       entry.armies = null;
-    }
+    } else if (/owneronly/i.test(level) || level === '3') entry.armies = null;
   }
   return entry;
 }

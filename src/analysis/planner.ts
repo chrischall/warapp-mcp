@@ -16,13 +16,19 @@
 //     every base-income opponent look like ~11). On the opening board (every
 //     visible territory still holds the same count) every opponent gets the
 //     floor. Given `previousBoard`, each estimate is at least the deploy observed since
-//     then (`observedDeploy`, issue #57: the net change of its armies visible on both
+//     then (`observeDeploy`, issue #57: the net change of its armies visible on both
 //     boards — shrinks included, so a transfer between its own territories is not deploy —
-//     plus, on each territory it captured, its armies there and what the previous owner held
-//     there) — never cut by the stack cap; the warning names which source won.
+//     plus, on each territory it captured from a visibly held or neutral territory, its
+//     armies there and what the previous owner held there). A territory hidden last turn
+//     (fogged, or under a fog level that hid its armies) is a fog reveal, never growth or a
+//     capture (issue #69). The observed figure is never cut by the stack cap, but is capped
+//     at what the opponent could earn on this board: its base income plus every bonus none of
+//     whose territories someone else visibly holds, owner-only included (a warning says when). A rationale line names
+//     the turns compared and the territories counted vs skipped as reveals; the warning
+//     names which source won.
 //     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
-//     enemy territory next to me that was visible then under the same owner and
+//     enemy territory next to me that was visible then (owner and armies, #69) under the same owner and
 //     has grown is "building" at growth = armies now − armies then per turn (a
 //     warning naming my most exposed neighbour and the armies it needs to hold
 //     next turn and the turn after). A border's threat becomes movable +
@@ -78,7 +84,11 @@
 //     hold saves, in income terms (armies / PAYBACK_TURNS): a top-up that keeps a
 //     big stack is worth paying even for a small bonus (live, a 60-army border
 //     protecting +4 needed 20 and held against 105). Its hold cost is the fewest
-//     deploys making `armiesToTake(armies + d) > threat`. Borders are taken in
+//     deploys making `armiesToTake(armies + d) > threat`. Every border facing one
+//     opponent is sized for that opponent's whole deploy (#69): it picks where to land
+//     after I commit, so that is each border's worst case, and a sure hold of several
+//     needs each sized for it (a rationale line says so when two or more are held
+//     against one player). Borders are taken in
 //     order of worth per army of hold cost (ties: lower hold cost, then id); a
 //     border is conceded when its hold cost exceeds the budget left or
 //     CONCEDE_FACTOR × its worth (so a thin border protecting nothing is
@@ -294,6 +304,9 @@ export const PAYBACK_TURNS = 10;
 export const WASTELAND_FACTOR = 5;
 /** Floor of the default enemy deploy estimate (a player's base income). */
 export const MIN_ENEMY_DEPLOY = DEFAULT_BASE_INCOME;
+
+/** Fog reveals named in the observed-deploy rationale before "and N more". */
+const MAX_NAMED_REVEALS = 6;
 /** The default estimate is capped at this share of the opponent's largest stack next to me. */
 export const ENEMY_STACK_SHARE = 0.75;
 /** A border is conceded when holding it costs more than this many times the income it protects. */
@@ -404,6 +417,11 @@ export interface PlanInput {
    * that grew since then project their growth into next turn's threat.
    */
   previousBoard?: BoardState;
+  /**
+   * The turn being planned, when known: `previousBoard` is then turn − 1's board, and the
+   * observed-deploy rationale names the two turns.
+   */
+  turn?: number;
   settings?: PlannerSettings;
   options?: PlanOptions;
 }
@@ -501,6 +519,8 @@ export interface EnemyDeployEstimate {
   playerId: number;
   /** clamp(base + bonusIncome, max(MIN_ENEMY_DEPLOY, base), stackCap); that floor on the opening board. */
   estimate: number;
+  /** The territories it visibly owns (owner shown, armies or not): what `base` is computed from. */
+  held: number;
   /**
    * Its base income: MinimumArmyBonus, or (BonusArmyPer on) its visible
    * territories / BonusArmyPer when larger.
@@ -515,23 +535,83 @@ export interface EnemyDeployEstimate {
   /** Every visible territory holds the same army count: no one has deployed yet. */
   opening: boolean;
   /**
-   * Its deploy as observed since the previous board ({@link observedDeploy}); `null`
-   * without one.
+   * Its deploy as observed since the previous board ({@link observeDeploy}), at most
+   * {@link EnemyDeployEstimate.observedCap}; `null` without a previous board.
    */
   observed: number | null;
+  /** The observed deploy before the plausibility cap; `null` without a previous board. */
+  observedRaw: number | null;
+  /**
+   * The most it could earn on this board (issue #69): `base` plus every positive bonus it could
+   * possibly hold (none of its territories visibly held by someone else, owner-only included);
+   * `null` without a previous board.
+   */
+  observedCap: number | null;
+  /** Which territories the observation counted and skipped; `null` without a previous board. */
+  observation: DeployObservation | null;
   /** `'observed'` when the observed figure beat the visible-bonus one (and set the estimate). */
   source: 'visible' | 'observed';
 }
 
 /**
- * One opponent's deploy last turn as seen across two boards (issue #57): the *net* change
- * of its visible armies plus what it visibly lost attacking, floored at 0. Only territories
- * visible on both boards count (one fogged last time may only have come into view):
+ * Fog levels that hide a territory's armies. The live board names war.app's StandingFogLevel
+ * (1 You, 2 Visible, 3 OwnerOnly, 4 Fogged; the client refuses a deploy on 3 or 4 as "fogged");
+ * a GameFeed standing may spell it as a word or as the raw number (every GameFeed scalar is a
+ * string).
+ */
+const HIDDEN_FOG = /fog|owneronly|^\s*[34]\s*$/i;
+/** Fog levels that hide a territory's owner too (StandingFogLevel 4, Fogged). */
+const OWNER_HIDDEN_FOG = /fog|^\s*4\s*$/i;
+
+/**
+ * `t` when a board shows both its owner (a player or a neutral) and its armies, else
+ * `undefined`: a fogged territory (owner unknown, armies `null`), or one whose fog level hides
+ * its armies even if a placeholder owner or count came with it (issue #69).
+ *
+ * One exception: an entry named `"OwnerOnly"` that still carries a count is fog level 2
+ * (Visible) from a board cache written before #69, which misnamed it; every current board nulls
+ * an owner-only territory's armies, and the old cache left level 3 unnamed (`"3"`).
+ */
+export function visibleState(t: TerritoryState | undefined): TerritoryState | undefined {
+  if (!t || t.armies === null) return undefined;
+  if (t.owner.kind !== 'player' && t.owner.kind !== 'neutral') return undefined;
+  if (t.fogLevel !== undefined && HIDDEN_FOG.test(t.fogLevel) && !/^\s*owneronly\s*$/i.test(t.fogLevel)) return undefined;
+  return t;
+}
+
+/**
+ * `t` when a board shows its owner (a player or a neutral), whatever its armies: visible, or
+ * owner-only (light fog); `undefined` when fogged, even under a placeholder owner.
+ */
+function ownerShown(t: TerritoryState | undefined): TerritoryState | undefined {
+  if (!t || (t.owner.kind !== 'player' && t.owner.kind !== 'neutral')) return undefined;
+  if (t.fogLevel !== undefined && OWNER_HIDDEN_FOG.test(t.fogLevel)) return undefined;
+  return t;
+}
+
+/** What {@link observeDeploy} read off two boards for one opponent. */
+export interface DeployObservation {
+  /** Its observed deploy last turn, floored at 0. */
+  deploy: number;
+  /** Its territories now that were visible last turn too (held both times, or captured), by id. */
+  counted: number[];
+  /** Of `counted`, those it took from another visible owner (a player, me included, or a neutral). */
+  captured: number[];
+  /** Its territories now that last turn's board did not show: fog reveals, never income. */
+  reveals: number[];
+}
+
+/**
+ * One opponent's deploy last turn as seen across two boards (issues #57, #69): the *net*
+ * change of its visible armies plus what it visibly lost attacking, floored at 0. Only
+ * territories visible on both boards count ({@link visibleState}): one hidden last time
+ * (fogged, or under a fog level that hid its armies) only came into view, so it is a fog
+ * reveal whoever holds it now — never growth, never a capture.
  * - under it both times: armies now − armies then, shrinks included — a transfer between
  *   its own territories nets to zero, so it is never read as deploy;
- * - taken from another player (me included) or from a visible neutral: the armies now on it
- *   (they moved in from a neighbour, whose shrink they cancel) plus the armies the previous
- *   owner held there (what the capture roughly cost it).
+ * - taken from another visible owner (another player, me included, or a visible neutral): the
+ *   armies now on it (they moved in from a neighbour, whose shrink they cancel) plus the
+ *   armies the previous owner held there (what the capture roughly cost it).
  * Not counted: armies it lost on a territory it attacked but did not take. The defender's
  * count there also moves with the defender's own deploys and transfers (mine included —
  * this board says nothing about my orders), so the loss cannot be read off it; leaving it
@@ -539,18 +619,33 @@ export interface EnemyDeployEstimate {
  * One turn only, not smoothed: the planner sees a single previous board. Transfers in from
  * (or out to) the fog still bias it — income in the fog is unseen anyway.
  */
-export function observedDeploy(g: MapGraph, board: BoardState, previous: BoardState, playerId: number): number {
+export function observeDeploy(g: MapGraph, board: BoardState, previous: BoardState, playerId: number): DeployObservation {
   const before = new Map(previous.territories.map((t) => [t.territoryId, t]));
   let total = 0;
-  for (const t of board.territories) {
-    if (!g.territoryById.has(t.territoryId) || t.armies === null) continue;
+  const counted: number[] = [];
+  const captured: number[] = [];
+  const reveals: number[] = [];
+  for (const t of [...board.territories].sort((a, b) => a.territoryId - b.territoryId)) {
+    if (!g.territoryById.has(t.territoryId) || !visibleState(t)) continue;
     if (t.owner.kind !== 'player' || t.owner.playerId !== playerId) continue;
-    const was = before.get(t.territoryId);
-    if (!was || was.armies === null || was.owner.kind === 'unknown') continue;
-    if (was.owner.kind === 'player' && was.owner.playerId === playerId) total += t.armies - was.armies;
-    else total += t.armies + was.armies;
+    const was = visibleState(before.get(t.territoryId));
+    if (!was) {
+      reveals.push(t.territoryId);
+      continue;
+    }
+    counted.push(t.territoryId);
+    if (was.owner.kind === 'player' && was.owner.playerId === playerId) total += t.armies! - was.armies!;
+    else {
+      captured.push(t.territoryId);
+      total += t.armies! + was.armies!;
+    }
   }
-  return Math.max(0, total);
+  return { deploy: Math.max(0, total), counted, captured, reveals };
+}
+
+/** {@link observeDeploy}'s deploy figure alone. */
+export function observedDeploy(g: MapGraph, board: BoardState, previous: BoardState, playerId: number): number {
+  return observeDeploy(g, board, previous, playerId).deploy;
 }
 
 /** The army count every visible territory holds, when they all hold the same one (the initial allotment). */
@@ -578,10 +673,14 @@ export function enemyDeployEstimates(
 ): EnemyDeployEstimate[] {
   const owner = new Map<number, number>();
   const armies = new Map<number, number>();
+  const seenNow = new Map<number, TerritoryState>();
+  for (const t of board.territories) if (g.territoryById.has(t.territoryId)) seenNow.set(t.territoryId, t);
+  // Owners count whatever the armies: an owner-only territory (light fog) is visibly held, so
+  // it counts toward base income and the bonuses held in full. Only stacks need the armies.
   for (const t of board.territories) {
-    if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player' || t.armies === null) continue;
+    if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player') continue;
     owner.set(t.territoryId, t.owner.playerId);
-    armies.set(t.territoryId, t.armies);
+    if (t.armies !== null) armies.set(t.territoryId, t.armies);
   }
   const players = [...new Set([...owner.values()].filter((p) => p !== me))].sort(byNum);
   const opening = openingArmies(g, board) !== null;
@@ -602,7 +701,8 @@ export function enemyDeployEstimates(
     let any = 0;
     for (const [t, p] of owner) {
       if (p !== playerId) continue;
-      const a = armies.get(t)!;
+      const a = armies.get(t);
+      if (a === undefined) continue;
       any = Math.max(any, a);
       if (neighborsOf(g, t).some((n) => owner.get(n) === me)) adjacent = Math.max(adjacent, a);
     }
@@ -611,11 +711,44 @@ export function enemyDeployEstimates(
     // Every opponent earns at least the game's base income (never below the 5 minimum).
     const floor = Math.max(MIN_ENEMY_DEPLOY, base);
     const visible = opening ? floor : Math.max(floor, Math.min(base + bonusIncome, stackCap));
-    // What it was seen to deploy is never cut by the stack cap.
-    const observed = previous ? observedDeploy(g, board, previous, playerId) : null;
+    // What it was seen to deploy is never cut by the stack cap, only by what it could earn
+    // (#69): its base plus every bonus none of whose territories someone else visibly holds
+    // (an owner-only territory is visibly held: its owner shows). Both come from this board,
+    // so a bonus it lost since last turn is out, though it may have paid for that deploy.
+    const observation = previous ? observeDeploy(g, board, previous, playerId) : null;
+    let observedCap: number | null = null;
+    if (observation) {
+      let possible = 0;
+      for (const b of g.map.bonuses) {
+        const ts = bonusTerritories(g, b.id);
+        if (b.value <= 0 || !ts.length) continue;
+        const taken = ts.some((t) => {
+          const st = ownerShown(seenNow.get(t));
+          return st !== undefined && !(st.owner.kind === 'player' && st.owner.playerId === playerId);
+        });
+        if (!taken) possible += b.value;
+      }
+      observedCap = base + possible;
+    }
+    const observedRaw = observation?.deploy ?? null;
+    const observed = observation ? Math.min(observation.deploy, observedCap!) : null;
     const source = observed !== null && observed > visible ? 'observed' : 'visible';
     const estimate = source === 'observed' ? observed! : visible;
-    return { playerId, estimate, base, bonusIncome, largestStack, stackCap, opening, observed, source };
+    return {
+      playerId,
+      estimate,
+      held,
+      base,
+      bonusIncome,
+      largestStack,
+      stackCap,
+      opening,
+      observed,
+      observedRaw,
+      observedCap,
+      observation,
+      source,
+    };
   });
 }
 
@@ -869,7 +1002,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
       if (st.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
       if (!neighborsOf(g, id).some((n) => mineSet.has(n))) continue;
-      const was = before.get(id);
+      // Visible both times (#69): a stack hidden last turn only came into view.
+      const was = visibleState(before.get(id));
       if (was?.owner.kind !== 'player' || was.owner.playerId !== st.owner.playerId || was.armies === null) continue;
       if (st.armies > was.armies) growthOf.set(id, { from: was.armies, to: st.armies, growth: st.armies - was.armies });
     }
@@ -1008,9 +1142,22 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const p of [...facing].sort(byNum)) {
         const e = estimates.get(p)!;
         const visible = `base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}`;
+        if (e.observation) {
+          const o = e.observation;
+          const turns = input.turn !== undefined ? `turn ${input.turn - 1} → turn ${input.turn}` : 'previous board → this board';
+          const shown = o.reveals.slice(0, MAX_NAMED_REVEALS).map(label).join(', ');
+          const more = o.reveals.length > MAX_NAMED_REVEALS ? ` and ${o.reveals.length - MAX_NAMED_REVEALS} more` : '';
+          rationale.push(
+            `Observed deploy for player ${p}, ${turns}: +${e.observedRaw}/turn over ${o.counted.length} territories visible on both boards (${o.captured.length} captured); ${o.reveals.length} skipped as fog reveals${o.reveals.length ? ` (${shown}${more}): not shown with an owner and armies last turn (fogged, armies hidden, or not yet picked), so what they hold is not income` : ''}.`,
+          );
+          if (e.observedRaw! > e.observedCap!)
+            warnings.push(
+              `player ${p} was observed to deploy +${e.observedRaw}/turn, more than it could earn on this board (base ${e.base} for its ${e.held} visible territories + bonuses it could still hold +${e.observedCap! - e.base} = ${e.observedCap}): capped at ${e.observedCap}. Armies moved in from the fog, a Reinforcement card, or a bonus it has lost since may explain the rest.`,
+            );
+        }
         if (e.source === 'observed') {
           warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${e.estimate} (observed +${e.observed}/turn: what its visible territories grew since last turn plus what it captured, more than ${visible}; the stack cap does not cut an observed figure); it holds income the fog hides, and could deploy more.`,
+            `Enemy deploy estimate for player ${p}: ~${e.estimate} (observed +${e.observed}/turn: the net growth of its territories visible on both boards plus what it captured from a visible owner, more than ${visible}; the stack cap does not cut an observed figure); it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }
@@ -1116,10 +1263,14 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
   /** What stays on a held border, for the rationale: its armies, and my commander when it stands there. */
   const heldStack = (t: Threatened) => `${t.have + t.holdCost} armies${t.units ? ' and my commander' : ''}`;
+  /** The borders a hold deployed to, by the player threatening them (for the #69 rationale). */
+  const heldAgainst = new Map<number, Set<number>>();
   const hold = (t: Threatened) => {
     noteRecent(t);
     deploy(t.id, t.holdCost);
     locked.add(t.id);
+    const by = borders.get(t.id)?.player;
+    if (by !== undefined) heldAgainst.set(by, (heldAgainst.get(by) ?? new Set()).add(t.id));
     rationale.push(
       `Deploy ${t.holdCost} to ${label(t.id)} so it holds (protects +${t.value}): ${heldStack(t)} need ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat.`,
     );
@@ -2963,6 +3114,18 @@ export function planTurn(input: PlanInput): TurnPlan {
     rationale.push(notCompleted.get(id)!.why);
   }
   const gained = completed.reduce((sum, id) => sum + g.bonusById.get(id)!.value, 0);
+
+  // Issue #69, second point: several borders facing one opponent are each sized for its whole
+  // deploy. That is each border's worst case — the opponent picks where to land after I
+  // commit — so a sure hold of all of them needs every one sized for it; no army is counted
+  // twice on one border (movable + max(deploy, growth)).
+  for (const [p, ids] of [...heldAgainst].sort((a, b) => a[0] - b[0])) {
+    const held = [...ids].filter((id) => !conceded.has(id)).sort(byNum);
+    if (held.length < 2) continue;
+    rationale.push(
+      `Each of the ${held.length} borders held against player ${p} (${held.map(label).join(', ')}) is sized for its full ~${deployOf(p)} deploy: it chooses where to land after seeing my orders, so any one of them can face all of it, and a share each would leave whichever it picks short. Each border's threat counts its stacks next to that border once plus one deploy, never the deploy twice.`,
+    );
+  }
 
   if (noSplit && moves.length)
     warnings.push(
