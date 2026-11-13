@@ -247,7 +247,7 @@ describe('fog reveals are not enemy income (#69)', () => {
     // An opponent seen only owner-only still gets an estimate, with no stack to size by.
     const onlyOwnerOnly = board([mine(1, 6), mine(2, 5), mine(3, 5), fogged(4), fogged(5), fogged(6), fogged(7), fogged(8), neutral(9, 2), ownerOnly(10), ownerOnly(11)]);
     const [f] = enemyDeployEstimates(g, onlyOwnerOnly, ME, STD);
-    expect(f).toMatchObject({ playerId: ENEMY, held: 2, bonusIncome: 30, largestStack: 0, stackCap: 0 });
+    expect(f).toMatchObject({ playerId: ENEMY, held: 2, bonusIncome: 30, largestStack: 0, estimate: 35 });
     expect(Number.isFinite(f!.estimate)).toBe(true);
   });
 

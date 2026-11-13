@@ -37,6 +37,7 @@ import {
   planTurn,
   AHEAD_PRESSURE_FACTOR,
   PRESSURE_FACTOR,
+  symmetricStart,
   trackGame,
   trackOpponents,
   type TurnBoard,
@@ -815,9 +816,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .optional()
           .describe(
             'Armies every enemy is assumed to deploy next turn when judging threats. Default, per opponent: base ' +
-              'income plus the bonuses it visibly holds (at most 75% of its largest stack next to you, never below ' +
-              'the base income), or what it was observed to deploy since the previous turn when larger. Income in ' +
-              'the fog is unseen, so raise it if you know they earn more.',
+              'income plus every bonus it visibly holds, whatever its stack next to you (never below the base income), ' +
+              'or what it was observed to deploy when larger, carried across turns. In an even-start 1v1 an opponent ' +
+              'bordering the fog is assumed to earn at least your income. Income in the fog is unseen, so raise it if ' +
+              'you know they earn more.',
           ),
         min_win_chance: z.coerce
           .number()
@@ -896,6 +898,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
           ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
           cards: rules.inPlay.length > 0,
+          // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
+          symmetricStart: symmetricStart(game.settings, map),
         },
         ...(tracks ? { tracks } : {}),
         options: {

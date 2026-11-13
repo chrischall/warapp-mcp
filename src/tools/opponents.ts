@@ -34,7 +34,8 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           'both turns plus what its captures cost; a stack that only came out of the fog is not income, and no turn ' +
           'exceeds what it could earn), its income estimate (each observed deploy is a lower bound under fog, so: the ' +
           'largest of its last three observed turns, or its visible army growth plus losses per turn (stacks out of the fog left out) when more, capped ' +
-          'at what it could earn and at least its base income plus the bonuses it visibly holds; with the method used ' +
+          'at what it could earn and at least its base income plus the bonuses it visibly holds; it never decays: an ' +
+          'earlier figure is carried until a bonus it visibly held is visibly broken; with the method used ' +
           'and the observed range), its unaccounted armies (income earned since first ' +
           'seen minus its visible army change and losses: armies that must be in the fog) and inferred bonuses (the ' +
           'combinations of bonuses it could hold whose values best explain the gap between that income and what it ' +
@@ -84,6 +85,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           deploy: x.observed,
           ...(x.raw !== x.observed ? { uncapped: x.raw, cap: x.cap } : {}),
           visibleIncome: x.visibleIncome,
+          ...(x.broken.length ? { brokenBonuses: x.broken.map(bonusOf) } : {}),
           ...(rung === 'full'
             ? {
                 counted: x.counted.map(name),
@@ -119,6 +121,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
               turns: t.incomeTurns,
               // #99: which term set the estimate, and the spread of what it was observed to deploy.
               method: t.incomeMethod,
+              ...(t.incomeLowered ? { lowered: t.incomeLowered } : {}),
               observedRange: t.observedRange,
               usedByPlanner: t.income !== null && t.turns.length >= TRACKED_MIN_TURNS,
             },

@@ -71,11 +71,12 @@
 //     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
 //     income (the larger of MinimumArmyBonus and, with BonusArmyPer on, its
 //     visible territories / BonusArmyPer) plus the bonuses that player
-//     visibly holds in full, clamped below by max(MIN_ENEMY_DEPLOY, base
-//     income) and above by round(ENEMY_STACK_SHARE × its largest
-//     stack next to me) — a big stack implies it *can* move a lot, never that
-//     its income is big (live, a 0.75 × 15 guess on an all-15 opening board made
-//     every base-income opponent look like ~11). On the opening board (every
+//     visibly holds in full, never below max(MIN_ENEMY_DEPLOY, base income).
+//     Its stack next to me is no part of it: a stack says how much can *move*,
+//     never how much can be deployed (live, a 0.75 × 15 guess on an all-15
+//     opening board made every base-income opponent look like ~11; and capping
+//     the estimate at 0.75 × a small stack hid income held in plain view — a
+//     +10 holder with a 2-stack on my border read as 5). On the opening board (every
 //     visible territory still holds the same count) every opponent gets the
 //     floor. Given `previousBoard`, each estimate is at least the deploy observed since
 //     then (`observeDeploy`, issue #57: the net change of its armies visible on both
@@ -86,7 +87,7 @@
 //     once, ascending id); the rest arrived from the fog when a neighbour was hidden (a move
 //     and a threat, never income, issue #86), or counts as deploy when every neighbour was in view). A territory hidden last turn
 //     (fogged, or under a fog level that hid its armies) is a fog reveal, never growth or a
-//     capture (issue #69). The observed figure is never cut by the stack cap, but is capped
+//     capture (issue #69). The observed figure is capped
 //     at what the opponent could earn on this board: its base income plus every bonus none of
 //     whose territories someone else visibly holds, owner-only included (a warning says when). A rationale line names
 //     the turns compared and the territories counted vs skipped as reveals; the warning
@@ -94,8 +95,18 @@
 //     opponent observed over at least TRACKED_MIN_TURNS turns gets its tracked income (the
 //     larger of the most it was observed to deploy over its last three observed turns — each a
 //     lower bound — and its visible army growth plus losses per turn less fog arrivals, capped at what it could
-//     earn, floored at base + visible bonuses; #99, `trackedIncome`) in place of the
+//     earn, floored at base + visible bonuses; #99, `trackedIncome` — and never decaying: an
+//     earlier window's figure is carried until a bonus it visibly held is visibly broken, less
+//     that bonus's value, and never above what it could earn; my own orders, when known, are
+//     measurements; #119) in place of the
 //     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
+//     The fog prior (#119, `EnemyIncomePrior`): when `game.symmetricStart` says every player
+//     started even and it is a 1v1 (one opponent still playing, no teams), an opponent
+//     bordering the fog (a territory next to one of its own shows no owner) is estimated at
+//     least at my own income (card armies out), capped at what it could earn on this board —
+//     every observed figure is a lower bound under fog, and the estimates read 2–3× low
+//     against a finished game's true deploys without it. It only raises an estimate; the
+//     warning calls it a prior, not an observation.
 //     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
 //     enemy territory next to me that was visible then (owner and armies, #69) under the same owner and
@@ -610,6 +621,7 @@
 import type { BoardState, TerritoryState } from '../board.js';
 import { incomeBasis, type OpponentTrack } from './opponents.js';
 import type { GameSettings } from '../normalize.js';
+import { carriesTeam } from '../teams.js';
 import { analyzeBonus, bonusTerritories } from './bonuses.js';
 import {
   armiesForChance,
@@ -646,8 +658,6 @@ export const TRACKED_MIN_TURNS = 2;
 
 /** Fog reveals named in the observed-deploy rationale before "and N more". */
 const MAX_NAMED_REVEALS = 6;
-/** The default estimate is capped at this share of the opponent's largest stack next to me. */
-export const ENEMY_STACK_SHARE = 0.75;
 /** A border is conceded when holding it costs more than this many times the income it protects. */
 export const CONCEDE_FACTOR = 3;
 /** A held border is comfortable once taking it needs more than this many times its threat. */
@@ -795,6 +805,11 @@ export interface PlanGameContext {
   commanders?: boolean;
   /** Any card is in play. */
   cards?: boolean;
+  /**
+   * Every player started with the same territories and armies (not a map scenario that sets its
+   * own starts): in a 1v1 it turns the fog prior on (#119, {@link EnemyIncomePrior}).
+   */
+  symmetricStart?: boolean;
 }
 
 export interface PlanInput {
@@ -1025,7 +1040,7 @@ export function guaranteedFalls(saveCosts: readonly number[], deploy: number): n
 /** One visible opponent's estimated deploy next turn and how it was reached. */
 export interface EnemyDeployEstimate {
   playerId: number;
-  /** clamp(base + bonusIncome, max(MIN_ENEMY_DEPLOY, base), stackCap); that floor on the opening board. */
+  /** max(base + bonusIncome, MIN_ENEMY_DEPLOY, base) — never below what it visibly holds; that floor on the opening board. */
   estimate: number;
   /** The territories it visibly owns (owner shown, armies or not): what `base` is computed from. */
   held: number;
@@ -1036,10 +1051,8 @@ export interface EnemyDeployEstimate {
   base: number;
   /** Value of the bonuses this player visibly holds in full. */
   bonusIncome: number;
-  /** Its largest visible stack next to one of my territories (else its largest visible stack). */
+  /** Its largest visible stack next to one of my territories (else its largest visible stack): what can move, not what it earns. */
   largestStack: number;
-  /** round(ENEMY_STACK_SHARE × largestStack). */
-  stackCap: number;
   /** Every visible territory holds the same army count: no one has deployed yet. */
   opening: boolean;
   /**
@@ -1066,10 +1079,33 @@ export interface EnemyDeployEstimate {
   /** The observed turns behind `tracked` (`from` turns, oldest first); empty when `tracked` is `null`. */
   trackedTurns: number[];
   /**
-   * `'tracked'` when the tracked income beat the visible-bonus figure, else `'observed'` when the
-   * single-turn observed figure did (only without a usable track), else `'visible'`.
+   * The most it could earn on this board: `base` plus every positive bonus none of whose
+   * territories someone else visibly holds (the same figure as `observedCap`, given or not a
+   * previous board).
    */
-  source: 'visible' | 'observed' | 'tracked';
+  couldEarn: number;
+  /**
+   * The fog prior (#119), when asked for ({@link EnemyIncomePrior}: a symmetric-start 1v1) and
+   * it borders the fog: my own income, capped at `couldEarn`; else `null`.
+   */
+  prior: number | null;
+  /**
+   * `'tracked'` when the tracked income beat the visible-bonus figure, else `'observed'` when the
+   * single-turn observed figure did (only without a usable track), else `'visible'` — unless the
+   * fog prior beat all of them: `'prior'`.
+   */
+  source: 'visible' | 'observed' | 'tracked' | 'prior';
+}
+
+/**
+ * The fog prior (#119): in a 1v1 that started even (the same territories and armies each), an
+ * opponent I cannot see all of — one bordering the fog — is assumed to earn at least what I earn
+ * (`myIncome`, card armies out), capped at what it could earn on the board. Observed deploys are
+ * lower bounds under fog: the evidence (a finished game's true deploys against the estimate)
+ * read 2–3× low without it. A prior, never an observation; the warning says so.
+ */
+export interface EnemyIncomePrior {
+  myIncome: number;
 }
 
 /**
@@ -1160,6 +1196,21 @@ export function observeDeploy(
   playerId: number,
   rates: KillRates = {},
 ): DeployObservation {
+  const { signed: _signed, ...o } = observeSigned(g, board, previous, playerId, rates);
+  return o;
+}
+
+/**
+ * {@link observeDeploy} with its total before the floor at 0 (`signed`): the opponent tracker
+ * adds what my own orders measure (#119) to it before flooring.
+ */
+export function observeSigned(
+  g: MapGraph,
+  board: BoardState,
+  previous: BoardState,
+  playerId: number,
+  rates: KillRates = {},
+): DeployObservation & { signed: number } {
   const before = new Map(previous.territories.map((t) => [t.territoryId, t]));
   let total = 0;
   const counted: number[] = [];
@@ -1218,7 +1269,7 @@ export function observeDeploy(
       } else total += arrived;
     }
   }
-  return { deploy: Math.max(0, total), counted, captured, fromFog, fogArmies, reveals };
+  return { deploy: Math.max(0, total), signed: total, counted, captured, fromFog, fogArmies, reveals };
 }
 
 /** {@link observeDeploy}'s deploy figure alone. */
@@ -1242,11 +1293,12 @@ function openingArmies(g: MapGraph, board: BoardState): number | null {
 
 /**
  * Per-opponent enemy deploy estimates, one per visible enemy player (sorted by
- * id): base income plus the bonuses that player visibly holds in full, clamped
- * below by max({@link MIN_ENEMY_DEPLOY}, base income) — the floor wins over the cap — and above by round({@link ENEMY_STACK_SHARE}
- * × its largest stack next to me). Bonuses in the fog are unseen, so this is
- * what the visible board supports. On the opening board (every visible
- * territory holds the same count) every opponent gets the floor.
+ * id): base income plus the bonuses that player visibly holds in full, never
+ * below max({@link MIN_ENEMY_DEPLOY}, base income). Its stack next to me does not
+ * limit it — income held in plain view can all be deployed on my border, however
+ * small the stack there. Bonuses in the fog are unseen, so this is what the
+ * visible board supports. On the opening board (every visible territory holds
+ * the same count) every opponent gets the floor.
  */
 export function enemyDeployEstimates(
   g: MapGraph,
@@ -1255,6 +1307,7 @@ export function enemyDeployEstimates(
   settings: PlannerSettings = {},
   previous?: BoardState,
   tracks?: readonly OpponentTrack[],
+  prior?: EnemyIncomePrior,
 ): EnemyDeployEstimate[] {
   const owner = new Map<number, number>();
   const armies = new Map<number, number>();
@@ -1290,36 +1343,34 @@ export function enemyDeployEstimates(
       if (neighborsOf(g, t).some((n) => owner.get(n) === me)) adjacent = Math.max(adjacent, a);
     }
     const largestStack = adjacent || any;
-    const stackCap = Math.round(ENEMY_STACK_SHARE * largestStack);
-    // Every opponent earns at least the game's base income (never below the 5 minimum).
+    // Every opponent earns at least the game's base income (never below the 5 minimum), and
+    // never less than the bonuses it visibly holds: its stack next to me limits neither.
     const floor = Math.max(MIN_ENEMY_DEPLOY, base);
-    const visible = opening ? floor : Math.max(floor, Math.min(base + bonusIncome, stackCap));
-    // What it was seen to deploy is never cut by the stack cap, only by what it could earn
+    const visible = opening ? floor : Math.max(floor, base + bonusIncome);
+    // What it was seen to deploy is cut only by what it could earn
     // (#69): its base plus every bonus none of whose territories someone else visibly holds
     // (an owner-only territory is visibly held: its owner shows). Both come from this board,
     // so a bonus it lost since last turn is out, though it may have paid for that deploy.
     const observation = previous ? observeDeploy(g, board, previous, playerId, settings) : null;
-    let observedCap: number | null = null;
-    if (observation) {
-      let possible = 0;
-      for (const b of g.map.bonuses) {
-        const ts = bonusTerritories(g, b.id);
-        if (b.value <= 0 || !ts.length) continue;
-        const taken = ts.some((t) => {
-          const st = ownerShown(seenNow.get(t));
-          return st !== undefined && !(st.owner.kind === 'player' && st.owner.playerId === playerId);
-        });
-        if (!taken) possible += b.value;
-      }
-      observedCap = base + possible;
+    let possible = 0;
+    for (const b of g.map.bonuses) {
+      const ts = bonusTerritories(g, b.id);
+      if (b.value <= 0 || !ts.length) continue;
+      const taken = ts.some((t) => {
+        const st = ownerShown(seenNow.get(t));
+        return st !== undefined && !(st.owner.kind === 'player' && st.owner.playerId === playerId);
+      });
+      if (!taken) possible += b.value;
     }
+    const couldEarn = base + possible;
+    const observedCap = observation ? couldEarn : null;
     const observedRaw = observation?.deploy ?? null;
     const observed = observation ? Math.min(observation.deploy, observedCap!) : null;
     // A track over enough turns replaces the single-turn observed figure (S3).
     const track = tracks?.find((t) => t.playerId === playerId);
     const usable = track && track.income !== null && track.turns.length >= TRACKED_MIN_TURNS ? track : undefined;
     const tracked = usable ? usable.income : null;
-    const source: EnemyDeployEstimate['source'] =
+    const seenSource: EnemyDeployEstimate['source'] =
       tracked !== null
         ? tracked > visible
           ? 'tracked'
@@ -1327,7 +1378,13 @@ export function enemyDeployEstimates(
         : observed !== null && observed > visible
           ? 'observed'
           : 'visible';
-    const estimate = source === 'tracked' ? tracked! : source === 'observed' ? observed! : visible;
+    const seen = seenSource === 'tracked' ? tracked! : seenSource === 'observed' ? observed! : visible;
+    // #119: the fog prior. In a symmetric-start 1v1 an opponent bordering the fog earns at least
+    // what I earn, capped at what it could earn on this board. It only ever raises the figure.
+    const fogBeside = [...theirs].some((t) => neighborsOf(g, t).some((n) => !ownerShown(seenNow.get(n))));
+    const priorFigure = prior && fogBeside ? Math.min(Math.max(0, Math.floor(prior.myIncome)), couldEarn) : null;
+    const source: EnemyDeployEstimate['source'] = priorFigure !== null && priorFigure > seen ? 'prior' : seenSource;
+    const estimate = source === 'prior' ? priorFigure! : seen;
     return {
       playerId,
       estimate,
@@ -1335,14 +1392,15 @@ export function enemyDeployEstimates(
       base,
       bonusIncome,
       largestStack,
-      stackCap,
       opening,
       observed,
       observedRaw,
       observedCap,
+      couldEarn,
       observation,
       tracked,
       trackedTurns: usable ? usable.incomeTurns : [],
+      prior: priorFigure,
       source,
     };
   });
@@ -1359,6 +1417,7 @@ export function defaultEnemyDeploy(
   settings: PlannerSettings = {},
   previous?: BoardState,
   tracks?: readonly OpponentTrack[],
+  prior?: EnemyIncomePrior,
 ): number {
   const mineIds = new Set(
     board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me ? [t.territoryId] : [])),
@@ -1369,7 +1428,7 @@ export function defaultEnemyDeploy(
     if (!g.territoryById.has(t.territoryId)) continue;
     if (neighborsOf(g, t.territoryId).some((n) => mineIds.has(n))) next.add(t.owner.playerId);
   }
-  return enemyDeployEstimates(g, board, me, settings, previous, tracks).reduce(
+  return enemyDeployEstimates(g, board, me, settings, previous, tracks, prior).reduce(
     (m, e) => (next.has(e.playerId) ? Math.max(m, e.estimate) : m),
     MIN_ENEMY_DEPLOY,
   );
@@ -1417,15 +1476,31 @@ interface BonusPlan {
   fogEach: number;
 }
 
+/**
+ * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
+ * symmetric (`symmetricStart`) and it is a 1v1 — exactly one opponent still playing, no teams
+ * (the players in sight when no player list is given).
+ */
+function fogPrior(board: BoardState, me: number, ctx: PlanGameContext, myIncome: number): EnemyIncomePrior | undefined {
+  if (ctx.symmetricStart !== true) return undefined;
+  const players = ctx.players ?? [];
+  if (players.some((p) => carriesTeam(p.team))) return undefined;
+  const opponents = players.length
+    ? players.filter((p) => p.id !== me && (p.state ?? 'Playing') === 'Playing').length
+    : new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId !== me ? [t.owner.playerId] : []))).size;
+  return opponents === 1 ? { myIncome: Math.max(0, myIncome) } : undefined;
+}
+
 export function planTurn(input: PlanInput): TurnPlan {
   const { graph: g, board, me } = input;
   const s = input.settings ?? {};
   const baseIncome = Math.max(0, Math.floor(s.baseIncome ?? DEFAULT_BASE_INCOME));
   const opts = input.options ?? {};
   const income = Math.max(0, Math.floor(input.income));
-  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard, input.tracks);
-  // ---- 0p. the game profile ----
   const ctx = input.game ?? {};
+  const incomePrior = fogPrior(board, me, ctx, income - Math.max(0, Math.floor(input.cardArmies ?? 0)));
+  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard, input.tracks, incomePrior);
+  // ---- 0p. the game profile ----
   const profile = gameProfile({
     graph: g,
     board,
@@ -1473,7 +1548,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const custom = opts.enemyDeploy !== undefined;
   const enemyDeploy = custom
     ? Math.max(0, Math.floor(opts.enemyDeploy!))
-    : defaultEnemyDeploy(g, board, me, s, input.previousBoard, input.tracks);
+    : defaultEnemyDeploy(g, board, me, s, input.previousBoard, input.tracks, incomePrior);
   const estimates = new Map(estimateList.map((e) => [e.playerId, e]));
   /** The deploy assumed for one opponent's threat: the override, else its own estimate. */
   const deployOf = (player: number) => (custom ? enemyDeploy : (estimates.get(player)?.estimate ?? MIN_ENEMY_DEPLOY));
@@ -1993,15 +2068,21 @@ export function planTurn(input: PlanInput): TurnPlan {
             `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
           );
         }
+        if (e.source === 'prior') {
+          warnings.push(
+            `Enemy deploy estimate for player ${p}: ~${e.estimate} (a prior, not an observation: in a 1v1 that started even, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}, capped at the most it could earn on this board, ${e.couldEarn}; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''}); observed deploys are lower bounds under fog, and it could deploy more.`,
+          );
+          continue;
+        }
         if (e.source === 'tracked') {
           warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${e.estimate} (tracked over ${e.trackedTurns.length} observed turns, more than ${visible}; the stack cap does not cut a tracked figure); it holds income the fog hides, and could deploy more.`,
+            `Enemy deploy estimate for player ${p}: ~${e.estimate} (tracked over ${e.trackedTurns.length} observed turns, more than ${visible}); it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }
         if (e.source === 'observed') {
           warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${e.estimate} (observed +${e.observed}/turn: the net growth of its territories visible on both boards plus what its captures from a visible owner cost it, more than ${visible}; the stack cap does not cut an observed figure); it holds income the fog hides, and could deploy more.`,
+            `Enemy deploy estimate for player ${p}: ~${e.estimate} (observed +${e.observed}/turn: the net growth of its territories visible on both boards plus what its captures from a visible owner cost it, more than ${visible}); it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }
@@ -2009,7 +2090,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         warnings.push(
           (opening !== null
             ? `Enemy deploy estimate for player ${p}: ~${e.estimate} (opening board: every visible territory holds ${opening}, so no one has deployed yet and every opponent gets its base income, at least ${MIN_ENEMY_DEPLOY}); enemy income is unknown, so they could deploy more.`
-            : `Enemy deploy estimate for player ${p}: ~${e.estimate} (${visible}, at least max(${MIN_ENEMY_DEPLOY}, base) and at most ${ENEMY_STACK_SHARE * 100}% of its largest stack next to me (${e.largestStack}) = ${e.stackCap}); enemy income beyond its visible bonuses is unknown, so they could deploy more.`) + seen,
+            : `Enemy deploy estimate for player ${p}: ~${e.estimate} (${visible}, at least max(${MIN_ENEMY_DEPLOY}, base); its largest stack next to me (${e.largestStack}) is what can move, not a limit on what it deploys); enemy income beyond its visible bonuses is unknown, so they could deploy more.`) + seen,
         );
       }
     }

@@ -9,7 +9,6 @@ import {
   CONCEDE_FACTOR,
   DEFENSE_DISCOUNT,
   defaultEnemyDeploy,
-  ENEMY_STACK_SHARE,
   enemyDeployEstimates,
   incomeFor,
   MIN_ENEMY_DEPLOY,
@@ -822,7 +821,8 @@ describe('planTurn — balanced', () => {
   const eBoard = board([mine(1, 5), enemy(5, 2), enemy(6, 2), enemy(7, 2)]);
 
   it('(e) breaks an enemy bonus with the exact capture cost, topped up from idle armies', () => {
-    const p = planTurn({ graph: eMap, board: eBoard, me: ME, income: 5, settings: STD });
+    // enemyDeploy is pinned at 5: this is about the mechanic, not the estimate (a holder of a +4 is estimated at 9).
+    const p = planTurn({ graph: eMap, board: eBoard, me: ME, income: 5, settings: STD, options: { enemyDeploy: 5 } });
     expect(p.rationale.join('\n')).toMatch(/Attack T5 \(#5\) from T1 \(#1\) with 3: breaks enemy bonus B811 \(#811\) \(\+4/);
     // S2: T1's leftover armies would sit idle once T5 falls, so the attack grows from the
     // exact cost (3) to the next efficient size (5: 3 kills for sure instead of 2).
@@ -971,9 +971,15 @@ describe('planTurn — balanced', () => {
     const base = { graph: g, me: ME, settings: STD } as const;
 
     it('attacks it from the border and still holds: what stays behind holds if the capture fails', () => {
-      // T1 (4) faces 1 movable + ~5 deploy = 6: the hold costs 1. The capture (3) comes on
-      // top of it, so T1 keeps 4 + 1 armies whether or not T5 falls.
-      const p = planTurn({ ...base, board: board([mine(1, 4), enemy(5, 2), enemy(6, 2), enemy(7, 2)]), income: 5 });
+      // T1 (4) faces 1 movable + 5 deploy = 6: the hold costs 1. The capture (3) comes on
+      // top of it, so T1 keeps 4 + 1 armies whether or not T5 falls. (enemyDeploy pinned at 5:
+      // the holder of the +4 is estimated at 9, which is a different sum for the same mechanic.)
+      const p = planTurn({
+        ...base,
+        board: board([mine(1, 4), enemy(5, 2), enemy(6, 2), enemy(7, 2)]),
+        income: 5,
+        options: { enemyDeploy: 5 },
+      });
       expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 3]]);
       // 1 for the hold and 3 for the capture; the leftover 1 goes to the attacking stack.
       expect(p.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
@@ -1041,7 +1047,7 @@ describe('planTurn — balanced', () => {
         ...base,
         board: board([mine(1, 1), enemy(5, 2), enemy(6, 2), enemy(7, 2)]),
         income: 4,
-        options: { reserve: 2 },
+        options: { reserve: 2, enemyDeploy: 5 },
       });
       expect(attacks(p)).toEqual([]);
       expect(p.rationale.join('\n')).toMatch(/Deploy 4 to T1 \(#1\) so it holds/);
@@ -1052,6 +1058,7 @@ describe('planTurn — balanced', () => {
         ...base,
         board: board([mine(1, 4), mine(2, 4), enemy(5, 2), enemy(6, 2), enemy(7, 2)]),
         income: 6,
+        options: { enemyDeploy: 5 },
       });
       expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 5]]);
       expect(p.rationale.join('\n')).toMatch(/so it holds/);
@@ -1114,11 +1121,12 @@ describe('enemy deploy estimate', () => {
   it('the warnings state the estimate used, its basis, and that unseen income is unknown', () => {
     const p = planTurn({ graph: g, board: florida, me: ME, income: 5, settings: STD });
     const w = p.warnings.join('\n');
-    expect(w).toMatch(/Enemy deploy estimate for player 20: ~10 /);
+    // The +6 it visibly holds is all deployable: 11, whatever its 13-stack next to me.
+    expect(w).toMatch(/Enemy deploy estimate for player 20: ~11 /);
     expect(w).toMatch(/base 5 \+ visible bonuses \+6 = 11/);
-    expect(w).toMatch(/largest stack next to me \(13\)/);
+    expect(w).toMatch(/largest stack next to me \(13\) is what can move, not a limit on what it deploys/);
     expect(w).toMatch(/income .*unknown/i);
-    expect(p.enemyDeploy).toBe(10);
+    expect(p.enemyDeploy).toBe(11);
   });
 
   it('a caller estimate replaces the default and is named as such', () => {
@@ -1156,8 +1164,7 @@ describe('enemy deploy estimate — per opponent, income-aware (R1)', () => {
   it('(a) an opponent with no complete bonus and a 15-stack is estimated at the floor, not 11', () => {
     const s = board([mine(1, 15), enemy(2, 15), neutral(3, 2), neutral(4, 2)]);
     const [e] = enemyDeployEstimates(g, s, ME);
-    expect(e).toMatchObject({ playerId: ENEMY, estimate: MIN_ENEMY_DEPLOY, base: 5, bonusIncome: 0, stackCap: 11 });
-    expect(Math.round(ENEMY_STACK_SHARE * 15)).toBe(11);
+    expect(e).toMatchObject({ playerId: ENEMY, estimate: MIN_ENEMY_DEPLOY, base: 5, bonusIncome: 0, largestStack: 15 });
     // 14 movable + 5 = 19 cannot take 15 (needs 25); the old ~11 said 25 could.
     expect(armiesToTake(15)).toBe(25);
     const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD });
@@ -1170,10 +1177,10 @@ describe('enemy deploy estimate — per opponent, income-aware (R1)', () => {
     const rich = { baseIncome: 8 };
     // Mid-game, no visible bonus, a big adjacent stack: base 8, not the 5 minimum.
     const [mid] = enemyDeployEstimates(g, board([mine(1, 15), enemy(2, 15), neutral(3, 2), neutral(4, 2)]), ME, rich);
-    expect(mid).toMatchObject({ estimate: 8, base: 8, stackCap: 11 });
-    // A small adjacent stack caps the bonus estimate but never below the base income.
+    expect(mid).toMatchObject({ estimate: 8, base: 8, largestStack: 15 });
+    // A small adjacent stack changes nothing: the base income is all deployable.
     const [small] = enemyDeployEstimates(g, board([mine(1, 15), enemy(2, 2), neutral(3, 2), neutral(4, 2)]), ME, rich);
-    expect(small).toMatchObject({ estimate: 8, stackCap: 2 });
+    expect(small).toMatchObject({ estimate: 8, largestStack: 2 });
     // Opening board (every territory holds the same count): base income, not 5.
     const [open] = enemyDeployEstimates(g, board([mine(1, 4), enemy(2, 4), neutral(3, 4), neutral(4, 4)]), ME, rich);
     expect(open).toMatchObject({ estimate: 8, opening: true });
@@ -1182,16 +1189,16 @@ describe('enemy deploy estimate — per opponent, income-aware (R1)', () => {
   it('(b) an opponent visibly holding a +5 bonus is estimated at base + 5', () => {
     const s = board([mine(1, 15), enemy(2, 15), neutral(3, 2), enemy(4, 3)]);
     const [e] = enemyDeployEstimates(g, s, ME);
-    expect(e).toMatchObject({ playerId: ENEMY, estimate: 10, base: 5, bonusIncome: 5, stackCap: 11, opening: false });
+    expect(e).toMatchObject({ playerId: ENEMY, estimate: 10, base: 5, bonusIncome: 5, largestStack: 15, opening: false });
     const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD });
     expect(p.enemyDeploy).toBe(10);
     expect(p.warnings.join('\n')).toMatch(/for player 20: ~10 \(base 5 \+ visible bonuses \+5 = 10/);
   });
 
-  it('the stack-based figure caps the income estimate', () => {
-    // Same +5 bonus but only a 7-stack next to me: round(0.75 × 7) = 5 caps 10 at 5.
+  it('a small stack next to me does not lower the estimate: visible income is all deployable', () => {
+    // Same +5 bonus but only a 7-stack next to me: still 10 (the old 75%-of-stack cap said 5).
     const s = board([mine(1, 15), enemy(2, 7), neutral(3, 2), enemy(4, 3)]);
-    expect(enemyDeployEstimates(g, s, ME)[0]).toMatchObject({ estimate: 5, bonusIncome: 5, stackCap: 5 });
+    expect(enemyDeployEstimates(g, s, ME)[0]).toMatchObject({ estimate: 10, bonusIncome: 5, largestStack: 7 });
     // A bonus held only partly (T4 fogged) does not count.
     const fog = board([mine(1, 15), enemy(2, 15), neutral(3, 2), fogged(4)]);
     expect(enemyDeployEstimates(g, fog, ME)[0]).toMatchObject({ estimate: 5, bonusIncome: 0 });
@@ -1242,7 +1249,7 @@ describe('enemy deploy estimate — per opponent, income-aware (R1)', () => {
   });
 
   it('each border is judged against its own opponent', () => {
-    // T1 faces player 20 (13-stack, +6 bonus: ~10); T6 faces player 30 (13-stack, no bonus: ~5).
+    // T1 faces player 20 (13-stack, +6 bonus: ~11); T6 faces player 30 (13-stack, no bonus: ~5).
     const g3 = buildGraph(
       makeMap(
         [1, 2, 4, 5, 6],
@@ -1260,18 +1267,18 @@ describe('enemy deploy estimate — per opponent, income-aware (R1)', () => {
     );
     const s = board([mine(1, 12), enemy(2, 13), enemy(4, 3), enemy(5, 13, 30), mine(6, 12)]);
     expect(enemyDeployEstimates(g3, s, ME).map((e) => [e.playerId, e.estimate])).toEqual([
-      [20, 10],
+      [20, 11],
       [30, 5],
     ]);
     const p = planTurn({ graph: g3, board: s, me: ME, income: 5, settings: STD });
     const w = p.warnings.join('\n');
-    expect(w).toMatch(/T1 \(#1\) \(12 armies\) could be taken next turn: player 20 has 12 movable armies next to it plus ~10 deploy/);
+    expect(w).toMatch(/T1 \(#1\) \(12 armies\) could be taken next turn: player 20 has 12 movable armies next to it plus ~11 deploy/);
     expect(w).not.toMatch(/T6 \(#6\) \(12 armies\) could be taken/);
-    expect(p.enemyDeploy).toBe(10);
+    expect(p.enemyDeploy).toBe(11);
   });
 
-  it('(d) a large adjacent stack still raises the estimate up to its cap when the income backs it', () => {
-    // +9 visible bonus: 5 + 9 = 14; a 20-stack caps it at 15, so 14 stands.
+  it('(d) the estimate is the visible income, whatever the size of the adjacent stack', () => {
+    // +9 visible bonus: 5 + 9 = 14, with a 20-stack next to me or a 12-stack.
     const g4 = buildGraph(
       makeMap(
         [1, 2, 3, 4],
@@ -1287,9 +1294,9 @@ describe('enemy deploy estimate — per opponent, income-aware (R1)', () => {
       ),
     );
     const big = board([mine(1, 15), enemy(2, 20), neutral(3, 2), enemy(4, 3)]);
-    expect(enemyDeployEstimates(g4, big, ME)[0]).toMatchObject({ estimate: 14, stackCap: 15 });
+    expect(enemyDeployEstimates(g4, big, ME)[0]).toMatchObject({ estimate: 14, largestStack: 20 });
     const small = board([mine(1, 15), enemy(2, 12), neutral(3, 2), enemy(4, 3)]);
-    expect(enemyDeployEstimates(g4, small, ME)[0]).toMatchObject({ estimate: 9, stackCap: 9 });
+    expect(enemyDeployEstimates(g4, small, ME)[0]).toMatchObject({ estimate: 14, largestStack: 12 });
   });
 });
 
@@ -1515,7 +1522,7 @@ describe('planTurn — defensibility-aware bonus completion (R3)', () => {
 
   it('a held border that would break its only threat just holds when that capture completes an indefensible bonus', () => {
     // My B950 (+3) = {1, 8}; the enemy's B951 (+2) = {8} is breakable. T8 (3) is T1's only
-    // threat (2 movable + 5 = 7 against T1's 3, which need 5): holding T1 needs 2. Capturing
+    // threat (2 movable + 7 = 9 — it holds the +2 — against T1's 3): holding T1 needs 3. Capturing
     // T8 would break B951 and complete B950, but T8 then faces T9 (30): indefensible.
     //   T1 ─ T8(enemy, B951) ─ T9(enemy 30)
     const g3 = buildGraph(
@@ -1536,7 +1543,7 @@ describe('planTurn — defensibility-aware bonus completion (R3)', () => {
     expect(attacks(p)).toEqual([]);
     expect(p.expected.bonusesCompleted).toEqual([]);
     expect(p.warnings.join('\n')).toMatch(/completing B950 \(#950\) leaves T8 \(#8\) indefensible .*: not completed/);
-    expect(p.rationale.join('\n')).toMatch(/Deploy 2 to T1 \(#1\) so it holds/);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 3 to T1 \(#1\) so it holds/);
     expect(p.conceded).toEqual([]);
     expect(deploySum(p)).toBe(10);
   });

@@ -42,7 +42,7 @@ const why = (p: TurnPlan) => p.rationale.join('\n');
 
 /** A track observed over two turns with `income`. */
 function track(playerId: number, income: number, visibleIncome = 5): OpponentTrack {
-  const turn = { from: 0, to: 1, observed: income, raw: income, cap: income, counted: [], captured: [], fromFog: [], reveals: [], visibleIncome, earned: income, net: 0, losses: 0, fogArmies: 0 };
+  const turn = { from: 0, to: 1, observed: income, raw: income, cap: income, counted: [], captured: [], fromFog: [], reveals: [], visibleIncome, earned: income, net: 0, losses: 0, fogArmies: 0, measured: 0, broken: [], brokenValue: 0 };
   return {
     playerId,
     firstSeen: 1,
@@ -58,6 +58,7 @@ function track(playerId: number, income: number, visibleIncome = 5): OpponentTra
     incomeTurns: [1, 2],
     observedRange: { min: income, max: income },
     incomeMethod: 'max-observed',
+    incomeLowered: 0,
     unaccounted: 0,
     visible: 1,
     turnsUnseen: 0,

@@ -165,7 +165,16 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
     income: 5,
     settings: STD,
     game: { players, turn: 6 },
-    options: { opponents: 2, ...options },
+    // enemyDeploy pinned at 5: these are about the mechanic, not the estimate (the holder of a visible bonus is estimated at base + its value).
+    options: { opponents: 2, enemyDeploy: 5, ...options },
+  });
+  // The standing reads the opponent's visible income (5 + its bonus), so a player with income 5
+  // is behind it and would defend (rule 0p.3). Rule 0p.2 is about an even game: an income of
+  // more than 0.8 × the opponent's (11 against 13, 13 against 15, 14 against 17), with a reserve that
+  // leaves the same 5 for captures as before.
+  const even = (options: PlanInput['options'] = {}, b = s, income = 11): PlanInput => ({
+    ...input({ reserve: income - 5, ...options }, b),
+    income,
   });
 
   it('exports its constant', () => {
@@ -177,7 +186,7 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
   });
 
   it('adapting: no second front — the neutral only', () => {
-    const p = planTurn(input({ adapt: true }));
+    const p = planTurn(even({ adapt: true }));
     expect(p.profile).toMatchObject({ format: 'ffa', opponents: 2, standing: 'even' });
     expect(attacks(p).map((m) => m.to)).toEqual([2]);
     expect(why(p)).toMatch(/FFA with 2 opponents left: no second front/);
@@ -203,7 +212,7 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
       ),
     );
     const s3 = board([mine(1, 6), neutral(2, 2), mine(3, 1), enemy(5, 2), enemy(6, 2), enemy(9, 2, THIRD)]);
-    const p = planTurn({ ...input({ adapt: true }, s3), graph: g3 });
+    const p = planTurn({ ...even({ adapt: true }, s3), graph: g3 });
     expect(attacks(p).map((m) => m.to)).toContain(5);
     expect(why(p)).not.toMatch(/Not breaking/);
   });
@@ -225,7 +234,7 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
         ],
       ),
     );
-    const p = planTurn({ ...input({ adapt: true }), graph: g1 });
+    const p = planTurn({ ...even({ adapt: true }, s, 14), graph: g1 });
     expect(attacks(p).map((m) => m.to)).toContain(5);
     expect(why(p)).not.toMatch(/Not breaking/);
     // Nothing was skipped, so the general rule is not claimed either.
@@ -262,13 +271,13 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
       ),
     );
     const thin = board([mine(1, 4), neutral(2, 2), enemy(5, 2), enemy(6, 2), enemy(9, 2, THIRD)]);
-    const p = planTurn({ ...input({ adapt: true }, thin), graph: g10 });
+    const p = planTurn({ ...even({ adapt: true }, thin, 13), graph: g10 });
     expect(why(p)).not.toMatch(/Not breaking/);
     expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 3]]);
     expect(why(p)).toMatch(/T5 \(#5\) is the only visible threat to T1 \(#1\)/);
     // At +8 the same cost gives 4.15 / 2.25 = 1.84 per army: a second front, so it only holds.
     const g8 = buildGraph(makeMap([1, 2, 5, 6, 9], [[1, 2], [1, 5], [5, 6]], [[821, 3, [2]], [822, 8, [5]]]));
-    const held = planTurn({ ...input({ adapt: true }, thin), graph: g8 });
+    const held = planTurn({ ...even({ adapt: true }, thin), graph: g8 });
     expect(why(held)).toMatch(/Not breaking B822 \(#822\) \(\+8 from player 20\): no second front in an FFA/);
     expect(attacks(held).map((m) => m.to)).not.toContain(5);
     expect(why(held)).not.toMatch(/only visible threat/);

@@ -145,12 +145,14 @@ describe('top-ups and what they change (S2)', () => {
 
   it('a retake warning is judged on the topped-up survivors', () => {
     // The break costs 3 and leaves 2 survivors (3 take them); topped up to 5 it leaves 4 (6 take them).
-    // T6 (2): 1 movable + ~5 deploy = 6 still retakes 4 survivors, and the warning says 4.
-    const p = planTurn({ graph: eMap, board: board([mine(1, 5), enemy(5, 2), enemy(6, 2), enemy(7, 2)]), me: ME, income: 5, settings: STD });
+    // T6 (2): 1 movable + 5 deploy = 6 still retakes 4 survivors, and the warning says 4.
+    // (enemyDeploy pinned at 5: the holder of the +4 is estimated at 9; the top-up is the subject.)
+    const pin = { enemyDeploy: 5 };
+    const p = planTurn({ graph: eMap, board: board([mine(1, 5), enemy(5, 2), enemy(6, 2), enemy(7, 2)]), me: ME, income: 5, settings: STD, options: pin });
     expect(attacks(p).map((m) => [m.to, m.armies])).toEqual([[5, 5]]);
     expect(p.warnings.join('\n')).toMatch(/T5 \(#5\) can be retaken after it breaks B811 \(#811\): 4 survivors need 6 to take, against ~6 next turn/);
     // T6 (1): 0 movable + ~5 = 5 retakes 2 survivors but not 4: no warning once topped up.
-    const q = planTurn({ graph: eMap, board: board([mine(1, 5), enemy(5, 2), enemy(6, 1), enemy(7, 2)]), me: ME, income: 5, settings: STD });
+    const q = planTurn({ graph: eMap, board: board([mine(1, 5), enemy(5, 2), enemy(6, 1), enemy(7, 2)]), me: ME, income: 5, settings: STD, options: pin });
     expect(attacks(q).map((m) => [m.to, m.armies])).toEqual([[5, 5]]);
     expect(q.warnings.join('\n')).not.toMatch(/retaken/);
   });
@@ -172,7 +174,15 @@ describe('top-ups and what they change (S2)', () => {
         ],
       ),
     );
-    const p = planTurn({ graph: g2, board: board([mine(1, 4), enemy(5, 2), enemy(6, 2), enemy(7, 2)]), me: ME, income: 5, settings: STD });
+    const p = planTurn({
+      graph: g2,
+      board: board([mine(1, 4), enemy(5, 2), enemy(6, 2), enemy(7, 2)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      // Pinned at 5 (the holder of the +4 is estimated at 9): the hold lock is the subject.
+      options: { enemyDeploy: 5 },
+    });
     expect(why(p)).toMatch(/T5 \(#5\) is the only visible threat to T1 \(#1\)/);
     expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 3]]);
     expect(why(p)).not.toMatch(/Top up/);

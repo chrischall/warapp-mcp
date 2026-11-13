@@ -204,10 +204,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
   Tests drive a scripted fake bridge and a fake WebSocket, never a real socket.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
-  separately: base income + the bonuses it visibly holds in full, at most round(0.75 × its
-  largest stack next to me) but never below the game's base income (at least 5)
-  (`enemyDeploy` / `enemy_deploy` overrides all of them). On the opening board (every visible
-  territory holds the same count) every opponent gets that floor — live, the old 0.75 × 15 guess made every base-income opponent look like ~11. A warning
+  separately: base income + the bonuses it visibly holds in full, never below the game's base
+  income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
+  me is no part of the estimate: a stack says what can move, not what can be deployed (capping
+  the figure at 0.75 × a small stack read a visible +10 holder as 5; guessing 0.75 × a 15-stack
+  on the opening board read every base-income opponent as ~11). On the opening board (every visible
+  territory holds the same count) every opponent gets that floor. A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also
   *observed* (`observedDeploy`, #57): the *net* change of its armies on territories visible
   both times (shrinks included — a transfer between its own territories is not deploy; counting
@@ -220,8 +222,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   over existing stacks read as +119 and conceded six held-bonus borders. The observed figure is
   capped at base + every bonus none of whose territories someone else visibly holds (a warning
   says when), and a rationale line names the turns compared and the reveals skipped. The
-  estimate is max(visible-bonus figure, observed) — the stack cap never cuts an observed figure —
-  and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). Each border
+  estimate is max(visible-bonus figure, observed)
+  and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). **The fog
+  prior (#119):** in a 1v1 that started even (`PlanGameContext.symmetricStart`, set by
+  `warapp_plan_turn` from `symmetricStart(settings, map)`: any distribution but a map scenario),
+  an opponent bordering the fog is estimated at least at my own income (card armies out), capped
+  at what it could earn on the board, and the warning calls it a prior — every observed figure is
+  a lower bound under fog, and without it a finished game's true deploys read 2–3× low. Each border
   is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to
   land), not a double count.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
@@ -233,7 +240,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   cached; it reports `trendSource`. A board the decoder refuses is never written there.
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
-  turn, income = median of the last three observed turns floored at base + visibly held bonuses,
+  turn, income = the most of the last three observed turns (or its stock and flow when more),
+  floored at base + visibly held bonuses — and never decaying (#119): an earlier figure is carried
+  until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it;
+  my own orders on a turn (`TurnBoard.orders`, when known) are measurements (`measureOrders`),
   unaccounted armies (earned since first seen − visible army change − visible losses) and
   inferred bonuses (combinations of up to three bonuses it could hold that best fit the income
   gap, all of them listed — candidates, never asserted). With 2+ observed turns the planner uses

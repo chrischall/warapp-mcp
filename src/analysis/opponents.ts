@@ -12,7 +12,12 @@
 //    that arrived from the fog, per turn),
 //    capped at the most it could earn in that window and floored at what it visibly earns on
 //    the newest board (base income + the bonuses it visibly holds in full) — see
-//    {@link trackedIncome} (#99);
+//    {@link trackedIncome} (#99). It never decays (#119): walking the observed turns, a window's
+//    figure replaces the carried one only when larger; otherwise the carried figure stays, less
+//    the value of each bonus it visibly held in full that the next board shows broken, and never
+//    above that turn's could-earn cap (`incomeMethod` 'carried'). Given my own orders on a turn
+//    (`TurnBoard.orders`), they are measurements ({@link measureOrders}): the defenders my failed
+//    attacks killed, and what a hold of mine that fell really killed;
 //  - unaccounted armies: the income it earned since first seen (each turn: what it visibly
 //    earned, or what it was seen to deploy when more) minus the change of its visible armies
 //    and what it visibly lost — armies that must be somewhere in the fog;
@@ -38,15 +43,26 @@ import type { BoardState } from '../board.js';
 import type { GameMap, GameSettings } from '../normalize.js';
 import { carriesTeam } from '../teams.js';
 import { bonusTerritories } from './bonuses.js';
-import { DEFAULT_DEFENSIVE_KILL_RATE, straightKills } from './combat.js';
+import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import type { MapGraph } from './graph.js';
-import { enemyDeployEstimates, ownerShown, visibleState, type PlannerSettings } from './planner.js';
+import { enemyDeployEstimates, observeSigned, ownerShown, visibleState, type PlannerSettings } from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 
 /** One of my boards and the turn it was seen on (the turn being played on it). */
 export interface TurnBoard {
   turn: number;
   board: BoardState;
+  /**
+   * My own orders on that turn, when known (#119): measurements of what the opponents deployed
+   * ({@link measureOrders}). Unknown orders change nothing.
+   */
+  orders?: MyOrders;
+}
+
+/** My orders on one turn (#119): my deploys and the moves I sent (attacks and transfers alike). */
+export interface MyOrders {
+  deploys: readonly { territoryId: number; armies: number }[];
+  moves: readonly { from: number; to: number; armies: number }[];
 }
 
 /** Observed turns (the latest) feeding the income estimate (#99: {@link trackedIncome}). */
@@ -64,8 +80,21 @@ export interface ObservedTurn {
   to: number;
   /** Its observed deploy, capped at what it could earn ({@link ObservedTurn.cap}). */
   observed: number;
-  /** The observed deploy before the cap. */
+  /** The observed deploy before the cap ({@link ObservedTurn.measured} included). */
   raw: number;
+  /**
+   * What my own orders on the earlier turn measured (#119, {@link measureOrders}), added to the
+   * board's reading before the floor at 0 and to `losses`: the defenders my failed attacks killed,
+   * and on a hold of mine that fell, what its defenders really killed. 0 without my orders.
+   */
+  measured: number;
+  /**
+   * Bonuses it visibly held in full on the earlier board of which the later one shows a member
+   * held by someone else: visibly broken (#119: only that lowers a carried income).
+   */
+  broken: number[];
+  /** Their total value. */
+  brokenValue: number;
   /** Base income plus every bonus it could still hold, on the later board. */
   cap: number;
   /** Territories visible on both boards and its on the later one, by id. */
@@ -176,6 +205,11 @@ export interface OpponentTrack {
   observedRange: { min: number; max: number } | null;
   /** Which term set `income` ({@link IncomeMethod}); `null` before any observed turn. */
   incomeMethod: IncomeMethod | null;
+  /**
+   * With `incomeMethod` `'carried'`: what the window it came from gave less what it is now
+   * (the bonuses visibly broken since, or a lower could-earn cap); else 0.
+   */
+  incomeLowered: number;
   /** Armies that must be in the fog (≥ 0); `null` before any observed turn. */
   unaccounted: number | null;
   /** Bonuses that could explain `income − visibleIncome`; `null` when there is no gap. */
@@ -242,6 +276,22 @@ export function trackGame(
 /** GameFeed's DistributionMode for full distribution (unverified, docs/WARAPP-API.md). */
 export const FULL_DISTRIBUTION = -1;
 
+/**
+ * Every player started with the same territories and armies (#119: the planner's fog prior
+ * needs it): any distribution but one of the map's own that is not `normal` (a scenario sets its
+ * own starts). Picks, random and full distribution give each player the same share. Unknown
+ * (no settings, no DistributionMode) is not symmetric: the prior stays off.
+ */
+export function symmetricStart(
+  settings: Pick<GameSettings, 'distributionMode'> | undefined,
+  map?: Pick<GameMap, 'distributionModes'>,
+): boolean {
+  const mode = settings?.distributionMode;
+  if (mode === undefined) return false;
+  const custom = map?.distributionModes.find((d) => d.id === mode);
+  return custom?.type === undefined || custom.type === 'normal';
+}
+
 /** Player states still in the game (absent counts as playing), as the profile counts them. */
 const playing = (p: TrackPlayer) => (p.state ?? 'Playing') === 'Playing';
 
@@ -250,9 +300,11 @@ const byNum = (a: number, b: number) => a - b;
 /**
  * Which term set a tracked income: `max-observed` the most it was observed to deploy,
  * `stock-flow` its visible army change plus visible losses (less fog arrivals) per turn, `visible` what it visibly
- * earns on the newest board (base + bonuses it visibly holds in full).
+ * earns on the newest board (base + bonuses it visibly holds in full), `carried` an earlier
+ * window's figure kept (#119: an income never decays unless a bonus it visibly held is visibly
+ * broken, or the most it could earn falls below it).
  */
-export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible';
+export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried';
 
 /** A tracked income and how it was reached ({@link trackedIncome}). */
 export interface TrackedIncome {
@@ -305,10 +357,16 @@ const turnSpan = (turns: readonly number[]) =>
  * How a track's income was reached, for a rationale line or a note, e.g. "max observed over
  * turns 9–11, observed 3–31"; `null` before any observed turn.
  */
-export function incomeBasis(t: Pick<OpponentTrack, 'incomeMethod' | 'incomeTurns' | 'observedRange'>): string | null {
+export function incomeBasis(
+  t: Pick<OpponentTrack, 'incomeMethod' | 'incomeTurns' | 'observedRange'> & Partial<Pick<OpponentTrack, 'incomeLowered'>>,
+): string | null {
   if (!t.incomeMethod || !t.observedRange || !t.incomeTurns.length) return null;
   const span = turnSpan(t.incomeTurns);
   const range = `observed ${t.observedRange.min}–${t.observedRange.max}`;
+  if (t.incomeMethod === 'carried')
+    return t.incomeLowered
+      ? `carried from ${span}, ${range}, less ${t.incomeLowered} for what it has visibly lost since`
+      : `carried from ${span}, ${range}: no bonus it visibly held has been visibly broken since`;
   if (t.incomeMethod === 'max-observed') return `max observed over ${span}, ${range}`;
   if (t.incomeMethod === 'stock-flow') return `visible army growth plus losses (fog arrivals left out) over ${span}, ${range}`;
   return `its visible base + bonuses, ${range} over ${span}`;
@@ -366,6 +424,80 @@ function possibleBonuses(g: MapGraph, board: BoardState, playerId: number): { id
     if (!taken && held < ts.length) out.push({ id: b.id, value: b.value });
   }
   return out;
+}
+
+/** Positive bonuses `playerId` visibly holds in full on `board`: every member shown as its. */
+function visiblyHeld(g: MapGraph, board: BoardState, playerId: number): { id: number; value: number }[] {
+  const seen = new Map(board.territories.map((t) => [t.territoryId, t]));
+  return [...g.map.bonuses]
+    .sort((x, y) => x.id - y.id)
+    .filter((b) => {
+      const ts = bonusTerritories(g, b.id);
+      if (b.value <= 0 || !ts.length) return false;
+      return ts.every((t) => {
+        const st = ownerShown(seen.get(t));
+        return st?.owner.kind === 'player' && st.owner.playerId === playerId;
+      });
+    })
+    .map((b) => ({ id: b.id, value: b.value }));
+}
+
+/** Of the bonuses it visibly held in full on `before`, those `after` shows a member of held by someone else. */
+function visiblyBroken(g: MapGraph, before: BoardState, after: BoardState, playerId: number): { id: number; value: number }[] {
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  return visiblyHeld(g, before, playerId).filter((b) =>
+    bonusTerritories(g, b.id).some((t) => {
+      const st = ownerShown(now.get(t));
+      return st !== undefined && !(st.owner.kind === 'player' && st.owner.playerId === playerId);
+    }),
+  );
+}
+
+/**
+ * What my own orders on the turn `before` → `after` measure of `playerId`'s deploy (#119), to add
+ * to the board's reading ({@link observeSigned}) — which leaves both out, as
+ * {@link observeDeploy}'s comment says:
+ * - a failed attack of mine (a move onto a territory it shows on both boards): its defenders lost
+ *   what my attackers killed, round(armies × the offensive kill rate) — the board reads that loss
+ *   as a shrink, so it counts back;
+ * - a hold of mine that fell to it: its defenders were my armies there plus what I deployed there
+ *   less what I sent out of it, not the start-of-turn count the board shows; the difference in
+ *   what they killed (at the defensive kill rate) is the correction, either way.
+ * Kill counts are straight-rounded expectations: luck can move them.
+ */
+export function measureOrders(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  me: number,
+  playerId: number,
+  orders: MyOrders,
+  settings: PlannerSettings = {},
+): number {
+  const offensive = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const defensive = settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  const owns = (t: ReturnType<typeof visibleState>, p: number) => t?.owner.kind === 'player' && t.owner.playerId === p;
+  const deployed = new Map<number, number>();
+  for (const d of orders.deploys) deployed.set(d.territoryId, (deployed.get(d.territoryId) ?? 0) + Math.max(0, d.armies));
+  const sent = new Map<number, number>();
+  for (const m of orders.moves) sent.set(m.from, (sent.get(m.from) ?? 0) + Math.max(0, m.armies));
+  let measured = 0;
+  for (const m of orders.moves) {
+    if (!g.territoryById.has(m.to) || !owns(visibleState(was.get(m.from)), me)) continue;
+    if (owns(visibleState(was.get(m.to)), playerId) && owns(visibleState(now.get(m.to)), playerId))
+      measured += straightKills(Math.max(0, m.armies), offensive);
+  }
+  const ids = [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum);
+  for (const id of ids) {
+    if (!g.territoryById.has(id)) continue;
+    const b = visibleState(was.get(id));
+    if (!owns(b, me) || !owns(visibleState(now.get(id)), playerId)) continue;
+    const defenders = Math.max(0, b!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0));
+    measured += straightKills(defenders, defensive) - straightKills(b!.armies!, defensive);
+  }
+  return measured;
 }
 
 /**
@@ -429,7 +561,11 @@ export function trackOpponents(
 ): OpponentTrack[] {
   // One board per turn (the last given wins), oldest first.
   const byTurn = new Map<number, BoardState>();
-  for (const b of boards) byTurn.set(b.turn, b.board);
+  const ordersOn = new Map<number, MyOrders | undefined>();
+  for (const b of boards) {
+    byTurn.set(b.turn, b.board);
+    ordersOn.set(b.turn, b.orders);
+  }
   const turns = [...byTurn.keys()].sort(byNum);
   if (!turns.length) return [];
   const lastTurn = turns.at(-1)!;
@@ -503,18 +639,23 @@ export function trackOpponents(
       const o = e.observation;
       const v = visibleAt(from).get(playerId);
       const visibleIncome = v ? v.base + v.bonusIncome : 0;
-      const { net, losses } = armyChange(
-        g,
-        before,
-        after,
-        playerId,
-        settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
-      );
+      const change = armyChange(g, before, after, playerId, settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE);
+      const net = change.net;
+      // My own orders that turn, when known, are measurements (#119).
+      const orders = ordersOn.get(from);
+      const measured = orders ? measureOrders(g, before, after, me, playerId, orders, settings) : 0;
+      const raw = measured ? Math.max(0, observeSigned(g, after, before, playerId, settings).signed + measured) : e.observedRaw!;
+      const losses = Math.max(0, change.losses + measured);
+      const seenObserved = Math.min(raw, e.observedCap!);
+      const broken = visiblyBroken(g, before, after, playerId);
       observed.push({
         from,
         to,
-        observed: e.observed!,
-        raw: e.observedRaw!,
+        observed: seenObserved,
+        raw,
+        measured,
+        broken: broken.map((b) => b.id),
+        brokenValue: broken.reduce((sum, b) => sum + b.value, 0),
         cap: e.observedCap!,
         counted: o.counted,
         captured: o.captured,
@@ -522,7 +663,7 @@ export function trackOpponents(
         fogArmies: o.fogArmies,
         reveals: o.reveals,
         visibleIncome,
-        earned: Math.max(visibleIncome, e.observed!),
+        earned: Math.max(visibleIncome, seenObserved),
         net,
         losses,
       });
@@ -540,7 +681,26 @@ export function trackOpponents(
     const turnsUnseen = visible ? 0 : lastTurn - back;
     const turnsUnseenAtLeast = turnsUnseen > 0 && back >= 1 && !byTurn.has(back);
     const recent = observed.slice(-INCOME_TURNS);
-    const estimate = recent.length ? trackedIncome(recent, visibleIncome) : null;
+    const lastWindow = recent.length ? trackedIncome(recent, visibleIncome) : null;
+    // #119: no decay. Walk the observed turns: each window's figure (as `trackedIncome` reads it)
+    // replaces the carried one only when larger; otherwise the carried figure stays, less the
+    // bonuses it visibly held that were visibly broken that turn, and never above that turn's
+    // could-earn cap. The last three turns alone read a real 31 as 12 once it aged out.
+    type Carry = { income: number; set: number; window: ObservedTurn[]; est: TrackedIncome };
+    let carry: Carry | null = null as Carry | null;
+    for (let i = 0; i < observed.length; i++) {
+      const x = observed[i]!;
+      const window = observed.slice(Math.max(0, i - INCOME_TURNS + 1), i + 1);
+      const est = trackedIncome(window, 0);
+      const prev: Carry | null = carry;
+      const kept = prev ? Math.min(x.cap, prev.income - x.brokenValue) : -Infinity;
+      carry = !prev || est.income >= kept ? { income: est.income, set: est.income, window, est } : { ...prev, income: kept };
+    }
+    const carried = carry !== null && lastWindow !== null && carry.income > lastWindow.income ? carry : null;
+    const estimate = carried
+      ? { ...carried.est, income: carried.income, method: 'carried' as IncomeMethod }
+      : lastWindow;
+    const incomeWindow = carried ? carried.window : recent;
     const income = estimate?.income ?? null;
     const unaccounted = observed.length
       ? Math.max(0, observed.reduce((s, x) => s + x.earned - x.net - x.losses, 0))
@@ -591,8 +751,17 @@ export function trackOpponents(
         `Only ${observed.length} observed turn${observed.length === 1 ? '' : 's'} (fewer than 2 observed turns): the planner keeps its single-turn estimate.`,
       );
     else {
-      const basis = incomeBasis({ incomeMethod: estimate!.method, incomeTurns: recent.map((x) => x.from), observedRange: estimate!.observedRange });
-      notes.push(
+      const basis = incomeBasis({
+        incomeMethod: estimate!.method,
+        incomeTurns: incomeWindow.map((x) => x.from),
+        observedRange: estimate!.observedRange,
+        incomeLowered: carried ? carried.set - carried.income : 0,
+      });
+      if (carried)
+        notes.push(
+          `Income ~${income} (${basis}): an income does not decay — it is kept until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it; its last ${recent.length} observed turns alone give ~${lastWindow!.income}. Each observed deploy is a lower bound under fog.`,
+        );
+      else notes.push(
         `Income ~${income} (${basis}): the larger of the most it was observed to deploy (each observation is a lower bound under fog, so the largest is the tightest) and its visible army growth plus losses per turn, fog arrivals left out (${estimate!.stockFlow}), capped at the most it could earn (${estimate!.cap}), at least its visible income ${visibleIncome}.`,
       );
     }
@@ -608,6 +777,11 @@ export function trackOpponents(
     if (capped.length)
       notes.push(
         `Capped at what it could earn on turn ${capped.map((x) => `${x.from} (+${x.raw} → ${x.cap})`).join(', ')}: armies from the fog or a Reinforcement card may explain the rest.`,
+      );
+    const measuredTurns = observed.filter((x) => x.measured);
+    if (measuredTurns.length)
+      notes.push(
+        `My own orders on turn ${measuredTurns.map((x) => `${x.from} (${x.measured > 0 ? '+' : ''}${x.measured})`).join(', ')} count as measurements: the defenders my failed attacks killed, and what a hold of mine that fell really killed.`,
       );
     const reveals = observed.reduce((s, x) => s + x.reveals.length, 0);
     if (reveals) notes.push(`${reveals} fog reveal${reveals === 1 ? '' : 's'} skipped: stacks that only came into view are not income.`);
@@ -640,9 +814,10 @@ export function trackOpponents(
       bonusIncome: v.bonusIncome,
       visibleIncome,
       income,
-      incomeTurns: recent.map((x) => x.from),
+      incomeTurns: incomeWindow.map((x) => x.from),
       observedRange: estimate?.observedRange ?? null,
       incomeMethod: estimate?.method ?? null,
+      incomeLowered: carried ? carried.set - carried.income : 0,
       unaccounted,
       inferred,
       visible,

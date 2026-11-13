@@ -376,7 +376,9 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
     );
     const tg = buildGraph(tmap);
     const tboard = board([mine(1, 4), mine(2, 1), enemy(5, 2), enemy(6, 2), enemy(7, 2), enemy(9, 2)]);
-    const twin = (income: number) => planTurn({ graph: tg, board: tboard, me: ME, income, settings: STD });
+    // enemyDeploy pinned at 5: these are about the mechanic, not the estimate (the holder of a visible bonus is estimated at base + its value).
+    const twin = (income: number) =>
+      planTurn({ graph: tg, board: tboard, me: ME, income, settings: STD, options: { enemyDeploy: 5 } });
 
     it('breaks Den from T1 when the income covers both holds and the capture (1 + 3 + 4)', () => {
       const p = twin(8);

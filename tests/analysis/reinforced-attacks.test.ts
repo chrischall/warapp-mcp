@@ -66,16 +66,18 @@ function valid(input: PlanInput, p: TurnPlan) {
   });
 }
 
-// My 80-stack T1 beside the opponent's T2 (5), with its T3 (10) behind; T4 is mine. Income 8, the
-// opponent's deploy ~5. Taking T2 for sure if it deploys its ~5 there first needs 16, and T1 has
-// 87 movable with nothing left to face once T2 falls.
+// My 80-stack T1 beside the opponent's T2 (5), with its T3 (10) behind; T4 is mine. Income 8. In
+// the first test the opponent visibly holds B101 = {T2, T3} (+3), so it deploys ~8 (#119: a bonus
+// held in plain view is all deployable, whatever the stack); taking T2 for sure if it deploys its
+// ~8 there first needs 21. In the others B101 has a fogged third member: ~5, and 16. T1 has 87
+// movable with nothing left to face once T2 falls.
 describe('an attack out of a big stack is sized for the owner deploying there first (#120)', () => {
   const edges: [number, number][] = [
     [1, 2],
     [2, 3],
     [1, 4],
   ];
-  it('a break: at least 16, and no "assumes it does not reinforce" warning', () => {
+  it('a break: at least 21, and no "assumes it does not reinforce" warning', () => {
     const g = buildGraph(makeMap([1, 2, 3, 4], edges, [[100, 3, [1, 4]], [101, 3, [2, 3]]]));
     const input: PlanInput = {
       graph: g,
@@ -87,14 +89,14 @@ describe('an attack out of a big stack is sized for the owner deploying there fi
       options: { adapt: true },
     };
     const p = planTurn(input);
-    expect(p.enemyDeploy).toBe(5);
-    expect(armiesToTake(10, { offensiveKillRate: 60, defensiveKillRate: 70 })).toBe(16);
+    expect(p.enemyDeploy).toBe(8);
+    expect(armiesToTake(13, { offensiveKillRate: 60, defensiveKillRate: 70 })).toBe(21);
     const a = attacks(p).find((m) => m.to === 2)!;
     expect(a.from).toBe(1);
-    expect(a.armies).toBeGreaterThanOrEqual(16);
+    expect(a.armies).toBeGreaterThanOrEqual(21);
     expect(warned(p)).not.toMatch(/Attack on enemy T2 \(#2\) assumes its owner does not reinforce it first/);
     expect(why(p)).toMatch(
-      /Size the attack on T2 \(#2\) from T1 \(#1\) up from \d+ to 16 with \d+ idle armies there: 16 take it even if player 20 deploys its ~5 there first/,
+      /Size the attack on T2 \(#2\) from T1 \(#1\) up from \d+ to 21 with \d+ idle armies there: 21 take it even if player 20 deploys its ~8 there first/,
     );
     valid(input, p);
   });

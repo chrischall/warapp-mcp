@@ -76,10 +76,10 @@ const then = board([mine(1, 20), enemy(2, 5), enemy(3, 10), enemy(4, 21), ...fog
 const now = board([mine(1, 20), enemy(2, 10), enemy(3, 25), enemy(4, 38), ...fog]);
 
 describe('enemy deploy from observed growth (#57)', () => {
-  it('estimates at least the observed growth, past the stack cap', () => {
+  it('estimates at least the observed growth, past what its visible bonuses pay', () => {
     const [e] = enemyDeployEstimates(g, now, ME, STD, then);
-    // Visible: base 5 + bonuses 0, capped at round(0.75 × 10) = 8 → 5. Observed: +37.
-    expect(e).toMatchObject({ playerId: ENEMY, base: 5, bonusIncome: 0, stackCap: 8, observed: 37, source: 'observed' });
+    // Visible: base 5 + bonuses 0 = 5. Observed: +37.
+    expect(e).toMatchObject({ playerId: ENEMY, base: 5, bonusIncome: 0, largestStack: 10, observed: 37, source: 'observed' });
     expect(e!.estimate).toBeGreaterThanOrEqual(37);
     expect(e!.estimate).toBe(37);
     expect(defaultEnemyDeploy(g, now, ME, STD, then)).toBe(37);

@@ -390,6 +390,9 @@ describe('trackedIncome (#99)', () => {
     net: flow,
     losses: 0,
     fogArmies,
+    measured: 0,
+    broken: [],
+    brokenValue: 0,
   });
 
   it('stock and flow sets the income when it beats every capped observation', () => {

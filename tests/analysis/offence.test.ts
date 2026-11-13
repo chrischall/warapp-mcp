@@ -50,7 +50,7 @@ const deployedTo = (p: TurnPlan, id: number) => p.deploys.find((d) => d.territor
 
 /** A track observed over two turns with `income`, and the bonus combinations that fit its gap. */
 function track(playerId: number, income: number, candidates: number[][] = [], visibleIncome = 5): OpponentTrack {
-  const turn = { from: 0, to: 1, observed: income, raw: income, cap: income, counted: [], captured: [], fromFog: [], reveals: [], visibleIncome, earned: income, net: 0, losses: 0, fogArmies: 0 };
+  const turn = { from: 0, to: 1, observed: income, raw: income, cap: income, counted: [], captured: [], fromFog: [], reveals: [], visibleIncome, earned: income, net: 0, losses: 0, fogArmies: 0, measured: 0, broken: [], brokenValue: 0 };
   return {
     playerId,
     firstSeen: 1,
@@ -66,6 +66,7 @@ function track(playerId: number, income: number, candidates: number[][] = [], vi
     incomeTurns: [1, 2],
     observedRange: { min: income, max: income },
     incomeMethod: 'max-observed',
+    incomeLowered: 0,
     unaccounted: 0,
     visible: 1,
     turnsUnseen: 0,
@@ -188,7 +189,8 @@ describe('a break is scored on landing (#72 with #71)', () => {
   const s = board([mine(1, 5), mine(2, 1), neutral(3, 2), neutral(4, 2), enemy(5, 3), enemy(6, 30)]);
 
   it("the captured territory's own hold need is out of its score; the frontier of the other borders stays", () => {
-    const p = planTurn({ graph: g, board: s, me: ME, income: 3, settings: STD });
+    // enemyDeploy pinned at 5 (the holder of the +5 is estimated at 10): the score is the subject.
+    const p = planTurn({ graph: g, board: s, me: ME, income: 3, settings: STD, options: { enemyDeploy: 5 } });
     // Break: worth 5 + armiesToTake(3 survivors) / 10 = 5.5 over 5 armies + frontier 0 (T5 opens a
     // border, +0.25; T1 closes one, −0.25) = 1.1 per army. Holding T5 against 29 + 5 would need
     // 18 more (#71's sizing), which no longer counts. The advance: 3 / (3 + 3 + 0) = 0.5.
@@ -568,6 +570,8 @@ describe('a break made by another path is reported as made (#72)', () => {
       me: ME,
       income: 5,
       settings: STD,
+      // Pinned at 5 (the holder of the +4 is estimated at 9): the report is the subject.
+      options: { enemyDeploy: 5 },
     });
     expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 10]]);
     expect(p.offence).toEqual([expect.objectContaining({ target: 5, kind: 'break', cost: 10, taken: true })]);
@@ -602,6 +606,8 @@ describe("a border's break of its only threat has its own offence entry (#72)", 
       me: ME,
       income: 5,
       settings: STD,
+      // Pinned at 5 (the holder of the +4 is estimated at 9): the report is the subject.
+      options: { enemyDeploy: 5 },
     });
     // The break option was T7 (cheapest, 2 armies); the hold's attack on T5 broke the bonus first.
     expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 3]]);
