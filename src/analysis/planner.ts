@@ -54,8 +54,14 @@
 //     deploy. When the best sizing fails only on an unfunded hold, the search runs once
 //     more with those holds reserved and those territories left unattacked, and its
 //     best is kept if it beats the first search's. With no success, nothing changes.
-//     An opponent bordering the fog is never attempted (a warning says so when its
-//     visible territories could all be eliminated); with fog anywhere else, the
+//     An opponent bordering the fog is never eliminated (issue #60): it is pressured
+//     instead — every visible territory attacked, each sized for its full deploy, and
+//     only when all of them fall for sure ("Pressure player …: take all N of its visible
+//     territories …, so this is not an elimination", with a warning that it may hold more
+//     in the fog) — when each of those captures costs at most PRESSURE_FACTOR × a typical
+//     expansion capture (the median capture cost of the visible neutrals next to me; with
+//     none, any cost). Otherwise it is not attempted (a warning says so when its visible
+//     territories could all be taken); with fog anywhere else, the
 //     elimination is hedged ("if it holds nothing in the fog") and a warning says it
 //     may hold unseen territories. When it can save some attacked territories, a
 //     warning says it chooses which. Borders next to the attacks are then re-judged
@@ -256,6 +262,14 @@ export const NEAR_MISS_ARMIES = 2;
 export function nearMissMargin(need: number): number {
   return Math.max(NEAR_MISS_ARMIES, NEAR_MISS * need);
 }
+
+/**
+ * An opponent next to the fog (it may hold unseen territories) is still pressured — all its
+ * visible territories attacked, each sized for its full estimated deploy — when each of
+ * those captures costs at most this many times a typical expansion capture (the median
+ * capture cost of the visible neutrals next to me; issue #60).
+ */
+export const PRESSURE_FACTOR = 4;
 
 /** Denying +V to the opponent is worth this many times gaining +V yourself (per opponent: divided among them). */
 export const BREAK_WEIGHT = 1.0;
@@ -1893,8 +1907,10 @@ export function planTurn(input: PlanInput): TurnPlan {
    * against that funded; otherwise rolled back. `probe`: always rolled back, true when an
    * elimination is affordable.
    */
-  const finishOff = (p: number, probe: boolean): boolean => {
+  const finishOff = (p: number, probe: boolean, fogged: readonly number[] = []): boolean => {
     const ts = ownedBy.get(p)!;
+    /** Next to the fog (#60): only taking every visible territory for sure counts, as pressure. */
+    const pressure = fogged.length > 0;
     const deployP = deployOf(p);
     const start = checkpoint(ts);
     if (ts.some((t) => captureCost(armiesOf(t), s) === null)) return false;
@@ -2020,7 +2036,7 @@ export function planTurn(input: PlanInput): TurnPlan {
             const a = attempt([...sizes]);
             restore(reserved);
             if (a.all) canEliminate = true;
-            if (!a.enough || !a.freed) return;
+            if (!a.enough || !a.freed || (pressure && !a.all)) return;
             if (a.unfunded) {
               if (!bestUnfunded || better(a, bestUnfunded) > 0) bestUnfunded = a;
             } else if (!best || better(a, best) > 0) best = a;
@@ -2078,6 +2094,17 @@ export function planTurn(input: PlanInput): TurnPlan {
     const rest = left.length
       ? `; ${left.map(label).join(', ')} stay${left.length === 1 ? 's' : ''} unattacked, and no attacking border faces ${left.length === 1 ? 'it' : 'them'}`
       : '';
+    if (chosen.all && pressure) {
+      const edge = fogged.map(label).join(', ');
+      rationale.push(
+        `Pressure player ${p}: take all ${ts.length} of its visible territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there; it may hold more in the fog (next to ${edge}), so this is not an elimination.`,
+      );
+      warnings.push(
+        `Pressuring player ${p} assumes it deploys at most ~${deployP} (its estimate); more income than that (unseen bonuses, cards) could still save a territory.`,
+        `player ${p} may hold more territories in the fog (next to ${edge}): taking its ${ts.length} visible territories is pressure, not an elimination.`,
+      );
+      return true;
+    }
     if (chosen.all) {
       rationale.push(
         `Finish off player ${p}: attack all ${ts.length} of its territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there, so it is eliminated ${fogAnywhere ? 'if it holds nothing in the fog, ' : ''}even if it reinforces; the borders facing it need no holding.`,
@@ -2120,9 +2147,18 @@ export function planTurn(input: PlanInput): TurnPlan {
           ownedBy.get(a)!.reduce((n, t) => n + armiesOf(t), 0) - ownedBy.get(b)!.reduce((n, t) => n + armiesOf(t), 0) ||
           a - b,
       );
+    // A typical expansion capture: the median cost of the visible neutrals next to me.
+    const neutralCosts = [...targets.values()].filter((tg) => !tg.enemy).map((tg) => tg.cost).sort(byNum);
+    const expansionCost = neutralCosts.length ? neutralCosts[(neutralCosts.length - 1) >> 1]! : null;
+    /** Each of `p`'s visible territories, sized for its full deploy, costs about what expansion does. */
+    const pressureAffordable = (p: number) =>
+      expansionCost === null ||
+      ownedBy.get(p)!.every((t) => (captureCost(armiesOf(t) + deployOf(p), s) ?? Infinity) <= PRESSURE_FACTOR * expansionCost);
     for (const p of candidates) {
       const edge = fogEdge(p);
       if (edge.length) {
+        // Fog is a reason not to claim elimination, not to skip a cheap capture (#60).
+        if (pressureAffordable(p) && finishOff(p, false, edge)) continue;
         if (finishOff(p, true))
           warnings.push(
             `player ${p} may hold more territories in the fog (next to ${edge.map(label).join(', ')}): finishing it off is not attempted, though its ${ownedBy.get(p)!.length} visible territories could all be taken this turn.`,

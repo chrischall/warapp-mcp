@@ -208,10 +208,12 @@ describe('warapp_plan_turn', () => {
 
   it('reports a conceded border and the Order Priority advice its withdrawal needs', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    // With no enemy deploy, Bob's 6 movable threaten only Sheepshead Hills (3): it protects +0,
-    // so it is conceded, and its 2 movable armies withdraw to Hornwood (6), which holds.
+    // With an enemy deploy of 1, Bob's 6 movable + 1 threaten only Sheepshead Hills (3): it
+    // protects +0, so it is conceded, and its 2 movable armies withdraw to Hornwood (6), which
+    // holds. (At 0, his 7 next to the fog would cost 11 to take — within 4× the 3 a neutral
+    // costs — so the plan would pressure him instead, #60.)
     const p = payload<PlanPayload>(
-      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend', enemy_deploy: 0 }),
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend', enemy_deploy: 1 }),
     );
     expect(p.conceded).toEqual([{ id: 161, name: mapName(161) }]);
     expect(p.cardAdvice).toBe('order-priority');

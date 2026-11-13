@@ -14,7 +14,14 @@ import { describe, expect, it } from 'vitest';
 import type { BoardState } from '../../src/board.js';
 import { armiesToTake } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { guaranteedFalls, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import {
+  captureCost,
+  guaranteedFalls,
+  planTurn,
+  PRESSURE_FACTOR,
+  type PlannerSettings,
+  type TurnPlan,
+} from '../../src/analysis/planner.js';
 import { boardStateFromLive, OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap, Player } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
@@ -399,5 +406,74 @@ describe('finishing off a weak opponent (#45)', () => {
     // expand reserves nothing for it: no line claiming it is held.
     const expand = plan(ENDGAME, 8, { previousBoard: previous, options: { goal: 'expand' } });
     expect(expand.rationale.join('\n')).not.toMatch(recent);
+  });
+});
+
+// Issue #60: the opponent's one visible territory (0 armies) sat next to my 7-stack, but it
+// borders the fog, so the finish-off check skipped it. Fog is a reason not to claim
+// elimination, not to skip a capture that costs about what expansion does.
+//
+//   1─2, 1─5, 5─10, 2─7, 1─8 — 1 (my 7-stack), 2 mine; 5 theirs; 10 fogged; 7, 8 neutral (2).
+describe('pressure on a weak opponent next to the fog (#60)', () => {
+  const MAP60 = mapOf(
+    [[1, 2], [1, 5], [5, 10], [2, 7], [1, 8]],
+    [1, 2, 5, 7, 8, 10],
+    [
+      { id: 501, name: 'Home', value: 2, territoryIds: [1, 2], bonusIds: [] },
+      { id: 502, name: 'Wilds', value: 3, territoryIds: [7, 8], bonusIds: [] },
+    ],
+  );
+  const board60 = (theirs: number, ten: LiveTerritory = fog(10)): LiveTerritory[] => [
+    t(1, ME, 7), t(2, ME, 2), t(5, THEM, theirs), t(7, OWNER_NEUTRAL, 2), t(8, OWNER_NEUTRAL, 2), ten,
+  ];
+
+  it('the gate by hand: its ~6 deploy on 0 costs 10, within PRESSURE_FACTOR × a 2-army neutral (3)', () => {
+    expect(PRESSURE_FACTOR).toBe(4);
+    expect(captureCost(0 + 6, STD)).toBe(10);
+    expect(captureCost(3 + 6, STD)).toBe(15);
+    expect(PRESSURE_FACTOR * captureCost(2, STD)!).toBe(12);
+  });
+
+  it('#60: attacks its one visible 0-army territory, sized for its full ~6 deploy, as pressure', () => {
+    const live = board60(0);
+    for (const goal of ['balanced', 'defend'] as const) {
+      const p = plan(live, 8, { options: { goal } }, MAP60);
+      expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 5, armies: 10 }));
+      expect(p.expected.captures).toContain(5);
+      const why = p.rationale.join('\n');
+      expect(why).toMatch(
+        /Pressure player 22567833: take all 1 of its visible territories \(T5 \(#5\)\) this turn, each sized for its full ~6 deploy landing there; it may hold more in the fog \(next to T5 \(#5\)\), so this is not an elimination/,
+      );
+      expect(why).not.toMatch(/Finish off/);
+      const warn = p.warnings.join('\n');
+      expect(warn).not.toMatch(/finishing it off is not attempted/);
+      expect(warn).not.toMatch(/Eliminating player/);
+      expect(warn).toMatch(/Pressuring player 22567833 assumes it deploys at most ~6/);
+      expect(warn).toMatch(
+        /player 22567833 may hold more territories in the fog \(next to T5 \(#5\)\): taking its 1 visible territories is pressure, not an elimination/,
+      );
+      expect(deploySum(p)).toBe(8);
+      expect(() => validate(p, live, 8, MAP60)).not.toThrow();
+    }
+  });
+
+  it('a visible territory too costly (3 armies + ~6 = 15 > 12) is not attacked, and warned as before', () => {
+    const live = board60(3);
+    const p = plan(live, 12, {}, MAP60);
+    expect(attacks(p).filter((m) => m.to === 5)).toEqual([]);
+    expect(p.rationale.join('\n')).not.toMatch(/Pressure player|Finish off/);
+    expect(p.warnings.join('\n')).toMatch(
+      /player 22567833 may hold more territories in the fog \(next to T5 \(#5\)\): finishing it off is not attempted, though its 1 visible territories could all be taken this turn/,
+    );
+    expect(() => validate(p, live, 12, MAP60)).not.toThrow();
+  });
+
+  it('full visibility still uses the elimination path, whatever it costs', () => {
+    const live = board60(3, t(10, OWNER_NEUTRAL, 2));
+    const p = plan(live, 12, {}, MAP60);
+    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 5, armies: 15 }));
+    expect(p.rationale.join('\n')).toMatch(/Finish off player 22567833: attack all 1 of its territories/);
+    expect(p.rationale.join('\n')).not.toMatch(/visible territories/);
+    expect(() => validate(p, live, 12, MAP60)).not.toThrow();
   });
 });
