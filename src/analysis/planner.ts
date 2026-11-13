@@ -2569,6 +2569,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    * stacks may attack before my attacks land. Every later keep ({@link keepFor}) honours it.
    */
   const coverKeep = new Map<number, number>();
+  /** #179: a buffer in an FFA left standing: no pass captures its territories this turn. */
+  const spared = new Set<number>();
   const captured = new Set<number>();
   /** Targets taken by a combined (multi-source) capture. */
   const combined = new Set<number>();
@@ -4998,6 +5000,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     fromConceded?: number,
   ): boolean => {
     refusal = undefined;
+    if (spared.has(t)) return false;
     const tg = targets.get(t)!;
     // My commander's territory keeps what holds it (rule 1k). Under No-Split nothing is kept: the
     // whole stack moves, and a territory that must hold issues no order (#124).
@@ -5830,8 +5833,42 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       }
     }
     if (!chosen) return false;
+    const coverBefore = new Map(coverKeep);
     const committed = reserve(stay, cover);
     committed.commit(chosen);
+    // #179: in an FFA, price the elimination before it stands: the players its land would make me
+    // border, and the frontier cost before and after (each border's hold need next turn, the
+    // victim's threat gone). A buffer whose removal costs more than a turn of my income, and more
+    // than the income its land adds pays back in PAYBACK_TURNS turns, is left standing.
+    if (chosen.all && !pressure && profile.format === 'ffa' && profile.opponents >= 2) {
+      const next = [...new Set(ts.flatMap((t) => neighborsOf(g, t)))].sort(byNum);
+      const exposed = next.filter((n) => {
+        const o = ownerOf(n);
+        return o !== undefined && o !== p && foe(o) && !neighborsOf(g, n).some((x) => mineSet.has(x));
+      });
+      if (exposed.length) {
+        const after = new Set([...mineSet, ...ts]);
+        const delta = frontierDelta(mineSet, ts, (x) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0))).armies;
+        const gain = Math.max(0, incomeGain(after));
+        const limit = Math.max(PAYBACK_TURNS * gain, income);
+        const who = [...new Set(exposed.map((n) => ownerOf(n)!))].sort(byNum);
+        const exposure = `taking ${ts.map(label).join(', ')} makes me border ${who
+          .map((q) => `player ${q}'s ${exposed.filter((n) => ownerOf(n) === q).map(label).join(', ')}`)
+          .join(' and ')}`;
+        const cost = `the frontier's hold cost changes by ${delta >= 0 ? '+' : ''}${delta} armies (its own threat gone)`;
+        if (delta > limit) {
+          restore(start);
+          coverKeep.clear();
+          for (const [k, v] of coverBefore) coverKeep.set(k, v);
+          for (const t of ts) spared.add(t);
+          rationale.push(
+            `Not finishing off player ${p} (#179): it is a buffer: ${exposure}, and ${cost}, more than a turn of my income (${income}) and more than the +${gain} its land adds pays back in ${PAYBACK_TURNS} turns.`,
+          );
+          return false;
+        }
+        rationale.push(`Elimination price (#179): ${exposure}; ${cost}, within ${limit} (a turn of my income, or ${PAYBACK_TURNS} turns of the +${gain} its land adds).`);
+      }
+    }
     const { attacked, falls, left } = chosen;
     const local = attacked.filter((t) => reachOn.get(t)! < deployP);
     if (local.length)
@@ -5976,6 +6013,23 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     hold(false);
     if (done) {
       struck.add(p);
+      // #179: a commander kill turns its owner's land neutral where it stands: nothing comes to
+      // me directly, and whoever borders it collects. Priced in an FFA, never gated.
+      if (profile.format === 'ffa' && profile.opponents >= 2) {
+        const land = (ownedBy.get(p) ?? []).filter((x) => x !== t);
+        const by = new Map<number, number[]>();
+        for (const x of land)
+          for (const n of neighborsOf(g, x)) {
+            const o = ownerOf(n);
+            if (o === undefined || o === p || !foe(o)) continue;
+            if (!(by.get(o) ?? []).includes(x)) by.set(o, [...(by.get(o) ?? []), x]);
+          }
+        const collectors = [...by].sort((a, b) => a[0] - b[0]).map(([q, xs]) => `player ${q} borders ${[...xs].sort(byNum).map(label).join(', ')}`);
+        if (land.length)
+          rationale.push(
+            `Commander kill (#179): player ${p}'s land turns neutral where it stands; ${collectors.length ? collectors.join(', ') : 'no other player in view borders it'}, so ${collectors.length ? 'they may collect it' : 'it is mine to take'} (struck all the same: it removes a player).`,
+          );
+      }
       warnings.push(
         `Killing player ${p}'s commander on ${label(t)} assumes it deploys at most ~${deployP} (its estimate); more than that (unseen bonuses, cards) could save it.`,
       );
@@ -8836,6 +8890,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const p = (st.owner as { playerId: number }).playerId;
       if (uncounted(n)) return `it holds ${uncountedKind(n)}, whose strength the board does not carry`;
       if (unitsAt(n) > 0) return `an enemy commander stands there: only a commander strike (rule 1s) attacks it, sized for its owner's whole deploy`;
+      if (spared.has(n)) return `player ${p} is a buffer in this FFA: finishing it off costs more frontier than it pays (#179)`;
       const skip = offenceSkip.get(n);
       if (skip) return skip;
       if (gainWith([n]) < 0) return 'taking it would lower my income (it completes a negative bonus)';

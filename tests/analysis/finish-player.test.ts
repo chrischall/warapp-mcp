@@ -9,6 +9,7 @@ import { board, mine, neutral } from './helpers.js';
 
 const ME = 10;
 const VICTIM = 20;
+const OTHER = 30;
 const STD: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true, baseIncome: 5 };
 
 function makeMap(ids: number[], edges: [number, number][], bonuses: [number, number, number[]][] = []): GameMap {
@@ -202,5 +203,36 @@ describe('#179 exits: an opponent down to a few territories', () => {
     expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
     expect(p.rationale.join('\n')).not.toMatch(/Cover player 20's exits/);
     expect(p.warnings.join('\n')).toMatch(/assumes my attacks land before its own orders/);
+  });
+});
+
+describe('#179 FFA: price the elimination before finishing a player off', () => {
+  // 1 2 mine; 3 the victim's last territory (1 army), between my 2 and player 30's 4; 5 is player 30's too.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [2, 3], [3, 4], [4, 5]]));
+  const game = { players: [{ id: ME }, { id: VICTIM }, { id: OTHER }] };
+  const ffa = (otherArmies: number) =>
+    planTurn({ graph: g, board: board([mine(1, 5), mine(2, 5), enemy(3, 1), enemy(4, otherArmies, OTHER), enemy(5, 1, OTHER)]), me: ME, income: 12, settings: STD, game });
+
+  it('a buffer against a strong third player is not finished off: the frontier it opens costs more than it pays', () => {
+    const p = ffa(60);
+    expect(attackOn(p, 3)).toBeUndefined();
+    expect(p.rationale.join('\n')).toMatch(/player 20 is a buffer in this FFA: finishing it off costs more frontier than it pays/);
+    expect(p.rationale.join('\n')).toMatch(/Not finishing off player 20 \(#179\): it is a buffer: taking T3 \(#3\) makes me border player 30's T4 \(#4\)/);
+  });
+
+  it('a buffer against a weak third player is finished off, priced', () => {
+    const p = ffa(1);
+    expect(attackOn(p, 3)).toBeDefined();
+    expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
+    expect(p.rationale.join('\n')).toMatch(/Elimination price \(#179\): taking T3 \(#3\) makes me border player 30's T4 \(#4\)/);
+  });
+
+  it('a commander strike is never gated, and says who collects the land it leaves', () => {
+    // The victim's commander on 3; its land turns neutral, next to player 30's 4.
+    const b = board([mine(1, 5), mine(2, 30), withCommander(enemy(3, 1), VICTIM), enemy(6, 1), enemy(4, 60, OTHER), enemy(5, 1, OTHER)], true);
+    const g2 = buildGraph(makeMap([1, 2, 3, 4, 5, 6], [[1, 2], [2, 3], [3, 4], [4, 5], [3, 6], [4, 6]]));
+    const p = planTurn({ graph: g2, board: b, me: ME, income: 12, settings: STD, game });
+    expect(attackOn(p, 3)).toBeDefined();
+    expect(p.rationale.join('\n')).toMatch(/Commander kill \(#179\): player 20's land turns neutral where it stands; player 30 borders T6 \(#6\)/);
   });
 });
