@@ -42,13 +42,17 @@
 //          then cheapest, then id — while what
 //          stays on it holds against the threat left after those attacks (rule 1's arithmetic,
 //          the captured territories gone), never below the opponent's deploy alone (orders
-//          interleave: it may land on a target first). No S2 top-up draws on that hold. Each attack
+//          interleave: it may land on a target first; the target's survivors striking back after a
+//          failed attack are not added — an approximation). No S2 top-up draws on that hold, and
+//          the transfer step never moves it (its captures can leave it interior). Each attack
 //          is a rationale line and an `offence` strike entry (target, armies, win chance, what it
 //          breaks or retakes); a target not attacked is a strike entry with `taken: false` and why.
 //          It only grows (deploy, no attack) when nothing in reach is worth taking: a rationale line
 //          ("Grow the strike stack …") names each target and why. The stack's own entry is
 //          `taken` only when it attacks this turn — also when it got no deploys (Local Deployment,
-//          no room): a strike stack, once built, is spent.
+//          no room, or holds and captures took the whole income: the stack is chosen the same way
+//          with no leftover, and a rationale line says none reached it): a strike stack, once
+//          built, is spent.
 //       4. An explicit `goal` always wins: none of the above, and the rationale says the
 //          profile was overridden.
 //  1. Defence. A visible enemy next to my territory T threatens it when
@@ -4297,16 +4301,45 @@ export function planTurn(input: PlanInput): TurnPlan {
   let strikeStack: { id: number; player: number; income: number; source: string; deployed: number } | undefined;
   /** Armies a Local Deployment pool put on each border this turn (#103): never moved out. */
   const poolDeployed = new Map<number, number>();
+  /** A territory the plan has not given up (or gave up but whose garrison may still hold it). */
+  const open = (id: number) => !conceded.has(id) || mayHold.has(id);
+  /** Armies that stay on a border after its deploys, outgoing moves and incoming withdrawals. */
+  const stays = (id: number) => avail.get(id)! + guard + (incoming.get(id) ?? 0);
+  // Concentrate (#72, adapting in a 1v1 facing the opponent): the spare deploys go to one strike stack
+  // on the border facing the strongest opponent (the highest income estimate, tracked when its
+  // track is trusted), the stack that keeps the most there, rather than to comfort margins.
+  // A 1v1 rule: in an FFA or a team game the comfort margins keep the leftover (several fronts).
+  // Chosen even when holds and captures leave no leftover (#102): the stack is still spent.
+  let stack: { id: number; player: number; income: number; source: string } | undefined;
+  if (auto && profile.format === '1v1' && goal !== 'defend' && facing.size) {
+    const player = [...facing]
+      .map((p) => ({ p, e: estimates.get(p) }))
+      .sort((a, b) => (b.e?.estimate ?? 0) - (a.e?.estimate ?? 0) || a.p - b.p)[0]!;
+    const id = mine
+      .filter(
+        (x) =>
+          open(x) &&
+          neighborsOf(g, x).some((n) => {
+            const st = state.get(n);
+            return !captured.has(n) && st?.owner.kind === 'player' && st.owner.playerId === player.p && st.armies !== null;
+          }),
+      )
+      .sort((a, b) => stays(b) - stays(a) || a - b)[0];
+    if (id !== undefined)
+      stack = {
+        id,
+        player: player.p,
+        income: player.e?.estimate ?? MIN_ENEMY_DEPLOY,
+        source: player.e?.source === 'tracked' ? 'tracked' : player.e?.source === 'observed' ? 'observed' : 'estimated',
+      };
+  }
   // ---- leftover deploy ----
   if (budget > 0) {
-    const open = (id: number) => !conceded.has(id) || mayHold.has(id);
     const foggedNext = (id: number) =>
       neighborsOf(g, id).filter((n) => {
         const st = state.get(n);
         return !captured.has(n) && (!st || st.owner.kind === 'unknown' || st.armies === null);
       }).length;
-    // Armies that stay on a border after its deploys, outgoing moves and incoming withdrawals.
-    const stays = (id: number) => avail.get(id)! + guard + (incoming.get(id) ?? 0);
     const short = [...borders.values()]
       .filter((b) => open(b.id))
       .map((b) => ({ ...b, take: armiesToTake(stays(b.id) + unitsAt(b.id), rates) }))
@@ -4316,33 +4349,6 @@ export function planTurn(input: PlanInput): TurnPlan {
     const fogged = [...mine].filter(open).sort((a, b) => foggedNext(b) - foggedNext(a) || a - b).find((id) => foggedNext(id) > 0);
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
-    // Concentrate (#72, adapting in a 1v1 facing the opponent): the spare deploys go to one strike stack
-    // on the border facing the strongest opponent (the highest income estimate, tracked when its
-    // track is trusted), the stack that keeps the most there, rather than to comfort margins.
-    // A 1v1 rule: in an FFA or a team game the comfort margins keep the leftover (several fronts).
-    let stack: { id: number; player: number; income: number; source: string } | undefined;
-    if (auto && profile.format === '1v1' && goal !== 'defend' && facing.size) {
-      const player = [...facing]
-        .map((p) => ({ p, e: estimates.get(p) }))
-        .sort((a, b) => (b.e?.estimate ?? 0) - (a.e?.estimate ?? 0) || a.p - b.p)[0]!;
-      const id = mine
-        .filter(
-          (x) =>
-            open(x) &&
-            neighborsOf(g, x).some((n) => {
-              const st = state.get(n);
-              return !captured.has(n) && st?.owner.kind === 'player' && st.owner.playerId === player.p && st.armies !== null;
-            }),
-        )
-        .sort((a, b) => stays(b) - stays(a) || a - b)[0];
-      if (id !== undefined)
-        stack = {
-          id,
-          player: player.p,
-          income: player.e?.estimate ?? MIN_ENEMY_DEPLOY,
-          source: player.e?.source === 'tracked' ? 'tracked' : player.e?.source === 'observed' ? 'observed' : 'estimated',
-        };
-    }
     // Holds before the strike stack: a border kept for the bonus this turn completes (rule 1c:
     // the leftover is its only garrison) is topped up to a comfortable margin, and any other
     // open border that would fall (its take at or below the threat) to just hold. The stack
@@ -4452,6 +4458,10 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
   }
 
+  // The stack exists whether or not a leftover reached it (#102): holds and captures may take the
+  // whole income, and an 80-stack must not stand idle for want of one spare army.
+  if (stack && !strikeStack) strikeStack = { ...stack, deployed: 0 };
+
   // ---- spend the strike stack (#102) ----
   // Once rule 0p.3c builds a strike stack, it attacks every adjacent enemy territory it can take
   // at the plan's win chance (the ordinary capture sizing; rule 4c re-checked as its captures
@@ -4461,6 +4471,10 @@ export function planTurn(input: PlanInput): TurnPlan {
   // it). It grows (deploy, no attack) only when nothing in reach is worth taking.
   if (strikeStack) {
     const S = strikeStack.id;
+    if (strikeStack.deployed === 0)
+      rationale.push(
+        `No leftover reaches the strike stack ${label(S)} this turn (holds, captures or Local Deployment pools took the income): it is spent with the armies already on it.`,
+      );
     const prev = new Map((input.previousBoard?.territories ?? []).map((t) => [t.territoryId, t]));
     /** Bonuses I held in full on the previous board and no longer do: lost, and retakable. */
     const lost = new Set(
@@ -4590,8 +4604,12 @@ export function planTurn(input: PlanInput): TurnPlan {
         break;
       }
     }
-    // What stays on the stack is its hold: an efficient-size top-up (S2) never draws on it.
-    if (taken.length) holdLocked.add(S);
+    // What stays on the stack is its hold: an efficient-size top-up (S2) never draws on it, and
+    // the transfer step never moves it (its captures can leave it interior; it may have got no deploys).
+    if (taken.length) {
+      holdLocked.add(S);
+      locked.add(S);
+    }
     const { threat: finalThreat, need: finalNeed } = holdAfter(new Set());
     const stays = avail.get(S)! + guard + (incoming.get(S) ?? 0);
     for (const { c, effect, value } of taken) {

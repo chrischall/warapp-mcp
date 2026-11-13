@@ -342,3 +342,90 @@ describe('strike effect labels do not overstate', () => {
     valid(input, p);
   });
 });
+
+// Holds take all the income: the stack still attacks. My stack T1 (80) faces the opponent's T2 (9)
+// and T3 (5), two members of its B500 (+3: T2, T3, T4). My B700 (+5: T7, T9, 4 each) faces its T8 (4),
+// and the 8 income all go to holding T7 and T9 (4 each). The break step takes T3; T2 (15) still falls from the
+// stack with no leftover deployed on it, and the rationale says the stack got none.
+describe('a strike stack is spent even when holds take all the income', () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 7, 8, 9],
+      [
+        [1, 2],
+        [1, 3],
+        [2, 4],
+        [3, 4],
+        [7, 8],
+        [9, 8],
+        [7, 9],
+      ],
+      [
+        [500, 3, [2, 3, 4]],
+        [700, 5, [7, 9]],
+      ],
+    ),
+  );
+  const input = (income: number): PlanInput => ({
+    graph: g,
+    board: board([mine(1, 80), enemy(2, 9), enemy(3, 5), enemy(4, 3), mine(7, 4), enemy(8, 4), mine(9, 4)]),
+    me: ME,
+    income,
+    settings: STD,
+    tracks: [track(ENEMY, income)],
+    game: { players: [{ id: ME }, { id: ENEMY }] },
+    options: { adapt: true },
+  });
+
+  it('attacks T2 from the stack at 8 income as at 11', () => {
+    for (const income of [8, 11]) {
+      const p = planTurn(input(income));
+      expect(p.profile.format).toBe('1v1');
+      expect(attacks(p).filter((m) => m.from === 1).map((m) => m.to).sort()).toEqual([2, 3]);
+      valid(input(income), p);
+    }
+    const p = planTurn(input(8));
+    expect(p.deploys.find((d) => d.territoryId === 1)).toBeUndefined();
+    expect(why(p)).toMatch(/Attack T2 \(#2\) from the strike stack T1 \(#1\) with 15/);
+    expect(why(p)).toMatch(/No leftover reaches the strike stack T1 \(#1\)/);
+    expect(p.offence.find((o) => o.kind === 'strike' && o.target === 1)).toMatchObject({ taken: true, cost: 0 });
+  });
+});
+
+// A stack with no deploys whose strike leaves it interior keeps what it holds. Under Local
+// Deployment all 3 income is B700's pool (my T8); the stack T1 (60) takes the opponent's T2 (5),
+// after which T1 sits two steps from the front (T2 faces T9, my T5 faces T6). The transfer step
+// must not walk the 52 the rationale says "the stack keeps" over to T5.
+describe('a strike stack the strike leaves interior keeps its armies', () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 5, 6, 8, 9],
+      [
+        [1, 2],
+        [1, 8],
+        [2, 9],
+        [1, 5],
+        [5, 6],
+      ],
+      [[700, 3, [8]]],
+    ),
+  );
+  const input: PlanInput = {
+    graph: g,
+    board: board([mine(1, 60), enemy(2, 5), mine(5, 20), enemy(6, 4), mine(8, 3), enemy(9, 4)]),
+    me: ME,
+    income: 3,
+    settings: { ...STD, localDeployments: true },
+    tracks: [track(ENEMY, 5)],
+    game: { players: [{ id: ME }, { id: ENEMY }] },
+    options: { adapt: true },
+  };
+
+  it('attacks from the stack and transfers nothing out of it', () => {
+    const p = planTurn(input);
+    expect(attacks(p).filter((m) => m.from === 1).map((m) => [m.to, m.armies])).toEqual([[2, 8]]);
+    expect(why(p)).toMatch(/the stack keeps 52/);
+    expect(p.moves.filter((m) => m.from === 1 && m.kind === 'transfer')).toEqual([]);
+    valid(input, p);
+  });
+});
