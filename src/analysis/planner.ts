@@ -1789,6 +1789,13 @@ function fogPrior(board: BoardState, me: number, ctx: PlanGameContext, myIncome:
   return opponents === 1 ? { myIncome: Math.max(0, myIncome) } : undefined;
 }
 
+/** The players on `me`'s team (#128), from the game's player list; none in a no-team game. */
+export function alliesOf(me: number, players: readonly ProfilePlayer[] | undefined): Set<number> {
+  const team = players?.find((p) => p.id === me)?.team;
+  if (!carriesTeam(team)) return new Set();
+  return new Set((players ?? []).filter((p) => p.id !== me && p.team === team).map((p) => p.id));
+}
+
 export function planTurn(input: PlanInput): TurnPlan {
   const { graph: g, board, me } = input;
   const s = input.settings ?? {};
@@ -1797,7 +1804,13 @@ export function planTurn(input: PlanInput): TurnPlan {
   const income = Math.max(0, Math.floor(input.income));
   const ctx = input.game ?? {};
   const incomePrior = fogPrior(board, me, ctx, income - Math.max(0, Math.floor(input.cardArmies ?? 0)));
-  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard, input.tracks, incomePrior);
+  /** My teammates (#128): players on my team, never a threat, a target or an estimate. */
+  const allies = alliesOf(me, ctx.players);
+  /** A player whose stacks threaten me and whose territories I may attack: not me, not a teammate. */
+  const foe = (p: number) => p !== me && !allies.has(p);
+  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard, input.tracks, incomePrior).filter((e) =>
+    foe(e.playerId),
+  );
   // ---- 0p. the game profile ----
   const profile = gameProfile({
     graph: g,
@@ -1844,9 +1857,26 @@ export function planTurn(input: PlanInput): TurnPlan {
   const focus = new Set(opts.focusBonusIds ?? []);
   const reserve = Math.min(income, Math.max(0, Math.floor(opts.reserve ?? 0)));
   const custom = opts.enemyDeploy !== undefined;
+  const mineAtStart = new Set(
+    board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me ? [t.territoryId] : [])),
+  );
+  // As {@link defaultEnemyDeploy}, over the opponents only (teammates out, #128).
   const enemyDeploy = custom
     ? Math.max(0, Math.floor(opts.enemyDeploy!))
-    : defaultEnemyDeploy(g, board, me, s, input.previousBoard, input.tracks, incomePrior);
+    : estimateList.reduce(
+        (m, e) =>
+          board.territories.some(
+            (t) =>
+              t.owner.kind === 'player' &&
+              t.owner.playerId === e.playerId &&
+              t.armies !== null &&
+              g.territoryById.has(t.territoryId) &&
+              neighborsOf(g, t.territoryId).some((n) => mineAtStart.has(n)),
+          )
+            ? Math.max(m, e.estimate)
+            : m,
+        MIN_ENEMY_DEPLOY,
+      );
   const estimates = new Map(estimateList.map((e) => [e.playerId, e]));
   /** The deploy assumed for one opponent's threat: the override, else its own estimate. */
   const deployOf = (player: number) => (custom ? enemyDeploy : (estimates.get(player)?.estimate ?? MIN_ENEMY_DEPLOY));
@@ -1973,7 +2003,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         armiesOf(n) - guard >= c &&
         !neighborsOf(g, n).some((y) => {
           const o = state.get(y)?.owner;
-          return o?.kind === 'player' && o.playerId !== me;
+          return o?.kind === 'player' && foe(o.playerId);
         }),
     );
     return lost + (idle ? 0 : 1);
@@ -2002,7 +2032,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         );
     const myArmies = totals.get(me) ?? 0;
     const [rival, theirs] = [...totals]
-      .filter(([p]) => p !== me)
+      .filter(([p]) => foe(p))
       .sort((a, b) => b[1] - a[1] || a[0] - b[0])[0] ?? [undefined, 0];
     if (rival !== undefined && theirs > 0 && myArmies < BEHIND_RATIO * theirs) {
       armiesBehind = true;
@@ -2274,10 +2304,10 @@ export function planTurn(input: PlanInput): TurnPlan {
         return o !== null && o.player !== player && o.shrink > 0;
       });
     for (const [id, st] of state)
-      if (st.owner.kind === 'player' && st.owner.playerId !== me && heldBoth(id, st.owner.playerId) && !fought(id, st.owner.playerId))
+      if (st.owner.kind === 'player' && foe(st.owner.playerId) && heldBoth(id, st.owner.playerId) && !fought(id, st.owner.playerId))
         shrinkLeft.set(id, Math.max(0, visibleState(before.get(id))!.armies! - st.armies!));
     for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
-      if (st.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      if (st.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
       if (!neighborsOf(g, id).some((n) => mineSet.has(n))) continue;
       // Visible both times (#69): a stack hidden last turn only came into view.
       const was = visibleState(before.get(id));
@@ -2305,7 +2335,7 @@ export function planTurn(input: PlanInput): TurnPlan {
    */
   const reinforcementAt = (t: number): number => {
     const st = state.get(t);
-    if (st?.owner.kind !== 'player' || st.owner.playerId === me) return 0;
+    if (st?.owner.kind !== 'player' || !foe(st.owner.playerId)) return 0;
     return Math.max(deployOf(st.owner.playerId), growthOf.get(t)?.growth ?? 0);
   };
   /** Fewest armies on a territory that hold against `threat` attackers. */
@@ -2323,7 +2353,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const byPlayer = new Map<number, { movable: number; growth: number }>();
     for (const n of neighborsOf(g, t)) {
       const st = state.get(n);
-      if (gone(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      if (gone(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
       const p = byPlayer.get(st.owner.playerId) ?? { movable: 0, growth: 0 };
       // An enemy commander can join the attack: it fights as COMMANDER_STRENGTH armies.
       p.movable += Math.max(0, st.armies - guard) + unitsAt(n);
@@ -2345,7 +2375,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const byPlayer = new Map<number, number>();
     for (const n of neighborsOf(g, t)) {
       const st = state.get(n);
-      if (captured.has(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
       byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard));
     }
     return Math.max(0, ...[...byPlayer].map(([p, movable]) => movable + deployOf(p)));
@@ -2393,7 +2423,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const byPlayer = new Map<number, { movable: number; growth: number }>();
     for (const n of neighborsOf(g, t)) {
       const st = state.get(n);
-      if (gone(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      if (gone(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
       const p = byPlayer.get(st.owner.playerId) ?? { movable: 0, growth: 0 };
       // An enemy commander can join the attack: it fights as COMMANDER_STRENGTH armies.
       p.movable += Math.max(0, st.armies - guard) + unitsAt(n);
@@ -2410,7 +2440,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   for (const t of mine) {
     for (const n of neighborsOf(g, t)) {
       const st = state.get(n);
-      if (st?.owner.kind === 'player' && st.owner.playerId !== me && st.armies !== null) facing.add(st.owner.playerId);
+      if (st?.owner.kind === 'player' && foe(st.owner.playerId) && st.armies !== null) facing.add(st.owner.playerId);
     }
     const b = borderAt(t, () => false);
     if (b) borders.set(t, b);
@@ -2878,7 +2908,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const byPlayer = new Map<number, number>();
     for (const n of neighborsOf(g, t)) {
       const st = state.get(n);
-      if (captured.has(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
       byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard) + unitsAt(n));
     }
     return Math.max(0, ...byPlayer.values());
@@ -3533,7 +3563,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       let visible = true;
       for (const t of ts) {
         const st = state.get(t);
-        if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) visible = false;
+        if (st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) visible = false;
         else owners.add(st.owner.playerId);
       }
       if (visible && owners.size === 1) {
@@ -3593,7 +3623,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const before = new Map(input.previousBoard.territories.map((t) => [t.territoryId, t]));
     const heldBy = (st: TerritoryState | undefined, p: number) => st?.owner.kind === 'player' && st.owner.playerId === p;
     for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
-      if (st.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null || breakMember.has(id)) continue;
+      if (st.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null || breakMember.has(id)) continue;
       const p = st.owner.playerId;
       const ns = neighborsOf(g, id);
       if (!ns.some((n) => mineSet.has(n))) continue;
@@ -3638,6 +3668,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       continue;
     }
     if (st.owner.kind === 'available') continue;
+    // A teammate's territory is never a target (#128).
+    if (st.owner.kind === 'player' && !foe(st.owner.playerId)) continue;
     const enemy = st.owner.kind === 'player';
     if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t)))) continue;
     const cost = costAt(t);
@@ -4047,7 +4079,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const value = valueOf(x);
     if (value <= 0 && !myCommanders.has(x)) return null;
     const st = state.get(t);
-    const owner = st?.owner.kind === 'player' && st.owner.playerId !== me ? st.owner.playerId : undefined;
+    const owner = st?.owner.kind === 'player' && foe(st.owner.playerId) ? st.owner.playerId : undefined;
     const sure = owner === undefined || (captureCost(defenceAt(t) + deployOf(owner), s) ?? Infinity) <= sent;
     const b = borderAt(x, (n) => captured.has(n) || assumeGone(n) || (n === t && sure));
     if (!b) return null;
@@ -4565,7 +4597,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   // Visible enemy territories by owner, sorted.
   const ownedBy = new Map<number, number[]>();
   for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
-    if (st.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+    if (st.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
     ownedBy.set(st.owner.playerId, [...(ownedBy.get(st.owner.playerId) ?? []), id]);
   }
   const ownerOf = (id: number) => {
@@ -4946,8 +4978,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   const unstruck: { t: number; text: string }[] = [];
   for (const t of [...state.keys()].sort(byNum)) {
     const st = state.get(t)!;
-    if (mineSet.has(t) || captured.has(t) || st.armies === null || st.owner.kind !== 'player') continue;
-    if (!(st.specialUnits ?? []).some((u) => u.kind === 'commander' && u.playerId !== me)) continue;
+    if (mineSet.has(t) || captured.has(t) || st.armies === null || st.owner.kind !== 'player' || !foe(st.owner.playerId)) continue;
+    if (!(st.specialUnits ?? []).some((u) => u.kind === 'commander' && foe(u.playerId))) continue;
     const adjacent = neighborsOf(g, t).filter((n) => mineSet.has(n));
     if (!adjacent.length) continue;
     const p = st.owner.playerId;
@@ -5148,7 +5180,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         opts.opponents ??
           new Set(
             board.territories.flatMap((t) =>
-              t.owner.kind === 'player' && t.owner.playerId !== me ? [t.owner.playerId] : [],
+              t.owner.kind === 'player' && foe(t.owner.playerId) ? [t.owner.playerId] : [],
             ),
           ).size,
       ),
@@ -5220,7 +5252,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const byPlayer = new Map<number, number>();
       for (const n of neighborsOf(g, t)) {
         const st = state.get(n);
-        if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+        if (st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
         byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard) + unitsAt(n));
       }
       // Each opponent's movable armies plus its own deploy estimate; with none next to it, the reported estimate.
@@ -5308,7 +5340,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const holdAndBreak = (t: Threatened, rest = 0): boolean => {
       const threats = neighborsOf(g, t.id).filter((n) => {
         const st = state.get(n);
-        return st?.owner.kind === 'player' && st.owner.playerId !== me && st.armies !== null;
+        return st?.owner.kind === 'player' && foe(st.owner.playerId) && st.armies !== null;
       });
       if (threats.length !== 1) return false;
       const n = threats[0]!;
@@ -5799,7 +5831,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         for (const t of [...g.territoryById.keys()].sort(byNum)) {
           if (mineSet.has(t) || captured.has(t)) continue;
           const st = state.get(t);
-          if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+          if (st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
           // An enemy commander is rule 1s's, sized for its owner's full deploy: never a fallback.
           if (unitsAt(t) > 0) continue;
           const sources = neighborsOf(g, t).filter((n) => mineSet.has(n));
@@ -6891,7 +6923,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const candidates: StrikeTarget[] = [];
     for (const n of neighborsOf(g, S)) {
       const st = state.get(n);
-      if (captured.has(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
       const cost = costAt(n);
       // Never a capture that lowers income (rule 4c): it completes a negative bonus. Re-checked
       // below against the strike's own captures, which can complete one only together.
@@ -7337,7 +7369,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const passable = (id: number) => held.has(id) && !conceded.has(id);
     const isEnemy = (id: number) => {
       const st = state.get(id);
-      return st?.owner.kind === 'player' && st.owner.playerId !== me;
+      return st?.owner.kind === 'player' && foe(st.owner.playerId);
     };
     // Enemy front first (#121): idle armies head for the territories a visible enemy holds; only
     // with no enemy reachable do they head for the nearest territory not mine (neutral or fog).
@@ -7585,7 +7617,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const byPlayer = new Map<number, number>();
     for (const n of neighborsOf(g, t)) {
       const st = state.get(n);
-      if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      if (st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
       const p = st.owner.playerId;
       byPlayer.set(p, (byPlayer.get(p) ?? deployOf(p)) + Math.max(0, st.armies - guard) + unitsAt(n));
     }
@@ -7594,7 +7626,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const facesEnemy = (t: number) =>
     neighborsOf(g, t).some((n) => {
       const st = state.get(n);
-      return st?.owner.kind === 'player' && st.owner.playerId !== me;
+      return st?.owner.kind === 'player' && foe(st.owner.playerId);
     });
   const lastWhy = new Map<PlannedMove, string>();
   const slotOf = (m: PlannedMove): MoveSlot => {
