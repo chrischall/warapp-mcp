@@ -587,9 +587,13 @@
 //     withdrawal taken back unless the territory it went to needs it to hold; never one that
 //     attacks out or whose garrison already stays); with two or more such borders, each is first brought to that
 //     margin in the same order (#121: two symmetric borders at an exact hold ended as 16 and 7),
-//     the rest to the first — else the source of the top expansion (which then makes
-//     no transfer), else the border with the most fogged neighbours, else
-//     my biggest stack.
+//     the rest to the first — else (#125) it saves toward a capture this turn cannot afford:
+//     rule 4e's top-ranked step when it stood still for want of armies, else (rule 4f committing)
+//     the closest bonus's cheapest missing member in reach when this turn made no capture into
+//     that bonus; it goes to my territory beside that member with the most armies free (open, not
+//     a softener, no order under No-Split; "save toward …, the next step of bonus …") — else the
+//     source of the top expansion (a capture's finisher; it then makes no transfer), else the
+//     border with the most fogged neighbours, else my biggest stack.
 //  6. Idle armies on interior territories transfer one step toward the front,
 //     only into territories held at the start of the turn and never into, or
 //     measured through, a conceded border
@@ -601,6 +605,12 @@
 //     sized for its owner's whole deploy (rule 1e, 1s, or rule 3's #120 sizing): an exact-sized attack on a player fails
 //     if the owner reinforces, and the garrison beside it is not idle. A leftover deploy (rule 5)
 //     to a border short of its margin is never transferred away.
+//     Staging (#125): when the leftover saved toward a step (rule 5), idle armies on my other
+//     territories facing no visible enemy (a border beside neutrals included; never one that
+//     attacks, a conceded border, my commander's, or one beside the step itself) walk one step
+//     toward its source first, when it is no farther than the enemy front ("Move N from … to …:
+//     stages toward …"): live, a stack two steps from the one neutral its bonus lacked stood
+//     still for five turns.
 // Local Deployment (`localDeployments`): a held bonus's value is a pool deployable
 // only on that bonus's territories (a superbonus's on all of its territories, beside
 // its member bonuses' pools); the rest of the income (base, per-territory, card
@@ -5552,6 +5562,11 @@ export function planTurn(input: PlanInput): TurnPlan {
   // and late phases (#107) enemy territories it can take at a trade of at least even join them,
   // ranked by the armies each capture loses (#112), and every other capture that loses nothing
   // is taken too.
+  /**
+   * #125: the step rule 4e ranked first and could not afford this turn (its size, nothing else):
+   * the leftover saves toward it (rule 5) and idle stacks stage toward it (rule 6).
+   */
+  let saveStep: { t: number; bonusId: number; cost: number } | undefined;
   if (goal !== 'complete-bonus' && captured.size === 0) {
     const early = profile.phase === 'opening' || profile.phase === 'expansion';
     // In a 1v1 the strike stack (rule 0p.3c, #102) is contact's own answer: it attacks every turn.
@@ -6249,6 +6264,9 @@ export function planTurn(input: PlanInput): TurnPlan {
             : `Standing still: no capture is planned, and the cheapest capture (${label(top.st.t)}, ${top.st.cost} armies, a territory of player ${top.st.player})`;
         const tail = `${failText(top.st, failed.get(top.st.t))}.`;
         warnings.push(`${head} ${tail}`);
+        const why = failed.get(top.st.t);
+        if (top.kind === 'neutral' && (why === undefined || why.kind === 'size'))
+          saveStep = { t: top.st.t, bonusId: top.st.id, cost: top.st.cost };
       }
       // #114, in contact: every candidate the fallback considered and dropped leaves a reason (the
       // top one, when nothing is taken, is in the stand-still warning). One already said elsewhere
@@ -6449,6 +6467,36 @@ export function planTurn(input: PlanInput): TurnPlan {
         source: player.e?.source === 'tracked' ? 'tracked' : player.e?.source === 'observed' ? 'observed' : 'estimated',
       };
   }
+  /**
+   * #125: the capture to save toward — rule 4e's top step it could not afford, else (rule 4f
+   * committing) the closest bonus's cheapest missing member in reach when this turn made no capture
+   * into that bonus — and its source: my territory beside it (open, not a softener, issuing no
+   * order under No-Split) with the most armies free, ties by id.
+   */
+  const stepSource = (
+    open: (x: number) => boolean,
+    notSoftening: (x: number) => boolean,
+  ): { t: number; bonusId: number; cost: number; from: number } | undefined => {
+    let step = saveStep;
+    if (!step && committing) {
+      for (const p of byCloseness) {
+        if (p.remaining.some((t) => captured.has(t))) return undefined;
+        const t = p.remaining
+          .filter((x) => bonusTarget(x) && state.get(x)?.owner.kind === 'neutral')
+          .sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b)[0];
+        if (t === undefined) continue;
+        step = { t, bonusId: p.bonusId, cost: targets.get(t)!.cost };
+        break;
+      }
+    }
+    if (!step || captured.has(step.t)) return undefined;
+    const from = neighborsOf(g, step.t)
+      .filter((x) => mineSet.has(x) && open(x) && notSoftening(x) && !orderOf(x))
+      .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b)[0];
+    return from === undefined ? undefined : { ...step, from };
+  };
+  /** Set by the leftover deploy (rule 5): the step it saved toward, which idle stacks stage toward (rule 6). */
+  let staging: { t: number; bonusId: number; cost: number; from: number } | undefined;
   // ---- leftover deploy ----
   if (budget > 0) {
     const foggedNext = (id: number) =>
@@ -6472,6 +6520,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       return !m || !softens(m);
     };
     const fogged = [...mine].filter((x) => open(x) && notSoftening(x)).sort((a, b) => foggedNext(b) - foggedNext(a) || a - b).find((id) => foggedNext(id) > 0);
+    const saving = stepSource(open, notSoftening);
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
     // Holds before the strike stack: a border kept for the bonus this turn completes (rule 1c:
@@ -6599,6 +6648,10 @@ export function planTurn(input: PlanInput): TurnPlan {
       why = spread
         ? `the rest, once every short border has its comfortable margin, to the one with the most at stake (protects +${valueOf(where)})`
         : `the held border with the most at stake (protects +${valueOf(where)}), still short of a comfortable margin over the ~${short[0].threat} threat`;
+    } else if (saving) {
+      where = saving.from;
+      why = `save toward ${label(saving.t)} (${saving.cost} to take), the next step of bonus ${bonusName(saving.bonusId)}, which this turn cannot afford`;
+      lock = true;
     } else if (expansion !== undefined && open(expansion)) {
       where = expansion;
       why = 'the stack working on the top expansion';
@@ -6618,6 +6671,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       }
     }
     const n = roomAt(where);
+    if (saving && where === saving.from) staging = saving;
     if (n > 0) {
       rationale.push(`Deploy the leftover ${n} to ${label(where)}: ${why}.`);
       deploy(where, n);
@@ -7170,6 +7224,35 @@ export function planTurn(input: PlanInput): TurnPlan {
     const anyFront = ids.filter((id) => !held.has(id));
     const distEnemy = bfsDistances(g, enemyFront, { passable });
     const distAny = bfsDistances(g, anyFront, { passable });
+    // #125: staging. Idle armies on a territory facing no visible enemy — a border beside neutrals
+    // included — walk one step toward the source of the capture the leftover saved toward, when
+    // it is no farther than the enemy front; once there they help take it.
+    if (staging) {
+      const st = staging;
+      const distStage = bfsDistances(g, [st.from], { passable });
+      for (const t of mine) {
+        const n = avail.get(t)!;
+        if (n <= 0 || locked.has(t) || t === st.from || conceded.has(t) || myCommanders.has(t)) continue;
+        if (neighborsOf(g, t).some((x) => isEnemy(x) || x === st.t)) continue;
+        if (moves.some((m) => m.from === t && m.kind === 'attack')) continue;
+        const d = distStage.get(t);
+        if (d === undefined || d < 1 || d > (distEnemy.get(t) ?? Infinity)) continue;
+        const step = neighborsOf(g, t)
+          .filter((x) => mineSet.has(x) && !conceded.has(x) && (distStage.get(x) ?? Infinity) < d)
+          .sort((a, b) => distStage.get(a)! - distStage.get(b)! || a - b)[0];
+        if (step === undefined) continue;
+        if (orderOf(t)) {
+          warnSplit(t, `its ${n} idle armies do not stage toward ${label(st.t)}`);
+          continue;
+        }
+        avail.set(t, 0);
+        const reason = `stages toward ${label(st.t)}, the next step of bonus ${bonusName(st.bonusId)}`;
+        moves.push({ from: t, to: step, armies: n, kind: 'transfer', reason });
+        rationale.push(
+          `Move ${n} from ${label(t)} to ${label(step)}: ${reason} (${st.cost} to take from ${label(st.from)}, not affordable this turn).`,
+        );
+      }
+    }
     for (const t of mine) {
       const dist = distEnemy.has(t) ? distEnemy : distAny;
       const n = avail.get(t)!;

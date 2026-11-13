@@ -18,7 +18,7 @@ const ME = 10;
 const ENEMY = 20;
 const STD: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true };
 
-export interface Scenario {
+interface Scenario {
   edges: string;
   bonuses?: Array<[number, number, number[]]>;
   /** 'M5' mine 5, 'n2' neutral 2, 'E3' the enemy with 3. */
@@ -35,7 +35,7 @@ const cell = (id: number, s: string): TerritoryState => {
   return { territoryId: id, owner: { kind: 'player', playerId: s[0] === 'M' ? ME : ENEMY }, armies: n };
 };
 
-export function scenario(sc: Scenario) {
+function scenario(sc: Scenario) {
   const adj = new Map<number, Set<number>>();
   const ids = new Set(Object.keys(sc.cells).map(Number));
   for (const e of sc.edges.split(/\s+/).filter(Boolean)) {
@@ -71,7 +71,7 @@ export function scenario(sc: Scenario) {
 }
 
 /** Plan the scenario; the plan must pass warapp_submit_turn's validator. */
-export function plan(sc: Scenario): TurnPlan {
+function plan(sc: Scenario): TurnPlan {
   const { g, input } = scenario(sc);
   const p = planTurn(input);
   const map = g.map;
@@ -206,5 +206,44 @@ describe('#125 turns to finish count the layers a chain needs', () => {
     const p = plan(sc);
     const line = p.rationale.find((l) => l.includes('closest to completion first'));
     expect(line).toMatch(/B101 \(#101\) 10 armies to finish, 2 turns at income 5, B100 \(#100\) 9, 3 turns/);
+  });
+});
+
+const deployedTo = (p: TurnPlan, id: number) => p.deploys.filter((d) => d.territoryId === id).reduce((n, d) => n + d.armies, 0);
+
+describe('#125 the leftover saves toward the closest completion', () => {
+  // +4 bonus [1,2]: 2 is a 10-neutral (16 to take); 1 has 6. A corridor of 2-neutrals in no bonus
+  // runs from 3. The leftover went to the corridor's expansion stack, and the bonus waited.
+  const B3: Scenario = {
+    edges: '1-2 1-3 3-4 4-5 5-6 6-7 7-8 8-9',
+    bonuses: [[100, 4, [1, 2]]],
+    cells: { 1: 'M6', 2: 'n10', 3: 'M2', 4: 'n2', 5: 'n2', 6: 'n2', 7: 'n2', 8: 'n2', 9: 'n2' },
+    turn: 3,
+  };
+  it('deploys the leftover on the stack beside the member it cannot yet afford', () => {
+    const p = plan(B3);
+    expect(deployedTo(p, 1)).toBeGreaterThan(0);
+    expect(p.rationale.join('\n')).toMatch(/Deploy the leftover \d+ to T1 \(#1\): save toward T2 \(#2\) \(16 to take\), the next step of bonus B100 \(#100\)/);
+  });
+});
+
+describe('#125 staging: unthreatened stacks move toward a capture not yet affordable', () => {
+  // 30/75: a 4-neutral (T5) needs 12 attackers. It is the last member of Ridge (+5) [1,2,5]. Only
+  // T2 (1 army) borders it; my 11-stack on T3 is two steps away, beside 2-neutrals worth +0
+  // (T6 and T7, in no bonus) and far from every enemy. It stood still for turns.
+  const R = { offensiveKillRate: 30, defensiveKillRate: 75, oneArmyStandsGuard: true };
+  const sc: Scenario = {
+    edges: '1-2 2-5 2-3 3-6 3-7 1-8 8-9 9-10',
+    bonuses: [[100, 5, [1, 2, 5]]],
+    cells: { 1: 'M1', 2: 'M1', 3: 'M11', 5: 'n4', 6: 'n4', 7: 'n4', 8: 'n4', 9: 'n4', 10: 'E5' },
+    settings: R,
+    turn: 4,
+    income: 5,
+  };
+  it('deploys beside the target and walks the stack one step toward it', () => {
+    const p = plan(sc);
+    expect(deployedTo(p, 2)).toBe(5);
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 3, to: 2, armies: 10, kind: 'transfer' }));
+    expect(p.rationale.join('\n')).toMatch(/Move 10 from T3 \(#3\) to T2 \(#2\): stages toward T5 \(#5\)/);
   });
 });
