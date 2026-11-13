@@ -49,9 +49,10 @@ and the planner conceded six held-bonus borders (≈ −29 income). With 30 it h
   owned by the opponent and was fogged last turn is a reveal, not a capture.
   - **#86 follow-up:** armies that arrive by an attack are a move, not income. A capture counts
     what it cost (the attackers the previous defenders killed, `straightKills` at the game's
-    defensive kill rate), plus the armies now on it only when one of the opponent's territories
-    next to it was visible on both boards (that source's shrink cancels them, so the move nets to
-    the attrition). Otherwise the stack came from the fog: the observation lists it in `fromFog`,
+    defensive kill rate), plus the armies now on it only up to what the opponent's neighbouring
+    territories visible on both boards sent away (their shrink, each claimed once, cancels them,
+    so the move nets to the attrition). The rest came from the fog when a neighbour was hidden
+    (or counts as deploy when every neighbour was in view): the observation lists it in `fromFog`,
     the rationale names it as a threat ("stack next to you: N … (threat)") apart from the
     estimated income, and the hold checks still size the borders next to it for it.
 - Plausibility cap: the observed figure never exceeds what the opponent could earn — its base

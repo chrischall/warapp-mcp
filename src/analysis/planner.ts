@@ -39,8 +39,9 @@
 //     boards — shrinks included, so a transfer between its own territories is not deploy —
 //     plus, on each territory it captured from a visibly held or neutral territory, the
 //     attackers the previous defenders killed at the game's kill rates, and its armies there
-//     only when one of its territories next to it was visible on both boards — else they
-//     arrived from the fog: a move and a threat, never income, issue #86). A territory hidden last turn
+//     only up to what its visible-both-turns neighbours sent away (their shrink, each claimed
+//     once, ascending id); the rest arrived from the fog when a neighbour was hidden (a move
+//     and a threat, never income, issue #86), or counts as deploy when every neighbour was in view). A territory hidden last turn
 //     (fogged, or under a fog level that hid its armies) is a fog reveal, never growth or a
 //     capture (issue #69). The observed figure is never cut by the stack cap, but is capped
 //     at what the opponent could earn on this board: its base income plus every bonus none of
