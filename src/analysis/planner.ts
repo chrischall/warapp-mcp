@@ -208,7 +208,8 @@
 //     2 armies). Under `goal: 'defend'` the plan deploys each hold, and a held
 //     border then makes no moves.
 //     Scope of "protected value", deliberately narrow: only bonuses containing T
-//     count (not a bonus T merely borders), and an incomplete one counts in full
+//     count (not a bonus T merely borders; a negative bonus I hold in full that contains T
+//     counts against it, #128 — losing T lifts it — floored at 0), and an incomplete one counts in full
 //     when T is my only foothold, however much of it the enemy holds, else by its share
 //     while I am building it (above). So with no complete bonus, no bonus being built and
 //     no per-territory income (`bonusArmyPer` off, or its armies still below the base income
@@ -2259,7 +2260,13 @@ export function planTurn(input: PlanInput): TurnPlan {
     const mineWithout = (x: number) => x !== t && holdings.has(x);
     for (const b of g.map.bonuses) {
       const ts = bonusTerritories(g, b.id);
-      if (b.value <= 0 || !ts.includes(t)) continue;
+      if (!ts.includes(t)) continue;
+      // #128: a negative bonus I hold in full that contains T is lifted when T falls.
+      if (b.value < 0) {
+        if (ts.every((x) => holdings.has(x))) v += b.value;
+        continue;
+      }
+      if (b.value === 0) continue;
       if (ts.every((x) => holdings.has(x))) {
         v += b.value;
         continue;
@@ -2285,7 +2292,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     // costs an army only above it.
     const per = s.bonusArmyPer ?? 0;
     if (per > 0) v += territoryIncome(mine.length, baseIncome, per) - territoryIncome(mine.length - 1, baseIncome, per);
-    return v;
+    return Math.max(0, Math.round(v * 10) / 10);
   };
   const valueCache = new Map<number, number>();
   const valueOf = (t: number) => {

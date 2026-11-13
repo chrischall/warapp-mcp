@@ -207,3 +207,15 @@ describe('bosses and custom units are never counted as nothing in silence (#128)
     expect(plan.warnings.join('\n')).toMatch(/T4 \(#4\) \(player 20\) holds a custom unit, whose strength the board does not carry: the threat to T1 \(#1\) counts its armies only/);
   });
 });
+
+describe('protected value counts an overlapping negative bonus (#128)', () => {
+  // 1 2 3 mine: +5 group (1 2 3) and a −4 singleton (3); enemy 4 (8) next to 3.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [2, 3], [3, 4], [4, 5]], [[101, 5, [1, 2, 3]], [103, -4, [3]]]));
+  it('a border whose loss costs 1 income protects +1, not +5', () => {
+    const b = board([mine(1, 1), mine(2, 1), mine(3, 4), player(4, 8, 20), player(5, 1, 20)]);
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 6, settings: STD, options: { goal: 'balanced' } });
+    const text = plan.rationale.join('\n') + plan.warnings.join('\n');
+    expect(text).toMatch(/T3 \(#3\) so it holds \(protects \+1\)/);
+    expect(text).not.toMatch(/protects \+5/);
+  });
+});
