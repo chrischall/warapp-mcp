@@ -48,7 +48,9 @@ const holdArmies = (threat: number) => {
 
 // My T1 (a +10 bonus on its own) borders the enemy's T2; T3 and T4 sit behind it,
 // T5 is fogged, so the enemy's +3 bonus {2, 3, 4, 5} is never visibly held.
-// T6 and T7 hang off T4 (for owner changes); T8 is a neutral next to T4.
+// T6 and T7 hang off T4 (for owner changes); T8 is a neutral next to T4. The +40 bonus
+// {6, 7} lies in the fog, so the opponent could hold it: the observed figure's plausibility
+// cap (#69: base + every bonus it could hold) stays above what these tests observe.
 const g = buildGraph(
   makeMap(
     [1, 2, 3, 4, 5, 6, 7, 8],
@@ -64,6 +66,7 @@ const g = buildGraph(
     [
       [701, 10, [1]],
       [702, 3, [2, 3, 4, 5]],
+      [703, 40, [6, 7]],
     ],
   ),
 );

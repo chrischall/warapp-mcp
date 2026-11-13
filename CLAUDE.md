@@ -139,10 +139,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   both times (shrinks included — a transfer between its own territories is not deploy; counting
   only growth once read a 30-army back-line move as +35 and conceded a bonus), where a territory
   it captured from a player or a visible neutral counts its armies now plus the previous owner's
-  armies there, floored at 0 (fogged-last-time territories never count; losses in an attack it
-  did not win are not counted — the defender's own orders hide them). The
+  armies there, floored at 0 (losses in an attack it did not win are not counted — the
+  defender's own orders hide them). **A fog reveal is not income (#69):** a territory counts
+  only when last turn's board showed both its owner and its armies (`visibleState`: not owner
+  `unknown`, not `null` armies, not fog level `Fogged`/`OwnerOnly`/`3`/`4`) — live, fog lifting
+  over existing stacks read as +119 and conceded six held-bonus borders. The observed figure is
+  capped at base + every bonus none of whose territories someone else visibly holds (a warning
+  says when), and a rationale line names the turns compared and the reveals skipped. The
   estimate is max(visible-bonus figure, observed) — the stack cap never cuts an observed figure —
-  and the warning names the source ("observed +N/turn" vs "base + visible bonuses").
+  and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). Each border
+  is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to
+  land), not a double count.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
   border's threat to movable + max(that opponent's deploy, growth). `warapp_plan_turn` gets it from
   GameFeed `GetHistory` (unverified in progress, parsed loosely in `src/trend.ts`), else from

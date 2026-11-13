@@ -49,8 +49,14 @@ export interface LiveSpecialUnit {
 export const OWNER_NEUTRAL = 0;
 export const OWNER_PICKABLE = -2;
 
-/** StandingFogLevel. */
-export const FOG_LEVEL_NAMES: Readonly<Record<number, string>> = { 1: 'Visible', 2: 'OwnerOnly', 4: 'Fogged' };
+/**
+ * StandingFogLevel, as the client bundle names it (verified 2026-11-12): 1 You (my own
+ * territory), 2 Visible, 3 OwnerOnly (owner shown, armies hidden), 4 Fogged. The client
+ * refuses a deploy on 3 or 4 as "on fogged territory"; a fully fogged standing is
+ * fog level 4, owner -1 and `Armies(0, fogged)`.
+ */
+export const FOG_LEVEL_NAMES: Readonly<Record<number, string>> = { 1: 'You', 2: 'Visible', 3: 'OwnerOnly', 4: 'Fogged' };
+export const FOG_LEVEL_OWNER_ONLY = 3;
 export const FOG_LEVEL_FOGGED = 4;
 
 /** One territory as the viewer's standing has it. */
@@ -128,7 +134,8 @@ function territoryOf(key: unknown, ts: Obj): LiveTerritory {
     fogLevel,
     fogged,
     owner,
-    armies: fogged || typeof count !== 'number' ? null : count,
+    // Owner-only: the owner shows, any army count is a placeholder (#69).
+    armies: fogged || fogLevel === FOG_LEVEL_OWNER_ONLY || typeof count !== 'number' ? null : count,
   };
   const units = armyFields.find((v): v is unknown[] => Array.isArray(v));
   if (!fogged && units?.length) out.specialUnits = units.map(specialUnitOf);
@@ -225,7 +232,7 @@ export function toBoardState(territories: readonly LiveTerritory[], players: rea
       const out: TerritoryState = {
         territoryId: t.territoryId,
         owner: ownerOf(t, byInGame),
-        armies: t.armies,
+        armies: t.fogLevel === FOG_LEVEL_OWNER_ONLY ? null : t.armies,
         fogLevel: FOG_LEVEL_NAMES[t.fogLevel] ?? String(t.fogLevel),
       };
       if (t.specialUnits?.length) {

@@ -82,6 +82,12 @@ describe('readLiveStanding', () => {
     ]);
   });
 
+  it('an owner-only territory (StandingFogLevel 3) shows its owner but no armies (#69)', () => {
+    // The client refuses a deploy on fog level 3 or 4 as "fogged": its army count is not evidence.
+    const out = readLiveStanding(bundle, body([{ id: 9, fogLevel: 3, owner: 123456, armies: 0 }], [123456]));
+    expect(out).toEqual([{ territoryId: 9, fogLevel: 3, fogged: false, owner: 123456, armies: null }]);
+  });
+
   it('no result, or no standing, is null', () => {
     const w = new Writer();
     w.bool(false);
@@ -267,7 +273,10 @@ describe('toBoardState', () => {
       { kind: 'player', playerId: 777 },
       { kind: 'unknown' },
     ]);
-    expect(board.territories.map((t) => t.fogLevel)).toEqual(['Visible', 'OwnerOnly', 'OwnerOnly', 'Fogged', 'Visible', '3']);
+    // war.app's StandingFogLevel: 1 You, 2 Visible, 3 OwnerOnly, 4 Fogged (from the client bundle).
+    expect(board.territories.map((t) => t.fogLevel)).toEqual(['You', 'Visible', 'Visible', 'Fogged', 'You', 'OwnerOnly']);
+    // An owner-only territory's armies are hidden even when a count came with it (#69).
+    expect(board.territories[5]!.armies).toBeNull();
   });
 });
 
