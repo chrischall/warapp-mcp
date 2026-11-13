@@ -166,6 +166,34 @@ compactness). A fallback that outscores the primary is warned about.
 7. **Read the opponent.** Strong picks depend on what the other player is likely to pick and
    where they will start. **Not encoded** — a later strategy phase (it needs their history).
 
+## What the award shows
+
+The award follows fixed rules, so the territories I start on, read against my own list, say things
+about the other players before a single order runs (Manual distribution, Move order and Commanders,
+in Sources). **Encoded** (`src/analysis/award.ts`; `warapp_plan_turn` and `warapp_check_plan` report
+it as `award`):
+
+- **Their starts.** A territory I ranked above a pick I was granted, and did not get, had been
+  taken: it is another player's start. With two players it is the opponent's, and when my last
+  granted pick is as far down the list as the award can reach, every start it has is known.
+- **Who was awarded first.** With two players the award runs first, second, second, first, and so
+  on. Some sets can only be granted to the first awarded and others only to the second; the rest
+  say nothing. Every award that fits the start is enumerated, and only what holds in all of them is
+  reported.
+- **Who moves first.** Under a cyclic move order the award counts as turn 0, so the first awarded
+  moves second on turn 1 and the order alternates after that. Reported as `award.firstMover`;
+  `warapp_check_plan` still tries both orders unless told, because this rule is the wiki's and has
+  not been checked against a live game.
+- **Their commander.** A commander starts on its owner's first awarded territory. When every award
+  that fits gives the opponent the same first territory of my list (always the case when my own
+  first pick was refused), that is where it started. Reported, not acted on.
+
+In a two-player game the proven starts that are still fogged are planned on as the opponent's
+territory: with the starting armies on turn 1, when nobody has deployed, and with unknown armies
+afterwards. The list is the one war.app read back (`warapp_submit_picks`, or `warapp_get_my_picks`
+during distribution), kept at `<dataDir>/picks/<gameId>.json`; the award is read once, on the first
+board, and nothing is inferred when the list cannot explain the start.
+
 # The rest of the game — `warapp_strategy`
 
 `warapp_strategy(game_id?, map_id?, topic?)` serves the notes below. With a game it picks the
