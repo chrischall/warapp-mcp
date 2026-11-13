@@ -83,10 +83,13 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   attacks an adjacent enemy commander first (killing it eliminates that player) once the user's
   commander's hold is funded; when the user's commander is threatened it advises Order
   Priority (`cardAdvice`) so the strike resolves first.
-- **Cards** → `warapp_plan_turn` reports the hand and whether a play is required (hand at the
-  hold limit — war.app then refuses a turn with no card play). It always plays Reinforcement
-  (its armies are planned) and, when a play is required, Order Priority or else Order Delay; it
-  never plays Blockade, which gives a territory away — offer that only if the user asks.
+- **Cards** → `warapp_plan_turn` reports the hand and whether cards must go (the hand is OVER
+  the hold limit — holding exactly the limit is fine; above it war.app refuses the turn). It
+  always plays Reinforcement (its armies are planned) and, only when cards must go, one Order
+  Priority, then discards the lowest-value cards. It never plays Blockade (it gives a territory
+  away) or Order Delay (it holds back the user's own attacks) — offer those only if the user
+  asks. Order Priority moves only the FIRST order ahead of the opponent's first; Order Delay
+  delays only the orders listed after it.
 - **Threats** assume each enemy deploys `enemy_deploy` armies (default per opponent: base
   income plus the bonuses it visibly holds, capped by 75% of its largest stack next to the
   user — or, when last turn's board is known and it is larger, what that opponent was observed
@@ -157,8 +160,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   name, card plays `{ "kind": "card", "card": <id or type name>, "target"? }`; confirm-gated,
   always as the signed-in account — it refuses another `player`). It validates the orders on
   the live board (cards in the hand, the user's territories, adjacent moves, armies available,
-  deploys = income + played Reinforcement armies), refuses with no card play when the hand is
-  full, and refuses outside a turn phase or when the user has already
+  deploys = income + played Reinforcement armies), refuses when the hand is over the hold
+  limit and too few cards are played or discarded, and refuses outside a turn phase or when the user has already
   committed this turn (withdraw them first with `warapp_uncommit_turn`, or modify orders in the game). Report its `status`: `resolved` (the
   turn advanced), `committed` (orders in, waiting on others) or `unknown` — then check
   `warapp_get_game`; never resend blindly. Other players see the results.
