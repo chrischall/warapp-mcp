@@ -190,6 +190,11 @@ describe('direct-transport helpers', () => {
       body: HEX_FRAME,
       url: 'https://war.app/Services',
     });
+    // The headers are kept: an edge challenge is read from them (#131).
+    const headers = new Headers({ 'cf-mitigated': 'challenge' });
+    expect(toDirectResult({ status: 403, body: bytes, url: 'https://war.app/Services', headers }).headers).toEqual({
+      'cf-mitigated': 'challenge',
+    });
   });
 
   it('warappUrl keeps war.app (and subdomains), refuses other hosts, http, and garbage', () => {
@@ -209,7 +214,7 @@ describe('direct-transport helpers', () => {
     expect(looksLikeHexFrame('')).toBe(false);
   });
 
-  it('looksSignedOut: only a 200 non-frame /Services reply or a sign-in redirect means signed out', () => {
+  it('looksSignedOut: a 200 non-frame /Services reply, a 401/403 or a sign-in redirect means signed out', () => {
     const svc = 'https://war.app/Services?m=x&js=1';
     expect(looksSignedOut(svc, { status: 200, body: '<html>x</html>', url: 'https://war.app/Services' })).toBe(true);
     expect(looksSignedOut(svc, { status: 502, body: '<html>Bad Gateway</html>', url: 'https://war.app/Services' })).toBe(false);
@@ -217,6 +222,8 @@ describe('direct-transport helpers', () => {
     expect(looksSignedOut(svc, { status: 500, body: '<input type="password">', url: 'https://war.app/Services' })).toBe(false);
     // A sign-in redirect is signed out whatever the final status.
     expect(looksSignedOut(svc, { status: 404, body: '', url: 'https://war.app/SignIn' })).toBe(true);
+    expect(looksSignedOut(svc, { status: 401, body: '', url: 'https://war.app/Services' })).toBe(true);
+    expect(looksSignedOut(svc, { status: 403, body: '', url: 'https://war.app/Services' })).toBe(true);
   });
 
   it('looksSignedOut tolerates unparseable urls and a healthy page', () => {
@@ -356,6 +363,37 @@ describe('createDirectFirstBridge router', () => {
     expect(bridge.status().transport).toBe('direct');
     expect(bridge.sessionStale()).toBe(false);
   });
+  it('in auto mode, a 401 or a non-edge 403 is a signed-out session: a GET falls back to the bridge (#131)', async () => {
+    for (const status of [401, 403]) {
+      const stub = stubFetch({ status, body: 'Unauthorized', url: 'https://war.app/InviteToken' });
+      const fp = fakeFetchproxy('<html>invite</html>');
+      const bridge = createDirectFirstBridge({ store: linkedStore(), makeBridge: () => fp.bridge, mode: 'auto', directFetch: stub.fn, log: () => {} });
+      const res = await (await bridge.ready()).fetch({ method: 'GET', path: '/InviteToken' });
+      expect(res.body).toBe('<html>invite</html>');
+      expect(bridge.status().transport).toBe('fetchproxy');
+      expect(bridge.sessionStale()).toBe(true);
+    }
+  });
+
+  it('in auto mode, an edge challenge (seen in the response headers) falls back to the bridge, the token not marked stale (#131)', async () => {
+    const stub = stubFetch({
+      status: 403,
+      body: '<html><title>Just a moment...</title></html>',
+      url: 'https://war.app/Services',
+      headers: { 'cf-mitigated': 'challenge', server: 'cloudflare' },
+    });
+    const fp = fakeFetchproxy();
+    const log = vi.fn();
+    const bridge = createDirectFirstBridge({ store: linkedStore(), makeBridge: () => fp.bridge, mode: 'auto', directFetch: stub.fn, log });
+    const res = await (await bridge.ready()).fetch(servicesPost);
+    // Refused at the edge, so it never reached war.app: the POST is sent over the bridge.
+    expect(res.body).toBe(BRIDGE_FRAME);
+    expect(fp.calls).toHaveLength(1);
+    expect(bridge.status().transport).toBe('fetchproxy');
+    expect(bridge.sessionStale()).toBe(false);
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/edge/);
+  });
+
 
   it('clears the stale flag when the direct leg succeeds again (direct mode)', async () => {
     let signedIn = false;
