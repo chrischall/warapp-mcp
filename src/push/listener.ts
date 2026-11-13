@@ -187,6 +187,8 @@ export class PushListener {
       this.cancelIdle = undefined;
       if (this.holds.size) return;
       this.socket.stop();
+      // The next watch starts a new run: its first connect is not a reconnect (#131).
+      this.connects = 0;
       this.games.clear();
       this.subscribed = new Set();
       this.sentBy.clear();
@@ -259,6 +261,7 @@ export class PushListener {
     this.cancelIdle?.();
     this.cancelIdle = undefined;
     this.socket.stop();
+    this.connects = 0;
   }
 
   private async subscribePending(): Promise<void> {

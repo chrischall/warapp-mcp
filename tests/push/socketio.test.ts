@@ -468,6 +468,68 @@ describe('PushListener', () => {
   });
 
 
+  /** A listener whose idle timer the test fires by hand. */
+  function idleListener(r: Rig) {
+    const timers: Array<() => void> = [];
+    const l = new PushListener({
+      transport: r.transport,
+      sleep: async () => {},
+      idleMs: 1000,
+      idleTimer: (_ms, fn) => {
+        timers.push(fn);
+        return () => {};
+      },
+    });
+    stoppers.push(() => {
+      l.stop();
+      r.socket.close();
+    });
+    return { l, fireIdle: () => timers.at(-1)!() };
+  }
+
+  it('an idle stop then a quick re-watch, with a poll in flight, runs one session loop, not two (#131)', async () => {
+    const r = rig();
+    const { l, fireIdle } = idleListener(r);
+    await l.watch([1]);
+    await until(() => l.status().connected, 'connect');
+    await r.socket.idle(); // a long poll is in flight on sid1
+    l.release([1]);
+    fireIdle();
+    expect(l.status().started).toBe(false);
+    await l.watch([1]);
+    await until(() => l.status().connected && r.socket.handshakes() === 2, 'restart');
+    for (let i = 0; i < 10; i++) {
+      await r.socket.idle();
+      r.socket.push('8::');
+      await flush();
+    }
+    await flush();
+    expect(r.socket.handshakes()).toBe(2);
+  });
+
+  it('after an idle stop and restart, the first connect is not a reconnect (#131)', async () => {
+    const r = rig();
+    const { l, fireIdle } = idleListener(r);
+    const seen: boolean[] = [];
+    let reconnects = 0;
+    l.onConnect((e) => seen.push(e.reconnect));
+    l.onReconnect(() => reconnects++);
+    await l.watch([1]);
+    await until(() => seen.length === 1, 'first connect');
+    l.release([1]);
+    fireIdle();
+    await l.watch([1]);
+    await until(() => seen.length === 2, 'connect after restart');
+    expect(seen).toEqual([false, false]);
+    expect(reconnects).toBe(0);
+    r.socket.push('8::'); // the stopped run's abandoned poll (the oldest waiting) ends quietly
+    r.socket.push('0::');
+    await until(() => seen.length === 3, 'reconnect');
+    expect(seen[2]).toBe(true);
+    expect(reconnects).toBe(1);
+  });
+
+
   it('a failed subscribe on a live session does not throw from watch; once its retries run out the reconnect re-subscribes', async () => {
     const r = rig();
     let failPosts = false;
