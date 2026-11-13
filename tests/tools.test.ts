@@ -124,6 +124,8 @@ describe('warapp_get_map', () => {
     const bonuses = p.bonuses as Array<Record<string, number>>;
     expect(bonuses).toHaveLength(25);
     expect(p.bonusesShown).toBe('25 of 316');
+    // #70: the compact table hides zero- and negative-value bonuses, and says how many.
+    expect(p.bonusesHidden).toMatch(/^56 zero- or negative-value bonuses not listed/);
     for (let i = 1; i < bonuses.length; i++) expect(bonuses[i - 1]!.score).toBeGreaterThanOrEqual(bonuses[i]!.score);
     expect(Object.keys(bonuses[0]!).sort()).toEqual(
       ['bonusId', 'borders', 'entryPoints', 'name', 'score', 'territories', 'value', 'valuePerTerritory'].sort(),
@@ -185,6 +187,7 @@ describe('warapp_get_map', () => {
     h = await harnessFor();
     const p = payload(await h.call('warapp_get_map', { game_id: GAME, view: 'full' }));
     expect(p.bonuses).toHaveLength(372);
+    expect(p).not.toHaveProperty('bonusesHidden');
     expect((p.bonuses as Array<Record<string, unknown>>)[0]).toHaveProperty('territories');
   });
 
