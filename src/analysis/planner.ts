@@ -26,13 +26,13 @@
 //          kill (its softeners each attack a stack larger than they can take) is not made.
 //          Ahead in a 1v1: pressure is allowed up to AHEAD_PRESSURE_FACTOR typical
 //          expansions (instead of PRESSURE_FACTOR).
-//       3c. Concentrate (#72; adapting and facing an opponent): the leftover deploy (rule 5) goes
+//       3c. Concentrate (#72; adapting in a 1v1, facing the opponent): the leftover deploy (rule 5) goes
 //          to one strike stack — the open border holding the most armies next to the strongest
 //          opponent (highest income estimate, tracked when trusted) — before any comfort margin;
 //          the rationale names it and `offence` reports it as a strike. Holds still come first:
 //          a border kept for a bonus this turn completes (rule 1c) is first topped up to a
-//          comfortable margin, and any other open border that would fall to just hold. Not
-//          under `defend` (behind outside a 1v1), where the comfort margins keep the leftover.
+//          comfortable margin, and any other open border that would fall to just hold. Only in a
+//          1v1: in an FFA or team game (several fronts) the comfort margins keep the leftover.
 //       4. An explicit `goal` always wins: none of the above, and the rationale says the
 //          profile was overridden.
 //  1. Defence. A visible enemy next to my territory T threatens it when
@@ -4039,12 +4039,12 @@ export function planTurn(input: PlanInput): TurnPlan {
     const fogged = [...mine].filter(open).sort((a, b) => foggedNext(b) - foggedNext(a) || a - b).find((id) => foggedNext(id) > 0);
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
-    // Concentrate (#72, adapting and facing an opponent): the spare deploys go to one strike stack
+    // Concentrate (#72, adapting in a 1v1 facing the opponent): the spare deploys go to one strike stack
     // on the border facing the strongest opponent (the highest income estimate, tracked when its
     // track is trusted), the stack that keeps the most there, rather than to comfort margins.
-    // Never under `defend` (behind outside a 1v1): there the comfort margins come first.
+    // A 1v1 rule: in an FFA or a team game the comfort margins keep the leftover (several fronts).
     let stack: { id: number; player: number; income: number; source: string } | undefined;
-    if (auto && goal !== 'defend' && facing.size) {
+    if (auto && profile.format === '1v1' && goal !== 'defend' && facing.size) {
       const player = [...facing]
         .map((p) => ({ p, e: estimates.get(p) }))
         .sort((a, b) => (b.e?.estimate ?? 0) - (a.e?.estimate ?? 0) || a.p - b.p)[0]!;

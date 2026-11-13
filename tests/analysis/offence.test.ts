@@ -379,26 +379,30 @@ describe('concentrate the spare deploys on the strongest opponent', () => {
     expect(planTurn(input({})).deploys).toEqual([{ territoryId: 1, armies: 10 }]);
   });
 
-  it('adapting: one strike stack on the border facing player 30, and the rationale names it', () => {
+  it('adapting in an FFA: no strike stack (a 1v1 rule); the leftover goes as before', () => {
     const p = planTurn(input({ adapt: true }));
     expect(p.profile).toMatchObject({ format: 'ffa', standing: 'even' });
-    expect(p.deploys).toEqual([{ territoryId: 2, armies: 10 }]);
-    expect(why(p)).toMatch(
-      /Deploy the leftover 10 to T2 \(#2\): one strike stack on the border facing player 30, the strongest opponent \(~12 income, tracked\), not spread/,
-    );
-    expect(p.offence).toContainEqual({
-      target: 2,
-      kind: 'strike',
-      cost: 10,
-      value: 12,
-      taken: true,
-      why: expect.stringMatching(/strike stack/),
+    expect(p.deploys).toEqual([{ territoryId: 1, armies: 10 }]);
+    expect(why(p)).not.toMatch(/strike stack/);
+  });
+
+  it('adapting in a 1v1: one strike stack on the border facing the opponent, and the rationale names it', () => {
+    const one = board([mine(1, 20), mine(2, 30), enemy(5, 2), enemy(6, 2), fogged(7), enemy(8, 2), enemy(9, 2)]);
+    const p = planTurn({
+      ...input({ adapt: true }),
+      board: one,
+      tracks: [track(ENEMY, 12)],
+      game: { players: [{ id: ME }, { id: ENEMY }] },
     });
+    expect(p.profile).toMatchObject({ format: '1v1' });
+    expect(p.deploys).toEqual([{ territoryId: 2, armies: 10 }]);
+    expect(why(p)).toMatch(/Deploy the leftover 10 to T2 \(#2\): one strike stack on the border facing player 20, the strongest opponent/);
+    expect(p.offence).toContainEqual(expect.objectContaining({ target: 2, kind: 'strike', taken: true }));
   });
 });
 
-// Concentrate takes the leftover ahead of a comfort margin, in an FFA too (rule 0p.3c has no
-// format restriction). I hold B906 (+3) at T3 (8), which faces player 20's T4 (8): it holds
+// Concentrate (rule 0p.3c) is a 1v1 rule: in an FFA the comfort margin on a held bonus border
+// keeps the leftover. I hold B906 (+3) at T3 (8), which faces player 20's T4 (8): it holds
 // without a deploy but is short of a comfortable margin. T1 (20) faces player 30's T5 (2), the
 // strongest opponent (tracked 12; its T6 keeps it from being finished off).
 describe('concentrate outranks a comfort margin on a held bonus border', () => {
@@ -431,11 +435,11 @@ describe('concentrate outranks a comfort margin on a held bonus border', () => {
     expect(why(p)).toMatch(/Deploy the leftover 10 to T3 \(#3\): the held border with the most at stake \(protects \+3\)/);
   });
 
-  it('adapting in an FFA: the strike stack facing player 30 takes it instead', () => {
+  it('adapting in an FFA: no strike stack, the comfort margin on the held border keeps it', () => {
     const p = planTurn(input({ adapt: true }));
     expect(p.profile.format).toBe('ffa');
-    expect(p.deploys).toEqual([{ territoryId: 1, armies: 10 }]);
-    expect(why(p)).toMatch(/Deploy the leftover 10 to T1 \(#1\): one strike stack on the border facing player 30/);
+    expect(p.deploys).toEqual([{ territoryId: 3, armies: 10 }]);
+    expect(why(p)).not.toMatch(/strike stack/);
   });
 
   it('adapting in an FFA while behind (goal defend): no strike stack, the comfort margin keeps it', () => {
