@@ -81,7 +81,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Open games come from the `/MultiPlayer/OpenGames` page payload (`AllOpenGamesData`), not a `/Services` call; joining is `AcceptOpenSeat` (61) via `warapp_join_game`, confirm-gated** and reported `joined` only once GameFeed or `GetMyGames` shows the account seated (`docs/WEB-PROTOCOL.md` "Open games").
 - **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (card plays, then deploys, then moves;
   encoders in `src/protocol/methods.ts` are golden-pinned to a live commit), turn number =
-  GameFeed `numberOfTurns` + 1. It always acts as the signed-in account (refuses any other
+  GameFeed `numberOfTurns` + 1 — every tool reports this as `turn` (`currentTurn()`); the
+  completed count is `turnsCompleted` (#130). It always acts as the signed-in account (refuses any other
   `player`, and refuses when that account cannot be determined), validates on the live board
   (own sources, adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
   the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a

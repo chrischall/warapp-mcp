@@ -11,7 +11,7 @@ import {
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { buildGraph, type MapGraph } from '../analysis/index.js';
-import type { GameMap } from '../normalize.js';
+import type { Game, GameMap } from '../normalize.js';
 
 /** Every game tool only reads war.app's GameFeed. */
 export const readAnnotations = (title: string) =>
@@ -72,3 +72,14 @@ export const mapSummary = (map: GameMap) => ({
 });
 
 export const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * The turn being played: GameFeed's completed turns + 1; `null` when the feed does not say.
+ * Every tool reports this as `turn` (#130); the completed count is {@link turnsCompleted}.
+ */
+export const currentTurn = (game: Game): number | null =>
+  game.numberOfTurns !== undefined && game.numberOfTurns >= 0 ? game.numberOfTurns + 1 : null;
+
+/** GameFeed's completed turns (`numberOfTurns`); `null` before the first turn or when the feed does not say. */
+export const turnsCompleted = (game: Game): number | null =>
+  game.numberOfTurns !== undefined && game.numberOfTurns >= 0 ? game.numberOfTurns : null;

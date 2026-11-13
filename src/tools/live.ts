@@ -16,7 +16,7 @@ import {
 } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
 import { Method, writeSendTerritoryPicksParams } from '../protocol/methods.js';
-import { gameIdArg, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
+import { currentTurn, gameIdArg, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { loadLiveTerritories, loadPicks, type LiveContext } from './live-context.js';
 import { mapOf } from './map.js';
@@ -87,7 +87,6 @@ const nameIn = (map: GameMap) => {
   return (id: number) => names.get(id) ?? String(id);
 };
 
-const turnOf = (game: Game) => (game.numberOfTurns !== undefined && game.numberOfTurns >= 0 ? game.numberOfTurns : null);
 
 /**
  * The most territory picks war.app's client lets a player list (players × territories per
@@ -110,7 +109,7 @@ function liveBoardView(game: Game, territories: LiveTerritory[], rung: string) {
     stats.set(t.owner, s);
   }
   const header = {
-    game: { id: game.id, name: game.name ?? null, state: game.state, turn: turnOf(game) },
+    game: { id: game.id, name: game.name ?? null, state: game.state, turn: currentTurn(game), turnsCompleted: turnsCompleted(game) },
     map: { id: map.id, name: map.name },
   };
   const players = game.players.map((p) => {

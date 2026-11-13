@@ -851,6 +851,8 @@ describe('warapp_submit_turn', () => {
     const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
     expect(p.status).toBe('unknown');
     expect(p.warning).toMatch(/warapp_get_game|warapp_get_live_board/);
+    // #130: the recovery read names the turn the way warapp_get_game reports it.
+    expect(p.warning).toMatch(/`turn` above 3 means this turn resolved/);
   });
 
   it('reports unknown when the state re-read fails after sending', async () => {

@@ -90,7 +90,7 @@ describe('warapp_get_live_board', () => {
     const res = await h.call('warapp_get_live_board', { game_id: GAME });
     const p = payload(res);
     expect(p.untrusted_content).toBe(true);
-    expect(p.game).toEqual({ id: GAME, name: 'Synthetic lobby game', state: 'DistributingTerritories', turn: null });
+    expect(p.game).toEqual({ id: GAME, name: 'Synthetic lobby game', state: 'DistributingTerritories', turn: null, turnsCompleted: null });
     const territories = p.territories as Array<Record<string, unknown>>;
     expect(territories).toHaveLength(5);
     expect(territories[0]).toEqual({ id: 159, name: mapName(159), owner: 'pickable', armies: 2 });
@@ -107,7 +107,8 @@ describe('warapp_get_live_board', () => {
   it('mid-game: owners by player name, fogged territories counted not listed', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(MID_BOARD) }) });
     const p = payload(await h.call('warapp_get_live_board', { game_id: GAME }));
-    expect((p.game as Record<string, unknown>).turn).toBe(2);
+    // #130: the turn being played, as warapp_plan_turn and warapp_submit_turn report it.
+    expect(p.game).toMatchObject({ turn: 3, turnsCompleted: 2 });
     const territories = p.territories as Array<Record<string, unknown>>;
     expect(territories.map((t) => [t.id, t.owner, t.armies])).toEqual([
       [159, 'Ann', 6],

@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { WarappClient } from '../client.js';
 import type { Game, GameSettings } from '../normalize.js';
-import { gameIdArg, mapSummary, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
+import { currentTurn, gameIdArg, mapSummary, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 
 const VIEWS = ['compact', 'full', 'raw'] as const;
@@ -19,7 +19,9 @@ function compact(game: Game) {
       id: game.id,
       name: game.name ?? null,
       state: game.state,
-      turn: game.numberOfTurns !== undefined && game.numberOfTurns >= 0 ? game.numberOfTurns : null,
+      // #130: the turn being played, as every turn tool reports it; the completed count apart.
+      turn: currentTurn(game),
+      turnsCompleted: turnsCompleted(game),
       created: game.created ?? null,
       lastTurnTime: game.lastTurnTime ?? null,
     },
@@ -50,7 +52,7 @@ export function registerGameTool(server: McpServer, client: WarappClient): void 
       title: 'Get a war.app (Warzone) game',
       description: untrustedDescription(
         'Look up one war.app (Warzone) multiplayer game by id: its state (lobby, distributing, playing, finished), ' +
-          'current turn, the players and who has committed orders (who the game is waiting on), and a digest of ' +
+          'the turn being played (`turn`; `turnsCompleted` counts the finished ones), the players and who has committed orders (who the game is waiting on), and a digest of ' +
           'its settings — fog, kill rates, luck, rounding, base income, army cap, enabled cards — plus which map it ' +
           'is on and whether the board is available for warapp_analyze_board. Optional game history and chat. ' +
           'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',

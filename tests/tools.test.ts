@@ -37,7 +37,9 @@ describe('warapp_get_game', () => {
     const res = await h.call('warapp_get_game', { game_id: GAME });
     const p = payload(res);
     expect(p.untrusted_content).toBe(true);
-    expect(p.game).toMatchObject({ id: GAME, name: 'Synthetic lobby game', state: 'Playing', turn: 3 });
+    // #130: `turn` is the turn being played (numberOfTurns + 1), as every turn tool reports it;
+    // the completed turns are `turnsCompleted`.
+    expect(p.game).toMatchObject({ id: GAME, name: 'Synthetic lobby game', state: 'Playing', turn: 4, turnsCompleted: 3 });
     const players = p.players as Array<Record<string, unknown>>;
     expect(players).toHaveLength(9);
     expect(players[0]).toEqual({ id: 1000, name: 'Player 1', state: 'Playing', committed: false });

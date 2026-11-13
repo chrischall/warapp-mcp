@@ -43,7 +43,7 @@ import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
 import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
 import { Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
+import { currentTurn, gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
@@ -122,9 +122,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   return out;
 }
 
-/** The turn being played: GameFeed's completed turns + 1; `null` when the feed does not say. */
-export const currentTurn = (game: Game): number | null =>
-  game.numberOfTurns !== undefined && game.numberOfTurns >= 0 ? game.numberOfTurns + 1 : null;
+export { currentTurn, turnsCompleted } from './common.js';
 
 /** Throw unless the game is in a turn phase. */
 export function requireTurnPhase(game: Game): void {
@@ -1055,8 +1053,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           async execute(st: TurnState) {
             const base = { game: st.gameId, turn: st.turnNumber, orders: st.named };
             const check =
-              'Check warapp_get_game (turn count, your committed flag) or warapp_get_live_board. Do not resend these ' +
-              'orders blindly — a second commit for the same turn is not known to be safe.';
+              `Check warapp_get_game: a \`turn\` above ${st.turnNumber} means this turn resolved; still ${st.turnNumber} with ` +
+              'your `committed` true means the orders are in. Do not resend these orders blindly — a second commit for ' +
+              'the same turn is not known to be safe, and once the turn has resolved they would commit to the next one.';
             try {
               // The reply's bool is war.app's "vacation ended" flag — never a success signal.
               await ctx.rpc.call('SendOrders', Method.SendOrders, (w) =>

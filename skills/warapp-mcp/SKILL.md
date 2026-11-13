@@ -180,7 +180,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   limit and too few cards are played or discarded, and refuses outside a turn phase or when the user has already
   committed this turn (withdraw them first with `warapp_uncommit_turn`, or modify orders in the game). Report its `status`: `resolved` (the
   turn advanced), `committed` (orders in, waiting on others) or `unknown` — then check
-  `warapp_get_game`; never resend blindly. Other players see the results.
+  `warapp_get_game` (its `turn` is the turn being played, as every tool reports it: a `turn` above
+  the submitted one means it resolved; `turnsCompleted` counts the finished turns); never resend
+  blindly — after the turn resolves, the same orders would commit to the next turn. Other players
+  see the results.
 - **"I committed the wrong orders" / "uncommit my turn"** → `warapp_uncommit_turn` with `game_id`
   (confirm-gated): withdraws the committed orders for the current turn so corrected ones can go in
   with `warapp_submit_turn`. It refuses outside a turn phase or when nothing is committed. Report its
