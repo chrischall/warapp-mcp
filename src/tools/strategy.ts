@@ -115,8 +115,8 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
           'and the first turn it can be played, fastest and guaranteed) and map notes: bonuses ranked by value per ' +
           'army to take at its settings with their entry points, chokepoints, and in the picking stage income ' +
           "targets by turn from the pick advisor's opening over the territories the game lists as pickable. With " +
-          'only `map_id` (a map already loaded with a game): the map notes. With neither: the list of topics ' +
-          '(pass `topic` for its notes, or view "full" for every note). Read-only.',
+          'only `map_id` (a map already loaded with a game): the map notes. With neither: the topics, and ' +
+          '`notes` as ids and topics only (pass `topic` for its notes, or view "full" for every note). Read-only.',
       ),
       _meta: lookupMeta(['warzone strategy', 'strategy tips', 'how to play this map', 'warzone advice']),
       annotations: readAnnotations('war.app strategy notes'),
@@ -136,11 +136,13 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
       const withMap = topic === undefined || topic === 'map';
       if (game_id === undefined && map_id === undefined) {
         return respond(view, VIEWS, (rung) =>
-          // Every note at once is a long read: with no topic the compact answer is the index.
+          // Every note at once is a long read: with no topic the compact answer is the index. `notes`
+          // stays in every answer (#168): here each entry is the id and topic alone.
           topic === undefined && rung !== 'full'
             ? {
                 scope: 'general',
-                topics: NOTE_TOPICS.map((t) => ({ topic: t, title: TOPIC_TITLES[t], notes: generalNotes(t).map((n) => n.id) })),
+                topics: NOTE_TOPICS.map((t) => ({ topic: t, title: TOPIC_TITLES[t], notes: generalNotes(t).length })),
+                notes: generalNotes().map((n) => ({ id: n.id, topic: n.topic })),
                 next: 'Pass `topic` for one topic\'s notes, `game_id` for the notes that fit a game, or view "full" for every note.',
               }
             : { scope: 'general', notes: generalNotes(topic).map(noteView(rung === 'full')) },

@@ -89,18 +89,19 @@ interface StrategyPayload {
 }
 
 describe('warapp_strategy', () => {
-  it('with no arguments: the topics and their note ids, with no traffic (every note at once is a long read)', async () => {
+  it('with no arguments: the topics and every note\'s id, with no traffic (every note at once is a long read)', async () => {
     h = await harnessFor(game());
-    const p = payload<StrategyPayload & { topics: Array<{ topic: string; title: string; notes: string[] }>; next: string }>(
+    const p = payload<{ scope: string; notes: Array<Record<string, unknown>>; topics: Array<{ topic: string; title: string; notes: number }>; next: string; map?: unknown }>(
       await h.call('warapp_strategy'),
     );
     expect(p.scope).toBe('general');
-    expect(p.notes).toBeUndefined();
+    // `notes` is always there (#168): here each entry is the id and topic alone, in the table's order.
+    expect(p.notes).toEqual(STRATEGY_NOTES.map((n) => ({ id: n.id, topic: n.topic })));
     expect(p.topics.map((t) => t.topic)).toEqual(['format', 'settings', 'cards', 'reading', 'opening', 'timing', 'fighting', 'map']);
-    expect(p.topics.flatMap((t) => t.notes).sort()).toEqual(STRATEGY_NOTES.map((n) => n.id).sort());
-    expect(p.topics.every((t) => t.title.length > 0 && t.notes.length > 0)).toBe(true);
+    expect(p.topics.reduce((n, t) => n + t.notes, 0)).toBe(STRATEGY_NOTES.length);
+    expect(p.topics.every((t) => t.title.length > 0 && t.notes > 0)).toBe(true);
     expect(p.next).toMatch(/topic/);
-    expect(JSON.stringify(p).length).toBeLessThan(5000);
+    expect(JSON.stringify(p).length).toBeLessThan(8000);
     expect(p.map).toBeUndefined();
     expect(h.calls).toHaveLength(0);
   });

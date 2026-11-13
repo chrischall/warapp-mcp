@@ -79,7 +79,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   standing `unknown`) and the answer carries the game's `cardClock` (`src/strategy/card-clock.ts`: per card, the
   capturing turns to the first one, fastest and guaranteed, from the pieces, starting pieces, minimums and pieces
   per turn in the settings; whether a commerce game is on is read from a non-empty `Commerce` object, unverified).
-  With no game and no topic the compact answer is the topic index, not every note. A `map_id` alone works only for
+  With no game and no topic the compact answer is the topic index, with `notes` as ids and topics only. A `map_id` alone works only for
   a map this process has cached, since GameFeed serves maps only with a game.
 - **The pick advisor `warapp_plan_picks` is read-only** and refuses outside `DistributingTerritories` or when the
   live board has nothing pickable. Its scorer (`src/analysis/picks.ts`) is pure and deterministic like the turn
