@@ -385,8 +385,10 @@ describe('finishing off a weak opponent (#45)', () => {
     const recent = /T3 \(#3\) was captured from player 22567833 last turn/;
     // defend, too poor to hold it (12 next to it: 11 movable + ~6 deploy = 17): conceded,
     // never also called held.
+    // The 12 stood there last turn too: no observed growth raises its ~6 deploy (#57).
     const heavy = ENDGAME.map((x) => (x.territoryId === 5 ? { ...x, armies: 12 } : x));
-    const poor = plan(heavy, 7, { previousBoard: previous, options: { goal: 'defend' } });
+    const heavyBefore = toBoard([...heavy.filter((x) => x.territoryId !== 3), t(3, THEM, 4)]);
+    const poor = plan(heavy, 7, { previousBoard: heavyBefore, options: { goal: 'defend' } });
     expect(poor.warnings.join('\n')).toMatch(/T3 \(#3\) cannot be held with the 7 armies left/);
     expect(poor.conceded).toContain(3);
     expect(poor.rationale.join('\n')).not.toMatch(recent);

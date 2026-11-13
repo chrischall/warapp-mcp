@@ -66,8 +66,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   hold limit — war.app then refuses a turn with no card play). It always plays Reinforcement
   (its armies are planned) and, when a play is required, Order Priority or else Order Delay; it
   never plays Blockade, which gives a territory away — offer that only if the user asks.
-- **Threats** assume each enemy deploys `enemy_deploy` armies (default max(5, 75% of the
-  largest visible enemy stack)). Enemy income is unseen: say so, and raise it when the user
+- **Threats** assume each enemy deploys `enemy_deploy` armies (default per opponent: base
+  income plus the bonuses it visibly holds, capped by 75% of its largest stack next to the
+  user — or, when last turn's board is known and it is larger, what that opponent was observed
+  to deploy: "observed +N/turn"). Enemy income is unseen: say so, and raise it when the user
   knows an opponent earns more. An enemy stack next to the user that grew since last turn
   ("is building: +G/turn") raises that border's threat by its growth; `trendSource` says where
   last turn's board came from (`history`, `cache`, or null when there was none).

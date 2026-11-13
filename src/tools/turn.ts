@@ -521,7 +521,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
           "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
           'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. Threat ' +
-          'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you). It reports ' +
+          'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you, or what it was observed to deploy since the previous turn when larger). It reports ' +
           'your cards and whether you must play or discard (more whole cards than the hold limit), and plays ' +
           'Reinforcement cards (their armies are planned) and, when cards must go, Order Priority, else discards the ' +
           'lowest-value cards — never playing Blockade or Order Delay. Its ' +
@@ -577,7 +577,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Armies every enemy is assumed to deploy next turn when judging threats. Default, per opponent: base ' +
               'income plus the bonuses it visibly holds in full, at most 75% of its largest stack next to you but ' +
               'never below the game\'s base income (at least 5); just that base income on an untouched opening ' +
-              'board — income in the fog is unseen, so raise it if you know they earn more.',
+              'board; when the previous turn\'s board is known, at least what that opponent was observed to deploy ' +
+              '(its visible growth plus its captures) — income in the fog is unseen, so raise it if you know they earn more.',
           ),
         view: viewArg(
           VIEWS,

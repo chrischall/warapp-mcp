@@ -1,0 +1,150 @@
+// Issue #57: under fog the visible-bonus estimate stays at the base income while the
+// opponent's visible armies grow by far more each turn. With the previous board, its
+// deploy is estimated from what it visibly gained too, and the larger figure wins.
+import { describe, expect, it } from 'vitest';
+import type { TerritoryState } from '../../src/board.js';
+import { armiesToTake } from '../../src/analysis/combat.js';
+import { buildGraph } from '../../src/analysis/graph.js';
+import {
+  defaultEnemyDeploy,
+  enemyDeployEstimates,
+  planTurn,
+  type PlannerSettings,
+} from '../../src/analysis/planner.js';
+import type { GameMap } from '../../src/normalize.js';
+import { board, fogged, mine, neutral } from './helpers.js';
+
+const ME = 10;
+const ENEMY = 20;
+const OTHER = 30;
+const STD: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true };
+
+function makeMap(ids: number[], edges: [number, number][], bonuses: [number, number, number[]][]): GameMap {
+  return {
+    id: 1,
+    name: 'Synthetic',
+    territories: ids.map((id) => ({
+      id,
+      name: `T${id}`,
+      connectedTo: edges.filter(([a, b]) => a === id || b === id).map(([a, b]) => (a === id ? b : a)),
+    })),
+    bonuses: bonuses.map(([id, value, territoryIds]) => ({ id, name: `B${id}`, value, territoryIds, bonusIds: [] })),
+    distributionModes: [],
+  };
+}
+
+const enemy = (territoryId: number, armies: number, playerId = ENEMY): TerritoryState => ({
+  territoryId,
+  owner: { kind: 'player', playerId },
+  armies,
+});
+
+/** Fewest armies a territory needs so `threat` attackers cannot take it. */
+const holdArmies = (threat: number) => {
+  let a = 0;
+  while ((armiesToTake(a) ?? Infinity) <= threat) a++;
+  return a;
+};
+
+// My T1 (a +10 bonus on its own) borders the enemy's T2; T3 and T4 sit behind it,
+// T5 is fogged, so the enemy's +3 bonus {2, 3, 4, 5} is never visibly held.
+// T6 and T7 hang off T4 (for owner changes); T8 is a neutral next to T4.
+const g = buildGraph(
+  makeMap(
+    [1, 2, 3, 4, 5, 6, 7, 8],
+    [
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [4, 5],
+      [4, 6],
+      [4, 7],
+      [4, 8],
+    ],
+    [
+      [701, 10, [1]],
+      [702, 3, [2, 3, 4, 5]],
+    ],
+  ),
+);
+const fog = [fogged(5), fogged(6), fogged(7), fogged(8)];
+// Visible enemy armies 5 + 10 + 21 = 36 → 10 + 25 + 38 = 73: +37 in one turn.
+const then = board([mine(1, 20), enemy(2, 5), enemy(3, 10), enemy(4, 21), ...fog]);
+const now = board([mine(1, 20), enemy(2, 10), enemy(3, 25), enemy(4, 38), ...fog]);
+
+describe('enemy deploy from observed growth (#57)', () => {
+  it('estimates at least the observed growth, past the stack cap', () => {
+    const [e] = enemyDeployEstimates(g, now, ME, STD, then);
+    // Visible: base 5 + bonuses 0, capped at round(0.75 × 10) = 8 → 5. Observed: +37.
+    expect(e).toMatchObject({ playerId: ENEMY, base: 5, bonusIncome: 0, stackCap: 8, observed: 37, source: 'observed' });
+    expect(e!.estimate).toBeGreaterThanOrEqual(37);
+    expect(e!.estimate).toBe(37);
+    expect(defaultEnemyDeploy(g, now, ME, STD, then)).toBe(37);
+  });
+
+  it('sizes the holds to the observed figure', () => {
+    // 9 movable on T2 + 37 = 46 threatens T1's 20 (33 take it); without the history 9 + 5 = 14 does not.
+    const p = planTurn({ graph: g, board: now, previousBoard: then, me: ME, income: 12, settings: STD, options: { goal: 'defend' } });
+    expect(p.enemyDeploy).toBe(37);
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/T1 \(#1\) \(20 armies\) could be taken next turn: player 20 has 9 movable armies next to it plus ~37 deploy/);
+    const d = p.deploys.find((x) => x.territoryId === 1)?.armies ?? 0;
+    expect(d).toBeGreaterThanOrEqual(holdArmies(9 + 37) - 20);
+    expect(p.rationale.join('\n')).toMatch(new RegExp(`Deploy ${holdArmies(9 + 37) - 20} to T1 \\(#1\\) so it holds`));
+    expect(armiesToTake(20 + d)).toBeGreaterThan(46);
+    expect(p.conceded).toEqual([]);
+
+    const blind = planTurn({ graph: g, board: now, me: ME, income: 12, settings: STD, options: { goal: 'defend' } });
+    expect(blind.enemyDeploy).toBe(5);
+    expect(blind.warnings.join('\n')).not.toMatch(/could be taken/);
+  });
+
+  it('names the source in the warning', () => {
+    const p = planTurn({ graph: g, board: now, previousBoard: then, me: ME, income: 12, settings: STD });
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/Enemy deploy estimate for player 20: ~37 \(observed \+37\/turn/);
+    expect(w).toMatch(/more than base 5 \+ visible bonuses \+0 = 5/);
+    // Below the visible figure, the visible source is named and the observation noted.
+    const flat = board([mine(1, 20), enemy(2, 6), enemy(3, 10), enemy(4, 21), ...fog]);
+    const q = planTurn({ graph: g, board: flat, previousBoard: then, me: ME, income: 12, settings: STD });
+    const v = q.warnings.join('\n');
+    expect(v).toMatch(/Enemy deploy estimate for player 20: ~5 \(base 5 \+ visible bonuses \+0 = 5/);
+    expect(v).toMatch(/observed \+1\/turn since last turn, below that/);
+    expect(v).not.toMatch(/\(observed \+/);
+  });
+
+  it('does not count growth on a territory that changed owner as deploy', () => {
+    // T6: player 30's 4 armies last turn, now the enemy's 25 — it lost 4 attacking, not +21.
+    // T7: mine with 7 last turn, now the enemy's 12 — armies I lost, 7.
+    const before = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 21), fogged(5), enemy(6, 4, OTHER), mine(7, 7), fogged(8)]);
+    const after = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 21), fogged(5), enemy(6, 25), enemy(7, 12), fogged(8)]);
+    const [e] = enemyDeployEstimates(g, after, ME, STD, before);
+    expect(e!.observed).toBe(4 + 7);
+    // A territory under the same owner that shrank adds nothing (its armies moved).
+    const shrank = board([mine(1, 30), enemy(2, 5), enemy(3, 2), enemy(4, 21), ...fog]);
+    expect(enemyDeployEstimates(g, shrank, ME, STD, then)[0]!.observed).toBe(0);
+  });
+
+  it('counts a visible neutral it captured, never a territory that was fogged', () => {
+    // T8 was a visible 2-army neutral and now holds 9 of the enemy's: its capture counts.
+    const before = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 21), fogged(5), fogged(6), fogged(7), neutral(8, 2)]);
+    const after = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 21), fogged(5), fogged(6), enemy(7, 30), enemy(8, 9)]);
+    // T7 was fogged: it may simply have come into view, so it is not counted.
+    expect(enemyDeployEstimates(g, after, ME, STD, before)[0]!.observed).toBe(9);
+  });
+
+  it('without a previous board nothing changes', () => {
+    const plain = enemyDeployEstimates(g, now, ME, STD);
+    expect(plain[0]).toMatchObject({ estimate: 5, observed: null, source: 'visible' });
+    expect(defaultEnemyDeploy(g, now, ME, STD)).toBe(5);
+    const p = planTurn({ graph: g, board: now, me: ME, income: 12, settings: STD });
+    expect(p.warnings.join('\n')).toMatch(/Enemy deploy estimate for player 20: ~5 \(base 5 \+ visible bonuses \+0 = 5/);
+    expect(p.warnings.join('\n')).not.toMatch(/observed/);
+  });
+
+  it('a caller override still wins over the observed figure', () => {
+    const p = planTurn({ graph: g, board: now, previousBoard: then, me: ME, income: 12, settings: STD, options: { enemyDeploy: 6 } });
+    expect(p.enemyDeploy).toBe(6);
+    expect(p.warnings.join('\n')).toMatch(/~6 \(your estimate\)/);
+  });
+});
