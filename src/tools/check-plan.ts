@@ -82,7 +82,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           `try: ${CHECK_PLAN_NOT_COVERED.join('; ')}. When this server kept your pick list, \`award\` says what the ` +
           "award of picks showed (as in warapp_plan_turn): the opponent's proven starts stand on the board the " +
           'orders are tried on even while fogged, and `award.firstMover` is who moves first this turn under a ' +
-          'cyclic move order — pass it as `first_mover` to judge by it; both orders are still tried by default. ' +
+          '`Cycle` move order (not NoLuckCycle, where play speed sets it) — pass it as `first_mover` to judge by it; both orders are still tried by default. ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on ` +
           'war.app; it never submits orders.',
       ),

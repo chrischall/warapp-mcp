@@ -997,7 +997,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           '`award` says what the award of picks showed: the territories of your list that are another player\'s ' +
           'start for certain (in a two-player game they are planned as the opponent\'s while still fogged, with the ' +
           'starting armies on turn 1), whether you were awarded first or second and who moves first this turn under ' +
-          "a cyclic move order, and with commanders the opponent's first award when the award pins it. " +
+          "a `Cycle` move order, and with commanders the opponent's first award when the award pins it. " +
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +

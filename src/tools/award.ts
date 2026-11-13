@@ -14,7 +14,7 @@ export interface AwardContext {
   reading: AwardReading;
   /** Two players: the other one. */
   opponent?: Player;
-  /** Two players, cyclic move order: who moves first on the turn being planned. */
+  /** Two players, `Cycle` move order (#127: not NoLuckCycle): who moves first on the turn being planned. */
   firstMover: 'me' | 'opponent' | null;
   /**
    * The board to plan on. In a two-player game the opponent's starts that are still fogged carry

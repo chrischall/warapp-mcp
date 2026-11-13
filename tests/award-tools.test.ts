@@ -254,6 +254,23 @@ describe('the opening threat model (#166): the opponent simulated from the start
     expect(warning).toMatch(new RegExp(`~${income[2]} \\(a prior`));
   });
 
+  it('under a no-luck cycle the prior still applies, though the award gives no first mover (#127)', async () => {
+    // The opening simulation never reads the move order, so #127 dropping the award's first mover
+    // under NoLuckCycle leaves the opponent's simulated income in place.
+    const income = simulated();
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, [159, 158, 157, 161]);
+    h = await live(board({ 157: FOG }), game(1, { MoveOrder: 'NoLuckCycle' }), dir);
+    await plan(h);
+    await h.harness.close();
+    h = await live(board({ 157: FOG, 158: BOB_ON_158 }, 9), game(3, { MoveOrder: 'NoLuckCycle' }), dir);
+    const p = payload<PlanPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.firstMover).toBeNull();
+    expect(p.award).toMatchObject({ firstMover: null });
+    const warning = p.warnings.find((w) => ESTIMATE_FOR_BOB.test(w))!;
+    expect(Number(OPENING.exec(warning)![1])).toBe(income[2]);
+  });
+
   it('past the simulated turns the prior is my own income again', async () => {
     const p = await planOn([159, 158, 157, 161], 5);
     expect(p.warnings.join(' ')).not.toMatch(OPENING);
