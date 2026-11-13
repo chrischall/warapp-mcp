@@ -371,6 +371,22 @@ describe('waitForTurn', () => {
     expect(fp.connectListeners()).toBe(0);
   });
 
+  it('releases its watch when done and forgets a game that has finished (#131)', async () => {
+    const fp = fakePush();
+    const released: number[][] = [];
+    const forgotten: number[][] = [];
+    const push = { ...fp.push, release: (ids: readonly number[]) => released.push([...ids]), forget: (ids: readonly number[]) => forgotten.push([...ids]) };
+    const out = await waitForTurn({
+      gameIds: [1, 2],
+      timeoutMs: 20,
+      push,
+      check: async (id) => (id === 1 ? { ...notReady(id), state: 'Finished' } : notReady(id)),
+    });
+    expect(out.status).toBe('timed_out');
+    expect(forgotten).toEqual([[1]]);
+    expect(released).toEqual([[1, 2]]);
+  });
+
 
   it('rejects at once for an already-aborted signal', async () => {
     const fp = fakePush();

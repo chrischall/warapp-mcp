@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { decodeRequest, fromHex } from '../../src/protocol/codec.js';
+import { decodeRequest, encodeReply, fromHex, toHex } from '../../src/protocol/codec.js';
 import { Method } from '../../src/protocol/methods.js';
-import { PushListener } from '../../src/push/listener.js';
+import { MAX_SUBSCRIBE_RETRIES, PushListener } from '../../src/push/listener.js';
 import {
   parseHandshake,
   parsePacket,
@@ -380,15 +380,104 @@ describe('PushListener', () => {
     ]);
   });
 
-
-  it('a failed subscribe on a live session does not throw from watch; the reconnect re-subscribes', async () => {
+  it('retries a failed Subscribe on the live session, without waiting for a reconnect (#131)', async () => {
     const r = rig();
-    let failPosts = false;
+    let failPosts = 0;
     const inner = r.transport;
     r.transport = async () => {
       const t = await inner();
       return {
-        fetch: (init) => (failPosts && init.method === 'POST' ? Promise.reject(new Error('bridge down')) : t.fetch(init)),
+        fetch: (init) =>
+          failPosts > 0 && init.method === 'POST' ? (failPosts--, Promise.resolve({ status: 502, body: '', url: init.path })) : t.fetch(init),
+      };
+    };
+    let wake: () => void = () => {};
+    const l = new PushListener({ transport: r.transport, sleep: () => new Promise<void>((res) => (wake = res)) });
+    stoppers.push(() => {
+      l.stop();
+      r.socket.close();
+    });
+    await l.watch([1]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    failPosts = 1;
+    await l.watch([2]);
+    expect(l.status().pending).toEqual([2]);
+    expect(l.status().lastError).toMatch(/HTTP 502/);
+    wake();
+    await until(() => subscribedTopics(r).length === 2, 'retried subscribe');
+    expect(subscribedTopics(r)[1]).toEqual({ sid: 'sid1', topics: ['Game.2'] });
+    expect(r.socket.handshakes()).toBe(1);
+    expect(l.status()).not.toHaveProperty('pending');
+  });
+
+  it('retries a Subscribe that war.app answered with a server error (#131)', async () => {
+    const r = rig();
+    const l = listener(r);
+    await l.watch([3]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    r.socket.push(`3:::${toHex(encodeReply({ method: Method.Subscribe, msgNum: 1, error: { code: 77, message: 'nope' } }))}`);
+    await until(() => subscribedTopics(r).length === 2, 'retried subscribe');
+    expect(subscribedTopics(r)[1]).toEqual({ sid: 'sid1', topics: ['Game.3'] });
+    expect(l.status().lastError).toMatch(/77/);
+  });
+
+  it('forgets a game: it is no longer watched or re-subscribed (#131)', async () => {
+    const r = rig();
+    const l = listener(r);
+    await l.watch([5, 6]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    l.forget([5]);
+    expect(l.status().watching).toEqual([6]);
+    r.socket.push('0::');
+    await until(() => subscribedTopics(r).length === 2, 're-subscribe');
+    expect(subscribedTopics(r)[1]).toEqual({ sid: 'sid2', topics: ['Game.6'] });
+  });
+
+  it('idles: once every watch is released, the socket stops after the idle delay (#131)', async () => {
+    const r = rig();
+    const timers: Array<{ ms: number; fn: () => void; cleared: boolean }> = [];
+    const l = new PushListener({
+      transport: r.transport,
+      sleep: async () => {},
+      idleMs: 1234,
+      idleTimer: (ms, fn) => {
+        const t = { ms, fn, cleared: false };
+        timers.push(t);
+        return () => {
+          t.cleared = true;
+        };
+      },
+    });
+    stoppers.push(() => {
+      l.stop();
+      r.socket.close();
+    });
+    await l.watch([1]);
+    await l.watch([1, 2]);
+    await until(() => l.status().connected, 'connect');
+    l.release([1, 2]);
+    expect(timers).toHaveLength(0); // game 1 is still held by the first watch
+    l.release([1]);
+    expect(timers.map((t) => t.ms)).toEqual([1234]);
+    // A new watch before the delay keeps the socket.
+    await l.watch([2]);
+    expect(timers[0]!.cleared).toBe(true);
+    l.release([2]);
+    timers[1]!.fn();
+    expect(l.status()).toMatchObject({ started: false, connected: false, watching: [] });
+  });
+
+
+  it('a failed subscribe on a live session does not throw from watch; once its retries run out the reconnect re-subscribes', async () => {
+    const r = rig();
+    let failPosts = false;
+    let refusedPosts = 0;
+    const inner = r.transport;
+    r.transport = async () => {
+      const t = await inner();
+      return {
+        fetch: (init) =>
+          failPosts && init.method === 'POST' ? (refusedPosts++, Promise.reject(new Error('bridge down'))) : t.fetch(init),
       };
     };
     const l = listener(r);
@@ -396,6 +485,10 @@ describe('PushListener', () => {
     await until(() => subscribedTopics(r).length === 1, 'subscribe');
     failPosts = true;
     await expect(l.watch([2])).resolves.toBeUndefined();
+    // The first try, then the retries on the live session (#131), all refused.
+    await until(() => refusedPosts === 1 + MAX_SUBSCRIBE_RETRIES, 'retries');
+    await flush();
+    expect(refusedPosts).toBe(1 + MAX_SUBSCRIBE_RETRIES);
     failPosts = false;
     r.socket.push('0::');
     await until(() => subscribedTopics(r).length === 2, 're-subscribe');

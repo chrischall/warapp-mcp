@@ -16,6 +16,9 @@ import { fetchMyGames } from './my-games.js';
 /** Game states in which a player has something to submit (picks or orders). */
 export const ACTION_STATES: ReadonlySet<string> = new Set(['Playing', 'DistributingTerritories']);
 
+/** Game states that never change again: the push listener forgets such a game. */
+export const TERMINAL_STATES: ReadonlySet<string> = new Set(['Finished']);
+
 export const MAX_WAIT_GAMES = 20;
 export const DEFAULT_TIMEOUT_SECONDS = 300;
 export const MAX_TIMEOUT_SECONDS = 1800;
@@ -57,7 +60,8 @@ export interface WaitOptions {
    * a reconnect gap, or the first connect of the process after the initial check — so every game
    * is re-read.
    */
-  push: Pick<PushListener, 'watch' | 'onUpdate'> & Partial<Pick<PushListener, 'onReconnect' | 'onConnect'>>;
+  push: Pick<PushListener, 'watch' | 'onUpdate'> &
+    Partial<Pick<PushListener, 'onReconnect' | 'onConnect' | 'release' | 'forget'>>;
   /** Read one game's current state from GameFeed. */
   check: (gameId: number) => Promise<GameCheck>;
   signal?: AbortSignal;
@@ -118,13 +122,22 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
     ? opts.push.onConnect((e) => requeue(e.reconnect))
     : opts.push.onReconnect?.(() => requeue(true));
   const timers: Array<ReturnType<typeof setTimeout>> = [];
+  let watched = false;
+  /** A finished game cannot need me again: the listener stops watching it. */
+  const settle = (c: GameCheck) => {
+    if (TERMINAL_STATES.has(c.state)) opts.push.forget?.([c.id]);
+  };
   let onAbort: (() => void) | undefined;
   try {
     opts.signal?.throwIfAborted();
     await opts.push.watch([...ids]);
+    watched = true;
     const latest = new Map<number, GameCheck>();
     const first = await Promise.all([...ids].map(async (id) => [id, await opts.check(id)] as const));
-    for (const [id, c] of first) latest.set(id, c);
+    for (const [id, c] of first) {
+      latest.set(id, c);
+      settle(c);
+    }
     const outcome = (status: WaitOutcome['status']): WaitOutcome => ({
       status,
       games: [...ids].map((id) => latest.get(id)!),
@@ -172,6 +185,7 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
         try {
           const c = await opts.check(id);
           latest.set(id, c);
+          settle(c);
           if (c.waitingOnYou) return outcome('your_turn');
           opts.progress?.(now() - start, `Game ${id} updated; not your turn there yet.`);
         } catch (e) {
@@ -188,6 +202,7 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
   } finally {
     off();
     offReconnect?.();
+    if (watched) opts.push.release?.([...ids]);
     timers.forEach((t) => clearTimeout(t));
     if (onAbort) opts.signal?.removeEventListener('abort', onAbort);
   }
