@@ -335,7 +335,8 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   shape here and tighten the parser.
 - **My own past orders (#119).** The opponent tracker uses the player's own orders on a turn as
   measurements (`TurnBoard.orders`, `measureOrders` in `src/analysis/opponents.ts`: the defenders a
-  failed attack killed, what a hold that fell really killed). They come from this server, not from
+  failed attack killed, what a hold that fell really killed, and what an opponent's failed attack on
+  a hold lost — the loss the orders do not explain, ÷ the offensive kill rate). They come from this server, not from
   war.app: `warapp_submit_turn` caches the deploys and moves it sent (once `SendOrders` returned
   without an error) beside the boards in `<dataDir>/boards/<gameId>.json`, by turn, and
   `boardHistory` attaches them. Orders sent from the web client are unknown, and the tracker reads

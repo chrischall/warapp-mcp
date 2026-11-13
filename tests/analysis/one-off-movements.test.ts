@@ -322,6 +322,36 @@ describe('5. unexplained armies leave out combat deaths (#123)', () => {
     expect(t!.turns[0]!.combat).toBe(0);
     expect(t!.unexplained).toBe(6);
   });
+
+  // #123 review: its failed attack on a hold of mine, with my orders known. My T2 (20) held; its
+  // T3 (20) got its base 5 and attacked my T2 with 10: my 20 defenders killed all 10 (round(20 × 0.7)
+  // = 14 ≥ 10), its 10 killed 6 of mine. After: my T2 14, its T3 15.
+  it('its failed attack on a hold of mine is measured from what my orders say stood there', () => {
+    const turns = (orders?: { deploys: { territoryId: number; armies: number }[]; moves: { from: number; to: number; armies: number }[] }) =>
+      trackOpponents(g, [{ turn: 3, board: at(20, 20), ...(orders ? { orders } : {}) }, { turn: 4, board: at(14, 15) }], ME, STD)[0]!;
+    const known = turns({ deploys: [], moves: [] });
+    // My T2 lost 6 that my orders do not explain: 10 attackers (6 ÷ 0.6), all killed.
+    expect(known.turns[0]).toMatchObject({ measured: 10, observed: 5, combat: 0 });
+    expect(known.unexplained).toBe(0);
+    // A deploy there and a transfer out are what stood there: 20 + 4 − 4 defenders, the same loss.
+    const moved = turns({ deploys: [{ territoryId: 2, armies: 4 }], moves: [{ from: 2, to: 1, armies: 4 }] });
+    expect(moved.turns[0]).toMatchObject({ measured: 10, observed: 5 });
+    // What my orders explain is no attack: a transfer of 6 out of T2 leaves nothing to measure.
+    const explained = turns({ deploys: [], moves: [{ from: 2, to: 1, armies: 6 }] });
+    expect(explained.turns[0]).toMatchObject({ measured: 0, combat: 0 });
+    // Unknown orders keep the board-only heuristic.
+    expect(turns().turns[0]).toMatchObject({ measured: 0, combat: 5 });
+  });
+
+  it('a hold of mine beside two opponents is not pinned on either: the heuristic counts it', () => {
+    // T1 – T2 – T3 and T2 – T5: my T2 (20) between its T3 (20) and another player's T5 (8).
+    const g2 = buildGraph(makeMap([1, 2, 3, 4, 5], [...line(4), [2, 5]], []));
+    const b = (t2: number, t3: number) => board([mine(1, 5), mine(2, t2), enemy(3, t3), enemy(4, 2), enemy(5, 8, 30)]);
+    const t = trackOpponents(g2, [{ turn: 3, board: b(20, 20), orders: { deploys: [], moves: [] } }, { turn: 4, board: b(14, 15) }], ME, STD).find(
+      (x) => x.playerId === ENEMY,
+    )!;
+    expect(t.turns[0]).toMatchObject({ measured: 0, combat: 5 });
+  });
 });
 
 describe('6. inferred bonuses must be plausible (#123)', () => {

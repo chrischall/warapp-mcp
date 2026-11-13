@@ -17,7 +17,8 @@
 //    the value of each bonus it visibly held in full that the next board shows broken, and never
 //    above that turn's could-earn cap (`incomeMethod` 'carried'). Given my own orders on a turn
 //    (`TurnBoard.orders`), they are measurements ({@link measureOrders}): the defenders my failed
-//    attacks killed, and what a hold of mine that fell really killed;
+//    attacks killed, what a hold of mine that fell really killed, and what its failed attack on a
+//    hold of mine cost it;
 //  - unexplained armies (#123): the income it earned since first seen (each turn: what it
 //    visibly earned, or what it was seen to deploy when more) minus the change of its visible
 //    armies, what it visibly lost, and what it may have lost fighting where its stack and a
@@ -103,7 +104,8 @@ export interface ObservedTurn {
   /**
    * What my own orders on the earlier turn measured (#119, {@link measureOrders}), added to the
    * board's reading before the floor at 0 and to `losses`: the defenders my failed attacks killed,
-   * and on a hold of mine that fell, what its defenders really killed. 0 without my orders.
+   * on a hold of mine that fell, what its defenders really killed, and the attackers it lost on a
+   * hold of mine that held. 0 without my orders.
    */
   measured: number;
   /**
@@ -144,7 +146,8 @@ export interface ObservedTurn {
   /**
    * #123: armies it may have lost fighting where its stack and a neighbour of another player both
    * shrank (the neighbour's losses at the kill rates: round(shrink × offensive ÷ defensive)), each
-   * neighbour counted once; mine left out when my orders measured the turn. Only the unexplained
+   * neighbour counted once; with my orders known, mine count only where an attack on a hold of mine
+   * is pinned on no one (the loss my orders do not explain). Only the unexplained
    * armies use it: the board cannot tell a fight from a transfer.
    */
   combat: number;
@@ -552,7 +555,9 @@ function visiblyBroken(g: MapGraph, before: BoardState, after: BoardState, playe
  * - a hold of mine that fell to it: its defenders were my armies there plus what I deployed there
  *   less what I sent out of it; the board reading priced the capture at the guard (#123, the
  *   least I may have left), so the difference in what they killed (at the defensive kill rate)
- *   is the correction.
+ *   is the correction;
+ * - its failed attack on a hold of mine ({@link attacksOnMyHolds}): what it lost there — the board
+ *   reads that loss as a shrink, so it counts back.
  * Kill counts are straight-rounded expectations: luck can move them.
  */
 export function measureOrders(
@@ -588,7 +593,74 @@ export function measureOrders(
     const defenders = Math.max(0, b!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0));
     measured += straightKills(defenders, defensive) - straightKills(Math.min(b!.armies!, guard), defensive);
   }
+  for (const a of attacksOnMyHolds(g, before, after, me, orders, settings)) if (a.attacker === playerId) measured += a.attackerLoss;
   return measured;
+}
+
+/** A hold of mine that lost armies my orders do not explain: an attack on it that failed (#123 review). */
+interface AttackOnMyHold {
+  territoryId: number;
+  /** What it lost beyond what my orders explain. */
+  loss: number;
+  /** The only other player with a territory in view beside it, else null (not pinned on anyone). */
+  attacker: number | null;
+  /** The attacker's loss: the attackers that killed `loss` (÷ the offensive kill rate), at most what the defenders killed. */
+  attackerLoss: number;
+}
+
+/**
+ * My holds (mine, with armies, on both boards) that lost armies my orders do not explain: the
+ * defenders were my armies there plus what I deployed there and moved in, less what I sent out;
+ * what the later board shows less is what an attack that failed killed. Its attackers were that
+ * loss ÷ the offensive kill rate, and it lost them all, up to what the defenders killed (at the
+ * defensive kill rate). A hold I attacked out of and failed is skipped: the survivors of my own
+ * attack came back to it, so its loss is not known. Straight-rounded expectations: luck can move them.
+ */
+function attacksOnMyHolds(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  me: number,
+  orders: MyOrders,
+  settings: PlannerSettings,
+): AttackOnMyHold[] {
+  const offensive = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const defensive = settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  const owns = (t: ReturnType<typeof visibleState>, p: number) => t?.owner.kind === 'player' && t.owner.playerId === p;
+  const held = (id: number) => owns(visibleState(was.get(id)), me) && owns(visibleState(now.get(id)), me);
+  const deployed = new Map<number, number>();
+  for (const d of orders.deploys) deployed.set(d.territoryId, (deployed.get(d.territoryId) ?? 0) + Math.max(0, d.armies));
+  const sent = new Map<number, number>();
+  const came = new Map<number, number>();
+  const failedFrom = new Set<number>();
+  for (const m of orders.moves) {
+    const armies = Math.max(0, m.armies);
+    sent.set(m.from, (sent.get(m.from) ?? 0) + armies);
+    if (held(m.to) && owns(visibleState(was.get(m.from)), me)) came.set(m.to, (came.get(m.to) ?? 0) + armies);
+    if (!owns(visibleState(was.get(m.to)), me) && !owns(visibleState(now.get(m.to)), me)) failedFrom.add(m.from);
+  }
+  const out: AttackOnMyHold[] = [];
+  for (const id of [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum)) {
+    if (!g.territoryById.has(id) || !held(id) || failedFrom.has(id)) continue;
+    const defenders = Math.max(0, visibleState(was.get(id))!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0));
+    const loss = defenders + (came.get(id) ?? 0) - visibleState(now.get(id))!.armies!;
+    if (loss <= 0) continue;
+    const others = new Set<number>();
+    for (const n of neighborsOf(g, id)) {
+      const st = visibleState(was.get(n));
+      if (st?.owner.kind === 'player' && st.owner.playerId !== me) others.add(st.owner.playerId);
+    }
+    const attackers = Math.round((loss * 100) / offensive);
+    out.push({
+      territoryId: id,
+      loss,
+      attacker: others.size === 1 ? [...others][0]! : null,
+      attackerLoss: Math.min(attackers, straightKills(defenders, defensive)),
+    });
+  }
+  return out;
 }
 
 /**
@@ -596,7 +668,10 @@ export function measureOrders(
  * territories shown with armies on both boards that shrank, each neighbour of another player
  * shown with armies on both boards that shrank too (claimed once, ascending ids) counts
  * round(its shrink × offensive ÷ defensive kill rate) — the armies a failed attack that cost the
- * neighbour that many killed. Mine are left out when my orders measured the turn (`measuredMe`).
+ * neighbour that many killed. When my orders measured the turn (`measured`), a hold of mine counts
+ * only where an attack on it is pinned on no one ({@link attacksOnMyHolds}: more than one other
+ * player beside it), with the loss my orders do not explain as its shrink; the rest of mine are
+ * left out (my orders explain them, or {@link measureOrders} counted them).
  * The board cannot tell a fight from a transfer, nor whom the neighbour fought (a third player)
  * or where its armies went: it can overcount, so only the unexplained armies use it.
  * The ratio is a heuristic: a failed attack's real loss runs from about 0.6x to 1.43x the
@@ -608,7 +683,7 @@ function combatLosses(
   before: BoardState,
   after: BoardState,
   playerId: number,
-  measuredMe: number | null,
+  measured: { me: number; unpinned: ReadonlyMap<number, number> } | null,
   settings: PlannerSettings,
 ): number {
   const offensive = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
@@ -630,8 +705,9 @@ function combatLosses(
     if (own?.player !== playerId || own.shrink <= 0) continue;
     for (const n of [...neighborsOf(g, id)].sort(byNum)) {
       if (claimed.has(n)) continue;
-      const other = shrinkOf(n);
-      if (!other || other.player === playerId || other.player === measuredMe || other.shrink <= 0) continue;
+      const seen = shrinkOf(n);
+      const other = seen && measured && seen.player === measured.me ? { ...seen, shrink: measured.unpinned.get(n) ?? 0 } : seen;
+      if (!other || other.player === playerId || other.shrink <= 0) continue;
       claimed.add(n);
       lost += Math.round((other.shrink * offensive) / defensive);
     }
@@ -884,7 +960,23 @@ export function trackOpponents(
         reinforced: o.reinforced,
         grewFromFog: o.grewFromFog,
         emptied: o.emptied,
-        combat: combatLosses(g, before, after, playerId, orders ? me : null, settings),
+        combat: combatLosses(
+          g,
+          before,
+          after,
+          playerId,
+          orders
+            ? {
+                me,
+                unpinned: new Map(
+                  attacksOnMyHolds(g, before, after, me, orders, settings)
+                    .filter((a) => a.attacker === null)
+                    .map((a) => [a.territoryId, a.loss]),
+                ),
+              }
+            : null,
+          settings,
+        ),
         visibleIncome,
         earned: Math.max(visibleIncome, seenObserved),
         net,
