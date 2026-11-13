@@ -317,11 +317,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it
-  from `warappcdn.com` and caches it at `<dataDir>/bundle/<version>.js` (`MCP_DATA_DIR`, else
-  `~/.config/warapp-mcp`), deleting older versions once the current one loads; when the page naming
-  the version cannot be read, the newest cached copy stands in for 5 minutes. Loading checks the
-  built-in reader helpers against the bundle's own (a mismatch refuses the bundle). Never commit the
-  bundle or snippets of it; tests use a hand-written mini-bundle in the same shape.
+  from exactly `https://warappcdn.com/js/Release/ujs.js` (any other host or path is refused; a
+  timeout and a byte cap bound the download) and caches it at
+  `<dataDir>/bundle/<version>.<sha256>.js` (`MCP_DATA_DIR`, else `~/.config/warapp-mcp`), deleting
+  older versions once the current one loads. A cached copy is loaded only when its bytes still hash
+  to the digest in its name; when the page naming the version cannot be read, the newest copy that
+  verifies stands in for 5 minutes. Loading checks the built-in reader helpers against the bundle's
+  own (a mismatch refuses the bundle). **The bundle is treated as hostile code:** the interpreter
+  reads own properties only, refuses `constructor` / `__proto__` / `prototype`, lets natives call
+  only interpreter closures (and the load-time check's own item readers), and bounds every read by a step budget, a call depth, size caps and a
+  wall-clock deadline (`InterpError` kinds `forbidden` and `budget`) — the load-time helper check
+  runs under the same rules. Never commit the bundle or snippets of it; tests use a hand-written
+  mini-bundle in the same shape.
 - **No captures in the repo.** No recorded frame, `*.hex` capture, or live reply goes into the
   repo — fixtures are synthetic (built by the encoder), with `test@example.com` and made-up
   ids. `git grep` for the real account email before committing. Tests and agents never call

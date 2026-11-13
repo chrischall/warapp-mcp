@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { DATE_EPOCH_MS, NO_DATE_SENTINEL, Reader, Writer } from '../../src/protocol/codec.js';
-import { BundleInterpreter, InterpError, parseBundle } from '../../src/protocol/interp.js';
+import {
+  BundleInterpreter,
+  DEFAULT_DIALECT,
+  DEFAULT_MAX_MILLIS,
+  DEFAULT_MAX_STEPS,
+  InterpError,
+  MAX_NESTING,
+  MAX_THROW_MESSAGE,
+  parseBundle,
+  type ReadBudget,
+} from '../../src/protocol/interp.js';
 import { MINI_BUNDLE } from './mini-bundle.js';
 
 const GUID = '00112233445566778899aabbccddeeff';
@@ -224,5 +234,510 @@ describe('BundleInterpreter', () => {
     const b = parseBundle('W["d.Q"]=Qq;Qq.Ha=function(a){return Q2.zz(a)};');
     const i = new BundleInterpreter(b, { dialect: { statics: { Q2: { zz: () => 'custom' } } } });
     expect(i.readClass('d.Q', new Reader(new Uint8Array()))).toBe('custom');
+  });
+});
+
+// The bundle is downloaded at run time, so the interpreter treats it as hostile: interpreted code
+// must not reach anything of the host process. Every bundle here is hand-written.
+describe('BundleInterpreter containment', () => {
+  // A read that must END at the step budget gets a small one: the default (30M steps) is half a
+  // second of CPU alone and several seconds when the suite runs many files at once, which made the
+  // old wall-clock assertions fail under load. One test below still runs the default.
+  const SMALL: ConstructorParameters<typeof BundleInterpreter>[1] = { maxSteps: 5_000_000 };
+  // What proves a stop is the error's kind. The wall-clock bound only tells a read whose work was
+  // charged from one that ran on for minutes, so it is generous (slow CI, a loaded machine).
+  const SOON_MS = 4_000;
+  /** Evaluate `body` as the reader `Hx.Ha=function(a,b,d){…}` of a one-class bundle. */
+  const run = (body: string, bytes: Uint8Array = new Uint8Array(8), opts: ConstructorParameters<typeof BundleInterpreter>[1] = SMALL) =>
+    new BundleInterpreter(parseBundle(`function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a,b,d){${body}};`), opts).readClass(
+      'h.X',
+      new Reader(bytes),
+    );
+  const g = globalThis as Record<string, unknown>;
+  const clean = () => {
+    delete g.__interpPwned;
+    for (const p of [Object.prototype, Array.prototype] as Record<string, unknown>[]) delete p.polluted;
+  };
+
+  it('blocks the array-prototype route to the host Function constructor, with no side effect', () => {
+    clean();
+    for (const body of [
+      'var F=[].constructor.constructor;return E.Za(["globalThis.__interpPwned=1"],F)',
+      'var F=[]["constructor"]["constructor"];return E.Za(["globalThis.__interpPwned=1"],F)',
+      'var e=new Hx;return e.__proto__',
+      'return P.wc(a).constructor',
+      'var x=[];return x.prototype',
+    ]) {
+      const e = interpError(() => run(body, new Writer().string('s').bytes()));
+      expect(e.kind, body).toBe('forbidden');
+    }
+    expect(g.__interpPwned).toBeUndefined();
+  });
+
+  it('never resolves a static or reader method through an inherited member', () => {
+    clean();
+    // `constructor` as a class name would otherwise find Object (and its Function) on the dialect table.
+    expect(() => run('return constructor.constructor("globalThis.__interpPwned=1")')).toThrow(InterpError);
+    expect(() => run('return E.Za([0],constructor.constructor("globalThis.__interpPwned=1"))')).toThrow(InterpError);
+    expect(() => run('return a.constructor(1)')).toThrow(InterpError);
+    expect(() => run('return a.hasOwnProperty("x")')).toThrow(InterpError);
+    expect(g.__interpPwned).toBeUndefined();
+  });
+
+  it('reads own members and the allowlisted array and string members only', () => {
+    const v = run(
+      'var e=new Hx,s=P.wc(a),x=[4,5];e.k=1;' +
+        'return [e.k,e.toString,e.hasOwnProperty,x.length,x[1],x.map,x.push,s.length,s[1],s.charAt,e.missing]',
+      new Writer().string('hey').bytes(),
+    );
+    expect(v).toEqual([1, undefined, undefined, 2, 5, undefined, undefined, 3, 'e', undefined, undefined]);
+  });
+
+  it('refuses writes through __proto__, constructor and prototype, leaving fresh objects unpolluted', () => {
+    clean();
+    for (const body of [
+      'var e=new Hx;e.__proto__.polluted=1;return e',
+      'var e=new Hx;e["__proto__"]=new Hx;return e',
+      'var e=new Hx;e.__proto__=[];return e',
+      'var q=[];q.constructor.prototype.polluted=1;return q',
+      'var e=new Hx;e.constructor=1;return e',
+      'var e=new Hx;e.prototype=1;return e',
+    ]) {
+      const e = interpError(() => run(body));
+      expect(e.kind, body).toBe('forbidden');
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(([] as unknown as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('refuses writes onto the reader', () => {
+    expect(interpError(() => run('a.pos=0;return 1')).kind).toBe('forbidden');
+  });
+
+  it('makes natives refuse a callback that is not an interpreter closure', () => {
+    for (const body of [
+      'return P.Sd(a,5)',
+      'return P.ms(a,"x")',
+      'return P.ef(a,function(){return 1},new Hx)',
+      'return E.Za([1],Hx)',
+    ]) {
+      const e = interpError(() => run(body, new Writer().int32(1).bytes()));
+      expect(e.kind, body).toBe('forbidden');
+    }
+    // Called directly with a host function, a native refuses it too.
+    const { P, E } = DEFAULT_DIALECT.statics;
+    const host = () => 'host';
+    expect(() => P.Sd(new Reader(new Writer().int32(1).bytes()), host)).toThrow(InterpError);
+    expect(() => P.ef(new Reader(new Writer().int32(1).bytes()), host, host)).toThrow(InterpError);
+    expect(() => E.Za([1], host)).toThrow(InterpError);
+  });
+
+  it('never returns a host function into interpreted scope', () => {
+    expect(interpError(() => run('return O.fA(function(){return 1})')).kind).toBe('forbidden');
+  });
+
+  it('stops a nested-loop bomb within the step budget', () => {
+    const e = interpError(() => run('for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){}}return 1'));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toContain(`${SMALL.maxSteps} steps`);
+  });
+
+  it('stops a nested-loop bomb under the DEFAULT limits too (the step budget or the deadline)', { timeout: 30_000 }, () => {
+    const e = interpError(() => run('for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){}}return 1', undefined, {}));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toMatch(new RegExp(`${DEFAULT_MAX_STEPS} steps|${DEFAULT_MAX_MILLIS} ms`));
+  });
+
+  it('stops unbounded recursion at the call-depth limit, never a RangeError', () => {
+    const t = Date.now();
+    const e = interpError(() => run('return Hx.Ha(a,b,d)'));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toContain('depth');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+  });
+
+  it('stops exponential fan-out at the step budget', () => {
+    const t = Date.now();
+    const b = parseBundle('W["h.F"]=Hf;Hf.Ha=function(a){return Hf.f(60)};Hf.f=function(n){if(n<1)return 1;return Hf.f(n-1)+Hf.f(n-1)};');
+    const e = interpError(() => new BundleInterpreter(b, SMALL).readClass('h.F', new Reader(new Uint8Array())));
+    expect(e.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+  });
+
+  it('takes the step budget and depth limit as options, and resets them per read', () => {
+    expect(interpError(() => run('var i=0;for(;i<100;i++){}return i', undefined, { maxSteps: 50 })).kind).toBe('budget');
+    expect(run('var i=0;for(;i<100;i++){}return i', undefined, { maxSteps: 5000 })).toBe(100);
+    const b = parseBundle('W["h.D"]=Hd;Hd.Ha=function(a){return Hd.f(10)};Hd.f=function(n){if(n<1)return 0;return Hd.f(n-1)+1};');
+    const i = new BundleInterpreter(b, { maxDepth: 5 });
+    expect(interpError(() => i.readClass('h.D', new Reader(new Uint8Array()))).kind).toBe('budget');
+    const ok = new BundleInterpreter(b, { maxDepth: 20, maxSteps: 1000 });
+    for (let k = 0; k < 5; k++) expect(ok.readClass('h.D', new Reader(new Uint8Array()))).toBe(10);
+  });
+
+  it('parses a function too large for one read once, not again on every read', () => {
+    // A parse is host work the budget can only charge afterwards. One that costs more than a whole
+    // read's budget fails the same way every time, so it is a cached parse failure, never re-parsed.
+    const big = `Hb.Ha=function(a){${'a;'.repeat(2_000)}return 1};`;
+    const i = new BundleInterpreter(parseBundle(`function Hb(){}W["h.B"]=Hb;${big}`), { maxSteps: 500 });
+    const first = interpError(() => i.readClass('h.B', new Reader(new Uint8Array())));
+    expect(first.kind).toBe('parse');
+    expect(first.message).toMatch(/too large/);
+    // The same cached error: the second read did not parse it again.
+    expect(interpError(() => i.readClass('h.B', new Reader(new Uint8Array())))).toBe(first);
+    // A source that does not parse and is larger than the budget is cached the same way.
+    const broken = new BundleInterpreter(parseBundle(`function Hc(){}W["h.C"]=Hc;Hc.Ha=function(a){${'a;'.repeat(2_000)}return (};`), { maxSteps: 500 });
+    const e1 = interpError(() => broken.readClass('h.C', new Reader(new Uint8Array())));
+    expect(e1.kind).toBe('parse');
+    expect(interpError(() => broken.readClass('h.C', new Reader(new Uint8Array())))).toBe(e1);
+  });
+
+  it('does not let a constructor swallow a budget or containment error', () => {
+    const b = parseBundle('function Hc(a){this.x=a.__proto__}W["h.C"]=Hc;Hc.Ha=function(a){return new Hc([])};');
+    expect(interpError(() => new BundleInterpreter(b).readClass('h.C', new Reader(new Uint8Array()))).kind).toBe('forbidden');
+  });
+
+  it('refuses a huge, negative or fractional count to the allocating helper without allocating', () => {
+    const t = Date.now();
+    const e = interpError(() =>
+      run('return E.Sa(E.Za(E.Range(0,P.Ya(a)),function(i){return 1}))', new Writer().int32(0x7fffffff).bytes()),
+    );
+    expect(e.kind).toBe('bad-value');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    const { E } = DEFAULT_DIALECT.statics;
+    for (const n of [-1, 1.5, Number.NaN, Infinity, 2 ** 31, '3']) expect(() => E.Range(0, n), String(n)).toThrow(InterpError);
+    expect(E.Range(2, 3)).toEqual([2, 3, 4]);
+  });
+
+  it('keeps arrays dense: no write to length, no index past the end', () => {
+    for (const body of [
+      'var x=[];x.length=4294967295;return x',
+      'var x=[];x["length"]=5;return x',
+      'var x=[];x[4294967294]=1;return x',
+      'var x=[1];x[2]=1;return x',
+      'var x=[];x["01"]=1;return x',
+      'var x=[];x[-1]=1;return x',
+      'var x=[];x.foo=1;return x',
+    ]) {
+      expect(interpError(() => run(body)).kind, body).toBe('forbidden');
+    }
+    // Appending and overwriting still work.
+    expect(run('var x=[];x[0]=1;x[1]=2;x[0]=3;x.push(4);return x')).toEqual([3, 2, 4]);
+  });
+
+  it('refuses an array longer than the cap to a native, as an InterpError (never a process abort)', () => {
+    const { E } = DEFAULT_DIALECT.statics;
+    const long: unknown[] = [];
+    long.length = 2 ** 32 - 1;
+    expect(() => E.Sa(long)).toThrow(InterpError);
+    expect(() => E.Za(long, () => 1)).toThrow(InterpError);
+    // Through the interpreter the long array cannot be made in the first place.
+    expect(interpError(() => run('var x=[];x.length=4294967295;return E.Sa(x)')).kind).toBe('forbidden');
+  });
+
+  it('charges native element work to the step budget', () => {
+    const t = Date.now();
+    const e = interpError(() => run('for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){E.Sa(E.Range(0,1000000))}}return 1'));
+    expect(e.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    // One Range of a million costs at least a million steps, charged before it allocates.
+    expect(interpError(() => run('return E.Range(0,1000000)', undefined, { maxSteps: 999_999 })).kind).toBe('budget');
+    expect(run('return E.Sa(E.Range(0,3))', undefined, { maxSteps: 1000 })).toEqual([0, 1, 2]);
+  });
+
+  it('refuses objects as operands of arithmetic and comparison, as an InterpError', () => {
+    for (const body of [
+      'var e=new Hx;e.k=function(){};return e+""',
+      'var e=new Hx;return e<1',
+      'var e=new Hx;return 1>=e',
+      'var e=new Hx;return e-1',
+      'return [1]+1',
+    ]) {
+      expect(interpError(() => run(body)).kind, body).toBe('bad-value');
+    }
+    // Equality, and null checks in particular, still work on objects.
+    expect(run('var e=new Hx,f=new Hx;return [e===e,e!==f,e==null,e!=null,e==e]')).toEqual([true, true, false, true, true]);
+  });
+
+  it('never converts an object in loose equality or a switch case', () => {
+    // An array compared with a primitive would otherwise be joined by the host on every comparison,
+    // host work the step budget never sees.
+    const t = Date.now();
+    expect(run('var x=E.Sa(E.Range(0,1000000)),n=0;for(var i=0;i<200;i++){if(x=="x")n++}return n')).toBe(0);
+    expect(run('var x=E.Sa(E.Range(0,1000000)),n=0;for(var i=0;i<200;i++){if(x!="x")n++}return n')).toBe(200);
+    expect(
+      run('var x=E.Sa(E.Range(0,1000000)),n=0;for(var i=0;i<200;i++){switch("x"){case x:n++;break;default:}}return n'),
+    ).toBe(0);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    // Without conversion an object never loosely equals a primitive, even one its join would match.
+    expect(run('var x=[1];return [x==1,x=="1",x!=1,1==x,x==x,x==null,x!=undefined]')).toEqual([
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+    ]);
+    expect(run('var x=[1];switch(1){case x:return "obj";case 1:return "num"}')).toBe('num');
+    // Primitives still compare loosely, as before.
+    expect(run('return [1=="1",null==undefined,0==""]')).toEqual([true, true, true]);
+    expect(run('switch("2"){case 2:return "two";default:return "none"}')).toBe('two');
+  });
+
+  it('refuses an object operand of ++ / --, as an InterpError', () => {
+    expect(interpError(() => run('var x=[1];x++;return x')).kind).toBe('bad-value');
+    expect(run('var x=1;x++;++x;x--;return x')).toBe(2);
+  });
+
+  it('caps a string built by + and charges its length, as an InterpError (never a RangeError or OOM)', () => {
+    const t = Date.now();
+    const e = interpError(() => run('var s="x";for(var i=0;i<40;i++){s=s+s}return s'));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toContain('string');
+    // Concatenating a long string over and over is charged per character, so it ends at the budget.
+    const f = interpError(() =>
+      run('var s="x";for(var i=0;i<19;i++){s=s+s}var k=[];for(var j=0;j<999999;j++){var t=s+"y";k.push(t[0])}return k'),
+    );
+    expect(f.kind).toBe('budget');
+    // Comparing two long distinct strings is charged too.
+    const c = interpError(() =>
+      run('var s="x";for(var i=0;i<19;i++){s=s+s}var u=s+"y",v=s+"y",n=0;for(var j=0;j<999999;j++){if(u===v)n++}return n'),
+    );
+    expect(c.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    // Short strings still concatenate.
+    expect(run('var s="a";s=s+1+"b";return s')).toBe('a1b');
+  });
+
+  it('does not let a constructor swallow a runaway string into $ctorError', () => {
+    const b = parseBundle(
+      'function Hs(a){var s="x";for(var i=0;i<40;i++){s=s+s}this.s=s}W["h.S"]=Hs;Hs.Ha=function(a){return new Hs(1)};',
+    );
+    const e = interpError(() => new BundleInterpreter(b).readClass('h.S', new Reader(new Uint8Array())));
+    expect(e.kind).toBe('budget');
+  });
+
+  it('refuses BigInt and RegExp literals, so no operator does unbounded host work per step', () => {
+    expect(interpError(() => run('var x=18446744073709551617n;x=x*x;return 1')).kind).toBe('bad-value');
+    expect(interpError(() => run('var x=-1n;return 1')).kind).toBe('bad-value');
+    expect(interpError(() => run('var x=/a/;return 1')).kind).toBe('bad-value');
+    const t = Date.now();
+    const e = interpError(() =>
+      run('var x=18446744073709551617n;for(var i=0;i<22;i++){x=x*x}for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){var y=x*3n}}return 1'),
+    );
+    expect(e.kind).toBe('bad-value');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    // Ordinary literals still evaluate.
+    expect(run('return [1,"s",true,null]')).toEqual([1, 's', true, null]);
+  });
+
+  it('reads the length of a typed array from the raw-bytes reader', () => {
+    expect(run('var b=a.JS(3);return [b.length,b[1]]', new Uint8Array([7, 8, 9]))).toEqual([3, 8]);
+  });
+
+  it('refuses writes of the inherited Object.prototype method names onto objects', () => {
+    const inherited = Object.getOwnPropertyNames(Object.prototype).filter((k) => k !== 'constructor' && k !== '__proto__');
+    expect(inherited).toContain('__defineGetter__');
+    for (const k of ['toJSON', ...inherited]) {
+      expect(interpError(() => run(`var e=new Hx;e.${k}=function(){};return e+""`)).kind, k).toBe('forbidden');
+    }
+  });
+
+  it('resolves a missing static without rescanning the bundle, even when a constructor swallows the error', () => {
+    // A large bundle: every lookup that scanned it would be host work the step budget never sees.
+    const padding = '/*' + 'X.nop'.repeat(400_000) + '*/';
+    const b = parseBundle(
+      'W["h.M"]=Hm;W["h.A"]=Am;function Am(x){this.q=X.nope();this.r=X["n"+x]()}' +
+        'Hm.Ha=function(a){var i;for(i=0;i<3000;i++){new Am(i)}return new Am(0)};' +
+        padding,
+    );
+    const t = Date.now();
+    const v = new BundleInterpreter(b).readClass('h.M', new Reader(new Uint8Array())) as { $ctorError?: string };
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    // The failure still surfaces as before.
+    expect(v.$ctorError).toContain('no definition for X.nope');
+  });
+
+  it('charges the length of a computed member key to the step budget', () => {
+    const t = Date.now();
+    const e = interpError(() => run('var s="1",i,x;for(i=0;i<19;i++){s=s+s}for(i=0;i<999999;i++){x="ab"[s]}return 1'));
+    expect(e.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    // The same holds for a write and for a static looked up by a computed name.
+    expect(interpError(() => run('var s="1",i,e=new Hx;for(i=0;i<19;i++){s=s+s}for(i=0;i<999999;i++){e[s]=1}return 1')).kind).toBe(
+      'budget',
+    );
+    // Short keys still read and write.
+    expect(run('var e=new Hx,x=[7,8];e["k"]=x[1];return [e.k,x[0],"ab"[1]]')).toEqual([8, 7, 'b']);
+  });
+
+  it('charges the length of a string converted to a number by an operator', () => {
+    // Converting a string to a number is host work in its length; one step per conversion let a
+    // long string in a loop run for far longer than the step budget allows.
+    const long = 'var s="1",i,n=0;for(i=0;i<19;i++){s=s+s}';
+    const t = Date.now();
+    for (const op of [
+      'if(s==1)n++',
+      'if(1!=s)n++',
+      'if(s==true)n++',
+      'if(s<1)n++',
+      'if(s>=1)n++',
+      'n=s-0',
+      'n=s*1',
+      'n=s|0',
+      'n=1&s',
+      'n=-s',
+      'var c=s;c++',
+      'switch(1){case s:n++}',
+    ]) {
+      const e = interpError(() => run(`${long}for(i=0;i<999999;i++){${op}}return n`));
+      expect(e.kind, op).toBe('budget');
+    }
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    // Short strings still convert as before.
+    expect(run('var s="12";return [s==12,s<13,s-2,s*2,s|1,-s,1&s,s==true]')).toEqual([true, true, 10, 24, 13, -12, 0, false]);
+    expect(run('var s="3";s++;return s')).toBe(4);
+  });
+
+  it('shares one step budget across several reads when given a ReadBudget', () => {
+    const b = parseBundle('function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a){var i;for(i=0;i<100;i++){}return i};');
+    const interp = new BundleInterpreter(b, { maxSteps: 1000 });
+    // Each read alone fits; with one shared budget the reads run out together.
+    for (let k = 0; k < 20; k++) expect(interp.readClass('h.X', new Reader(new Uint8Array()))).toBe(100);
+    const budget: ReadBudget = { spent: 0 };
+    const e = interpError(() => {
+      for (let k = 0; k < 20; k++) interp.readClass('h.X', new Reader(new Uint8Array()), budget);
+    });
+    expect(e.kind).toBe('budget');
+    expect(budget.spent).toBeGreaterThan(1000);
+  });
+
+  it('ends a read at a wall-clock deadline, whatever the step count', () => {
+    expect(DEFAULT_MAX_MILLIS).toBe(5000);
+    const bomb = 'for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){}}return 1';
+    // A real clock: the step budget is out of reach, the deadline ends the read.
+    const t = Date.now();
+    const e = interpError(() => run(bomb, undefined, { maxSteps: Number.MAX_SAFE_INTEGER, maxMillis: 50 }));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toContain('50 ms');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    // An injected clock: the deadline is per read, so the next read starts afresh.
+    const src = 'function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a){var i;for(i=0;i<5000;i++){}return i};';
+    let clock = 0;
+    const i = new BundleInterpreter(parseBundle(src), { maxMillis: 10, now: () => clock });
+    expect(i.readClass('h.X', new Reader(new Uint8Array()))).toBe(5000);
+    clock = 1000; // time passing between reads does not count against the next one
+    expect(i.readClass('h.X', new Reader(new Uint8Array()))).toBe(5000);
+    // A clock that advances a millisecond per check runs out within the read.
+    const slow = new BundleInterpreter(parseBundle(src), { maxMillis: 10, now: () => (clock += 1) });
+    expect(interpError(() => slow.readClass('h.X', new Reader(new Uint8Array()))).kind).toBe('budget');
+  });
+
+  it('shares the deadline across reads that share a ReadBudget', () => {
+    let clock = 0;
+    const src = 'function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a){var i;for(i=0;i<5000;i++){}return i};';
+    const i = new BundleInterpreter(parseBundle(src), { maxMillis: 10, now: () => clock });
+    const budget: ReadBudget = { spent: 0 };
+    expect(i.readClass('h.X', new Reader(new Uint8Array()), budget)).toBe(5000);
+    clock = 11;
+    expect(interpError(() => i.readClass('h.X', new Reader(new Uint8Array()), budget)).kind).toBe('budget');
+  });
+
+  it('builds the message of a thrown value once per throw site, capped and charged', () => {
+    // A constructor whose throw argument holds many string literals, failing in a loop.
+    const lits = Array.from({ length: 10_000 }, () => '"x"').join(',');
+    const ctor = `W["h.C"]=Hc;function Hc(x){throw [${lits}]}`;
+    const loop = parseBundle(`${ctor}W["h.B"]=Hb;Hb.Ha=function(a){for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){new Hc(1)}}return 0};`);
+    const t = Date.now();
+    const e = interpError(() => new BundleInterpreter(loop, SMALL).readClass('h.B', new Reader(new Uint8Array())));
+    expect(e.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+    const one = parseBundle(`${ctor}W["h.O"]=Ho;Ho.Ha=function(a){return new Hc(1)};`);
+    const v = new BundleInterpreter(one).readClass('h.O', new Reader(new Uint8Array())) as { $ctorError: string };
+    expect(v.$ctorError).toContain('reader threw: x x x');
+    expect(v.$ctorError.length).toBeLessThan(MAX_THROW_MESSAGE + 100);
+  });
+
+  it('caps lexical function nesting and charges each name lookup by the scopes it walks', () => {
+    const nested = (depth: number, body: string) => {
+      let inner = `function(){${body}}`;
+      for (let k = 0; k < depth; k++) inner = `function(){return ${inner}}`;
+      return `var f=${inner};for(var n=0;n<${depth + 1};n++){f=f()}return f`;
+    };
+    // Real readers nest a few functions deep: that still runs.
+    expect(run(nested(4, 'return 7'))).toBe(7);
+    // Past the cap, a read ends with a budget error rather than slow lookups.
+    const deep = interpError(() => run(nested(MAX_NESTING + 1, 'return 7')));
+    expect(deep.kind).toBe('budget');
+    expect(deep.message).toContain('nested');
+    // Inside the cap, an undeclared name looked up in a loop ends at the step budget quickly.
+    const t = Date.now();
+    const lookups = 'for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q}}return 0';
+    const e = interpError(() => run(nested(MAX_NESTING - 2, lookups)));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toContain('steps');
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
+  });
+
+  it('refuses a reader argument that is not the reader, as an InterpError', () => {
+    for (const body of [
+      'return P.Sd(new Hx,function(){return 1})',
+      'return P.ms("abc",function(){return 1})',
+      'return P.ef(1,function(){},function(){})',
+      'return P.Ya("abc")',
+    ]) {
+      const e = interpError(() => run(body, new Writer().int32(1).bytes()));
+      expect(e.kind, body).toBe('bad-value');
+    }
+    expect(() => DEFAULT_DIALECT.statics.P.Ya({})).toThrow(InterpError);
+  });
+
+  it('never treats a key longer than ten characters as an array index', () => {
+    // No canonical array index has more than ten digits: such a key is refused on an array write
+    // and reads as undefined on a string, without a pattern test over the whole key.
+    expect(interpError(() => run('var x=[];x["12345678901"]=1;return x')).kind).toBe('forbidden');
+    expect(run('return "ab"["12345678901"]')).toBeUndefined();
+    expect(run('var x=[5];x["1"]=6;return [x[1],"ab"["1"]]')).toEqual([6, 'b']);
+  });
+
+  // The per-function AST walks were quadratic (a duplicate check by array scan, a reader test repeated
+  // for every enclosing assignment) and uncharged, so a few megabytes of bundle took minutes. The clock
+  // is held still in these: only the step count (or the walks being linear) can end them. A quadratic
+  // walk would take minutes, so the generous timeouts (for a loaded machine) still catch one.
+  const still = { now: () => 0 };
+
+  it('hoists a function with many `var` names in linear time, the walk charged', { timeout: 30_000 }, () => {
+    const names = Array.from({ length: 200_000 }, (_, k) => `a${k}`).join(',');
+    // Declared in an untaken branch, so only the hoisting does work.
+    expect(run(`var g=function(){if(0){var ${names}}return 3};return g()`, undefined, still)).toBe(3);
+    // The walk is charged to the step count: a budget that covers the parse alone runs out in it.
+    const src = `function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a,b,d){if(0){var ${names}}return 3};`;
+    const parse = src.length - src.indexOf('function(a,b,d)');
+    const tight = new BundleInterpreter(parseBundle(src), { ...still, maxSteps: parse + 10 });
+    expect(interpError(() => tight.readClass('h.X', new Reader(new Uint8Array()))).kind).toBe('budget');
+  });
+
+  it('charges each call the parameters and hoisted names it declares', { timeout: 30_000 }, () => {
+    const names = Array.from({ length: 1000 }, (_, k) => `a${k}`).join(',');
+    for (const fn of [`function(){if(0){var ${names}}}`, `function(${names}){}`]) {
+      const e = interpError(() => run(`var g=${fn};for(var i=0;i<999999999;i++){g()}return 0`, undefined, { ...still, ...SMALL }));
+      expect(e.kind, fn.slice(0, 20)).toBe('budget');
+      expect(e.message).toContain('steps');
+    }
+  });
+
+  it('finds the fields a reader fills in linear time, the walks charged', { timeout: 30_000 }, () => {
+    // A reader making many distinct calls to its own statics, none of them a field read.
+    const calls = Array.from({ length: 100_000 }, (_, k) => `Lg.x${k}()`).join(';');
+    const src = `W["t.Lg"]=Lg;W["t.F"]=Ff;\nLg.Ha=function(a,b,d){${calls}};\n`;
+    expect(new BundleInterpreter(parseBundle(src), still).fieldsReadAs('t.Lg', 't.F')).toEqual([]);
+    // A long assignment chain is judged once per node, not once per enclosing assignment.
+    const chain = `${'e='.repeat(4000)}Ff.Ha(a)`;
+    const deep = new BundleInterpreter(parseBundle(`W["t.Lg"]=Lg;W["t.F"]=Ff;\nLg.Ha=function(a,b,d){var e;${chain};d.f=e;d.g=Ff.Ha(a);d.f=e};\n`), still);
+    expect(deep.fieldsReadAs('t.Lg', 't.F')).toEqual(['f', 'g']);
+    // The walks are charged: a step budget covering the parse alone runs out in them.
+    const parse = src.length - src.indexOf('function(a,b,d)');
+    const tight = new BundleInterpreter(parseBundle(src), { ...still, maxSteps: parse + 10 });
+    expect(interpError(() => tight.fieldsReadAs('t.Lg', 't.F')).kind).toBe('budget');
   });
 });

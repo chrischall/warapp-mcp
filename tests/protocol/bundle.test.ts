@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,6 +10,12 @@ import { MINI_BUNDLE } from './mini-bundle.js';
 const PAGE = 'https://war.app/MultiPlayer';
 const CDN = 'https://warappcdn.com/js/Release/ujs.js?v=987';
 const html = (src: string) => `<html><head><script type="text/javascript" src="${src}"></script></head></html>`;
+
+const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+/** The cache file of `version` holding `body`: its digest is part of its name. */
+const cacheName = (version: string, body: string = MINI_BUNDLE) => `${version}.${sha256(body)}.js`;
+/** The files in `<dataDir>/bundle`, sorted (none when it does not exist). */
+const listCache = (dataDir: string) => (existsSync(join(dataDir, 'bundle')) ? readdirSync(join(dataDir, 'bundle')).sort() : []);
 
 const dirs: string[] = [];
 function tempDir(): string {
@@ -39,21 +46,42 @@ describe('discoverBundleUrl', () => {
     expect(discoverBundleUrl(html(CDN), PAGE)).toEqual({ url: CDN, version: '987' });
   });
 
-  it('resolves protocol-relative and relative sources and HTML entities', () => {
-    expect(discoverBundleUrl(html('//warappcdn.com/js/Release/ujs.js?v=5&amp;x=1'), PAGE)).toEqual({
-      url: 'https://warappcdn.com/js/Release/ujs.js?v=5&x=1',
+  // The location is pinned (host, path, version as the only variable): a relative source
+  // (which resolves onto war.app), extra query parameters and a URL without a version used
+  // to be accepted; those expectations encoded the flaw and now read as refusals.
+  it('resolves a protocol-relative source', () => {
+    expect(discoverBundleUrl(html('//warappcdn.com/js/Release/ujs.js?v=5'), PAGE)).toEqual({
+      url: 'https://warappcdn.com/js/Release/ujs.js?v=5',
       version: '5',
-    });
-    expect(discoverBundleUrl(html('/js/Release/ujs.js?v=6'), PAGE)).toEqual({
-      url: 'https://war.app/js/Release/ujs.js?v=6',
-      version: '6',
     });
   });
 
-  it('derives a stable version when the URL carries none', () => {
-    const a = discoverBundleUrl(html('https://warappcdn.com/js/ujs.js'), PAGE);
-    expect(a.version).toMatch(/^u-[0-9a-f]{16}$/);
-    expect(discoverBundleUrl(html('https://warappcdn.com/js/ujs.js'), PAGE)).toEqual(a);
+  it('pins the bundle to the CDN host and the bundle path, with the version the only variable', () => {
+    for (const src of [
+      'https://www.warappcdn.com/js/Release/ujs.js?v=1', // a subdomain of the CDN
+      'https://cdn.war.app/js/Release/ujs.js?v=1', // a subdomain of war.app
+      'https://war.app/js/Release/ujs.js?v=1', // war.app itself
+      '/js/Release/ujs.js?v=6', // relative: resolves onto war.app
+      'https://warappcdn.com.evil.example/js/Release/ujs.js?v=1',
+      'https://user@warappcdn.com/js/Release/ujs.js?v=1',
+      'https://warappcdn.com:8443/js/Release/ujs.js?v=1',
+    ]) {
+      expect(() => discoverBundleUrl(html(src), PAGE), src).toThrow(/host/);
+    }
+    for (const src of [
+      'https://warappcdn.com/js/ujs.js?v=1',
+      'https://warappcdn.com/uploads/js/Release/ujs.js?v=1',
+      'https://warappcdn.com/js/Release/x/../ujs.js?v=1&y=/ujs.js',
+    ]) {
+      expect(() => discoverBundleUrl(html(src), PAGE), src).toThrow(BundleError);
+    }
+    expect(() => discoverBundleUrl(html('https://warappcdn.com/js/Release/ujs.js?v=5&amp;x=1'), PAGE)).toThrow(/query/);
+    expect(() => discoverBundleUrl(html('https://warappcdn.com/js/Release/ujs.js?v=5&amp;v=6'), PAGE)).toThrow(/query/);
+    expect(() => discoverBundleUrl(html('https://warappcdn.com/js/Release/ujs.js?v=5#frag'), PAGE)).toThrow(/fragment|query/);
+  });
+
+  it('refuses a bundle URL that carries no version', () => {
+    expect(() => discoverBundleUrl(html('https://warappcdn.com/js/Release/ujs.js'), PAGE)).toThrow(/version/);
   });
 
   it('rejects a page without the bundle script', () => {
@@ -66,19 +94,21 @@ describe('discoverBundleUrl', () => {
   });
 
   it('rejects a version that is not a safe file name', () => {
-    expect(() => discoverBundleUrl(html('https://warappcdn.com/ujs.js?v=../../x'), PAGE)).toThrow(/version/);
+    // The path is pinned now, so this probe uses the bundle path (it used `/ujs.js`).
+    expect(() => discoverBundleUrl(html('https://warappcdn.com/js/Release/ujs.js?v=../../x'), PAGE)).toThrow(/version/);
+    expect(() => discoverBundleUrl(html('https://warappcdn.com/js/Release/ujs.js?v=..'), PAGE)).toThrow(/version/);
   });
 });
 
 describe('loadBundle', () => {
-  it('downloads, caches under <dataDir>/bundle/<version>.js and reads by stable type name', async () => {
+  it('downloads, caches under <dataDir>/bundle/<version>.<sha256>.js and reads by stable type name', async () => {
     const dataDir = tempDir();
     const f = fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE });
     const b = await loadBundle({ dataDir, fetchText: f.fetchText, pageUrl: PAGE });
     expect(f.calls).toEqual([PAGE, CDN]);
     expect(b.version).toBe('987');
-    const file = join(dataDir, 'bundle', '987.js');
-    expect(readFileSync(file, 'utf8')).toBe(MINI_BUNDLE);
+    expect(listCache(dataDir)).toEqual([cacheName('987')]);
+    expect(readFileSync(join(dataDir, 'bundle', cacheName('987')), 'utf8')).toBe(MINI_BUNDLE);
     const r = new Reader(new Writer().int32(12).bytes());
     expect(b.readClass('warlight.shared.LatestGameInfo', r)).toEqual({
       $type: 'warlight.shared.LatestGameInfo',
@@ -102,7 +132,7 @@ describe('loadBundle', () => {
     const dataDir = tempDir();
     const f = fakeFetch({ [PAGE]: html(CDN), [CDN]: '<html>error</html>' });
     await expect(loadBundle({ dataDir, fetchText: f.fetchText, pageUrl: PAGE })).rejects.toThrow(BundleError);
-    expect(existsSync(join(dataDir, 'bundle', '987.js'))).toBe(false);
+    expect(listCache(dataDir)).toEqual([]);
   });
 
   it('passes interpreter options through', async () => {
@@ -117,6 +147,95 @@ describe('loadBundle', () => {
     const f = fakeFetch({ 'https://war.app/MultiPlayer': html(CDN), [CDN]: MINI_BUNDLE });
     await loadBundle({ dataDir: tempDir(), fetchText: f.fetchText });
     expect(f.calls[0]).toBe('https://war.app/MultiPlayer');
+  });
+});
+
+describe('loadBundle cache integrity (content-addressed)', () => {
+  const bundleFile = (dataDir: string) => join(dataDir, 'bundle', cacheName('987'));
+  const load = (dataDir: string, pages: Record<string, string> = { [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }) => {
+    const f = fakeFetch(pages);
+    return loadBundle({ dataDir, fetchText: f.fetchText, pageUrl: PAGE }).then((b) => ({ b, calls: f.calls }));
+  };
+
+  it('keeps one file per bundle, its SHA-256 in its name, and no digest file beside it', async () => {
+    const dataDir = tempDir();
+    await load(dataDir);
+    expect(listCache(dataDir)).toEqual([cacheName('987')]);
+    expect(sha256(readFileSync(bundleFile(dataDir), 'utf8'))).toBe(sha256(MINI_BUNDLE));
+  });
+
+  it('does not use a cached file changed after it was written: it downloads it again', async () => {
+    const dataDir = tempDir();
+    await load(dataDir);
+    writeFileSync(bundleFile(dataDir), MINI_BUNDLE.replace('turn', 'tvrn'));
+    const { b, calls } = await load(dataDir);
+    expect(calls).toEqual([PAGE, CDN]);
+    expect(readFileSync(bundleFile(dataDir), 'utf8')).toBe(MINI_BUNDLE);
+    expect(b.readClass('NE', new Reader(new Writer().int32(3).bytes()))).toMatchObject({ turn: 3 });
+  });
+
+  it('re-runs the content check on load, even when the digest matches', async () => {
+    const dataDir = tempDir();
+    const fake = '<html>not a bundle</html>';
+    mkdirSync(join(dataDir, 'bundle'), { recursive: true });
+    writeFileSync(join(dataDir, 'bundle', cacheName('987', fake)), fake);
+    expect((await load(dataDir)).calls).toEqual([PAGE, CDN]);
+    expect(listCache(dataDir)).toEqual([cacheName('987')]);
+  });
+
+  it('never interprets a cache written before this layout: it downloads the bundle again and prunes the old files', async () => {
+    for (const legacy of [
+      { '987.js': MINI_BUNDLE.replace('turn', 'tvrn') }, // before digests were recorded
+      { '987.js': MINI_BUNDLE.replace('turn', 'tvrn'), '987.js.sha256': `${sha256(MINI_BUNDLE.replace('turn', 'tvrn'))}\n` }, // a digest beside it
+    ]) {
+      const dataDir = tempDir();
+      mkdirSync(join(dataDir, 'bundle'), { recursive: true });
+      for (const [name, body] of Object.entries(legacy)) writeFileSync(join(dataDir, 'bundle', name), body);
+      const { b, calls } = await load(dataDir);
+      expect(calls).toEqual([PAGE, CDN]);
+      expect(b.readClass('NE', new Reader(new Writer().int32(3).bytes()))).toMatchObject({ turn: 3 });
+      expect(listCache(dataDir)).toEqual([cacheName('987')]);
+      expect((await load(dataDir, { [PAGE]: html(CDN) })).calls).toEqual([PAGE]);
+    }
+  });
+
+  it('deletes a cached file that fails verification even when the download then fails', async () => {
+    const dataDir = tempDir();
+    await load(dataDir);
+    writeFileSync(bundleFile(dataDir), MINI_BUNDLE + '// changed');
+    await expect(load(dataDir, { [PAGE]: html(CDN) })).rejects.toThrow(/unexpected fetch/);
+    expect(listCache(dataDir)).toEqual([]);
+  });
+
+  it('loads of a new version at once all succeed and leave one verified file', async () => {
+    // One load's pruning must never remove another in-flight load's unfinished write, in this process
+    // or another (#140), or that load's rename fails.
+    const dataDir = tempDir();
+    const all = await Promise.all(Array.from({ length: 12 }, () => load(dataDir)));
+    for (const { b } of all) expect(b.version).toBe('987');
+    expect(listCache(dataDir)).toEqual([cacheName('987')]);
+    expect((await load(dataDir, { [PAGE]: html(CDN) })).calls).toEqual([PAGE]);
+  });
+
+  it.skipIf(process.platform === 'win32')('writes the bundle 0600 in 0700 directories', async () => {
+    const dataDir = join(tempDir(), 'data');
+    await load(dataDir);
+    const mode = (p: string) => statSync(p).mode & 0o777;
+    expect(mode(dataDir)).toBe(0o700);
+    expect(mode(join(dataDir, 'bundle'))).toBe(0o700);
+    expect(mode(bundleFile(dataDir))).toBe(0o600);
+  });
+
+  it.skipIf(process.platform === 'win32')('tightens a data and bundle directory that already exist as 0755', async () => {
+    const dataDir = tempDir();
+    mkdirSync(join(dataDir, 'bundle'));
+    chmodSync(dataDir, 0o755);
+    chmodSync(join(dataDir, 'bundle'), 0o755);
+    await load(dataDir);
+    const mode = (p: string) => statSync(p).mode & 0o777;
+    expect(mode(dataDir)).toBe(0o700);
+    expect(mode(join(dataDir, 'bundle'))).toBe(0o700);
+    expect(mode(bundleFile(dataDir))).toBe(0o600);
   });
 });
 
@@ -182,6 +301,24 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
     expect(b.dialectCheck.mismatched).toEqual([]);
   });
 
+  it("runs the bundle's helpers under the interpreter's step budget: a runaway helper is unverified, not a hang", () => {
+    const loop = 'var W={};var P={};P.Ya=function(a){for(;;){}};P.uq=function(a){return a.bc()};' + READER;
+    const t0 = Date.now();
+    const b = new WarappBundle(loop, 'loop', { maxSteps: 50_000, maxIterations: 1e9 });
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(b.dialectCheck.unverified).toContain('P.Ya');
+    expect(b.dialectCheck.mismatched).toEqual([]);
+    // The check's budget is its own: a read afterwards starts from a fresh count.
+    expect(b.readClass('t.Dx', new Reader(new Writer().u8(7).int32(9).bytes()))).toEqual({ $type: 't.Dx', small: 7, big: 9 });
+  });
+
+  it("keeps the bundle's helpers contained during the check", () => {
+    // A helper that reaches for a host member is refused inside the interpreter (unverified), never run.
+    const b = new WarappBundle('var W={};var P={};P.Ya=function(a){return a.constructor};' + READER, 'escape');
+    expect(b.dialectCheck.unverified).toContain('P.Ya');
+    expect(b.dialectCheck.mismatched).toEqual([]);
+  });
+
   it('a bundle that defines no helpers (the test bundles) has nothing to check', () => {
     const b = new WarappBundle(MINI_BUNDLE, 'mini');
     expect(b.dialectCheck).toEqual({ verified: [], unverified: [], mismatched: [] });
@@ -189,39 +326,73 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
 });
 
 describe('the bundle cache is pruned and survives a failed version lookup (#131)', () => {
-  const seed = (dataDir: string, files: Record<string, string>, mtimeSec?: Record<string, number>) => {
+  /** Seed `<version>` → body as cached files (content-addressed), plus any other raw file names. */
+  const seed = (dataDir: string, bundles: Record<string, string>, raw: Record<string, string> = {}, mtimeSec: Record<string, number> = {}) => {
     mkdirSync(join(dataDir, 'bundle'), { recursive: true });
-    for (const [name, body] of Object.entries(files)) {
-      const f = join(dataDir, 'bundle', name);
-      writeFileSync(f, body);
-      const t = mtimeSec?.[name];
-      if (t !== undefined) utimesSync(f, t, t);
+    const names: Record<string, string> = {};
+    for (const [version, body] of Object.entries(bundles)) names[cacheName(version, body)] = body;
+    for (const [name, body] of Object.entries({ ...names, ...raw })) writeFileSync(join(dataDir, 'bundle', name), body);
+    for (const [version, t] of Object.entries(mtimeSec)) {
+      const name = Object.hasOwn(bundles, version) ? cacheName(version, bundles[version]) : version;
+      utimesSync(join(dataDir, 'bundle', name), t, t);
     }
   };
+  const loadCurrent = (dataDir: string) =>
+    loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }).fetchText, pageUrl: PAGE });
 
   it('keeps only the version in use once it loads', async () => {
     const dataDir = tempDir();
-    seed(dataDir, { '111.js': MINI_BUNDLE, '222.js': MINI_BUNDLE, '987.js.tmp-2147483646': 'x', 'notes.txt': 'keep' });
-    await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }).fetchText, pageUrl: PAGE });
-    expect(readdirSync(join(dataDir, 'bundle')).sort()).toEqual(['987.js', 'notes.txt']);
+    seed(dataDir, { '111': MINI_BUNDLE, '222': MINI_BUNDLE }, { [`${cacheName('987')}.tmp-2147483646`]: 'x', 'notes.txt': 'keep' });
+    await loadCurrent(dataDir);
+    expect(listCache(dataDir)).toEqual([cacheName('987'), 'notes.txt']);
+  });
+
+  it('prunes the files of earlier layouts (bundles, digests, unfinished writes), never the bundle in use', async () => {
+    const dataDir = tempDir();
+    seed(dataDir, {}, {
+      '111.js': MINI_BUNDLE,
+      '111.js.sha256': `${sha256(MINI_BUNDLE)}\n`,
+      '333.js.sha256': 'orphan',
+      '987.js.sha256.tmp-2147483646-ab12': 'x',
+      '987.js.tmp-2147483646': 'x',
+    });
+    await loadCurrent(dataDir);
+    expect(listCache(dataDir)).toEqual([cacheName('987')]);
+    const f = fakeFetch({ [PAGE]: html(CDN) });
+    await loadBundle({ dataDir, fetchText: f.fetchText, pageUrl: PAGE });
+    expect(f.calls).toEqual([PAGE]);
+  });
+
+  it('prunes another copy of the same version whose digest is not the one loaded', async () => {
+    const dataDir = tempDir();
+    const other = MINI_BUNDLE + '// another build';
+    seed(dataDir, { '987': MINI_BUNDLE }, { [cacheName('987', other)]: other }, { '987': 1_700_000_000 });
+    utimesSync(join(dataDir, 'bundle', cacheName('987', other)), 1_600_000_000, 1_600_000_000);
+    const f = fakeFetch({ [PAGE]: html(CDN) });
+    await loadBundle({ dataDir, fetchText: f.fetchText, pageUrl: PAGE });
+    expect(f.calls).toEqual([PAGE]);
+    expect(listCache(dataDir)).toEqual([cacheName('987')]);
   });
 
   // #140: a partial download belongs to whichever process is writing it; pruning it under a live
   // process makes that process's rename fail.
   it("keeps another live process's partial download, prunes a dead process's or a stale one", async () => {
     const dataDir = tempDir();
-    const live = `987.js.tmp-${process.ppid}`;
-    const dead = '987.js.tmp-2147483646';
-    const stale = `988.js.tmp-${process.ppid}`;
+    const live = `${cacheName('987')}.tmp-${process.ppid}-ab12`;
+    const dead = `${cacheName('987')}.tmp-2147483646`;
+    const stale = `${cacheName('988')}.tmp-${process.ppid}`;
+    const oldLayoutLive = `987.js.tmp-${process.ppid}`;
+    // This process's own leftover, from a write that is no longer in flight.
+    const mine = `${cacheName('986')}.tmp-${process.pid}-cd34`;
     const old = Math.floor(Date.now() / 1000) - 3600;
-    seed(dataDir, { [live]: 'x', [dead]: 'x', [stale]: 'x' }, { [stale]: old });
-    await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }).fetchText, pageUrl: PAGE });
-    expect(readdirSync(join(dataDir, 'bundle')).sort()).toEqual(['987.js', live]);
+    seed(dataDir, {}, { [live]: 'x', [dead]: 'x', [stale]: 'x', [oldLayoutLive]: 'x', [mine]: 'x' }, { [stale]: old });
+    await loadCurrent(dataDir);
+    expect(listCache(dataDir)).toEqual([cacheName('987'), oldLayoutLive, live].sort());
   });
 
   it('falls back to the newest cached copy when the page naming the version cannot be read', async () => {
     const dataDir = tempDir();
-    seed(dataDir, { '111.js': MINI_BUNDLE, '222.js': MINI_BUNDLE }, { '111.js': 1_700_000_000, '222.js': 1_700_000_500 });
+    seed(dataDir, { '111': MINI_BUNDLE, '222': MINI_BUNDLE }, {}, { '111': 1_700_000_000, '222': 1_700_000_500 });
     const fetchText = async () => {
       throw new Error('did not respond within 30000ms');
     };
@@ -229,7 +400,36 @@ describe('the bundle cache is pruned and survives a failed version lookup (#131)
     expect(b.version).toBe('222');
     expect(b.fallback).toBe(true);
     // Nothing is pruned on a fallback: the lookup did not say which version is current.
-    expect(readdirSync(join(dataDir, 'bundle')).sort()).toEqual(['111.js', '222.js']);
+    expect(listCache(dataDir)).toEqual([cacheName('111'), cacheName('222')]);
+  });
+
+  it('falls back only to a copy that still hashes to its name, never to an earlier layout', async () => {
+    const dataDir = tempDir();
+    seed(dataDir, { '111': MINI_BUNDLE, '333': MINI_BUNDLE }, { '444.js': MINI_BUNDLE, '444.js.sha256': `${sha256(MINI_BUNDLE)}\n` }, {
+      '111': 1_700_000_000,
+      '333': 1_700_001_000,
+      '444.js': 1_700_002_000,
+    });
+    // The newest copy changed after it was written: deleted, never loaded. The old-layout copy is ignored.
+    writeFileSync(join(dataDir, 'bundle', cacheName('333')), MINI_BUNDLE + '// changed');
+    utimesSync(join(dataDir, 'bundle', cacheName('333')), 1_700_001_000, 1_700_001_000);
+    const fetchText = async () => {
+      throw new Error('offline');
+    };
+    const b = await loadBundle({ dataDir, fetchText, pageUrl: PAGE });
+    expect(b.version).toBe('111');
+    expect(b.fallback).toBe(true);
+    expect(listCache(dataDir)).toEqual([cacheName('111'), '444.js', '444.js.sha256']);
+  });
+
+  it('still fails when no cached copy verifies', async () => {
+    const dataDir = tempDir();
+    seed(dataDir, {}, { [cacheName('111', 'something else')]: MINI_BUNDLE, '222.js': MINI_BUNDLE });
+    const fetchText = async () => {
+      throw new Error('offline');
+    };
+    await expect(loadBundle({ dataDir, fetchText, pageUrl: PAGE })).rejects.toThrow('offline');
+    expect(listCache(dataDir)).toEqual(['222.js']);
   });
 
   it('still fails when there is no cached copy to fall back to', async () => {
@@ -241,7 +441,7 @@ describe('the bundle cache is pruned and survives a failed version lookup (#131)
 
   it('the provider keeps a fallback copy only for a while, then looks the version up again', async () => {
     const dataDir = tempDir();
-    seed(dataDir, { '111.js': MINI_BUNDLE });
+    seed(dataDir, { '111': MINI_BUNDLE });
     let now = 1_000_000;
     let up = false;
     const calls: string[] = [];

@@ -6,7 +6,7 @@ import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
 import { inGameId, readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
 import type { Game } from '../normalize.js';
-import { BundleProvider } from '../protocol/bundle.js';
+import { BUNDLE_FETCH_TIMEOUT_MS, BUNDLE_MAX_BYTES, BundleProvider } from '../protocol/bundle.js';
 import {
   Method,
   readTerritoryPicks,
@@ -96,11 +96,67 @@ export const IDENTITY_TTL_MS = 60_000;
 
 const onBridge = (url: URL) => BRIDGE_DOMAINS.some((d) => url.hostname === d || url.hostname.endsWith(`.${d}`));
 
+export interface BundleFetchLimits {
+  /** Headers and body together (default {@link BUNDLE_FETCH_TIMEOUT_MS}). */
+  timeoutMs?: number;
+  /** Enforced while the body streams (default {@link BUNDLE_MAX_BYTES}). */
+  maxBytes?: number;
+}
+
+/**
+ * Read a response body as UTF-8, cancelling it as soon as it passes `maxBytes` or `signal` aborts
+ * (the download timed out): nothing keeps pulling the body in the background after that, even when
+ * the fetch itself ignored the signal.
+ */
+async function readCapped(res: Response, maxBytes: number, what: string, signal: AbortSignal): Promise<string> {
+  const tooLarge = () => new Error(`${what} is larger than ${maxBytes} bytes`);
+  const aborted = () => (signal.reason instanceof Error ? signal.reason : new Error(`${what} was aborted`));
+  if (signal.aborted) {
+    await res.body?.cancel().catch(() => {});
+    throw aborted();
+  }
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => {});
+    throw tooLarge();
+  }
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const onAbort = () => {
+    reader.cancel().catch(() => {});
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw aborted();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw tooLarge();
+      }
+      chunks.push(value);
+    }
+    // Decoded as `Response.text()` decodes (a leading byte-order mark dropped), so the cached
+    // bundle is the same text the unbounded read produced.
+    return new TextDecoder().decode(Buffer.concat(chunks));
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 /**
  * GET a URL as text: war.app pages through the signed-in tab (the bridge's
- * only domain), the CDN-hosted bundle directly.
+ * only domain), the CDN-hosted bundle directly — with a timeout over the whole
+ * download and a byte cap enforced while the body streams, so an endless or
+ * enormous response is cut off rather than buffered.
  */
-export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch = fetch) {
+export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch = fetch, limits: BundleFetchLimits = {}) {
+  const timeoutMs = limits.timeoutMs ?? BUNDLE_FETCH_TIMEOUT_MS;
+  const maxBytes = limits.maxBytes ?? BUNDLE_MAX_BYTES;
   return async (url: string): Promise<string> => {
     const u = new URL(url);
     if (onBridge(u)) {
@@ -108,9 +164,28 @@ export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch 
       if (res.status !== 200) throw new Error(`war.app answered HTTP ${res.status} for ${u.pathname}`);
       return res.body;
     }
-    const res = await fetchImpl(u.href, { redirect: 'error' });
-    if (!res.ok) throw new Error(`${u.hostname} answered HTTP ${res.status} for the client bundle`);
-    return res.text();
+    const ac = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Raced as well as signalled, so a fetch that ignores the signal still cannot hang the load; the
+    // body reader is cancelled on the same signal, so nothing keeps pulling after the timeout.
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const e = new Error(`${u.hostname} timed out after ${timeoutMs} ms fetching the client bundle`);
+        ac.abort(e);
+        reject(e);
+      }, timeoutMs);
+    });
+    const download = (async () => {
+      const res = await fetchImpl(u.href, { redirect: 'error', signal: ac.signal });
+      if (!res.ok) throw new Error(`${u.hostname} answered HTTP ${res.status} for the client bundle`);
+      return readCapped(res, maxBytes, `the client bundle from ${u.hostname}`, ac.signal);
+    })();
+    try {
+      return await Promise.race([download, timedOut]);
+    } finally {
+      clearTimeout(timer);
+      download.catch(() => {}); // a download still settling after a timeout is not unhandled
+    }
   };
 }
 

@@ -99,7 +99,7 @@ state:
     ($HOME/.fetchproxy/identity/warapp-mcp.json) is what the browser extension
     paired with: without a persistent $HOME every cold start mints a new
     identity and asks the user to pair again. And the war.app client bundle
-    (ujs.js, ~16 MB) is cached under $MCP_DATA_DIR/bundle/<version>.js: the
+    (ujs.js, ~16 MB) is cached under $MCP_DATA_DIR/bundle/<version>.<sha256>.js: the
     live board is decoded with the client's own readers, so without the cache
     every cold start downloads it again. The per-map GameFeed cache lives in
     memory and needs no state.

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { Writer } from '../src/protocol/codec.js';
+import { Reader, Writer } from '../src/protocol/codec.js';
+import type { ReadBudget } from '../src/protocol/interp.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { feedScreen, filterOpenGames, OPEN_GAMES_URL, openGameOf, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
+import { feedScreen, filterOpenGames, GAME_INFO, MAX_OPEN_GAMES, OPEN_GAMES_URL, openGameOf, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
 import { liveHarness, payload, textOf, type Harness } from './helpers.js';
 import { MY_GAMES_BUNDLE, writeGameInfo, type SyntheticGame } from './protocol/my-games-bundle.js';
 
@@ -289,6 +290,56 @@ describe('parseOpenGamesPage', () => {
   it('accepts the script tag with its attributes in any order and lowercase hex', () => {
     const html = `<script id="AllOpenGamesData" type="text/plain">\n${payloadHex(GAMES).toLowerCase()}\n</script>`;
     expect(parseOpenGamesPage(html, bundle).games).toHaveLength(5);
+  });
+
+  describe('bounds on a hostile payload or bundle', () => {
+    /** A one-class bundle whose GameInfo reader is `body` (hand-written, not the real client). */
+    const hostile = (body: string, opts?: ConstructorParameters<typeof WarappBundle>[2]) =>
+      new WarappBundle(`function Gi(){}W["${GAME_INFO}"]=Gi;Gi.Ha=function(a,b,d){${body}};`, 'test', opts);
+    const counted = (b: WarappBundle) => {
+      let calls = 0;
+      return {
+        calls: () => calls,
+        reader: {
+          readClass: (t: string, r: Reader, budget?: ReadBudget) => {
+            calls++;
+            return b.readClass(t, r, budget);
+          },
+        },
+      };
+    };
+
+    it('refuses a record count above the cap without reading a record', () => {
+      const c = counted(bundle);
+      const t = Date.now();
+      const out = parseOpenGamesPage(page('FFFFFF7F'), c.reader);
+      expect(Date.now() - t).toBeLessThan(1000);
+      expect(c.calls()).toBe(0);
+      expect(out.games).toEqual([]);
+      expect(out.note).toMatch(/could not be read/i);
+      const over = parseOpenGamesPage(page(hexOf(new Writer().int32(MAX_OPEN_GAMES + 1).bytes())), bundle);
+      expect(over.note).toMatch(/could not be read/i);
+    });
+
+    it('stops at a record that takes no bytes', () => {
+      const c = counted(hostile('return null'));
+      const out = parseOpenGamesPage(page(hexOf(new Writer().int32(MAX_OPEN_GAMES).bytes())), c.reader);
+      expect(c.calls()).toBe(1);
+      expect(out.games).toEqual([]);
+      expect(out.note).toMatch(/could not be read/i);
+    });
+
+    it('spends one step budget on the whole page, not one per record', () => {
+      // Each record takes one byte and burns steps; alone each fits the budget, together they do not.
+      const b = hostile('a.bc();var i;for(i=0;i<3000;i++){}return null', { maxSteps: 50_000 });
+      const w = new Writer().int32(1000);
+      for (let i = 0; i < 1000; i++) w.u8(0);
+      const c = counted(b);
+      const out = parseOpenGamesPage(page(hexOf(w.bytes())), c.reader);
+      expect(c.calls()).toBeLessThan(20);
+      expect(out.note).toMatch(/could not be read/i);
+      expect(out.note).toMatch(/steps/);
+    });
   });
 });
 

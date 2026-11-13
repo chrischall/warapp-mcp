@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   DATE_EPOCH_MS,
   MAX_DATE,
+  MAX_EMPTY_ITEMS,
+  MAX_WIRE_COUNT,
   PREAMBLE,
   ProtocolError,
   Reader,
@@ -172,6 +174,108 @@ describe('malformed input', () => {
     expectProtocolError(() => reader('ffffffffff01').varint(), 'bad-varint');
     expectProtocolError(() => reader('0102c328').string(), 'bad-string');
     expectProtocolError(() => reader('feffffff').list((r) => r.int32()), 'bad-length');
+  });
+
+  it('raw(n) refuses a negative, fractional or NaN length and leaves the position unchanged', () => {
+    for (const n of [-4, Number.NaN, 1.5, Number.POSITIVE_INFINITY]) {
+      const r = reader('0102030405060708');
+      r.int32();
+      expectProtocolError(() => r.raw(n), 'bad-length');
+      expect(r.position).toBe(4);
+      expect(r.u8()).toBe(5);
+    }
+  });
+
+  it('raw(n) past the end is truncated and leaves the position unchanged', () => {
+    const r = reader('01020304');
+    r.u8();
+    expectProtocolError(() => r.raw(4), 'truncated');
+    expect(r.position).toBe(1);
+    expect(r.raw(3)).toEqual(new Uint8Array([2, 3, 4]));
+    expect(r.raw(0)).toEqual(new Uint8Array(0));
+  });
+
+  it('a string whose varint length exceeds the frame is truncated, not read', () => {
+    // present, length 2^28 (varint 80 80 80 80 01), one byte of data
+    expectProtocolError(() => reader('01808080800161').string(), 'truncated');
+  });
+
+  it('refuses a list count above the absolute cap', () => {
+    const w = new Writer().int32(MAX_WIRE_COUNT + 1);
+    expectProtocolError(() => new Reader(w.bytes()).list((r) => r.u8()), 'bad-length');
+    expectProtocolError(
+      () =>
+        new Reader(w.bytes()).dict(
+          (r) => r.u8(),
+          (r) => r.u8(),
+        ),
+      'bad-length',
+    );
+  });
+
+  it('refuses a huge list of zero-byte items quickly, without allocating it', () => {
+    const w = new Writer().int32(0x7fffffff);
+    let calls = 0;
+    expectProtocolError(
+      () =>
+        new Reader(w.bytes()).list(() => {
+          calls++;
+          return 1;
+        }),
+      'bad-length',
+    );
+    // The item reader ran at most once: the count was refused before the loop (no timing assertion,
+    // which could flake on a loaded runner).
+    expect(calls).toBeLessThanOrEqual(1);
+  });
+
+  it('refuses a list of zero-byte items above the empty-item cap, under the absolute cap', () => {
+    const w = new Writer().int32(MAX_EMPTY_ITEMS + 1);
+    let calls = 0;
+    expectProtocolError(
+      () =>
+        new Reader(w.bytes()).list(() => {
+          calls++;
+          return null;
+        }),
+      'bad-length',
+    );
+    expect(calls).toBe(1);
+    expectProtocolError(
+      () =>
+        new Reader(w.bytes()).dict(
+          () => calls++,
+          () => null,
+        ),
+      'bad-length',
+    );
+  });
+
+  it('still reads zero-byte items up to the empty-item cap', () => {
+    const w = new Writer().int32(MAX_EMPTY_ITEMS);
+    const out = new Reader(w.bytes()).list(() => 0);
+    expect(out).toHaveLength(MAX_EMPTY_ITEMS);
+  });
+
+  it('still decodes empty lists and lists of empty strings', () => {
+    const w = new Writer()
+      .list<string>([], (ww, s) => ww.string(s))
+      .list(['', '', 'a', ''], (ww, s) => ww.string(s))
+      .dict(
+        new Map([[1, '']]),
+        (ww, k) => ww.int32(k),
+        (ww, v) => ww.string(v),
+      );
+    const r = new Reader(w.bytes());
+    expect(r.list((rr) => rr.string())).toEqual([]);
+    expect(r.list((rr) => rr.string())).toEqual(['', '', 'a', '']);
+    expect(
+      r.dict(
+        (rr) => rr.int32(),
+        (rr) => rr.string(),
+      ),
+    ).toEqual(new Map([[1, '']]));
+    expect(r.remaining).toBe(0);
   });
 
   it('refuses to encode out-of-range values', () => {
