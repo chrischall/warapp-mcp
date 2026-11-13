@@ -418,6 +418,28 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
 When an in-progress game is captured live, record its shape here, add an anonymized fixture,
 tighten `boardFromStanding`, and set `verified: true`.
 
+## End of game, boot and AI seats — keys verified (lobby), meanings UNVERIFIED (#178)
+
+`parseEndRules` (`Game.endRules`) reads, from `settings`: `InstantSurrender`,
+`SurrenderedPlayersTurnIntoAIs`, `BootedPlayersTurnIntoAIs`, `TimesCanComeBackFromAI`,
+`AIsSurrenderWhenOneHumanRemains`, `DirectBoot` / `AutoBoot` (minutes; `2880.0` on the lobby),
+`BankingBootTimes` (`{ BankAmount, InitialBankInMinutes }`) and `AllowVacations`. The keys and
+types are verified on the lobby fixture.
+
+- `InstantSurrender` came as the **string** `"Instant"`; the client bundle reads the setting as a
+  boolean, and its surrender toast says "has surrendered" when it is on and "'s surrender has been
+  accepted" when off. Read: booleans and `True`/`False`, `Instant` = on, a few spellings of "not
+  instant" = off; any other string is kept (`instantSurrenderRaw`) and treated as unknown.
+  **UNVERIFIED:** the string GameFeed sends when it is off, and whether a two-player game with it off
+  really waits for the opponent to accept. `warapp_surrender` reads acceptance from it, falling back
+  to the player count (more than two players) when it does not read.
+- `AIsSurrenderWhenOneHumanRemains` (wiki): once one human is left the AIs give up, so the profile's
+  `endsWith` names the last other human. **UNVERIFIED** live.
+- Boots (`leavers`): a human still `Playing` who has not committed, with the minutes left until
+  `AutoBoot` / `DirectBoot`, counted from the game's `lastTurnTime`. **UNVERIFIED:** what
+  `lastTurnTime` marks (taken as the moment the turn began); banked boot time and vacations are not
+  counted. A booted seat becomes an AI when `BootedPlayersTurnIntoAIs`, else its land turns neutral.
+
 ## A lobby's settings for the join screen — UNVERIFIED (#132)
 
 `warapp_join_game`'s preview reads the lobby with `GetSettings=true` for what the open-games record

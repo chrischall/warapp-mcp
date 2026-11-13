@@ -3,7 +3,8 @@
 // contact phase needs a real front (#132): an enemy stack that can take a territory of mine
 // as the board stands, or most of my borders facing enemies — not one enemy territory beside me. Pure and deterministic;
 // no I/O. The planner (rule 0p in planner.ts) reads it to pick a default goal and to tune
-// its scoring; the plan echoes it.
+// its scoring; the plan echoes it. #178: it counts the humans still playing and the AI opponents, and names who
+// the game ends with when the AIs surrender to the last human (`endsWith`).
 
 import type { BoardState } from '../board.js';
 import { carriesTeam } from '../teams.js';
