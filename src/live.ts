@@ -58,9 +58,11 @@ export const OWNER_PICKABLE = -2;
  * fog level 4, owner -1 and `Armies(0, fogged)`.
  */
 export const FOG_LEVEL_NAMES: Readonly<Record<number, string>> = { 1: 'You', 2: 'Visible', 3: 'OwnerOnly', 4: 'Fogged' };
+export const FOG_LEVEL_YOU = 1;
+export const FOG_LEVEL_VISIBLE = 2;
 export const FOG_LEVEL_OWNER_ONLY = 3;
 export const FOG_LEVEL_FOGGED = 4;
-const KNOWN_FOG_LEVELS: ReadonlySet<number> = new Set([1, 2, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_FOGGED]);
+const KNOWN_FOG_LEVELS: ReadonlySet<number> = new Set([FOG_LEVEL_YOU, FOG_LEVEL_VISIBLE, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_FOGGED]);
 
 /** One territory as the viewer's standing has it. */
 export interface LiveTerritory {
@@ -246,7 +248,7 @@ export function standingFromInfo(info: unknown): LiveTerritory[] | null {
  * without "one army stands guard"); all of them at once is not a board war.app would send.
  */
 function checkArmies(territories: readonly LiveTerritory[]): void {
-  const mine = territories.filter((t) => t.fogLevel === 1 && t.armies !== null);
+  const mine = territories.filter((t) => t.fogLevel === FOG_LEVEL_YOU && t.armies !== null);
   if (mine.length && mine.every((t) => t.armies === 0)) {
     throw new LiveBoardFormatError(
       `every territory of yours reads 0 armies (${mine.length} of them), so the army count was not read from the right field`,
