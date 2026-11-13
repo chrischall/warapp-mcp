@@ -402,8 +402,13 @@ describe('a two-step hold is stated once, with the final stay (#172)', () => {
   // armies both meet the hold.
   const attackMap = makeMap([...IDS, 6], [...EDGES, [1, 6]], [...KEEP, [102, 3, [6]]]);
   const attackBoard = board([...reported(98).territories, neutral(6, 2)]);
+  // T7 (mine, 30) behind T1, interior: rule 6 moves its idle armies one step toward the front,
+  // into T1 — they end the plan on T1 and count toward its hold.
+  const behindMap = makeMap([...IDS, 7], [...EDGES, [1, 7]], KEEP);
+  const behindBoard = board([...reported(98).territories, mine(7, 30)]);
   const cases: [string, GameMap, BoardState, number][] = [
     ['reported, income 40', reportedMap, reported(98), 40],
+    ['an interior transfer lands on it', behindMap, behindBoard, 40],
     ['reported, income 30', reportedMap, reported(98), 30],
     ['reported, small stack', reportedMap, reported(12), 40],
     ['an attack out of it', attackMap, attackBoard, 40],
@@ -420,7 +425,23 @@ describe('a two-step hold is stated once, with the final stay (#172)', () => {
       // Short of the hold: the rest comes next turn, and says how much.
       expect(s.bring).toBe(Math.max(0, s.needs - s.kept));
     }
+    // An order cites a hold only when the end of the plan states it (one that no longer applies
+    // there is dropped, citations and all), and no citation mark is left in the text.
+    const text = p.rationale.join('\n');
+    expect(text).not.toMatch(/[\u0001-\u0003]/);
+    const cited = p.rationale.filter((l) => l.includes('its hold against a stack two steps away'));
+    for (const line of cited) expect(ts.some((t) => line.includes(`T${t} (#${t})`))).toBe(true);
     expect(valid(map, p, b, income)).toEqual([]);
+  });
+
+  it('an interior transfer into the held territory counts in its final stay', () => {
+    const p = plan(behindMap, behindBoard, 40);
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 7, to: 1, kind: 'transfer' }));
+    const [s] = statements(p);
+    expect(s).toBeDefined();
+    expect(s!.t).toBe(1);
+    expect(s!.kept).toBe(finalAt(behindBoard, p, 1));
+    expect(s!.kept).toBeGreaterThan(28);
   });
 
   it('an order that keeps the hold names it without restating its numbers', () => {

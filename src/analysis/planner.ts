@@ -1201,6 +1201,14 @@ export const LUCK_WIN_CHANCE = 0.95;
  * is judged against the fewest attackers that win more often than this.
  */
 export const HOLD_FALL_CHANCE = 0.05;
+/**
+ * Marks around a rationale clause citing a two-step hold (#172): `OPEN <territory> SEP <clause>
+ * CLOSE`, resolved at the end of the plan (kept if the hold still applies, dropped if not).
+ */
+const CITE_OPEN = '\u0001';
+const CITE_SEP = '\u0002';
+const CITE_CLOSE = '\u0003';
+const CITE_RE = /\u0001(\d+)\u0002([^\u0003]*)\u0003/g;
 export function defaultMinWinChance(settings: PlannerSettings = {}): number {
   return luckFraction(settings.luckModifier) > 0 ? LUCK_WIN_CHANCE : 1;
 }
@@ -3038,6 +3046,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    */
   const twoStepCited = new Map<number, TwoStepHoldAt>();
   /**
+   * Armies rule 6 moves into each territory of mine (staging and idle interior transfers), which
+   * {@link stayAt}'s `incoming` leaves out: they end the plan there, so a two-step hold counts them.
+   */
+  const arrived = new Map<number, number>();
+  /** {@link stayAt} with rule 6's arrivals: what stays on my `t` once every order has run. */
+  const finalStayAt = (t: number) => stayAt(t) + (arrived.get(t) ?? 0);
+  /**
    * Territories whose two-step hold kept back armies some order could otherwise have used (an
    * attack's size, a softener, a finisher, a top-up): each is explained at the end, unless an
    * order already said so.
@@ -3110,7 +3125,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const stay = Math.max(0, needs - unitsAt(t));
       // Hopeless — not even what is there now and what next turn can deploy there make it hold:
       // keeping its armies home saves nothing (as {@link keepFor} judges a one-step hold).
-      if (stayAt(t) + nextRoomAt(t) < stay) continue;
+      if (finalStayAt(t) + nextRoomAt(t) < stay) continue;
       if (!best || stay > best.stay) best = { stay, needs, reach: r };
     }
     if (!best || best.stay <= 0) return null;
@@ -3137,21 +3152,26 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /**
    * An order that keeps `t`'s two-step hold (#172) names it, without numbers: the hold is stated
    * once, at the end ({@link twoStepNote}), with the stay the plan ends on — a stay read mid-plan
-   * disagrees with the orders after it.
+   * disagrees with the orders after it. `clause` renders the rationale text that names it; the
+   * text is marked, so the end of the plan keeps it only if the hold still applies then (a later
+   * capture or a smaller stay can end it), and drops it otherwise.
    */
-  const twoStepCite = (t: number, h: TwoStepHoldAt) => {
+  const twoStepCite = (t: number, h: TwoStepHoldAt, clause: (cite: string) => string) => {
     twoStepCited.set(t, h);
-    return 'its hold against a stack two steps away';
+    return `${CITE_OPEN}${t}${CITE_SEP}${clause('its hold against a stack two steps away')}${CITE_CLOSE}`;
   };
   /**
-   * The rationale clause for a two-step hold (#172), at the end of the plan. A hold kept short of
-   * what it needs (kept because next turn's deploy can make up the rest) says how many more to bring.
+   * The rationale clause for a two-step hold (#172), at the end of the plan: the armies the plan
+   * ends with there (rule 6's arrivals included), its special units named, since they count toward
+   * what it needs. A hold kept short of that (kept because next turn's deploy can make up the rest)
+   * says how many more to bring.
    */
   const twoStepNote = (t: number, h: TwoStepHoldAt) => {
     const r = h.reach;
-    const kept = stayAt(t);
-    const short = h.stay - kept;
-    return `kept ${kept} on ${label(t)}: player ${r.opponent} can reach it next turn from ${label(r.from)} via ${label(r.via)} (~${r.attackers} attacking; it needs ${h.needs} to hold${short > 0 ? `; bring ${short} more next turn` : ''})`;
+    const kept = finalStayAt(t);
+    const units = unitsAt(t);
+    const short = h.needs - units - kept;
+    return `kept ${kept} on ${label(t)}${units ? ` (with its special units, worth ${units})` : ''}: player ${r.opponent} can reach it next turn from ${label(r.from)} via ${label(r.via)} (~${r.attackers} attacking; it needs ${h.needs} to hold${short > 0 ? `; bring ${short} more next turn` : ''})`;
   };
   /**
    * Fill `threatened` from `borders`, judging each by the armies that stay on it (its
@@ -4844,7 +4864,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         sent > tg.cost ? `, the whole stack (No-Split; ${tg.cost} would take it)` : ''
       }: ${reason}.`,
     );
-    if (farBinds) rationale.push(`The attack on ${label(t)} leaves ${label(src)} ${twoStepCite(src, far!)}.`);
+    if (farBinds) rationale.push(twoStepCite(src, far!, (c) => `The attack on ${label(t)} leaves ${label(src)} ${c}.`));
     else if (forHold > 0) {
       const th = borderAt(src, (n) => captured.has(n));
       if (th)
@@ -8049,9 +8069,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         avail.set(t, n - k);
         const reason = `stages toward ${label(st.t)}, the next step of bonus ${bonusName(st.bonusId)}`;
         moves.push({ from: t, to: step, armies: k, kind: 'transfer', reason });
+        arrived.set(step, (arrived.get(step) ?? 0) + k);
         rationale.push(
           `Move ${k} from ${label(t)} to ${label(step)}: ${reason} (${st.cost} to take from ${label(st.from)}, not affordable this turn)${
-            k < n && far ? `; the rest stay: ${twoStepCite(t, far)}` : ''
+            k < n && far ? twoStepCite(t, far, (c) => `; the rest stay: ${c}`) : ''
           }.`,
         );
       }
@@ -8092,7 +8113,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const k = noSplit && part < n ? 0 : part;
       if (k <= 0) {
         if (twoStep)
-          rationale.push(`Keep the ${n} idle armies on ${label(t)}: ${twoStepCite(t, twoStep)}.`);
+          rationale.push(twoStepCite(t, twoStep, (c) => `Keep the ${n} idle armies on ${label(t)}: ${c}.`));
         else if (pending.length)
           rationale.push(
             `Keep the ${n} idle armies on ${label(t)}: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat}.`,
@@ -8106,10 +8127,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       avail.set(t, n - k);
       const reason = 'moves idle interior armies toward the front';
       moves.push({ from: t, to: step, armies: k, kind: 'transfer', reason });
+      arrived.set(step, (arrived.get(step) ?? 0) + k);
       rationale.push(
         `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${
           k < n && twoStep
-            ? ` (the rest stay: ${twoStepCite(t, twoStep)})`
+            ? twoStepCite(t, twoStep, (c) => ` (the rest stay: ${c})`)
             : k < n
             ? ` (${stayAt(t)} stay: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat})`
             : ''
@@ -8217,10 +8239,22 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   }
   // #172: each two-step hold an order cited, or that shrank or ruled out an order (a pressure
   // attack's size, a softener, a finisher, a top-up), is stated once, with the stay the plan ends
-  // on (an order's own note would read the stay mid-plan).
+  // on (an order's own note would read the stay mid-plan) — if it still applies at the end. One
+  // that no longer does (a later capture took the territory in between, or the stay fell so far
+  // that holding is hopeless) is not stated, and the orders' citations of it are dropped.
+  const stillHeld = new Set<number>();
   for (const t of [...new Set([...twoStepBound, ...twoStepCited.keys()])].sort(byNum)) {
-    const h = twoStepHold(t) ?? twoStepCited.get(t);
-    if (h) rationale.push(`Hold ${label(t)} against a stack two steps away (${twoStepNote(t, h)}).`);
+    const h = twoStepHold(t);
+    if (!h) continue;
+    stillHeld.add(t);
+    rationale.push(`Hold ${label(t)} against a stack two steps away (${twoStepNote(t, h)}).`);
+  }
+  for (let i = rationale.length - 1; i >= 0; i--) {
+    const line = rationale[i]!;
+    if (!line.includes(CITE_OPEN)) continue;
+    const text = line.replace(CITE_RE, (_m, t: string, clause: string) => (stillHeld.has(Number(t)) ? clause : ''));
+    if (text.trim()) rationale[i] = text;
+    else rationale.splice(i, 1);
   }
   if (frontier.enemyBorders)
     rationale.push(
