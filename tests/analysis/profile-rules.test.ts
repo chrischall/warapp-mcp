@@ -109,8 +109,10 @@ describe('rule 0p.1: a 1v1 in contact', () => {
     expect(p.profile).toMatchObject({ format: '1v1', phase: 'contact', standing: 'even' });
     expect(why(p)).toMatch(/Deploy 3 to T2 \(#2\) so it holds \(protects \+2\)/);
     expect(p.conceded).toEqual([]);
-    // The 2 left cannot fund the advance (3): it waits.
-    expect(attacks(p)).toEqual([]);
+    // The 2 left cannot fund the advance (3): it waits. They build the strike stack on T2 (7), which
+    // spends it (#102): T8 (2) falls to 3, and the 4 that stay hold against the ~5 deploy alone.
+    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[2, 8, 3]]);
+    expect(why(p)).toMatch(/Attack T8 \(#8\) from the strike stack T2 \(#2\) with 3 \(win chance 100%\)/);
     expect(why(p)).toMatch(/1v1 in contact: breaking an enemy bonus counts like completing one of equal value/);
   });
 

@@ -77,7 +77,7 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   picks it (`goalSource: "profile"` — defend when behind on income in an FFA or team game; in a 1v1
   behind on income it strikes instead: breaks the opponent's bonuses, also ones the tracker infers
   behind the fog) and the first rationale line says why. `view: "full"` lists the offensive
-  options considered (breaks, counter-attacks, and in a 1v1 the strike stack) in `offence`.
+  options considered (breaks, counter-attacks, and in a 1v1 the strike stack and each attack from it) in `offence`.
   Pass a `goal` only when the user asks for one: it overrides the profile. In a Commanders game it counts each
   commander as 7 armies, never concedes the territory holding the user's commander, and
   attacks an adjacent enemy commander first (killing it eliminates that player) once the user's
@@ -229,7 +229,7 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 5. **The overall shape.** The planner is single-turn: it charges each capture for the frontier
    it adds, commits to the bonus closest to completion until one is held (keeping last turn's
    unless another is strictly closer) and, in a 1v1, breaks probable enemy bonuses and builds a
-   strike stack, but it does not plan a campaign over several turns. In an FFA it never concentrates on one front and avoids
+   strike stack that attacks every adjacent enemy territory it can take while keeping its hold, but it does not plan a campaign over several turns. In an FFA it never concentrates on one front and avoids
    second fronts; judge yourself when a leader must be attacked.
 
 Every ~3 turns, step back and compare income trends (yours vs each opponent), frontier vs

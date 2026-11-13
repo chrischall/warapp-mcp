@@ -588,7 +588,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'no second front (a player threatening none of your bonuses is not attacked while a neutral of similar ' +
           'value exists; finishing one off still is); behind, attacks are sized at the minimum; behind on armies in a 1v1, no capture of ' +
           "a player's territory that loses more armies than it kills; in a 1v1, spare deploys build one strike stack on the border " +
-          `facing the opponent; ahead in a 1v1, fog ` +
+          'facing the opponent, which attacks every adjacent enemy territory it can take (bonus breaks and retakes first) while ' +
+          `keeping what holds it; ahead in a 1v1, fog ` +
           `pressure is allowed up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. An explicit \`goal\` overrides the ` +
           'profile (the rationale says so). Goals: "balanced" (default) — the profile\'s base — ' +
           'spends income where it earns most per army — holding borders that protect income, completing ' +
