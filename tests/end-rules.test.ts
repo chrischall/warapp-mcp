@@ -49,6 +49,7 @@ describe('parseEndRules (#178)', () => {
 describe('parseFeedTime', () => {
   it('reads the feed\'s M/D/YYYY HH:MM:SS as UTC', () => {
     expect(parseFeedTime('11/3/2026 07:05:09')).toBe(Date.UTC(2026, 10, 3, 7, 5, 9));
+    expect(parseFeedTime('2026-01-02T03:04:05')).toBe(Date.UTC(2026, 0, 2, 3, 4, 5));
     expect(parseFeedTime('not a date')).toBeUndefined();
     expect(parseFeedTime(undefined)).toBeUndefined();
   });

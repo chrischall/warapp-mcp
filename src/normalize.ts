@@ -517,12 +517,15 @@ export function parseEndRules(raw: unknown): EndRules {
   return out;
 }
 
-/** A feed time (`M/D/YYYY HH:MM:SS`, UTC assumed, docs/WARAPP-API.md) as epoch ms; `undefined` when unreadable. */
+/** A feed time (`M/D/YYYY HH:MM:SS` live, or ISO `YYYY-MM-DDTHH:MM:SS`; UTC assumed, docs/WARAPP-API.md) as epoch ms; `undefined` when unreadable. */
 export function parseFeedTime(s: string | undefined): number | undefined {
   if (s === undefined) return undefined;
-  const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*$/.exec(s);
-  if (!m) return undefined;
-  const [, mo, d, y, h, mi, se] = m.map(Number) as number[];
+  const us = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*$/.exec(s);
+  const iso = /^\s*(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z?\s*$/.exec(s);
+  if (!us && !iso) return undefined;
+  const [, mo, d, y, h, mi, se] = us
+    ? (us.map(Number) as number[])
+    : ([0, iso![2], iso![3], iso![1], iso![4], iso![5], iso![6]].map(Number) as number[]);
   const t = Date.UTC(y!, mo! - 1, d!, h!, mi!, se!);
   return Number.isFinite(t) ? t : undefined;
 }

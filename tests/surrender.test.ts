@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
+import { recordOutlook } from '../src/outlook-log.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 
 let h: Harness | undefined;
@@ -18,13 +19,24 @@ interface FeedPlayer {
   id: string;
   name: string;
   state: string;
+  isAI?: string;
+  hasCommittedOrders?: string;
 }
 
 const me = (state = 'Playing'): FeedPlayer => ({ id: ME.feed, name: 'Me', state });
 const opp = (n: number, state = 'Playing'): FeedPlayer => ({ id: String(1000 + n), name: `Opponent ${n}`, state });
 
-/** A GameFeed game `GAME_ID` named `name` in `state` with `players`. */
-function feedGame(players: FeedPlayer[], state = 'Playing', name = 'Synthetic Duel'): Record<string, unknown> {
+/**
+ * A GameFeed game `GAME_ID` named `name` in `state` with `players`; `settings` override the
+ * lobby fixture's (whose surrender is instant). Everyone has committed unless a player says not,
+ * so no one is close to a boot.
+ */
+function feedGame(
+  players: FeedPlayer[],
+  state = 'Playing',
+  name = 'Synthetic Duel',
+  settings: Record<string, unknown> = {},
+): Record<string, unknown> {
   const f = lobbyFixture();
   const template = (f.players as Array<Record<string, string>>)[0]!;
   return {
@@ -33,9 +45,12 @@ function feedGame(players: FeedPlayer[], state = 'Playing', name = 'Synthetic Du
     name,
     state,
     numberOfTurns: '5',
-    players: players.map((p) => ({ ...template, ...p })),
+    settings: { ...(f.settings as Record<string, unknown>), ...settings },
+    players: players.map((p) => ({ ...template, hasCommittedOrders: 'True', ...p })),
   };
 }
+/** Surrender needs the others' acceptance. */
+const VOTE = { InstantSurrender: false };
 
 const DUEL = [me(), opp(1)];
 const THREE = [me(), opp(1), opp(2)];
@@ -94,9 +109,9 @@ describe('warapp_surrender', () => {
     expect(p).toMatchObject({ status: 'surrendered', game: { id: GAME_ID, name: 'Synthetic Duel' } });
   });
 
-  it('reports a 3-player surrender as pending the others\' acceptance, not surrendered', async () => {
+  it('reports a 3-player surrender as pending the others\' acceptance when the setting asks for it, not surrendered', async () => {
     const s = surrenderServer();
-    h = await harness([feedGame(THREE)], s.warapp);
+    h = await harness([feedGame(THREE, 'Playing', 'Synthetic Duel', VOTE)], s.warapp);
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.sent).toHaveLength(1);
     expect(p.status).toBe('pending');
@@ -172,7 +187,7 @@ describe('warapp_surrender', () => {
   describe('undo', () => {
     it('previews taking back the pending surrender, then sends surrender=false', async () => {
       const s = surrenderServer();
-      h = await harness([feedGame(THREE, 'Playing', 'Synthetic Brawl')], s.warapp);
+      h = await harness([feedGame(THREE, 'Playing', 'Synthetic Brawl', VOTE)], s.warapp);
       const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID, undo: true }));
       const text = JSON.stringify(preview);
       expect(text).toContain(`take back your pending surrender in game ${GAME_ID}`);
@@ -188,8 +203,9 @@ describe('warapp_surrender', () => {
 
     it('reports surrendered when the others accepted before the take-back landed', async () => {
       const s = surrenderServer();
-      const after = feedGame([me('SurrenderAccepted'), opp(1), opp(2)]);
-      h = await harness([feedGame(THREE), feedGame(THREE), after], s.warapp);
+      const after = feedGame([me('SurrenderAccepted'), opp(1), opp(2)], 'Playing', 'Synthetic Duel', VOTE);
+      const three = feedGame(THREE, 'Playing', 'Synthetic Duel', VOTE);
+      h = await harness([three, three, after], s.warapp);
       const p = payload(await confirmed({ game_id: GAME_ID, undo: true }));
       expect(p.status).toBe('surrendered');
     });
@@ -208,6 +224,88 @@ describe('warapp_surrender', () => {
       expect(res.isError).toBe(true);
       expect(textOf(res)).toMatch(/no pending surrender/i);
       expect(s.sent).toEqual([]);
+    });
+  });
+
+  describe('the settings and the outlook (#178)', () => {
+    it('reads acceptance from the setting, not the player count: an instant surrender in a 3-player game ends it at once', async () => {
+      const s = surrenderServer();
+      h = await harness([feedGame(THREE)], s.warapp);
+      const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID }));
+      const v = preview.preview as Record<string, unknown>;
+      expect(v.acceptance).toMatchObject({ needed: false, from: 'setting' });
+      expect(JSON.stringify(preview)).not.toMatch(/others must accept/);
+      const p = payload(await h.call('warapp_surrender', { game_id: GAME_ID, confirmToken: preview.confirmToken }));
+      // Still Playing after an instant surrender is not a pending one.
+      expect(p.status).toBe('unchanged');
+    });
+
+    it('refuses to take back an instant surrender in any game, which is never pending', async () => {
+      h = await harness([feedGame(THREE)]);
+      const res = await h.call('warapp_surrender', { game_id: GAME_ID, undo: true });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toMatch(/no pending surrender.*instant/i);
+    });
+
+    it('allows pending and undo in a two-player game when the setting says surrender is not instant (UNVERIFIED that it waits)', async () => {
+      const s = surrenderServer();
+      h = await harness([feedGame(DUEL, 'Playing', 'Synthetic Duel', VOTE)], s.warapp);
+      const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID }));
+      const v = preview.preview as Record<string, unknown>;
+      expect(v.acceptance).toMatchObject({ needed: true, from: 'setting' });
+      expect(String((v.acceptance as { note: string }).note)).toMatch(/UNVERIFIED/);
+      const p = payload(await h.call('warapp_surrender', { game_id: GAME_ID, confirmToken: preview.confirmToken }));
+      expect(p.status).toBe('pending');
+      const undo = payload(await h.call('warapp_surrender', { game_id: GAME_ID, undo: true }));
+      expect(undo.confirmToken).toEqual(expect.any(String));
+    });
+
+    it('falls back to the player count when the setting cannot be read, and says so', async () => {
+      h = await harness([feedGame(THREE, 'Playing', 'Synthetic Duel', { InstantSurrender: 'Mystery' })]);
+      const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID }));
+      const v = preview.preview as Record<string, unknown>;
+      expect(v.acceptance).toMatchObject({ needed: true, from: 'player count' });
+      expect(String((v.acceptance as { note: string }).note)).toMatch(/could not be read/);
+    });
+
+    it('says what my land becomes and which opponents are AIs', async () => {
+      h = await harness([
+        feedGame([me(), { ...opp(1), isAI: 'True' }, opp(2)], 'Playing', 'Synthetic Duel', { SurrenderedPlayersTurnIntoAIs: true }),
+      ]);
+      const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID }));
+      const v = preview.preview as Record<string, unknown>;
+      expect(v.yourLandBecomes).toBe('AI');
+      expect(v.aiOpponents).toEqual([{ id: 1001, name: '⟦Opponent 1⟧' }]);
+      await h.harness.close();
+      h = await harness([feedGame(DUEL)]);
+      const plain = payload(await h.call('warapp_surrender', { game_id: GAME_ID })).preview as Record<string, unknown>;
+      expect(plain.yourLandBecomes).toBe('neutral');
+      expect(plain.aiOpponents).toEqual([]);
+    });
+
+    it('shows the outlook warapp_plan_turn last logged, with its basis, or says there is none', async () => {
+      h = await harness([feedGame(DUEL)]);
+      const none = payload(await h.call('warapp_surrender', { game_id: GAME_ID })).preview as Record<string, unknown>;
+      expect(String((none.outlook as { note: string }).note)).toMatch(/warapp_plan_turn/);
+      await recordOutlook(h.dataDir, GAME_ID, Number(ME.feed), {
+        state: 'losing',
+        heldTurns: 3,
+        k: 3,
+        threshold: 2.4,
+        basis: 'Losing for 3 turns running.',
+        turns: [{ turn: 5, mine: 10, strongest: { playerId: 1001, low: 40, high: 40 }, ratio: { low: 0.25, high: 0.25 }, changed: 1, state: 'losing' }],
+      });
+      const p = payload(await h.call('warapp_surrender', { game_id: GAME_ID })).preview as Record<string, unknown>;
+      expect(p.outlook).toMatchObject({ turn: 5, state: 'losing', basis: 'Losing for 3 turns running.' });
+    });
+
+    it('lists opponents close to a boot, what their seat becomes, and that lastTurnTime is unverified', async () => {
+      h = await harness([feedGame([me(), { ...opp(1), hasCommittedOrders: 'False' }, opp(2)])]);
+      const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID }));
+      const v = preview.preview as Record<string, unknown>;
+      const l = v.leavers as { players: Array<Record<string, unknown>>; unverified: string };
+      expect(l.players).toEqual([expect.objectContaining({ id: 1001, becomes: 'neutral', autoBootInMinutes: 0 })]);
+      expect(l.unverified).toMatch(/lastTurnTime/);
     });
   });
 });
