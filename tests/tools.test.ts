@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { armiesToTake } from '../src/analysis/index.js';
-import { harnessFor, lobbyFixture, payload, textOf, TOKEN, type Harness } from './helpers.js';
+import { readOutlookLog, recordOutlook } from '../src/outlook-log.js';
+import { harnessFor, liveHarness, lobbyFixture, payload, textOf, TOKEN, type Harness } from './helpers.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -66,6 +67,32 @@ describe('warapp_get_game', () => {
     const p = payload(await h.call('warapp_get_game', { game_id: GAME }));
     expect((p.players as Array<Record<string, unknown>>)[2]).toMatchObject({ ai: true, turnedIntoAI: true });
     expect(p.waitingOn).toHaveLength(8);
+  });
+
+  it('compact reads the end-of-game settings and lists the players close to a boot, saying lastTurnTime is unverified (#178)', async () => {
+    h = await harnessFor(playingFixture());
+    const p = payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect(p.endRules).toMatchObject({ instantSurrender: true, surrenderedTurnIntoAI: false, autoBootMinutes: 2880 });
+    const l = p.leavers as { players: Array<Record<string, unknown>>; unverified: string };
+    expect(l.players[0]).toMatchObject({ id: 1000, name: 'Player 1', becomes: 'neutral', autoBootInMinutes: 0 });
+    expect(l.players.map((x) => x.id)).not.toContain(1001);
+    expect(l.unverified).toMatch(/lastTurnTime/);
+  });
+
+  it('records my final result in the outlook log of a finished game this server planned, and only then (#178)', async () => {
+    const f = lobbyFixture();
+    const finished = {
+      ...f,
+      state: 'Finished',
+      players: (f.players as Array<Record<string, string>>).map((p, i) => ({ ...p, state: i === 0 ? 'Won' : 'Eliminated' })),
+    };
+    h = await liveHarness({ feed: [finished, finished] });
+    await h.call('warapp_get_game', { game_id: GAME });
+    expect(await readOutlookLog(h.dataDir, GAME, 1000)).toBeUndefined();
+    await recordOutlook(h.dataDir, GAME, 1000, { state: null, heldTurns: 1, k: 3, threshold: 2.4, basis: 'b', turns: [] });
+    const p = payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect(p.leavers).toBeUndefined();
+    expect((await readOutlookLog(h.dataDir, GAME, 1000))?.result).toBe('Won');
   });
 
   it('a lobby has no board and no turn yet', async () => {

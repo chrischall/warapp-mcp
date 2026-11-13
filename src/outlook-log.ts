@@ -91,3 +91,23 @@ export async function recordResult(dir: string, gameId: number, playerId: number
     return false;
   }
 }
+
+/**
+ * When `game` is finished and this server logs it, record the logged player's final GameFeed state
+ * as the result; `true` when written. Best effort.
+ */
+export async function recordFinalResult(
+  dir: string,
+  game: { id: number; state: string; players: ReadonlyArray<{ id: number; state?: string }> },
+): Promise<boolean> {
+  if (game.state !== 'Finished') return false;
+  try {
+    const c: unknown = JSON.parse(await readFile(outlookLogPath(dir, game.id), 'utf8'));
+    if (!isRec(c) || typeof c.playerId !== 'number') return false;
+    const playerId = c.playerId;
+    const state = game.players.find((p) => p.id === playerId)?.state;
+    return state === undefined ? false : await recordResult(dir, game.id, playerId, state);
+  } catch {
+    return false;
+  }
+}

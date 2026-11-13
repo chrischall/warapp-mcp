@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { GameOutlook } from '../src/analysis/outlook.js';
-import { outlookLogPath, readOutlookLog, recordOutlook, recordResult } from '../src/outlook-log.js';
+import { outlookLogPath, readOutlookLog, recordFinalResult, recordOutlook, recordResult } from '../src/outlook-log.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -51,5 +51,14 @@ describe('outlook log (#178)', () => {
     expect(await readOutlookLog(dir, 7001, 1002)).toBeUndefined();
     expect(await readOutlookLog(join(dir, 'missing'), 7001, 1001)).toBeUndefined();
     await expect(recordOutlook(join(dir, 'f', '\0bad'), 1, 1, outlook(1))).resolves.toBeUndefined();
+  });
+
+  it('recordFinalResult reads the logged player\'s state from a finished game', async () => {
+    await recordOutlook(dir, 7001, 1001, outlook(4));
+    const players = [{ id: 1001, state: 'Eliminated' }, { id: 1002, state: 'Won' }];
+    expect(await recordFinalResult(dir, { id: 7001, state: 'Playing', players })).toBe(false);
+    expect(await recordFinalResult(dir, { id: 7001, state: 'Finished', players })).toBe(true);
+    expect((await readOutlookLog(dir, 7001, 1001))?.result).toBe('Eliminated');
+    expect(await recordFinalResult(dir, { id: 7009, state: 'Finished', players })).toBe(false);
   });
 });
