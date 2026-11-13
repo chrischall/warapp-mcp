@@ -234,7 +234,7 @@ describe('second-pass notes: each is offered only where it applies', () => {
     const cardNames = ['Reinforcement', 'Spy', 'Emergency Blockade', 'Order Priority', 'Order Delay', 'Airlift', 'Gift', 'Diplomacy', 'Sanctions', 'Reconnaissance', 'Surveillance', 'Blockade', 'Bomb'];
     for (const format of ['1v1', 'ffa', 'teams'] as const) {
       for (const phase of ['opening', 'expansion', 'contact', 'late'] as const) {
-        for (const standing of ['ahead', 'behind'] as const) {
+        for (const standing of ['ahead', 'even', 'behind'] as const) {
           for (const fog of ['NoFog', 'LightFog', 'Foggy', 'ModerateFog']) {
             for (const distribution of ['manual', 'automatic'] as const) {
               for (const flip of [false, true]) {

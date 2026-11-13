@@ -84,6 +84,23 @@ export const STRATEGY_SOURCES = {
   surrender: 'https://war.app/wiki/Surrender',
   teamGames: 'https://war.app/wiki/Team_Games',
   territoryIncome: 'https://war.app/wiki/Extra_armies_for_territories',
+  // The end-game pass (read 2026-11-13): finishing, being behind, stand-offs, leavers and AI seats.
+  aiSurrenders: 'https://war.app/wiki/AI_surrenders_when_one_human_remains',
+  booting: 'https://war.app/wiki/Booting',
+  playersIntoAis: 'https://war.app/wiki/Players_turning_into_AIs',
+  voteToEnd: 'https://war.app/wiki/Vote_to_End',
+  forumBadSurrender: 'https://war.app/Forum/642777-bad-surrender',
+  forumCommanderDeath: 'https://war.app/Forum/156933-commanders-eliminated-ends-turn-player',
+  forumFfaLeague: 'https://war.app/Forum/546500-ffa-competition-league',
+  forumFfaTruce: 'https://war.app/Forum/5231-ffa-ffa',
+  forumGuessMultiBorder: 'https://war.app/Forum/145784-guess-attack-multibordering',
+  forumLargeFront: 'https://war.app/Forum/101261-fight-over-large-front',
+  forumNeverSurrender: 'https://war.app/Forum/376144-people-never-surrender',
+  forumStalemate: 'https://war.app/Forum/41750-strategic-1v1-draw-perfect-play',
+  forumTeamCommanders: 'https://war.app/Forum/737712-kabix-2v2-template',
+  forumTellingSurrender: 'https://war.app/Forum/118844-telling-opponent-surrender',
+  forumTougherOpponents: 'https://war.app/Forum/297674-strategy-facing-tougher-opponents',
+  forumTurningAi: 'https://war.app/Forum/3768-turningai-issue',
 } as const;
 
 /** Game facts a note may need that the profile does not carry. */
@@ -542,9 +559,10 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'cards',
     when: on({ cardsInPlay: ['Order Priority'] }),
     text:
-      "Order Priority makes only your first order run before the opponent's first: put the one order that must " +
-      'beat them at the top (a withdrawal, or a strike on a stack or a commander before it moves). It is wasted ' +
-      'if you would move first anyway and they play none; if both play one the normal order decides.',
+      "Order Priority moves only your first order ahead of the opponent's first: put the one order that must " +
+      'beat them at the top (a withdrawal, or a strike on a stack or a commander before it moves). If you would ' +
+      'move first anyway it adds nothing, unless they may play one too: two cancel, so yours is what keeps ' +
+      'your first move.',
     source: S.orderPriority,
     basis: 'source',
     encoded:
@@ -654,8 +672,10 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'reading',
     when: (p) => p.standing === 'ahead' || p.standing === 'unknown',
     text:
-      'Ahead on income, trade: an even exchange of armies hurts the smaller income more, so keep the pressure on ' +
-      'and break their bonuses while you out-deploy them.',
+      'Ahead on income, use every turn: break a bonus or take ground the opponent cannot retake. Trade armies ' +
+      'only where you kill more than you lose, which needs clearly more than the defenders after their ' +
+      'deployment (fighting-trade-zones); at the usual kill rates an attack at even numbers costs the attacker ' +
+      'more, lead or not.',
     source: S.oneVsOne,
     basis: 'derived',
     encoded: 'ahead in a 1v1, the planner allows more pressure (profile rule 0p, warapp_plan_turn)',
@@ -665,8 +685,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'reading',
     when: (p) => p.standing === 'behind' || p.standing === 'unknown',
     text:
-      'Behind on income, avoid even trades: defend the bonuses you have (defence kills more than attack), build up ' +
-      'when expansion is expensive, and strike only where it breaks a bonus or saves one.',
+      'Behind on income, every turn costs you: any edge you have in armies shrinks every turn, so spend it ' +
+      'now on an attack that breaks a bonus, and refuse trades that only swap armies. Defend the bonuses that ' +
+      'pay (defence kills more than attack). Stacking and waiting helps only the richer side.',
     source: S.oneVsOne,
     basis: 'derived',
     encoded: 'behind, the profile picks the defend goal and minimal attack sizes (profile rule 0p, warapp_plan_turn)',
@@ -724,10 +745,11 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'cards',
     when: on({ cardsInPlay: ['Reinforcement'] }),
     text:
-      'Once you are in contact, play a Reinforcement card the turn you get it: armies left in the card do ' +
-      'nothing. Holding it is right only for a reason - no enemy in sight and nothing worth spending it on, ' +
-      'or to make the opponent undercount what you can deploy next turn.',
-    source: S.clanGuide,
+      'In contact, play a Reinforcement card the turn you get it unless holding it has a reason: nothing worth ' +
+      'spending it on, making the opponent undercount your next deployment, or a border neither side can ' +
+      'break, where cards kept up to the hand limit and played in one turn can tip it when a single card ' +
+      'cannot.',
+    source: S.smallEarthGuide,
     basis: 'source',
     encoded:
       'the planner plays every Reinforcement card it holds and says the play is a default (in a team game it holds them for the ' +
@@ -956,9 +978,10 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'settings',
     when: on({ commanders: true }),
     text:
-      'An enemy Commander dies only to a single attack that kills every army with it and then deals 7 more; ' +
-      'damage short of that leaves it unharmed. Killing it removes that player from the game, so when one ' +
-      'stack can cover its armies, its 7 and what its owner may deploy there, make that strike first.',
+      'An enemy Commander dies only to one attack that kills every army with it and then deals 7 more; ' +
+      'less leaves it unharmed. That removes its owner, and all it held turns neutral where it stands. Against ' +
+      "one opponent, strike first when a stack covers its armies, its 7 and its owner's deploy; with more " +
+      'sides, first see who collects the land.',
     source: S.commanders,
     basis: 'derived',
     encoded: "the planner strikes an adjacent enemy commander first, sized for its armies, its 7 and its owner's deploy",
@@ -1339,11 +1362,12 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'fighting',
     when: on({ format: ['1v1', 'teams'], phase: ['contact', 'late'] }),
     text:
-      'Once two big stacks face each other and neither can break through, more armies on that border change ' +
-      'nothing. Put the surplus into a bonus the opponent cannot see or reach, provided everything you hold ' +
-      'still survives its full deployment.',
-    source: S.strategyGuideDoc,
-    basis: 'source',
+      'When two big stacks face each other, count the next turns out before calling it stuck. If attacking every ' +
+      'turn breaks it, do that; if the opponent could do that to you, keep deploying what holds. Only armies ' +
+      'beyond that are surplus: put them into a bonus the opponent cannot see or reach, if every hold still ' +
+      'survives.',
+    source: S.forumSkillChecklist,
+    basis: 'derived',
   },
   {
     id: 'fighting-go-round',
@@ -1534,11 +1558,11 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'format',
     when: on({ format: ['ffa'] }),
     text:
-      "When a neighbour surrenders or is booted, its land turns neutral or passes to an AI, by the game's " +
-      'settings; any truce with it is gone. Neutral, it keeps its armies: lightly held bonuses there are ' +
-      'cheap for whoever moves first, big stacks are not. An AI keeps fighting, and goes for nearby neutral ' +
-      'bonuses first.',
-    source: S.surrender,
+      'When a neighbour surrenders or is booted, its land goes to an AI or turns neutral (set separately ' +
+      "for each; neutral after a boot is players' report), and any truce ends. Neutral land keeps its " +
+      'armies, so thin bonuses there are cheap. An AI fights on, goes for neutral bonuses first, and its ' +
+      'player may take the seat back.',
+    source: S.playersIntoAis,
     basis: 'derived',
   },
   {
@@ -1605,11 +1629,486 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'format',
     when: on({ format: ['teams'] }),
     text:
-      'A teammate replaced by an AI plays no cards while a human is on the team, and may attack teammates ' +
-      'to finish a bonus the team holds between them or one it is expanding into. Armies you transfer to it ' +
-      "become the AI's: defend from your own territories behind its borders, and keep spare armies where it " +
-      'could attack you.',
+      "An AI in a teammate's seat plays no card of its own accord while a human is on the team, though the " +
+      "rules can force a play for the team. It may attack a teammate's territory to finish a bonus (one " +
+      'thread reports it taking only one-army ones: keep two on yours beside it). Armies you transfer to it ' +
+      "become the AI's: defend from your land.",
     source: S.ai,
+    basis: 'derived',
+  },
+  // ---- the end-game (third research pass): stand-offs, finishing, behind, leavers ----
+  {
+    id: 'fighting-grind-threshold',
+    topic: 'fighting',
+    when: on({ phase: ['contact', 'late'], exact: true, defaultKillRates: true }),
+    text:
+      'With both sides deploying everything at one border, attacking every turn wins from about 1.1 to 1.15 ' +
+      "times the defender's stack at 100 armies or more (1.2 to 1.3 times at 20, more with large incomes), " +
+      'though the first attacks lose more than they kill. Short of that it feeds the defender; with neither ' +
+      'side that far ahead: a stand-off.',
+    source: S.forumSkillChecklist,
+    basis: 'derived',
+  },
+  {
+    id: 'fighting-income-lead-clock',
+    topic: 'fighting',
+    when: on({ phase: ['contact', 'late'], standing: ['ahead'], exact: true, defaultKillRates: true }),
+    text:
+      'From equal stacks at one border, more income breaks it by stacking a few turns, then attacking every ' +
+      'turn: a fifth more (12 against 10) takes about 8 to 12 turns, half as much again 4 or 5, double 3. A ' +
+      'tenth more may never get through there: spend that lead on a second point of contact.',
+    source: S.strategyGuideDoc,
+    basis: 'derived',
+  },
+  {
+    id: 'fighting-army-lead-expires',
+    topic: 'fighting',
+    when: on({ format: ['1v1', 'teams'], phase: ['contact', 'late'], exact: true, defaultKillRates: true }),
+    text:
+      'More armies with less income is a lead that shrinks every turn. At 40 against 20 with 7 income against ' +
+      '10, attacking every turn from now breaks the border in 2 turns; wait 2 turns first and the same attacks ' +
+      'are ground down. Spend such a lead at once on a capture that cuts their income, or do not count on it.',
+    source: S.combat,
+    basis: 'derived',
+  },
+  {
+    id: 'fighting-failed-attack-reply',
+    topic: 'fighting',
+    when: on({ phase: ['contact', 'late'], exact: true, defaultKillRates: true }),
+    text:
+      'A failed attack leaves your territory thin. If the stack you hit is larger than your attack (from about ' +
+      '1.06 times at 100 armies to 1.2 times at 10) and has not moved yet, its reply takes your territory as ' +
+      'well. Near parity, attack only after that stack has attacked, or with enough to capture.',
+    source: S.forumSkillChecklist,
+    basis: 'source',
+  },
+  {
+    id: 'fighting-double-border-safety',
+    topic: 'fighting',
+    when: on({ phase: ['contact', 'late'], exact: true, defaultKillRates: true }),
+    text:
+      'A territory survives an attack of A only with more than 0.6 × A armies (61 against 100). One enemy ' +
+      'stack touching two territories you must keep needs that on each, about 1.2 × A in all, 1.8 × A for ' +
+      'three: with less you are guessing. To break a one-border deadlock, walk your stack to a territory ' +
+      'touching two of theirs.',
+    source: S.forumStalemate,
+    basis: 'derived',
+  },
+  {
+    id: 'fighting-finish-contain',
+    topic: 'fighting',
+    when: on({ format: ['1v1', 'teams'], phase: ['late'], standing: ['ahead'] }),
+    text:
+      'To end a won game, pen the last stack in rather than taking the map: a stack beside each way out, a ' +
+      'small late attack retaking each territory it leaves, and your first order on it on a turn you move ' +
+      'first, sized for its armies plus its whole income. On a turn it moves first, a strike where it ' +
+      'stands misses if it runs.',
+    source: S.forumNeverSurrender,
+    basis: 'source',
+  },
+  {
+    id: 'fighting-ahead-stop-expanding',
+    topic: 'fighting',
+    when: on({ format: ['1v1', 'teams'], phase: ['late'], standing: ['ahead'] }),
+    text:
+      "Once the game is yours, count the turns to finish it: the steps to the opponent's farthest territory, or the " +
+      'armies its land needs over what you can spare each turn, whichever is more. Take a neutral bonus only ' +
+      "if it repays its cost within that time and opens no border; every other army goes at the opponent's " +
+      'bonuses and stacks.',
+    source: S.forumNeverSurrender,
+    basis: 'derived',
+  },
+  {
+    id: 'fighting-more-threats-than-deploy',
+    topic: 'fighting',
+    when: on({ phase: ['contact', 'late'], standing: ['ahead'] }),
+    text:
+      'The opponent has one deployment to share among every territory you can take this turn. Ahead, set up ' +
+      'more captures than it can save, each sized to win unless reinforced and aimed at different bonuses: ' +
+      'whatever it guesses some fall and its income drops, unless it strikes back instead (warapp_check_plan ' +
+      'tries that).',
+    source: S.forumGuessMultiBorder,
+    basis: 'derived',
+  },
+  {
+    id: 'fighting-behind-take-variance',
+    topic: 'fighting',
+    when: on({ format: ['1v1'], phase: ['contact', 'late'], standing: ['behind'] }),
+    text:
+      'Well behind, the safe plan only loses more slowly. Prefer lines that win if one guess is right: an ' +
+      'attack sized for where the opponent will not deploy, a stack sent past its front. Make them while your ' +
+      'stack still outweighs a turn of its income, and vary your targets so it cannot read you.',
+    source: S.forumTougherOpponents,
+    basis: 'source',
+  },
+  {
+    id: 'fighting-raid-back-line',
+    topic: 'fighting',
+    when: on({ format: ['1v1', 'teams'], phase: ['contact', 'late'] }),
+    text:
+      'Armies defending a border the other side can overrun are wasted; past its front they threaten every ' +
+      'bonus they touch, and it must garrison them all or turn back. Each turn move the stack on to a ' +
+      'territory touching two bonuses rather than holding what it took. Facing one, turn a stack on it ' +
+      'while your front keeps advancing.',
+    source: S.forumLargeFront,
+    basis: 'derived',
+  },
+  {
+    id: 'fighting-vote-to-end',
+    topic: 'fighting',
+    when: on({ phase: ['contact', 'late'], standing: ['even'] }),
+    text:
+      'A game nobody can win can end by vote, but only if every player still alive votes for it, and never ' +
+      'in ladder, tournament, quickmatch, clan-war or coin games. It then has no winner and counts as a loss ' +
+      'for anyone already out. Propose it in chat once nothing is left to try; the vote is cast in the game ' +
+      'client.',
+    source: S.voteToEnd,
+    basis: 'source',
+  },
+  {
+    id: 'fighting-not-risk',
+    topic: 'fighting',
+    when: on({ phase: ['contact', 'late'], defenceBeatsOffence: true, multiAttack: false }),
+    text:
+      'Risk habits mislead here. A defender kills more per army, so attacking an equal stack loses more than it ' +
+      'kills; it deploys before your attack lands, so size for that; armies move one step a turn, so nothing ' +
+      'is swept in one turn; and cards have fixed effects, with no rule page paying you for eliminating a player.',
+    source: S.combat,
+    basis: 'derived',
+  },
+  {
+    id: 'reading-net-gain',
+    topic: 'reading',
+    when: on({ phase: ['contact', 'late'] }),
+    text:
+      "Measure a lead in armies, not income alone: each turn take your income plus the armies you killed, " +
+      "less the opponent's income and the armies you lost. A smaller income that wins its exchanges is " +
+      'gaining; a larger one that loses them is not. Judge it over a few turns, not one.',
+    source: S.forumSkillChecklist,
+    basis: 'source',
+  },
+  {
+    id: 'reading-when-lost',
+    topic: 'reading',
+    when: on({ format: ['1v1'], phase: ['contact', 'late'], standing: ['behind'] }),
+    text:
+      'Call a two-player game lost only when this has held for several turns: no bonus of yours survives, ' +
+      'the opponent out-deploys you by far and shows more armies, none of its bonuses breaks against its ' +
+      'full deployment, its commander (if any) is out of reach, and fog hides no other picture. Then ' +
+      'surrender rather than run a stack to delay.',
+    source: S.forumTellingSurrender,
+    basis: 'derived',
+  },
+  {
+    id: 'reading-surrender-checks',
+    topic: 'reading',
+    when: on({ phase: ['contact', 'late'], standing: ['behind'] }),
+    text:
+      'Before you surrender, read the settings. Where surrenders must be accepted, you keep playing until every ' +
+      'other player has accepted. Your land then turns neutral or passes to an AI, as the game is set; with ' +
+      'more than two sides that can decide the game between the others, so see who borders it.',
+    source: S.surrender,
+    basis: 'source',
+  },
+  {
+    id: 'reading-leaver-replan',
+    topic: 'reading',
+    when: on({ format: ['ffa', 'teams'] }),
+    text:
+      'Players report that a surrender or boot shows at once to anyone who has not committed, who can re-plan ' +
+      'the same turn. When a neighbour is near its boot time or has asked to surrender, read the game again ' +
+      'just before you commit: its land may be neutral already, or played by an AI that keeps no truce.',
+    source: S.forumTurningAi,
+    basis: 'source',
+  },
+  {
+    id: 'timing-setup-then-first-order',
+    topic: 'timing',
+    when: on({ format: ['1v1'], moveOrder: ['Cycle', 'NoLuckCycle'], phase: ['contact', 'late'] }),
+    text:
+      'Under a cyclic order you move first every other turn. On the turn before yours, step beside the target ' +
+      'late in your list; next turn, strike with your first order. The opponent gets a deployment in between ' +
+      'but no move, so size the strike for its stack plus its whole income.',
+    source: S.forumSkillChecklist,
+    basis: 'source',
+  },
+  {
+    id: 'settings-commander-kill-ends-game',
+    topic: 'settings',
+    when: on({ format: ['1v1'], commanders: true }),
+    text:
+      'In a two-player game the game ends the moment a commander dies, and no later order runs. If both ' +
+      'commanders can be killed this turn, the kill that runs first wins: make it your first order and know ' +
+      'who moves first. If the opponent may hold Order Priority, play yours: two cancel and the usual order ' +
+      'stands.',
+    source: S.forumCommanderDeath,
+    basis: 'derived',
+  },
+  {
+    id: 'settings-commander-guard-numbers',
+    topic: 'settings',
+    when: on({ commanders: true, exact: true, defaultKillRates: true }),
+    text:
+      'A commander with g armies on its territory dies to the attack that takes g + 7: alone 11, with 5 armies 20, ' +
+      'with 10 28, with 20 45. To make an attack of A fail, keep round(0.6 × A) − 6 armies with it (6 against ' +
+      '20, 54 against 100). A smaller attack kills armies, never the commander.',
+    source: S.commanders,
+    basis: 'derived',
+  },
+  {
+    id: 'settings-commander-keep-back',
+    topic: 'settings',
+    when: on({ commanders: true }),
+    text:
+      'A commander is attacked only from a territory next to it: with no enemy or fogged territory beside ' +
+      'it, it is safe this turn; with none within two steps, next turn too (under Multi-Attack count chains). ' +
+      'Ahead, keep it that far back. Move it with `commander` on a move in ' +
+      'warapp_submit_turn (not yet verified live).',
+    source: S.commanders,
+    basis: 'derived',
+  },
+  {
+    id: 'settings-commander-snipe-behind',
+    topic: 'settings',
+    when: on({ format: ['1v1'], commanders: true, phase: ['contact', 'late'], standing: ['behind'] }),
+    text:
+      'Behind in a commander game, killing theirs wins whatever the incomes. Work out where it can be: its ' +
+      'first awarded territory or last sighting, one step for each turn since (anywhere its owner holds, after ' +
+      'an Airlift). Keep one stack able to cover its guard, its 7 and a full deployment, and bring it within ' +
+      'reach.',
+    source: S.commanders,
+    basis: 'derived',
+  },
+  {
+    id: 'settings-commander-kill-neutral',
+    topic: 'settings',
+    when: on({ format: ['ffa', 'teams'], commanders: true }),
+    text:
+      'With more than two players a commander kill pays nothing directly: all its owner held turns neutral ' +
+      'where it stands, armies included. Its stacks facing you become neutral walls, and its thin land is ' +
+      'cheap for whoever borders it. Before the strike, see who that is: you, or a rival.',
+    source: S.commanders,
+    basis: 'derived',
+  },
+  {
+    id: 'cards-priority-catch-runner',
+    topic: 'cards',
+    when: on({ format: ['1v1'], cardsInPlay: ['Order Priority'], phase: ['late'], standing: ['ahead'] }),
+    text:
+      'A stack that keeps moving away is caught only on a turn your attack runs before its move: every other ' +
+      'turn under a cyclic order, an even chance each turn under a random one. Order Priority on your first ' +
+      'order makes it certain unless the opponent plays one too. Save the card for the strike that ' +
+      'eliminates.',
+    source: S.orderPriority,
+    basis: 'derived',
+  },
+  {
+    id: 'cards-bomb-standoff-size',
+    topic: 'cards',
+    when: on({ cardsInPlay: ['Bomb'], phase: ['contact', 'late'], exact: true, defaultKillRates: true }),
+    text:
+      'A Bomb halves a stack after its deployment and before any attack, so the capture drops from five ' +
+      'thirds of the stack to about five sixths: 83 instead of 166 against 100. With one, a stack about equal ' +
+      'to theirs captures the turn you play it (in the game client); facing one, keep the stacks beside its ' +
+      'holder split.',
+    source: S.bomb,
+    basis: 'derived',
+  },
+  {
+    id: 'cards-diplomacy-three-sides',
+    topic: 'cards',
+    when: on({ format: ['ffa'], cardsInPlay: ['Diplomacy'] }),
+    text:
+      'With three sides left a Diplomacy card makes a two-on-one while it runs: the two at peace can attack ' +
+      'only the third. Play it on the opponent you want facing the other; if your two opponents end up at ' +
+      'peace by card, expect both on you from the next turn. It is played in the game client.',
+    source: S.diplomacy,
+    basis: 'derived',
+  },
+  {
+    id: 'cards-sanctions-on-leader',
+    topic: 'cards',
+    when: on({ format: ['ffa', 'teams'], cardsInPlay: ['Sanctions'] }),
+    text:
+      'A Sanctions card with a positive percentage takes a share of income, so it costs the largest player ' +
+      'most, and two on one player compound. When several of you face one leader, play them on it for the ' +
+      'same turns, the turn before you attack: the cut starts with its next income. It is played in the game ' +
+      'client.',
+    source: S.sanctions,
+    basis: 'derived',
+  },
+  {
+    id: '1v1-opponent-replaced-by-ai',
+    topic: 'format',
+    when: on({ format: ['1v1'], phase: ['contact', 'late'] }),
+    text:
+      'An opponent who surrenders or is booted may be replaced by an AI that plays on, and its player may take ' +
+      'the seat back a limited number of times; whether the AI gives up once you are the last human is a ' +
+      'setting. Until the game shows as won, keep every hold and keep finishing.',
+    source: S.playersIntoAis,
+    basis: 'source',
+  },
+  {
+    id: '1v1-beaten-opponent-chat',
+    topic: 'format',
+    when: on({ format: ['1v1'], phase: ['late'], standing: ['ahead'] }),
+    text:
+      'If a beaten opponent plays on, do not tell it to surrender. Say once, politely, what the board shows ' +
+      '(incomes, armies) and keep committing promptly; that often ends it. Repeated demands are rude, can draw ' +
+      'a warning and make some players dig in. Only the boot timer removes a player who stops moving.',
+    source: S.forumTellingSurrender,
+    basis: 'source',
+  },
+  {
+    id: 'ffa-last-human',
+    topic: 'format',
+    when: on({ format: ['ffa', 'teams'] }),
+    text:
+      'Where AIs give up once one human is left (in a team game, one team with humans), they surrender as ' +
+      'soon as the last other human is out, whatever they hold: with AI seats in play, count the humans ' +
+      'still in and finish that one first. Where they do not, an AI plays to the end and can win, even for ' +
+      'a booted leader.',
+    source: S.aiSurrenders,
+    basis: 'derived',
+  },
+  {
+    id: 'ffa-coalition-match-commitment',
+    topic: 'format',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'], standing: ['even', 'behind'] }),
+    text:
+      'When you and another smaller player both face a runaway leader, match the effort the other puts in. ' +
+      'A league player warns that whoever throws everything at the leader while the other also guards your ' +
+      'shared border is squeezed from both sides and falls first; if both hold back, the leader beats you ' +
+      'one at a time.',
+    source: S.forumFfaLeague,
+    basis: 'source',
+  },
+  {
+    id: 'ffa-two-player-moment',
+    topic: 'format',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
+    text:
+      "With three left, the game turns two-player when the leader's income collapses, not when its last " +
+      'territory falls, and any pact against it ends there. Before helping to finish anyone, compare what you ' +
+      'and the other survivor would hold afterwards: whoever is clearly behind then usually loses within a ' +
+      'turn or two.',
+    source: S.forumFfaLeague,
+    basis: 'derived',
+  },
+  {
+    id: 'ffa-second-needs-third',
+    topic: 'format',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'], standing: ['even', 'behind'] }),
+    text:
+      'Only first place wins. Second of three, you cannot win without the third, so helping the leader finish ' +
+      'it only buys second place. Third, the second needs you alive and fighting the leader: that is worth a ' +
+      'quiet border from it, and you can ask for one.',
+    source: S.forumKeepingPlayers,
+    basis: 'source',
+  },
+  {
+    id: 'ffa-leader-combined-holds',
+    topic: 'format',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'], standing: ['ahead'] }),
+    text:
+      'Clearly the largest, be ready for the others to stop fighting each other and turn on you. Size each border ' +
+      'for every neighbour touching it attacking in the same turn, fight one neighbour at a time and finish ' +
+      'it, show no more than a border needs, and keep quiet in public chat: naming the leader starts the ' +
+      'pile-on.',
+    source: S.forumFfaLeague,
+    basis: 'derived',
+  },
+  {
+    id: 'ffa-buffer-neighbour',
+    topic: 'format',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
+    text:
+      'Eliminating a player pays the land you take, and no rule page gives the eliminator more. Before ' +
+      'finishing a weak neighbour, see who stands behind it: if its land keeps a stronger player off you, its ' +
+      'income holds that border for free. Finish it when its bonuses would otherwise go to a rival, or it can ' +
+      'still hurt you.',
+    source: S.forumKeepingPlayers,
+    basis: 'derived',
+  },
+  {
+    id: 'ffa-surrender-veto',
+    topic: 'format',
+    when: on({ format: ['ffa'] }),
+    text:
+      'Where surrenders must be accepted, every other player must accept before a loser leaves; its land then ' +
+      'turns neutral or goes to an AI, as the game is set. Accept when that helps you more than your rivals; ' +
+      'if it would mostly feed a rival, refusing keeps the player in (it must move or be booted). Accept in ' +
+      'the game client.',
+    source: S.surrender,
+    basis: 'derived',
+  },
+  {
+    id: 'ffa-truce-end',
+    topic: 'format',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
+    text:
+      'Every truce in a free-for-all ends, since only one player wins. End yours before the partner grows too ' +
+      'strong to beat, but not while the leader still gains from your fight. If you agreed terms, give the ' +
+      'notice they name, and expect the partner to use it to move stacks to your border.',
+    source: S.forumFfaTruce,
+    basis: 'source',
+  },
+  {
+    id: 'ffa-lost-game-exit',
+    topic: 'format',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'], standing: ['behind'] }),
+    text:
+      'When you cannot win a free-for-all, staying on is accepted while your moves still affect the result, ' +
+      'unlike in a two-player game. Leaving is a move as well: your land turns neutral or passes to an AI, and ' +
+      'whoever borders it can profit. Before surrendering, see which opponent your land would feed.',
+    source: S.forumBadSurrender,
+    basis: 'source',
+  },
+  {
+    id: 'ffa-boot-clock',
+    topic: 'format',
+    when: on({ format: ['ffa', 'teams'] }),
+    text:
+      'Past the direct-boot time any player may boot one who has not committed (in the game client), when ' +
+      'it chooses; the seat goes to an AI where the game says so, and players report it turns neutral ' +
+      'otherwise. Near a deadline, note which neighbours have not committed and what their bonuses would ' +
+      'cost, and commit your own turn in good time.',
+    source: S.booting,
+    basis: 'derived',
+  },
+  {
+    id: 'teams-commander-weakest',
+    topic: 'format',
+    when: on({ format: ['teams'], commanders: true }),
+    text:
+      "In a team game a commander's death removes only its owner; the teammate plays on alone and the dead " +
+      "player's land turns neutral. The weaker or more exposed enemy's commander is the short way to " +
+      "outnumbering them, and the same goes for your side: guard a teammate's commander by transferring " +
+      'armies onto its territory early in your orders.',
+    source: S.forumTeamCommanders,
+    basis: 'derived',
+  },
+  {
+    id: 'teams-hand-over-before-leaving',
+    topic: 'format',
+    when: on({ format: ['teams'] }),
+    text:
+      'A teammate who surrenders or is booted leaves its land to an AI or neutral, as the game is set; neutral, ' +
+      "its income is gone from the team, as when one is eliminated. Armies about to be lost do more in a " +
+      "teammate's hands: transfer them across a shared border first. Do not surrender alone; agree it with " +
+      'the team.',
+    source: S.teamGames,
+    basis: 'derived',
+  },
+  {
+    id: 'teams-no-march-through',
+    topic: 'format',
+    when: on({ format: ['teams'] }),
+    text:
+      "An order into a teammate's territory hands the armies over and they stop there, so your stacks cannot " +
+      "march through a teammate's land. Route around it, or hand armies over on purpose where the teammate " +
+      'faces the enemy and has nothing better coming.',
+    source: S.teamGames,
     basis: 'derived',
   },
 ];
