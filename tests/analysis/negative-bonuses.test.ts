@@ -6,7 +6,7 @@ import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn, type PlanGoal, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, fogged, mine, neutral } from './helpers.js';
+import { board, fogged, mine, neutral, tinyMap } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -199,5 +199,91 @@ describe('negative bonuses (#70): captures are scored by their net effect on inc
       settings: STD,
     });
     expect(p.expected.bonusesCompleted).toContain(601);
+  });
+});
+
+// Net scoring in the complete-vs-hold decision (rule 1h.3): a completion is weighed by its net
+// worth, never its gross value. Keep (+10): 1 2 3 4, mine; 1, 2, 3 (2 armies each) face enemy
+// 4-stacks on 11, 12, 13 (fog behind at 14). 4 borders the 1-army neutrals 20, 21: Sea (+22)
+// whose two tiles are each a lone −8 bonus, so completing it nets +22 − 16 = +6.
+const KEEP_SEA = buildGraph(
+  makeMap(
+    [1, 2, 3, 4, 11, 12, 13, 14, 20, 21],
+    [
+      [1, 2],
+      [2, 3],
+      [1, 4],
+      [2, 4],
+      [3, 4],
+      [1, 11],
+      [2, 12],
+      [3, 13],
+      [11, 14],
+      [12, 14],
+      [13, 14],
+      [4, 20],
+      [4, 21],
+      [20, 21],
+    ],
+    [
+      [601, 'Keep', 10, [1, 2, 3, 4]],
+      [602, 'Sea', 22, [20, 21]],
+      [603, 'Reef', -8, [20]],
+      [604, 'Reef', -8, [21]],
+    ],
+  ),
+);
+const KEEP_SEA_BOARD = board([
+  mine(1, 2),
+  mine(2, 2),
+  mine(3, 2),
+  mine(4, 1),
+  enemy(11, 4),
+  enemy(12, 4),
+  enemy(13, 4),
+  fogged(14),
+  neutral(20, 1),
+  neutral(21, 1),
+]);
+
+describe('negative bonuses (#70): completions compete with holds at their net worth', () => {
+  it('a net +6 cluster (+22 gross) does not starve the hold of a +10 bonus', () => {
+    // Holding Keep's three borders needs 4 each (12, the whole income). Completing Sea
+    // (4 armies) first would leave 8: Keep is conceded for +6 net. Gross +22 > 10 would
+    // complete it; net +6 < 10 holds Keep instead.
+    const p = planTurn({ graph: KEEP_SEA, board: KEEP_SEA_BOARD, me: ME, income: 12, settings: STD });
+    expect(p.conceded).toEqual([]);
+    expect(p.expected.bonusesCompleted).toEqual([]);
+    expect(p.expected.nextIncome).toBe(12);
+    expect(p.rationale.join('\n')).toMatch(
+      /Complete bonus Sea \(#602\) \(\+22, net \+6\) only after holding Keep \(#601\) \(\+10\)/,
+    );
+  });
+});
+
+describe('negative bonuses (#70): default maps plan as before', () => {
+  it('(f) an unrelated lone negative bonus nobody can reach changes nothing', () => {
+    // tinyMap has no negative bonus; adding an isolated territory 8 in a lone −4 bonus must
+    // leave every plan exactly as it was (deploys, moves, reasons, rationale, warnings).
+    const base = tinyMap();
+    const withNeg: GameMap = {
+      ...base,
+      territories: [...base.territories, { id: 8, name: 'T8', connectedTo: [] }],
+      bonuses: [...base.bonuses, { id: 105, name: 'Bog', value: -4, territoryIds: [8], bonusIds: [] }],
+    };
+    const tiles = [mine(1, 4), mine(2, 1), neutral(3, 2), neutral(4, 2), neutral(5, 2), neutral(6, 1), neutral(7, 1)];
+    for (const goal of ['balanced', 'expand', 'complete-bonus', 'defend'] as PlanGoal[]) {
+      const a = planTurn({ graph: buildGraph(base), board: board(tiles), me: ME, income: 6, settings: STD, options: { goal } });
+      const b = planTurn({
+        graph: buildGraph(withNeg),
+        board: board([...tiles, neutral(8, 2)]),
+        me: ME,
+        income: 6,
+        settings: STD,
+        options: { goal },
+      });
+      expect(attacks(a).length, goal).toBeGreaterThan(0);
+      expect(b, goal).toEqual(a);
+    }
   });
 });

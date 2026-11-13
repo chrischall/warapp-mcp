@@ -2400,6 +2400,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       combined: new Set(combined),
       survivorsAt: new Map(survivorsAt),
       staged: new Map(staged),
+      captureOrder: captureOrder.length,
       moves: moves.length,
       rationale: rationale.length,
       warnings: warnings.length,
@@ -2419,6 +2420,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const [k, v] of snap.survivorsAt) survivorsAt.set(k, v);
       staged.clear();
       for (const [k, v] of snap.staged) staged.set(k, v);
+      captureOrder.length = snap.captureOrder;
       rationale.length = snap.rationale;
       warnings.length = snap.warnings;
     };
@@ -2436,7 +2438,11 @@ export function planTurn(input: PlanInput): TurnPlan {
     const ok = todo.every((t) => tryCapture(t, `completes bonus ${bonusName(p.bonusId)} (${worth})`));
     // Rule 4c: completing it must not lower income (its members' negative bonuses included).
     if (ok && !p.focus && incomeGain(heldNow()) < before) {
+      const net = incomeGain(heldNow()) - before;
       restore();
+      rationale.push(
+        `Do not complete bonus ${bonusName(p.bonusId)} (${worth}): with this turn's other captures it changes income by ${net} (its members complete negative bonuses).`,
+      );
       return;
     }
     if (ok) {
@@ -2565,6 +2571,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     worstCase: new Map(worstCase),
     targets: new Map(ts.map((t) => [t, targets.get(t)] as const)),
     notCompleted: new Map(notCompleted),
+    staged: new Map(staged),
+    captureOrder: captureOrder.length,
     moves: moves.length,
     rationale: rationale.length,
     warnings: warnings.length,
@@ -2590,6 +2598,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     notCompleted.clear();
     for (const [k, v] of c.notCompleted) notCompleted.set(k, v);
+    staged.clear();
+    for (const [k, v] of c.staged) staged.set(k, v);
+    captureOrder.length = c.captureOrder;
     moves.length = c.moves;
     rationale.length = c.rationale;
     warnings.length = c.warnings;
@@ -3155,11 +3166,16 @@ export function planTurn(input: PlanInput): TurnPlan {
       expansionSpent += before - budget;
       expansionLeft--;
     };
+    /** A bonus's worth as the rationale states it: "+22, net +6" when its members carry penalties. */
+    const worthOf = new Map<number, string>();
     for (const p of plans) {
       const score = ratio(p);
+      // Rule 4c: a completion competes with holds at its net worth (`value` feeds topValue and
+      // rule 1h.3's starve check), never its gross value.
+      worthOf.set(p.bonusId, p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`);
       if (p.completable)
-        candidates.push({ kind: 'complete', score, cost: p.cost, id: p.bonusId, value: p.value, focus: p.focus, borders: p.borders, run: spend(() => complete(p)) });
-      candidates.push({ kind: 'advance', score, cost: p.cost, id: p.bonusId, value: p.value, focus: p.focus, borders: p.borders, run: spend(() => advance(p)) });
+        candidates.push({ kind: 'complete', score, cost: p.cost, id: p.bonusId, value: p.net, focus: p.focus, borders: p.borders, run: spend(() => complete(p)) });
+      candidates.push({ kind: 'advance', score, cost: p.cost, id: p.bonusId, value: p.net, focus: p.focus, borders: p.borders, run: spend(() => advance(p)) });
     }
     // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
     const breakOption = (t: number) => {
@@ -3390,7 +3406,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       expansionLeft = left;
       postponed.push(c);
       rationale.push(
-        `Complete bonus ${bonusName(c.id)} (+${c.value}) only after holding ${starved.map((u) => `${bonusName(u.bonusId)} (+${u.value})`).join(', ')}: completing it first would leave too little to hold ${starved.length === 1 ? 'it' : 'them'}, and it earns no more.`,
+        `Complete bonus ${bonusName(c.id)} (${worthOf.get(c.id) ?? `+${c.value}`}) only after holding ${starved.map((u) => `${bonusName(u.bonusId)} (+${u.value})`).join(', ')}: completing it first would leave too little to hold ${starved.length === 1 ? 'it' : 'them'}, and it earns no more.`,
       );
     };
     const runPostponed = () => {
@@ -3444,6 +3460,12 @@ export function planTurn(input: PlanInput): TurnPlan {
   }
 
   // ---- rule 4c's guard: planned captures never lower next income (#70) ----
+  // Known limit: dropping a capture rewinds its attacks, `avail`, `captured`, `survivorsAt` and
+  // its own move/rationale/warning lines, but decisions made while it was assumed are not
+  // re-checked: an earlier R3 `defensible()` may have counted its survivors, `anchor` may still
+  // name its source, and a "Keep X (not conceded): this turn's captures complete ..." line may
+  // cite a completion that no longer happens. Only maps with overlapping negative bonuses reach
+  // this path (elsewhere no capture lowers income).
   {
     const order = captureOrder.filter((t, i) => captured.has(t) && captureOrder.lastIndexOf(t) === i);
     /** The negative bonuses `t` helps complete in the plan as it stands, as "name value". */
