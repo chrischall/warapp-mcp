@@ -14,8 +14,10 @@ slug: warapp
 # war.app session (warapp_link_session) and then talk to war.app directly
 # without a browser (WARAPP_TRANSPORT=auto/direct). That stores a full-account
 # AuthToken on the machine, so hosting never uses it: a hosted child keeps the
-# browser bridge above and stores no session token. Nothing in this manifest
-# enables direct mode.
+# browser bridge above and stores no session token — enforced in code
+# (src/hosted.ts): when hosted, warapp_link_session is not registered, the
+# session store reads as empty and the transport is pinned to the bridge.
+# Nothing in this manifest enables direct mode.
 summary: >-
   war.app (Warzone) game advisor — your games, players and settings, map
   bonuses and chokepoints, board analysis and route planning through war.app's

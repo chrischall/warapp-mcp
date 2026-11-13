@@ -5,6 +5,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { FetchproxyFetchInit, FetchproxyFetchResult } from '@chrischall/mcp-utils/fetchproxy';
 import { readEmail } from '../config.js';
+import { scrubSecrets } from '../redact.js';
 import {
   decodeReplyEnvelope,
   encodeRequest,
@@ -207,9 +208,10 @@ function serverError(methodName: string, code: number, message: string | null, e
   const known = SERVER_ERROR_MESSAGES[code];
   if (known) return new WarappServerError(code, `${known} (war.app error ${code})`);
   // Unmapped: the message can be a whole server stack trace — keep its first
-  // line, short, with the account email scrubbed out.
+  // line, short, with the account email scrubbed out (any letter case, raw or
+  // percent/form-encoded).
   let detail = (message ?? '').split(/\r?\n/, 1)[0]!.trim();
-  if (email) detail = detail.split(email).join('[email]');
+  if (email) detail = scrubSecrets(detail, [{ value: email, anyCase: true }], '[email]');
   if (detail.length > MAX_SERVER_MESSAGE) detail = `${detail.slice(0, MAX_SERVER_MESSAGE)}…`;
   const base = `war.app refused ${methodName} (server error ${code}).`;
   return new WarappServerError(code, detail ? `${base} ${detail}` : base);

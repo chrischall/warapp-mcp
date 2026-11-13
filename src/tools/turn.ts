@@ -54,13 +54,14 @@ import {
   graphOf,
   readAnnotations,
   respond,
+  shownAccount,
   UNTRUSTED_PREVIEW_NOTE,
   untrustedDescription,
   untrustedText,
   viewArg,
 } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
-import { failureText, loadLiveGame, type LiveContext } from './live-context.js';
+import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
@@ -178,7 +179,7 @@ export async function requireSignedInMe(
   game: Game,
   input: string | number | undefined,
 ): Promise<Player> {
-  const token = await ctx.myInviteToken();
+  const token = await ctx.myInviteToken({ fresh: true });
   if (token === undefined) {
     throw new McpToolError('Could not tell which war.app account is signed in, so no orders were prepared.', {
       hint:
@@ -1202,11 +1203,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 // By id only: player and territory names are other people's words and go,
                 // delimited, in the labelled fields of `willSend`.
                 summary: `Commit ${send.length} order${send.length === 1 ? '' : 's'} for player ${me.id} in game ${game.id}, turn ${turnNumber}`,
-                account: undefined,
+                account: writeAccount(me.id),
                 target: game.id,
                 payload: { method: 'SendOrders', gameId: game.id, playerId, turnNumber, orders: send },
                 willSend: { game: game.id, player: untrustedText(me.name), turn: turnNumber, income, orders: named.map(shownOrder) },
                 preview: {
+                  account: shownAccount(me.name, me.id),
                   note: 'These orders reach the game; once the turn resolves, other players see the results.',
                   ...(attacks.length ? { attacks: attacks.map((a) => ({ ...a, from: shownPlace(a.from), to: shownPlace(a.to) })) } : {}),
                   ...(warnings.length ? { warnings } : {}),
@@ -1227,6 +1229,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             };
           },
           async execute(st: TurnState) {
+            await requireApprovedAccount(ctx, writeAccount(st.feedPlayerId));
             const base = { game: st.gameId, turn: st.turnNumber, orders: st.named };
             const check =
               `Check warapp_get_game: a \`turn\` above ${st.turnNumber} means this turn resolved; still ${st.turnNumber} with ` +

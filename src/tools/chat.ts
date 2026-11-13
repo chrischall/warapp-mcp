@@ -25,7 +25,7 @@ import {
   untrustedText,
 } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
-import { failureText, type LiveContext } from './live-context.js';
+import { failureText, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
 
 const DEFAULT_LIMIT = 50;
@@ -121,6 +121,8 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
     gameId: number;
     text: string;
     recipient?: { id: number; name: string };
+    /** The account the gate bound (its GameFeed id), when the plan could read it. */
+    account?: string;
   }
 
   withToolConfig(
@@ -158,11 +160,15 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
             const gameId = parseGameId(game_id);
             // Read the game for every message (#130): one GameFeed does not know is refused here.
             const game = await ctx.client.getGame(gameId);
+            // The message goes out as whoever is signed in: bind that account, so an
+            // approval given while one account was signed in never posts as another.
+            const me = await ctx.myInviteToken({ fresh: true });
+            const account = writeAccount(me);
             let recipient: ChatState['recipient'];
             let shownRecipient: { id: number; name: string } | undefined;
             if (to !== undefined && String(to).trim() !== '') {
               const p = resolvePlayer(game.players, to);
-              if (p.id === (await ctx.myInviteToken())) {
+              if (p.id === me) {
                 throw new McpToolError(`${untrustedText(p.name)} (${p.id}) is you: a private message to yourself was not sent.`, {
                   hint: 'Name another player in `to`, or omit it to post to the whole game.',
                 });
@@ -177,7 +183,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
                 summary: shownRecipient
                   ? `Send a private chat message to player ${shownRecipient.id} in game ${gameId}`
                   : `Post a chat message to everyone in game ${gameId}`,
-                account: undefined,
+                account,
                 target: gameId,
                 payload: {
                   method: 'SendChat',
@@ -188,16 +194,23 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
                 },
                 willSend: { game: gameId, to: shownRecipient?.name ?? 'everyone in the game', message },
                 preview: {
+                  account: account ?? 'the signed-in war.app account (could not be read)',
                   note: 'Other players will see this message; it cannot be unsent.',
                   game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state },
                   ...(shownRecipient ? { recipient: shownRecipient } : {}),
                   untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
-              state: { gameId, text: message, ...(recipient ? { recipient } : {}) } satisfies ChatState,
+              state: {
+                gameId,
+                text: message,
+                ...(recipient ? { recipient } : {}),
+                ...(account === undefined ? {} : { account }),
+              } satisfies ChatState,
             };
           },
-          async execute({ gameId, text, recipient }: ChatState) {
+          async execute({ gameId, text, recipient, account }: ChatState) {
+            await requireApprovedAccount(ctx, account);
             const to = recipient?.name ?? 'everyone in the game';
             try {
               await ctx.rpc.call('SendChat', Method.SendChat, (w) =>

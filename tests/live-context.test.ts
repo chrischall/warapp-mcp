@@ -88,6 +88,22 @@ describe('invite token (the signed-in account)', () => {
     expect(await ctx.myInGameId()).toBe(123456);
   });
 
+  it('myIdentity gives the token and the in-game id from ONE read, so both are the same account', async () => {
+    let reads = 0;
+    const { bridge } = mockWarappBridge(() => {
+      reads += 1;
+      // Each read answers as another account: two reads would pair one account's token with another's id.
+      const token = reads === 1 ? '0712345698' : '5598765499';
+      return { status: 200, body: `Your invite token is ${token}`, url: 'https://war.app/InviteToken' };
+    });
+    const client = new WarappClient({ env: {}, fetchImpl: async () => new Response('{}'), mapCache: new MapCache() });
+    const ctx = createLiveContext({ client, bridge, bundle: async () => { throw new Error('unused'); } });
+    expect(await ctx.myIdentity({ fresh: true })).toEqual({ token: 712345698, inGameId: 123456 });
+    expect(reads).toBe(1);
+    expect(await ctx.myIdentity({ fresh: true })).toEqual({ token: 5598765499, inGameId: 987654 });
+    expect(reads).toBe(2);
+  });
+
   it('caches a success and retries after a failure', async () => {
     let n = 0;
     const { bridge } = mockWarappBridge(() => {

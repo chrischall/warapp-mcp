@@ -10,6 +10,10 @@
 //   last answer was a `SessionExpiredError`, it surfaces "session expired — run
 //   warapp_link_session" so the owner relinks; a relink clears it.
 //
+// LOCAL-ONLY: on a hosted child (src/hosted.ts) `warapp_link_session` is not
+// registered, and `warapp_session_status` reports `hosted: true` and the
+// browser bridge without reading the store or suggesting a link.
+//
 // SECURITY: the AuthToken is a full-account credential. Neither tool returns,
 // logs, or previews it; the status output carries only `capturedAt`/`host`/age.
 import { CONFIRM_INJECTION_RULE, defineWrite, registerWrite, toolAnnotations } from '@chrischall/mcp-utils';
@@ -17,6 +21,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { linkSession, type LinkResult, type LinkSessionOptions } from '../direct/link.js';
 import { readSession, SESSION_HOST, type Session } from '../direct/session.js';
+import { isHosted } from '../hosted.js';
 import type { PushTransportName } from '../push/socketio.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
@@ -45,35 +50,72 @@ export interface SessionToolsDeps {
   pushTransport?: () => PushTransportName | undefined;
   /** Clock for age. Defaults to `Date.now`. */
   now?: () => number;
+  /** A hosted child: no link tool, status reports the bridge. Defaults to {@link isHosted} of `env`. */
+  hosted?: boolean;
+  /** Called after a successful link: discard the cached signed-in account (the new session may be another one). */
+  identityChanged?: () => void;
 }
 
 const HINT_NOT_LINKED =
   'No war.app session is linked. Run warapp_link_session to use the direct (no-browser) transport; the browser ' +
   'bridge is used until then.';
+const NOTE_HOSTED =
+  'This server is hosted: the direct (no-browser) transport is local-only, so war.app calls go through the browser ' +
+  'bridge and your signed-in war.app tab.';
 const HINT_EXPIRED =
   'The linked war.app session is signed out (war.app answered a direct call signed-out this run). Run ' +
   'warapp_link_session to relink.';
+
+/**
+ * The sentence other tools' descriptions carry about the direct transport —
+ * empty on a hosted child, where there is no session to link.
+ */
+export function noBrowserNote(hosted: boolean | undefined): string {
+  return hosted ? '' : ' Works without a browser once a session is linked (warapp_link_session).';
+}
+
+/** The hint when the signed-in account cannot be told: linking a session is suggested only locally. */
+export function signedInHint(hosted: boolean | undefined): string {
+  return hosted
+    ? 'Open a war.app tab signed in to your account, then retry.'
+    : 'Open a war.app tab signed in to your account (or link a session with warapp_link_session), then retry.';
+}
 
 export function registerSessionTools(server: McpServer, deps: SessionToolsDeps): void {
   const read = deps.read ?? (() => readSession(deps.env));
   const link = deps.link ?? ((opts?: LinkSessionOptions) => linkSession({ ...(deps.env ? { env: deps.env } : {}), ...opts }));
   const now = deps.now ?? Date.now;
+  const hosted = deps.hosted ?? isHosted(deps.env ?? process.env);
 
   server.registerTool(
     'warapp_session_status',
     {
       title: 'war.app direct-transport session status',
       description: untrustedDescription(
-        'Report whether a signed-in war.app session is linked for the direct (no-browser) transport, when it was ' +
-          'captured and how old it is, which transport is currently active (direct, or the browser bridge), and ' +
-          'which transport the turn-notification push socket rides (websocket or xhr-polling) once it has run. ' +
-          'Never shows the session cookie. Read-only; use warapp_link_session to link or relink.',
+        hosted
+          ? 'Report which transport serves war.app calls on this hosted server (always the browser bridge: the ' +
+              'direct, no-browser transport is local-only) and which transport the turn-notification push socket ' +
+              'rides (websocket or xhr-polling) once it has run. Read-only.'
+          : 'Report whether a signed-in war.app session is linked for the direct (no-browser) transport, when it was ' +
+              'captured and how old it is, which transport is currently active (direct, or the browser bridge), and ' +
+              'which transport the turn-notification push socket rides (websocket or xhr-polling) once it has run. ' +
+              'Never shows the session cookie. Read-only; use warapp_link_session to link or relink.',
       ),
       _meta: lookupMeta(['war.app session', 'is war.app linked', 'direct transport status']),
       annotations: readAnnotations('war.app session status'),
       inputSchema: z.object({}),
     },
     async () => {
+      if (hosted) {
+        const pt = deps.pushTransport?.();
+        return respond(undefined, ['compact'], () => ({
+          hosted: true,
+          linked: false,
+          activeTransport: 'fetchproxy' as const,
+          ...(pt ? { pushTransport: pt } : {}),
+          hostedNote: NOTE_HOSTED,
+        }));
+      }
       const session = await read();
       const activeTransport = deps.transport.activeLeg();
       const pt = deps.pushTransport?.();
@@ -86,6 +128,9 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
       });
     },
   );
+
+  // Never on a hosted child: it would store a full-account token on the host.
+  if (hosted) return;
 
   withToolConfig(
     server,
@@ -137,6 +182,8 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
             // The old token's stale flag and the router's fallback were about
             // the OLD session: reset them so the direct leg is tried again.
             deps.transport.sessionLinked();
+            // The new session may be another account: "me" must be read again.
+            deps.identityChanged?.();
             return {
               status: 'linked' as const,
               host: result.host,

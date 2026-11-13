@@ -25,8 +25,9 @@ import {
 } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
+import { noBrowserNote } from './session.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import { failureText, type LiveContext } from './live-context.js';
+import { failureText, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
 import { openGamesPage } from './open-games.js';
 import { NO_TEAM } from '../teams.js';
@@ -74,6 +75,8 @@ interface JoinState {
   url: string;
   team: number;
   color: number;
+  /** The account the gate bound (its GameFeed id), when the plan could read it. */
+  account?: string;
 }
 
 function refuse(message: string, hint: string): never {
@@ -211,8 +214,8 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
             'It joins with your preferred colour, else your secondary, else a free standard colour (or the color you ' +
             'pass); the preview shows which, plus a screen from the lobby\'s GameFeed settings (does the cheapest ' +
             'neutral cost at most one turn of base income; Light Fog). You become a player and are expected ' +
-            'to take turns — leaving later means declining or being booted. Works without a browser once a session ' +
-            `is linked (warapp_link_session). ${CONFIRM_INJECTION_RULE}`,
+            'to take turns — leaving later means declining or being booted.' +
+            `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
             title: 'Join an open war.app game',
             readOnly: false,
@@ -241,7 +244,11 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
           }),
           async plan({ game_id, allow_team, accept_entry_fee, color: requested }) {
             const gameId = parseGameId(game_id);
-            const [html, myId] = await Promise.all([openGamesPage(ctx), ctx.myInGameId()]);
+            // One fresh read gives the account the gate binds and its in-game id (sliced from the
+            // token TEXT, #130), so the already-joined check is for that same account.
+            const [html, me] = await Promise.all([openGamesPage(ctx), ctx.myIdentity({ fresh: true })]);
+            const token = me?.token;
+            const myId = me?.inGameId;
             const bundle = await ctx.bundle();
             const parsed = parseOpenGamesPage(html, bundle);
             const lobby = parsed.lobbies.get(gameId);
@@ -256,7 +263,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
               gate: {
                 action: 'warapp.join_game',
                 summary: `Join war.app game ${gameId} (${game.pace}, ${game.openSeats} open of ${game.seats} seats)`,
-                account: undefined,
+                account: writeAccount(token),
                 target: gameId,
                 payload: { method: 'AcceptOpenSeat', gameId, team, color },
                 willSend: { game: gameId, team: team === NO_TEAM ? 'none' : team, color },
@@ -280,14 +287,23 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                   screen: screened.screen,
                   ...(screened.note ? { screenNote: screened.note } : {}),
                   color: { index: color, source },
+                  account: token === undefined ? 'the signed-in war.app account (could not be read)' : String(token),
                   note: 'Joining makes you a player who must take turns until the game ends.',
                   untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
-              state: { gameId, name: game.name, url: game.url, team, color } satisfies JoinState,
+              state: {
+                gameId,
+                name: game.name,
+                url: game.url,
+                team,
+                color,
+                ...(token === undefined ? {} : { account: writeAccount(token) }),
+              } satisfies JoinState,
             };
           },
-          async execute({ gameId, name, url, team, color }: JoinState) {
+          async execute({ gameId, name, url, team, color, account }: JoinState) {
+            await requireApprovedAccount(ctx, account);
             const game = { id: gameId, name, url };
             let vacationEnded = false;
             try {

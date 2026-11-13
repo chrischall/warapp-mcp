@@ -17,9 +17,10 @@ import { parseGameId } from '../client.js';
 import type { Game, Player } from '../normalize.js';
 import { Method, writeUnCommitParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, respond, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
+import { gameIdArg, respond, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
+import { signedInHint } from './session.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import { failureText, type LiveContext } from './live-context.js';
+import { failureText, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
 import { currentTurn, requireTurnPhase } from './turn.js';
 
@@ -97,11 +98,11 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
           async plan({ game_id }) {
             const game = await ctx.client.getGame(parseGameId(game_id));
             requireTurnPhase(game);
-            const token = await ctx.myInviteToken();
+            const token = await ctx.myInviteToken({ fresh: true });
             if (token === undefined) {
               refuse(
                 'Could not tell which war.app account is signed in, so nothing was sent.',
-                'Open a war.app tab signed in to your account (or link a session with warapp_link_session), then retry.',
+                signedInHint(ctx.hosted),
               );
             }
             const seat = uncommittable(game, token);
@@ -114,7 +115,7 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
                 // By id only: the game and player names (other people's words) go, delimited,
                 // in labelled fields.
                 summary: `Withdraw your committed orders for ${turnLabel} of war.app game ${game.id}`,
-                account: undefined,
+                account: writeAccount(seat.id),
                 target: game.id,
                 payload: { method: 'UnCommit', gameId: game.id },
                 willSend: { game: game.id, player: untrustedText(seat.name), turn },
@@ -123,6 +124,7 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
                     `This withdraws your committed orders for ${turnLabel} of game ${game.id}. The game then waits on you ` +
                     'again: submit corrected orders with warapp_submit_turn before the boot timer runs out, or you ' +
                     'may be booted.',
+                  account: shownAccount(seat.name, seat.id),
                   game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), turn },
                   untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
@@ -137,6 +139,7 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
             };
           },
           async execute({ gameId, name, me, turnsBefore, turn }: UncommitState) {
+            await requireApprovedAccount(ctx, writeAccount(me));
             const base = { game: { id: gameId, name }, turn };
             const check = 'Check warapp_get_game (your committed flag, the turn count) before doing anything else.';
             try {

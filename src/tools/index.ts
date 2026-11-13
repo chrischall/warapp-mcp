@@ -28,7 +28,8 @@ import { registerUncommitTool } from './uncommit.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { pushWebSocketLeg } from '../push/websocket.js';
 import { readSession } from '../direct/session.js';
-import { createDirectFirstBridge } from '../direct/transport.js';
+import { createDirectFirstBridge, type DirectFetch } from '../direct/transport.js';
+import { isHosted } from '../hosted.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
 
 export type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCache'> & {
@@ -43,6 +44,8 @@ export type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' |
   bundle?: () => Promise<ClassReader>;
   /** The turn-notification listener; default: the bridge's one per process. */
   push?: PushListener;
+  /** Test seam: the direct leg's HTTPS primitive (default netguard `fetchPublic`). */
+  directFetch?: DirectFetch;
 };
 
 /** Every tool this server serves. index.ts and the tests share this list. */
@@ -58,10 +61,15 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   // browser bridge otherwise (WARAPP_TRANSPORT: auto default | direct |
   // fetchproxy). WarappRpc, the page fetches, the healthcheck and the push
   // socket all take this one bridge, so they all gain direct mode at once.
+  // Direct mode is LOCAL-ONLY (src/hosted.ts): on a hosted child the router is
+  // pinned to the browser bridge, the session store reads as empty and
+  // warapp_link_session is not registered.
+  const hosted = isHosted(env ?? process.env);
   const bridge = createDirectFirstBridge({
     store: { read: () => readSession(deps.env) },
     makeBridge: () => fetchproxy,
     ...(env ? { env } : {}),
+    ...(deps.directFetch ? { directFetch: deps.directFetch } : {}),
   });
   const live = createLiveContext({
     client,
@@ -69,6 +77,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     ...(deps.env ? { env: deps.env } : {}),
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
     ...(deps.bundle ? { bundle: deps.bundle } : {}),
+    // The cached signed-in account is discarded whenever the account behind the router may have changed.
+    identity: () => bridge.identityState(),
   });
   registerHealthcheckTool(server, fetchproxy, bridge, deps);
   registerGameTool(server, client);
@@ -118,6 +128,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
       sessionLinked: () => bridge.sessionLinked(),
     },
     pushTransport: () => push.status().transport,
+    identityChanged: () => live.forgetIdentity(),
+    hosted,
     ...(env ? { env } : {}),
   });
   registerPushTools(server, live, push);
