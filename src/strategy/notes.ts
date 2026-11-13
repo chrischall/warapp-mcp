@@ -6,6 +6,7 @@
 import { gameProfile, type GameProfile, type ProfilePlayer, type ProfileSettings } from '../analysis/profile.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { BoardState } from '../board.js';
+import { armiesToTake } from '../analysis/combat.js';
 
 export const NOTE_TOPICS = ['format', 'settings', 'cards', 'reading', 'map'] as const;
 export type NoteTopic = (typeof NOTE_TOPICS)[number];
@@ -20,11 +21,19 @@ export const STRATEGY_SOURCES = {
   cards: 'https://war.app/wiki/Cards',
 } as const;
 
+/** Game facts a note may need that the profile does not carry. */
+export interface NoteContext {
+  /** Percent; absent means the default (60). */
+  offensiveKillRate?: number;
+  /** Percent; absent means the default (70). */
+  defensiveKillRate?: number;
+}
+
 export interface StrategyNote {
   id: string;
   topic: NoteTopic;
-  /** Whether the note applies to a game with this profile. */
-  when: (profile: GameProfile) => boolean;
+  /** Whether the note applies to a game with this profile (and these settings). */
+  when: (profile: GameProfile, context: NoteContext) => boolean;
   /** The heuristic, in our own words. */
   text: string;
   /** The page it rests on. */
@@ -130,7 +139,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
   {
     id: 'settings-defend-with-three',
     topic: 'settings',
-    when: always,
+    // Its numbers are the 60/70 breakpoints: offered only where two defenders fall to
+    // three attackers and three need five.
+    when: (_p, rates) => armiesToTake(2, rates) === 3 && armiesToTake(3, rates) === 5,
     text:
       'Leave three, not two, on a border you want to keep cheap to hold: at the default kill rates two defenders fall ' +
       'to three attackers but three need five, so the extra army costs the attacker two.',
@@ -345,8 +356,8 @@ export function generalNotes(topic?: NoteTopic): StrategyNote[] {
 }
 
 /** The notes that apply to a game with this profile (optionally one topic). */
-export function notesFor(profile: GameProfile, topic?: NoteTopic): StrategyNote[] {
-  return generalNotes(topic).filter((n) => n.when(profile));
+export function notesFor(profile: GameProfile, topic?: NoteTopic, context: NoteContext = {}): StrategyNote[] {
+  return generalNotes(topic).filter((n) => n.when(profile, context));
 }
 
 export interface FeedProfileInput {

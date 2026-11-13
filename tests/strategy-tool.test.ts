@@ -135,6 +135,16 @@ describe('warapp_strategy', () => {
     expect(payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME })).profile!.phase).toBe('expansion');
   });
 
+  it('a 20/80 game leaves out the defend-with-three note (its numbers are for 60/70)', async () => {
+    h = await harnessFor(game({ settings: { OffensiveKillRate: 20, DefensiveKillRate: 80 } }));
+    const ids = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME })).notes.map((n) => n.id);
+    expect(ids).not.toContain('settings-defend-with-three');
+    await h.harness.close();
+    h = await harnessFor(game());
+    const dflt = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME })).notes.map((n) => n.id);
+    expect(dflt).toContain('settings-defend-with-three');
+  });
+
   it('an FFA with cards and luck selects those notes', async () => {
     h = await harnessFor(game({ players: 4, settings: { LuckModifier: 0.16, ReinforcementCard: { NumPieces: 4 } } }));
     const ids = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME })).notes.map((n) => n.id);

@@ -7,6 +7,7 @@ import type { GameMap } from '../../src/normalize.js';
 import {
   feedProfile,
   generalNotes,
+  type NoteContext,
   NOTE_TOPICS,
   notesFor,
   notesMarkdown,
@@ -33,7 +34,8 @@ const profile = (over: Partial<GameProfile> = {}, settings: Partial<GameProfile[
   },
 });
 
-const ids = (p: GameProfile, topic?: (typeof NOTE_TOPICS)[number]) => notesFor(p, topic).map((n) => n.id);
+const ids = (p: GameProfile, topic?: (typeof NOTE_TOPICS)[number], context?: NoteContext) =>
+  notesFor(p, topic, context).map((n) => n.id);
 
 describe('strategy notes: the data', () => {
   it('every note has a unique id, a known topic, text and a source from the researched pages', () => {
@@ -130,6 +132,12 @@ describe('strategy notes: selection by profile', () => {
     for (const p of [profile(), profile({ format: 'ffa' }), profile({ format: 'teams' })]) {
       expect(ids(p)).toEqual(expect.arrayContaining(['settings-efficient-sizes', 'reading-count-armies']));
     }
+  });
+
+  it('defend-with-three only where its breakpoints hold: the default 60/70, not a 20/80 game', () => {
+    expect(ids(profile())).toContain('settings-defend-with-three');
+    expect(ids(profile(), 'settings', { offensiveKillRate: 60, defensiveKillRate: 70 })).toContain('settings-defend-with-three');
+    expect(ids(profile(), 'settings', { offensiveKillRate: 20, defensiveKillRate: 80 })).not.toContain('settings-defend-with-three');
   });
 
   it('filters by topic', () => {

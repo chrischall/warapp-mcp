@@ -152,7 +152,10 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
         picking: game.state === PICK_PHASE_STATE,
         ...(game.standing ? { board: game.standing } : {}),
       });
-      const notes = notesFor(profile, topic);
+      const notes = notesFor(profile, topic, {
+        ...(s?.offensiveKillRate !== undefined ? { offensiveKillRate: s.offensiveKillRate } : {}),
+        ...(s?.defensiveKillRate !== undefined ? { defensiveKillRate: s.defensiveKillRate } : {}),
+      });
       const mapped = withMap ? gameMapNotes(game, map) : undefined;
       return respond(view, VIEWS, (rung) => ({
         scope: 'game',

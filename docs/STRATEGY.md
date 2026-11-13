@@ -129,7 +129,7 @@ The pages were read on 2026-11-13; nothing is quoted.
 
 - `settings-efficient-sizes` — attack at the breakpoint; armies between breakpoints are wasted.
   **Encoded:** the planner sizes attacks at their breakpoints (`src/analysis/combat.ts`). Source: Combat basics.
-- `settings-defend-with-three` — three defenders cost an attacker five, two only three.
+- `settings-defend-with-three` — three defenders cost an attacker five, two only three (offered only at kill rates where those breakpoints hold, e.g. the default 60/70).
   **Advice only.** Source: General strategy guidelines.
 - `settings-poke` — a one-army attack can break an exact-size attack. **Advice only.** Source:
   General strategy guidelines.
