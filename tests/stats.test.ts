@@ -119,6 +119,56 @@ describe('StatsCollector', () => {
     expect(Math.min(...gaps)).toBeGreaterThanOrEqual(MIN_GAP_MS);
   });
 
+  it('keeps the 1 s gap when two calls overlap on the shared collector', async () => {
+    // Virtual timers: sleep() parks until the driver advances the clock to its due time.
+    let clock = 50_000;
+    const timers: Array<{ due: number; resolve: () => void }> = [];
+    const stamps: number[] = [];
+    const client: StatsClient = {
+      async getGameIds() {
+        stamps.push(clock);
+        return [3, 2, 1];
+      },
+      async getGame(id) {
+        stamps.push(clock);
+        return game(id);
+      },
+    };
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-stats-test-'));
+    const collector = new StatsCollector({
+      client,
+      dir: () => dir,
+      now: () => clock,
+      sleep: (ms) => new Promise<void>((resolve) => timers.push({ due: clock + ms, resolve })),
+    });
+    let done = false;
+    const both = Promise.all([collector.collect(1), collector.collect(2)]).then(() => {
+      done = true;
+    });
+    while (!done) {
+      // Let real file I/O settle so every caller that is going to park has parked.
+      await new Promise((r) => setTimeout(r, 10));
+      if (timers.length === 0) continue;
+      timers.sort((a, b) => a.due - b.due);
+      const t = timers.shift()!;
+      clock = Math.max(clock, t.due);
+      t.resolve();
+    }
+    await both;
+    const sorted = [...stamps].sort((a, b) => a - b);
+    const gaps = sorted.slice(1).map((t, i) => t - sorted[i]!);
+    expect(stamps.length).toBeGreaterThan(3);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(MIN_GAP_MS);
+  });
+
+  it('tries untried games before ones that already failed this process', async () => {
+    const { collector, requests } = fake([3, 2, 1], { 1: () => game(1), 2: () => game(2) });
+    expect(await collector.collect(0, 1)).toMatchObject({ fetched: 1, failed: 1 });
+    requests.length = 0;
+    expect(await collector.collect(0, 1)).toMatchObject({ fetched: 1, newlyCached: 1, failed: 0 });
+    expect(requests.map((r) => r.what)).toEqual(['feed:0', 'game:2']);
+  });
+
   it('a cache hit makes no request', async () => {
     const { collector, requests } = fake([2, 1], finished(1, 2));
     await collector.collect(0);
@@ -165,10 +215,14 @@ describe('StatsCollector', () => {
     expect(requests.map((r) => r.what)).toEqual(['feed:0']);
   });
 
-  it('ignores an unreadable record when reading a map', async () => {
-    const { collector, dir } = fake([]);
+  it('ignores an unreadable record when reading a map, and drops it so it is fetched again', async () => {
+    const { collector, dir, requests } = fake([9], finished(9));
     mkdirSync(join(dir, 'stats', '777'), { recursive: true });
     writeFileSync(join(dir, 'stats', '777', '9.json'), 'not json');
     expect(await collector.records(777)).toEqual([]);
+    expect(existsSync(recordPath(dir, 777, 9))).toBe(false);
+    expect(await collector.collect(0)).toMatchObject({ cacheHits: 0, newlyCached: 1 });
+    expect(requests.map((r) => r.what)).toEqual(['feed:0', 'game:9']);
+    expect((await collector.records(777)).map((r) => r.gameId)).toEqual([9]);
   });
 });

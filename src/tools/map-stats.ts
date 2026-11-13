@@ -2,14 +2,13 @@
 // games — OPT-IN (WARAPP_STATS=1) and never on a hosted server. See
 // src/stats.ts (collection, throttle, cache) and src/map-stats.ts (the pure
 // aggregation).
-import { McpToolError } from '@chrischall/mcp-utils';
+import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { MapCache } from '../client.js';
 import { MIN_SAMPLE, mapStats, type MapStats } from '../map-stats.js';
 import type { GameMap } from '../normalize.js';
 import { DEFAULT_NEW_GAMES, MAX_NEW_GAMES, STATS_ENV, statsGate, type StatsCollector, type StatsGate } from '../stats.js';
-import type { EnvSource } from '@chrischall/mcp-utils';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta } from './hints.js';
 

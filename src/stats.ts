@@ -14,7 +14,7 @@
 // forever at `<dataDir>/stats/<mapId>/<gameId>.json` (its compact
 // {@link GameRecord}: ids, wins and turn numbers, no names), so a cache hit
 // costs no request. A failing game is skipped and counted, never fatal.
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { GetGameOptions } from './client.js';
@@ -110,13 +110,27 @@ const isRecord = (v: unknown): v is GameRecord => {
   );
 };
 
+/**
+ * Read one cached record. A file that reads but is not a valid record is
+ * deleted: its name alone counts as a cache hit, so left in place it would
+ * never be fetched again and never be counted.
+ */
 async function readRecord(path: string): Promise<GameRecord | undefined> {
+  let text: string;
   try {
-    const r: unknown = JSON.parse(await readFile(path, 'utf8'));
-    return isRecord(r) ? r : undefined;
+    text = await readFile(path, 'utf8');
   } catch {
     return undefined;
   }
+  let r: unknown;
+  try {
+    r = JSON.parse(text);
+  } catch {
+    r = undefined;
+  }
+  if (isRecord(r)) return r;
+  await unlink(path).catch(() => undefined);
+  return undefined;
 }
 
 async function names(path: string): Promise<string[]> {
@@ -156,7 +170,11 @@ export class StatsCollector {
   readonly #sleep: (ms: number) => Promise<void>;
   /** Games seen unfinished this process: not worth a request again soon. */
   readonly #unfinished = new Set<number>();
+  /** Games that failed this process: tried again only after every untried game. */
+  readonly #failed = new Set<number>();
   #last: number | undefined;
+  /** The request queue: each throttle waits for the one before it, so overlapping calls never share a slot. */
+  #queue: Promise<void> = Promise.resolve();
 
   constructor(opts: CollectorOptions) {
     this.#client = opts.client;
@@ -165,13 +183,21 @@ export class StatsCollector {
     this.#sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
-  /** Wait until {@link MIN_GAP_MS} has passed since the previous request, then mark this one. */
-  async #throttle(): Promise<void> {
-    if (this.#last !== undefined) {
-      const wait = this.#last + MIN_GAP_MS - this.#now();
-      if (wait > 0) await this.#sleep(wait);
-    }
-    this.#last = this.#now();
+  /**
+   * Wait until {@link MIN_GAP_MS} has passed since the previous request, then
+   * mark this one. Slots are granted one at a time through {@link #queue}, so
+   * two overlapping `collect()` calls cannot read the same `#last` and wake together.
+   */
+  #throttle(): Promise<void> {
+    const turn = this.#queue.then(async () => {
+      if (this.#last !== undefined) {
+        const wait = this.#last + MIN_GAP_MS - this.#now();
+        if (wait > 0) await this.#sleep(wait);
+      }
+      this.#last = this.#now();
+    });
+    this.#queue = turn.catch(() => undefined);
+    return turn;
   }
 
   /** Pull up to `maxNewGames` uncached games from a ladder's feed into the cache. */
@@ -191,7 +217,10 @@ export class StatsCollector {
       failed: 0,
       remaining: 0,
     };
-    for (const id of ids) {
+    // Newest first, but a game that already failed this process goes last, so a
+    // permanently broken game at the head of the feed cannot eat the budget every call.
+    const ordered = [...ids.filter((id) => !this.#failed.has(id)), ...ids.filter((id) => this.#failed.has(id))];
+    for (const id of ordered) {
       if (index.has(id)) {
         res.cacheHits++;
         continue;
@@ -215,8 +244,10 @@ export class StatsCollector {
         }
         if (!game.map) throw new Error('no map');
         await writeRecord(dir, recordFromGame(game, game.map));
+        this.#failed.delete(id);
         res.newlyCached++;
       } catch {
+        this.#failed.add(id);
         res.failed++;
       }
     }
