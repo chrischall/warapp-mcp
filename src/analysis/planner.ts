@@ -137,7 +137,7 @@
 //     (`guaranteedFalls`). Every sizing is searched: each territory attacked as if
 //     0..D of the deploy lands there, or not attacked (all of them while there are at
 //     most 1024 sizings, else evenly spaced shares, always including D), with the
-//     usual capture rules (single and combined attacks, kill rates, luck margin, R3);
+//     usual capture rules (single and combined attacks, kill rates, luck, R3);
 //     a softener in a combined capture never kills the defenders there now either.
 //     Every opponent in reach is tried, not only weak ones. A sizing succeeds when every
 //     territory falls for sure (elimination, so each attack is sized for all of D), or
@@ -369,11 +369,18 @@
 //     absorbed by its own neighbours' growth) and is now cheaper to take than it
 //     was; never under `expand`/`defend`). Fogged or unknown neighbours are never attacked — they
 //     produce a warning.
-//  3. Capture cost: `armiesToTake` (0% luck, straight round). With luck L > 0
-//     the cost becomes `ceil(cost / (1 − L))`, i.e. the luck-free share of the
-//     attack alone still takes the territory. S2: with `minWinChance` below 1 an
-//     ordinary capture instead gets the fewest armies whose exact `winChance`
-//     reaches it (worst-case sizings stay guaranteed); every attack carries its
+//  3. Capture cost (#126): the fewest armies whose exact `winChance` reaches the capture's
+//     chance — certain (chance 1) means every roll and rounding takes it: `armiesToTake` at 0%
+//     luck under straight rounding, one army more where weighted-random rounding could round a
+//     kill down, the kills the luck-free share guarantees with luck. An ordinary capture's
+//     chance is `minWinChance` (default 1 with no luck, LUCK_WIN_CHANCE = 0.95 with luck on,
+//     where certainty costs several times a likely win), taken to the power 1/k for a
+//     territory in a positive bonus with k members not mine, so the captures a bonus still
+//     needs reach it together; the plan states each completion's joint chance when below 1.
+//     Worst-case sizings (finishing a player off, fog pressure, commander strikes) stay
+//     certain. Holds (#126): with luck or weighted rounding a stack "needs N to take" where N
+//     is the fewest attackers winning more than HOLD_FALL_CHANCE (5%), so a hold above the
+//     threat falls to it at most that often (exact `armiesToTake` otherwise); every attack carries its
 //     `winChance`; after the leftover deploy an attack on a player's territory (not already
 //     sized for a worst case) is sized for its defenders plus what its owner may deploy there
 //     first (its deploy estimate, or its growth there per turn when larger; #120) when the
@@ -829,11 +836,11 @@ export interface PlanOptions {
    */
   adapt?: boolean;
   /**
-   * The least win chance an ordinary capture is sized for, 0.5–1. Default 1: today's
-   * guaranteed sizing (`captureCost`). Below 1, each capture of a neutral or an enemy
+   * The least win chance an ordinary capture is sized for, 0.5–1. Default (#126): 1 with no
+   * luck, {@link LUCK_WIN_CHANCE} with luck on. Below 1, each capture of a neutral or an enemy
    * territory sized for its current armies gets the fewest armies whose {@link winChance}
-   * reaches it. Worst-case sizings (finishing a player off, fog pressure, commander strikes)
-   * stay guaranteed.
+   * reaches it — a bonus's missing captures together (each at the chance^(1/k)). Worst-case
+   * sizings (finishing a player off, fog pressure, commander strikes) stay certain.
    */
   minWinChance?: number;
 }
@@ -1048,20 +1055,43 @@ export function minWinChanceOf(v: number | undefined): number {
 }
 
 /**
+ * The win chance an ordinary capture is sized for when `minWinChance` is not given (#126): with
+ * luck on, certainty can cost several times a likely win (a 2-army neutral needs 14 armies to be
+ * certain at 75% luck, 5 for 95%), so {@link LUCK_WIN_CHANCE}; with no luck certainty is cheap
+ * (weighted-random rounding: one army more than straight rounding), so 1.
+ */
+export const LUCK_WIN_CHANCE = 0.95;
+/**
+ * The most a hold may fall to the attack it is sized against (#126): with luck or weighted-random
+ * rounding a stack falls to an attack below its exact `armiesToTake` some of the time, so a hold
+ * is judged against the fewest attackers that win more often than this.
+ */
+export const HOLD_FALL_CHANCE = 0.05;
+export function defaultMinWinChance(settings: PlannerSettings = {}): number {
+  return luckFraction(settings.luckModifier) > 0 ? LUCK_WIN_CHANCE : 1;
+}
+
+/** Certain sizes by settings and defenders: each is a search over the exact model. */
+const certainMemo = new Map<string, number | null>();
+
+/**
  * Armies to send at a territory held by `defenders`; `null` when it cannot be taken. With
- * `minWinChance` 1 (default) the guaranteed sizing: `armiesToTake` (0% luck, straight round)
- * plus the luck margin `ceil(cost / (1 − luck))`. Below 1, the fewest armies whose exact
+ * `minWinChance` 1 (default) the certain sizing (#126): the fewest armies whose exact
+ * {@link winChance} is 1 — every roll and every rounding takes it (`armiesToTake` at 0% luck under
+ * straight rounding; one army more under weighted-random rounding; the kills the luck-free share
+ * guarantees, {@link guaranteedKills}, with luck). Below 1, the fewest armies whose
  * {@link winChance} reaches it.
  */
 export function captureCost(defenders: number, settings: PlannerSettings = {}, minWinChance = 1): number | null {
-  if (minWinChance < 1) return armiesForChance(defenders, minWinChanceOf(minWinChance), combatSettings(settings));
-  const base = armiesToTake(defenders, {
-    offensiveKillRate: settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
-    defensiveKillRate: settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
-  });
-  if (base === null) return null;
-  const luck = luckFraction(settings.luckModifier);
-  return luck > 0 ? Math.ceil(base / (1 - luck)) : base;
+  const combat = combatSettings(settings);
+  if (minWinChance < 1) return armiesForChance(defenders, minWinChanceOf(minWinChance), combat);
+  if (!combat.luck && combat.rounding !== 'WeightedRandom') return armiesToTake(defenders, combat);
+  const key = `${combat.offensiveKillRate}|${combat.defensiveKillRate}|${combat.luck}|${combat.rounding}|${defenders}`;
+  if (!certainMemo.has(key)) {
+    if (certainMemo.size > 50_000) certainMemo.clear();
+    certainMemo.set(key, armiesForChance(defenders, 1, combat));
+  }
+  return certainMemo.get(key)!;
 }
 
 /**
@@ -1785,13 +1815,47 @@ export function planTurn(input: PlanInput): TurnPlan {
   /** The exact combat model's settings (S2): kill rates, luck, rounding. */
   const combat = combatSettings(s);
   const chanceOf = (armies: number, defenders: number) => winChance(armies, defenders, combat);
-  /** The least win chance an ordinary capture is sized for (S2). */
-  const minWin = minWinChanceOf(opts.minWinChance);
-  const costMemo = new Map<number, number | null>();
-  /** An ordinary capture's size against `defenders`, at {@link minWin}. */
-  const costOf = (defenders: number): number | null => {
-    if (!costMemo.has(defenders)) costMemo.set(defenders, captureCost(defenders, s, minWin));
-    return costMemo.get(defenders)!;
+  /** The least win chance an ordinary capture is sized for (S2; #126: 95% by default with luck on). */
+  const minWin = opts.minWinChance !== undefined ? minWinChanceOf(opts.minWinChance) : defaultMinWinChance(s);
+  /** Exact results: 0% luck under straight rounding, where every chance is 0 or 1. */
+  const exactCombat = !combat.luck && combat.rounding !== 'WeightedRandom';
+  /**
+   * #126: the chance each capture of `t` is sized for, so the captures a bonus still needs reach
+   * {@link minWin} together: minWin^(1/k), k the most members not mine of any positive bonus `t`
+   * is in (1 outside a bonus). 1 when minWin is.
+   */
+  const missingOf = new Map<number, number>();
+  const heldAtStart = new Set(
+    board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me ? [t.territoryId] : [])),
+  );
+  for (const b of g.map.bonuses) {
+    if (b.value <= 0) continue;
+    const ts = bonusTerritories(g, b.id);
+    const missing = ts.filter((x) => !heldAtStart.has(x)).length;
+    for (const x of ts) missingOf.set(x, Math.max(missingOf.get(x) ?? 1, missing));
+  }
+  const chanceAt = (t: number) => (minWin >= 1 ? 1 : minWin ** (1 / (missingOf.get(t) ?? 1)));
+  const costMemo = new Map<string, number | null>();
+  /** An ordinary capture's size against `defenders`, at `chance` (default {@link minWin}). */
+  const costOf = (defenders: number, chance = minWin): number | null => {
+    const key = `${defenders}|${chance}`;
+    if (!costMemo.has(key)) costMemo.set(key, captureCost(defenders, s, chance));
+    return costMemo.get(key)!;
+  };
+  /** An ordinary capture of `t`'s size against `defenders` (default what defends it now), at {@link chanceAt}. */
+  const costAt = (t: number, defenders = defenceAt(t)): number | null => costOf(defenders, chanceAt(t));
+  /** {@link toTake} by defenders, for this plan's settings. */
+  const takeMemo = new Map<number, number | null>();
+  /**
+   * The attack that takes `defenders` (holds, threats, retakes): `armiesToTake` with exact results;
+   * else (#126) the fewest attackers whose win chance exceeds {@link HOLD_FALL_CHANCE}, so a stack
+   * that "needs N to take, above the threat" falls to that threat at most that often.
+   */
+  const toTake = (defenders: number): number | null => {
+    if (exactCombat) return armiesToTake(defenders, rates);
+    if (!takeMemo.has(defenders))
+      takeMemo.set(defenders, defenders <= 0 ? 1 : armiesForChance(defenders, HOLD_FALL_CHANCE + 1e-9, combat));
+    return takeMemo.get(defenders)!;
   };
   const warnings: string[] = [];
   const rationale: string[] = [];
@@ -1857,7 +1921,7 @@ export function planTurn(input: PlanInput): TurnPlan {
    * it). Infinity when it cannot be taken.
    */
   const econCostAt = (x: number): number => {
-    const c = costOf(defenceAt(x));
+    const c = costAt(x);
     if (c === null) return Infinity;
     const lost = Math.min(c - 1, straightKills(defenceAt(x), rates.defensiveKillRate));
     const idle = neighborsOf(g, x).some(
@@ -1912,20 +1976,26 @@ export function planTurn(input: PlanInput): TurnPlan {
   if (luck > 0)
     warnings.push(
       minWin < 1
-        ? `Luck is ${Math.round(luck * 100)}%: each capture is sized for at least a ${Math.round(minWin * 100)}% win chance (min_win_chance), so it can fail; each attack's winChance says how likely it is.`
-        : `Luck is ${Math.round(luck * 100)}%: each attack carries a margin (armies = ceil(cost / (1 − luck))) so the luck-free share alone takes it${weightedRounding ? '' : ' (win chance 1 under straight rounding)'}; each attack's winChance says how likely it is.`,
+        ? `Luck is ${Math.round(luck * 100)}%: each capture is sized for at least a ${Math.round(minWin * 100)}% win chance (min_win_chance${opts.minWinChance === undefined ? `, ${Math.round(LUCK_WIN_CHANCE * 100)}% by default with luck on` : ''}), so it can fail; each attack's winChance says how likely it is.`
+        : `Luck is ${Math.round(luck * 100)}%: each capture is sized to be certain (min_win_chance 1: the fewest armies whose every roll takes it); each attack's winChance says how likely it is.`,
     );
   if (s.offensiveKillRate === undefined || s.defensiveKillRate === undefined)
     warnings.push(
       `Kill rates missing from the game settings; assuming ${rates.offensiveKillRate}% offense, ${rates.defensiveKillRate}% defense.`,
     );
-  if (s.roundingMode !== undefined && s.roundingMode !== 'StraightRound')
+  if (s.roundingMode === 'WeightedRandom')
     warnings.push(
-      `Capture costs assume straight rounding; this game uses ${s.roundingMode}: each attack's winChance is computed under it (an attack can fail).`,
+      `This game uses ${s.roundingMode} rounding: capture and hold sizes are computed under it (a fraction of a kill can round either way), and each attack's winChance says how likely it is.`,
     );
+  else if (weightedRounding)
+    warnings.push(`Capture costs assume straight rounding; this game uses ${s.roundingMode}, which the combat model does not know.`);
   if (minWin < 1)
     rationale.push(
-      `Captures are sized for at least a ${Math.round(minWin * 100)}% win chance (min_win_chance), not a guaranteed take: each gets the fewest armies whose exact win chance reaches it. Attacks sized for a worst case (finishing a player off, fog pressure, commander strikes) stay guaranteed.`,
+      `Captures are sized for at least a ${Math.round(minWin * 100)}% win chance (min_win_chance), not a guaranteed take: each gets the fewest armies whose exact win chance reaches it, and the captures a bonus still needs reach it together (each at that chance to the power 1/k, k the bonus's missing members). Attacks sized for a worst case (finishing a player off, fog pressure, commander strikes) stay certain: their win chance is 1.`,
+    );
+  if (!exactCombat)
+    rationale.push(
+      `Holds are sized so the attack assumed wins at most ${Math.round(HOLD_FALL_CHANCE * 100)}%: "need N to take" is the smallest attack that wins more often than that${luck > 0 ? ` at ${Math.round(luck * 100)}% luck` : ''}${weightedRounding ? ` under ${s.roundingMode} rounding` : ''}.`,
     );
   if (s.multiAttack)
     rationale.push('Multi-attack is on, but the plan does not chain attacks from captured territories.');
@@ -2198,7 +2268,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   /** Fewest armies on a territory that hold against `threat` attackers. */
   const holdArmies = (threat: number) => {
     let a = 0;
-    while ((armiesToTake(a, rates) ?? Infinity) <= threat) a++;
+    while ((toTake(a) ?? Infinity) <= threat) a++;
     return a;
   };
   /**
@@ -2253,7 +2323,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (!th) continue;
       // My commander defends with the armies on my territory (a capture's units were the enemy's).
       const have = stays(m) + (mineSet.has(m) ? unitsAt(m) : 0);
-      const take = armiesToTake(have, rates);
+      const take = toTake(have);
       if (take === null || take > th.threat) continue;
       out.push({ id: m, player: th.player, take, need: holdArmies(th.threat) - have });
     }
@@ -2308,7 +2378,7 @@ export function planTurn(input: PlanInput): TurnPlan {
    */
   const safeAtStart = new Set(
     [...borders.values()]
-      .filter((b) => (armiesToTake(armiesOf(b.id) + unitsAt(b.id), rates) ?? Infinity) > b.threat)
+      .filter((b) => (toTake(armiesOf(b.id) + unitsAt(b.id)) ?? Infinity) > b.threat)
       .map((b) => b.id),
   );
   for (const [e, gr] of growthOf) {
@@ -2474,14 +2544,14 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const b of borders.values()) {
       const have = stayAt(b.id);
       const units = unitsAt(b.id);
-      const take = armiesToTake(have + units, rates);
+      const take = toTake(have + units);
       if (take === null || take > b.threat) continue;
       const text = `${label(b.id)} (${have} armies${units ? ' and my commander' : ''}) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${take} would do.`;
       threatWarnings.set(b.id, { text, threat: b.threat });
       warnings.push(text);
       // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.
       let d = 1;
-      while ((armiesToTake(have + units + d, rates) ?? Infinity) <= b.threat) d++;
+      while ((toTake(have + units + d) ?? Infinity) <= b.threat) d++;
       const value = valueOf(b.id);
       const from = recentlyTakenFrom(b.id);
       threatened.push({
@@ -2532,7 +2602,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const by = borders.get(t.id)?.player;
     if (by !== undefined) heldAgainst.set(by, (heldAgainst.get(by) ?? new Set()).add(t.id));
     rationale.push(
-      `Deploy ${t.holdCost + (t.given ?? 0)} to ${label(t.id)} so it holds (protects +${t.value}): ${heldStack(t)} need ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat.`,
+      `Deploy ${t.holdCost + (t.given ?? 0)} to ${label(t.id)} so it holds (protects +${t.value}): ${heldStack(t)} need ${toTake(t.have + t.units + t.holdCost)} to take, above the ~${t.threat} threat.`,
     );
   };
   // ---- 1h. held-bonus units (#51) ----
@@ -2726,7 +2796,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const margin = nearMissMargin(need);
     const shortOnes = given.filter((x) => x.n < x.m.holdCost);
     const holdsExpected = shortOnes.every(
-      (x) => (armiesToTake(x.m.have + x.n, rates) ?? Infinity) > expectedAt(x.m.id),
+      (x) => (toTake(x.m.have + x.n) ?? Infinity) > expectedAt(x.m.id),
     );
     if (short > margin && !holdsExpected) {
       for (const x of given) if (x.n > 0) undeploy(x.m.id, x.n);
@@ -2747,8 +2817,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       heldBorders.add(m.id);
       rationale.push(
         n + (m.given ?? 0) > 0
-          ? `Deploy ${n + (m.given ?? 0)} to ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have + n} armies need ${armiesToTake(m.have + n, rates)} to take, against the ~${m.threat} threat (its armies stay: withdrawing them would guarantee the loss).`
-          : `Keep the armies on ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have} armies need ${armiesToTake(m.have, rates)} to take, against the ~${m.threat} threat.`,
+          ? `Deploy ${n + (m.given ?? 0)} to ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have + n} armies need ${toTake(m.have + n)} to take, against the ~${m.threat} threat (its armies stay: withdrawing them would guarantee the loss).`
+          : `Keep the armies on ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have} armies need ${toTake(m.have)} to take, against the ~${m.threat} threat.`,
       );
     }
     return true;
@@ -2774,7 +2844,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const floorOf = (m: Threatened) => {
     const movable = adjacentMovable(m.id);
     let d = 0;
-    while (d < m.holdCost && (armiesToTake(m.have + m.units + d, rates) ?? Infinity) <= movable) d++;
+    while (d < m.holdCost && (toTake(m.have + m.units + d) ?? Infinity) <= movable) d++;
     return d;
   };
   /** Deploy `n` to `m` as part of its hold: what it has grows and what its hold still needs shrinks. */
@@ -2830,7 +2900,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       rationale.push(
         ...done.map(
           (x) =>
-            `Floor for bonus ${bonusName(u.bonusId)} (+${u.value}): deploy ${x.f} to ${label(x.m.id)} so its ${x.m.have} armies beat the ${adjacentMovable(x.m.id)} already next to it (${armiesToTake(x.m.have + x.m.units, rates)} to take): one enemy deploy lands on one target, so every border first holds against what is already there.`,
+            `Floor for bonus ${bonusName(u.bonusId)} (+${u.value}): deploy ${x.f} to ${label(x.m.id)} so its ${x.m.have} armies beat the ${adjacentMovable(x.m.id)} already next to it (${toTake(x.m.have + x.m.units)} to take): one enemy deploy lands on one target, so every border first holds against what is already there.`,
         ),
       );
     }
@@ -2891,7 +2961,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     heldBorders.add(t.id);
   };
   /** Armies the opponent's deploy needs on my `m` to take it, with `have` armies there. */
-  const breakCostWith = (m: Threatened, have: number) => (armiesToTake(have + m.units, rates) ?? Infinity) - adjacentMovable(m.id);
+  const breakCostWith = (m: Threatened, have: number) => (toTake(have + m.units) ?? Infinity) - adjacentMovable(m.id);
   /**
    * The bonus value the opponents' best response takes from the floored units in `us`, given
    * the armies on each border: per player, its one deploy split to break the most value (each
@@ -3033,7 +3103,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const [m, n] of [...given].sort((a, b) => a[0].id - b[0].id))
       rationale.push(
         m.holdCost <= 0
-          ? `Deploy ${n} more to ${label(m.id)} so it holds (${m.have} armies, ${armiesToTake(m.have + m.units, rates)} to take, above the ~${m.threat} threat).`
+          ? `Deploy ${n} more to ${label(m.id)} so it holds (${m.have} armies, ${toTake(m.have + m.units)} to take, above the ~${m.threat} threat).`
           : `Deploy ${n} more to ${label(m.id)} against the one shared deploy: ${m.have} armies, so player ${borders.get(m.id)?.player}'s deploy needs ${breakCost(m)} of its ~${deployShare(m)} there to take it.`,
       );
     for (const m of members) if (m.holdCost <= 0) heldBorders.add(m.id);
@@ -3079,7 +3149,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         deploy(t.id, t.holdCost);
         commanderHeld.add(t.id);
         rationale.push(
-          `Deploy ${t.holdCost} to ${label(t.id)}: my commander stands there, so it must hold (losing the commander eliminates me): ${heldStack(t)} need ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat.`,
+          `Deploy ${t.holdCost} to ${label(t.id)}: my commander stands there, so it must hold (losing the commander eliminates me): ${heldStack(t)} need ${toTake(t.have + t.units + t.holdCost)} to take, above the ~${t.threat} threat.`,
         );
         continue;
       }
@@ -3195,7 +3265,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         })
         .sort((a, b) => a.id - b.id);
       const stays = stayAt(t);
-      const take = armiesToTake(stays, rates) ?? Infinity;
+      const take = toTake(stays) ?? Infinity;
       const expected = expectedAt(t);
       if (held.length && take > expected) {
         locked.add(t);
@@ -3265,8 +3335,8 @@ export function planTurn(input: PlanInput): TurnPlan {
           dest !== undefined &&
           !conceded.has(to.id) &&
           valueOf(to.id) > 0 &&
-          (armiesToTake(at, rates) ?? Infinity) <= dest.threat &&
-          (armiesToTake(at + n, rates) ?? Infinity) > dest.threat;
+          (toTake(at) ?? Infinity) <= dest.threat &&
+          (toTake(at + n) ?? Infinity) > dest.threat;
         if (!makesHold) {
           locked.add(t);
           stood.add(t);
@@ -3369,7 +3439,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (!mineSet.has(t) || !border || heldBorders.has(t) || myCommanders.has(t)) continue;
         const stays = stayAt(t) + unitsAt(t);
         let d = 0;
-        while ((armiesToTake(stays + d, rates) ?? Infinity) <= border.threat) d++;
+        while ((toTake(stays + d) ?? Infinity) <= border.threat) d++;
         if (!d) continue;
         // No-Split: a deploy on a territory that already issues an order leaves with it.
         if (orderOf(t)) split = true;
@@ -3390,7 +3460,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         locked.add(x.id);
         const stays = stayAt(x.id) + unitsAt(x.id);
         rationale.push(
-          `Garrison ${label(x.id)} for bonus ${bonusName(b.id)} (+${b.value}), completed this turn: deploy ${x.d} so its ${stays} armies need ${armiesToTake(stays, rates)} to take, above the ~${x.threat} threat — held like a bonus held at the start, before any later capture, not left to the leftover.`,
+          `Garrison ${label(x.id)} for bonus ${bonusName(b.id)} (+${b.value}), completed this turn: deploy ${x.d} so its ${stays} armies need ${toTake(stays)} to take, above the ~${x.threat} threat — held like a bonus held at the start, before any later capture, not left to the leftover.`,
         );
       }
     }
@@ -3504,8 +3574,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         return heldBy(a, p) && heldBy(b, p) ? sum + Math.max(0, a.armies! - b.armies!) : sum;
       }, 0);
       if (was!.armies! - st.armies <= absorbed) continue;
-      const costNow = costOf(defenceAt(id));
-      const costThen = costOf(was!.armies! + unitsAt(id));
+      const costNow = costAt(id);
+      const costThen = costAt(id, was!.armies! + unitsAt(id));
       if (costNow === null || costThen === null || costNow >= costThen) continue;
       counterAt.set(id, { player: p, from: was!.armies!, to: st.armies, costNow, costThen });
     }
@@ -3527,7 +3597,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (st.owner.kind === 'available') continue;
     const enemy = st.owner.kind === 'player';
     if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t)))) continue;
-    const cost = costOf(defenceAt(t));
+    const cost = costAt(t);
     if (cost === null) continue;
     targets.set(t, { id: t, cost, enemy, sources });
   }
@@ -3694,7 +3764,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         fogged++;
         continue;
       }
-      const c = costOf(defenceAt(t)) ?? Infinity;
+      const c = costAt(t) ?? Infinity;
       cost += c;
       worst = Math.max(worst, c);
       const l = econCostAt(t);
@@ -3848,7 +3918,7 @@ export function planTurn(input: PlanInput): TurnPlan {
    */
   const retakeChecks = new Map<number, { bonusId: number; survivors: number; counter: number; warning?: string }>();
   const retakeWarning = (t: number, bonusId: number, survivors: number, counter: number): string | undefined => {
-    const take = armiesToTake(survivors, rates);
+    const take = toTake(survivors);
     return take !== null && take <= counter
       ? `${label(t)} can be retaken after it breaks ${bonusName(bonusId)}: ${survivors} survivors need ${take} to take, against ~${counter} next turn.`
       : undefined;
@@ -3935,11 +4005,11 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (value <= 0 && !myCommanders.has(x)) return null;
     const st = state.get(t);
     const owner = st?.owner.kind === 'player' && st.owner.playerId !== me ? st.owner.playerId : undefined;
-    const sure = owner === undefined || (costOf(defenceAt(t) + deployOf(owner)) ?? Infinity) <= sent;
+    const sure = owner === undefined || (captureCost(defenceAt(t) + deployOf(owner), s) ?? Infinity) <= sent;
     const b = borderAt(x, (n) => captured.has(n) || assumeGone(n) || (n === t && sure));
     if (!b) return null;
     const stays = guard + (incoming.get(x) ?? 0);
-    if ((armiesToTake(stays + unitsAt(x), rates) ?? Infinity) > b.threat) return null;
+    if ((toTake(stays + unitsAt(x)) ?? Infinity) > b.threat) return null;
     return { from: x, value, stays, threat: b.threat };
   };
   /** A No-Split warning: `h.from` must hold, so `what` is not planned. Never repeated. */
@@ -4482,7 +4552,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const p = previousOwner.get(id);
     return p !== undefined && p !== me && weak.has(p) ? p : undefined;
   };
-  /** The most defenders `armies` attackers take (capture cost, luck margin included). */
+  /** The most defenders `armies` attackers take for certain (`captureCost` at chance 1). */
   const takesUpTo = (armies: number) => {
     let y = 0;
     while ((captureCost(y + 1, s) ?? Infinity) <= armies) y++;
@@ -5066,7 +5136,7 @@ export function planTurn(input: PlanInput): TurnPlan {
             movable += Math.max(0, st.armies - guard) + unitsAt(n);
             growth = Math.max(growth, growthOf.get(n)?.growth ?? 0);
           }
-          const take = armiesToTake(defenceAt(m), rates);
+          const take = toTake(defenceAt(m));
           return next && take !== null && take <= movable + Math.max(deployOf(p), growth);
         }),
       );
@@ -5151,7 +5221,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const cost = targets.get(t)!.cost;
       const survivors = cost - straightKills(defenceAt(t), rates.defensiveKillRate);
       const counter = counterThreat(t);
-      const take = armiesToTake(survivors, rates);
+      const take = toTake(survivors);
       return { t, cost, survivors, counter, take, survives: take === null || take > counter, scoreCost: landScoreCost(t) };
     };
     type BreakOption = ReturnType<typeof breakOption>;
@@ -5208,7 +5278,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (!tryCapture(n, breakReason(b), { from: t.id, keep: avail.get(t.id)! })) {
         // Refused (R3: it would complete a bonus I cannot hold next turn): just hold.
         rationale.push(
-          `Deploy ${t.holdCost} to ${label(t.id)} so it holds (protects +${t.value}): ${heldStack(t)} need ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat.`,
+          `Deploy ${t.holdCost} to ${label(t.id)} so it holds (protects +${t.value}): ${heldStack(t)} need ${toTake(t.have + t.units + t.holdCost)} to take, above the ~${t.threat} threat.`,
         );
         return true;
       }
@@ -5218,7 +5288,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         `${label(n)} is the only visible threat to ${label(t.id)}: capturing it removes that threat and breaks the bonus.`,
         noSplit
           ? `Deploy ${t.holdCost} to ${label(t.id)}: under No-Split its whole stack attacks ${label(n)} and nothing stays behind, so ${label(t.id)} (protects +${t.value}) is safe only once ${label(n)} falls.`
-          : `Deploy ${t.holdCost} to ${label(t.id)} so it still holds (protects +${t.value}) after attacking ${label(n)}: ${heldStack(t)} stay, needing ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat if the attack fails.`,
+          : `Deploy ${t.holdCost} to ${label(t.id)} so it still holds (protects +${t.value}) after attacking ${label(n)}: ${heldStack(t)} stay, needing ${toTake(t.have + t.units + t.holdCost)} to take, above the ~${t.threat} threat if the attack fails.`,
       );
       warnRetake(b, o);
       // Its own offence entry (#72): the break option may be another member, which never runs.
@@ -5689,7 +5759,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           const sources = neighborsOf(g, t).filter((n) => mineSet.has(n));
           if (!sources.length || gainWith([t]) < 0) continue;
           if (!targets.has(t)) {
-            const cost = costOf(defenceAt(t));
+            const cost = costAt(t);
             if (cost === null) continue;
             targets.set(t, { id: t, cost, enemy: true, sources });
             added.push(t);
@@ -5761,7 +5831,7 @@ export function planTurn(input: PlanInput): TurnPlan {
             movable += Math.max(0, st.armies - guard) + unitsAt(n);
             growth = Math.max(growth, growthOf.get(n)?.growth ?? 0);
           }
-          const take = armiesToTake(defenceAt(x), rates);
+          const take = toTake(defenceAt(x));
           return next && take !== null && take <= movable + Math.max(deployOf(p), growth);
         });
       /** What capturing enemy `t` does to a bonus: breaks one its owner holds in full, or advances one of mine. */
@@ -5907,7 +5977,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           const th = threatAt(m.from, (n) => captured.has(n));
           if (!th) continue;
           const stays = stayAt(m.from);
-          const holds = (n: number) => (armiesToTake(stays + n + unitsAt(m.from), rates) ?? Infinity) > th.threat;
+          const holds = (n: number) => (toTake(stays + n + unitsAt(m.from)) ?? Infinity) > th.threat;
           if (holds(0)) continue;
           const spare = Math.max(0, spareAt(m.from));
           let n = 1;
@@ -6429,7 +6499,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       let best: { n: number; cost: number; extra: number; spare: number; can: number } | null = null;
       for (const n of aims(x)) {
         const extra = reinforcementAt(n);
-        const cost = costOf(defenceAt(n) + extra);
+        const cost = costAt(n, defenceAt(n) + extra);
         if (cost === null || gainWith([n]) < 0) continue;
         const threat = Math.max(threatAt(x, (y) => captured.has(y) || y === n)?.threat ?? 0, deployOf(player.p));
         const hold = Math.max(0, holdArmies(threat) - unitsAt(x));
@@ -6512,7 +6582,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const short = [...borders.values()]
       // No-Split (#124): a deploy on a territory that issues an order leaves with it, holding nothing.
       .filter((b) => open(b.id) && !orderOf(b.id))
-      .map((b) => ({ ...b, take: armiesToTake(stays(b.id) + unitsAt(b.id), rates) }))
+      .map((b) => ({ ...b, take: toTake(stays(b.id) + unitsAt(b.id)) }))
       .filter((b) => b.take !== null && b.take <= COMFORT_MARGIN * b.threat)
       .sort((a, b) => valueOf(b.id) - valueOf(a.id) || a.take! / a.threat - b.take! / b.threat || a.id - b.id);
     /** No-Split (#124): an attack that only softens its target; deploys there would leave with it, killing nothing more that matters. */
@@ -6539,7 +6609,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         const room = roomAt(b.id);
         let d = 0;
         for (;;) {
-          const take = armiesToTake(stays(b.id) + d + unitsAt(b.id), rates);
+          const take = toTake(stays(b.id) + d + unitsAt(b.id));
           if (take === null || take > bar || d >= room) break;
           d++;
         }
@@ -6567,7 +6637,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const b of borders.values()) {
         if (conceded.has(b.id) || orderOf(b.id)) continue;
         let d = 0;
-        while ((armiesToTake(stayAt(b.id) + d + unitsAt(b.id), rates) ?? Infinity) <= b.threat) d++;
+        while ((toTake(stayAt(b.id) + d + unitsAt(b.id)) ?? Infinity) <= b.threat) d++;
         falling += d;
       }
       const revivable = threatened
@@ -6582,7 +6652,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           const out = moves.find((m) => m.from === t.id);
           const back = out?.armies ?? 0;
           let d = 0;
-          while ((armiesToTake(stayAt(t.id) + back + d + unitsAt(t.id), rates) ?? Infinity) <= b.threat) d++;
+          while ((toTake(stayAt(t.id) + back + d + unitsAt(t.id)) ?? Infinity) <= b.threat) d++;
           return { t, d, out, threat: b.threat };
         })
         .filter(({ out }) => {
@@ -6591,8 +6661,8 @@ export function planTurn(input: PlanInput): TurnPlan {
           const dest = borders.get(out.to);
           if (!dest || conceded.has(out.to)) return true;
           const at = stayAt(out.to) + unitsAt(out.to);
-          const heldWith = (armiesToTake(at, rates) ?? Infinity) > dest.threat;
-          return !heldWith || (armiesToTake(at - out.armies, rates) ?? Infinity) > dest.threat;
+          const heldWith = (toTake(at) ?? Infinity) > dest.threat;
+          return !heldWith || (toTake(at - out.armies) ?? Infinity) > dest.threat;
         })
         .sort((a, b) => b.t.worth / Math.max(1, b.d) - a.t.worth / Math.max(1, a.d) || a.d - b.d || a.t.id - b.t.id);
       for (const { t, d, out, threat } of revivable) {
@@ -6615,7 +6685,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (d > 0) deploy(t.id, d);
         locked.add(t.id);
         rationale.push(
-          `Hold ${label(t.id)} after all (not conceded): deploy ${d} there${out ? `, and keep the ${out.armies} that would have withdrawn` : ''}; the leftover covers it before any comfort margin (${stayAt(t.id) + unitsAt(t.id)} armies need ${armiesToTake(stayAt(t.id) + unitsAt(t.id), rates)} to take, above the ~${threat} threat; protects +${t.value}).`,
+          `Hold ${label(t.id)} after all (not conceded): deploy ${d} there${out ? `, and keep the ${out.armies} that would have withdrawn` : ''}; the leftover covers it before any comfort margin (${stayAt(t.id) + unitsAt(t.id)} armies need ${toTake(stayAt(t.id) + unitsAt(t.id))} to take, above the ~${threat} threat; protects +${t.value}).`,
         );
       }
       if (cardAdvice === 'order-priority' && !moves.some((m) => conceded.has(m.from))) cardAdvice = null;
@@ -6636,7 +6706,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           const room = roomAt(b.id);
           let d = 0;
           while (d < room) {
-            const take = armiesToTake(stays(b.id) + d + unitsAt(b.id), rates);
+            const take = toTake(stays(b.id) + d + unitsAt(b.id));
             if (take === null || take > COMFORT_MARGIN * b.threat) break;
             d++;
           }
@@ -6693,7 +6763,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const danger = (id: number) => {
         const b = borders.get(id);
         if (!b) return -Infinity;
-        return b.threat - (armiesToTake(stays(id) + unitsAt(id), rates) ?? Infinity);
+        return b.threat - (toTake(stays(id) + unitsAt(id)) ?? Infinity);
       };
       // A conceded border whose garrison stays (#59) is still defended: its pool goes there.
       const lost = (id: number) => conceded.has(id) && !stood.has(id);
@@ -6776,7 +6846,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const n of neighborsOf(g, S)) {
       const st = state.get(n);
       if (captured.has(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
-      const cost = costOf(defenceAt(n));
+      const cost = costAt(n);
       // Never a capture that lowers income (rule 4c): it completes a negative bonus. Re-checked
       // below against the strike's own captures, which can complete one only together.
       if (cost === null || gainWith([n]) < 0) continue;
@@ -6943,7 +7013,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const m of moves) {
         if (m.from !== S || m.kind !== 'attack' || combined.has(m.to) || worstCase.has(m.to) || strikes.has(m.to)) continue;
         const extra = reinforcementAt(m.to);
-        const full = extra > 0 ? costOf(defenceAt(m.to) + extra) : null;
+        const full = extra > 0 ? costAt(m.to, defenceAt(m.to) + extra) : null;
         if (full === null || full <= m.armies || full - m.armies > room()) continue;
         const add = full - m.armies;
         const before = m.armies;
@@ -6960,7 +7030,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       }
       for (const x of taken) {
         const extra = reinforcementAt(x.c.id);
-        const full = extra > 0 ? costOf(defenceAt(x.c.id) + extra) : null;
+        const full = extra > 0 ? costAt(x.c.id, defenceAt(x.c.id) + extra) : null;
         if (full === null || full <= x.armies) continue;
         const add = full - x.armies;
         if (add > room()) continue;
@@ -7045,7 +7115,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   for (const t of [...kept].sort(byNum)) {
     const b = borders.get(t)!;
     const stays = avail.get(t)! + guard + (incoming.get(t) ?? 0);
-    const take = armiesToTake(stays + unitsAt(t), rates);
+    const take = toTake(stays + unitsAt(t));
     if (take !== null && take <= b.threat)
       warnings.push(
         `${label(t)} is kept for the bonus this turn completes, but its ${stays} armies need only ${take} to take against the ~${b.threat} threat: the bonus can fall next turn.`,
@@ -7135,7 +7205,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     // #120: an attack on a player's territory is sized for its defenders plus what its owner may
     // deploy there first, when armies beyond what holds the source cover it.
     const extra = enemyTarget && !worst ? reinforcementAt(m.to) : 0;
-    const full = extra > 0 ? costOf(d + extra) : null;
+    const full = extra > 0 ? costAt(m.to, d + extra) : null;
     if (full !== null && full > m.armies && full - m.armies <= spareBeyondHold(m.from)) {
       const before = m.armies;
       const add = full - before;
@@ -7202,8 +7272,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     const st = state.get(m.to)!;
     if (st.owner.kind !== 'player') continue;
     const d = defenceAt(m.to);
-    const full = costOf(d + extra);
-    warnings[w] = `Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first: if player ${st.owner.playerId} deploys its ~${extra} there, ${m.armies} attack ${d + extra} (win chance ${pct(chanceOf(m.armies, d + extra))})${full !== null ? `; ${full} would ${minWin >= 1 ? 'be sure' : `reach ${pct(minWin)}`}` : ''}.`;
+    const full = costAt(m.to, d + extra);
+    const aim = chanceAt(m.to);
+    warnings[w] = `Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first: if player ${st.owner.playerId} deploys its ~${extra} there, ${m.armies} attack ${d + extra} (win chance ${pct(chanceOf(m.armies, d + extra))})${full !== null ? `; ${full} would ${aim >= 1 ? 'be sure' : `reach ${pct(aim)}`}` : ''}.`;
   }
 
   // ---- transfers ----
@@ -7300,7 +7371,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const st = state.get(n);
       return !(st?.owner.kind === 'player' && struck.has(st.owner.playerId));
     });
-    return b !== null && (armiesToTake(stayAt(c) + unitsAt(c), rates) ?? Infinity) <= b.threat;
+    return b !== null && (toTake(stayAt(c) + unitsAt(c)) ?? Infinity) <= b.threat;
   });
   if (struck.size && commanderThreatened) {
     const where = [...myCommanders].map(label).join(', ');
@@ -7319,6 +7390,17 @@ export function planTurn(input: PlanInput): TurnPlan {
   // ---- expected ----
   const after = heldNow();
   const completed = completedBy(after);
+  // #126: a completion lands only if every capture it needs does — its chance is their product.
+  for (const id of completed) {
+    const taken = bonusTerritories(g, id).filter((x) => captured.has(x));
+    // Each member's capture is its last attack (a combined capture's softeners fail by design).
+    const chances = taken.map((x) => moves.filter((m) => m.kind === 'attack' && m.to === x).at(-1)?.winChance ?? 1);
+    const joint = chances.reduce((a, b) => a * b, 1);
+    if (joint < 1)
+      rationale.push(
+        `Bonus ${bonusName(id)} (+${g.bonusById.get(id)!.value}) completes with a ${pct(joint)} chance: the product of its ${taken.length} capture${taken.length === 1 ? "'s" : "s'"} win chances this turn.`,
+      );
+  }
   // A bonus refused in one pass but completed by a later one is not reported as refused.
   for (const id of [...notCompleted.keys()].sort(byNum)) {
     if (completed.includes(id)) continue;
@@ -7407,7 +7489,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const n = deployed.get(id) ?? 0;
     if (n <= 0) continue;
     const have = stayAt(id);
-    const take = armiesToTake(have + unitsAt(id), rates);
+    const take = toTake(have + unitsAt(id));
     warnings[i] += ` Before this turn's deploys: the plan deploys ${n} there, leaving ${have} armies (${take ?? 'none can'} to take${take !== null && take > threat ? `, more than the ${threat} that can reach it: it holds` : `; the ${threat} that can reach it still could`}).`;
   }
   const offenceList = [...offence.values()].map(({ bonusId, ...o }): OffenceEntry => {

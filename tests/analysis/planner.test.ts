@@ -5,6 +5,7 @@ import { buildGraph, neighborsOf } from '../../src/analysis/graph.js';
 import {
   BREAK_WEIGHT,
   captureCost,
+  defaultMinWinChance,
   COMFORT_MARGIN,
   CONCEDE_FACTOR,
   DEFENSE_DISCOUNT,
@@ -57,11 +58,14 @@ describe('captureCost', () => {
     expect(captureCost(10, {})).toBe(armiesToTake(10));
   });
 
-  it('adds a luck margin: ceil(cost / (1 - luck))', () => {
-    expect(captureCost(2, { ...STD, luckModifier: 0.16 })).toBe(4);
+  it('with luck, is the fewest armies that take it whatever the dice (#126)', () => {
+    // 16%: 3 armies kill round(0.84 × 1.8) = 2 for sure (the old margin ceil(3 / 0.84) said 4).
+    expect(captureCost(2, { ...STD, luckModifier: 0.16 })).toBe(3);
     // A percentage is accepted too.
-    expect(captureCost(2, { ...STD, luckModifier: 16 })).toBe(4);
-    expect(captureCost(0, { ...STD, luckModifier: 0.5 })).toBe(2);
+    expect(captureCost(2, { ...STD, luckModifier: 16 })).toBe(3);
+    // 50%: 5 armies kill round(0.5 × 3) = 2 and lose at most round(0.5 × 1.4 + 0.5 × 2) = 2.
+    expect(captureCost(2, { ...STD, luckModifier: 0.5 })).toBe(5);
+    expect(captureCost(0, { ...STD, luckModifier: 0.5 })).toBe(1);
   });
 
   it('is null when attackers cannot kill', () => {
@@ -148,10 +152,11 @@ describe('planTurn — opening', () => {
     expect(p.rationale.join(' ')).toMatch(/reserve/i);
   });
 
-  it('warns that luck adds margins', () => {
+  it('warns that luck makes captures chances (#126: sized for 95% by default)', () => {
     const p = planTurn({ ...input, settings: { ...STD, luckModifier: 0.16 } });
-    expect(p.warnings.join(' ')).toMatch(/luck/i);
-    for (const m of attacks(p)) expect(m.armies).toBe(4);
+    expect(p.warnings.join(' ')).toMatch(/Luck is 16%: each capture is sized for at least a 95% win chance/);
+    // 3 armies already take 2 for sure at 16% luck.
+    for (const m of attacks(p)) expect(m.armies).toBe(3);
   });
 
   it('warns about non-straight rounding and an unverified board', () => {
@@ -1978,7 +1983,8 @@ describe('planTurn — accounting property', () => {
       for (const [to, sent] of attacksOn) {
         const defenders = byId.get(to)!.armies!;
         if (sent.length === 1) {
-          expect(sent[0], ctx).toBeGreaterThanOrEqual(captureCost(defenders, settings)!);
+          // Captures are sized for at least the default win chance (#126: 95% with luck on).
+          expect(sent[0], ctx).toBeGreaterThanOrEqual(captureCost(defenders, settings, defaultMinWinChance(settings))!);
           continue;
         }
         // A combined capture: only at 0% luck; every attack but the last fails yet

@@ -8,7 +8,7 @@
 //     InitialNeutralsInDistribution for a pickable territory (an unpicked one turns
 //     neutral) and InitialNonDistributionArmies for the rest. A capture costs
 //     `captureCost` (the planner's: exact at the game's kill rates, 0% luck,
-//     straight round, with a luck margin when luck > 0).
+//     straight round; the game's luck is not passed in).
 //  2. Opening simulation (`simulate`), PICK_HORIZON turns from a set of picks, each
 //     starting with InitialPlayerArmiesPerTerritory. Armies stay where they stand:
 //     each turn's income is max(base income, floor(territories held / BonusArmyPer))

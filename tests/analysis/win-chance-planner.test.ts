@@ -43,8 +43,8 @@ describe('winChance on every planned attack (S2)', () => {
     for (const m of p.moves.filter((x) => x.kind === 'transfer')) expect(m.winChance).toBeUndefined();
   });
 
-  it('the guaranteed-margin size wins for sure at luck > 0 (and the plan names the waste)', () => {
-    // Luck 16%: 2 defenders cost ceil(3 / 0.84) = 4, but 3 already kill round(0.84·1.8) = 2 for sure.
+  it('at luck > 0 the default sizes for 95%: 3 armies already take 2 for sure at 16% (#126)', () => {
+    // The old margin, ceil(3 / 0.84) = 4, sent an army that adds no kill.
     const p = planTurn({
       graph: g,
       board: board([mine(1, 1), neutral(2, 2)]),
@@ -53,25 +53,22 @@ describe('winChance on every planned attack (S2)', () => {
       settings: { ...STD, luckModifier: 0.16 },
       options: { goal: 'expand' },
     });
-    expect(attacks(p)).toEqual([expect.objectContaining({ to: 2, armies: 4, winChance: 1 })]);
-    expect(why(p)).toMatch(/The attack on T2 \(#2\) from T1 \(#1\) sends 4, but 3 already kill 2 for sure: the other 1 add no kill/);
-    expect(p.warnings.join('\n')).toMatch(/win chance 1 under straight rounding/);
+    expect(attacks(p)).toEqual([expect.objectContaining({ to: 2, armies: 3, winChance: 1 })]);
+    expect(p.warnings.join('\n')).toMatch(/Luck is 16%: each capture is sized for at least a 95% win chance \(min_win_chance, 95% by default with luck on\)/);
   });
 
-  it('under weighted-random rounding the chance is computed, not just warned about', () => {
-    // 3 vs 2 at 0% luck: 1.8 kills round up to 2 with p 0.8. No idle armies to top up with.
+  it('under weighted-random rounding the size is certain under it, not the straight size (#126)', () => {
+    // 3 vs 2 at 0% luck: 1.8 kills round up to 2 only 80% of the time; 4 (2.4, floor 2) is certain.
     const p = planTurn({
       graph: g,
       board: board([mine(1, 1), neutral(2, 2)]),
       me: ME,
-      income: 3,
+      income: 4,
       settings: { ...STD, roundingMode: 'WeightedRandom' },
       options: { goal: 'expand' },
     });
-    expect(attacks(p)).toHaveLength(1);
-    expect(attacks(p)[0]!.armies).toBe(3);
-    expect(attacks(p)[0]!.winChance).toBeCloseTo(0.8, 12);
-    expect(p.warnings.join('\n')).toMatch(/WeightedRandom: each attack's winChance is computed under it/);
+    expect(attacks(p)).toEqual([expect.objectContaining({ to: 2, armies: 4, winChance: 1 })]);
+    expect(p.warnings.join('\n')).toMatch(/This game uses WeightedRandom rounding: capture and hold sizes are computed under it/);
   });
 });
 
@@ -79,18 +76,18 @@ describe('minWinChance (S2)', () => {
   const luck50: PlannerSettings = { ...STD, luckModifier: 0.5 };
 
   it('captureCost: the fewest armies reaching the chance', () => {
-    // Luck 50%, 2 defenders: 3 armies win 0.648, 4 win 0.9744 (see combat-luck.test.ts), the margin is 6.
-    expect(captureCost(2, luck50)).toBe(6);
+    // Luck 50%, 2 defenders: 3 armies win 0.648, 4 win 0.9744 (see combat-luck.test.ts), 5 are certain.
+    expect(captureCost(2, luck50)).toBe(5);
     expect(captureCost(2, luck50, 0.9)).toBe(4);
     expect(captureCost(2, luck50, 0.6)).toBe(3);
     // 0% luck, straight: chances are 0 or 1, so any minimum gives the guaranteed size.
     expect(captureCost(2, STD, 0.5)).toBe(captureCost(2, STD));
   });
 
-  it('0.9 sizes smaller than the default', () => {
+  it('0.9 sizes smaller than certainty', () => {
     const input = { graph: g, board: board([mine(1, 1), neutral(2, 2)]), me: ME, income: 4, settings: luck50, options: { goal: 'expand' as const } };
-    // Default: 6 needed, 4 available — no attack.
-    expect(attacks(planTurn(input))).toEqual([]);
+    // Certain: 5 needed, 4 available — no attack.
+    expect(attacks(planTurn({ ...input, options: { ...input.options, minWinChance: 1 } }))).toEqual([]);
     const p = planTurn({ ...input, options: { ...input.options, minWinChance: 0.9 } });
     expect(attacks(p)).toEqual([expect.objectContaining({ to: 2, armies: 4 })]);
     expect(attacks(p)[0]!.winChance).toBeCloseTo(0.9744, 12);
@@ -98,26 +95,33 @@ describe('minWinChance (S2)', () => {
     expect(p.warnings.join('\n')).toMatch(/Luck is 50%: each capture is sized for at least a 90% win chance/);
   });
 
-  it('default 1 leaves plans unchanged', () => {
-    for (const settings of [STD, luck50, { ...STD, roundingMode: 'WeightedRandom' }]) {
+  it('defaults to 1 without luck and to 0.95 with it (#126)', () => {
+    for (const [settings, chance] of [
+      [STD, 1],
+      [{ ...STD, roundingMode: 'WeightedRandom' }, 1],
+      [luck50, 0.95],
+    ] as const) {
       const input = { graph: g, board: board([mine(1, 6), neutral(2, 2), enemy(3, 3)]), me: ME, income: 5, settings };
-      expect(planTurn({ ...input, options: { minWinChance: 1 } })).toEqual(planTurn(input));
+      const [given, dflt] = [planTurn({ ...input, options: { minWinChance: chance } }), planTurn(input)];
+      expect([given.deploys, given.moves]).toEqual([dflt.deploys, dflt.moves]);
     }
   });
 });
 
 describe('efficient sizes: top-ups only from idle armies (S2)', () => {
   // Weighted rounding: 3 vs 2 wins 80%; 4 (2.4 kills, floor 2) is the next efficient size and certain.
+  // Sized for 80% (min_win_chance 0.8) so the capture starts at 3: certain by default (#126).
   const W: PlannerSettings = { ...STD, roundingMode: 'WeightedRandom' };
+  const at80 = { goal: 'expand' as const, minWinChance: 0.8 };
 
   it('tops up from armies that would sit idle', () => {
-    const p = planTurn({ graph: g, board: board([mine(1, 6), neutral(2, 2), neutral(3, 9)]), me: ME, income: 5, settings: W, options: { goal: 'expand' } });
+    const p = planTurn({ graph: g, board: board([mine(1, 6), neutral(2, 2), neutral(3, 9)]), me: ME, income: 5, settings: W, options: at80 });
     expect(attacks(p)).toEqual([expect.objectContaining({ to: 2, armies: 4, winChance: 1 })]);
     expect(why(p)).toMatch(/Top up the attack on T2 \(#2\) from T1 \(#1\) from 3 to 4 with 1 idle armies there.*80% to 100%/);
   });
 
   it('never from a border still facing an enemy', () => {
-    const p = planTurn({ graph: g, board: board([mine(1, 6), neutral(2, 2), enemy(3, 6)]), me: ME, income: 5, settings: W, options: { goal: 'expand' } });
+    const p = planTurn({ graph: g, board: board([mine(1, 6), neutral(2, 2), enemy(3, 6)]), me: ME, income: 5, settings: W, options: at80 });
     expect(attacks(p)).toEqual([expect.objectContaining({ to: 2, armies: 3 })]);
     expect(why(p)).not.toMatch(/Top up/);
   });

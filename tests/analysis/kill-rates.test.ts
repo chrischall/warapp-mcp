@@ -141,7 +141,7 @@ describe('planTurn — kill rates (G1)', () => {
     expect(attacks(std)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 15 }));
   });
 
-  it('under WeightedRandom rounding the plan sizes at straight arithmetic, computes the chance and warns', () => {
+  it('under WeightedRandom rounding the plan sizes under it (certain), computes the chance and says so', () => {
     const p = planTurn({
       graph: g,
       board: board([mine(1, 10), neutral(2, 2)]),
@@ -150,12 +150,11 @@ describe('planTurn — kill rates (G1)', () => {
       settings: { ...R20_80, roundingMode: 'WeightedRandom' },
       options: { goal: 'expand' },
     });
-    // Sized at 8 (straight arithmetic): 1.6 kills round up with only 60% under weighted
-    // rounding, so S2 tops it up from T1's idle armies to 10 (2.0 kills: certain).
-    expect(p.rationale.join('\n')).toMatch(/Attack T2 \(#2\) from T1 \(#1\) with 8:/);
-    expect(p.rationale.join('\n')).toMatch(/win chance rises from 60% to 100%/);
+    // #126: straight arithmetic says 8, but 1.6 kills round up only 60% of the time under
+    // weighted rounding; the certain size is 10 (2.0 kills), planned directly.
+    expect(p.rationale.join('\n')).toMatch(/Attack T2 \(#2\) from T1 \(#1\) with 10 /);
     expect(attacks(p)).toEqual([expect.objectContaining({ armies: 10, winChance: 1 })]);
-    expect(p.warnings.join('\n')).toMatch(/assume straight rounding; this game uses WeightedRandom/);
+    expect(p.warnings.join('\n')).toMatch(/This game uses WeightedRandom rounding: capture and hold sizes are computed under it/);
   });
 
   it('warns when the settings carry no kill rates (it then assumes 60/70)', () => {

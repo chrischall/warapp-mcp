@@ -852,10 +852,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .max(1)
           .optional()
           .describe(
-            'The least win chance each ordinary capture is sized for, 0.5–1. Default 1: the guaranteed sizing (the ' +
-              'luck-free share alone takes it). Below 1, each capture gets the fewest armies whose exact win chance ' +
-              '(game kill rates, luck, rounding) reaches it — cheaper, but it can fail. Attacks sized for a worst case ' +
-              '(finishing a player off, fog pressure, commander strikes) stay guaranteed.',
+            'The least win chance each ordinary capture is sized for, 0.5–1. Default: 1 (certain: every roll and ' +
+              'rounding takes it) with no luck, 0.95 with luck on. Below 1, each capture gets the fewest armies whose ' +
+              'exact win chance (game kill rates, luck, rounding) reaches it — cheaper, but it can fail — and the ' +
+              'captures a bonus still needs reach it together. Attacks sized for a worst case (finishing a player off, ' +
+              'fog pressure, commander strikes) stay certain.',
           ),
         view: viewArg(
           VIEWS,
