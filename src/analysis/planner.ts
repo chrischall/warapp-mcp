@@ -489,7 +489,11 @@
 //     exceeds my next income (#128: the income the plan keeps — without the borders it concedes
 //     or a held bonus it has not yet decided to hold whole; rule 4d and `frontier.income` use the
 //     same figure) (plus this turn's leftover, for members I held at the
-//     start) the bonus would fall at once: under `balanced`/`defend` the capture is
+//     start) the bonus would fall at once. #128: a member I held at the start that is exposed
+//     either way (its armies before any attack leaves it, against the threat without this turn's
+//     captures) counts only the need the completion adds — refusing would not save it — and the
+//     bonuses this turn's earlier captures completed share the same next income (their added
+//     needs count too). Then: under `balanced`/`defend` the capture is
 //     refused (warning "… indefensible …: not completed"); under `expand` and
 //     `complete-bonus` it is made with a warning. Under `balanced`/`defend` a bonus's
 //     score is value / (capture cost + DEFENSE_DISCOUNT × that defence cost).
@@ -4197,19 +4201,49 @@ export function planTurn(input: PlanInput): TurnPlan {
       // An earlier capture this turn: the survivors of its finishing attack.
       return survivorsAt.get(m) ?? 0;
     };
+    /**
+     * #128: what holding `m` next turn needs that it would not have needed anyway. A member I held
+     * at the start that is exposed either way (its armies before any attack leaves it, against the
+     * threat without this turn's captures) only adds its need beyond that: refusing the completion
+     * would not save it.
+     */
+    const either = (m: number) => {
+      if (!mineSet.has(m)) return 0;
+      const th = threatAt(m, (n) => captured.has(n) && n !== t && !mineSet.has(n));
+      if (!th) return 0;
+      return Math.max(0, holdArmies(th.threat) - armiesOf(m) - (deployed.get(m) ?? 0) - unitsAt(m));
+    };
+    const exposedOf = (id: number) =>
+      exposure(bonusTerritories(g, id), (n) => captured.has(n), stays).map((e) => ({ ...e, added: Math.max(0, e.need - either(e.id)) }));
+    // #128: every bonus this turn's earlier captures completed shares the same next income — two
+    // completions that each fit it may not fit it together.
+    const ids = new Set(completes.map((b) => b.id));
+    const earlier = new Map<number, number>();
+    for (const e of completedBy(after)
+      .filter((id) => !ids.has(id) && g.bonusById.get(id)!.value > 0 && !bonusTs.get(id)!.every((x) => mineSet.has(x)))
+      .flatMap(exposedOf))
+      earlier.set(e.id, Math.max(earlier.get(e.id) ?? 0, e.added));
     let ok = true;
     for (const b of completes) {
-      const exposed = exposure(bonusTerritories(g, b.id), (n) => captured.has(n), stays);
-      const total = exposed.reduce((sum, e) => sum + e.need, 0);
-      const held = exposed.filter((e) => mineSet.has(e.id)).reduce((sum, e) => sum + e.need, 0);
-      if (total <= nextIncome + Math.min(spare, held)) continue;
-      const worst = [...exposed].sort((a, b) => b.need - a.need || a.id - b.id)[0]!;
+      const exposed = exposedOf(b.id);
+      const total = exposed.reduce((sum, e) => sum + e.added, 0);
+      const before = [...earlier].reduce((n, [id, need]) => n + (exposed.some((e) => e.id === id) ? 0 : need), 0);
+      const held = exposed.filter((e) => mineSet.has(e.id)).reduce((sum, e) => sum + e.added, 0);
+      const anyway = exposed.filter((e) => e.added < e.need);
+      if (total + before <= nextIncome + Math.min(spare, held)) {
+        if (anyway.length && guarded)
+          rationale.push(
+            `Complete bonus ${bonusName(b.id)} though ${anyway.map((e) => label(e.id)).join(', ')} may fall next turn: ${anyway.length === 1 ? 'it is' : 'they are'} exposed whether or not it is completed, so refusing would save nothing.`,
+          );
+        continue;
+      }
+      const worst = [...exposed].sort((a, b) => b.added - a.added || b.need - a.need || a.id - b.id)[0]!;
       const head = `completing ${bonusName(b.id)} leaves ${label(worst.id)} indefensible (player ${worst.player} can take it for ${worst.take}; next income ${nextIncome})`;
       if (guarded) {
         if (!notCompleted.has(b.id)) {
           notCompleted.set(b.id, {
             warning: `${head}: not completed`,
-            why: `Do not complete bonus ${bonusName(b.id)}: holding its frontier next turn needs ${total} more armies (${exposed.map((e) => `${label(e.id)} ${e.need}`).join(', ')}), more than the next income of ${nextIncome}${held ? ` plus the ${Math.min(spare, held)} left this turn` : ''}, so it would fall next turn; the armies stay for defence.`,
+            why: `Do not complete bonus ${bonusName(b.id)}: holding its frontier next turn needs ${total} more armies (${exposed.map((e) => `${label(e.id)} ${e.added}`).join(', ')})${before ? `, on top of the ${before} this turn's other completions need` : ''}, more than the next income of ${nextIncome}${held ? ` plus the ${Math.min(spare, held)} left this turn` : ''}, so it would fall next turn; the armies stay for defence.`,
           });
         }
         ok = false;

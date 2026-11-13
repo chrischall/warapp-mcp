@@ -255,3 +255,25 @@ describe('R3 and the frontier count only the income the plan keeps (#128)', () =
     expect(plan.frontier.income).toBe(5);
   });
 });
+
+describe('the defensibility veto (R3) judges what a completion changes (#128)', () => {
+  it('a cheap completion is made when the exposed member falls either way', () => {
+    // +3 bonus 1 2 3: 1 (2 armies) faces an enemy 20-stack whatever I do; 3 is a 2-army neutral.
+    const g = buildGraph(makeMap([1, 2, 3, 8, 9], [[1, 9], [1, 2], [2, 3], [9, 8]], [[100, 3, [1, 2, 3]]]));
+    const b = board([mine(1, 2), mine(2, 5), neutral(3, 2), player(9, 20, 20), { territoryId: 8, owner: { kind: 'unknown' }, armies: null, fogLevel: 'Fogged' }]);
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    expect(plan.expected.bonusesCompleted).toEqual([100]);
+    expect(plan.warnings.join('\n')).not.toMatch(/indefensible/);
+    expect(plan.rationale.join('\n')).toMatch(/Complete bonus B100 \(#100\) though T1 \(#1\) may fall next turn: it is exposed whether or not it is completed/);
+  });
+  it('two completions that each fit the next income but not together: only the first is made', () => {
+    // +2 bonuses 1 2 and 3 4; 2 and 4 are 2-army neutrals, each beside an enemy 6-stack (9, 8).
+    const g = buildGraph(
+      makeMap([1, 2, 3, 4, 7, 8, 9], [[1, 2], [2, 9], [3, 4], [4, 8], [1, 3], [9, 7], [8, 7]], [[100, 2, [1, 2]], [101, 2, [3, 4]]]),
+    );
+    const b = board([mine(1, 4), neutral(2, 2), mine(3, 4), neutral(4, 2), player(8, 6, 20), player(9, 6, 20), { territoryId: 7, owner: { kind: 'unknown' }, armies: null, fogLevel: 'Fogged' }]);
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, options: { goal: 'balanced' } });
+    expect(plan.expected.bonusesCompleted).toEqual([100]);
+    expect(plan.rationale.join('\n')).toMatch(/Do not complete bonus B101 \(#101\): holding its frontier next turn needs 5 more armies \(T4 \(#4\) 5\), on top of the 5 this turn's other completions need, more than the next income of 9/);
+  });
+});
