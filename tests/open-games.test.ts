@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Reader, Writer } from '../src/protocol/codec.js';
 import type { ReadBudget } from '../src/protocol/interp.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { feedScreen, filterOpenGames, GAME_INFO, MAX_OPEN_GAMES, OPEN_GAMES_URL, openGameOf, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
+import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, MAX_OPEN_GAMES, OPEN_GAMES_URL, openGameOf, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
 import { liveHarness, payload, textOf, type Harness } from './helpers.js';
 import { MY_GAMES_BUNDLE, writeGameInfo, type SyntheticGame } from './protocol/my-games-bundle.js';
 
@@ -382,6 +382,16 @@ describe('warapp_list_open_games', () => {
     expect(h.exchanges).toEqual([]); // a page GET, no /Services call
   });
 
+  it('marks each game that breaks the joining policy, advisory (#134)', async () => {
+    h = await liveHarness({ pages: { [OPEN_GAMES_URL]: page(payloadHex(GAMES)) } });
+    const p = payload(await h.call('warapp_list_open_games', { pace: 'both' }));
+    const breaks = (id: number) => (byId(p.games as OpenGame[], id) as OpenGame & { policyBreaks?: string[] }).policyBreaks;
+    expect(breaks(2001)).toBeUndefined();
+    expect(breaks(2002)?.join(' ')).toMatch(/boot time 5m/i);
+    expect(breaks(2005)?.join(' ')).toMatch(/Commerce.*Custom scenario|Custom scenario.*Commerce/);
+    expect(breaks(2005)?.join(' ')).toMatch(/6 seats/);
+  });
+
   it('marks the lobbies the signed-in account has already joined', async () => {
     const me = { id: 123456, name: 'Me', state: P_PLAYING, committed: false };
     const games: SyntheticGame[] = [
@@ -486,5 +496,62 @@ describe('feedScreen: the join preview screen from GameFeed settings (#132)', ()
       'Light Fog — owners show everywhere but armies only near you; the planner counts every unseen stack as unknown',
     ]);
     expect(feedScreen({ ...base, fog: 'Foggy' }).gaps).toEqual([]);
+  });
+});
+
+describe('joiningPolicy: the owner\'s joining policy, advisory (#134)', () => {
+  const plain = (over: Partial<OpenGame> = {}): OpenGame => ({
+    id: 1, name: 'x', url: 'u', pace: 'multi-day', bootTime: '3d', bootTimeMinutes: 4320, players: 1, openSeats: 1,
+    seats: 2, teamGame: false, mapId: 1, entryFeeCoins: 0, prizeCoins: 0, rules: [], plannerGaps: [], ...over,
+  });
+  const cheap = { cheapestNeutral: 2, armiesToTake: 3, baseIncome: 5, turnsOfBaseIncome: 0.6, passes: true };
+
+  it('a 1v1 with a day\'s boot and cheap neutrals passes', () => {
+    expect(joiningPolicy(plain(), cheap)).toEqual({ passes: true, breaks: [] });
+  });
+
+  it('Commerce, mods and custom scenarios break it', () => {
+    const r = joiningPolicy(plain({ rules: ['Custom scenario', 'Commerce (no army multiplier)', 'Mods'] }), cheap);
+    expect(r.passes).toBe(false);
+    expect(r.breaks).toEqual([
+      'Commerce — the policy joins no Commerce games',
+      'Mods — the policy joins no mod games',
+      'Custom scenario — the policy joins no custom scenarios',
+    ]);
+  });
+
+  it('more than four seats (or a mega game cap above four) breaks it; four is allowed', () => {
+    expect(joiningPolicy(plain({ seats: 4 }), cheap).breaks).toEqual([]);
+    expect(joiningPolicy(plain({ seats: 5 }), cheap).breaks).toEqual(['5 seats — the policy is 1v1 or at most four players']);
+    expect(joiningPolicy(plain({ seats: 3, maxPlayers: 8 }), cheap).breaks).toEqual([
+      '8 seats — the policy is 1v1 or at most four players',
+    ]);
+  });
+
+  it('a boot time under a day breaks it; no boot time ("never") does not', () => {
+    expect(joiningPolicy(plain({ bootTime: '12h', bootTimeMinutes: 720 }), cheap).breaks).toEqual([
+      'Boot time 12h — the policy wants at least a day',
+    ]);
+    expect(joiningPolicy(plain({ bootTime: '1d', bootTimeMinutes: 1440 }), cheap).breaks).toEqual([]);
+    const never = plain();
+    delete never.bootTime;
+    delete never.bootTimeMinutes;
+    expect(joiningPolicy(never, cheap).breaks).toEqual([]);
+  });
+
+  it('a neutral costing more than a turn of base income breaks it', () => {
+    const costly = { cheapestNeutral: 10, armiesToTake: 16, baseIncome: 5, turnsOfBaseIncome: 3.2, passes: false };
+    expect(joiningPolicy(plain(), costly).breaks).toEqual([
+      'Costly neutrals — the cheapest takes 16 armies, 3.2 turns of base income; the policy is at most one turn',
+    ]);
+    const untakeable = { ...costly, armiesToTake: null, turnsOfBaseIncome: null };
+    expect(joiningPolicy(plain(), untakeable).breaks).toEqual([
+      'Costly neutrals — the cheapest cannot be taken at these kill rates; the policy is at most one turn of base income',
+    ]);
+  });
+
+  it('without a neutral screen it cannot pass, only fail: passes is null when nothing else breaks', () => {
+    expect(joiningPolicy(plain())).toEqual({ passes: null, breaks: [], unchecked: ['the cheapest neutral\'s cost'] });
+    expect(joiningPolicy(plain({ seats: 6 }), null).passes).toBe(false);
   });
 });

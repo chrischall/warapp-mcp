@@ -4,7 +4,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { filterOpenGames, markJoined, OPEN_GAMES_URL, parseOpenGamesPage } from '../open-games.js';
+import { filterOpenGames, joiningPolicy, markJoined, OPEN_GAMES_URL, parseOpenGamesPage } from '../open-games.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { noBrowserNote } from './session.js';
 import { lookupMeta } from './hints.js';
@@ -36,7 +36,9 @@ export function registerOpenGamesTool(server: McpServer, ctx: LiveContext): void
           'map id, entry fee and prize in coins, cards, rules (the settings flags the game carries, in war.app\'s ' +
           'wording) and plannerGaps — rules the turn planner does not model yet. joined: true marks a game you ' +
           'already hold a seat in (when the signed-in account can be told). By default only free, multi-day, ' +
-          'no-team games. hiddenByPrerequisites counts games war.app hides from this account.' +
+          'no-team games. policyBreaks lists the joining-policy rules a game breaks (Commerce, mods, custom ' +
+          'scenarios, more than four seats, a boot time under a day); the neutral cost is checked by ' +
+          'warapp_join_game\'s preview. hiddenByPrerequisites counts games war.app hides from this account.' +
           `${noBrowserNote(ctx.hosted)} Read-only.`,
       ),
       _meta: lookupMeta(['open games', 'find a game', 'join a game', 'new warzone game', 'games to join']),
@@ -56,12 +58,17 @@ export function registerOpenGamesTool(server: McpServer, ctx: LiveContext): void
       const [html, myId] = await Promise.all([openGamesPage(ctx), ctx.myInGameId()]);
       const parsed = parseOpenGamesPage(html, await ctx.bundle());
       const marked = myId === undefined ? parsed.games : markJoined(parsed.games, parsed.lobbies, myId);
-      const games = filterOpenGames(marked, {
+      const filtered = filterOpenGames(marked, {
         ...(pace ? { pace } : {}),
         ...(max_players !== undefined ? { max_players } : {}),
         ...(free_only !== undefined ? { free_only } : {}),
         ...(exclude_teams !== undefined ? { exclude_teams } : {}),
         limit: limit ?? 25,
+      });
+      // #134: advisory — the neutral-cost part needs each lobby's GameFeed settings, so only the join preview has it.
+      const games = filtered.map((g) => {
+        const { breaks } = joiningPolicy(g, null);
+        return breaks.length ? { ...g, policyBreaks: breaks } : g;
       });
       return respond(undefined, ['compact'], () => ({
         games,
