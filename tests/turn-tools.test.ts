@@ -536,6 +536,8 @@ describe('the seat and the hand (#130)', () => {
       expect(res.isError, tool).toBe(true);
       expect(textOf(res), tool).toMatch(/no longer playing.*Booted/);
     }
+    // The tool returns on the refusal; a board read started alongside would land just after it.
+    await new Promise((r) => setTimeout(r, 200));
     expect(h.exchanges).toEqual([]);
   });
 
@@ -640,7 +642,7 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(p.warnings.join('\n')).toMatch(building(7, 12));
   });
 
-  it('(h) a failed account read fails the plan while the board read runs; history is never fetched (#131)', async () => {
+  it('(h) a failed account read fails the plan; neither the board nor history is read (#130, #131)', async () => {
     h = await liveHarness({
       feed: [game('Playing', { history: [{ turn: 0, standing: [] }, { turn: 1, standing: previous }] })],
       warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
@@ -648,7 +650,9 @@ describe('warapp_plan_turn — threat trend', () => {
     const res = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Nobody' });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/Nobody/);
+    await new Promise((r) => setTimeout(r, 200));
     expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
+    expect(h.exchanges).toEqual([]);
   });
 
   it('(h) a failed board read fails the plan while the history read runs (#131)', async () => {

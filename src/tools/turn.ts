@@ -802,19 +802,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const map = mapOf(game);
       const focusBonusIds = (focus ?? []).map((b) => resolveBonus(map, b).id);
       const turn = currentTurn(game);
-      // The signed-in account, the live board and the board history are independent reads: in
-      // parallel, not in series (#131). Accepted trade-offs of not serializing them: when the board
-      // read fails, a history read already under way still reaches GameFeed after the tool has
-      // returned (one wasted, harmless read; boardHistory never throws); and when the account and
-      // board reads both fail, whichever fails first is the error reported (each is a true error).
-      const meRead = resolveMe(ctx, game.players, player).then((m) => {
-        requirePlayingSeat(game, m);
-        return m;
-      });
-      const [me, { territories, info }, history] = await Promise.all([
-        meRead,
+      // My seat is checked before the board is read (#130): an eliminated or booted seat has no turn,
+      // so nothing is read for it. Then the live board and the board history are independent reads:
+      // in parallel, not in series (#131). History needed my seat anyway, so the board waiting for it
+      // adds no step to the slowest chain (account, then history). Accepted trade-off of not
+      // serializing them: when the board read fails, a history read already under way still reaches
+      // GameFeed after the tool has returned (one wasted, harmless read; boardHistory never throws).
+      const me = await resolveMe(ctx, game.players, player);
+      requirePlayingSeat(game, me);
+      const [{ territories, info }, history] = await Promise.all([
         loadLiveGame(ctx, game),
-        meRead.then((m) => boardHistory(ctx, game, m, turn)),
+        boardHistory(ctx, game, me, turn),
       ]);
       const graph = graphOf(map);
       const board = boardStateFromLive(territories, me, game.players);
