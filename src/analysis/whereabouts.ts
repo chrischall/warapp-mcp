@@ -29,7 +29,8 @@
 //    tracked income), capped at {@link PRESENCE_CAP}.
 //  - From those: the bonuses it probably holds, the earliest turn it could attack each border
 //    territory of mine (`approaches`), what it is doing in plain sentences (`doing`), and what to
-//    prepare for (`prepare`: hold, contested, scout).
+//    prepare for (`prepare`: hold — the soonest attack a seen stack can make, contested — a bonus I
+//    hold part of and that is worth finishing, scout).
 import type { BoardState, TerritoryState } from '../board.js';
 import { carriesTeam } from '../teams.js';
 import { bonusTerritories } from './bonuses.js';
@@ -70,6 +71,13 @@ export const MAX_APPROACHES = 10;
 export const MAX_PREPARE = 10;
 /** Sentences one `doing` rule gives per opponent. */
 export const MAX_DOING_PER_RULE = 3;
+/** Territories one `can-attack` sentence names before it gives the rest as a count. */
+export const MAX_TARGETS_NAMED = 5;
+/**
+ * A bonus I hold part of is `contested` only when finishing it (the capture cost of its missing
+ * territories, as shown now) is at most this many turns of its value.
+ */
+export const CONTEST_PAYBACK_TURNS = 10;
 
 /** The settings the model reads: the planner's, and how the game began. */
 export interface WhereSettings extends PlannerSettings {
@@ -260,7 +268,10 @@ export interface Whereabouts {
   turn: number | null;
   /** By player id. */
   opponents: OpponentWhereabouts[];
-  /** Across opponents, most urgent first, at most {@link MAX_PREPARE}. */
+  /**
+   * Across opponents, at most {@link MAX_PREPARE}: what to hold first, then contested bonuses, then
+   * a look; each kind soonest first, then the largest shortfall or value.
+   */
   prepare: Prepare[];
   /** What the model assumes, in plain sentences. */
   assumptions: string[];
@@ -694,6 +705,8 @@ interface Taking {
   /** Turns after which it could hold the territory. */
   turns: number;
   from: number;
+  /** From a territory it only probably holds. */
+  guessed: boolean;
 }
 
 interface Located {
@@ -733,6 +746,17 @@ export function locateOpponents(input: WhereInput): Whereabouts {
   // What my side holds and values.
   const index = bonusesOf(g);
   const fullBonusOf = new Map<number, number>();
+  const mine = fieldFor(w, w.me);
+  /** Finishing a bonus pays within {@link CONTEST_PAYBACK_TURNS} of its value. */
+  const worthFinishing = (value: number, missing: readonly number[]): boolean => {
+    let cost = 0;
+    for (const t of missing) {
+      const c = mine.cost(t);
+      if (c === null) return false;
+      cost += c;
+    }
+    return cost <= CONTEST_PAYBACK_TURNS * value;
+  };
   const partial: { bonusId: number; value: number; size: number; held: number; missing: number[] }[] = [];
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     const members = bonusTerritories(g, b.id);
@@ -740,7 +764,7 @@ export function locateOpponents(input: WhereInput): Whereabouts {
     const missing = members.filter((t) => !w.mine.has(t));
     if (!missing.length) {
       for (const t of members) if (!fullBonusOf.has(t)) fullBonusOf.set(t, b.id);
-    } else if (missing.length < members.length) {
+    } else if (missing.length < members.length && worthFinishing(b.value, missing)) {
       partial.push({ bonusId: b.id, value: b.value, size: members.length, held: members.length - missing.length, missing });
     }
   }
@@ -1055,7 +1079,8 @@ export function locateOpponents(input: WhereInput): Whereabouts {
           if (sooner(way, ways.get(m))) ways.set(m, way);
           if (s.counted && way.inTurns < PREPARE_TURNS) {
             const t = threats.get(m);
-            if (!t || way.arriving > t.armies || (way.arriving === t.armies && way.inTurns < t.inTurns))
+            // The soonest attack is the one to prepare for; among equally soon ones, the largest.
+            if (!t || way.inTurns < t.inTurns || (way.inTurns === t.inTurns && way.arriving > t.armies))
               threats.set(m, { armies: way.arriving, inTurns: way.inTurns, from: s.id });
           }
         }
@@ -1064,7 +1089,7 @@ export function locateOpponents(input: WhereInput): Whereabouts {
         const e = r.best.get(t);
         if (!e || e.turns < 1) continue;
         const had = takings.get(t);
-        if (!had || e.turns < had.turns) takings.set(t, { turns: e.turns, from: s.id });
+        if (!had || e.turns < had.turns) takings.set(t, { turns: e.turns, from: s.id, guessed: s.kind === 'guessed' });
       }
     }
     const approaches: Approach[] = [...ways]
@@ -1089,16 +1114,32 @@ export function locateOpponents(input: WhereInput): Whereabouts {
     if (!seenIds.length) doing.push({ rule: 'unseen', text: `Player ${o} has not been seen on any board of yours${received}`, territoryIds: [] });
     else if (!own.length)
       doing.push({ rule: 'out-of-sight', text: `Player ${o} has nothing in view (last seen on turn ${lastSight})${received}`, territoryIds: [] });
-    const attacks = [...ways]
-      .filter(([, way]) => way.inTurns === 0 && way.source.counted)
-      .sort(([a, x], [b, y]) => y.arriving - x.arriving || a - b)
-      .slice(0, MAX_DOING_PER_RULE);
-    for (const [target, way] of attacks)
+    // One sentence per stack, naming the territories of mine it can attack this turn.
+    const stacks = new Map<number, { arriving: number; targets: number[] }>();
+    for (const [target, way] of ways) {
+      if (way.inTurns !== 0 || !way.source.counted) continue;
+      const s = stacks.get(way.source.id) ?? { arriving: 0, targets: [] };
+      s.arriving = Math.max(s.arriving, way.arriving);
+      s.targets.push(target);
+      stacks.set(way.source.id, s);
+    }
+    const attacks = [...stacks].sort(([a, x], [b, y]) => y.arriving - x.arriving || a - b).slice(0, MAX_DOING_PER_RULE);
+    for (const [from, { arriving, targets }] of attacks) {
+      targets.sort(byNum);
+      const named = targets.slice(0, MAX_TARGETS_NAMED);
+      const rest = targets.length - named.length;
+      const list =
+        targets.length === 1
+          ? `territory ${named[0]}`
+          : rest > 0
+            ? `territories ${named.join(', ')} and ${rest} more`
+            : `territories ${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
       doing.push({
         rule: 'can-attack',
-        text: `Player ${o} can attack territory ${target} this turn with up to ${way.arriving} armies from territory ${way.source.id} (what its stack can move plus a deploy of ${income}).`,
-        territoryIds: [target, way.source.id],
+        text: `Player ${o} can attack ${list} this turn with up to ${arriving} armies from territory ${from} (what its stack can move plus a deploy of ${income}).`,
+        territoryIds: [...targets, from],
       });
+    }
     const before = w.byTurn.get(turn - 1);
     if (before) {
       const was = new Map(before.territories.map((t) => [t.territoryId, t]));
@@ -1241,7 +1282,7 @@ export function locateOpponents(input: WhereInput): Whereabouts {
       if (taken !== undefined) {
         const t = takings.get(taken)!;
         const by = turn + t.turns - 1;
-        ranked.push({ ...base, turn: by, territory: taken, from: t.from, text: `${head} could take territory ${taken} by turn ${by} from territory ${t.from}.` });
+        ranked.push({ ...base, turn: by, territory: taken, from: t.from, text: `${head} could take territory ${taken} by turn ${by} from territory ${t.from}${t.guessed ? ' (guessed)' : ''}.` });
       }
     }
     // One look per opponent: the territory next to mine that shows the most of the fog, among
@@ -1272,9 +1313,8 @@ export function locateOpponents(input: WhereInput): Whereabouts {
   const prepare = ranked
     .sort(
       (a, b) =>
-        Number(a.kind === 'scout') - Number(b.kind === 'scout') ||
-        a.turn - b.turn ||
         kindOrder[a.kind] - kindOrder[b.kind] ||
+        a.turn - b.turn ||
         b.weight - a.weight ||
         a.territory - b.territory ||
         a.opponent - b.opponent ||

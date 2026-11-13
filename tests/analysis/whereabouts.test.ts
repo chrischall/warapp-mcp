@@ -431,6 +431,10 @@ describe('approaches', () => {
     expect(o.approaches).toHaveLength(MAX_APPROACHES);
     expect(o.approaches.map((a) => a.target)).toEqual([7, 8, 1, 2, 3, 4, 5, 6, 9, 10]);
     expect(o.approaches[0]!.valued).toBe(true);
+    // One sentence per stack, however many territories it touches.
+    expect(o.doing.filter((d) => d.rule === 'can-attack').map((d) => d.text)).toEqual([
+      'Player 200 can attack territories 1, 2, 3, 4, 5 and 7 more this turn with up to 24 armies from territory 50 (what its stack can move plus a deploy of 5).',
+    ]);
   });
 });
 
@@ -498,6 +502,14 @@ describe('prepare', () => {
     expect(r.prepare.filter((p) => p.kind === 'hold')).toEqual([]);
   });
 
+  it('hold: judges the soonest attack, not a larger one a turn later', () => {
+    // Its 12 on 1 touches my 3 directly, and could also come round through the neutral 2.
+    const graph = mkGraph([[1, 3], [1, 2], [2, 3], [3, 4]], [[971, 3, [3, 4]]]);
+    const r = locate({ graph, boards: [at(4, foe(1, 12), neutral(2, 0), own(3, 4), own(4, 2))] });
+    // This turn: 11 + 5 = 16, which 11 defenders hold. Next turn through 2 it would be 20.
+    expect(r.prepare.filter((p) => p.kind === 'hold')).toMatchObject([{ territory: 3, turn: 4, armies: 16, need: 11, have: 4 }]);
+  });
+
   it('hold: my commander\'s territory counts, and the commander defends as seven', () => {
     const graph = mkGraph(line(3));
     const commander = { ...own(2, 2), specialUnits: [{ kind: 'commander' as const, id: 'c', playerId: ME }] };
@@ -541,6 +553,34 @@ describe('prepare', () => {
     const graph = mkGraph(line(4), [[981, 2, [3, 4]]]);
     const r = locate({ graph, boards: [at(4, foe(3, 3), own(4, 5))] });
     expect(r.prepare.find((p) => p.kind === 'contested')!.text).toBe('Bonus 981 (+2): you hold 1 of 2; player 200 holds territory 3.');
+  });
+
+  it('contested: says when the stack that could take it is itself a guess', () => {
+    // 3 is in the fog, last seen as its own; 4 is a neutral in bonus 981 = {4, 5}, of which I hold 5.
+    const graph = mkGraph(line(5), [[981, 2, [4, 5]]]);
+    const r = locate({ graph, boards: [at(3, own(5, 5), neutral(4, 2), foe(3, 4)), at(4, own(5, 5), neutral(4, 2), fogged(3))] });
+    expect(r.prepare.find((p) => p.kind === 'contested')!.text).toBe(
+      'Bonus 981 (+2): you hold 1 of 2; player 200 could take territory 4 by turn 4 from territory 3 (guessed).',
+    );
+  });
+
+  it('contested: leaves out a bonus not worth finishing', () => {
+    // I hold one territory of a +2 bonus of thirty: the other 29 would cost 87 armies, far past ten turns of its value.
+    const graph = mkGraph(line(31), [[991, 2, Array.from({ length: 30 }, (_, i) => i + 2)]]);
+    const r = locate({ graph, boards: [at(4, foe(29, 6), neutral(30, 2), own(31, 5))] });
+    expect(r.prepare.filter((p) => p.kind === 'contested')).toEqual([]);
+  });
+
+  it('puts what to hold before a contested bonus, and a look last', () => {
+    // My bonus 971 = {5, 6} faces its stack on 3 across the neutral 4; I hold 6 of bonus 972 = {6, 7}
+    // too, whose 7 is in the fog and may be its start (as 9 may).
+    const graph = mkGraph([[3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]], [[971, 3, [5, 6]], [972, 2, [6, 7]]]);
+    const r = locate({ graph, boards: [at(2, foe(3, 12), neutral(4, 2), own(5, 2), own(6, 2))], candidates: pickable(7, 9) });
+    expect(r.prepare.map((p) => [p.kind, p.turn, p.territory])).toEqual([
+      ['hold', 3, 5],
+      ['contested', 2, 7],
+      ['scout', 2, 7],
+    ]);
   });
 
   it('scout: a territory whose capture would show a guess that could go either way', () => {

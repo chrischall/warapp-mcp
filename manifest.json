@@ -154,6 +154,10 @@
       "description": "Track each opponent over your board history: deploys per turn, income, armies hidden in the fog, and bonuses that could explain the gap"
     },
     {
+      "name": "warapp_locate_opponents",
+      "description": "Guess where each opponent is and what it may be doing: what you saw kept apart from likely starts, hidden territories, approaches and what to prepare for"
+    },
+    {
       "name": "warapp_plan_picks",
       "description": "Plan your territory picks: a ranked list in a compact primary and fallback group, with reasons and submit-ready ids"
     },

@@ -12,6 +12,7 @@ import { lookupMeta } from './hints.js';
 import { loadLiveTerritories, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
 import { mapOf } from './map.js';
+import { keepPickable } from './where.js';
 
 const VIEWS = ['compact', 'full'] as const;
 /** The only GameFeed state in which territories are picked. */
@@ -104,6 +105,8 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           hint: 'Check warapp_get_live_board: picks may already be closed, or this game distributes territories automatically.',
         });
       }
+      // Kept for the turns to come: where a player could have started (warapp_locate_opponents).
+      await keepPickable(ctx, game, pickable);
       const neutralArmies = new Map<number, number>();
       for (const t of territories) {
         if (!t.fogged && t.owner === OWNER_NEUTRAL && t.armies !== null) neutralArmies.set(t.territoryId, t.armies);
