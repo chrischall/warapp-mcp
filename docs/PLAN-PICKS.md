@@ -13,7 +13,8 @@ FFAs the pick list took hand analysis of the map, the live board's pickables and
 
 ## Facts and strategy inputs
 
-- Picks allowed = `TerritoryLimit × 2` (`maxPicks` in `src/tools/live.ts`); only `TerritoryLimit`
+- Picks allowed: war.app's client lets a list hold players × territories per player (`clientPickLimits`,
+  docs/WARAPP-API.md; this plan first assumed `TerritoryLimit × 2`, true only in a 1v1, #129); only `TerritoryLimit`
   are granted, in pick order, skipping ones another player got first. So the list is ordered: the top
   `TerritoryLimit` form one compact primary group; the rest a compact fallback group.
 - Settings that change pick value: `InitialNonDistributionArmies` (neutral size; with 0-army
