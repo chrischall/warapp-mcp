@@ -1077,7 +1077,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Who moves first this turn, when you know (as warapp_check_plan takes it; Cycle and No-Luck Cycle move ' +
               'orders swap the first mover every turn: whoever moved second last turn moves first now). Give the ' +
               "cycle's order, not one an Order Priority or Order Delay card changed. When you move " +
-              "first, your first order already runs before the opponent's, so Order Priority is not advised. In a " +
+              "first, your first order already runs before the opponent's, so Order Priority is not advised (unless the " +
+              'opponent may hold one too and the order ends a player). In a ' +
               'two-player game under a cyclic order it is remembered and later turns default to it, alternated; ' +
               'omitted, the default is that, else the award of picks, else unknown (`firstMover` says which).',
           ),

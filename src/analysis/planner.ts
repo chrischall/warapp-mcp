@@ -190,6 +190,18 @@
 //     deploy. When the best sizing fails only on an unfunded hold, the search runs once
 //     more with those holds reserved and those territories left unattacked, and its
 //     best is kept if it beats the first search's. With no success, nothing changes.
+//     #179: under Local Deployment each territory is sized for the deploy that can reach it
+//     (`deployReaching`: its bonus pools pay only into their own territories), and a target whose
+//     save needs more than that falls for sure (`guaranteedFallsReaching`). Unless I am known to
+//     move first, an elimination is first tried covering its exits onto my land: each territory
+//     of mine next to it holds against its stacks there plus that deploy (a source keeps it and
+//     what its attack would lose defending; a border that attacks nothing is deployed to), and
+//     keeps it through the later passes (`coverKeep`); unaffordable, it is planned uncovered with
+//     the move-order caveat ("Cover player …'s exits"). In an FFA (two or more opponents) an
+//     elimination is priced first: the players its land makes me border and the frontier cost
+//     before and after (`frontierDelta`, its threat gone); a buffer whose removal costs more than
+//     a turn of my income and more than PAYBACK_TURNS × the income its land adds is left standing
+//     ("Not finishing off player …"), and no pass takes its territories this turn.
 //     An opponent bordering the fog is never eliminated (issue #60): it is pressured
 //     instead — every visible territory attacked, each sized for its full deploy plus
 //     pressureMargin (an attack sized for exactly the estimate failed live), and
@@ -329,7 +341,9 @@
 //  1s. Commander strike (every goal, before finishing off, triage and any expansion; #61).
 //     A visible enemy commander next to a territory I held at the start of the turn is
 //     attacked first — killing it eliminates its owner — sized for its armies + the
-//     commander's 7 + its owner's full deploy estimate. Nothing is conceded yet, so a thin
+//     commander's 7 + its owner's full deploy estimate (#179: under Local Deployment, what can
+//     reach it). In an FFA a rationale line says who borders the land it leaves neutral; a
+//     commander strike is never gated. Nothing is conceded yet, so a thin
 //     border next to it may strike with deploys. No vanishing: war.app interleaves both
 //     players' attacks, so only the struck territory stops threatening; the owner's other
 //     stacks still count in every threat this turn (elimination changes next turn). My
@@ -753,7 +767,10 @@
 //     am not known to move first (`movesFirst`), and that order carries at least
 //     ORDER_PRIORITY_MIN_ARMIES; its warning then says so, and the other such moves' warnings say
 //     they are listed early but may come too late. Under `movesFirst` the strike's card advice is
-//     dropped too. Finishing a player off (rule 1e) assumes my attacks land before its own
+//     dropped too, unless `opponentsMayHoldOrderPriority` (two cards cancel, so mine keeps it
+//     first; #179). The strike that eliminates a finished-off player (#179: the first attack on
+//     its largest stack) is my first order after a commander strike, and Order Priority is advised
+//     for it on the same terms (no minimum armies). Finishing a player off (rule 1e) assumes my attacks land before its own
 //     orders: unless `movesFirst`, a warning says it can move between its territories or take my
 //     borders next to it that its stacks plus its deploy can take (named), and survive. (Holding
 //     those borders against it is not planned.)
