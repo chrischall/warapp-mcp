@@ -54,7 +54,7 @@ import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js'
 import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
-import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
+import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { adviseCards, cardGame, handOwners, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
@@ -998,6 +998,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'start for certain (in a two-player game they are planned as the opponent\'s while still fogged, with the ' +
           'starting armies on turn 1), whether you were awarded first or second and who moves first this turn under ' +
           "a cyclic move order, and with commanders the opponent's first award when the award pins it. " +
+          '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
+          '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
+          'cyclic order). ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -1056,8 +1059,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .optional()
           .describe(
             'Who moves first this turn, when you know (as warapp_check_plan takes it; Cycle and No-Luck Cycle move ' +
-              'orders swap the first mover every turn: whoever moved second last turn moves first now). When you move ' +
-              "first, your first order already runs before the opponent's, so Order Priority is not advised. Default unknown.",
+              'orders swap the first mover every turn: whoever moved second last turn moves first now). Give the ' +
+              "cycle's order, not one an Order Priority or Order Delay card changed. When you move " +
+              "first, your first order already runs before the opponent's, so Order Priority is not advised. In a " +
+              'two-player game under a cyclic order it is remembered and later turns default to it, alternated; ' +
+              'omitted, the default is that, else the award of picks, else unknown (`firstMover` says which).',
           ),
         view: viewArg(
           VIEWS,
@@ -1092,6 +1098,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const award = await loadAward(ctx.dataDir, game, me, seen, turn);
       const board = award?.board ?? seen;
       const opening = openingThreat(award, game, graph, seen, turn);
+      // #127: who moves first — first_mover, else a turn kept for this game alternated, else the award.
+      const mover = await firstMoverFor(ctx.dataDir, game, me, turn, first_mover, award);
       const settings = plannerSettings(game.settings);
       const rules = cardRules(game.settings);
       // A team shares one hand (#163): mine and my teammates' cards.
@@ -1146,7 +1154,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
-          ...(first_mover !== undefined ? { movesFirst: first_mover === 'me' } : {}),
+          ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);
@@ -1164,6 +1172,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             ]
           : []),
         ...(award ? assumedWarning(award) : []),
+        ...mover.warnings,
         ...(handUnknown ? [UNREADABLE_HAND] : []),
         ...(inGame.team && rules.inPlay.length ? [TEAM_HAND] : []),
         ...cards.warnings,
@@ -1202,6 +1211,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               },
         income,
         enemyDeploy: plan.enemyDeploy,
+        // #127: who moves first this turn and how it is known; null when unknown.
+        firstMover: mover.view,
         // #166: what the award of picks showed (absent when no pick list is kept for this game).
         ...(award ? { award: awardView(award, game, turn, name) } : {}),
         trendSource: trend?.source ?? null,

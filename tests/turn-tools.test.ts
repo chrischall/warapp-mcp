@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FetchproxyTimeoutError } from '@fetchproxy/server';
@@ -1418,6 +1419,51 @@ describe('cards in the turn tools', () => {
     expect(p.orders[0]).toEqual({ kind: 'card', card: OP });
     expect(p.orders.filter((o) => o.kind === 'card')).toHaveLength(1);
     expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
+  });
+
+  it('plan_turn takes the first mover it remembers in a two-player cyclic game (#127)', async () => {
+    // The Order Priority opening above, with only Ann and Bob under the fixture's Cycle order.
+    const opening: SyntheticTerritory[] = [
+      { id: 158, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 1 },
+      { id: 157, fogLevel: 1, owner: 0, armies: 4 },
+      { id: 161, fogLevel: 1, owner: 0, armies: 12 },
+      { id: 135, fogLevel: 1, owner: 0, armies: 12 },
+      { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 25 },
+    ];
+    const duel = game('Playing', { numberOfTurns: '1', settings: modelledSettings() });
+    duel.players = (duel.players as unknown[]).slice(0, 2);
+    const dataDir = mkdtempSync(join(tmpdir(), 'warapp-mcp-first-mover-'));
+    const harness = (turnsDone: string) =>
+      liveHarness({
+        feed: [{ ...duel, numberOfTurns: turnsDone }],
+        dataDir,
+        warapp: routes({
+          [Method.GetLatestGameInfo]: () =>
+            ({
+              body: (w) => writeLatestGameInfo(w, opening, [ANN.inGame, BOB.inGame], { [ANN.inGame]: [{ id: OP, type: 4 }] }),
+            }) satisfies Partial<ReplyFrame>,
+        }),
+      });
+    h = await harness('1');
+    const unknown = payload<CardsPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(unknown.firstMover).toBeNull();
+    expect(unknown.cardAdvice).toBe('order-priority');
+    // Turn 2: the user says Ann moves first. Turn 4: remembered, so the card is not needed.
+    await h.harness.close();
+    h = await harness('1');
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', first_mover: 'me' });
+    await h.harness.close();
+    h = await harness('3');
+    const later = payload<CardsPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(later.firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect(later.cardAdvice).toBeNull();
+    // Turn 3 alternates: the opponent moves first, and the card is advised again.
+    await h.harness.close();
+    h = await harness('2');
+    const odd = payload<CardsPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(odd.firstMover).toEqual({ who: 'opponent', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect(odd.cardAdvice).toBe('order-priority');
   });
 
   it('plan_turn advises Order Delay above the calm orders when an attack the opponent can answer is planned (#163)', async () => {

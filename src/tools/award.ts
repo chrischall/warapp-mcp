@@ -1,11 +1,12 @@
 // What the award of picks tells the turn tools (#166): read once from my stored pick list on the
 // first board after distribution (src/analysis/award.ts, src/pick-list.ts), then reused all game.
-import { firstMoverOnTurn, readAward, type AwardReading, type AwardRole } from '../analysis/award.js';
+import { firstMoverOnTurn, isCyclicMoveOrder, readAward, type AwardReading, type AwardRole } from '../analysis/award.js';
 import type { MapGraph } from '../analysis/graph.js';
 import { openingIncome, PICK_HORIZON } from '../analysis/picks.js';
 import type { BoardState, TerritoryState } from '../board.js';
 import { FOG_LEVEL_NAMES, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_VISIBLE } from '../live.js';
 import type { Game, Player } from '../normalize.js';
+import { readFirstMover, resolveFirstMover, writeFirstMover, type FirstMover, type FirstMoverSource } from '../move-order.js';
 import { readPickRecord, writeAward } from '../pick-list.js';
 import { pickSettings } from './picks.js';
 
@@ -182,8 +183,10 @@ export function awardView<T>(
         (a.firstMover
           ? `; under this game's ${game.settings?.moveOrder} move order the first awarded moves second on turn 1 and the order alternates, so ` +
             `${a.firstMover === 'me' ? 'you move' : 'the opponent moves'} first on turn ${turn} (an Order Priority or Order Delay card changes that). ` +
-            'This is the community wiki\'s rule, not verified live.'
-          : '.'),
+            "This is the community wiki's rule and the game client's help text, not verified live."
+          : game.settings?.moveOrder === 'NoLuckCycle'
+            ? '; under a no-luck cycle play speed, not the award, set who moves first: the game shows it (Game → Move Order), so pass it as `first_mover`.'
+            : '.'),
     );
   const commanders = game.settings?.commanders === true;
   if (commanders && duel && reading.opponentFirstAward !== null)
@@ -199,5 +202,44 @@ export function awardView<T>(
     ...(commanders && duel ? { opponentCommanderStart: reading.opponentFirstAward === null ? null : name(reading.opponentFirstAward) } : {}),
     assumedOnBoard: a.assumed.map(name),
     notes,
+  };
+}
+
+/** Who moves first, as warapp_plan_turn reports it: `null` when unknown. */
+export interface FirstMoverView {
+  who: 'you' | 'opponent';
+  /** `explicit`: `first_mover` given; `award`: the award of picks; `remembered`: alternated from the turn in `from`. */
+  source: FirstMoverSource | 'remembered';
+  from?: { turn: number; source: FirstMoverSource };
+}
+
+/**
+ * Who moves first on `turn` (#127): `first_mover` when given, else what this server knows — a
+ * turn kept at `<dataDir>/move-order/` alternated, or the award of picks — in a two-player game
+ * under a cyclic move order. What is newly known is kept for later turns. Never throws.
+ */
+export async function firstMoverFor(
+  dataDir: string | undefined,
+  game: Game,
+  me: Player,
+  turn: number | null,
+  explicit: FirstMover | undefined,
+  award: AwardContext | undefined,
+): Promise<{ firstMover?: FirstMover; view: FirstMoverView | null; warnings: string[] }> {
+  const cyclicDuel = game.players.length === 2 && isCyclicMoveOrder(game.settings?.moveOrder);
+  const remembered = dataDir && cyclicDuel ? await readFirstMover(dataDir, game.id, me.id) : undefined;
+  const { resolved, record, warnings } = resolveFirstMover({
+    turn,
+    cyclicDuel,
+    ...(explicit ? { explicit } : {}),
+    award: award?.firstMover ?? null,
+    ...(remembered ? { remembered } : {}),
+  });
+  if (dataDir && record) await writeFirstMover(dataDir, game.id, me.id, record);
+  if (!resolved) return { view: null, warnings };
+  return {
+    firstMover: resolved.firstMover,
+    view: { who: resolved.firstMover === 'me' ? 'you' : 'opponent', source: resolved.source, ...(resolved.from ? { from: resolved.from } : {}) },
+    warnings,
   };
 }

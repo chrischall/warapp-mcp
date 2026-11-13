@@ -1,13 +1,14 @@
 // The award of picks in the turn tools (#166): read from the stored pick list on the first board,
 // reported by warapp_plan_turn and warapp_check_plan, and the opponent's proven starts planned on
 // while fogged. Synthetic board on the anonymized lobby fixture's map; no war.app traffic.
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openingIncome } from '../src/analysis/picks.js';
+import { readFirstMover } from '../src/move-order.js';
 import { normalizeGame, normalizeMap } from '../src/normalize.js';
-import { readPickRecord, writePickList } from '../src/pick-list.js';
+import { pickListPath, readPickRecord, writePickList } from '../src/pick-list.js';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { graphOf } from '../src/tools/common.js';
@@ -140,6 +141,15 @@ describe('warapp_plan_turn — the award of picks', () => {
     h = await live(board({ 157: FOG }), game(1, { MoveOrder: 'Random' }), dir);
     const p = await plan(h);
     expect(p.award).toMatchObject({ awarded: 'first', firstMover: null });
+  });
+
+  it('gives no move order from the award under a no-luck cycle, and says to pass it (#127)', async () => {
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, [159, 158, 157, 161]);
+    h = await live(board({ 157: FOG }), game(1, { MoveOrder: 'NoLuckCycle' }), dir);
+    const p = await plan(h);
+    expect(p.award).toMatchObject({ awarded: 'first', firstMover: null });
+    expect(p.award!.notes.join(' ')).toMatch(/play speed, not the award, set who moves first.*first_mover/);
   });
 
   it("with commanders, names the opponent's first award when the award pins it", async () => {
@@ -308,5 +318,76 @@ describe('warapp_check_plan — the award of picks', () => {
     expect(p).not.toHaveProperty('award');
     expect(p.considered).toBe(0);
     expect(ids(p.unseenOpponents)).toEqual([Number(BOB.feed)]);
+  });
+});
+
+describe('warapp_plan_turn — who moves first, kept between turns (#127)', () => {
+  interface Mover {
+    who: 'you' | 'opponent';
+    source: 'explicit' | 'award' | 'remembered';
+    from?: { turn: number; source: 'explicit' | 'award' };
+  }
+  interface MoverPayload {
+    firstMover: Mover | null;
+    award?: Award;
+    warnings: string[];
+  }
+  const planOn = async (feed: Record<string, unknown>, dir: string, args: Record<string, unknown> = {}) => {
+    await h?.harness.close();
+    h = await live(board({}, 9), feed, dir);
+    return payload<MoverPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', ...args }));
+  };
+
+  it('is unknown with nothing to go on', async () => {
+    const p = await planOn(game(3), tmp());
+    expect(p.firstMover).toBeNull();
+  });
+
+  it('remembers an explicit first mover and alternates it on later turns', async () => {
+    const dir = tmp();
+    expect((await planOn(game(3), dir, { first_mover: 'me' })).firstMover).toEqual({ who: 'you', source: 'explicit' });
+    expect((await readFirstMover(dir, GAME, ME))).toEqual({ turn: 3, firstMover: 'me', source: 'explicit' });
+    expect((await planOn(game(4), dir)).firstMover).toEqual({ who: 'opponent', source: 'remembered', from: { turn: 3, source: 'explicit' } });
+    expect((await planOn(game(5), dir)).firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 3, source: 'explicit' } });
+    // A later explicit first mover replaces it.
+    expect((await planOn(game(5), dir, { first_mover: 'opponent' })).firstMover).toEqual({ who: 'opponent', source: 'explicit' });
+    expect((await planOn(game(6), dir)).firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 5, source: 'explicit' } });
+  });
+
+  it('keeps what the award said, and alternates it once the award is gone', async () => {
+    const dir = tmp();
+    // Awarded first under the fixture's Cycle order: the opponent moves first on turn 1.
+    await writePickList(dir, GAME, ME, [159, 158, 157, 161]);
+    await h?.harness.close();
+    h = await live(board({ 157: FOG }), game(1), dir);
+    const p = payload<MoverPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.firstMover).toEqual({ who: 'opponent', source: 'award' });
+    expect(await readFirstMover(dir, GAME, ME)).toEqual({ turn: 1, firstMover: 'opponent', source: 'award' });
+    // The pick list is gone (pruned, or another machine): the kept turn still says.
+    rmSync(pickListPath(dir, GAME));
+    expect((await planOn(game(4), dir)).firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 1, source: 'award' } });
+  });
+
+  it('a remembered explicit turn outranks the award, and the disagreement is a warning', async () => {
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, [159, 158, 157, 161]);
+    await h?.harness.close();
+    h = await live(board({ 157: FOG }), game(1), dir);
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    // The user saw the award's order was the other way round on turn 2.
+    expect((await planOn(game(2), dir, { first_mover: 'opponent' })).firstMover).toEqual({ who: 'opponent', source: 'explicit' });
+    const p = await planOn(game(3), dir);
+    expect(p.firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect(p.award).toMatchObject({ firstMover: 'opponent' });
+    expect(p.warnings.join(' ')).toMatch(/Move order: the plan takes it that you move first on turn 3 .*the award of picks says the opponent moves first on turn 3/);
+  });
+
+  it('keeps nothing under a random move order or with more than two players', async () => {
+    const dir = tmp();
+    expect((await planOn(game(3, { MoveOrder: 'Random' }), dir, { first_mover: 'me' })).firstMover).toEqual({ who: 'you', source: 'explicit' });
+    expect(await readFirstMover(dir, GAME, ME)).toBeUndefined();
+    expect((await planOn(game(4, { MoveOrder: 'Random' }), dir)).firstMover).toBeNull();
+    expect((await planOn(game(3, {}, 3), dir, { first_mover: 'me' })).firstMover).toEqual({ who: 'you', source: 'explicit' });
+    expect(await readFirstMover(dir, GAME, ME)).toBeUndefined();
   });
 });

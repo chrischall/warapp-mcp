@@ -115,12 +115,15 @@ describe('readAward — other sizes', () => {
 
 describe('firstMoverOnTurn', () => {
   it('under a cyclic order the first awarded moves second on turn 1, and the order alternates', () => {
-    for (const order of ['Cycle', 'NoLuckCycle']) {
-      expect(firstMoverOnTurn({ role: 'first', turn: 1, moveOrder: order })).toBe('opponent');
-      expect(firstMoverOnTurn({ role: 'first', turn: 2, moveOrder: order })).toBe('me');
-      expect(firstMoverOnTurn({ role: 'second', turn: 1, moveOrder: order })).toBe('me');
-      expect(firstMoverOnTurn({ role: 'second', turn: 4, moveOrder: order })).toBe('opponent');
-    }
+    expect(firstMoverOnTurn({ role: 'first', turn: 1, moveOrder: 'Cycle' })).toBe('opponent');
+    expect(firstMoverOnTurn({ role: 'first', turn: 2, moveOrder: 'Cycle' })).toBe('me');
+    expect(firstMoverOnTurn({ role: 'second', turn: 1, moveOrder: 'Cycle' })).toBe('me');
+    expect(firstMoverOnTurn({ role: 'second', turn: 4, moveOrder: 'Cycle' })).toBe('opponent');
+  });
+
+  it('says nothing under a no-luck cycle, whose first order is set by play speed, not the award (#127)', () => {
+    expect(firstMoverOnTurn({ role: 'first', turn: 1, moveOrder: 'NoLuckCycle' })).toBeNull();
+    expect(firstMoverOnTurn({ role: 'second', turn: 4, moveOrder: 'NoLuckCycle' })).toBeNull();
   });
 
   it('says nothing under a random order, an order it does not know, or an unknown role or turn', () => {

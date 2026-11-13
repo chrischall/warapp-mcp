@@ -122,8 +122,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   later turns reuse it, and a list that cannot explain the start gives nothing. `warapp_plan_turn` and
   `warapp_check_plan` report it as `award` and, in a two-player game, plan on the opponent's proven starts while
   they are fogged (owner, plus the starting armies on turn 1); the board cache and opponent tracking keep the
-  board war.app showed. The move order (`award.firstMover`) and the commander start are the wiki's rules, not
-  verified live: reported, never used to narrow the stress test or to place a commander.
+  board war.app showed. The move order (`award.firstMover`, `Cycle` only: under `NoLuckCycle` play speed sets
+  the first order, not the award) and the commander start are the wiki's rules, not verified live: never used
+  to narrow the stress test or to place a commander; `warapp_plan_turn` defaults its first mover to it.
+- **Who moved first is kept between turns (#127, `src/move-order.ts`).** In a two-player game under `Cycle`
+  or `NoLuckCycle` the first mover alternates every turn, so `warapp_plan_turn` keeps one known turn at
+  `<dataDir>/move-order/<gameId>.json` (turn, `me`/`opponent`, source) and later turns default to it,
+  alternated. Sources, best first: `first_mover` given now; a kept explicit turn; the award; a kept award
+  turn. Disagreement is a warning; `firstMover` reports `{ who, source, from? }`. The game history is not
+  read for it (UNVERIFIED whether an in-progress `GetHistory` carries the orders in the order they ran).
+  `warapp_check_plan` writes nothing and still tries both orders unless `first_mover` is given.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'
