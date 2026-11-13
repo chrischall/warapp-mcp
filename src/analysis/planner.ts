@@ -4294,7 +4294,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         /** The source is a conceded border: it attacks out (with deploys) rather than withdraw. */
         viaConceded: boolean;
         /** No usable source: why each neighbour of mine is out. */
-        blocked: { x: number; why: 'hold' | 'split' }[];
+        blocked: { x: number; why: 'hold' | 'conceded' | 'split' }[];
       }
       /**
        * What can reach `t` this turn, as {@link tryCapture} judges it: its best single source's
@@ -4302,7 +4302,8 @@ export function planTurn(input: PlanInput): TurnPlan {
        * deployed there. A source that holds its border (locked) or already issues an order
        * (No-Split) is out. A conceded border counts with the armies rule 1b would withdraw and
        * with deploys (#107): rather than stand still it attacks out, and its deploys leave with
-       * the attack. On a tie a source that is not conceded wins.
+       * the attack — but only when no unconceded source can take it alone. On a tie a source that
+       * is not conceded wins.
        */
       const reachOf = (t: number): Reach => {
         let best: Reach = { from: undefined, movable: 0, deploy: 0, reach: 0, viaConceded: false, blocked: [] };
@@ -4310,8 +4311,10 @@ export function planTurn(input: PlanInput): TurnPlan {
         const tg = targets.get(t)!;
         for (const x of [...tg.sources].sort(byNum)) {
           const back = conceded.has(x) ? withdrawnFrom(x) : 0;
+          // A conceded border kept in place (its garrison stays, not withdrawn) is not holding its
+          // border: name it as conceded.
           if (back === 0 && locked.has(x)) {
-            blocked.push({ x, why: 'hold' });
+            blocked.push({ x, why: !conceded.has(x) ? 'hold' : orderOf(x) ? 'split' : 'conceded' });
             continue;
           }
           if (back === 0 && orderOf(x)) {
@@ -4323,7 +4326,15 @@ export function planTurn(input: PlanInput): TurnPlan {
           const viaConceded = conceded.has(x) && !concededSource(x, t, tg.cost);
           const deploy = Math.max(0, spareAt(x));
           const reach = movable + deploy;
-          if (best.from === undefined || reach > best.reach || (reach === best.reach && best.viaConceded && !viaConceded))
+          // An unconceded source that can take it alone goes first: a conceded border attacks out
+          // only when none can, so its armies are not thrown away for a step another source affords.
+          const fits = !conceded.has(x) && reach >= tg.cost;
+          const bestFits = best.from !== undefined && !conceded.has(best.from) && best.reach >= tg.cost;
+          if (
+            best.from === undefined ||
+            (fits && !bestFits) ||
+            (fits === bestFits && (reach > best.reach || (reach === best.reach && best.viaConceded && !viaConceded)))
+          )
             best = { from: x, movable, deploy, reach, viaConceded, blocked: [] };
         }
         return best.from === undefined ? { ...best, blocked } : best;
@@ -4422,6 +4433,21 @@ export function planTurn(input: PlanInput): TurnPlan {
         const move = [...moves].reverse().find((m) => m.kind === 'attack' && m.to === st.t)!;
         if (out !== undefined && move.from === out) {
           const need = Math.max(0, st.cost - before);
+          // Every movable army leaves with the attack: left behind on the conceded border they are
+          // lost; at the target they survive.
+          const extra = Math.max(0, movableFor(out, st.t));
+          if (extra > 0) {
+            const sent = move.armies;
+            avail.set(out, avail.get(out)! - extra);
+            move.armies = sent + extra;
+            move.winChance = chanceOf(move.armies, defenceAt(st.t));
+            survivorsAt.set(st.t, (survivorsAt.get(st.t) ?? 0) + extra);
+            captureUndo.set(st.t, () => avail.set(out, avail.get(out)! + move.armies));
+            const head = `Attack ${label(st.t)} from ${label(out)} with ${sent}`;
+            let r = rationale.length - 1;
+            while (r >= 0 && !rationale[r]!.startsWith(`${head}:`) && !rationale[r]!.startsWith(`${head} (`)) r--;
+            if (r >= 0) rationale[r] = `Attack ${label(st.t)} from ${label(out)} with ${move.armies}${rationale[r]!.slice(head.length)}`;
+          }
           rationale.push(
             `Attack out of conceded ${label(out)} rather than withdraw: its ${before} movable armies${need ? ` (and ${need} deployed there, which leave with the attack)` : ''} take ${label(st.t)}; one capture is worth more than saving them.`,
           );
@@ -4470,11 +4496,15 @@ export function planTurn(input: PlanInput): TurnPlan {
           .filter((id) => bonusTs.get(id)?.includes(t))
           .sort(byNum)
           .map(bonusName);
-      /** Why no neighbour of mine can attack `st`: each holds its border, or already issues an order. */
+      /** Why no neighbour of mine can attack `st`: each holds its border, is conceded, or already issues an order. */
       const blockedText = (st: (typeof steps)[number]) =>
         `no neighbour of mine can attack it (${st.blocked
           .map(({ x, why }) =>
-            why === 'hold' ? `${label(x)} stays to hold its border` : `${label(x)} already issues an order under No-Split`,
+            why === 'hold'
+              ? `${label(x)} stays to hold its border`
+              : why === 'conceded'
+                ? `${label(x)} is a conceded border whose armies stay there`
+                : `${label(x)} already issues an order under No-Split`,
           )
           .join('; ')})`;
       /** "needs C, and at most R can reach it this turn (M movable on S[, a conceded border] + D to deploy[; the holds took H])". */

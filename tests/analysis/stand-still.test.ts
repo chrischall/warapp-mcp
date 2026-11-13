@@ -431,6 +431,43 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
     expect(valid(p, b, 5, map)).toEqual([]);
   });
 
+  it('attacking out sends every movable army on the conceded border, not only the cost', () => {
+    // A 10-stack on 1: 9 movable, a 4-neutral takes 6. The 3 extra are lost on 1 anyway; at 3 they survive.
+    const b = board([mine(1, 10), mine(2, 1), neutral(3, 4), neutral(5, 12), neutral(6, 12), neutral(7, 12), player(22, 40, P2)]);
+    const p = run(b);
+    expect(p.conceded).toEqual([1]);
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 9, kind: 'attack' })]);
+    expect(p.moves.filter((m) => m.from === 1)).toHaveLength(1);
+    expect(p.deploys.find((d) => d.territoryId === 1)).toBeUndefined();
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/Attack T3 \(#3\) from T1 \(#1\) with 9:/);
+    expect(r).toMatch(/Attack out of conceded T1 \(#1\) rather than withdraw: its 9 movable armies take T3 \(#3\)/);
+    expect(valid(p, b, 5, map)).toEqual([]);
+  });
+
+  describe('an unconceded source that can take the step alone goes first: the conceded stack withdraws', () => {
+    //   My 30-stack on 1 borders a 60-army enemy on 22 (conceded). My 6-stack on 4 and 1 both border
+    //   the 4-neutral 3 (Pair, +2, with 12-neutrals on 5 and 6). My 1-army 2 borders 1 and 4.
+    const umap = makeMap(
+      [1, 2, 3, 4, 5, 6, 22],
+      [[1, 2], [2, 4], [1, 3], [4, 3], [3, 5], [5, 6], [1, 22]],
+      [[401, 'Pair', 2, [3, 5, 6]]],
+    );
+    const ub = board([mine(1, 30), mine(2, 1), neutral(3, 4), mine(4, 6), neutral(5, 12), neutral(6, 12), player(22, 60, P2)]);
+
+    it('withdraws 29 from 1 and takes 3 from 4', () => {
+      for (const adapt of [false, true]) {
+        const p = planTurn({ graph: buildGraph(umap), board: ub, me: ME, income: 5, settings: CAP, game: SEVEN, options: { adapt } });
+        expect(p.profile.phase).toBe('opening');
+        expect(p.conceded).toEqual([1]);
+        expect(p.moves.filter((m) => m.from === 1)).toEqual([expect.objectContaining({ to: 2, armies: 29, kind: 'transfer' })]);
+        expect(attacks(p)).toEqual([expect.objectContaining({ from: 4, to: 3, kind: 'attack' })]);
+        expect(p.rationale.join('\n')).not.toMatch(/Attack out of conceded/);
+        expect(valid(p, ub, 5, umap)).toEqual([]);
+      }
+    });
+  });
+
   describe('the capture goes from other sources: rule 1b withdrawal survives every undo', () => {
     //   Conceded 6-stack on 1 (a 25-army enemy on 22) has the best reach to 3, a 7-neutral in Pair
     //   (+2, with 12-neutrals on 6 and 7). 3 also borders my 4-stacks on 4 and 5, and a 15-army enemy
