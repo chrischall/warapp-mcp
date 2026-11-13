@@ -626,9 +626,9 @@ describe('#107: in contact, never stand still either', () => {
       expect(p.profile.phase).toBe('contact');
       expect(p.conceded).toEqual([]);
       // #112: 22 advances Delta but loses ~3 armies; 23 (1 to take) loses none, so it goes first —
-      // a bonus is only a tie-break. Sized at 1, then topped up from the stack's idle armies to the
-      // next kill breakpoint (3), as every attack on a player's is. 22 is no free capture.
-      expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 3, kind: 'attack' })]);
+      // a bonus is only a tie-break. Sized at 1, then (#120) sized from the stack's idle armies for
+      // its 0 defenders plus player 40's ~5 deploy landing there first: 8. 22 is no free capture.
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 8, kind: 'attack' })]);
       // #114: its 1 survivor cannot hold 23 against player 40's 3 on 25 (+ deploy): at risk.
       expect(attacks(p)[0]!.reason).toMatch(
         /^cheapest capture \(loses no armies, and its 1 survivor may fall next turn\): takes a territory of player 40/,
@@ -643,7 +643,8 @@ describe('#107: in contact, never stand still either', () => {
       );
       expect(r).not.toMatch(/Also take/);
       const w = p.warnings.join('\n');
-      expect(w).toMatch(/Attack on enemy T23 \(#23\) assumes its owner does not reinforce it first\./);
+      expect(w).not.toMatch(/Attack on enemy T23 \(#23\) assumes its owner does not reinforce it first/);
+      expect(r).toMatch(/Size the attack on T23 \(#23\) from T2 \(#2\) up from 1 to 8 with 7 idle armies there/);
       expect(w).not.toMatch(/standing still/i);
       expect(valid(p, b, 5, map)).toEqual([]);
     }
@@ -657,8 +658,8 @@ describe('#107: in contact, never stand still either', () => {
     );
     const b = contactBoard();
     const p = run(b, { map: plain });
-    // 1 to take, topped up to 3 from the idle stack.
-    expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 3, kind: 'attack' })]);
+    // 1 to take; sized for its owner's ~5 deploy from the idle stack (#120): 8.
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 8, kind: 'attack' })]);
     expect(valid(p, b, 5, plain)).toEqual([]);
   });
 

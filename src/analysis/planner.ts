@@ -45,7 +45,10 @@
 //          the captured territories gone), never below the opponent's deploy alone (orders
 //          interleave: it may land on a target first; the target's survivors striking back after a
 //          failed attack are not added — an approximation). No S2 top-up draws on that hold, and
-//          the transfer step never moves it (its captures can leave it interior). Each attack
+//          the transfer step never moves it (its captures can leave it interior). Then (#120) each of
+//          the stack's attacks on a player (its earlier breaks and counter-attacks first, then the
+//          strikes in order) is sized for its defenders plus what the owner may deploy there first,
+//          as rule 3 sizes one, while what stays still holds. Each attack
 //          is a rationale line and an `offence` strike entry (target, armies, win chance, what it
 //          breaks or retakes); a target not attacked is a strike entry with `taken: false` and why.
 //          It only grows (deploy, no attack) when nothing in reach is worth taking: a rationale line
@@ -319,10 +322,17 @@
 //     attack alone still takes the territory. S2: with `minWinChance` below 1 an
 //     ordinary capture instead gets the fewest armies whose exact `winChance`
 //     reaches it (worst-case sizings stay guaranteed); every attack carries its
-//     `winChance`; after the leftover deploy an attack is topped up to its next kill
-//     breakpoint from idle armies on its source (never a hold, a conceded border, my
-//     commander's territory or a source still facing an enemy) when its target is a
-//     player's or it is not certain; otherwise an attack between breakpoints is named.
+//     `winChance`; after the leftover deploy an attack on a player's territory (not already
+//     sized for a worst case) is sized for its defenders plus what its owner may deploy there
+//     first (its deploy estimate, or its growth there per turn when larger; #120) when the
+//     armies on its source beyond what holds it (never a hold, a conceded border or the strike
+//     stack) cover the difference — the plain "assumes its owner does not reinforce it" warning
+//     is then dropped, and the attack counts as landing for sure (rule 6). Otherwise an attack
+//     is topped up to its next kill breakpoint from idle armies on its source (never a hold, a
+//     conceded border, my commander's territory or a source still facing an enemy) when its
+//     target is a player's or it is not certain, else an attack between breakpoints is named;
+//     and an attack on a player's still sized below that deploy keeps the warning, which then
+//     gives its win chance against the reinforced target and the size that would be sure.
 //  3a. Combined (multi-source) captures (R4). When no single source can afford a
 //     target (its movable armies plus the deploys left), two or more of my
 //     sources held at the start of the turn (not locked, not conceded) attack it
@@ -479,7 +489,7 @@
 //     taken only because no neutral capture fits"), and the trade ("kills K for L lost"). Outside
 //     the contact/late fallback (passes 1–3, the opening/expansion and army-cap fallback) rule 4d
 //     keeps its veto. An enemy capture carries the usual warning that it assumes the owner does
-//     not reinforce first.
+//     not reinforce first, unless rule 3 sizes it for that deploy (#120).
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, in
 //     the opening and expansion phases, and in an FFA while a neutral borders a territory of mine
 //     (#132: one front leaves the rest of the map to expand into; the rationale says "neutrals in
@@ -520,7 +530,7 @@
 //     not mine (neutral or fog) instead (#121: idle armies walked toward a worthless neutral
 //     while the enemy front was short, and a stack beside one never moved). This turn's
 //     captures count as mine only when they land for sure — a neutral, or an attack on a player
-//     sized for its owner's whole deploy (rule 1e, 1s): an exact-sized attack on a player fails
+//     sized for its owner's whole deploy (rule 1e, 1s, or rule 3's #120 sizing): an exact-sized attack on a player fails
 //     if the owner reinforces, and the garrison beside it is not idle. A leftover deploy (rule 5)
 //     to a border short of its margin is never transferred away.
 // Local Deployment (`localDeployments`): a held bonus's value is a pool deployable
@@ -1742,6 +1752,15 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (st.armies > was.armies) growthOf.set(id, { from: was.armies, to: st.armies, growth: st.armies - was.armies });
     }
   }
+  /**
+   * #120: what the owner of enemy territory `t` may add there before my attack lands — its deploy
+   * estimate, or its growth there per turn when larger (rule 1t). 0 for a territory no player holds.
+   */
+  const reinforcementAt = (t: number): number => {
+    const st = state.get(t);
+    if (st?.owner.kind !== 'player' || st.owner.playerId === me) return 0;
+    return Math.max(deployOf(st.owner.playerId), growthOf.get(t)?.growth ?? 0);
+  };
   /** Fewest armies on a territory that hold against `threat` attackers. */
   const holdArmies = (threat: number) => {
     let a = 0;
@@ -6152,6 +6171,47 @@ export function planTurn(input: PlanInput): TurnPlan {
         break;
       }
     }
+    // #120: each attack is then sized for its defenders plus what their owner may deploy there
+    // first, in the order taken, while the stack still covers it and keeps its hold after every
+    // attack. One the stack cannot cover keeps its size (its warning gives the reinforced odds).
+    const reinforced = new Map<number, number>();
+    if (!noSplit) {
+      const { need } = holdAfter(new Set());
+      const room = () => Math.min(avail.get(S)! - pinned, avail.get(S)! + guard + (incoming.get(S) ?? 0) - need);
+      // The stack's earlier attacks on a player (a break or counter-attack from it) first.
+      for (const m of moves) {
+        if (m.from !== S || m.kind !== 'attack' || combined.has(m.to) || worstCase.has(m.to) || strikes.has(m.to)) continue;
+        const extra = reinforcementAt(m.to);
+        const full = extra > 0 ? costOf(defenceAt(m.to) + extra) : null;
+        if (full === null || full <= m.armies || full - m.armies > room()) continue;
+        const add = full - m.armies;
+        const before = m.armies;
+        avail.set(S, avail.get(S)! - add);
+        m.armies = full;
+        m.winChance = chanceOf(full, defenceAt(m.to));
+        if (survivorsAt.has(m.to)) survivorsAt.set(m.to, survivorsAt.get(m.to)! + add);
+        worstCase.set(m.to, defenceAt(m.to) + extra);
+        const w = warnings.indexOf(`Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first.`);
+        if (w >= 0) warnings.splice(w, 1);
+        rationale.push(
+          `Size the attack on ${label(m.to)} from the strike stack ${label(S)} up from ${before} to ${full}: ${full} take it even if player ${strikeStack.player} deploys its ~${extra} there first, and the stack still holds.`,
+        );
+      }
+      for (const x of taken) {
+        const extra = reinforcementAt(x.c.id);
+        const full = extra > 0 ? costOf(defenceAt(x.c.id) + extra) : null;
+        if (full === null || full <= x.armies) continue;
+        const add = full - x.armies;
+        if (add > room()) continue;
+        avail.set(S, avail.get(S)! - add);
+        sent += add;
+        x.armies = full;
+        x.chance = chanceOf(full, defenceAt(x.c.id));
+        survivorsAt.set(x.c.id, survivorsAt.get(x.c.id)! + add);
+        worstCase.set(x.c.id, defenceAt(x.c.id) + extra);
+        reinforced.set(x.c.id, extra);
+      }
+    }
     // What stays on the stack is its hold: an efficient-size top-up (S2) never draws on it, and
     // the transfer step never moves it (its captures can leave it interior; it may have got no deploys).
     if (taken.length) {
@@ -6163,14 +6223,19 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const { c, effect, value, armies, chance } of taken) {
       const reason = `the strike stack ${effect ?? 'takes an adjacent enemy territory'}`;
       moves.push({ from: S, to: c.id, armies, kind: 'attack', reason, winChance: chance });
-      warnings.push(`Attack on enemy ${label(c.id)} assumes its owner does not reinforce it first.`);
+      const extra = reinforced.get(c.id);
+      if (extra === undefined) warnings.push(`Attack on enemy ${label(c.id)} assumes its owner does not reinforce it first.`);
       const keeps = noSplit
         ? `No-Split sends the whole stack (${c.cost} would take it), and ${label(S)} need not hold: ${
             valueOf(S) > 0 || myCommanders.has(S) ? 'no visible threat to it is left' : 'it protects nothing'
           }`
         : `the stack keeps ${stays}, enough to hold against the ~${finalThreat} threat after the attacks (needs ${finalNeed})`;
+      const sized =
+        extra === undefined
+          ? ''
+          : ` — sized for its ${defenceAt(c.id)} defenders plus the ~${extra} player ${strikeStack.player} may deploy there first (${c.cost} would take it as it stands)`;
       rationale.push(
-        `Attack ${label(c.id)} from the strike stack ${label(S)} with ${armies} (win chance ${pct(chance)}): ${
+        `Attack ${label(c.id)} from the strike stack ${label(S)} with ${armies} (win chance ${pct(chance)}${sized}): ${
           effect ?? 'it can take this adjacent enemy territory'
         }; ${keeps}.`,
       );
@@ -6287,6 +6352,17 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (borderAt(src, (x) => captured.has(x))) return 0;
     return Math.max(0, avail.get(src)!);
   };
+  /**
+   * #120: armies on `src` beyond what holds it once this turn's captures land — none on a hold, a
+   * conceded border or the strike stack; on my commander's territory, or a border that cannot hold
+   * on what it has, none either (keepFor keeps everything there).
+   */
+  const spareBeyondHold = (src: number): number => {
+    if (!mineSet.has(src) || holdLocked.has(src) || conceded.has(src)) return 0;
+    return Math.max(0, avail.get(src)! - keepFor(src, () => false));
+  };
+  /** The plain "assumes its owner does not reinforce" warning on an attack on `t`. */
+  const assumes = (t: number) => `Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`;
   // No-Split (#124): every attack already sends its whole stack; there is nothing to top up or trim.
   for (const m of noSplit ? [] : moves) {
     if (m.kind !== 'attack' || combined.has(m.to)) continue;
@@ -6295,6 +6371,34 @@ export function planTurn(input: PlanInput): TurnPlan {
     const d = defenceAt(m.to);
     const chance = m.winChance ?? chanceOf(m.armies, d);
     const enemyTarget = state.get(m.to)?.owner.kind === 'player';
+    // #120: an attack on a player's territory is sized for its defenders plus what its owner may
+    // deploy there first, when armies beyond what holds the source cover it.
+    const extra = enemyTarget && !worst ? reinforcementAt(m.to) : 0;
+    const full = extra > 0 ? costOf(d + extra) : null;
+    if (full !== null && full > m.armies && full - m.armies <= spareBeyondHold(m.from)) {
+      const before = m.armies;
+      const add = full - before;
+      avail.set(m.from, avail.get(m.from)! - add);
+      m.armies = full;
+      m.winChance = chanceOf(full, d);
+      worstCase.set(m.to, d + extra);
+      if (survivorsAt.has(m.to)) survivorsAt.set(m.to, survivorsAt.get(m.to)! + add);
+      const check = retakeChecks.get(m.to);
+      const at = check?.warning === undefined ? -1 : warnings.indexOf(check.warning);
+      if (check && at >= 0) {
+        check.survivors += add;
+        check.warning = retakeWarning(m.to, check.bonusId, check.survivors, check.counter);
+        if (check.warning) warnings[at] = check.warning;
+        else warnings.splice(at, 1);
+      }
+      const w = warnings.indexOf(assumes(m.to));
+      if (w >= 0) warnings.splice(w, 1);
+      const owner = (state.get(m.to)!.owner as { playerId: number }).playerId;
+      rationale.push(
+        `Size the attack on ${label(m.to)} from ${label(m.from)} up from ${before} to ${full} with ${add} idle armies there: ${full} take it even if player ${owner} deploys its ~${extra} there first (${d} + ${extra} defenders), and ${label(m.from)} still holds.`,
+      );
+      continue;
+    }
     const next = nextBreakpoint(m.armies, rates.offensiveKillRate, luck, rounding);
     const add = next === null ? 0 : next - m.armies;
     if (next !== null && add > 0 && !worst && (enemyTarget || chance < 1) && add <= idleAt(m.from)) {
@@ -6326,6 +6430,19 @@ export function planTurn(input: PlanInput): TurnPlan {
     rationale.push(
       `The attack on ${label(m.to)} from ${label(m.from)} sends ${m.armies}, but ${b} already kill ${kills} for sure: the other ${m.armies - b} add no kill (only survivors)${next !== null ? `; the next kill needs ${next}` : ''}.`,
     );
+  }
+  // #120: an attack on a player's territory still sized below its owner's deploy says what it
+  // faces if that deploy lands there first.
+  for (const m of moves) {
+    if (m.kind !== 'attack' || combined.has(m.to) || worstCase.has(m.to) || strikes.has(m.to)) continue;
+    const w = warnings.indexOf(assumes(m.to));
+    const extra = reinforcementAt(m.to);
+    if (w < 0 || extra <= 0) continue;
+    const st = state.get(m.to)!;
+    if (st.owner.kind !== 'player') continue;
+    const d = defenceAt(m.to);
+    const full = costOf(d + extra);
+    warnings[w] = `Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first: if player ${st.owner.playerId} deploys its ~${extra} there, ${m.armies} attack ${d + extra} (win chance ${pct(chanceOf(m.armies, d + extra))})${full !== null ? `; ${full} would ${minWin >= 1 ? 'be sure' : `reach ${pct(minWin)}`}` : ''}.`;
   }
 
   // ---- transfers ----
