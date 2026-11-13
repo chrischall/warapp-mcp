@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { armiesToTake } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import { planTurn, type PlanGameContext, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import { OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
@@ -102,5 +102,84 @@ describe('#121 a capture keeps what holds a safe border', () => {
     const p = plan(input);
     expect(p.moves.some((m) => m.from === 22 && m.to === 18)).toBe(true);
     expect(takes(endsOn(input, p, 22))).toBeGreaterThan(11);
+  });
+});
+
+describe('#121 transfers: what counts as held, and where the front is', () => {
+  const FFA: PlanGameContext = { players: [{ id: ME }, { id: ENEMY }, { id: 21 }], turn: 14, fog: 'NoFog' };
+  const transfersFrom = (p: TurnPlan, id: number) => p.moves.filter((m) => m.kind === 'transfer' && m.from === id);
+
+  it('an exact-sized break on a player does not make the garrison beside it idle', () => {
+    // 1(60) – 2(enemy 30) – 3(enemy 2): bonus B101 (+1) = 2, 3 is player 20's; B100 (+3) = 1, 4 is
+    // mine. 1 – 4(3) – 5(player 21, 4) – 6(player 21, 4). The break of T2 is sized for its 30, not
+    // for a reinforcement: if it fails, T1 still faces T2. Before, T1 then transferred 13 to T4 as
+    // "idle interior armies".
+    const g = buildGraph(
+      makeMap([1, 2, 3, 4, 5, 6], [[1, 2], [2, 3], [1, 4], [5, 6], [4, 5]], [[100, 3, [1, 4]], [101, 1, [2, 3]]]),
+    );
+    const input: PlanInput = {
+      graph: g,
+      board: board([mine(1, 60), enemy(2, 30), enemy(3, 2), mine(4, 3), enemy(5, 4, 21), enemy(6, 4, 21)]),
+      me: ME,
+      income: 8,
+      settings: { offensiveKillRate: 60, defensiveKillRate: 70 },
+      game: FFA,
+      options: { adapt: true },
+    };
+    const p = plan(input);
+    expect(p.moves.some((m) => m.kind === 'attack' && m.from === 1 && m.to === 2)).toBe(true);
+    expect(transfersFrom(p, 1)).toEqual([]);
+  });
+
+  it("my commander's stack beside a conceded border stays", () => {
+    // E1(30) – 2(3) – 3(12, my commander) – 4(1) – 5(1) – neutral 6 (a +0 bonus). T2 is conceded;
+    // the enemy takes it next and then faces T3. Before, T3 counted as interior (a conceded border
+    // is not "the front": other stacks still concentrate on a front that holds) and sent 16 to T4.
+    const g = buildGraph(makeMap([1, 2, 3, 4, 5, 6], [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6]], [[101, 0, [6]]]));
+    const cmd: TerritoryState = { ...mine(3, 12), specialUnits: [{ kind: 'commander', id: 'c', playerId: ME }] };
+    const input: PlanInput = {
+      graph: g,
+      board: board([enemy(1, 30), mine(2, 3), cmd, mine(4, 1), mine(5, 1), neutral(6, 10)]),
+      me: ME,
+      income: 5,
+      settings: { offensiveKillRate: 60, defensiveKillRate: 70 },
+      game: { players: [{ id: ME }, { id: ENEMY }], turn: 9, commanders: true },
+      options: { adapt: true },
+    };
+    const p = plan(input);
+    expect(p.conceded).toEqual([2]);
+    expect(transfersFrom(p, 3)).toEqual([]);
+  });
+
+  it('idle armies head for the enemy, not a worthless neutral', () => {
+    // neutral 9(20) – 1(1) – 2(15) – 3(1) – 4(4) – enemy 5(12); bonus B60 (+3) = 3, 4, held, so T4
+    // spends 7 of the 9 income on its hold. Before, T2's stack moved to T1, toward the neutral.
+    const g = buildGraph(makeMap([1, 2, 3, 4, 5, 9], [[9, 1], [1, 2], [2, 3], [3, 4], [4, 5]], [[60, 3, [3, 4]]]));
+    const input: PlanInput = {
+      graph: g,
+      board: board([neutral(9, 20), mine(1, 1), mine(2, 15), mine(3, 1), mine(4, 4), enemy(5, 12)]),
+      me: ME,
+      income: 9,
+      settings: STD,
+    };
+    const p = plan(input);
+    expect(p.conceded).toEqual([]);
+    expect(deployedOn(p, 4)).toBeGreaterThanOrEqual(7);
+    expect(transfersFrom(p, 2).map((m) => m.to)).toEqual([3]);
+  });
+
+  it('a stack one step from a worthless neutral moves toward the enemy', () => {
+    // neutral 9(20) – 2(15) – 3(1) – 4(1) – enemy 5(2); bonus B60 (+3) = 3, 4, held. Before, T2
+    // was next to "the front" (the neutral) and never moved.
+    const g = buildGraph(makeMap([2, 3, 4, 5, 9], [[9, 2], [2, 3], [3, 4], [4, 5]], [[60, 3, [3, 4]]]));
+    const input: PlanInput = {
+      graph: g,
+      board: board([neutral(9, 20), mine(2, 15), mine(3, 1), mine(4, 1), enemy(5, 2)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+    };
+    const p = plan(input);
+    expect(transfersFrom(p, 2).map((m) => m.to)).toEqual([3]);
   });
 });

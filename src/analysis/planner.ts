@@ -235,8 +235,9 @@
 //     conceded, and it makes no attack or transfer except that strike. When the hold
 //     does not fit, all that may still be deployed there goes there, with a warning.
 //     Unthreatened, any attack from it keeps what holds it against the visible enemies
-//     next to it; next to an enemy at the start of the turn, it never transfers out (a
-//     capture that makes it interior can still fail). A held bonus containing it leaves
+//     next to it; next to an enemy at the start of the turn, or to a border the plan concedes
+//     (#121: the enemy takes that next), it never transfers out (a capture that makes it
+//     interior can still fail). A held bonus containing it leaves
 //     its hold, once fully funded here, out of the bonus's cost and payback test (rule 1h):
 //     neither its hold cost nor the stack it saves counts for the unit. The
 //     commander itself never moves: planned moves carry armies only (the order encoder
@@ -507,7 +508,14 @@
 //  6. Idle armies on interior territories transfer one step toward the front,
 //     only into territories held at the start of the turn and never into, or
 //     measured through, a conceded border
-//     (only when transfer-only orders are allowed).
+//     (only when transfer-only orders are allowed). The front is the territories a visible
+//     enemy holds; only a stack no enemy can be reached from heads for the nearest territory
+//     not mine (neutral or fog) instead (#121: idle armies walked toward a worthless neutral
+//     while the enemy front was short, and a stack beside one never moved). This turn's
+//     captures count as mine only when they land for sure — a neutral, or an attack on a player
+//     sized for its owner's whole deploy (rule 1e, 1s): an exact-sized attack on a player fails
+//     if the owner reinforces, and the garrison beside it is not idle. A leftover deploy (rule 5)
+//     to a border short of its margin is never transferred away.
 // Local Deployment (`localDeployments`): a held bonus's value is a pool deployable
 // only on that bonus's territories (a superbonus's on all of its territories, beside
 // its member bonuses' pools); the rest of the income (base, per-territory, card
@@ -5771,6 +5779,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       where = stack.id;
       why = `one strike stack on the border facing player ${stack.player}, the strongest opponent (~${stack.income} income, ${stack.source}), not spread`;
     } else if (short[0]) {
+      lock = true;
       where = short[0].id;
       why = `the held border with the most at stake (protects +${valueOf(where)}), still short of a comfortable margin over the ~${short[0].threat} threat`;
     } else if (expansion !== undefined && open(expansion)) {
@@ -6225,17 +6234,39 @@ export function planTurn(input: PlanInput): TurnPlan {
 
   // ---- transfers ----
   if (s.allowTransferOnly ?? true) {
-    const held = new Set([...mine, ...captured]);
-    // A conceded border is not "the front": the plan gives it up, so armies never
-    // flow into it and distances are not measured through it.
-    const front = [...g.territoryById.keys()].filter((id) => !held.has(id));
-    const dist = bfsDistances(g, front, { passable: (id) => held.has(id) && !conceded.has(id) });
+    // #121: a capture counts as held only when it lands for sure — a neutral, or an attack on a
+    // player sized for its owner's whole deploy (finishing off, fog pressure, a commander strike).
+    // An exact-sized attack on a player fails if the owner reinforces first, and a garrison moved
+    // off beside it as "idle interior" would leave its border on the guard.
+    const lands = (t: number) =>
+      state.get(t)?.owner.kind !== 'player' || worstCase.has(t) || strikes.has(t);
+    const held = new Set([...mine, ...[...captured].filter(lands)]);
+    // A conceded border is not "the front": the plan gives it up, so armies never flow into it and
+    // distances are not measured through it; idle armies concentrate on a front that holds.
+    const passable = (id: number) => held.has(id) && !conceded.has(id);
+    const isEnemy = (id: number) => {
+      const st = state.get(id);
+      return st?.owner.kind === 'player' && st.owner.playerId !== me;
+    };
+    // Enemy front first (#121): idle armies head for the territories a visible enemy holds; only
+    // with no enemy reachable do they head for the nearest territory not mine (neutral or fog).
+    const ids = [...g.territoryById.keys()];
+    const enemyFront = ids.filter((id) => !held.has(id) && isEnemy(id));
+    const anyFront = ids.filter((id) => !held.has(id));
+    const distEnemy = bfsDistances(g, enemyFront, { passable });
+    const distAny = bfsDistances(g, anyFront, { passable });
     for (const t of mine) {
+      const dist = distEnemy.has(t) ? distEnemy : distAny;
       const n = avail.get(t)!;
       if (n <= 0 || locked.has(t)) continue;
       // My commander's territory next to an enemy at the start of the turn keeps its armies,
-      // even when this turn's captures make it interior: a capture can still fail.
-      if (myCommanders.has(t) && neighborsOf(g, t).some((x) => (ownerOf(x) ?? me) !== me)) continue;
+      // even when this turn's captures make it interior: a capture can still fail. So does one
+      // next to a border the plan concedes (#121): the enemy takes it next, and then faces it.
+      if (
+        myCommanders.has(t) &&
+        neighborsOf(g, t).some((x) => (ownerOf(x) ?? me) !== me || conceded.has(x))
+      )
+        continue;
       const d = dist.get(t);
       if (d === undefined || d <= 1) continue;
       // Only into a territory held at the start of the turn: a planned capture is
