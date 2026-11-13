@@ -505,7 +505,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     );
 
   const guard = s.oneArmyStandsGuard === false ? 0 : 1;
-  const players = Math.max(1, Math.floor(input.players));
+  const players = Number.isFinite(input.players) ? Math.max(1, Math.floor(input.players)) : 2;
   const duel = players <= 2;
   const entryWeight = duel ? ENTRY_WEIGHT_1V1 : ENTRY_WEIGHT;
   const rates = { offensiveKillRate: off, defensiveKillRate: def, luckModifier: s.luckModifier };
@@ -943,7 +943,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     primary.splice(0, primary.length, commanderPick, ...primary.filter((t) => t !== commanderPick));
   }
   let award: AwardReport | undefined;
-  if (outcomeSets) {
+  if (outcomeSets?.length) {
     const base = [...primary];
     let bestOrder = base;
     let bestWorst = worstOf([...base, ...fallback], outcomeSets);
@@ -1107,7 +1107,7 @@ export const MAX_AWARD_STATES = 50_000;
 export function pickOutcomes(input: { listLength: number; perPlayer: number; players: number }): number[][] | null {
   const n = Math.max(0, Math.floor(input.listLength));
   const rounds = Math.max(0, Math.floor(input.perPlayer));
-  const players = Math.max(1, Math.floor(input.players));
+  const players = Number.isFinite(input.players) ? Math.max(1, Math.floor(input.players)) : 2;
   if (n > 30) return null;
   const outcomes = new Set<number>();
   const seen = new Set<string>();

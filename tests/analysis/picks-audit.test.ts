@@ -310,3 +310,12 @@ describe('planPicks — completion turns, per pick and per group (#129)', () => 
     expect(p.rationale.join(' ')).toMatch(/reasons are its opening alone.*joint opening/);
   });
 });
+
+describe('planPicks — a nonsense player count does not throw', () => {
+  it('NaN players plans as a 1v1', () => {
+    const g = mkGraph([[1, 2], [2, 3], [3, 4]], [{ id: 100, name: 'Trio', value: 3, territoryIds: [1, 2, 3] }]);
+    const p = plan({ graph: g, pickable: [1, 2, 3, 4], players: Number.NaN, territoryLimit: 2, maxPicks: 4 });
+    expect(p.picks.length).toBe(4);
+    expect(pickOutcomes({ listLength: 4, perPlayer: 2, players: Number.NaN })).not.toBeNull();
+  });
+});
