@@ -23,7 +23,7 @@ const ME = 10;
 function westeros(): GameMap {
   return {
     id: 7,
-    name: 'Westeros-ish',
+    name: 'Castles',
     territories: [1, 2, 3, 4].map((id) => ({
       id,
       name: `T${id}`,
@@ -102,7 +102,7 @@ describe('parseOverriddenBonuses', () => {
     ['an array of unknown objects', [{ foo: 1, bar: 2 }]],
     ['an object with a non-numeric key', { House: 12 }],
     ['an object with a non-integer value', { '50': 'twelve' }],
-    ['a string that is not JSON', 'House Stark=12'],
+    ['a string that is not JSON', 'Northfold=12'],
     ['a boolean', true],
   ])('flags %s as unparsed with no values, without throwing', (_name, raw) => {
     expect(parseOverriddenBonuses(raw)).toEqual({ values: new Map(), unparsed: true });
@@ -243,7 +243,7 @@ describe('fail soft while the shape is unverified', () => {
   });
 
   it('an unparseable shape: map values are used, income names it, and both checks warn instead of refusing', () => {
-    const s = liveSettings('House Stark=12');
+    const s = liveSettings('Northfold=12');
     const map = applyBonusOverrides(westeros(), s);
     expect(map).toEqual(westeros());
     expect(incomeFor(buildGraph(map), liveBoard(), ME, s)).toBe(13);

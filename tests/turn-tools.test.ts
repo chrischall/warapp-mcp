@@ -1361,7 +1361,7 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
 
   it('an unreadable OverriddenBonuses: map values, a warning, and soft checks for the panel’s 21', async () => {
     h = await liveHarness({
-      feed: [game('Playing', { settings: overrideSettings('House Baratheon=12') })],
+      feed: [game('Playing', { settings: overrideSettings('Eastvale=12') })],
       pages: ME_PAGE,
       warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
     });
