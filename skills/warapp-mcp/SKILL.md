@@ -202,21 +202,22 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
    moved in to hold. At default kill rates defenders kill 70% and attackers 60%, so a border is
    cheaper to hold than to take back.
 2. **The enemy income estimate looks wrong.** Check the "Enemy deploy estimate" line against
-   what the opponent can plausibly earn: its territory count and the bonuses it can hold. The
-   estimate only sees one previous turn and caps itself at what the opponent could earn, so it
-   can still miss income hidden in the fog. When the figure is off, re-plan with `enemy_deploy`.
-3. **Income drops.** Look for a negative-value bonus in `expected.bonusesCompleted`, or a
-   `nextIncome` below this turn's income without a reason the user accepts. The planner scores a
-   positive bonus net of the negative bonuses its missing members complete, prefers completing
-   such a cluster in one turn, and drops captures that lower next income unless focused or a
-   rationale line says "Stage bonus …" with the payback; a remaining drop is always a warning.
-4. **A rule the plan may not model.** Compare the plan's income with the game's deploy panel,
-   and read the plan's warnings for assumed settings: luck, rounding, Local Deployment, No-Split,
-   overridden bonuses and commanders.
-5. **Sprawl or passivity against a concentrating opponent.** Watch for frontier growing faster
-   than income, armies spread thin over many borders, or no attack on an opponent whose income is
-   outpacing yours. The planner breaks enemy bonuses only when it can see the whole bonus (#71,
-   #72, #74).
+   what the opponent can plausibly earn. It reads territories visible on both turns, counts a
+   stack that captured out of the fog as a threat rather than income, uses tracked income over
+   several turns once that opponent has 2 or more observed turns (consecutive turns compared, as `warapp_track_opponents` reports), and caps itself at what the opponent could
+   earn, but income hidden in the fog can still be missed. When the figure is off, re-plan with
+   `enemy_deploy`.
+3. **Income drops.** A `nextIncome` below this turn's income always comes with a warning (a
+   focused bonus, or a "Stage bonus …" line with its payback). Accept it only for a reason the
+   user agrees with.
+4. **A rule the plan may not model.** Compare the plan's income with the game's deploy panel
+   (card armies count only when the plan's card play is submitted with its deploys), and read the
+   plan's warnings for assumed settings: luck, rounding, Local Deployment, No-Split, overridden
+   bonuses and commanders.
+5. **The overall shape.** The planner is single-turn: it charges each capture for the frontier
+   it adds and, in a 1v1, breaks probable enemy bonuses and builds a strike stack, but it does not
+   plan a campaign over several turns. In an FFA it never concentrates on one front and avoids
+   second fronts; judge yourself when a leader must be attacked.
 
 Every ~3 turns, step back and compare income trends (yours vs each opponent), frontier vs
 income, and what `warapp_scout_player` shows. Override early, because a lost bonus costs every
