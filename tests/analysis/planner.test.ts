@@ -1188,13 +1188,13 @@ describe('enemy deploy estimate — per opponent, income-aware (R1)', () => {
   );
 
   it('(a) an opponent with no complete bonus and a 15-stack is estimated at the floor, not 11', () => {
-    // Mine at 16 (#128: with every player stack at 15 this is the opening board, neutrals aside).
-    const s = board([mine(1, 16), enemy(2, 15), neutral(3, 2), neutral(4, 2)]);
-    const [e] = enemyDeployEstimates(g, s, ME);
-    expect(e).toMatchObject({ playerId: ENEMY, estimate: MIN_ENEMY_DEPLOY, base: 5, bonusIncome: 0, largestStack: 15 });
-    // 14 movable + 5 = 19 cannot take 16 (needs 26); the old ~11 said 25 could.
-    expect(armiesToTake(16)).toBe(26);
-    const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD });
+    // Turn 7 (#128): equal player stacks past the first turn are not the opening board.
+    const s = board([mine(1, 15), enemy(2, 15), neutral(3, 2), neutral(4, 2)]);
+    const [e] = enemyDeployEstimates(g, s, ME, {}, undefined, undefined, undefined, { turn: 7 });
+    expect(e).toMatchObject({ playerId: ENEMY, estimate: MIN_ENEMY_DEPLOY, base: 5, bonusIncome: 0, largestStack: 15, opening: false });
+    // 14 movable + 5 = 19 cannot take 15 (needs 25); the old ~11 said 25 could.
+    expect(armiesToTake(15)).toBe(25);
+    const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD, turn: 7 });
     expect(p.enemyDeploy).toBe(MIN_ENEMY_DEPLOY);
     expect(p.warnings.join('\n')).not.toMatch(/could be taken/);
     expect(p.warnings.join('\n')).toMatch(/Enemy deploy estimate for player 20: ~5 \(base 5 \+ visible bonuses \+0 = 5/);

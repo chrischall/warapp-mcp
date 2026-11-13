@@ -132,6 +132,13 @@ describe("the opponent's Local Deployment pools land only in their own bonus (#1
     const plan = planTurn({ graph: g2, board: b, me: ME, income: 9, settings: LD, options: { goal: 'defend' } });
     expect(plan.warnings.join('\n')).toMatch(/T3 \(#3\) \(15 armies\) could be taken next turn: player 20 has 19 movable armies next to it plus ~17 deploy/);
   });
+  it('on the opening board a pool the floor estimate leaves out does not cut the free base income', () => {
+    // 1 mine (5) beside player 20's 2 (5), outside its +6 pick bonus 3 4; every stack 5: the opening.
+    const g2 = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [2, 3], [3, 4], [1, 5]], [[102, 6, [3, 4]]]));
+    const b = board([mine(1, 5), player(2, 5, 20), player(3, 5, 20), player(4, 5, 20), neutral(5, 2)]);
+    const plan = planTurn({ graph: g2, board: b, me: ME, income: 0, settings: LD, turn: 1, options: { goal: 'defend' } });
+    expect(plan.warnings.join('\n')).toMatch(/T1 \(#1\) \(5 armies\) could be taken next turn: player 20 has 4 movable armies next to it plus ~5 deploy/);
+  });
   it('without Local Deployment the pool lands anywhere (unchanged)', () => {
     const b = board([mine(1, 1), mine(2, 1), mine(3, 15), player(4, 20, 20), player(5, 1, 20), player(6, 1, 20), player(7, 1, 20)]);
     const plan = planTurn({ graph: g, board: b, me: ME, income: 9, settings: STD, options: { goal: 'defend' } });
@@ -173,6 +180,27 @@ describe('a hold deferred for the expansion share is not then conceded (#128)', 
     expect(deployedTo(plan, 1)).toBeGreaterThanOrEqual(4);
     expect(plan.moves.filter((m) => m.from === 1)).toEqual([]);
   });
+  it('two deferred holds are judged together against what the capture leaves', () => {
+    // As above, plus 21 (mine, 30) beside enemy 23 (51) and 31 (mine, a +9 singleton, 30) beside
+    // enemy 33 (54). Income 14: 31 is held first; 1 and 21 (4 each) wait for the expansion share,
+    // and the 3-army capture would leave 4 — enough for either alone, not both.
+    const g2 = buildGraph(
+      makeMap(
+        [1, 2, 3, 5, 6, 7, 8, 21, 23, 31, 33],
+        [[3, 1], [1, 2], [2, 5], [5, 6], [6, 7], [7, 8], [21, 2], [23, 21], [31, 2], [33, 31]],
+        [[102, 4, [5, 6]], [131, 9, [31]]],
+      ),
+    );
+    const b2 = board([
+      mine(1, 30), mine(2, 1), player(3, 51, 20), neutral(5, 2), neutral(6, 2), neutral(7, 2), player(8, 3, 30),
+      mine(21, 30), player(23, 51, 20), mine(31, 30), player(33, 54, 20),
+    ]);
+    const plan = planTurn({ graph: g2, board: b2, me: ME, income: 14, settings: STD, game: { players, turn: 9 }, options: { adapt: true } });
+    expect(plan.conceded).toEqual([]);
+    expect(deployedTo(plan, 1)).toBeGreaterThanOrEqual(4);
+    expect(deployedTo(plan, 21)).toBeGreaterThanOrEqual(4);
+    expect(attacksOn(plan, 5)).toEqual([]);
+  });
 });
 
 describe('opening-board detection reads only the players\' stacks (#128)', () => {
@@ -185,6 +213,22 @@ describe('opening-board detection reads only the players\' stacks (#128)', () =>
       [20, true],
       [30, true],
     ]);
+  });
+  it('equal player stacks on a mid-game turn are not the opening board: visible bonuses count', () => {
+    // Mine 12 12; player 20's 12 12 hold its +8 bonus 602 in full; 3 a 2-army neutral.
+    const g2 = buildGraph(makeMap([1, 2, 3, 5, 6], [[1, 2], [1, 3], [1, 5], [5, 6]], [[602, 8, [5, 6]]]));
+    const b = board([mine(1, 12), mine(2, 12), neutral(3, 2), player(5, 12, 20), player(6, 12, 20)]);
+    const [mid] = enemyDeployEstimates(g2, b, ME, STD, undefined, undefined, undefined, { turn: 6 });
+    expect(mid).toMatchObject({ playerId: 20, opening: false, estimate: 13 });
+    // The same board with a previous board is past the opening too.
+    const [after] = enemyDeployEstimates(g2, b, ME, STD, b);
+    expect(after).toMatchObject({ opening: false });
+    expect(after!.estimate).toBeGreaterThanOrEqual(13);
+    // On the first turn it is the opening board.
+    const [first] = enemyDeployEstimates(g2, b, ME, STD, undefined, undefined, undefined, { turn: 1 });
+    expect(first).toMatchObject({ opening: true, estimate: 5 });
+    const plan = planTurn({ graph: g2, board: b, me: ME, income: 5, settings: STD, turn: 6, options: { goal: 'defend' } });
+    expect(plan.warnings.join('\n')).toMatch(/Enemy deploy estimate for player 20: ~13 \(base 5 \+ visible bonuses \+8/);
   });
   it('one player stack off the starting count is not', () => {
     const b = board([mine(1, 5), player(2, 8, 20), neutral(3, 2), player(4, 5, 20), player(5, 5, 30)]);
@@ -249,6 +293,15 @@ describe('R3 and the frontier count only the income the plan keeps (#128)', () =
     expect(plan.conceded).toEqual([1]);
     expect(plan.expected.bonusesCompleted).toEqual([]);
     expect(plan.warnings.join('\n')).toMatch(/completing B102 \(#102\) leaves T6 \(#6\) indefensible \(player 20 can take it for 3; next income 8\): not completed/);
+  });
+  it('the frontier warning names the income it counts on beside the expected next income', () => {
+    const b2 = board([mine(1, 2), mine(2, 1), player(3, 60, 20), mine(5, 10), neutral(6, 2), player(7, 14, 20)]);
+    const p = planTurn({ graph: g, board: b2, me: ME, income: 10, settings: STD, options: { goal: 'expand', enemyDeploy: 5 } });
+    expect(p.expected.nextIncome).toBe(13);
+    expect(p.frontier.income).toBe(8);
+    expect(p.warnings.join('\n')).toMatch(
+      /Frontier grows faster than income: holding its 2 enemy-facing borders next turn needs 10 at the expected deploy, more than the 8 of next income the plan counts on \(13 if every border holds: the bonuses it concedes or still contests are left out\)/,
+    );
   });
   it("the frontier's income is the one if the conceded borders fall", () => {
     expect(plan.frontier.income).toBe(plan.expected.nextIncomeIfConcededFall);

@@ -771,7 +771,7 @@ export function trackOpponents(
   const visibleAt = (turn: number) => {
     let m = visibleOn.get(turn);
     if (!m) {
-      m = new Map(enemyDeployEstimates(g, byTurn.get(turn)!, me, settings).map((e) => [e.playerId, e]));
+      m = new Map(enemyDeployEstimates(g, byTurn.get(turn)!, me, settings, undefined, undefined, undefined, { turn }).map((e) => [e.playerId, e]));
       visibleOn.set(turn, m);
     }
     return m;

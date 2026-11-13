@@ -88,7 +88,8 @@
 //     opening board made every base-income opponent look like ~11; and capping
 //     the estimate at 0.75 × a small stack hid income held in plain view — a
 //     +10 holder with a 2-stack on my border read as 5). On the opening board (every
-//     visible player territory still holds the same count; neutrals aside, #128) every opponent gets the
+//     visible player territory still holds the same count; neutrals aside, and only on the first
+//     turn — no previous board, the turn unknown or 1, #128) every opponent gets the
 //     floor. Given `previousBoard`, each estimate is at least the deploy observed since
 //     then (`observeDeploy`, issue #57: the net change of its armies visible on both
 //     boards — shrinks included, so a transfer between its own territories is not deploy —
@@ -1099,6 +1100,12 @@ export interface FrontierBudget {
   borders: number;
   enemyBorders: number;
   holdCost: number;
+  /**
+   * The next income the plan counts on (#128): `expected.nextIncome` without the bonuses broken
+   * by the borders it concedes, and without those of a held bonus still contested (warned about
+   * as short, not conceded). It can be below `expected.nextIncomeIfConcededFall`, which leaves
+   * out only the conceded borders.
+   */
   income: number;
 }
 
@@ -1597,9 +1604,16 @@ export function observedDeploy(
 /**
  * The army count every visible player territory holds, when they all hold the same one (the
  * initial allotment). Neutrals are left out (#128): their stacks are not the starting stacks on
- * ordinary maps, so counting them meant this never fired.
+ * ordinary maps, so counting them meant this never fired. Only the first turn can be the opening
+ * board (#128): with a previous board, or a known turn past the first, equal stacks are a
+ * coincidence of the mid-game, and reading them as the opening would drop visible bonuses.
  */
-function openingArmies(g: MapGraph, board: BoardState): number | null {
+function openingArmies(
+  g: MapGraph,
+  board: BoardState,
+  when: { turn?: number | null | undefined; previous?: BoardState | undefined } = {},
+): number | null {
+  if (when.previous !== undefined || (when.turn !== null && when.turn !== undefined && when.turn > 1)) return null;
   const counts = new Set<number>();
   for (const t of board.territories)
     if (g.territoryById.has(t.territoryId) && t.armies !== null && t.owner.kind === 'player') counts.add(t.armies);
@@ -1613,7 +1627,8 @@ function openingArmies(g: MapGraph, board: BoardState): number | null {
  * limit it — income held in plain view can all be deployed on my border, however
  * small the stack there. Bonuses in the fog are unseen, so this is what the
  * visible board supports. On the opening board (every visible player territory holds
- * the same count) every opponent gets the floor.
+ * the same count, with no previous board and `when.turn` unknown or the first) every
+ * opponent gets the floor.
  */
 export function enemyDeployEstimates(
   g: MapGraph,
@@ -1623,6 +1638,7 @@ export function enemyDeployEstimates(
   previous?: BoardState,
   tracks?: readonly OpponentTrack[],
   prior?: EnemyIncomePrior,
+  when: { turn?: number | null } = {},
 ): EnemyDeployEstimate[] {
   const owner = new Map<number, number>();
   const armies = new Map<number, number>();
@@ -1636,7 +1652,7 @@ export function enemyDeployEstimates(
     if (t.armies !== null) armies.set(t.territoryId, t.armies);
   }
   const players = [...new Set([...owner.values()].filter((p) => p !== me))].sort(byNum);
-  const opening = openingArmies(g, board) !== null;
+  const opening = openingArmies(g, board, { turn: when.turn, previous }) !== null;
   const minimum = Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME));
   const per = settings.bonusArmyPer ?? 0;
   return players.map((playerId) => {
@@ -1837,7 +1853,9 @@ export function planTurn(input: PlanInput): TurnPlan {
   const allies = alliesOf(me, ctx.players);
   /** A player whose stacks threaten me and whose territories I may attack: not me, not a teammate. */
   const foe = (p: number) => p !== me && !allies.has(p);
-  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard, input.tracks, incomePrior).filter((e) =>
+  /** The turn being planned, when known (the opening board is the first turn's only, #128). */
+  const turnNow = input.turn ?? ctx.turn ?? null;
+  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard, input.tracks, incomePrior, { turn: turnNow }).filter((e) =>
     foe(e.playerId),
   );
   // ---- 0p. the game profile ----
@@ -2307,7 +2325,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     // costs an army only above it.
     const per = s.bonusArmyPer ?? 0;
     if (per > 0) v += territoryIncome(mine.length, baseIncome, per) - territoryIncome(mine.length - 1, baseIncome, per);
-    return Math.max(0, Math.round(v * 10) / 10);
+    // Floored at 0 only (#128): a negative bonus can outweigh the rest, never below nothing.
+    return Math.max(0, v);
   };
   const valueCache = new Map<number, number>();
   const valueOf = (t: number) => {
@@ -2401,8 +2420,11 @@ export function planTurn(input: PlanInput): TurnPlan {
   /**
    * What `player` may deploy on any of `on` (#128): its whole estimate, except under Local
    * Deployment, where a bonus it visibly holds pays only into that bonus's territories — the
-   * estimate less every visible pool (unseen income counts as deployable anywhere) plus the
-   * pools that contain one of `on`.
+   * estimate less the visible pools it counts (unseen income counts as deployable anywhere) plus
+   * the pools that contain one of `on`, never above the estimate. The estimate may leave pools
+   * out (the opening board's floor; a negative bonus lowering its bonus income), so only what
+   * it holds above its free floor — max({@link MIN_ENEMY_DEPLOY}, base income) — is taken as
+   * pooled: the free base always lands anywhere.
    */
   const deployReaching = (player: number, on: readonly number[]): number => {
     const all = deployOf(player);
@@ -2410,7 +2432,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (!pools?.length) return all;
     const pooled = pools.reduce((n, q) => n + q.value, 0);
     const here = pools.reduce((n, q) => n + (on.some((t) => q.members.has(t)) ? q.value : 0), 0);
-    return Math.min(all, Math.max(0, all - pooled) + here);
+    const free = Math.min(all, Math.max(MIN_ENEMY_DEPLOY, estimates.get(player)?.base ?? 0));
+    return Math.min(all, Math.max(free, all - pooled) + here);
   };
   /**
    * #120: what the owner of enemy territory `t` may add there before my attack lands — its deploy
@@ -2434,7 +2457,13 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (!reachMemo.has(attackers)) reachMemo.set(attackers, holdArmies(attackers) - 1);
     return reachMemo.get(attackers)!;
   };
-  /** The armies `n` armies kill whatever happens next: the luck-free share, rounded (S2). */
+  /**
+   * The armies a softening attack of `n` kills, in a separate-attack threat: the luck-free share,
+   * rounded straight (S2) — deliberately not the game's luck and rounding. Under luck,
+   * {@link guaranteedKills} is the fewest kills luck allows, which would understate a threat
+   * whose last attack ({@link toTake}) is sized pessimistically for me; the luck-free share is
+   * what the softener kills on average, under either rounding.
+   */
   const killsOf = (n: number) => guaranteedKills(n, rates.offensiveKillRate, 0, 'StraightRound');
   interface Force {
     player: number;
@@ -2628,7 +2657,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         `Enemy deploy estimate: threat checks assume ~${enemyDeploy} (your estimate); enemy income is unknown, so they could deploy more.`,
       );
     else {
-      const opening = openingArmies(g, board);
+      const opening = openingArmies(g, board, { turn: turnNow, previous: input.previousBoard });
       for (const p of [...facing].sort(byNum)) {
         const e = estimates.get(p)!;
         const visible = `base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}`;
@@ -5840,7 +5869,10 @@ export function planTurn(input: PlanInput): TurnPlan {
         const spent = expansionSpent;
         const left = expansionLeft;
         run(c);
-        if (owed.every((t) => t.holdCost <= roomAt(t.id))) return garrisonCompleted();
+        // Every owed hold must fit what is left together, not each on its own: two holds of 4
+        // with 5 left both pass alone, and the second would be conceded later.
+        if (owed.every((t) => t.holdCost <= roomAt(t.id)) && owed.reduce((n, t) => n + t.holdCost, 0) <= budget)
+          return garrisonCompleted();
         restore();
         expansionSpent = spent;
         expansionLeft = left;
@@ -7763,7 +7795,11 @@ export function planTurn(input: PlanInput): TurnPlan {
       : '';
     warnings.push(
       outgrown
-        ? `Frontier grows faster than income: holding its ${frontier.enemyBorders} enemy-facing borders next turn needs ${frontier.holdCost} at the expected deploy, more than the next income of ${frontier.income} (${startCost} at the start of the turn).${stop}`
+        ? `Frontier grows faster than income: holding its ${frontier.enemyBorders} enemy-facing borders next turn needs ${frontier.holdCost} at the expected deploy, more than ${
+            frontier.income < nextIncome
+              ? `the ${frontier.income} of next income the plan counts on (${nextIncome} if every border holds: the bonuses it concedes or still contests are left out)`
+              : `the next income of ${frontier.income}`
+          } (${startCost} at the start of the turn).${stop}`
         : `Frontier grows faster than income.${stop}`,
     );
   }

@@ -1010,6 +1010,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 plan.expected.nextIncomeIfConcededFall < plan.expected.nextIncome
                   ? `, ${plan.expected.nextIncomeIfConcededFall} if the conceded borders fall`
                   : ''
+              }${
+                // #128: the figure the frontier is judged against, when it leaves out more (contested bonuses).
+                plan.frontier.income < (plan.expected.nextIncomeIfConcededFall ?? plan.expected.nextIncome)
+                  ? `; the plan counts on ${plan.frontier.income}`
+                  : ''
               }`,
         // #72: the offensive options considered, full view only.
         ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
