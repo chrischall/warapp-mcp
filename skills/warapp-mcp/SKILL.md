@@ -54,7 +54,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"Which bonuses should I go for?"** → `warapp_get_map`: bonuses ranked easiest first
   (value per territory and per border, entry points, ease score) plus chokepoints. Narrow to
   one bonus with `bonus: "<part of its name>"`; `sort` is `easiest` / `value` / `name`;
-  `view: "full"` includes zero/negative bonuses and lists territories by name. Works in a
+  `view: "full"` includes zero/negative bonuses and lists territories by name (compact says how
+  many it leaves out in `bonusesHidden`; the planner always counts them). Works in a
   lobby — no board needed.
 - **"How should I play this game / map?" / "any strategy tips?"** → `warapp_strategy` with
   `game_id`: short heuristics fitted to the game's format and settings, each with its source
@@ -179,7 +180,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
    estimate only sees one previous turn and caps itself at what the opponent could earn, so it
    can still miss income hidden in the fog. When the figure is off, re-plan with `enemy_deploy`.
 3. **Income drops.** Look for a negative-value bonus in `expected.bonusesCompleted`, or a
-   `nextIncome` below this turn's income without a reason the user accepts.
+   `nextIncome` below this turn's income without a reason the user accepts. The planner scores a
+   positive bonus net of the negative bonuses its missing members complete, prefers completing
+   such a cluster in one turn, and drops captures that lower next income unless focused or a
+   rationale line says "Stage bonus …" with the payback; a remaining drop is always a warning.
 4. **A rule the plan may not model.** Compare the plan's income with the game's deploy panel,
    and read the plan's warnings for assumed settings: luck, rounding, Local Deployment, No-Split,
    overridden bonuses and commanders.

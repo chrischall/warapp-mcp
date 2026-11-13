@@ -136,10 +136,17 @@ export function registerMapTool(server: McpServer, client: WarappClient): void {
         }
         const positive = all.filter((b) => b.value >= 1).sort(order);
         const shown = positive.slice(0, limit ?? DEFAULT_LIMIT);
+        const hidden = all.length - positive.length;
         return {
           map: mapSummary(map),
           bonuses: shown.map(row),
           bonusesShown: `${shown.length} of ${positive.length}`,
+          // #70: say what compact leaves out (the turn planner always counts every bonus).
+          ...(hidden
+            ? {
+                bonusesHidden: `${hidden} zero- or negative-value bonuses not listed (view "full" or a \`bonus\` filter shows them; the turn planner counts every bonus)`,
+              }
+            : {}),
           chokepoints: chokepoints(g, COMPACT_CHOKEPOINTS),
         };
       });

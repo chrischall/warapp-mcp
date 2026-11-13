@@ -244,7 +244,25 @@
 //     territory costing over WASTELAND_FACTOR × value, is uneconomic and its
 //     territories are not planned (unless focused or also in an economic bonus).
 //     A negative-value bonus is always uneconomic unless focused, so the plan
-//     never captures into it (completing one would cut income).
+//     never captures into it (completing one would cut income). A positive bonus is
+//     scored by its net worth (rule 4c), not its value, in every test above.
+//  4c. Net income (#70). Maps with overlapping bonuses (each sea tile a single-territory
+//     −4 bonus and a member of a +22 group) are scored by every capture's effect on
+//     income: `incomeGain` — the exact sum over every bonus whose completion status
+//     changes, the one computation `expected.nextIncome` and R3 use. A positive bonus's
+//     net worth is its value plus the (negative) values of the other negative bonuses its
+//     missing members complete (= value on a map without negative bonuses); net ≤ 0 is
+//     uneconomic unless focused. Completing it is all or nothing (pass 1), refused when it
+//     would lower income. A capture that lowers income this turn (it completes a negative
+//     bonus) is taken only when (a) it is part of completing a positive bonus this turn,
+//     (b) it is in a focused bonus, or (c) it stages a bonus: with k = ceil(the capture
+//     cost of the bonus's other missing members / this turn's income) turns to finish (≥ 1;
+//     unknown under fog: refused), k ≤ PAYBACK_TURNS and k × every penalty its missing
+//     members carry ≤ PAYBACK_TURNS × its net worth; the reason then says "stages", never
+//     "advances". Pass 3 never takes one. Guard: after the capture passes, while next income
+//     is below this turn's, the latest capture that completes a negative bonus is dropped
+//     (its attacks taken back, its deploys left where they are) unless focused, staging,
+//     a commander strike or finishing off; whatever remains is a warning with the numbers.
 //     Pass 1 completes bonuses that can be finished this turn (all or nothing);
 //     pass 2 advances bonuses one capture at a time, cheapest first; pass 3
 //     (not under `complete-bonus`) takes any other affordable target (never an
@@ -978,6 +996,11 @@ interface BonusPlan {
   borders: number;
   /** Deploys its frontier needs next turn to hold once completed (0 when not judged). */
   defenseCost: number;
+  /**
+   * Its worth once complete (#70): its value plus the (negative) value of every other negative
+   * bonus its missing members complete. Equal to `value` on a map without negative bonuses.
+   */
+  net: number;
 }
 
 export function planTurn(input: PlanInput): TurnPlan {
@@ -1150,6 +1173,38 @@ export function planTurn(input: PlanInput): TurnPlan {
   const moves: PlannedMove[] = [];
   /** Armies that occupy each capture this turn (its finishing attack's survivors). */
   const survivorsAt = new Map<number, number>();
+
+  // ---- income change (#70): the one computation nextIncome, R3 and the negative-bonus rules use ----
+  const bonusTs = new Map(g.map.bonuses.map((b) => [b.id, bonusTerritories(g, b.id)]));
+  /** Bonuses complete over `after` that were not complete at the start of the turn, sorted by id. */
+  const completedBy = (after: ReadonlySet<number>): number[] =>
+    g.map.bonuses
+      .filter((b) => {
+        const ts = bonusTs.get(b.id)!;
+        return ts.length > 0 && ts.every((t) => after.has(t)) && !ts.every((t) => mineSet.has(t));
+      })
+      .map((b) => b.id)
+      .sort(byNum);
+  /**
+   * The exact income change from holding `after` instead of what I held at the start: the sum
+   * of every bonus whose completion status changes (negative ones and superbonuses included).
+   */
+  const incomeGain = (after: ReadonlySet<number>): number =>
+    completedBy(after).reduce((sum, id) => sum + g.bonusById.get(id)!.value, 0);
+  const heldNow = () => new Set([...mine, ...captured]);
+  /** The income change of also capturing `ts`, on top of this turn's captures so far. */
+  const gainWith = (ts: readonly number[]): number => {
+    const now = heldNow();
+    return incomeGain(new Set([...now, ...ts])) - incomeGain(now);
+  };
+  /** `t` is in a bonus the caller focused: the negative-bonus rules never refuse it. */
+  const inFocus = (t: number) => [...focus].some((id) => bonusTs.get(id)?.includes(t));
+  /** Every capture planned, in the order it was made (a rolled-back one may repeat; filter by `captured`). */
+  const captureOrder: number[] = [];
+  /** How to take back each capture's attacks (rule 4c's guard), by target. */
+  const captureUndo = new Map<number, () => void>();
+  /** Captures that stage a positive bonus under rule 4c(c), with the bonus they stage. */
+  const staged = new Map<number, number>();
   /** Under No-Split, the order `x` already issues (its only one); otherwise always `undefined`. */
   const orderOf = (x: number): PlannedMove | undefined => (noSplit ? moves.find((m) => m.from === x) : undefined);
   const describeOrder = (m: PlannedMove) =>
@@ -1991,6 +2046,22 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     if (b.value <= 0 && !isFocus) continue;
     if (!remaining.length) continue;
+    // Cluster as a unit (#70): the negative bonuses its missing members complete come off its
+    // worth (on a map without negative bonuses, net = value).
+    const whole = new Set([...mine, ...remaining]);
+    const penalties = completedBy(whole).filter((id) => id !== b.id && g.bonusById.get(id)!.value < 0);
+    const penalty = penalties.reduce((n, id) => n + g.bonusById.get(id)!.value, 0);
+    const net = b.value + penalty;
+    if (penalty < 0 && remaining.some(bonusTarget))
+      rationale.push(
+        `Bonus ${b.name} (#${b.id}) (+${b.value}) is worth +${net} net once complete: its missing members also complete ${penalties.length} negative bonus${penalties.length === 1 ? '' : 'es'} (${penalty}), and each step short of completion only adds penalties.`,
+      );
+    if (net <= 0 && !isFocus) {
+      for (const t of remaining) uneconomicMember.add(t);
+      if (remaining.some(bonusTarget))
+        rationale.push(`Skip bonus ${b.name} (#${b.id}): completing it costs more income than it pays (net ${net}).`);
+      continue;
+    }
     let cost = 0;
     let worst = 0;
     for (const t of remaining) {
@@ -2000,12 +2071,12 @@ export function planTurn(input: PlanInput): TurnPlan {
       cost += c;
       worst = Math.max(worst, c);
     }
-    const economic = isFocus || (cost <= PAYBACK_TURNS * b.value && worst <= WASTELAND_FACTOR * b.value);
+    const economic = isFocus || (cost <= PAYBACK_TURNS * net && worst <= WASTELAND_FACTOR * net);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
     if (!economic) {
       rationale.push(
-        `Skip bonus ${b.name} (#${b.id}): uneconomic for +${b.value} (${cost} armies to finish, ${worst} for its costliest territory).`,
+        `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${cost} armies to finish, ${worst} for its costliest territory).`,
       );
       continue;
     }
@@ -2034,11 +2105,12 @@ export function planTurn(input: PlanInput): TurnPlan {
       cost,
       borders: analyzeBonus(g, b.id)!.borderTerritoryIds.length,
       defenseCost,
+      net,
     });
   }
   const ratio = (p: BonusPlan) => {
     const cost = p.cost + DEFENSE_DISCOUNT * p.defenseCost;
-    return cost > 0 ? p.value / cost : Infinity;
+    return cost > 0 ? p.net / cost : Infinity;
   };
   plans.sort(
     (a, b) =>
@@ -2172,6 +2244,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       return false;
     }
     survivorsAt.set(t, survivors);
+    captureOrder.push(t);
+    captureUndo.set(t, () => avail.set(src, avail.get(src)! + tg.cost));
     moves.push({ from: src, to: t, armies: tg.cost, kind: 'attack', reason, winChance: chanceOf(tg.cost, defenceAt(t)) });
     if (tg.enemy && !worstCase.has(t))
       warnings.push(`Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`);
@@ -2275,6 +2349,14 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     survivorsAt.set(t, plan.survivors);
     combined.add(t);
+    captureOrder.push(t);
+    captureUndo.set(t, () => {
+      for (const x of plan.softeners) {
+        avail.set(x.from, avail.get(x.from)! + x.armies);
+        incoming.set(x.from, (incoming.get(x.from) ?? 0) - x.survivors);
+      }
+      avail.set(plan.finisher, avail.get(plan.finisher)! + plan.armies);
+    });
     for (const x of plan.softeners)
       moves.push({
         from: x.from,
@@ -2317,6 +2399,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       incoming: new Map(incoming),
       combined: new Set(combined),
       survivorsAt: new Map(survivorsAt),
+      staged: new Map(staged),
       moves: moves.length,
       rationale: rationale.length,
       warnings: warnings.length,
@@ -2334,6 +2417,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const t of snap.combined) combined.add(t);
       survivorsAt.clear();
       for (const [k, v] of snap.survivorsAt) survivorsAt.set(k, v);
+      staged.clear();
+      for (const [k, v] of snap.staged) staged.set(k, v);
       rationale.length = snap.rationale;
       warnings.length = snap.warnings;
     };
@@ -2346,7 +2431,14 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (!todo.length) return;
     const first = moves.length;
     const restore = snapshot();
-    const ok = todo.every((t) => tryCapture(t, `completes bonus ${bonusName(p.bonusId)} (+${p.value})`));
+    const before = incomeGain(heldNow());
+    const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
+    const ok = todo.every((t) => tryCapture(t, `completes bonus ${bonusName(p.bonusId)} (${worth})`));
+    // Rule 4c: completing it must not lower income (its members' negative bonuses included).
+    if (ok && !p.focus && incomeGain(heldNow()) < before) {
+      restore();
+      return;
+    }
     if (ok) {
       anchor ??= moves[first]?.from;
       return;
@@ -2355,13 +2447,60 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
 
   // ---- pass 2: advance a bonus one capture at a time ----
+  /** Bonuses whose staging was refused (rule 4c(c)), so the rationale says it once. */
+  const unstaged = new Set<number>();
+  /**
+   * Rule 4c(c): capturing `t` toward `p` lowers income this turn. It is a staging step, taken
+   * only when the bonus completes within PAYBACK_TURNS (k turns: its other missing members'
+   * capture cost / this turn's income, rounded up, at least 1) and the penalties until then —
+   * at most k × every penalty its missing members carry — are repaid by its net worth within
+   * PAYBACK_TURNS turns of completion. Returns the capture's reason and rationale line, or
+   * `null` when refused.
+   */
+  const stage = (p: BonusPlan, t: number): { reason: string; note: string } | null => {
+    const rest = p.remaining.filter((x) => x !== t && !captured.has(x));
+    let restCost = 0;
+    for (const x of rest) {
+      const st = state.get(x);
+      restCost += !st || st.owner.kind === 'unknown' || st.armies === null ? Infinity : (captureCost(defenceAt(x), s) ?? Infinity);
+    }
+    const penalty = p.value - p.net;
+    const turns = income > 0 ? Math.max(1, Math.ceil(restCost / income)) : Infinity;
+    const interim = turns * penalty;
+    const step = gainWith([t]);
+    if (turns <= PAYBACK_TURNS && interim <= PAYBACK_TURNS * p.net) {
+      return {
+        note: `Stage bonus ${bonusName(p.bonusId)} with ${label(t)} (${step} income until it completes): its other ${rest.length} missing member${rest.length === 1 ? '' : 's'} cost ${restCost}, ~${turns} turns at income ${income}; ${turns} turns × ${penalty} = ${interim} of penalties at most, repaid within ${PAYBACK_TURNS} turns of completion (${PAYBACK_TURNS} × +${p.net} = ${PAYBACK_TURNS * p.net}).`,
+        reason: `stages bonus ${bonusName(p.bonusId)} (+${p.value}, net +${p.net} once complete; ${step} income until then)`,
+      };
+    }
+    if (!unstaged.has(p.bonusId)) {
+      unstaged.add(p.bonusId);
+      rationale.push(
+        `Do not take ${label(t)} toward bonus ${bonusName(p.bonusId)}: it costs ${step} income until the bonus completes, ${
+          restCost === Infinity
+            ? 'and the rest of the bonus cannot be costed (fog)'
+            : `~${turns} turns away (${restCost} armies at income ${income}); ${turns} × ${penalty} = ${interim} of penalties is not repaid by ${PAYBACK_TURNS} × +${p.net}`
+        }.`,
+      );
+    }
+    return null;
+  };
   const advance = (p: BonusPlan) => {
     const todo = p.remaining
       .filter((t) => bonusTarget(t) && !captured.has(t))
       .sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
     for (const t of todo) {
-      if (tryCapture(t, `advances bonus ${bonusName(p.bonusId)} (+${p.value}, ${p.cost} to finish)`))
+      const stepping = !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
+      if (stepping === null) continue;
+      const reason = stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (+${p.value}, ${p.cost} to finish)`;
+      if (tryCapture(t, reason)) {
         anchor ??= moves[moves.length - 1]!.from;
+        if (stepping) {
+          staged.set(t, p.bonusId);
+          rationale.push(stepping.note);
+        }
+      }
     }
   };
 
@@ -3300,7 +3439,62 @@ export function planTurn(input: PlanInput): TurnPlan {
           (economicMember.has(t.id) || !uneconomicMember.has(t.id)),
       )
       .sort((a, b) => a.cost - b.cost || a.id - b.id);
-    for (const t of rest) tryCapture(t.id, 'expands territory');
+    // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
+    for (const t of rest) if (gainWith([t.id]) >= 0 || inFocus(t.id)) tryCapture(t.id, 'expands territory');
+  }
+
+  // ---- rule 4c's guard: planned captures never lower next income (#70) ----
+  {
+    const order = captureOrder.filter((t, i) => captured.has(t) && captureOrder.lastIndexOf(t) === i);
+    /** The negative bonuses `t` helps complete in the plan as it stands, as "name value". */
+    const negativesOf = (t: number) =>
+      completedBy(heldNow())
+        .filter((id) => g.bonusById.get(id)!.value < 0 && bonusTs.get(id)!.includes(t))
+        .map((id) => `${bonusName(id)} ${g.bonusById.get(id)!.value}`);
+    let gain = incomeGain(heldNow());
+    for (const t of [...order].reverse()) {
+      if (gain >= 0) break;
+      const after = incomeGain(new Set([...mine, ...captured].filter((x) => x !== t)));
+      if (after <= gain) continue;
+      // Kept: a focused bonus, a staging step (rule c), a commander strike, finishing off.
+      if (inFocus(t) || staged.has(t) || strikes.has(t) || worstCase.has(t)) continue;
+      const negatives = negativesOf(t);
+      captureUndo.get(t)!();
+      captured.delete(t);
+      survivorsAt.delete(t);
+      combined.delete(t);
+      for (let i = moves.length - 1; i >= 0; i--) if (moves[i]!.kind === 'attack' && moves[i]!.to === t) moves.splice(i, 1);
+      const attack = `Attack ${label(t)} `;
+      for (let i = rationale.length - 1; i >= 0; i--) if (rationale[i]!.startsWith(attack)) rationale.splice(i, 1);
+      for (let i = warnings.length - 1; i >= 0; i--)
+        if (
+          warnings[i]!.startsWith(`Attack on enemy ${label(t)} `) ||
+          warnings[i]!.startsWith(`${label(t)} can be retaken `) ||
+          warnings[i]!.startsWith(`The capture of ${label(t)} combines `)
+        )
+          warnings.splice(i, 1);
+      rationale.push(
+        `Drop the attack on ${label(t)}: it completes ${negatives.join(', ')}, and next income would fall below this turn's ${income} (next income ${income + gain} → ${income + after} without it); its armies stay where they are.`,
+      );
+      gain = after;
+    }
+    if (gain < 0) {
+      const kept = order.flatMap((t) => {
+        const negs = captured.has(t) ? negativesOf(t) : [];
+        if (!negs.length) return [];
+        const why = inFocus(t)
+          ? 'focused'
+          : staged.has(t)
+            ? `stages bonus ${bonusName(staged.get(t)!)}`
+            : strikes.has(t)
+              ? 'a commander strike'
+              : 'finishing off a player';
+        return [`${label(t)} (${negs.join(', ')}; ${why})`];
+      });
+      warnings.push(
+        `This plan lowers next income from ${income} to ${income + gain}: its captures complete negative bonuses — ${kept.join('; ')}.`,
+      );
+    }
   }
 
   /** Territories locked before the leftover deploy: holds, kept and standing borders, withdrawals. */
@@ -3518,14 +3712,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   }
 
   // ---- expected ----
-  const after = new Set([...mine, ...captured]);
-  const completed = g.map.bonuses
-    .filter((b) => {
-      const ts = bonusTerritories(g, b.id);
-      return ts.length > 0 && ts.every((t) => after.has(t)) && !ts.every((t) => mineSet.has(t));
-    })
-    .map((b) => b.id)
-    .sort(byNum);
+  const after = heldNow();
+  const completed = completedBy(after);
   // A bonus refused in one pass but completed by a later one is not reported as refused.
   for (const id of [...notCompleted.keys()].sort(byNum)) {
     if (completed.includes(id)) continue;
