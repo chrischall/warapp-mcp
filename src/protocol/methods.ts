@@ -286,28 +286,49 @@ export function writeDeployOrder(w: Writer, o: DeployOrder): void {
   writeOrderBase(w, o.playerId);
 }
 
+/** A commander an order takes along: its GUID and its owner's in-game id, as the live board reads them. */
+export interface OrderCommander {
+  /** The unit's GUID (32 hex digits; dashes allowed). */
+  id: string;
+  /** In-game id of its owner. */
+  owner: number;
+}
+
+/** The special-unit tag of a Commander (`warlight.shared.Commander`, from the bundle; docs/WEB-PROTOCOL.md). */
+const SPECIAL_UNIT_COMMANDER = 1;
+
 export interface AttackTransferOrder {
   playerId: number;
   from: number;
   to: number;
+  /** Armies sent; with {@link byPercent} the percentage (1–100) of what can move when the order runs. */
   armies: number;
+  /** 1 Attack Only, 2 Transfer Only, 3 AttackTransfer (default). */
   mode?: AttackTransferMode;
   byPercent?: boolean;
+  /** Treat teammates' territories as enemies (attack them). */
   attackTeammates?: boolean;
+  /** Take this commander along (the client writes it in the order's Armies as a special unit). */
+  commander?: OrderCommander;
 }
 
-/** Encode an AttackTransfer order (layout verified against a live turn commit). */
+/**
+ * Encode an AttackTransfer order. The layout is verified against a live turn commit (mode 3, no
+ * options); the option bytes (mode 1/2, byPercent, attackTeammates, a commander in the Armies)
+ * follow the client bundle's writer and are UNVERIFIED live (#165).
+ */
 export function writeAttackTransferOrder(w: Writer, o: AttackTransferOrder): void {
   w.u8(ORDER_TAG_ATTACK_TRANSFER)
     .bool(o.attackTeammates ?? false)
     .u8(o.mode ?? AttackTransferMode.AttackTransfer)
     .bool(o.byPercent ?? false)
     .int32(o.from)
-    // Armies: not fogged, count, no special units
+    // Armies: not fogged, count, then the special units (count byte; each a tag, a GUID, an owner)
     .bool(false)
-    .int32(o.armies)
-    .u8(0)
-    .int32(o.to);
+    .int32(o.armies);
+  if (o.commander) w.u8(1).u8(SPECIAL_UNIT_COMMANDER).guid(o.commander.id).int32(o.commander.owner);
+  else w.u8(0);
+  w.int32(o.to);
   writeOrderBase(w, o.playerId);
 }
 
@@ -365,7 +386,16 @@ export function writeDiscardOrder(w: Writer, o: DiscardOrder): void {
 /** One order of a turn, as a tool builds it (the player id is supplied per turn). */
 export type TurnOrder =
   | { kind: 'deploy'; territoryId: number; armies: number }
-  | { kind: 'move'; from: number; to: number; armies: number }
+  | {
+      kind: 'move';
+      from: number;
+      to: number;
+      armies: number;
+      mode?: AttackTransferMode;
+      byPercent?: boolean;
+      attackTeammates?: boolean;
+      commander?: OrderCommander;
+    }
   | { kind: 'card'; card: CardPlayKind; cardId: string; target?: number }
   | { kind: 'discard'; cardId: string };
 
@@ -421,7 +451,7 @@ function compareTurnOrders(a: TurnOrder, b: TurnOrder): number {
  * client sends as false. Orders are written in turn-phase order (a stable
  * sort, so orders of one phase keep their given order, card plays after
  * the rest): discards, Order Priority and Reinforcement plays, then every deploy, then
- * the moves (ordinary AttackTransfers, mode 3) followed by any Order Delay
+ * the moves (AttackTransfers, mode 3 unless the move sets another) followed by any Order Delay
  * plays, then any Blockade plays.
  */
 export function writeSendOrdersParams(
@@ -442,7 +472,8 @@ export function writeSendOrdersParams(
     } else if (o.kind === 'deploy') {
       writeDeployOrder(w, { playerId, territoryId: o.territoryId, armies: o.armies });
     } else {
-      writeAttackTransferOrder(w, { playerId, from: o.from, to: o.to, armies: o.armies });
+      const { kind: _kind, ...move } = o;
+      writeAttackTransferOrder(w, { playerId, ...move });
     }
   }
   w.int32(turnNumber).bool(false).bool(false);
