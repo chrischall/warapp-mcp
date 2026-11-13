@@ -9,9 +9,11 @@
 // taken from the real bundle. `writeLatestGameInfo` encodes a matching reply
 // body with this project's own Writer.
 import type { Writer } from '../../src/protocol/codec.js';
+import { REQUIRED_HELPER_DEFS } from './mini-bundle.js';
 
 export const LIVE_BUNDLE = [
   'var W={};',
+  REQUIRED_HELPER_DEFS,
   'function Lg(){this.k1=0}function Gs(){}function Ts(){}function Pc(){}',
   'W["warlight.shared.LatestGameInfo"]=Lg;',
   'Lg.Ha=function(a,b,d){null==d&&(d=242);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;e.k3=P.Ya(a);return e};',

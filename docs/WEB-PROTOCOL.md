@@ -166,11 +166,15 @@ What that check covers:
   reads is caught (it differs on its first item read) but nothing more is proven about it.
 - **refused when unverified:** `P.Ya`, `P.Yc` and `P.uq` (`REQUIRED_HELPERS`) read every army
   count, fog flag and unit count; a bundle whose definition of one of them cannot be verified is
-  refused (`dialect-unverified`) and, like a mismatch, remembered for five minutes.
+  refused (`dialect-unverified`) and, like a mismatch, remembered for five minutes. So is a bundle
+  that references one of them (`P.Ya`, `P["Ya"]`) but defines it in a form the scan does not find
+  at all (`P["Ya"]=…`, `Object.assign(P,{…})`): for these three, absent from the check is not
+  verified.
 - **not checked:** the reader methods called on the reader itself (`a.Og()`, `a.Ua()` and the
-  rest, the dialect's `readerMethods`), and a helper given to `P` some other way (`Object.assign`,
-  a computed key). A client release that renames or repurposes one of these decodes through the
-  old read without an error; suspect them first when a new client misreads a reply.
+  rest, the dialect's `readerMethods`), and any other helper given to `P` some other way
+  (`Object.assign`, a computed key). A client release that renames or repurposes one of these
+  decodes through the old read without an error; suspect them first when a new client misreads a
+  reply.
 
 The result is shown (#148): `warapp_session_status` reports the loaded bundle (`decoder`: version,
 whether a cached stand-in is decoding, the helpers verified and the unverified ones with why),

@@ -273,7 +273,8 @@ export interface DialectCheck {
   /**
    * Defined in the bundle, but not shown to read alike: a definition the interpreter cannot evaluate,
    * one in a form the check cannot follow (an alias to something other than a static function), or
-   * a builder whose reads were never seen in full (#148).
+   * a builder whose reads were never seen in full; and a required helper the bundle references but
+   * whose definition the scan never found (#148).
    */
   unverified: string[];
   /** The bundle's definition reads differently: the built-in would mis-read. */
@@ -737,6 +738,20 @@ export class BundleInterpreter {
         out.unverified.push(key);
         reasons[key] = why;
       }
+    }
+    // A required helper the scan found no definition of, though the bundle references it (`P.Ya`,
+    // `P["Ya"]`): it is defined in a form the scan does not know (`P["Ya"]=…`, `Object.assign(P,…)`),
+    // and the built-in would decode every read through it unchecked. Absent from the check is not
+    // verified (#148).
+    const src = this.bundle.src;
+    const esc = READER_HELPERS.replace(/\$/g, '\\$');
+    for (const name of REQUIRED_HELPERS) {
+      if (forms.has(name) || !Object.hasOwn(natives, name)) continue;
+      const ref = new RegExp(`(?<![\\w$.])${esc}\\s*(?:\\.\\s*${name}(?![\\w$])|\\[\\s*(["'\`])${name}\\1\\s*\\])`);
+      if (!ref.test(src)) continue;
+      const key = `${READER_HELPERS}.${name}`;
+      out.unverified.push(key);
+      reasons[key] = 'the bundle reads through it, but no definition was found in a form this check can follow';
     }
     for (const list of [out.verified, out.unverified, out.mismatched]) list.sort();
     if (Object.keys(reasons).length) out.reasons = reasons;

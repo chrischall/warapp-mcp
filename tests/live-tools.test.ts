@@ -85,7 +85,7 @@ describe('warapp_get_live_board', () => {
     expect(payload(await h.call('warapp_get_live_board', { game_id: GAME, view: 'full' })).decoder).toEqual({
       bundleVersion: 'test',
       fallback: false,
-      helpers: { verified: [], unverified: [] },
+      helpers: { verified: ['P.Ya', 'P.Yc', 'P.uq'], unverified: [] },
     });
     await h.harness.close();
 
@@ -101,7 +101,7 @@ describe('warapp_get_live_board', () => {
     expect(full.decoder).toMatchObject({
       bundleVersion: 'cached-1',
       fallback: true,
-      helpers: { verified: ['P.Ya'], unverified: ['P.tL'], reasons: { 'P.tL': expect.any(String) } },
+      helpers: { verified: ['P.Ya', 'P.Yc', 'P.uq'], unverified: ['P.tL'], reasons: { 'P.tL': expect.any(String) } },
     });
   });
 

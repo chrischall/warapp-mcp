@@ -9,8 +9,10 @@
 // `writeGameInfo` and `writeInitParameters` encode matching bytes with this
 // project's own Writer.
 import type { Writer } from '../../src/protocol/codec.js';
+import { REQUIRED_HELPER_DEFS } from './mini-bundle.js';
 
 export const MY_GAMES_BUNDLE = [
+  REQUIRED_HELPER_DEFS,
   'function Mr(){}function Gi(){}function Gp(){}function Sx(){}function Ox(){}function Cl(){}function Pr(){}function Ip(){}',
   'W["warlight.shared.MyGamesReturn"]=Mr;',
   'Mr.Ha=function(a,b,d){null==d&&(d=242);var e=new Mr;' +

@@ -4,8 +4,17 @@
 // constructors as `function <var>(…){this.…}`. Every name and value here is
 // made up — nothing is taken from the real bundle.
 
+/**
+ * The count, flag and byte helpers (int32, bool, byte), defined as the built-ins read them. Every test bundle
+ * that reads through one defines it: a bundle that reads through one the load-time check cannot find is
+ * refused (#148), as the real client always defines the helpers it calls.
+ */
+export const REQUIRED_HELPER_DEFS =
+  'var P={};P.Ya=function(a){return a.Og()};P.Yc=function(a){return a.Ua()};P.uq=function(a){return a.bc()};';
+
 export const MINI_BUNDLE = [
   'var W={};',
+  REQUIRED_HELPER_DEFS,
   // A decoy definition *before* the registration: resolution must prefer the one after it.
   'Pt.rd=function(a){throw Y.sa(new Pa("decoy definition used"))};',
   'function Pt(){this.x=0;this.y=0}',
