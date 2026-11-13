@@ -334,13 +334,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     next to it" rule picked the hopeless border).
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
     the threat (see the threat model above), and warns "is building" — less what a visible
-    neighbour of the same owner sent, and at most its observed deploy (#123: a transfer is a
-    one-off).
+    neighbour of the same owner sent, and at most its observed deploy with every ambiguous army
+    read as deploy (`high`; #123: a transfer is a one-off, a stack walking in beside the fog is
+    still massing — lesson 5).
   - **One-off movements are not income (#123, `observeDeploy`).** Growth on its territory next
-    to the fog beyond what it was expected to deploy (visible income or the fog prior) is a stack
-    walking in; a capture whose visible attacker shrank counts its surplus as deployed on that
-    attacker (up to what it could earn); a capture from me is priced at the guard unless my cached
-    orders say what stood there. Each observed turn has a low–high range for the ambiguity. The
+    to the fog and the surplus of a capture whose visible attacker shrank are ambiguous: both read
+    as deploy up to one bound, `HIDDEN_INCOME_FACTOR` (2) × what it was expected to deploy
+    (visible income, the fog prior, or tracked/carried income — so a steady hidden bonus is still
+    seen) and at most what it could earn; beyond it, a stack out of the fog. A capture from me is
+    priced at the guard unless my cached orders say what stood there. Each observed turn has a low–high range for the ambiguity. The
     tracker's `unexplained` armies leave out likely combat deaths (its stack and a neighbour of
     another player both shrank), and inferred bonuses must lie within `INFER_REACH` hops and be
     affordable — none listed when more than `MAX_LISTED_COMBINATIONS` fit.

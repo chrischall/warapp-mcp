@@ -149,13 +149,13 @@ describe('warapp_track_opponents', () => {
   });
 
   it('#123: a stack that may have walked in from the fog reads as a move, with the range', async () => {
-    // Bob's 158 (next to the fogged 135) goes 7 → 22: beyond his visible 5, the 10 more may be a
-    // stack out of the fog. The deploy reads 5; the range says 0–15.
-    const { last } = await playTurns('warapp_track_opponents', [7, 22]);
+    // Bob's 158 (next to the fogged 135) goes 7 → 27: beyond twice his visible 5, the 10 more may
+    // be a stack out of the fog. The deploy reads 10; the range says 0–20.
+    const { last } = await playTurns('warapp_track_opponents', [7, 27]);
     const bob = (last as TrackPayload).opponents.find((o) => o.player.name === 'Bob')! as TrackPayload['opponents'][number] & {
       observed: Array<{ range?: { low: number; high: number } }>;
     };
-    expect(bob.observed[0]).toMatchObject({ turn: 3, deploy: 5, range: { low: 0, high: 15 } });
+    expect(bob.observed[0]).toMatchObject({ turn: 3, deploy: 10, range: { low: 0, high: 20 } });
     expect(bob.notes.join(' ')).toMatch(/walked in from the fog/);
     const full = payload<TrackPayload>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann', view: 'full' }));
     expect(full.opponents.find((o) => o.player.name === 'Bob')!.observed[0]).toMatchObject({ grewFromFog: [{ id: 158 }] });

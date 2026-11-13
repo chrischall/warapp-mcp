@@ -2,10 +2,12 @@
 // synthetic (made-up maps, ids and counts).
 //  1. Deploy-then-capture: a visible stack that shrank into a capture it outnumbers was
 //     reinforced — the surplus is deploy, not a stack out of the fog.
-//  2. A stack walking out of the fog onto a held territory: growth beyond what it was expected to
-//     deploy, on a territory with a hidden neighbour, is a move from the fog, not income.
+//  2. A stack walking out of the fog onto a held territory: growth beyond twice what it was
+//     expected to deploy, on a territory with a hidden neighbour, is a move from the fog, not
+//     income. A capture's surplus shares that bound (7, 8: the review of #123).
 //  3. A visible transfer between its own territories is not a trend: growth matched by a visible
-//     neighbour's shrink is a transfer, and projected growth is capped at the observed deploy.
+//     neighbour's shrink is a transfer, and projected growth is capped at the observed deploy
+//     with every ambiguous army read as deploy (`high`).
 //  4. Taking a territory I emptied: a capture from me is priced from what I may have left (the
 //     guard), not last turn's stack — unless my orders say what stood there.
 //  5. Unexplained armies leave out combat deaths where its stack and a neighbour of another owner
@@ -94,10 +96,11 @@ describe('1. deploy-then-capture (#123)', () => {
   });
 
   it('never more deploy-then-capture than it could earn: the rest came from the fog', () => {
-    // 40 stand on T3: T4's 5 and 10 deployed at most (base 5 + 5); 25 arrived from the fog.
+    // 40 stand on T3: T4's 5, and a deploy of 10 at most in all (base 5 + 5) — the capture's
+    // cost (2) and 8 deployed on T4 before it attacked; 27 arrived from the fog.
     const big = board([mine(1, 5), mine(2, 5), enemy(3, 40), enemy(4, 1), fogged(5)]);
     const o = observeDeploy(g, big, before, ENEMY, STD, { most: 10 });
-    expect(o).toMatchObject({ deploy: -5 + 2 + 5 + 10, reinforced: [3], fromFog: [3], fogArmies: 25 });
+    expect(o).toMatchObject({ deploy: 10, reinforced: [3], fromFog: [3], fogArmies: 27 });
     // A board-only reading (no context) keeps #86's: the surplus is a move.
     expect(observeDeploy(g, after, before, ENEMY, STD)).toMatchObject({ deploy: 2, reinforced: [], fromFog: [3] });
   });
@@ -118,24 +121,25 @@ describe('2. a stack walking out of the fog onto a held territory (#123)', () =>
   const before = at(5);
   const after = at(45);
 
-  it('growth beyond what it was expected to deploy, beside the fog, is a move', () => {
+  it('growth beyond twice what it was expected to deploy, beside the fog, is a move', () => {
+    // Expected 5 (its visible income): up to 10 may be a hidden income; the other 30 moved in.
     const [e] = enemyDeployEstimates(g, after, ME, STD, before);
-    expect(e!.observation).toMatchObject({ deploy: 5, low: 0, high: 40, fogArmies: 35, grewFromFog: [4] });
-    expect(e).toMatchObject({ estimate: 5, observedRaw: 5 });
+    expect(e!.observation).toMatchObject({ deploy: 10, low: 0, high: 40, fogArmies: 30, grewFromFog: [4] });
+    expect(e).toMatchObject({ estimate: 10, observedRaw: 10 });
   });
 
   it('the plan holds the bonus rather than conceding it to a phantom +40', () => {
     const p = planTurn({ graph: g, board: after, previousBoard: before, me: ME, income: 10, settings: STD, options: { adapt: true } });
-    expect(p.enemyDeploy).toBe(5);
+    expect(p.enemyDeploy).toBe(10);
     expect(p.conceded).toEqual([]);
     expect(p.moves.filter((m) => m.from === 3)).toEqual([]);
-    expect(p.rationale.join('\n')).toMatch(/35 of its growth on T4 \(#4\).*next to the fog.*a move/);
+    expect(p.rationale.join('\n')).toMatch(/30 of its growth on T4 \(#4\).*next to the fog.*a move/);
   });
 
   it('the tracker does not pin it at 40 for the idle turns that follow', () => {
     const [t] = trackOpponents(g, history([8, before], [9, after], [10, after], [11, after]), ME, STD);
-    expect(t!.turns.map((x) => x.observed)).toEqual([5, 0, 0]);
-    expect(t!.income).toBe(5);
+    expect(t!.turns.map((x) => x.observed)).toEqual([10, 0, 0]);
+    expect(t!.income).toBe(10);
   });
 
   it('growth a visible neighbour of its own sent is no fog arrival', () => {
@@ -286,6 +290,18 @@ describe('6. inferred bonuses must be plausible (#123)', () => {
     ]);
   });
 
+  it('what it could have paid for is what it earned, not its income now on every turn', () => {
+    // Seen on turns 7–9 only, deploying 7: it earned 7 + 7 on the observed turns and the base 5
+    // on the 7 turns before, 49 — one short of the 50 neutrals of B999 (in reach via T9). Its
+    // income now on all 9 turns (63) would have let it pay for B999.
+    const [t] = trackOpponents(g, history([7, at(10)], [8, at(17)], [9, at(24)]), ME, STD);
+    expect(t!.inferred!.candidates.flatMap((c) => c.bonusIds)).not.toContain(999);
+    expect(t!.inferred!.candidates).toEqual([
+      { bonusIds: [907], total: 2, hops: 2 },
+      { bonusIds: [908], total: 2, hops: 3 },
+    ]);
+  });
+
   it('none listed when too many fit', () => {
     const many = range(6, 6 + MAX_LISTED_COMBINATIONS);
     const g2 = buildGraph(
@@ -339,5 +355,89 @@ describe('6b. inferred bonuses on the 761-territory fixture (#123)', () => {
     expect(track!.inferred!.candidates.length + track!.inferred!.more).toBeGreaterThan(0);
     expect(track!.inferred!.candidates.length + track!.inferred!.more).toBeLessThan(1000);
     expect(track!.inferred!.implausible).toBeGreaterThan(0);
+  });
+});
+
+describe('7. a steady hidden bonus beside the fog is still income (#123 review)', () => {
+  // A line T1..T8: my T1–T3; its T4 beside the fogged T5..T8; +3 {T5} and +20 {T6, T7, T8} in
+  // the fog. It holds T5 unseen and deploys base 5 + 3 on T4 every turn: 5 → 13 → 21 → 29.
+  const g = buildGraph(
+    makeMap(range(1, 8), line(8), [
+      [101, 3, [5]],
+      [102, 20, [6, 7, 8]],
+    ]),
+  );
+  const fog = range(5, 8).map(fogged);
+  const at = (t4: number) => board([mine(1, 5), mine(2, 5), mine(3, 5), enemy(4, t4), ...fog]);
+
+  it('one turn of it reads as deploy, not a move out of the fog', () => {
+    const [e] = enemyDeployEstimates(g, at(13), ME, STD, at(5));
+    expect(e!.observation).toMatchObject({ deploy: 8, grewFromFog: [], fogArmies: 0 });
+    expect(e).toMatchObject({ estimate: 8, source: 'observed' });
+  });
+
+  it('the tracker reads 8 every turn and infers the hidden +3', () => {
+    const [t] = trackOpponents(g, history([3, at(5)], [4, at(13)], [5, at(21)], [6, at(29)]), ME, STD);
+    expect(t!.turns.map((x) => x.observed)).toEqual([8, 8, 8]);
+    expect(t!.income).toBe(8);
+    expect(t!.inferred!.gap).toBe(3);
+    expect(t!.inferred!.candidates[0]).toMatchObject({ bonusIds: [101], total: 3 });
+  });
+
+  it('a hidden income beyond twice the visible one is learnt over turns, not one turn', () => {
+    // +20 hidden: 25 a turn. One turn reads 10 (twice its visible 5); the tracker carries it up.
+    const big = (t4: number) => board([mine(1, 5), mine(2, 5), mine(3, 5), enemy(4, t4), ...fog]);
+    const [e] = enemyDeployEstimates(g, big(30), ME, STD, big(5));
+    expect(e!.observation).toMatchObject({ deploy: 10, low: 0, high: 25, grewFromFog: [4] });
+    const [t] = trackOpponents(g, history([3, big(5)], [4, big(30)], [5, big(55)], [6, big(80)]), ME, STD);
+    expect(t!.turns.map((x) => x.observed)).toEqual([10, 20, 25]);
+    expect(t!.income).toBe(25);
+  });
+});
+
+describe('8. a large fog stack joining a capture with a small visible shrink (#123 review)', () => {
+  // T1 – T2 – T3 – T4, T3 – T5 – T6 – T7. My T1, T2; a 3-army neutral T3; its T4 (6) and the
+  // fogged T5..T7 (+5 {T5}, +30 {T6, T7}). 39 out of the fog and 1 from T4 take T3: 40 stand.
+  const g = buildGraph(
+    makeMap(
+      range(1, 7),
+      [
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [3, 5],
+        [5, 6],
+        [6, 7],
+      ],
+      [
+        [901, 5, [5]],
+        [902, 30, [6, 7]],
+      ],
+    ),
+  );
+  const fog = range(5, 7).map(fogged);
+  const before = board([mine(1, 5), mine(2, 5), neutral(3, 3), enemy(4, 6), ...fog]);
+  const after = board([mine(1, 5), mine(2, 5), enemy(3, 40), enemy(4, 5), ...fog]);
+
+  it('reads at most twice what it was expected to deploy; the rest arrived from the fog', () => {
+    const [e] = enemyDeployEstimates(g, after, ME, STD, before);
+    // Visible income 5: the capture's cost (2) and T4's 1 count; 7 more as deploy-then-capture
+    // makes 10; the other 31 are a move, named in `high`.
+    expect(e!.observation).toMatchObject({
+      deploy: 10,
+      low: 2,
+      high: 41,
+      reinforced: [3],
+      fromFog: [3],
+      fogArmies: 31,
+    });
+    expect(e!.estimate).toBe(10);
+    expect(e!.estimate).toBeLessThan(40);
+  });
+
+  it('the tracker does not carry a +40 from it', () => {
+    const [t] = trackOpponents(g, history([3, before], [4, after], [5, after]), ME, STD);
+    expect(t!.turns[0]).toMatchObject({ observed: 10, low: 2, high: 41 });
+    expect(t!.income).toBeLessThanOrEqual(10);
   });
 });
