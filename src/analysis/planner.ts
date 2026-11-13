@@ -228,9 +228,10 @@
 //     under `balanced` only enemy territories in a breakable bonus — one whose
 //     every territory is visible and held by a single enemy, or (#72) a probable one: the
 //     opponent's track over at least TRACKED_MIN_TURNS turns lists it in every combination
-//     fitting its income gap or in the best fit, and every member is that opponent's or
+//     fitting its income gap (none unlisted) or in its single best fit (fewer bonuses than the
+//     next), and every member is that opponent's or
 //     hidden — and counter-attack targets: an enemy stack next to me visible on both boards
-//     that shrank attacking me (every neighbour visible on both, one of them mine on both, every
+//     that shrank fighting me (every neighbour visible on both, one of them mine on both, every
 //     neighbour neither mine nor its owner's unchanged in owner and armies, the shrink not
 //     absorbed by its own neighbours' growth) and is now cheaper to take than it
 //     was; never under `expand`/`defend`). Fogged or unknown neighbours are never attacked — they
@@ -296,7 +297,8 @@
 //     armiesToTake(my survivors), / PAYBACK_TURNS) over its capture cost plus the frontier it
 //     changes without its own hold need, warning when it can be retaken), or a counter-attack
 //     (scored like a break worth no bonus). Every break and counter-attack considered is
-//     reported in `offence` with whether it was made and why. A threatened border whose only
+//     reported in `offence` with whether it was made and why (a bonus broken through another
+//     member, by any path, counts as made). A threatened border whose only
 //     visible threat is a member of a breakable bonus also attacks it, once per
 //     bonus: it deploys its hold plus the capture, so what stays still holds if
 //     the enemy reinforces that member first and the attack fails; when it cannot
@@ -654,9 +656,11 @@ export interface TurnPlan {
   /**
    * The offensive options this plan considered (#72): each bonus break (its cheapest visible
    * member, "probable" when the opponent tracker inferred the bonus), each counter-attack on a
-   * stack that shrank attacking me, and the strike stack the spare deploys built. `cost` is the
-   * capture's armies (a strike: the armies deployed), `value` its worth in income terms (a strike:
-   * the strongest opponent's income), `taken` whether the plan makes it, `why` the reason.
+   * stack that shrank fighting me, and the strike stack the spare deploys built. `cost` is the
+   * capture's armies (what the final orders send when made; a strike: the armies deployed),
+   * `value` its worth in income terms (a strike: the strongest opponent's income), `taken`
+   * whether the plan makes it (a break: whether any member of the bonus falls this turn, `target`
+   * then being that member), `why` the reason.
    */
   offence: OffenceEntry[];
 }
@@ -2153,7 +2157,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   // A bonus is breakable when every territory in it is visible and held by one enemy, or (#72)
   // when the opponent tracker infers it behind the fog: its track (over at least
   // TRACKED_MIN_TURNS observed turns) lists it in every combination of bonuses that fits the
-  // opponent's income gap, or in the best fit (the first listed), and on this board every member
+  // opponent's income gap (all of them listed), or in its single best fit (the first listed, with
+  // fewer bonuses than the next), and on this board every member
   // is that opponent's or hidden. Such a break is "probable".
   interface Breakable {
     bonusId: number;
@@ -2191,8 +2196,13 @@ export function planTurn(input: PlanInput): TurnPlan {
       const tr = input.tracks?.find((x) => x.playerId === player);
       const fits = tr && tr.income !== null && tr.turns.length >= TRACKED_MIN_TURNS ? tr.inferred?.candidates : undefined;
       if (!fits?.length) continue;
-      const inEvery = fits.every((c) => c.bonusIds.includes(b.id));
-      const inBest = fits[0]!.bonusIds.includes(b.id);
+      // "Every" only when the tracker listed every fit (no "and N more"). The best fit must be
+      // strictly smaller than the next: equal-sized fits are ordered only by bonus id.
+      const more = tr!.inferred!.more;
+      const inEvery = more === 0 && fits.every((c) => c.bonusIds.includes(b.id));
+      const single = fits.length === 1 && more === 0;
+      const inBest =
+        fits[0]!.bonusIds.includes(b.id) && (single || (fits[1] !== undefined && fits[0]!.bonusIds.length < fits[1].bonusIds.length));
       if (!inEvery && !inBest) continue;
       breakable.push({
         bonusId: b.id,
@@ -2211,7 +2221,9 @@ export function planTurn(input: PlanInput): TurnPlan {
   // both boards under the same owner (F1, #69), every neighbour visible on both, one of them a
   // territory I held on both, every neighbour that was neither mine nor its owner's unchanged in
   // owner and armies (else it may have expanded or hit a third player), and the shrink not
-  // absorbed by its own neighbours' growth (a transfer). When it is now cheaper to take than it was, it is a strike candidate scored like
+  // absorbed by its own neighbours' growth (a transfer). The boards cannot tell its attack on me
+  // from my failed attack on it (both shrink it next to me), so the rationale says "fighting me":
+  // either way it is cheaper to take now. When it is now cheaper to take than it was, it is a strike candidate scored like
   // a break (rule 4a). A member of a breakable bonus is a break instead.
   interface Counter {
     player: number;
@@ -2351,7 +2363,7 @@ export function planTurn(input: PlanInput): TurnPlan {
 
   // ---- offence report (#72) ----
   /** The offensive options considered, by kind and target, in the order they were found. */
-  const offence = new Map<string, OffenceEntry>();
+  const offence = new Map<string, OffenceEntry & { bonusId?: number }>();
   /** Why an offensive capture was not made, by target (the first reason wins). */
   const offenceSkip = new Map<number, string>();
   const skipOffence = (t: number, why: string) => {
@@ -3665,6 +3677,16 @@ export function planTurn(input: PlanInput): TurnPlan {
         `Deploy ${t.holdCost} to ${label(t.id)} so it still holds (protects +${t.value}) after attacking ${label(n)}: ${heldStack(t)} stay, needing ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat if the attack fails.`,
       );
       warnRetake(b, o);
+      // Its own offence entry (#72): the break option may be another member, which never runs.
+      offence.set(`break:${b.bonusId}`, {
+        bonusId: b.bonusId,
+        target: n,
+        kind: 'break',
+        cost: o.cost,
+        value: round2(strikeWorth(b.value, o)),
+        taken: true,
+        why: `${breakReason(b)}, removing the only visible threat to ${label(t.id)}`,
+      });
       return true;
     };
     for (const b of breakable) {
@@ -3677,7 +3699,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (!o) continue;
       const worth = strikeWorth(b.value, o);
       const score = worth / Math.max(1, o.scoreCost);
-      offence.set(`break:${o.t}`, {
+      offence.set(`break:${b.bonusId}`, {
+        bonusId: b.bonusId,
         target: o.t,
         kind: 'break',
         cost: o.cost,
@@ -3712,14 +3735,14 @@ export function planTurn(input: PlanInput): TurnPlan {
         }),
       });
     }
-    // Counter-attacks (#72): a stack that shrank attacking me, scored like a break that breaks no
+    // Counter-attacks (#72): a stack that shrank fighting me, scored like a break that breaks no
     // bonus (the armies its owner must spend to retake it). It attacked me, so it is never a
     // second front.
     for (const [t, c] of counterAt) {
       if (!targets.has(t)) continue;
       const o = breakOption(t);
       const worth = strikeWorth(0, o);
-      const reason = `counter-attacks player ${c.player}'s ${label(t)}, which shrank from ${c.from} to ${c.to} attacking me last turn (${c.costNow} to take now, ${c.costThen} before)`;
+      const reason = `counter-attacks player ${c.player}'s ${label(t)}, which shrank from ${c.from} to ${c.to} fighting me last turn (attacking me, or holding off an attack of mine) (${c.costNow} to take now, ${c.costThen} before)`;
       offence.set(`counter:${t}`, { target: t, kind: 'counter', cost: o.cost, value: round2(worth), taken: false, why: reason });
       candidates.push({
         kind: 'counter',
@@ -4041,19 +4064,18 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     let where: number;
     let why: string;
+    let lock = false;
     if (stack) {
+      lock = true;
       where = stack.id;
       why = `one strike stack on the border facing player ${stack.player}, the strongest opponent (~${stack.income} income, ${stack.source}), not spread`;
-      // Keep it there: the transfer step must not walk it back as "idle interior" armies.
-      locked.add(where);
     } else if (short[0]) {
       where = short[0].id;
       why = `the held border with the most at stake (protects +${valueOf(where)}), still short of a comfortable margin over the ~${short[0].threat} threat`;
     } else if (expansion !== undefined && open(expansion)) {
       where = expansion;
       why = 'the stack working on the top expansion';
-      // Keep it there: the transfer step must not walk it back as "idle interior" armies.
-      locked.add(where);
+      lock = true;
     } else if (fogged !== undefined) {
       where = fogged;
       why = 'the border with the most fogged neighbours';
@@ -4072,6 +4094,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (n > 0) {
       rationale.push(`Deploy the leftover ${n} to ${label(where)}: ${why}.`);
       deploy(where, n);
+      // Keep a strike or expansion stack there: the transfer step must not walk it back as "idle
+      // interior" armies. Only when it got deploys (under Local Deployment it may get none).
+      if (lock) locked.add(where);
       if (stack)
         offence.set(`strike:${where}`, {
           target: where,
@@ -4309,15 +4334,28 @@ export function planTurn(input: PlanInput): TurnPlan {
       rationale.push(
         `Not attacking ${label(t)}: the combined capture loses ${lost} armies for the ${killed} it kills, a trade below even while behind on armies.`,
       );
-  const offenceList = [...offence.values()].map((o) => {
+  /** What the final orders send at `t` (a top-up of idle armies can raise a capture's size). */
+  const sentAt = (t: number) => moves.reduce((n, m) => (m.kind === 'attack' && m.to === t ? n + m.armies : n), 0);
+  const offenceList = [...offence.values()].map(({ bonusId, ...o }): OffenceEntry => {
     if (o.kind === 'strike') return o;
-    const taken = captured.has(o.target);
+    // A bonus broken this turn is a break made, whichever member fell and whatever path took it.
+    const via = captured.has(o.target)
+      ? o.target
+      : bonusId !== undefined
+        ? bonusTerritories(g, bonusId).filter((x) => captured.has(x)).sort(byNum)[0]
+        : undefined;
+    if (via !== undefined)
+      return {
+        ...o,
+        target: via,
+        cost: sentAt(via) || o.cost,
+        taken: true,
+        why: via === o.target ? o.why : `already broken by the capture of ${label(via)}: ${o.why}`,
+      };
     return {
       ...o,
-      taken,
-      why: taken
-        ? o.why
-        : `not made — ${offenceSkip.get(o.target) ?? 'other uses of the income scored higher per army, or it could not be afforded'}: ${o.why}`,
+      taken: false,
+      why: `not made — ${offenceSkip.get(o.target) ?? 'other uses of the income scored higher per army, or it could not be afforded'}: ${o.why}`,
     };
   });
 

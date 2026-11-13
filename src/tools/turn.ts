@@ -591,7 +591,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'spends income where it earns most per army — holding borders that protect income, completing ' +
           'cheap bonuses, breaking enemy bonuses (also ones the opponent tracker infers behind the fog, "probable"; a break is sized to land, ' +
           'not to survive the counter-attack, and is worth their lost income plus what retaking costs them), counter-attacking a stack that ' +
-          'shrank attacking you — with at least 30% on expansion (`full` lists the offensive options in `offence`); "expand" takes neutrals and never ' +
+          'shrank fighting you — with at least 30% on expansion (`full` lists the offensive options in `offence`); "expand" takes neutrals and never ' +
           'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
           'borders worth holding before anything else. Under balanced/defend, an opponent whose every territory is ' +
           'visible and borders yours is attacked at once when, whatever way it splits its one estimated deploy to ' +

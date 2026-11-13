@@ -115,17 +115,33 @@ describe('break an inferred bonus (#72)', () => {
     );
     expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 5]]);
     // 5 − round(0.7 × 3) = 3 survivors, retaken for 5: worth 5 + 5 / 10 = 5.5.
+    // `cost` reads the final orders: the idle-army top-up sends 6 (sized at 5).
+    expect(attacks(p).map((m) => m.armies)).toEqual([6]);
     expect(p.offence).toEqual([
-      expect.objectContaining({ target: 5, kind: 'break', cost: 5, value: 5.5, taken: true }),
+      expect.objectContaining({ target: 5, kind: 'break', cost: 6, value: 5.5, taken: true }),
     ]);
     expect(p.offence[0]!.why).toMatch(/probable/);
     expect(p.warnings.join('\n')).toMatch(/T5 \(#5\) can be retaken after it breaks B901/);
   });
 
-  it("in the tracker's best fit only: still probable", () => {
-    const p = planTurn(input([track(ENEMY, 10, [[901], [902]])]));
+  it("in the tracker's single best fit only (fewer bonuses than the next): still probable", () => {
+    // 904 is a made-up id: the second fit only needs to be a larger combination without B901.
+    const p = planTurn(input([track(ENEMY, 10, [[901], [902, 904]])]));
     expect(attacks(p).map((m) => m.to)).toEqual([5]);
     expect(why(p)).toMatch(/breaks probable enemy bonus B901 \(#901\) \(\+5 from player 20; in the best fit of its income gap\)/);
+  });
+
+  it('a best fit tied with another of the same size (ordered only by ids) is not a break target', () => {
+    const p = planTurn(input([track(ENEMY, 10, [[901], [902]])]));
+    expect(attacks(p)).toEqual([]);
+    expect(p.offence).toEqual([]);
+  });
+
+  it('with unlisted fits ("and N more"), every listed fit is not every fit: the best-fit wording', () => {
+    const t = track(ENEMY, 10, [[901], [901, 902]]);
+    const p = planTurn(input([{ ...t, inferred: { ...t.inferred!, more: 3 } }]));
+    expect(attacks(p).map((m) => m.to)).toEqual([5]);
+    expect(why(p)).toMatch(/\(\+5 from player 20; in the best fit of its income gap\)/);
   });
 
   it('a bonus only a weaker fit lists is not a break target', () => {
@@ -172,7 +188,9 @@ describe('a break is scored on landing (#72 with #71)', () => {
     expect(PAYBACK_TURNS).toBe(10);
     expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 5]]);
     expect(deployedTo(p, 1)).toBeGreaterThanOrEqual(1);
-    expect(p.offence).toEqual([expect.objectContaining({ target: 5, kind: 'break', cost: 5, value: 5.5, taken: true })]);
+    // Sized at 5; `cost` reads the final orders, which the idle-army top-up raised to 6.
+    expect(attacks(p).map((m) => m.armies)).toEqual([6]);
+    expect(p.offence).toEqual([expect.objectContaining({ target: 5, kind: 'break', cost: 6, value: 5.5, taken: true })]);
   });
 });
 
@@ -445,9 +463,11 @@ describe('counter-attack a stack that spent itself on me', () => {
     expect(captureCost(12, STD)).toBe(20);
     expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 5]]);
     expect(why(p)).toMatch(
-      /Attack T5 \(#5\) from T1 \(#1\) with 6: counter-attacks player 20's T5 \(#5\), which shrank from 12 to 4 attacking me last turn \(6 to take now, 20 before\)/,
+      /Attack T5 \(#5\) from T1 \(#1\) with 6: counter-attacks player 20's T5 \(#5\), which shrank from 12 to 4 fighting me last turn \(attacking me, or holding off an attack of mine\) \(6 to take now, 20 before\)/,
     );
-    expect(p.offence).toEqual([expect.objectContaining({ target: 5, kind: 'counter', cost: 6, taken: true })]);
+    // Sized at 6; `cost` reads the final orders, which the idle-army top-up raised to 8.
+    expect(attacks(p).map((m) => m.armies)).toEqual([8]);
+    expect(p.offence).toEqual([expect.objectContaining({ target: 5, kind: 'counter', cost: 8, taken: true })]);
   });
 
   it('no previous board, or a shrink its own neighbour absorbed (a transfer): no counter', () => {
@@ -486,18 +506,86 @@ describe('a counter-attack needs the shrink pinned on me', () => {
   it('the stack expanded into a neutral (T7: neutral 2 -> enemy 6): no counter', () => {
     const p = plan(neutral(7, 2), enemy(7, 6));
     expect(p.offence.filter((o) => o.kind === 'counter')).toEqual([]);
-    expect(why(p)).not.toMatch(/attacking me last turn/);
+    expect(why(p)).not.toMatch(/fighting me last turn/);
     expect(attacks(p).map((m) => m.to)).not.toContain(5);
   });
 
   it("the stack attacked a third player (T7: player 30's 10 -> 4): no counter", () => {
     const p = plan(enemy(7, 10, THIRD), enemy(7, 4, THIRD));
     expect(p.offence.filter((o) => o.kind === 'counter')).toEqual([]);
-    expect(why(p)).not.toMatch(/attacking me last turn/);
+    expect(why(p)).not.toMatch(/fighting me last turn/);
   });
 
   it('the third player untouched (T7 unchanged): the counter stands', () => {
     const p = plan(enemy(7, 10, THIRD), enemy(7, 10, THIRD));
     expect(p.offence).toContainEqual(expect.objectContaining({ target: 5, kind: 'counter', taken: true }));
+  });
+});
+
+// A bonus another path already broke is reported as broken, not as "not made". B910 (+4: T5, T6)
+// is the enemy's. T1 (6) faces T5 (1); T2 (12) faces T6 (3). Rule 1e pressure takes T5, sized for
+// the enemy's full deploy, so the break option (sized to land) moved to T6 and never ran.
+describe('a break made by another path is reported as made (#72)', () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 5, 6, 9],
+      [
+        [1, 5],
+        [2, 6],
+        [5, 6],
+        [1, 9],
+      ],
+      [[910, 4, [5, 6]]],
+    ),
+  );
+
+  it('pressure captures T5: the break of B910 is taken through T5, at the armies the attack sends', () => {
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 6), mine(2, 12), enemy(5, 1), enemy(6, 3), neutral(9, 2)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+    });
+    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 10]]);
+    expect(p.offence).toEqual([expect.objectContaining({ target: 5, kind: 'break', cost: 10, taken: true })]);
+    expect(p.offence[0]!.why).toMatch(/^already broken by the capture of T5 \(#5\): breaks enemy bonus B910 \(#910\)/);
+  });
+});
+
+// A border attacking its only threat breaks the bonus through that member (rule 4a), even when
+// the break option is a cheaper member elsewhere. T1 (4) holds +5 (B831) and faces only T5 (2) of
+// the enemy's B833 (+4: T5, T6, T7); T3 (6) faces T7 (1), the cheapest member.
+describe("a border's break of its only threat has its own offence entry (#72)", () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 3, 5, 6, 7],
+      [
+        [1, 5],
+        [5, 6],
+        [6, 7],
+        [3, 7],
+      ],
+      [
+        [831, 5, [1]],
+        [833, 4, [5, 6, 7]],
+      ],
+    ),
+  );
+
+  it('reports the break through T5 as made, with the threat it removes', () => {
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 4), mine(3, 6), enemy(5, 2), enemy(6, 2), enemy(7, 1)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+    });
+    // The break option was T7 (cheapest, 2 armies); the hold's attack on T5 broke the bonus first.
+    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 3]]);
+    expect(p.offence).toEqual([expect.objectContaining({ target: 5, kind: 'break', cost: 3, taken: true })]);
+    expect(p.offence[0]!.why).toBe(
+      'breaks enemy bonus B833 (#833) (+4 from player 20), removing the only visible threat to T1 (#1)',
+    );
   });
 });
