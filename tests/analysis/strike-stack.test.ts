@@ -12,7 +12,7 @@ import { captureCost, planTurn, type PlanInput, type PlannerSettings, type TurnP
 import { OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
-import { board, fogged, mine, neutral } from './helpers.js';
+import { board, fogged, mine, neutral, ruleAttacks } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -173,13 +173,14 @@ describe('the strike stack attacks what it can take (#102)', () => {
     const ffa = input({ game: { players: [{ id: ME }, { id: ENEMY }, { id: THIRD }] } });
     const p = planTurn(ffa);
     expect(p.profile.format).toBe('ffa');
-    expect(attacks(p).filter((m) => m.from === 1 && (m.to === 2 || m.to === 3))).toEqual([]);
+    expect(ruleAttacks(p).filter((m) => m.from === 1 && (m.to === 2 || m.to === 3))).toEqual([]);
     expect(why(p)).not.toMatch(/strike stack/);
+    expect(p.offence.filter((o) => o.kind.startsWith('strike'))).toEqual([]);
   });
 
   it('without adapting: no strike stack, so nothing changes', () => {
     const p = planTurn(input({ options: {} }));
-    expect(attacks(p)).toEqual([]);
+    expect(ruleAttacks(p)).toEqual([]);
     expect(p.offence.filter((o) => o.kind.startsWith('strike'))).toEqual([]);
   });
 });

@@ -19,7 +19,7 @@ import {
   type TurnPlan,
 } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, fogged, mine, neutral } from './helpers.js';
+import { board, fogged, mine, neutral, ruleAttacks } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -109,7 +109,7 @@ describe('break an inferred bonus (#72)', () => {
 
   it('without a track, a partly fogged bonus is never broken', () => {
     const p = planTurn(input());
-    expect(attacks(p)).toEqual([]);
+    expect(ruleAttacks(p)).toEqual([]);
     expect(p.offence).toEqual([]);
   });
 
@@ -140,7 +140,7 @@ describe('break an inferred bonus (#72)', () => {
 
   it('a best fit tied with another of the same size (ordered only by ids) is not a break target', () => {
     const p = planTurn(input([track(ENEMY, 10, [[901], [902]])]));
-    expect(attacks(p)).toEqual([]);
+    expect(ruleAttacks(p)).toEqual([]);
     expect(p.offence).toEqual([]);
   });
 
@@ -153,13 +153,15 @@ describe('break an inferred bonus (#72)', () => {
 
   it('a bonus only a weaker fit lists is not a break target', () => {
     const p = planTurn(input([track(ENEMY, 10, [[902], [901]])]));
-    expect(attacks(p)).toEqual([]);
+    expect(ruleAttacks(p)).toEqual([]);
+    expect(p.offence).toEqual([]);
   });
 
   it('a track over fewer than two observed turns is not trusted', () => {
     const t = track(ENEMY, 10, [[901]]);
     const p = planTurn(input([{ ...t, turns: t.turns.slice(0, 1) }]));
-    expect(attacks(p)).toEqual([]);
+    expect(ruleAttacks(p)).toEqual([]);
+    expect(p.offence).toEqual([]);
   });
 });
 
@@ -490,9 +492,10 @@ describe('counter-attack a stack that spent itself on me', () => {
   });
 
   it('no previous board, or a shrink its own neighbour absorbed (a transfer): no counter', () => {
-    expect(attacks(plan())).toEqual([]);
+    expect(ruleAttacks(plan())).toEqual([]);
+    expect(plan().offence).toEqual([]);
     const moved = plan(before(12, 32));
-    expect(attacks(moved)).toEqual([]);
+    expect(ruleAttacks(moved)).toEqual([]);
     expect(moved.offence).toEqual([]);
   });
 });
@@ -526,7 +529,7 @@ describe('a counter-attack needs the shrink pinned on me', () => {
     const p = plan(neutral(7, 2), enemy(7, 6));
     expect(p.offence.filter((o) => o.kind === 'counter')).toEqual([]);
     expect(why(p)).not.toMatch(/fighting me last turn/);
-    expect(attacks(p).map((m) => m.to)).not.toContain(5);
+    expect(ruleAttacks(p).map((m) => m.to)).not.toContain(5);
   });
 
   it("the stack attacked a third player (T7: player 30's 10 -> 4): no counter", () => {
