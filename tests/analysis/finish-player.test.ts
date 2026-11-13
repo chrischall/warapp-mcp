@@ -123,3 +123,38 @@ describe('#179 Order Priority: the commander strike when I move first but the op
     expect(p.rationale.join('\n')).toMatch(/may hold an Order Priority card: two cancel/);
   });
 });
+
+describe('#179 eta.eliminate: the turns to finish each visible opponent', () => {
+  it('one turn when every territory is next to mine and the armies are there', () => {
+    const p = killPlan();
+    expect(p.eta?.eliminate[VICTIM]).toEqual({ turns: 1, atLeast: false, distance: 1, armies: expect.any(Number) });
+  });
+
+  it('more turns when the income must catch up with its deploy', () => {
+    const p = planTurn({ graph: buildGraph(LD_MAP), board: KILL_BOARD, me: ME, income: 20, settings: STD });
+    const eta = p.eta!.eliminate[VICTIM]!;
+    expect(eta.turns).toBeGreaterThan(1);
+    // Its territories' armies plus ~9 a turn for that many turns, against my armies plus 20 a turn.
+    expect(eta.armies).toBeLessThanOrEqual(8 + 20 * eta.turns!);
+  });
+
+  it('never fewer turns than the steps to its farthest territory', () => {
+    // 1 2 3 mine; 4 neutral; 5 the victim's, two steps from 3.
+    const g = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [2, 3], [3, 4], [4, 5]]));
+    const p = planTurn({ graph: g, board: board([mine(1, 30), mine(2, 30), mine(3, 30), neutral(4, 2), enemy(5, 1)]), me: ME, income: 50, settings: STD });
+    expect(p.eta!.eliminate[VICTIM]).toMatchObject({ turns: 2, distance: 2, atLeast: false });
+  });
+
+  it('at least, when its land borders the fog', () => {
+    const g = buildGraph(makeMap([1, 2, 3], [[1, 2], [2, 3]]));
+    const b = board([mine(1, 30), enemy(2, 1), { territoryId: 3, owner: { kind: 'unknown' }, armies: null, fogLevel: 'Fogged' }]);
+    const p = planTurn({ graph: g, board: b, me: ME, income: 50, settings: STD });
+    expect(p.eta!.eliminate[VICTIM]).toMatchObject({ turns: 1, atLeast: true });
+  });
+
+  it('null turns when my income never catches up with its deploy', () => {
+    const g = buildGraph(makeMap([1, 2], [[1, 2]]));
+    const p = planTurn({ graph: g, board: board([mine(1, 2), enemy(2, 40)]), me: ME, income: 5, settings: STD, options: { enemyDeploy: 30 } });
+    expect(p.eta!.eliminate[VICTIM]).toMatchObject({ turns: null });
+  });
+});

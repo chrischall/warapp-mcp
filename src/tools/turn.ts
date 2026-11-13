@@ -1265,6 +1265,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...(rung === 'full' && plan.exchanges
           ? { exchanges: plan.exchanges.map((e) => ({ ...e, from: name(e.from), to: name(e.to) })) }
           : {}),
+        // #179: turns to eliminate each visible opponent, full view only.
+        ...(rung === 'full' && plan.eta ? { eta: plan.eta } : {}),
         cards: {
           hand: hand.map(cardView),
           ...(handUnknown ? { handReadable: false } : {}),

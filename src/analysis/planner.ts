@@ -1189,7 +1189,31 @@ export interface TurnPlan {
    * there, and after its owner's whole income, with a label. Absent when no attack hits a player.
    */
   exchanges?: ExchangeView[];
+  /**
+   * #179: estimated turns to eliminate each visible opponent, by player id (absent with none in
+   * view). Present for every opponent with a visible territory my land can reach.
+   */
+  eta?: { eliminate: Record<number, EliminateEta> };
 }
+
+/**
+ * Turns to eliminate one opponent (#179): at least the steps from my land to its farthest visible
+ * territory (a multi-source search), and enough turns that what its territories need — each one's
+ * capture cost now, plus its deploy for that many turns — fits my movable armies plus my income for
+ * as many turns. `turns` is null when that is not within {@link ETA_HORIZON} turns (its deploy grows
+ * faster than my income can pay). `atLeast` when its land borders the fog (it may hold more there).
+ */
+export interface EliminateEta {
+  turns: number | null;
+  atLeast: boolean;
+  /** Steps from my nearest territory to its farthest visible one. */
+  distance: number;
+  /** The armies that takes, at `turns` (at `distance` when `turns` is null). */
+  armies: number;
+}
+
+/** The most turns {@link EliminateEta} looks ahead. */
+export const ETA_HORIZON = 30;
 
 export interface ExchangeView extends Exchange {
   from: number;
@@ -9030,6 +9054,32 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         .join('; ')}.`,
     );
 
+  // ---- #179: turns to eliminate each visible opponent ----
+  const eliminateEta: Record<number, EliminateEta> = {};
+  {
+    const dist = new Map<number, number>(mine.map((t) => [t, 0] as const));
+    const queue = [...mine];
+    for (let i = 0; i < queue.length; i++) {
+      const x = queue[i]!;
+      for (const n of neighborsOf(g, x))
+        if (!dist.has(n)) {
+          dist.set(n, dist.get(x)! + 1);
+          queue.push(n);
+        }
+    }
+    const movable = mine.reduce((n, x) => n + Math.max(0, armiesOf(x) - guard), 0);
+    for (const [p, ts] of [...ownedBy].sort((a, b) => a[0] - b[0])) {
+      const distance = Math.max(...ts.map((t) => dist.get(t) ?? Infinity));
+      const base = ts.reduce((n, t) => n + (captureCost(defenceAt(t), s) ?? Infinity), 0);
+      if (!Number.isFinite(distance) || !Number.isFinite(base)) continue;
+      const need = (k: number) => base + (k * deployOf(p) > 0 ? (captureCost(k * deployOf(p), s) ?? Infinity) : 0);
+      let turns: number | null = null;
+      for (let k = Math.max(1, distance); k <= ETA_HORIZON && turns === null; k++) if (need(k) <= movable + income * k) turns = k;
+      const armies = need(turns ?? Math.max(1, distance));
+      eliminateEta[p] = { turns, atLeast: fogEdge(p).length > 0, distance, armies: Number.isFinite(armies) ? armies : -1 };
+    }
+  }
+
   return {
     goal,
     profile,
@@ -9056,5 +9106,6 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     offence: offenceList,
     moveSlots: moves.map((m) => SLOT_NAMES[slotOf(m)]!),
     ...(exchanges.length ? { exchanges } : {}),
+    ...(Object.keys(eliminateEta).length ? { eta: { eliminate: eliminateEta } } : {}),
   };
 }
