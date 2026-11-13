@@ -69,7 +69,11 @@ function opponentCanHold(settings: GameSettings | undefined, card: string, turn:
 }
 
 export interface CardAdviceView {
-  orderDelay?: { card: string; before: number; attacks: number[] };
+  /**
+   * `before` is 1-based among the plan's moves (its `orders` moves, in order); `order` is the card
+   * order to pass to warapp_submit_turn as is (#186: that placement is UNVERIFIED live).
+   */
+  orderDelay?: { card: string; before: number; attacks: number[]; order: { kind: 'card'; card: string; before: number } };
   bomb?: { target: number | null; kind: string | null; why: string };
   emergencyBlockade?: { territory: number; givesUp: number; wall: number; player: number; reach: number; kills: number };
   active?: Array<{ card: string; players?: number[]; target?: number; playedBy?: number; expiresAfterTurn?: number; untilTurn?: number }>;
@@ -119,12 +123,19 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
   // Order Delay: above every order that is not urgent, when an attack the opponent can answer is planned.
   const delay = adviseOrderDelay(hand, choice, plan.moves, plan.moveSlots);
   if (delay) {
-    view.orderDelay = { card: delay.card.id, before: delay.before, attacks: delay.attacks };
+    view.orderDelay = {
+      card: delay.card.id,
+      before: delay.before,
+      attacks: delay.attacks,
+      order: { kind: 'card', card: delay.card.id, before: delay.before },
+    };
     warnings.push(
       `Play Order Delay above move ${delay.before}${delay.before <= plan.moves.length ? ` (${moveLabel(delay.before)})` : ''}: ` +
         `${delay.attacks.map(moveLabel).join(', ')} ${delay.attacks.length === 1 ? 'is an attack' : 'are attacks'} the opponent can answer first, ` +
-        'and the orders after the card wait until the opponent has moved. Play it in the game client: warapp_submit_turn ' +
-        'writes the card after every move (its only verified position), where it delays nothing.',
+        'and the orders after the card wait until the opponent has moved. Add `cards.advice.orderDelay.order` (the card with ' +
+        '`before`) to the orders for warapp_submit_turn — placing the card among the moves is UNVERIFIED live until one ' +
+        'commit uses it — or play it in the game client. Without `before`, warapp_submit_turn writes the card after every ' +
+        'move (its verified position), where it delays nothing.',
     );
   }
 

@@ -324,6 +324,52 @@ describe('SendOrders params', () => {
     ).toBe('39300000' + '01' + '04000000' + '01' + deploy + '01' + attack + '01' + transfer + '01' + playOd + '02000000' + '0000');
   });
 
+  describe('an Order Delay placed among the moves (#186, UNVERIFIED live)', () => {
+    // The bundle's GameOrderPlayCardOrderDelay writes tag 11, the GUID and the base — no position
+    // field — so where the card sits in the order list is its position; its phase is 50, the moves'.
+    const od = 'ffeeddccbbaa99887766554433221100';
+    const playOd = '0B' + 'CCDDEEFF' + 'AABB' + '8899' + '7766554433221100' + '090300000000';
+    const attack = '01000300090000000003000000000A000000090300000000';
+    const transfer = '010003000600000000010000000004000000090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    const send = (beforeMove: number | undefined, card: 'OrderDelay' | 'OrderPriority' = 'OrderDelay') =>
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'card', card, cardId: od, ...(beforeMove !== undefined ? { beforeMove } : {}) },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'move', from: 9, to: 10, armies: 3 },
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+          ],
+          2,
+        ),
+      );
+    const frame = (...orders: string[]) =>
+      '39300000' + '01' + '04000000' + orders.map((o) => '01' + o).join('') + '02000000' + '0000';
+
+    it('writes the card above the second move (beforeMove 1): deploy, attack, Order Delay, transfer', () => {
+      expect(send(1)).toBe(frame(deploy, attack, playOd, transfer));
+    });
+
+    it('writes the card above the first move (beforeMove 0), still after the deploys', () => {
+      expect(send(0)).toBe(frame(deploy, playOd, attack, transfer));
+    });
+
+    it('writes it after every move when beforeMove is the move count: the verified default', () => {
+      expect(send(2)).toBe(send(undefined));
+      expect(send(2)).toBe(frame(deploy, attack, transfer, playOd));
+    });
+
+    it('refuses a position past the moves, a negative one, and a position on any other card', () => {
+      expect(() => send(3)).toThrow(/beforeMove 3 .*2 moves/);
+      expect(() => send(-1)).toThrow(/beforeMove/);
+      expect(() => send(1, 'OrderPriority')).toThrow(/Only an Order Delay/);
+    });
+  });
+
   it('writes discards (phase 10) before everything else, Order Priority next', () => {
     // Bundle: GameOrderDiscard.Vd() is TurnPhase 10 (Discards), ahead of Order Priority (12).
     const d = '00112233445566778899aabbccddeeff';

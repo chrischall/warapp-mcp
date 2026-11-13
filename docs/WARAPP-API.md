@@ -223,6 +223,23 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   presses Begin (`BeginFirstTurn`, 78 — `docs/WEB-PROTOCOL.md` "Begin first turn"). Read from the
   client bundle; the 2026-11-12 live game in issue #44 matched it (no standing until Begin), but
   `warapp_begin_turn`'s encoding has not been sent live.
+- **Who moves first (#127) — the rules read from the client's help text, UNVERIFIED live.** Under
+  `Cycle` turn 1 is random and each later turn reverses the order ("ABCD becomes DCBA"); with
+  manual distribution the award counts as part of the cycle (A awarded first, B moves first on turn
+  one). War.app does not say who moves first under `Cycle`: "you must deduce it by observing the
+  sequence that orders happen". Under `NoLuckCycle` the first order is set by how fast each player
+  played turn one (or the distribution, in a picking game), then swaps every turn, and the game
+  shows it (Game → Move Order). So `warapp_plan_turn` keeps one known turn per game at
+  `<dataDir>/move-order/<gameId>.json` (from `first_mover`, or the award under `Cycle`) and
+  alternates it for later turns (`src/move-order.ts`).
+- **Move order in the game history — not read, UNVERIFIED.** The client's turn record carries the
+  turn's `MoveOrder` (player ids in the order they moved) beside `Orders`, `TurnNumber` and
+  `TurnTime`, and its game record a `CyclicMoveOrder`. Whether GameFeed's `GetHistory` sends either
+  (or a game in progress's orders, in the order they ran) has not been seen, and the in-progress
+  history shape itself is unverified (below), so nothing reads the first mover from it: one
+  off-by-one in the turn numbering would invert every turn after it. When a live history is
+  captured, record whether it carries a turn's move order and its turn numbering here, then add it
+  as a source in `src/move-order.ts`.
 
 ## Order options and mods — keys verified, the options UNVERIFIED live (#165)
 
@@ -258,8 +275,9 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
 - Picks are awarded round by round in move order, the order reversing each round, each player
   getting their highest-ranked territory still free (the community wiki; not read from the bundle).
 - What the award is read for (#166, `src/analysis/award.ts`) rests on that rule and two more from
-  the wiki, none checked against a live game: under a cyclic move order the award is turn 0 of the
-  cycle (the first awarded moves second on turn 1), and a commander starts on its owner's first
+  the wiki, none checked against a live game: under a `Cycle` move order the award is turn 0 of the
+  cycle (the first awarded moves second on turn 1; the client's help text says so too, and under
+  `NoLuckCycle` play speed sets the first order instead, so the award says nothing there), and a commander starts on its owner's first
   awarded territory. UNVERIFIED too: whether `GetTerritoryPicks` still answers once territories are
   distributed, which is why the list is kept locally when it is read during distribution.
 

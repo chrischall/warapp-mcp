@@ -396,7 +396,18 @@ export type TurnOrder =
       attackTeammates?: boolean;
       commander?: OrderCommander;
     }
-  | { kind: 'card'; card: CardPlayKind; cardId: string; target?: number }
+  | {
+      kind: 'card';
+      card: CardPlayKind;
+      cardId: string;
+      target?: number;
+      /**
+       * Order Delay only (#186): the move (0-based, among this turn's moves in their order) the card
+       * is written above. The move count, or absent, writes it after every move — the only
+       * live-verified position; a smaller index is UNVERIFIED live (docs/WEB-PROTOCOL.md).
+       */
+      beforeMove?: number;
+    }
   | { kind: 'discard'; cardId: string };
 
 /**
@@ -435,13 +446,45 @@ export function turnPhaseOf(o: TurnOrder): number {
 /**
  * Turn-phase order, and within one phase the card plays after the other orders (so an Order
  * Delay, phase 50, follows every AttackTransfer: the shape of the 2026-11-12 live commit that
- * verified phase 50). The phase is VERIFIED; whether war.app accepts an Order Delay ahead of a
- * move in phase 50 is UNVERIFIED live (the client bundle lets a player raise it among the moves and
- * its validator refuses only a phase that goes down, but no such commit has been sent), so it is
- * never written there (docs/WEB-PROTOCOL.md).
+ * verified phase 50). The phase is VERIFIED; an Order Delay ahead of a move in phase 50 is
+ * UNVERIFIED live (the client bundle lets a player raise it among the moves and its validator
+ * refuses only a phase that goes down, but no such commit has been sent), so it is written there
+ * only when its order asks (`beforeMove`, #186; docs/WEB-PROTOCOL.md).
  */
 function compareTurnOrders(a: TurnOrder, b: TurnOrder): number {
   return turnPhaseOf(a) - turnPhaseOf(b) || Number(a.kind === 'card') - Number(b.kind === 'card');
+}
+
+/**
+ * The orders in the sequence SendOrders writes them: turn-phase order ({@link compareTurnOrders}),
+ * then each Order Delay that names a `beforeMove` short of the move count lifted out and written
+ * just above that move (#186 — the bundle's Order Delay order carries no position field, so its
+ * place in the list is its position; UNVERIFIED live). Several placed above one move keep their
+ * given order. Throws on a `beforeMove` on any other card, or one outside 0..moves.
+ */
+export function sendOrderSequence(orders: readonly TurnOrder[]): TurnOrder[] {
+  const moveCount = orders.filter((o) => o.kind === 'move').length;
+  const placed = new Map<TurnOrder, number>();
+  for (const o of orders) {
+    if (o.kind !== 'card' || o.beforeMove === undefined) continue;
+    if (o.card !== 'OrderDelay') throw new Error(`Only an Order Delay takes a position among the moves, not ${o.card}.`);
+    if (!Number.isInteger(o.beforeMove) || o.beforeMove < 0 || o.beforeMove > moveCount) {
+      throw new Error(`Order Delay beforeMove ${o.beforeMove} is outside the turn's ${moveCount} moves (0–${moveCount}).`);
+    }
+    if (o.beforeMove < moveCount) placed.set(o, o.beforeMove);
+  }
+  const sorted = orders.filter((o) => !placed.has(o)).sort(compareTurnOrders);
+  if (!placed.size) return sorted;
+  const out: TurnOrder[] = [];
+  let move = 0;
+  for (const o of sorted) {
+    if (o.kind === 'move') {
+      for (const [card, at] of placed) if (at === move) out.push(card);
+      move++;
+    }
+    out.push(o);
+  }
+  return out;
 }
 
 /**
@@ -452,7 +495,8 @@ function compareTurnOrders(a: TurnOrder, b: TurnOrder): number {
  * sort, so orders of one phase keep their given order, card plays after
  * the rest): discards, Order Priority and Reinforcement plays, then every deploy, then
  * the moves (AttackTransfers, mode 3 unless the move sets another) followed by any Order Delay
- * plays, then any Blockade plays.
+ * plays (or one written above a chosen move, `beforeMove`, UNVERIFIED live: {@link sendOrderSequence}),
+ * then any Blockade plays.
  */
 export function writeSendOrdersParams(
   w: Writer,
@@ -461,7 +505,7 @@ export function writeSendOrdersParams(
   orders: readonly TurnOrder[],
   turnNumber: number,
 ): void {
-  const sorted = [...orders].sort(compareTurnOrders);
+  const sorted = sendOrderSequence(orders);
   w.int32(gameId).bool(true).int32(sorted.length);
   for (const o of sorted) {
     w.bool(true);

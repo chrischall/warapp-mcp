@@ -8,8 +8,9 @@
 //    another player's start. In a two-player game it is the opponent's.
 //  - in a two-player game the award order is A B B A A B …, and some granted sets can come about
 //    only as the first awarded, others only as the second (my k-th granted pick being list number
-//    2k is exactly that case). Under a cyclic move order the award is turn 0 of the cycle, so the
-//    first awarded moves second on turn 1 (the wiki's Move order page) and the order alternates.
+//    2k is exactly that case). Under a `Cycle` move order the award is turn 0 of the cycle, so the
+//    first awarded moves second on turn 1 (the wiki's Move order page and the client's help text)
+//    and the order alternates. Under `NoLuckCycle` play speed sets the first order instead.
 //  - a commander starts on its owner's first awarded territory (the wiki's Commanders page), so
 //    when every award that fits gives the opponent the same first territory of my list, its
 //    commander started there.
@@ -142,16 +143,22 @@ function readDuel(list: readonly number[], granted: readonly number[], awards: n
 /** Move orders under which the award order carries into the turns (GameFeed's `MoveOrder`). */
 const CYCLIC_ORDERS = new Set(['Cycle', 'NoLuckCycle']);
 
+/** A cyclic move order (GameFeed's `MoveOrder`): the order reverses every turn. */
+export const isCyclicMoveOrder = (moveOrder: string | undefined): boolean => moveOrder !== undefined && CYCLIC_ORDERS.has(moveOrder);
+
 /**
- * Who moves first on `turn` in a two-player game, from my place in the award: under a cyclic
+ * Who moves first on `turn` in a two-player game, from my place in the award: under a `Cycle`
  * order the award is turn 0 of the cycle, so the first awarded moves second on turn 1, first on
- * turn 2, and so on. `null` under a random (or unknown) order or without a role. An Order
- * Priority or Order Delay card played that turn changes it.
+ * turn 2, and so on (the client's own help text: "if player A gets their first pick, player B
+ * will get first move on turn one"). `null` under a random (or unknown) order or without a role,
+ * and under `NoLuckCycle`, whose first order is set by how fast each player played turn one or
+ * the distribution (the same help text), not by the award (#127). An Order Priority or Order
+ * Delay card played that turn changes it.
  */
 export function firstMoverOnTurn(input: { role: AwardRole | null; turn: number | null; moveOrder: string | undefined }): 'me' | 'opponent' | null {
   const { role, turn, moveOrder } = input;
   if (role === null || turn === null || !Number.isInteger(turn) || turn < 1) return null;
-  if (moveOrder === undefined || !CYCLIC_ORDERS.has(moveOrder)) return null;
+  if (moveOrder !== 'Cycle') return null;
   const firstAwardedMovesFirst = turn % 2 === 0;
   return (role === 'first') === firstAwardedMovesFirst ? 'me' : 'opponent';
 }

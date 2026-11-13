@@ -252,9 +252,13 @@ it as `award`):
   say nothing. Every award that fits the start is enumerated, and only what holds in all of them is
   reported.
 - **Who moves first.** Under a cyclic move order the award counts as turn 0, so the first awarded
-  moves second on turn 1 and the order alternates after that. Reported as `award.firstMover`;
-  `warapp_check_plan` still tries both orders unless told, because this rule is the wiki's and has
-  not been checked against a live game.
+  moves second on turn 1 and the order alternates after that (the client's own help text says the
+  same: "if player A gets their first pick, player B will get first move on turn one"). Reported as
+  `award.firstMover` under `Cycle` only: under a no-luck cycle the first order is set by how fast
+  each player played turn one or the distribution, not by the award. `warapp_plan_turn` takes it as
+  its default first mover, and keeps a known first mover between turns, alternated (#127);
+  `warapp_check_plan` still tries both orders unless told, because this rule has not been checked
+  against a live game.
 - **Their commander.** A commander starts on its owner's first awarded territory. When every award
   that fits gives the opponent the same first territory of my list (always the case when my own
   first pick was refused), that is where it started. Reported, not acted on.
@@ -684,7 +688,7 @@ delays the orders listed after it; under No-Split the whole stack moves).
   an opponent's first visible deployment than the move order allows, it has deployed somewhere
   out of your sight first, so its income is larger than what arrives at your border. **Advice
   only.** Source: <https://warlight.nghood.com/>
-- `reading-pick-move-order` — Under a cyclic move order the pick award is turn 0: whoever was
+- `reading-pick-move-order` — Under a Cycle move order (not NoLuckCycle, where play speed sets the first mover) the pick award is turn 0: whoever was
   awarded first moves second on turn 1 and first on turn 2. If your k-th granted pick was number
   2k on your list you know which: k odd, you were awarded second and move first on turn 1; k
   even, the reverse. **Advice only.** Source:
