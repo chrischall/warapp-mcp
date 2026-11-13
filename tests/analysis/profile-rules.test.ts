@@ -121,6 +121,9 @@ describe('rule 0p.1: a 1v1 in contact', () => {
     expect(p).toMatchObject({ goal: 'balanced' });
     expect(attacks(p).map((m) => m.to)).toEqual([4]);
     expect(why(p)).toMatch(/Goal balanced was given explicitly, so it overrides the game profile \(1v1, contact, even\)/);
+    // It is a warning as well as a rationale line: an agent that passed `goal: balanced` on
+    // every call played two whole 1v1s with the format rules (and all offence) switched off.
+    expect(p.warnings.join('\n')).toMatch(/goal balanced was given explicitly, so none of the game-profile rules for a 1v1 apply this turn.*leave the goal out/i);
     expect(why(p)).not.toMatch(/1v1 in contact/);
   });
 

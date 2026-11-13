@@ -225,6 +225,51 @@ describe('gameProfile: standing', () => {
     expect(gameProfile(base()).standingSource).toBe('visible');
   });
 
+  // Lost games: "ahead (tracked): 23 against ~12" while holding 65 armies against 138 in view.
+  // An opponent's visible armies are a lower bound on what it has; mine are exact.
+  describe('the armies on the board overrule an income comparison', () => {
+    const outnumbered = (theirs: number) =>
+      board([mine(1, 5), mine(2, 5), mine(3, 5), enemy(4, theirs, 20), enemy(5, 1, 20), enemy(6, 1, 20), neutral(7, 2), neutral(8, 2)]);
+
+    it(`never ahead while my visible armies are below ${BEHIND_RATIO}× the opponent's`, () => {
+      // Income 10 against ~5 reads ahead; 15 armies against 22 is not.
+      const p = gameProfile(base({ board: outnumbered(20), income: 10 }));
+      expect(p.standing).toBe('even');
+      expect(p.notes.join(' ')).toMatch(/my 15 visible armies are below 0\.8× player 20's 22/);
+    });
+
+    it('behind when its visible armies are more than twice mine, whatever the incomes', () => {
+      const p = gameProfile(base({ board: outnumbered(40), income: 10 }));
+      expect(p.standing).toBe('behind');
+      expect(p.notes.join(' ')).toMatch(/my 15 visible armies are less than half of player 20's 42/);
+    });
+
+    it('also under fog, where the income comparison says unknown', () => {
+      const foggy = board([mine(1, 5), mine(2, 5), enemy(3, 40, 20), fogged(4), fogged(5), fogged(6), fogged(7), fogged(8)]);
+      const p = gameProfile(base({ board: foggy, income: 10 }));
+      expect(p.standing).toBe('behind');
+      expect(p.standingSource).toBe('visible');
+    });
+
+    it('armies in my favour change nothing: the income comparison stands', () => {
+      expect(gameProfile(base({ board: touching, income: 10 })).standing).toBe('ahead');
+      const p = gameProfile(base({ board: touching, income: 3 }));
+      expect(p.standing).toBe('behind');
+    });
+
+    it("a teammate's armies are not an opponent's", () => {
+      const withMate = board([mine(1, 5), mine(2, 5), enemy(3, 60, 11), enemy(7, 5, 20), enemy(8, 5, 20)]);
+      const p = gameProfile(
+        base({
+          board: withMate,
+          income: 10,
+          players: [{ id: ME, team: 0 }, { id: 11, team: 0 }, { id: 20, team: 1 }, { id: 21, team: 1 }],
+        }),
+      );
+      expect(p.standing).toBe('ahead');
+    });
+  });
+
   it('unknown when no opponent is in sight', () => {
     const p = gameProfile(base({ estimates: [] }));
     expect(p.standing).toBe('unknown');

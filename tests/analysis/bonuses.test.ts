@@ -24,6 +24,15 @@ describe('bonusTerritories', () => {
     expect(bonusTerritories(g2, 201)).toEqual([6, 7]);
     expect(bonusTerritories(g2, 999)).toEqual([]);
   });
+
+  it('answers a repeat call from the graph’s own cache, and the answer cannot be changed', () => {
+    const first = bonusTerritories(g, 104);
+    expect(bonusTerritories(g, 104)).toBe(first);
+    expect(Object.isFrozen(first)).toBe(true);
+    // The cache belongs to one graph: another graph of the same map has its own.
+    expect(bonusTerritories(buildGraph(tinyMap()), 104)).not.toBe(first);
+    expect(bonusTerritories(buildGraph(tinyMap()), 104)).toEqual([...first]);
+  });
 });
 
 describe('analyzeBonus', () => {

@@ -366,7 +366,10 @@ describe('the planner uses the tracked income', () => {
     });
     expect(plan.profile).toMatchObject({ standingSource: 'tracked' });
     expect(plan.profile!.standing).not.toBe('ahead');
-    expect(plan.profile!.standing).toBe('even');
+    // On income it is even (25 against 31); its 71-stack in view is more than twice my armies,
+    // and the armies on the board overrule the income comparison: behind.
+    expect(plan.profile!.notes.join(' ')).toMatch(/Standing even \(tracked\): my income 25/);
+    expect(plan.profile!.standing).toBe('behind');
   });
 });
 

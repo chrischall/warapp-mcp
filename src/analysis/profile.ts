@@ -204,6 +204,33 @@ export function gameProfile(input: ProfileInput): GameProfile {
     );
   }
 
+  // ---- the armies on the board overrule an income comparison ----
+  // An opponent's visible armies are a lower bound on what it has, and mine are exact, so being
+  // outnumbered in view is certain where an income estimate is not. Live, the standing read
+  // "ahead (23 against ~12 tracked)" while I held 65 armies against 138 in view, and "unknown"
+  // against 893.
+  const armiesBy = new Map<number, number>();
+  for (const t of board.territories)
+    if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.armies !== null)
+      armiesBy.set(t.owner.playerId, (armiesBy.get(t.owner.playerId) ?? 0) + t.armies);
+  const myArmies = armiesBy.get(me) ?? 0;
+  const rival = [...armiesBy].filter(([p]) => !ally(p)).sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+  if (rival && rival[1] > 0 && mine.length) {
+    const [rivalId, theirArmies] = rival;
+    if (myArmies * 2 < theirArmies && standing !== 'behind') {
+      notes.push(
+        `Standing behind, whatever the incomes (it read ${standing}): my ${myArmies} visible armies are less than half of player ${rivalId}'s ${theirArmies} in view, and what it shows is the least it has.`,
+      );
+      standing = 'behind';
+      standingSource ??= 'visible';
+    } else if (standing === 'ahead' && myArmies < BEHIND_RATIO * theirArmies) {
+      notes.push(
+        `Not ahead: the income comparison says so, but my ${myArmies} visible armies are below ${BEHIND_RATIO}× player ${rivalId}'s ${theirArmies} in view. Standing even.`,
+      );
+      standing = 'even';
+    }
+  }
+
   return {
     format,
     opponents,

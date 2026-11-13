@@ -37,7 +37,7 @@ export function deployPools(g: MapGraph, held: ReadonlySet<number>, income: numb
     if (b.value <= 0) continue;
     const ts = bonusTerritories(g, b.id);
     if (!ts.length || !ts.every((t) => held.has(t))) continue;
-    bonuses.push({ bonusId: b.id, name: b.name, value: b.value, territoryIds: ts });
+    bonuses.push({ bonusId: b.id, name: b.name, value: b.value, territoryIds: [...ts] });
   }
   bonuses.sort((a, b) => a.territoryIds.length - b.territoryIds.length || a.bonusId - b.bonusId);
   const total = bonuses.reduce((s, p) => s + p.value, 0);
