@@ -43,15 +43,19 @@
 //     by adding, greedily, the pick with the biggest marginal gain in the joint
 //     simulation's score (× its contest factor), among picks within COMPACT_DISTANCE hops
 //     (on the map graph warapp_plan_route uses) of a pick already in the group. Ties:
-//     individual score, then id. Seeds are tried best score first; when none grows a full
-//     group, the hop limit relaxes by one, with a warning, until one does. This holds in
+//     individual score, then id. Every seed (the MAX_SEEDS best by score) grows a group and
+//     the best-scoring group wins, ties to the better seed (#129: growing only from the best
+//     single pick gave a +4 single grown into dead ground over three +3 singles); when none
+//     grows a full group, the hop limit relaxes by one, with a warning, until one does. This holds in
 //     a 1v1 too (#73): a primary spread over bonuses against a counter-pick meant a
 //     frontier on every one of them from turn 1, and the counter-pick is already covered
 //     by the fallback. The fallback group is built the same way from the remaining
-//     pickables, up to maxPicks in total; in a 1v1, among the equally scored compact
-//     fallbacks found at its hop limit, the one farthest from the primary (fewest hops
-//     between the two groups, maximised) wins, so one counter-pick cannot reach both. A
-//     fallback that still outscores the primary is warned about.
+//     pickables, up to maxPicks in total, but scored — its picks' scores and reasons too —
+//     with the primary picks held by someone else, since only then is it granted: a bonus
+//     shared with the primary never completes for it (#129). In a 1v1, among the equally
+//     scored compact fallbacks found at its hop limit, the one farthest from the primary
+//     (fewest hops between the two groups, maximised) wins, so one counter-pick cannot reach
+//     both. A fallback that still outscores the primary is warned about.
 //     Only with `spread: true` in a 1v1 does the old rule apply: a pick may also join
 //     when it anchors a bonus no group pick anchors and lies within SPREAD_DISTANCE hops,
 //     and the bound gives way, with a warning, at the smallest hop limit where a group
@@ -94,6 +98,8 @@ export const SPREAD_RELAX_GAIN = 1.5;
 export const DEFAULT_PICK_ARMIES = 5;
 export const DEFAULT_NEUTRALS_IN_DISTRIBUTION = 4;
 export const DEFAULT_NON_DISTRIBUTION_ARMIES = 2;
+/** Seeds (best score first) each group search grows from; every one when the pool is no larger (#129). */
+export const MAX_SEEDS = 12;
 /** Neutral size used to compare attack hardness against the standard kill rates. */
 const HARDNESS_PROBE = 10;
 
@@ -171,6 +177,7 @@ export interface PickPlan {
 }
 
 const byNum = (a: number, b: number) => a - b;
+const NO_TAKEN: ReadonlySet<number> = new Set();
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
 interface BonusInfo {
@@ -203,7 +210,11 @@ interface SimResult {
   score: number;
 }
 
-function simulate(ctx: Ctx, start: readonly number[]): SimResult {
+/**
+ * The opening from `start`. `taken` territories belong to someone else (the primary picks when
+ * the fallback is granted, #129): never captured, so a bonus holding one never completes.
+ */
+function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number> = NO_TAKEN): SimResult {
   const held = new Set(start);
   // Armies on each held territory: armies attack only from where they stand.
   const armiesOn = new Map<number, number>(start.map((t) => [t, ctx.pickArmies]));
@@ -248,7 +259,7 @@ function simulate(ctx: Ctx, start: readonly number[]): SimResult {
         let blocked = false;
         for (const m of b.members) {
           if (held.has(m) || captured.has(m)) continue;
-          const c = ctx.cost.get(m);
+          const c = taken.has(m) ? null : ctx.cost.get(m);
           if (c === null || c === undefined) {
             blocked = true;
             break;
@@ -306,7 +317,8 @@ function simulate(ctx: Ctx, start: readonly number[]): SimResult {
       continue;
     }
     const share = b.members.filter((m) => held.has(m)).length / b.members.length;
-    if (share > 0) {
+    // A bonus someone else holds part of is not progress (#129).
+    if (share > 0 && !b.members.some((m) => taken.has(m))) {
       progress.set(id, share);
       score += PROGRESS_WEIGHT * b.value * share * b.defense;
     }
@@ -449,14 +461,16 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   // Individual scores and reasons. reasons[0] is the point of the pick: the bonus it
   // anchors (worth most to it) and when it completes, or how far it gets; then the other
   // bonuses it helps; the negatives (shortfalls, wastelands, contest) come last.
-  const scores = new Map<number, number>();
-  const anchors = new Map<number, number | null>();
-  const reasons = new Map<number, string[]>();
+  /** A pick's own score, reasons and anchor bonus, with `taken` held by someone else. */
+  interface Assessment {
+    score: number;
+    reasons: string[];
+    anchor: number | null;
+  }
   const terrName = (id: number) => g.territoryById.get(id)?.name ?? String(id);
-  for (const t of pickable) {
-    const sim = simulate(ctx, [t]);
+  const assess = (t: number, taken: ReadonlySet<number>): Assessment => {
+    const sim = simulate(ctx, [t], taken);
     const factor = contestFactor(t);
-    scores.set(t, round2(sim.score * factor));
     const lines: { id: number; worth: number; point: string; negatives: string[] }[] = [];
     const touched = [...new Set([...sim.completions.keys(), ...sim.progress.keys()])].sort(byNum);
     for (const id of touched) {
@@ -506,11 +520,18 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     } else why.push(`No bonus within reach in ${PICK_HORIZON} turns`);
     if (contestWeight > 0 && 1 - factor >= 0.05)
       why.push(`Central: likely contested with ${players} players (score −${Math.round((1 - factor) * 100)}%)`);
-    reasons.set(t, why);
-    anchors.set(t, anchor?.id ?? null);
+    return { score: round2(sim.score * factor), reasons: why, anchor: anchor?.id ?? null };
+  };
+  /** Assessments of a pool with `taken` held by someone else (the fallback's view, #129). */
+  interface View {
+    taken: ReadonlySet<number>;
+    of: Map<number, Assessment>;
   }
-  const byScore = (a: number, b: number) => scores.get(b)! - scores.get(a)! || a - b;
-
+  const viewOf = (pool: readonly number[], taken: ReadonlySet<number>): View => ({
+    taken,
+    of: new Map(pool.map((t) => [t, assess(t, taken)])),
+  });
+  const firstView = viewOf(pickable, NO_TAKEN);
   // Hop distances on the map graph (the one warapp_plan_route uses), cached per territory.
   const bfsCache = new Map<number, Map<number, number>>();
   const hops = (a: number, b: number) => {
@@ -520,32 +541,33 @@ export function planPicks(input: PlanPicksInput): PickPlan {
 
   // Groups. A pick joins a group when it lies within `hop` hops of a pick already in it
   // (hop starts at COMPACT_DISTANCE) — or, with `spread: true` in a 1v1, when it anchors a
-  // bonus no group pick anchors and lies within max(SPREAD_DISTANCE, hop) hops. Seeds are
-  // tried best score first; when no seed grows a full group, hop relaxes by one and the
-  // search repeats.
+  // bonus no group pick anchors and lies within max(SPREAD_DISTANCE, hop) hops. Every seed
+  // (the MAX_SEEDS best) grows a group and the best-scoring one wins (#129); when no seed grows
+  // a full group, hop relaxes by one and the search repeats.
   const spread = duel && input.spread === true;
-  const tryGroup = (pool: number[], size: number, seed: number, hop: number): number[] | null => {
+  const tryGroup = (view: View, pool: number[], size: number, seed: number, hop: number): number[] | null => {
+    const score = (t: number) => view.of.get(t)!.score;
     const group = [seed];
     const left = new Set(pool.filter((t) => t !== seed));
-    let current = simulate(ctx, group).score;
+    let current = simulate(ctx, group, view.taken).score;
     const distTo = (c: number) => Math.min(...group.map((x) => hops(x, c)));
     while (group.length < size) {
-      const anchored = new Set(group.map((t) => anchors.get(t)));
+      const anchored = new Set(group.map((t) => view.of.get(t)!.anchor));
       const eligible = [...left].sort(byNum).filter((c) => {
         const d = distTo(c);
         if (d <= hop) return true;
-        const a = anchors.get(c);
+        const a = view.of.get(c)!.anchor;
         return spread && a != null && !anchored.has(a) && d <= Math.max(SPREAD_DISTANCE, hop);
       });
       if (!eligible.length) return null;
       let best: { t: number; gain: number; total: number } | null = null;
       for (const c of eligible) {
-        const total = simulate(ctx, [...group, c]).score;
+        const total = simulate(ctx, [...group, c], view.taken).score;
         const gain = round2((total - current) * contestFactor(c));
         if (
           !best ||
           gain > best.gain ||
-          (gain === best.gain && (scores.get(c)! > scores.get(best.t)! || (scores.get(c) === scores.get(best.t) && c < best.t)))
+          (gain === best.gain && (score(c) > score(best.t) || (score(c) === score(best.t) && c < best.t)))
         )
           best = { t: c, gain, total };
       }
@@ -555,43 +577,41 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     }
     return group;
   };
-  const groupScore = (ids: number[]) => simulate(ctx, ids).score;
   /** The hop limit each group was relaxed to (absent: not relaxed; Infinity: until every pick could join). */
   const relaxedTo = new Map<string, number>();
   /** Fewest hops between a pick of `ids` and one of `away` (the gap between two groups). */
   const gapTo = (ids: number[], away: number[]) => Math.min(...ids.flatMap((a) => away.map((b) => hops(a, b))));
-  // The first seed (best score first) that grows a full group. With `away` (a 1v1
-  // fallback), every seed's group is grown at this hop limit, and among those scoring as
-  // much as the first, the one farthest from `away` wins (ties: the first).
-  const firstGroup = (pool: number[], size: number, seeds: number[], hop: number, away: number[] = []) => {
-    let first: number[] | null = null;
-    let firstScore = 0;
+  // The best-scoring group any seed grows at this hop limit (ties: the better seed). With
+  // `away` (a 1v1 fallback), among the groups scoring as much as the best, the one farthest
+  // from `away` wins.
+  const bestGroup = (view: View, pool: number[], size: number, seeds: number[], hop: number, away: number[] = []) => {
+    const groupScore = (ids: number[]) => round2(simulate(ctx, ids, view.taken).score);
     let best: number[] | null = null;
+    let bestScore = -Infinity;
     let bestGap = -Infinity;
-    for (const seed of seeds) {
-      const group = tryGroup(pool, size, seed, hop);
+    for (const seed of seeds.slice(0, MAX_SEEDS)) {
+      const group = tryGroup(view, pool, size, seed, hop);
       if (!group) continue;
-      if (!away.length) return group;
-      const sc = round2(groupScore(group));
-      if (first === null) {
-        first = group;
-        firstScore = sc;
-      } else if (sc !== firstScore) continue;
-      const gap = gapTo(group, away);
-      if (gap > bestGap) {
+      const sc = groupScore(group);
+      const gap = away.length ? gapTo(group, away) : 0;
+      if (sc > bestScore || (sc === bestScore && gap > bestGap)) {
         best = group;
+        bestScore = sc;
         bestGap = gap;
       }
     }
     return best;
   };
-  const buildGroup = (pool: number[], size: number, label: string, away: number[] = []): number[] => {
+  const buildGroup = (view: View, pool: number[], size: number, label: string, away: number[] = []): number[] => {
     if (size <= 0 || !pool.length) return [];
+    const score = (t: number) => view.of.get(t)!.score;
+    const byScore = (a: number, b: number) => score(b) - score(a) || a - b;
+    const groupScore = (ids: number[]) => simulate(ctx, ids, view.taken).score;
     const seeds = [...pool].sort(byScore);
     if (size === 1) {
       if (!away.length) return [seeds[0]!];
       // In a 1v1, the farthest from the primary among the equally scored best.
-      const top = seeds.filter((t) => round2(scores.get(t)!) === round2(scores.get(seeds[0]!)!));
+      const top = seeds.filter((t) => round2(score(t)) === round2(score(seeds[0]!)));
       let pick = top[0]!;
       for (const t of top) if (gapTo([t], away) > gapTo([pick], away)) pick = t;
       return [pick];
@@ -602,7 +622,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       // Past every connected distance (and never at the compact limit itself): the
       // last try allows any distance, so it is a recorded relaxation, not "compact".
       const last = hop > Math.max(widest, COMPACT_DISTANCE);
-      const group = firstGroup(pool, size, seeds, last ? Infinity : hop, away);
+      const group = bestGroup(view, pool, size, seeds, last ? Infinity : hop, away);
       if (!group) {
         if (last) return seeds.slice(0, size).sort(byScore);
         continue;
@@ -624,10 +644,10 @@ export function planPicks(input: PlanPicksInput): PickPlan {
           const sc = g2 ? groupScore(g2) : -Infinity;
           return sc > bounded && sc >= SPREAD_RELAX_GAIN * bounded ? sc : null;
         };
-        if (better(firstGroup(pool, size, seeds, Infinity)) !== null) {
+        if (better(bestGroup(view, pool, size, seeds, Infinity)) !== null) {
           for (let h = bound + 1; h <= widest + 1; h++) {
             const limit = h > widest ? Infinity : h;
-            const wide = firstGroup(pool, size, seeds, limit);
+            const wide = bestGroup(view, pool, size, seeds, limit);
             const sc = better(wide);
             if (sc === null) continue;
             relaxedTo.set(label, limit);
@@ -651,15 +671,20 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     warnings.push(
       `Only ${pickable.length} pickable territor${pickable.length === 1 ? 'y' : 'ies'} for a limit of ${limit}: the list has no full fallback.`,
     );
-  const primary = buildGroup(pickable, primarySize, 'primary');
+  const primary = buildGroup(firstView, pickable, primarySize, 'primary');
   const rest = pickable.filter((t) => !primary.includes(t));
+  // The fallback is granted only when someone else holds primary picks: it is scored, and
+  // its reasons written, with the primary taken (#129).
+  const fallbackView = viewOf(rest, new Set(primary));
   // In a 1v1 (unless spreading) the fallback is counter-pick insurance: in another area.
   const fallback = buildGroup(
+    fallbackView,
     rest,
     Math.min(maxPicks - primary.length, rest.length),
     'fallback',
     duel && !spread ? primary : [],
   );
+  const viewFor = (t: number) => (primary.includes(t) ? firstView : fallbackView);
 
   /** Farthest pair (hops) and the longest step that links the picks into one cluster. */
   const spreadOf = (ids: number[]) => {
@@ -698,9 +723,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     return { far, pair, link };
   };
 
-  const groupOf = (ids: number[]): PickGroup => {
+  const groupOf = (ids: number[], taken: ReadonlySet<number>): PickGroup => {
     if (!ids.length) return { territoryIds: [], score: 0, bonuses: [], maxHops: 0 };
-    const sim = simulate(ctx, ids);
+    const sim = simulate(ctx, ids, taken);
     const done = [...sim.completions.entries()]
       .map(([id, turn]) => ({ bonusId: id, name: bonuses.get(id)!.name, value: bonuses.get(id)!.value, turn }))
       .sort((a, b) => a.turn - b.turn || a.bonusId - b.bonusId);
@@ -708,9 +733,13 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     return { territoryIds: ids, score: round2(sim.score), bonuses: done, maxHops: Number.isFinite(far) ? far : null };
   };
 
+  const pickOf = (t: number) => {
+    const a = viewFor(t).of.get(t)!;
+    return { score: a.score, reasons: a.reasons };
+  };
   const picks: PickChoice[] = [
-    ...primary.map((t) => ({ territoryId: t, group: 'primary' as const, score: scores.get(t)!, reasons: reasons.get(t)! })),
-    ...fallback.map((t) => ({ territoryId: t, group: 'fallback' as const, score: scores.get(t)!, reasons: reasons.get(t)! })),
+    ...primary.map((t) => ({ territoryId: t, group: 'primary' as const, ...pickOf(t) })),
+    ...fallback.map((t) => ({ territoryId: t, group: 'fallback' as const, ...pickOf(t) })),
   ];
 
   const hopsText = (n: number) => (Number.isFinite(n) ? `${n} hop${n === 1 ? '' : 's'}` : 'unconnected');
@@ -751,7 +780,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       `the rest are a disjoint fallback${fallback.length ? ` (${describe(fallback)})` : ''}, granted in order when another player picks first.`,
   );
 
-  const groups = { primary: groupOf(primary), fallback: groupOf(fallback) };
+  const groups = { primary: groupOf(primary, NO_TAKEN), fallback: groupOf(fallback, fallbackView.taken) };
   if (groups.fallback.score > groups.primary.score)
     warnings.push(
       `The fallback group scores more than the primary (${groups.fallback.score} vs ${groups.primary.score}): the primary keeps to ` +
