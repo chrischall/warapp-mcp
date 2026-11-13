@@ -559,7 +559,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'several attacks in a fixed order (`multiSourceCaptures`; 0% luck only). Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
           'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
           'server last planned on (`trendSource` says which, or null). Obeys the game\'s rules: every attack and ' +
-          "threat is sized at the game's kill rates; under Local Deployment a held bonus's armies are deployed only " +
+          "threat is sized at the game's kill rates; every attack carries `winChance`, its exact probability of " +
+          'capturing (kill rates, luck and rounding; 1 when certain), and `min_win_chance` below 1 sizes captures ' +
+          'for that chance instead of a guarantee. An attack is topped up to its next efficient size (one more kill ' +
+          'for sure) from armies that would sit idle when its target is a player\'s or it is not certain, and the ' +
+          "reasoning names attacks whose extra armies add no kill. Under Local Deployment a held bonus's armies are deployed only " +
           'inside that bonus; under No-Split each territory issues at most one attack or transfer. ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
@@ -601,6 +605,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               'board; when the previous turn\'s board is known, at least what that opponent was observed to deploy ' +
               '(the net change of its armies on territories visible both turns plus what its captures cost it; a fog reveal is not income, and it never exceeds its base plus every bonus it could hold) — income in the fog is unseen, so raise it if you know they earn more.',
           ),
+        min_win_chance: z.coerce
+          .number()
+          .min(0.5)
+          .max(1)
+          .optional()
+          .describe(
+            'The least win chance each ordinary capture is sized for, 0.5–1. Default 1: the guaranteed sizing (the ' +
+              'luck-free share alone takes it). Below 1, each capture gets the fewest armies whose exact win chance ' +
+              '(game kill rates, luck, rounding) reaches it — cheaper, but it can fail. Attacks sized for a worst case ' +
+              '(finishing a player off, fog pressure, commander strikes) stay guaranteed.',
+          ),
         view: viewArg(
           VIEWS,
           'compact (default) gives the plan and orders (the profile as format, phase and standing); "full" adds each ' +
@@ -608,7 +623,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ),
       }),
     },
-    async ({ game_id, player, goal, focus, reserve, enemy_deploy, view }) => {
+    async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, view }) => {
       const game = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(game);
       const map = mapOf(game);
@@ -654,6 +669,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           holdsOrderPriority: holdsOrderPriority(hand, cards),
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
+          ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
@@ -709,6 +725,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           to: name(m.to),
           armies: m.armies,
           kind: m.kind,
+          ...(m.winChance !== undefined ? { winChance: Math.round(m.winChance * 1000) / 1000 } : {}),
           ...(rung === 'full' ? { reason: m.reason } : {}),
         })),
         expected: {

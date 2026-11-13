@@ -160,6 +160,32 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   client bundle; the 2026-11-12 live game in issue #44 matched it (no standing until Begin), but
   `warapp_begin_turn`'s encoding has not been sent live.
 
+## Combat (luck and rounding) — verified from the client bundle, not live
+
+Read from war.app's own client bundle (its shared combat code, `warlight.shared`; the same
+code the client's single-player games and its attack-odds tool run), 2026-11-13. Not checked
+against a live turn's results. Settings: `LuckModifier` is a fraction 0–1 (the client
+validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `WeightedRandom`
+(0) or `StraightRound` (1), kill rates are fractions (`0.6`, `0.7` by default).
+
+- **Kills.** `n` armies at kill rate `r` and luck `L` kill `x = n·r + (G − n·r)·L`, i.e.
+  `(1 − L)·n·r + L·G`, where `G` counts the armies that each kill with probability `r`
+  (a Binomial(n, r) draw). With straight rounding at 0% luck the dice are not rolled at all
+  (`round(n·r)`).
+- **Rounding.** Straight: round half up (`2.5 → 3`). Weighted random: `floor(x) + 1` with
+  probability equal to the fraction `x − floor(x)`, else `floor(x)` ("3.3 has a 30% chance of
+  rounding to 4", the client's own help text).
+- **Capture.** Attackers and defenders fight at once (defenders kill at the defensive rate
+  with the same luck and rounding). The client's odds tool counts an attack as a capture when
+  the attackers' kills reach the defenders and, when the two sides are equal, the defenders do
+  not kill every attacker — the same as "every defender dies and at least one attacker survives",
+  since defenders never kill more attackers than they are.
+- **What the planner does with it** (`src/analysis/combat.ts`): `winChance` sums the binomial
+  distributions exactly (no simulation); `guaranteedKills` is the luck-free share rounded (the
+  floor under weighted rounding); the guaranteed sizing `ceil(armiesToTake / (1 − L))` therefore
+  wins with chance 1 under straight rounding. `killBreakpoints` lists the efficient attack sizes
+  (60%: 1, 3, 5, 6, 8, 10, 11, 13).
+
 ## Map — verified
 
 - `map: { id, name, territories[], bonuses[], distributionModes[] }`. Territory and bonus

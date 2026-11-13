@@ -805,10 +805,14 @@ describe('planTurn — balanced', () => {
   );
   const eBoard = board([mine(1, 5), enemy(5, 2), enemy(6, 2), enemy(7, 2)]);
 
-  it('(e) breaks an enemy bonus with the exact capture cost', () => {
+  it('(e) breaks an enemy bonus with the exact capture cost, topped up from idle armies', () => {
     const p = planTurn({ graph: eMap, board: eBoard, me: ME, income: 5, settings: STD });
-    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, captureCost(2, STD)]]);
     expect(p.rationale.join('\n')).toMatch(/Attack T5 \(#5\) from T1 \(#1\) with 3: breaks enemy bonus B811 \(#811\) \(\+4/);
+    // S2: T1's leftover armies would sit idle once T5 falls, so the attack grows from the
+    // exact cost (3) to the next efficient size (5: 3 kills for sure instead of 2).
+    expect(captureCost(2, STD)).toBe(3);
+    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 5]]);
+    expect(p.rationale.join('\n')).toMatch(/Top up the attack on T5 \(#5\) from T1 \(#1\) from 3 to 5/);
     // 2 survivors need 3 to take; T6 has 1 movable + ~5 deploy next to it.
     expect(p.warnings.join('\n')).toMatch(/T5 \(#5\).*retaken/);
     expect(deploySum(p)).toBe(5);

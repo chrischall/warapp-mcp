@@ -107,6 +107,19 @@ describe('warapp_plan_turn', () => {
     expect(textOf(res)).toMatch(/press Begin.*warapp_begin_turn.*Begin starts the turn timer/s);
   });
 
+  it('min_win_chance (S2): passed to the planner, 0.5–1 only', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const base = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' }));
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand', min_win_chance: 0.9 }),
+    );
+    // 0% luck under straight rounding: every chance is 0 or 1, so the sizes stay the same.
+    expect(p.moves).toEqual(base.moves);
+    expect(p.rationale.join('\n')).toMatch(/sized for at least a 90% win chance/);
+    const bad = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', min_win_chance: 0.3 });
+    expect(bad.isError).toBe(true);
+  });
+
   it('plans from the live board: deploys and moves by name and id, expected bonuses, and submit-shaped orders', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     // R3: completing bonus 118 leaves all three members facing Bob's ~11 with a next income
@@ -127,6 +140,7 @@ describe('warapp_plan_turn', () => {
       to: { id: 157, name: mapName(157) },
       armies: 3,
       kind: 'attack',
+      winChance: 1,
     });
     expect(p.expected.captures).toEqual([{ id: 157, name: mapName(157) }]);
     expect(p.expected.bonusesCompleted).toEqual([{ id: 118, name: 'Broken Branch Riverlords', value: 2 }]);

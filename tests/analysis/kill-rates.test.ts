@@ -130,12 +130,17 @@ describe('planTurn — kill rates (G1)', () => {
     const gb = buildGraph(makeMap([1, 2, 3], [[1, 2], [1, 3]], [[9, 5, [1, 3]]]));
     const s = board([mine(1, 20), neutral(2, 1), enemy(3, 4)]);
     const p = planTurn({ graph: gb, board: s, me: ME, income: 5, settings: R30_75, options: { goal: 'complete-bonus' } });
-    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 12 }));
+    // Sized at 12; S2 then tops it up from T1's idle armies to the next efficient size, 15
+    // (round(0.3·15) = 5 kills for sure instead of 4), since the enemy may reinforce T3.
+    expect(p.rationale.join('\n')).toMatch(/Attack T3 \(#3\) from T1 \(#1\) with 12:/);
+    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 15 }));
     const std = planTurn({ graph: gb, board: s, me: ME, income: 5, settings: STD, options: { goal: 'complete-bonus' } });
-    expect(attacks(std)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 6 }));
+    expect(std.rationale.join('\n')).toMatch(/Attack T3 \(#3\) from T1 \(#1\) with 6:/);
+    // 60%: 6 → 8 (round(4.8) = 5 kills instead of 4).
+    expect(attacks(std)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 8 }));
   });
 
-  it('under WeightedRandom rounding the plan keeps exact arithmetic and warns', () => {
+  it('under WeightedRandom rounding the plan sizes at straight arithmetic, computes the chance and warns', () => {
     const p = planTurn({
       graph: g,
       board: board([mine(1, 10), neutral(2, 2)]),
@@ -144,7 +149,11 @@ describe('planTurn — kill rates (G1)', () => {
       settings: { ...R20_80, roundingMode: 'WeightedRandom' },
       options: { goal: 'expand' },
     });
-    expect(attacks(p)).toEqual([expect.objectContaining({ armies: 8 })]);
+    // Sized at 8 (straight arithmetic): 1.6 kills round up with only 60% under weighted
+    // rounding, so S2 tops it up from T1's idle armies to 10 (2.0 kills: certain).
+    expect(p.rationale.join('\n')).toMatch(/Attack T2 \(#2\) from T1 \(#1\) with 8:/);
+    expect(p.rationale.join('\n')).toMatch(/win chance rises from 60% to 100%/);
+    expect(attacks(p)).toEqual([expect.objectContaining({ armies: 10, winChance: 1 })]);
     expect(p.warnings.join('\n')).toMatch(/assume straight rounding; this game uses WeightedRandom/);
   });
 
