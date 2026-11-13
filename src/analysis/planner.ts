@@ -15,7 +15,12 @@
 //     its income is big (live, a 0.75 × 15 guess on an all-15 opening board made
 //     every base-income opponent look like ~11). On the opening board (every
 //     visible territory still holds the same count) every opponent gets the
-//     floor. `options.enemyDeploy` overrides all of them. Always a warning.
+//     floor. Given `previousBoard`, each estimate is at least the deploy observed since
+//     then (`observedDeploy`, issue #57: the net change of its armies visible on both
+//     boards — shrinks included, so a transfer between its own territories is not deploy —
+//     plus, on each territory it captured, its armies there and what the previous owner held
+//     there) — never cut by the stack cap; the warning names which source won.
+//     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
 //     enemy territory next to me that was visible then under the same owner and
 //     has grown is "building" at growth = armies now − armies then per turn (a
@@ -49,8 +54,15 @@
 //     deploy. When the best sizing fails only on an unfunded hold, the search runs once
 //     more with those holds reserved and those territories left unattacked, and its
 //     best is kept if it beats the first search's. With no success, nothing changes.
-//     An opponent bordering the fog is never attempted (a warning says so when its
-//     visible territories could all be eliminated); with fog anywhere else, the
+//     An opponent bordering the fog is never eliminated (issue #60): it is pressured
+//     instead — every visible territory attacked, each sized for its full deploy plus
+//     pressureMargin (an attack sized for exactly the estimate failed live), and
+//     only when all of them fall for sure ("Pressure player …: take all N of its visible
+//     territories …, so this is not an elimination", with a warning that it may hold more
+//     in the fog) — when each of those margin-sized captures costs at most PRESSURE_FACTOR × a typical
+//     expansion capture (the median capture cost of the visible neutrals next to me; with
+//     none, any cost). Otherwise it is not attempted (a warning says so when its visible
+//     territories could all be taken); with fog anywhere else, the
 //     elimination is hedged ("if it holds nothing in the fog") and a warning says it
 //     may hold unseen territories. When it can save some attacked territories, a
 //     warning says it chooses which. Borders next to the attacks are then re-judged
@@ -101,7 +113,13 @@
 //     bonus earns more than the units it starves; otherwise it waits until they are
 //     funded (concede a held bonus only for alternatives that earn more). It waits for
 //     rule 4a's expansion share only until then. Finishing off (rule 1e) keeps its place before
-//     it. A unit the armies left cannot cover is conceded whole ("conceding bonus …:
+//     it. A unit the armies left cannot cover is first tried as a near miss (issue #59):
+//     each border not yet held gets what may still be deployed there, up to its hold
+//     cost (pools respected), and the unit is kept — deploys stay, nothing withdrawn,
+//     a warning "… is held though short …; X may fall" — when the total is short by at
+//     most nearMissMargin(need) = max(NEAR_MISS_ARMIES, NEAR_MISS × need), or when every
+//     short border still holds against the expected attack (movable + deploy estimate,
+//     no trend projection). Otherwise it is conceded whole ("conceding bonus …:
 //     holding all N threatened borders needs X, more than …"; a one-border unit keeps
 //     rule 1a's warnings). Each border of a conceded unit is then judged alone by rule
 //     1a with its protected value less that bonus (other bonuses, per-territory income,
@@ -119,6 +137,10 @@
 //     to the adjacent territory of mine nearest a border that holds (then the
 //     one protecting the most value, then id); the plan advises Order Priority
 //     (`cardAdvice`), because a withdrawal only executes while the border is mine.
+//     A conceded border of a bonus I hold in full whose armies staying still hold
+//     against the expected attack (movable + deploy estimate) is never withdrawn from
+//     (issue #59): its garrison stays, and under Local Deployment its bonus's leftover
+//     pool may go there as if it were not conceded.
 //  2. Targets: visible neutrals adjacent to a territory I held at the start of
 //     the turn (plus visible enemy territories under `goal: 'complete-bonus'`, and
 //     under `balanced` only enemy territories in a breakable bonus — one whose
@@ -229,6 +251,42 @@ export const ENEMY_STACK_SHARE = 0.75;
 export const CONCEDE_FACTOR = 3;
 /** A held border is comfortable once taking it needs more than this many times its threat. */
 export const COMFORT_MARGIN = 1.25;
+/**
+ * A held bonus whose threatened borders are short of a sure hold by at most this share of
+ * the hold they need (or {@link NEAR_MISS_ARMIES}, whichever is larger) is a near miss:
+ * funded with everything available rather than conceded (issue #59).
+ */
+export const NEAR_MISS = 0.15;
+/** The near-miss margin is never below this many armies. */
+export const NEAR_MISS_ARMIES = 2;
+/** The most a held bonus's hold `need` may be short and still be a near miss. */
+export function nearMissMargin(need: number): number {
+  return Math.max(NEAR_MISS_ARMIES, NEAR_MISS * need);
+}
+
+/**
+ * An opponent next to the fog (it may hold unseen territories) is still pressured — all its
+ * visible territories attacked, each sized for its full estimated deploy plus
+ * {@link pressureMargin} — when each of those margin-sized captures costs at most this many
+ * times a typical expansion capture (the median capture cost of the visible neutrals next to
+ * me; issue #60). All or nothing: one visible territory over it blocks the pressure on all.
+ * Not tuned to admit #60: at ~6 its 0-army territory costs 15 with the margin, five 2-army
+ * neutrals — "more than the expansion it displaces" (the owner's live calibration) — so it is
+ * not attempted; at ~4 it costs 10 and is.
+ */
+export const PRESSURE_FACTOR = 4;
+/**
+ * A pressure attack is sized for its target's armies + the full estimated deploy + this share
+ * of that deploy (at least {@link PRESSURE_MARGIN_ARMIES}): the opponent's income is unseen
+ * under fog, and live (#60) an attack sized for exactly its ~6 deploy failed.
+ */
+export const PRESSURE_MARGIN = 0.5;
+/** The pressure margin is never below this many armies. */
+export const PRESSURE_MARGIN_ARMIES = 2;
+/** The extra defenders a pressure attack is sized for, over an estimated `deploy`. */
+export function pressureMargin(deploy: number): number {
+  return Math.max(PRESSURE_MARGIN_ARMIES, Math.ceil(PRESSURE_MARGIN * deploy));
+}
 
 /** Denying +V to the opponent is worth this many times gaining +V yourself (per opponent: divided among them). */
 export const BREAK_WEIGHT = 1.0;
@@ -398,6 +456,43 @@ export interface EnemyDeployEstimate {
   stackCap: number;
   /** Every visible territory holds the same army count: no one has deployed yet. */
   opening: boolean;
+  /**
+   * Its deploy as observed since the previous board ({@link observedDeploy}); `null`
+   * without one.
+   */
+  observed: number | null;
+  /** `'observed'` when the observed figure beat the visible-bonus one (and set the estimate). */
+  source: 'visible' | 'observed';
+}
+
+/**
+ * One opponent's deploy last turn as seen across two boards (issue #57): the *net* change
+ * of its visible armies plus what it visibly lost attacking, floored at 0. Only territories
+ * visible on both boards count (one fogged last time may only have come into view):
+ * - under it both times: armies now − armies then, shrinks included — a transfer between
+ *   its own territories nets to zero, so it is never read as deploy;
+ * - taken from another player (me included) or from a visible neutral: the armies now on it
+ *   (they moved in from a neighbour, whose shrink they cancel) plus the armies the previous
+ *   owner held there (what the capture roughly cost it).
+ * Not counted: armies it lost on a territory it attacked but did not take. The defender's
+ * count there also moves with the defender's own deploys and transfers (mine included —
+ * this board says nothing about my orders), so the loss cannot be read off it; leaving it
+ * out keeps the figure a lower bound (the failed attack's losses still shrink its source).
+ * One turn only, not smoothed: the planner sees a single previous board. Transfers in from
+ * (or out to) the fog still bias it — income in the fog is unseen anyway.
+ */
+export function observedDeploy(g: MapGraph, board: BoardState, previous: BoardState, playerId: number): number {
+  const before = new Map(previous.territories.map((t) => [t.territoryId, t]));
+  let total = 0;
+  for (const t of board.territories) {
+    if (!g.territoryById.has(t.territoryId) || t.armies === null) continue;
+    if (t.owner.kind !== 'player' || t.owner.playerId !== playerId) continue;
+    const was = before.get(t.territoryId);
+    if (!was || was.armies === null || was.owner.kind === 'unknown') continue;
+    if (was.owner.kind === 'player' && was.owner.playerId === playerId) total += t.armies - was.armies;
+    else total += t.armies + was.armies;
+  }
+  return Math.max(0, total);
 }
 
 /** The army count every visible territory holds, when they all hold the same one (the initial allotment). */
@@ -421,6 +516,7 @@ export function enemyDeployEstimates(
   board: BoardState,
   me: number,
   settings: PlannerSettings = {},
+  previous?: BoardState,
 ): EnemyDeployEstimate[] {
   const owner = new Map<number, number>();
   const armies = new Map<number, number>();
@@ -456,8 +552,12 @@ export function enemyDeployEstimates(
     const stackCap = Math.round(ENEMY_STACK_SHARE * largestStack);
     // Every opponent earns at least the game's base income (never below the 5 minimum).
     const floor = Math.max(MIN_ENEMY_DEPLOY, base);
-    const estimate = opening ? floor : Math.max(floor, Math.min(base + bonusIncome, stackCap));
-    return { playerId, estimate, base, bonusIncome, largestStack, stackCap, opening };
+    const visible = opening ? floor : Math.max(floor, Math.min(base + bonusIncome, stackCap));
+    // What it was seen to deploy is never cut by the stack cap.
+    const observed = previous ? observedDeploy(g, board, previous, playerId) : null;
+    const source = observed !== null && observed > visible ? 'observed' : 'visible';
+    const estimate = source === 'observed' ? observed! : visible;
+    return { playerId, estimate, base, bonusIncome, largestStack, stackCap, opening, observed, source };
   });
 }
 
@@ -470,6 +570,7 @@ export function defaultEnemyDeploy(
   board: BoardState,
   me: number,
   settings: PlannerSettings = {},
+  previous?: BoardState,
 ): number {
   const mineIds = new Set(
     board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me ? [t.territoryId] : [])),
@@ -480,7 +581,7 @@ export function defaultEnemyDeploy(
     if (!g.territoryById.has(t.territoryId)) continue;
     if (neighborsOf(g, t.territoryId).some((n) => mineIds.has(n))) next.add(t.owner.playerId);
   }
-  return enemyDeployEstimates(g, board, me, settings).reduce(
+  return enemyDeployEstimates(g, board, me, settings, previous).reduce(
     (m, e) => (next.has(e.playerId) ? Math.max(m, e.estimate) : m),
     MIN_ENEMY_DEPLOY,
   );
@@ -523,8 +624,10 @@ export function planTurn(input: PlanInput): TurnPlan {
   const income = Math.max(0, Math.floor(input.income));
   const reserve = Math.min(income, Math.max(0, Math.floor(opts.reserve ?? 0)));
   const custom = opts.enemyDeploy !== undefined;
-  const enemyDeploy = custom ? Math.max(0, Math.floor(opts.enemyDeploy!)) : defaultEnemyDeploy(g, board, me, s);
-  const estimates = new Map(enemyDeployEstimates(g, board, me, s).map((e) => [e.playerId, e]));
+  const enemyDeploy = custom
+    ? Math.max(0, Math.floor(opts.enemyDeploy!))
+    : defaultEnemyDeploy(g, board, me, s, input.previousBoard);
+  const estimates = new Map(enemyDeployEstimates(g, board, me, s, input.previousBoard).map((e) => [e.playerId, e]));
   /** The deploy assumed for one opponent's threat: the override, else its own estimate. */
   const deployOf = (player: number) => (custom ? enemyDeploy : (estimates.get(player)?.estimate ?? MIN_ENEMY_DEPLOY));
   const guard = (s.oneArmyStandsGuard ?? true) ? 1 : 0;
@@ -733,6 +836,19 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     return best;
   };
+  /**
+   * The expected (not worst-case) attack on my `t` next turn (issue #59): per player, its
+   * movable armies next to `t` plus its deploy estimate — no trend projection. 0 with none.
+   */
+  const expectedAt = (t: number): number => {
+    const byPlayer = new Map<number, number>();
+    for (const n of neighborsOf(g, t)) {
+      const st = state.get(n);
+      if (captured.has(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard));
+    }
+    return Math.max(0, ...[...byPlayer].map(([p, movable]) => movable + deployOf(p)));
+  };
   interface Exposure {
     id: number;
     player: number;
@@ -822,10 +938,18 @@ export function planTurn(input: PlanInput): TurnPlan {
       const opening = openingArmies(g, board);
       for (const p of [...facing].sort(byNum)) {
         const e = estimates.get(p)!;
+        const visible = `base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}`;
+        if (e.source === 'observed') {
+          warnings.push(
+            `Enemy deploy estimate for player ${p}: ~${e.estimate} (observed +${e.observed}/turn: what its visible territories grew since last turn plus what it captured, more than ${visible}; the stack cap does not cut an observed figure); it holds income the fog hides, and could deploy more.`,
+          );
+          continue;
+        }
+        const seen = e.observed !== null ? ` Its deploy was observed +${e.observed}/turn since last turn, below that.` : '';
         warnings.push(
-          opening !== null
+          (opening !== null
             ? `Enemy deploy estimate for player ${p}: ~${e.estimate} (opening board: every visible territory holds ${opening}, so no one has deployed yet and every opponent gets its base income, at least ${MIN_ENEMY_DEPLOY}); enemy income is unknown, so they could deploy more.`
-            : `Enemy deploy estimate for player ${p}: ~${e.estimate} (base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}, at least max(${MIN_ENEMY_DEPLOY}, base) and at most ${ENEMY_STACK_SHARE * 100}% of its largest stack next to me (${e.largestStack}) = ${e.stackCap}); enemy income beyond its visible bonuses is unknown, so they could deploy more.`,
+            : `Enemy deploy estimate for player ${p}: ~${e.estimate} (${visible}, at least max(${MIN_ENEMY_DEPLOY}, base) and at most ${ENEMY_STACK_SHARE * 100}% of its largest stack next to me (${e.largestStack}) = ${e.stackCap}); enemy income beyond its visible bonuses is unknown, so they could deploy more.`) + seen,
         );
       }
     }
@@ -1027,6 +1151,55 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     return true;
   };
+  /**
+   * Rule 1h near miss (issue #59), when {@link fundUnit} cannot cover `u`: give each of its
+   * borders not yet held what may still be deployed there, up to its hold cost (pools
+   * respected). It is kept — those deploys stay, nothing is withdrawn — when the total is
+   * short by at most {@link nearMissMargin} of the need, or when every short border still
+   * holds against the expected attack ({@link expectedAt}: movable + deploy estimate, not the
+   * trend's worst case). Otherwise every deploy is rolled back: false.
+   */
+  const fundNearMiss = (u: Unit): boolean => {
+    const todo = u.members.filter((m) => !heldBorders.has(m.id));
+    if (!todo.length) return false;
+    const given = todo.map((m) => {
+      const n = Math.max(0, Math.min(m.holdCost, roomAt(m.id)));
+      deploy(m.id, n);
+      return { m, n };
+    });
+    const need = todo.reduce((n, m) => n + m.holdCost, 0);
+    const total = given.reduce((n, x) => n + x.n, 0);
+    const short = need - total;
+    const margin = nearMissMargin(need);
+    const shortOnes = given.filter((x) => x.n < x.m.holdCost);
+    const holdsExpected = shortOnes.every(
+      (x) => (armiesToTake(x.m.have + x.n, rates) ?? Infinity) > expectedAt(x.m.id),
+    );
+    if (short > margin && !holdsExpected) {
+      for (const x of given) if (x.n > 0) undeploy(x.m.id, x.n);
+      return false;
+    }
+    const expected = Math.max(...shortOnes.map((x) => expectedAt(x.m.id)));
+    const why =
+      short <= margin
+        ? `short by ${short}, within the near-miss margin of ${Math.round(margin * 10) / 10}`
+        : `enough to hold against the expected ~${expected} attack (movable + deploy estimate), not the worst case`;
+    const one = todo.length === 1;
+    warnings.push(
+      `Bonus ${bonusName(u.bonusId)} (+${u.value}) is held though short: its ${todo.length} threatened border${one ? '' : 's'} need${one ? 's' : ''} ${need}, only ${total} left to deploy, so ${total ? `all ${total} go there` : 'its armies stay'} (${why}); ${shortOnes.map((x) => label(x.m.id)).join(', ')} may fall.`,
+    );
+    for (const { m, n } of given) {
+      noteRecent(m);
+      locked.add(m.id);
+      heldBorders.add(m.id);
+      rationale.push(
+        n > 0
+          ? `Deploy ${n} to ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have + n} armies need ${armiesToTake(m.have + n, rates)} to take, against the ~${m.threat} threat (its armies stay: withdrawing them would guarantee the loss).`
+          : `Keep the armies on ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have} armies need ${armiesToTake(m.have, rates)} to take, against the ~${m.threat} threat.`,
+      );
+    }
+    return true;
+  };
 
   // Under `balanced`, holds worth paying for compete with expansion in the greedy step below.
   const holds: Threatened[] = [];
@@ -1093,7 +1266,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (!heldBorders.has(it.border.id) && !conceded.has(it.border.id)) single(it.border);
         continue;
       }
-      if (!fundUnit(it.unit)) concedeUnit(it.unit, { economic: false, left: leftFor(it.unit) }, single);
+      if (!fundUnit(it.unit) && !fundNearMiss(it.unit))
+        concedeUnit(it.unit, { economic: false, left: leftFor(it.unit) }, single);
     }
   };
 
@@ -1101,6 +1275,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   let cardAdvice: CardAdvice | null = null;
   // Armies withdrawn into each territory this turn (they stay there: armies never move twice).
   const incoming = new Map<number, number>();
+  /** Conceded borders of a held bonus whose garrison stays (it holds against the expected attack). */
+  const stood = new Set<number>();
   const withdraw = () => {
     if (!conceded.size) return;
     const withdrawals: PlannedMove[] = [];
@@ -1110,6 +1286,25 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const t of [...conceded].sort(byNum)) {
       const n = avail.get(t)!;
       if (n <= 0) continue;
+      // Issue #59: a held bonus's border keeps its garrison while it still holds against the
+      // expected attack — withdrawing it would guarantee the loss.
+      const held = g.map.bonuses
+        .filter((b) => {
+          const ts = bonusTerritories(g, b.id);
+          return b.value > 0 && ts.includes(t) && ts.every((x) => mineSet.has(x));
+        })
+        .sort((a, b) => a.id - b.id);
+      const stays = stayAt(t);
+      const take = armiesToTake(stays, rates) ?? Infinity;
+      const expected = expectedAt(t);
+      if (held.length && take > expected) {
+        locked.add(t);
+        stood.add(t);
+        rationale.push(
+          `Keep the ${n} movable armies on ${label(t)} (not withdrawn): it is a border of held bonus ${held.map((b) => bonusName(b.id)).join(', ')}, and its ${stays} armies need ${take} to take, above the expected ~${expected} attack (movable + deploy estimate).`,
+        );
+        continue;
+      }
       const options = neighborsOf(g, t)
         .filter(keep)
         .map((c) => {
@@ -1729,9 +1924,15 @@ export function planTurn(input: PlanInput): TurnPlan {
    * against that funded; otherwise rolled back. `probe`: always rolled back, true when an
    * elimination is affordable.
    */
-  const finishOff = (p: number, probe: boolean): boolean => {
+  const finishOff = (p: number, probe: boolean, fogged: readonly number[] = []): boolean => {
     const ts = ownedBy.get(p)!;
-    const deployP = deployOf(p);
+    /** Next to the fog (#60): only taking every visible territory for sure counts, as pressure. */
+    const pressure = fogged.length > 0;
+    /** Its estimated deploy; under pressure, sized for with a margin over it (#60). */
+    const estimateP = deployOf(p);
+    const marginP = pressure ? pressureMargin(estimateP) : 0;
+    const deployP = estimateP + marginP;
+    const deployText = marginP ? `~${estimateP} deploy plus a margin of ${marginP}` : `~${deployP} deploy`;
     const start = checkpoint(ts);
     if (ts.some((t) => captureCost(armiesOf(t), s) === null)) return false;
     /**
@@ -1775,7 +1976,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         funded.set(h.x, h.cost);
       }
       const reserved = checkpoint(ts);
-      const fullReason = `takes player ${p}'s territory, sized for its full ~${deployP} deploy landing there`;
+      const fullReason = `takes player ${p}'s territory, sized for its full ${deployText} landing there`;
       /** Size and plan the attacks for `sizes` (from `reserved`), and judge the result. */
       const attempt = (sizes: number[]): Attempt => {
         tried.forEach((t, i) => {
@@ -1856,7 +2057,7 @@ export function planTurn(input: PlanInput): TurnPlan {
             const a = attempt([...sizes]);
             restore(reserved);
             if (a.all) canEliminate = true;
-            if (!a.enough || !a.freed) return;
+            if (!a.enough || !a.freed || (pressure && !a.all)) return;
             if (a.unfunded) {
               if (!bestUnfunded || better(a, bestUnfunded) > 0) bestUnfunded = a;
             } else if (!best || better(a, best) > 0) best = a;
@@ -1914,6 +2115,17 @@ export function planTurn(input: PlanInput): TurnPlan {
     const rest = left.length
       ? `; ${left.map(label).join(', ')} stay${left.length === 1 ? 's' : ''} unattacked, and no attacking border faces ${left.length === 1 ? 'it' : 'them'}`
       : '';
+    if (chosen.all && pressure) {
+      const edge = fogged.map(label).join(', ');
+      rationale.push(
+        `Pressure player ${p}: take all ${ts.length} of its visible territories (${names}) this turn, each sized for its full ${deployText} landing there; it may hold more in the fog (next to ${edge}), so this is not an elimination.`,
+      );
+      warnings.push(
+        `Pressuring player ${p} assumes it deploys at most ~${deployP} (its ~${estimateP} estimate plus a margin of ${marginP}); more income than that (unseen bonuses, cards) could still save a territory.`,
+        `player ${p} may hold more territories in the fog (next to ${edge}): taking its ${ts.length} visible territories is pressure, not an elimination.`,
+      );
+      return true;
+    }
     if (chosen.all) {
       rationale.push(
         `Finish off player ${p}: attack all ${ts.length} of its territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there, so it is eliminated ${fogAnywhere ? 'if it holds nothing in the fog, ' : ''}even if it reinforces; the borders facing it need no holding.`,
@@ -1956,9 +2168,26 @@ export function planTurn(input: PlanInput): TurnPlan {
           ownedBy.get(a)!.reduce((n, t) => n + armiesOf(t), 0) - ownedBy.get(b)!.reduce((n, t) => n + armiesOf(t), 0) ||
           a - b,
       );
+    // A typical expansion capture: the median cost of the visible neutrals next to me.
+    const neutralCosts = [...targets.values()].filter((tg) => !tg.enemy).map((tg) => tg.cost).sort(byNum);
+    const expansionCost = neutralCosts.length ? neutralCosts[(neutralCosts.length - 1) >> 1]! : null;
+    /**
+     * Each of `p`'s visible territories, sized for its full deploy plus the pressure margin,
+     * costs at most PRESSURE_FACTOR typical expansions (with no visible neutral next to me,
+     * nothing to compare with: no limit). All or nothing.
+     */
+    const pressureAffordable = (p: number) => {
+      const d = deployOf(p);
+      return (
+        expansionCost === null ||
+        ownedBy.get(p)!.every((t) => (captureCost(armiesOf(t) + d + pressureMargin(d), s) ?? Infinity) <= PRESSURE_FACTOR * expansionCost)
+      );
+    };
     for (const p of candidates) {
       const edge = fogEdge(p);
       if (edge.length) {
+        // Fog is a reason not to claim elimination, not to skip a cheap capture (#60).
+        if (pressureAffordable(p) && finishOff(p, false, edge)) continue;
         if (finishOff(p, true))
           warnings.push(
             `player ${p} may hold more territories in the fog (next to ${edge.map(label).join(', ')}): finishing it off is not attempted, though its ${ownedBy.get(p)!.length} visible territories could all be taken this turn.`,
@@ -2164,7 +2393,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     const waiting: Unit[] = [];
     const fundOrConcede = (u: Unit) => {
       if (u.conceded) return;
-      if (!fundUnit(u, holdAndBreak)) concedeUnit(u, { economic: false, left: leftFor(u) }, singleNow);
+      if (!fundUnit(u, holdAndBreak) && !fundNearMiss(u))
+        concedeUnit(u, { economic: false, left: leftFor(u) }, singleNow);
     };
     let unitsDue = false;
     const unitOf = new Map<Candidate, Unit>();
@@ -2355,12 +2585,14 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (!b) return -Infinity;
         return b.threat - (armiesToTake(stays(id), rates) ?? Infinity);
       };
+      // A conceded border whose garrison stays (#59) is still defended: its pool goes there.
+      const lost = (id: number) => conceded.has(id) && !stood.has(id);
       const charged = chargeDeploys(pools, deployed).used;
       for (const p of pools.bonuses) {
         const left = p.value - (charged.get(p.bonusId) ?? 0);
         if (left <= 0) continue;
         const m = [...p.territoryIds].sort(
-          (a, b) => Number(conceded.has(a)) - Number(conceded.has(b)) || danger(b) - danger(a) || a - b,
+          (a, b) => Number(lost(a)) - Number(lost(b)) || danger(b) - danger(a) || a - b,
         )[0]!;
         rationale.push(
           `Deploy bonus ${p.name} (#${p.bonusId})'s ${left} to ${label(m)}: Local Deployment keeps them inside the bonus, and it is its most threatened member.`,

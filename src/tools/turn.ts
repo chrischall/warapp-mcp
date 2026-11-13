@@ -28,6 +28,7 @@ import {
   overrideUncertainties,
   neighborsOf,
   planTurn,
+  PRESSURE_FACTOR,
   type PlanGoal,
   type PlannerSettings,
 } from '../analysis/index.js';
@@ -521,7 +522,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
           "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
           'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. Threat ' +
-          'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you). It reports ' +
+          'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you, or what it was observed to deploy since the previous turn when larger). It reports ' +
           'your cards and whether you must play or discard (more whole cards than the hold limit), and plays ' +
           'Reinforcement cards (their armies are planned) and, when cards must go, Order Priority, else discards the ' +
           'lowest-value cards — never playing Blockade or Order Delay. Its ' +
@@ -532,10 +533,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'borders worth holding before anything else. Under balanced/defend, an opponent whose every territory is ' +
           'visible and borders yours is attacked at once when, whatever way it splits its one estimated deploy to ' +
           'save territories, that still eliminates it or cuts it to one territory (or takes at least half); a ' +
-          'pressure plan may leave some of its territories unattacked. This runs before any border facing it is ' +
+          'pressure plan may leave some of its territories unattacked. One next to the fog is never called ' +
+          'eliminated, but all its visible territories are attacked as pressure (each sized for its full deploy plus a margin) ' +
+          `when each costs at most ${PRESSURE_FACTOR}× a typical neutral capture; one visible territory too costly blocks the pressure on all of them. ` +
+          'This runs before any border facing it is ' +
           'conceded (holds worth paying for against other players are funded first). Hopeless borders are listed in `conceded` and get no ' +
           'deploys (unless every territory you hold is conceded); under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
-          'Priority so the withdrawal runs before the border falls. A bonus whose new frontier would fall next turn is ' +
+          'Priority so the withdrawal runs before the border falls. A held bonus\'s border short of a sure hold by a near ' +
+          'miss (at most 2 armies or 15%), or still holding against the expected attack, is funded with everything left ' +
+          'instead (a warning says it may fall) and never withdrawn. A bonus whose new frontier would fall next turn is ' +
           'not completed under balanced/defend (a warning says so). A neutral no single stack can afford may be taken by ' +
           'several attacks in a fixed order (`multiSourceCaptures`; 0% luck only). Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
           'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
@@ -577,7 +583,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Armies every enemy is assumed to deploy next turn when judging threats. Default, per opponent: base ' +
               'income plus the bonuses it visibly holds in full, at most 75% of its largest stack next to you but ' +
               'never below the game\'s base income (at least 5); just that base income on an untouched opening ' +
-              'board — income in the fog is unseen, so raise it if you know they earn more.',
+              'board; when the previous turn\'s board is known, at least what that opponent was observed to deploy ' +
+              '(the net change of its visible armies plus what its captures cost it) — income in the fog is unseen, so raise it if you know they earn more.',
           ),
         view: viewArg(
           VIEWS,

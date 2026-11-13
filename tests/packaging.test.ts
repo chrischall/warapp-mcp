@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestHarness, type TestHarness } from '@chrischall/mcp-utils/test';
 import { registerAllTools } from '../src/tools/index.js';
+import { PRESSURE_FACTOR } from '../src/analysis/planner.js';
 
 /**
  * Things that otherwise fail only once a tag exists: provenance needs
@@ -332,6 +333,13 @@ describe('packaging for the smarter planner (phase 6)', () => {
     expect(claude).toMatch(/PLAN-PLANNER-2\.md/);
     for (const s of ['protected value', 'CONCEDE_FACTOR', 'withdraw', 'Order Priority', 'MIN_EXPANSION_SHARE', 'BREAK_WEIGHT', 'previousBoard'])
       expect(claude).toContain(s);
+  });
+
+  it('README states the fog pressure gate from PRESSURE_FACTOR, its margin and that it is all or nothing (#60)', () => {
+    const flat = readme.replace(/\s+/g, ' ');
+    expect(flat).toContain(`at most ${PRESSURE_FACTOR}× a typical neutral capture`);
+    expect(flat).toMatch(/full estimated deploy plus a margin/);
+    expect(flat).toMatch(/one visible territory too costly blocks the pressure on all of them/);
   });
 
   it('WARAPP-API.md marks GetHistory for a game in progress as unverified', () => {

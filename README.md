@@ -124,7 +124,7 @@ active. `warapp_healthcheck` reports the same.
 | `warapp_plan_route` | Shortest path between two territories, given by name or id. |
 | `warapp_get_live_board` | The live board through your war.app tab: every territory with its owner (player, `neutral`, or `pickable` during picks), armies and fog, and in a Commanders game whose `commander` stands there. Works in the pick phase and mid-game. `view`: compact / full (every special unit — commanders, bosses — with its owner). |
 | `warapp_get_my_picks` | Your submitted territory picks in priority order, and how many the game allows. |
-| `warapp_plan_turn` | A plan for your turn from the live board (defaults to the signed-in account): income, your cards and whether you must play one, deploys and moves by name and id, expected captures, bonuses and next income, warnings and reasoning, and an `orders` array (card plays included). `goal`: balanced (default: best income per army across holds, bonuses and breaking enemy bonuses, with at least 30% on expansion) / expand / complete-bonus / defend; `focus` bonuses; `reserve`; `enemy_deploy` (armies an enemy is assumed to deploy; default from the largest visible enemy stack). Reports the borders it gives up (`conceded`: not worth or not affordable to hold, never deployed to unless every territory you hold is conceded; it may still attack out with the armies already on it), `cardAdvice` (`order-priority` when a withdrawal from a conceded border must run first) and `trendSource` (where last turn's board came from — `history`, `cache` or null — for growing enemy stacks). Obeys the game's kill rates, Local Deployment and No-Split (`view: "full"` echoes the settings it assumed). Read-only; refuses outside a turn phase. |
+| `warapp_plan_turn` | A plan for your turn from the live board (defaults to the signed-in account): income, your cards and whether you must play one, deploys and moves by name and id, expected captures, bonuses and next income, warnings and reasoning, and an `orders` array (card plays included). `goal`: balanced (default: best income per army across holds, bonuses and breaking enemy bonuses, with at least 30% on expansion) / expand / complete-bonus / defend; `focus` bonuses; `reserve`; `enemy_deploy` (armies an enemy is assumed to deploy; default per opponent from its visible bonuses, or its observed growth since last turn when that is larger). Reports the borders it gives up (`conceded`: not worth or not affordable to hold, never deployed to unless every territory you hold is conceded; it may still attack out with the armies already on it), `cardAdvice` (`order-priority` when a withdrawal from a conceded border must run first) and `trendSource` (where last turn's board came from — `history`, `cache` or null — for growing enemy stacks). Obeys the game's kill rates, Local Deployment and No-Split (`view: "full"` echoes the settings it assumed). Read-only; refuses outside a turn phase. |
 | `warapp_plan_picks` | A pick list for a manual-distribution game in the picking stage, from the map, the settings and the live board's pickable territories: priority order by name and id, a compact primary group (the territory limit) and a disjoint fallback group, each pick's score and reasons (bonus, value, turns to complete, first-turn bonus, entry points, contested), warnings for assumed settings, and `submitPicks` — the ids in order, ready for `warapp_submit_picks`. The heuristics are in [docs/STRATEGY.md](docs/STRATEGY.md). `view`: compact / full. Read-only; refuses outside the picking stage. |
 | `warapp_submit_picks` | **Writes.** Replace your territory picks (priority order, pickable territories only, at most twice the territory limit). Confirm-gated; reads the picks back and reports `verified` only on an exact match. |
 | `warapp_submit_turn` | **Writes.** Commit your turn's orders (e.g. `warapp_plan_turn`'s `orders`) as the signed-in account: card plays (Reinforcement, Order Priority, Order Delay, Blockade), discards, deploys and moves. Confirm-gated; validated on the live board (cards in your hand, your territories, adjacent moves, armies available, deploys = income + played Reinforcement armies; bonus armies inside their bonus under Local Deployment; one attack/transfer per territory under No-Split; enough card plays or discards when you hold more cards than the limit); confirmed from game state (`resolved` / `committed` / `unknown`). Other players see the results. |
@@ -159,8 +159,9 @@ and chat text comes back marked as untrusted third-party content.
    or discard per card over — it plays Order Priority, else discards the lowest-value cards. It
    never plays Blockade (that gives a territory away) or Order Delay (it holds back your attacks).
    Threat warnings assume each enemy deploys `enemy_deploy` armies; enemy income is unseen, so
-   raise it if you know better. An enemy stack that grew since last turn raises the threat by
-   its growth (`trendSource` says where last turn's board came from).
+   raise it if you know better. With last turn's board, an opponent's deploy is at least what it
+   was observed to deploy (the net change of its visible armies plus what its captures cost it). An enemy stack that grew since
+   last turn raises the threat by its growth (`trendSource` says where last turn's board came from).
    Under the default `balanced` goal the plan spends income where it earns most per army:
    holding borders that protect bonuses, completing cheap bonuses (at least 30% of income goes
    to expansion), and breaking an enemy bonus you can reach. Under `balanced` and `defend`, an
@@ -171,15 +172,23 @@ and chat text comes back marked as untrusted third-party content.
    2-army territories, when its ~6 cannot save both). Any such opponent is tried, strong or weak, fewest
    territories first; holds worth paying for against other players, and against what a
    "Pressure" plan leaves the opponent, are funded first (pressure is dropped when they cannot
-   be). An opponent next to the fog is not attempted (a warning says so only when its visible
-   territories could all fall), and with fog anywhere else on the board the elimination is
+   be). An opponent next to the fog is never called eliminated, but its visible territories
+   are all attacked as "Pressure" (each sized for its full estimated deploy plus a margin of
+   half that deploy, at least 2, since its income is unseen) when each capture costs at most
+   4× a typical neutral capture next to you (with no neutral next to you, any cost). It is all
+   or nothing: one visible territory too costly blocks the pressure on all of them. Otherwise
+   it is not attempted (a warning says so only when its visible territories could all fall),
+   and with fog anywhere else on the board the elimination is
    hedged (it may hold unseen territories). A
    border just taken last turn from a weak opponent (fewer territories, smaller deploy) is never
    conceded. A border too costly to hold for
    what it protects is `conceded`: nothing is deployed there (unless every territory you hold
    is conceded) and no attack from it is funded, its armies withdraw to a border
    that holds, and `cardAdvice: "order-priority"` says to play Order Priority (add it to the
-   `orders` if you hold one) so the withdrawal runs before the border falls.
+   `orders` if you hold one) so the withdrawal runs before the border falls. A held bonus's
+   border is not conceded on a near miss (short of a sure hold by at most 2 armies or 15%) or
+   while it still holds against the expected attack (enemy movable + its deploy estimate):
+   everything left goes there, with a warning that it may fall, and its armies stay.
 2. **Review.** Go through the plan and its warnings; edit the `orders` if you want something
    different (territories by id or name, cards by id or type name).
 3. **Submit.** `warapp_submit_turn` with those `orders`. It always acts as the account signed in

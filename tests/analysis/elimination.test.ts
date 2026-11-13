@@ -14,7 +14,17 @@ import { describe, expect, it } from 'vitest';
 import type { BoardState } from '../../src/board.js';
 import { armiesToTake } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { guaranteedFalls, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import {
+  captureCost,
+  guaranteedFalls,
+  planTurn,
+  PRESSURE_FACTOR,
+  PRESSURE_MARGIN,
+  PRESSURE_MARGIN_ARMIES,
+  pressureMargin,
+  type PlannerSettings,
+  type TurnPlan,
+} from '../../src/analysis/planner.js';
 import { boardStateFromLive, OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap, Player } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
@@ -385,8 +395,10 @@ describe('finishing off a weak opponent (#45)', () => {
     const recent = /T3 \(#3\) was captured from player 22567833 last turn/;
     // defend, too poor to hold it (12 next to it: 11 movable + ~6 deploy = 17): conceded,
     // never also called held.
+    // The 12 stood there last turn too: no observed growth raises its ~6 deploy (#57).
     const heavy = ENDGAME.map((x) => (x.territoryId === 5 ? { ...x, armies: 12 } : x));
-    const poor = plan(heavy, 7, { previousBoard: previous, options: { goal: 'defend' } });
+    const heavyBefore = toBoard([...heavy.filter((x) => x.territoryId !== 3), t(3, THEM, 4)]);
+    const poor = plan(heavy, 7, { previousBoard: heavyBefore, options: { goal: 'defend' } });
     expect(poor.warnings.join('\n')).toMatch(/T3 \(#3\) cannot be held with the 7 armies left/);
     expect(poor.conceded).toContain(3);
     expect(poor.rationale.join('\n')).not.toMatch(recent);
@@ -397,5 +409,138 @@ describe('finishing off a weak opponent (#45)', () => {
     // expand reserves nothing for it: no line claiming it is held.
     const expand = plan(ENDGAME, 8, { previousBoard: previous, options: { goal: 'expand' } });
     expect(expand.rationale.join('\n')).not.toMatch(recent);
+  });
+});
+
+// Issue #60: the opponent's one visible territory (0 armies) sat next to my 7-stack, but it
+// borders the fog, so the finish-off check skipped it. Fog is a reason not to claim
+// elimination, not to skip a capture that costs about what expansion does. Live, an 11-army
+// attack sized for exactly its ~6 estimated deploy FAILED (it deployed more): pressure is
+// sized with a margin over the full deploy (PRESSURE_MARGIN), and that margin-sized cost is
+// what the PRESSURE_FACTOR gate judges. At ~6 the #60 shape costs 15 — five 2-army neutrals,
+// "more than the expansion it displaces" — so the cautious choice (not attempted) stands; a
+// weaker opponent (~4) is pressured.
+//
+//   1─2, 1─5, 5─10, 2─7, 1─8 — 1 (my 7-stack), 2 mine; 5 theirs; 10 fogged; 7, 8 neutral (2).
+describe('pressure on a weak opponent next to the fog (#60)', () => {
+  const MAP60 = mapOf(
+    [[1, 2], [1, 5], [5, 10], [2, 7], [1, 8]],
+    [1, 2, 5, 7, 8, 10],
+    [
+      { id: 501, name: 'Home', value: 2, territoryIds: [1, 2], bonusIds: [] },
+      { id: 502, name: 'Wilds', value: 3, territoryIds: [7, 8], bonusIds: [] },
+    ],
+  );
+  const board60 = (theirs: number, ten: LiveTerritory = fog(10)): LiveTerritory[] => [
+    t(1, ME, 7), t(2, ME, 2), t(5, THEM, theirs), t(7, OWNER_NEUTRAL, 2), t(8, OWNER_NEUTRAL, 2), ten,
+  ];
+  /** No visible neutral next to me: 7 and 8 are mine too. */
+  const noNeutrals60 = (theirs: number): LiveTerritory[] => [
+    t(1, ME, 7), t(2, ME, 2), t(5, THEM, theirs), t(7, ME, 2), t(8, ME, 2), fog(10),
+  ];
+
+  it('the margin by hand: at least ceil((deploy + 1) / 0.6) plus a buffer, never under PRESSURE_MARGIN_ARMIES', () => {
+    expect(PRESSURE_MARGIN).toBe(0.5);
+    expect(PRESSURE_MARGIN_ARMIES).toBe(2);
+    expect(pressureMargin(0)).toBe(2);
+    expect(pressureMargin(4)).toBe(2);
+    expect(pressureMargin(6)).toBe(3);
+    expect(pressureMargin(9)).toBe(5);
+    // The #60 sizing that failed live: exactly the ~6 deploy, 10 armies. With the margin: 15,
+    // over the owner's floor of ceil(7 / 0.6) = 12.
+    expect(captureCost(0 + 6, STD)).toBe(10);
+    expect(captureCost(0 + 6 + pressureMargin(6), STD)).toBe(15);
+    expect(captureCost(0 + 6 + pressureMargin(6), STD)!).toBeGreaterThan(Math.ceil(7 / 0.6));
+  });
+
+  it('the gate by hand: PRESSURE_FACTOR × a 2-army neutral (3) is 12 — ~6 on 0 (15) is over it, ~4 on 0 (10) under', () => {
+    expect(PRESSURE_FACTOR).toBe(4);
+    expect(PRESSURE_FACTOR * captureCost(2, STD)!).toBe(12);
+    expect(captureCost(0 + 4 + pressureMargin(4), STD)).toBe(10);
+    expect(captureCost(3 + 6 + pressureMargin(6), STD)).toBe(20);
+  });
+
+  it('#60 at ~6: the margin-sized capture (15) costs more than the expansion it displaces, so it is not attempted', () => {
+    const live = board60(0);
+    for (const goal of ['balanced', 'defend'] as const) {
+      const p = plan(live, 8, { options: { goal } }, MAP60);
+      // Never the 10-army attack that failed live.
+      expect(attacks(p).filter((m) => m.to === 5)).toEqual([]);
+      expect(p.rationale.join('\n')).not.toMatch(/Pressure player|Finish off/);
+      expect(p.warnings.join('\n')).toMatch(
+        /player 22567833 may hold more territories in the fog \(next to T5 \(#5\)\): finishing it off is not attempted/,
+      );
+      expect(() => validate(p, live, 8, MAP60)).not.toThrow();
+    }
+  });
+
+  it('a weaker opponent (~4): its one visible 0-army territory is attacked with a margin over its full deploy, as pressure', () => {
+    const live = board60(0);
+    for (const goal of ['balanced', 'defend'] as const) {
+      const p = plan(live, 8, { options: { goal, enemyDeploy: 4 } }, MAP60);
+      expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 5, armies: 10 }));
+      expect(p.expected.captures).toContain(5);
+      const why = p.rationale.join('\n');
+      expect(why).toMatch(
+        /Pressure player 22567833: take all 1 of its visible territories \(T5 \(#5\)\) this turn, each sized for its full ~4 deploy plus a margin of 2 landing there; it may hold more in the fog \(next to T5 \(#5\)\), so this is not an elimination/,
+      );
+      expect(why).not.toMatch(/Finish off/);
+      const warn = p.warnings.join('\n');
+      expect(warn).not.toMatch(/finishing it off is not attempted/);
+      expect(warn).not.toMatch(/Eliminating player/);
+      expect(warn).toMatch(/Pressuring player 22567833 assumes it deploys at most ~6 \(its ~4 estimate plus a margin of 2\)/);
+      expect(warn).toMatch(
+        /player 22567833 may hold more territories in the fog \(next to T5 \(#5\)\): taking its 1 visible territories is pressure, not an elimination/,
+      );
+      expect(deploySum(p)).toBe(8);
+      expect(() => validate(p, live, 8, MAP60)).not.toThrow();
+    }
+  });
+
+  it('with no visible neutral next to me there is no expansion to compare with: the #60 shape is pressured, margin included', () => {
+    const live = noNeutrals60(0);
+    const p = plan(live, 10, {}, MAP60);
+    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 5, armies: 15 }));
+    expect(p.rationale.join('\n')).toMatch(/Pressure player 22567833: take all 1 of its visible territories/);
+    expect(() => validate(p, live, 10, MAP60)).not.toThrow();
+  });
+
+  it('a visible territory too costly (3 armies + ~6 + 3 = 20 > 12) is not attacked, and warned as before', () => {
+    const live = board60(3);
+    const p = plan(live, 12, {}, MAP60);
+    expect(attacks(p).filter((m) => m.to === 5)).toEqual([]);
+    expect(p.rationale.join('\n')).not.toMatch(/Pressure player|Finish off/);
+    expect(p.warnings.join('\n')).toMatch(
+      /player 22567833 may hold more territories in the fog \(next to T5 \(#5\)\): finishing it off is not attempted, though its 1 visible territories could all be taken this turn/,
+    );
+    expect(() => validate(p, live, 12, MAP60)).not.toThrow();
+  });
+
+  it('the gate is all-or-nothing: one dear visible territory blocks pressure on a cheap one beside it', () => {
+    // 1─6 added: 6 is theirs with 3 armies (3 + 4 + 2 = 9 → 15 > 12); 5 alone (0 → 10) would pass.
+    const map = mapOf(
+      [[1, 2], [1, 5], [1, 6], [5, 10], [2, 7], [1, 8]],
+      [1, 2, 5, 6, 7, 8, 10],
+      [
+        { id: 501, name: 'Home', value: 2, territoryIds: [1, 2], bonusIds: [] },
+        { id: 502, name: 'Wilds', value: 3, territoryIds: [7, 8], bonusIds: [] },
+      ],
+    );
+    const live = [
+      t(1, ME, 20), t(2, ME, 2), t(5, THEM, 0), t(6, THEM, 3), t(7, OWNER_NEUTRAL, 2), t(8, OWNER_NEUTRAL, 2), fog(10),
+    ];
+    const p = plan(live, 12, { options: { enemyDeploy: 4 } }, map);
+    expect(attacks(p).filter((m) => m.to === 5 || m.to === 6)).toEqual([]);
+    expect(p.rationale.join('\n')).not.toMatch(/Pressure player|Finish off/);
+    expect(() => validate(p, live, 12, map)).not.toThrow();
+  });
+
+  it('full visibility still uses the elimination path, sized for the plain estimate (no pressure margin)', () => {
+    const live = board60(3, t(10, OWNER_NEUTRAL, 2));
+    const p = plan(live, 12, {}, MAP60);
+    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 5, armies: 15 }));
+    expect(p.rationale.join('\n')).toMatch(/Finish off player 22567833: attack all 1 of its territories/);
+    expect(p.rationale.join('\n')).not.toMatch(/visible territories/);
+    expect(() => validate(p, live, 12, MAP60)).not.toThrow();
   });
 });
