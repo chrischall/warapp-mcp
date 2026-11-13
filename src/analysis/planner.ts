@@ -486,7 +486,9 @@
 //     frontier it leaves: each member a visible enemy could take next turn (threat as
 //     in rule 1, armies staying after this turn's moves; a fresh capture holds its
 //     attack's survivors) needs holdArmies(threat) − armies more. When the total
-//     exceeds my next income (plus this turn's leftover, for members I held at the
+//     exceeds my next income (#128: the income the plan keeps — without the borders it concedes
+//     or a held bonus it has not yet decided to hold whole; rule 4d and `frontier.income` use the
+//     same figure) (plus this turn's leftover, for members I held at the
 //     start) the bonus would fall at once: under `balanced`/`defend` the capture is
 //     refused (warning "… indefensible …: not completed"); under `expand` and
 //     `complete-bonus` it is made with a warning. Under `balanced`/`defend` a bonus's
@@ -2004,6 +2006,12 @@ export function planTurn(input: PlanInput): TurnPlan {
   /** Next income after a change of `gain`: this turn's, less its card armies, moved by `gain`. */
   const nextIncomeWith = (gain: number) => Math.max(0, income - cardArmies + gain);
   const incomeAfter = (after: ReadonlySet<number>) => nextIncomeWith(incomeGain(after));
+  /**
+   * #128: the next income the plan can count on — {@link incomeAfter} without the borders it
+   * concedes (it does not plan to hold them, so the bonuses they break do not pay for anything).
+   * Assigned once `conceded` exists; R3, rule 4d and the frontier report use it.
+   */
+  let keptIncome = (after: ReadonlySet<number>) => incomeAfter(after);
   const armiesOf = (id: number) => state.get(id)?.armies ?? 0;
   /** The armies the special units on `id` fight as (a commander: {@link COMMANDER_STRENGTH}). */
   const unitsAt = (id: number) => specialUnitStrength(state.get(id)?.specialUnits);
@@ -2844,6 +2852,16 @@ export function planTurn(input: PlanInput): TurnPlan {
     contested: boolean;
   }
   const units: Unit[] = [];
+  // #128: what the plan can count on excludes the borders it concedes, and those of a held bonus
+  // it has not decided to hold whole yet (contested, #118): R3 runs before that is settled.
+  keptIncome = (after) =>
+    incomeAfter(
+      new Set(
+        [...after].filter(
+          (t) => !conceded.has(t) && !units.some((u) => (u.conceded || u.contested) && u.members.some((m) => m.id === t)),
+        ),
+      ),
+    );
   /** Borders a funded unit (or an individual hold) already holds. */
   const heldBorders = new Set<number>();
   /** My commander's borders whose whole hold rule 1k deployed. */
@@ -4171,7 +4189,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       })
       .sort((a, b) => a.id - b.id);
     if (!completes.length) return true;
-    const nextIncome = incomeAfter(after);
+    const nextIncome = keptIncome(after);
     const spare = Math.max(0, budget - reserve);
     const stays = (m: number) => {
       if (mineSet.has(m)) return avail.get(m)! + guard + (incoming.get(m) ?? 0);
@@ -4695,7 +4713,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const without = new Set([...held].filter((x) => x !== t));
     if (frontierDelta(without, [t], stays).enemy <= 0) return null;
     const f = frontierOf(held, stays);
-    const next = incomeAfter(held);
+    const next = keptIncome(held);
     const start = startHold();
     if (f.holdCost <= next || f.holdCost <= start) return null;
     const why = `${stoppedLine(t)} and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.`;
@@ -7693,7 +7711,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   // Rule 4d's frontier budget (#71): the frontier this plan leaves against the next income.
   const frontier: FrontierBudget = {
     ...frontierOf(after, (x) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0))),
-    income: incomeAfter(after),
+    income: keptIncome(after),
   };
   const startCost = startHold();
   const outgrown = frontier.holdCost > frontier.income && frontier.holdCost > startCost;

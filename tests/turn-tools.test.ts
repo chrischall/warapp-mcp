@@ -186,8 +186,9 @@ describe('warapp_plan_turn', () => {
     expect(p.goal).toBe('balanced');
     expect(p.expected.bonusesCompleted).toEqual([]);
     expect(p.moves.some((m) => m.kind === 'attack')).toBe(false);
+    // #128: R3 counts the income the plan keeps — 5, without the bonus its conceded border breaks (7 if it held).
     expect(p.warnings.join('\n')).toMatch(
-      /completing Broken Branch Riverlords \(#118\) leaves .* \(#\d+\) indefensible \(player \d+ can take it for \d+; next income 7\): not completed/,
+      /completing Broken Branch Riverlords \(#118\) leaves .* \(#\d+\) indefensible \(player \d+ can take it for \d+; next income 5\): not completed/,
     );
     expect(p.rationale.join('\n')).toMatch(/Do not complete bonus Broken Branch Riverlords \(#118\)/);
   });

@@ -236,3 +236,22 @@ describe('a territory interior only once a capture lands keeps a hold until then
     expect(plan.rationale.join('\n')).toMatch(/it is interior only once T2 \(#2\) falls, and until then they hold it against ~8/);
   });
 });
+
+describe('R3 and the frontier count only the income the plan keeps (#128)', () => {
+  // A (+5): 1 2, its border 1 facing an enemy 60-stack (conceded). B (+3): 5 mine, 6 a 2-army
+  // neutral beside enemy 7 (14): completing B needs ~10 on 6 next turn.
+  const g = buildGraph(
+    makeMap([1, 2, 3, 5, 6, 7], [[1, 2], [1, 3], [2, 5], [5, 6], [6, 7], [3, 7]], [[101, 5, [1, 2]], [102, 3, [5, 6]]]),
+  );
+  const b = board([mine(1, 2), mine(2, 1), player(3, 60, 20), mine(5, 10), neutral(6, 2), player(7, 14, 20)]);
+  const plan = planTurn({ graph: g, board: b, me: ME, income: 10, settings: STD, options: { goal: 'balanced', enemyDeploy: 5 } });
+  it('a completion is not judged defensible on a bonus the plan concedes', () => {
+    expect(plan.conceded).toEqual([1]);
+    expect(plan.expected.bonusesCompleted).toEqual([]);
+    expect(plan.warnings.join('\n')).toMatch(/completing B102 \(#102\) leaves T6 \(#6\) indefensible \(player 20 can take it for 3; next income 8\): not completed/);
+  });
+  it("the frontier's income is the one if the conceded borders fall", () => {
+    expect(plan.frontier.income).toBe(plan.expected.nextIncomeIfConcededFall);
+    expect(plan.frontier.income).toBe(5);
+  });
+});
