@@ -3505,7 +3505,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         )
           warnings.splice(i, 1);
       rationale.push(
-        `Drop the attack on ${label(t)}: it completes ${negatives.join(', ')}, and next income would fall below this turn's ${nextIncomeWith(0)} (next income ${nextIncomeWith(gain)} → ${nextIncomeWith(after)} without it); its armies stay where they are.`,
+        `Drop the attack on ${label(t)}: it completes ${negatives.join(', ')}, and next income would fall below the ${nextIncomeWith(0)} it is without these captures (next income ${nextIncomeWith(gain)} → ${nextIncomeWith(after)} without it); its armies stay where they are.`,
       );
       gain = after;
     }
