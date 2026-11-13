@@ -6,7 +6,7 @@
 // every hold. Synthetic maps only: every id and name here is made up.
 import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
-import { armiesToTake } from '../../src/analysis/combat.js';
+import { armiesToTake, straightKills } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { incomeUncertainties } from '../../src/analysis/player.js';
 import { planTurn, type PlanGameContext, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
@@ -842,8 +842,8 @@ describe('#112: the contact fallback takes the capture that loses the fewest arm
 
   it('the arithmetic: a 15-neutral loses 11, a 4-army stack 3, an empty one nothing', () => {
     expect(armiesToTake(15)).toBe(25);
-    expect(Math.round((15 * 70) / 100)).toBe(11);
-    expect(Math.round((4 * 70) / 100)).toBe(3);
+    expect(straightKills(15, 70)).toBe(11);
+    expect(straightKills(4, 70)).toBe(3);
   });
 
   it('takes the empty enemy territory, not the 15-neutral toward the big bonus', () => {
