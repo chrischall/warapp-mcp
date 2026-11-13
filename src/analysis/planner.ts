@@ -1005,6 +1005,12 @@ export interface PlanOptions {
    */
   movesFirst?: boolean;
   /**
+   * An opponent may hold an Order Priority card this turn (#179): the card clock says one can
+   * exist by now and its hand is hidden. Two played cards cancel, so even moving first, mine is
+   * what keeps the killing strike (rule 1e) or the commander strike (rule 1s) first. Default false.
+   */
+  opponentsMayHoldOrderPriority?: boolean;
+  /**
    * Adapt to the game profile (rule 0p): with no `goal`, pick it from the profile (behind:
    * `defend`, else `balanced`) and apply the profile's rules. An explicit `goal` always wins
    * (the plan says the profile was overridden). Default `false`: the plan ignores the profile.
@@ -8774,10 +8780,25 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const CONCEDED_ORDER = /; play Order Priority so it goes first\.$/;
   /** The strike Order Priority protects (rule 1s), when the threat to my commander advised the card. */
   const strikeOrder = strikeCard ? moves.find((m) => m.kind === 'attack' && strikes.has(m.to)) : undefined;
-  const outOfConceded = moves.filter((m) => conceded.has(m.from) && m !== strikeOrder);
+  /**
+   * #179: the strike that eliminates a player finished off (rule 1e) — the first attack on its
+   * largest stack (most movable armies, then lowest id): the one that can flee or strike first.
+   */
+  const kill = (() => {
+    for (const p of [...finishedOff].sort(byNum)) {
+      const target = [...(ownedBy.get(p) ?? [])]
+        .filter((t) => moves.some((m) => m.kind === 'attack' && m.to === t))
+        .sort((a, b) => armiesOf(b) + unitsAt(b) - (armiesOf(a) + unitsAt(a)) || a - b)[0];
+      const order = target === undefined ? undefined : moves.find((m) => m.kind === 'attack' && m.to === target);
+      if (order) return { p, order };
+    }
+    return undefined;
+  })();
+  const killOrder = strikeOrder ? undefined : kill?.order;
+  const outOfConceded = moves.filter((m) => conceded.has(m.from) && m !== strikeOrder && m !== killOrder);
   /** My first order: the one Order Priority would protect. Checked against the schedule below. */
   let firstOrder: PlannedMove | undefined =
-    strikeOrder ?? [...outOfConceded].sort((a, b) => b.armies - a.armies || a.from - b.from || a.to - b.to)[0];
+    strikeOrder ?? killOrder ?? [...outOfConceded].sort((a, b) => b.armies - a.armies || a.from - b.from || a.to - b.to)[0];
   /** The visible stacks of one player next to `t` plus its deploy: what can reach `t` this turn. */
   const reachOf = (t: number) => {
     const byPlayer = new Map<number, number>();
@@ -8840,6 +8861,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // A move it depends on (one into its source, say) must run before it, so it is not my first
     // order, and the card protects only that one: my first order is whatever the schedule puts first.
     const head = scheduled[0]!;
+    if (firstOrder === killOrder)
+      warnings.push(
+        `The strike that eliminates player ${kill!.p} cannot be my first order: ${label(head.from)} → ${label(head.to)} must run before it.`,
+      );
     if (firstOrder === strikeOrder) {
       const r = rationale.findIndex((l) => l.startsWith("Play Order Priority: my commander's territory"));
       if (r >= 0) rationale.splice(r, 1);
@@ -8860,7 +8885,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   if (!firstOrder) cardAdvice = null;
   else {
     const n = firstOrder.armies;
-    why = opts.movesFirst
+    /** #179: a strike that ends a player is protected even moving first when the opponent may hold the card too. */
+    const decisive = firstOrder === strikeOrder || firstOrder === killOrder;
+    const contested = decisive && opts.movesFirst === true && opts.opponentsMayHoldOrderPriority === true;
+    why = opts.movesFirst && !contested
       ? "I move first this turn, so my first order already runs before any of the opponent's"
       : firstOrder === strikeOrder
         ? undefined
@@ -8870,7 +8898,18 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
             ? `it saves only ${n} ${n === 1 ? 'army' : 'armies'}, under the ${ORDER_PRIORITY_MIN_ARMIES} a card is worth`
             : undefined;
     cardAdvice = why === undefined ? 'order-priority' : null;
-    if (firstOrder === strikeOrder && opts.movesFirst) {
+    const mayHold = (who: string) =>
+      `I move first this turn, but ${who} may hold an Order Priority card: two cancel, so mine keeps this order first`;
+    if (firstOrder === killOrder && cardAdvice) {
+      const target = state.get(firstOrder.to)!;
+      rationale.push(
+        `Play Order Priority: ${label(firstOrder.from)} → ${label(firstOrder.to)} is the strike that eliminates player ${kill!.p}, on its largest stack (${target.armies}), the one that could flee or strike first; ${contested ? mayHold(`player ${kill!.p}`) : `with the card it is my first order and runs before player ${kill!.p}'s first`}.`,
+      );
+    }
+    if (firstOrder === strikeOrder && contested) {
+      const r = rationale.findIndex((l) => l.startsWith("Play Order Priority: my commander's territory"));
+      if (r >= 0) rationale[r] = `${rationale[r]} ${mayHold(strikeWho)}.`;
+    } else if (firstOrder === strikeOrder && opts.movesFirst) {
       // Rule 1s advised the card before it knew I move first: take that line back.
       const r = rationale.findIndex((l) => l.startsWith("Play Order Priority: my commander's territory"));
       if (r >= 0) rationale.splice(r, 1);

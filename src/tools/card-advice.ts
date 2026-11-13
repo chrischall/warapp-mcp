@@ -61,7 +61,7 @@ function multiplier(settings: GameSettings | undefined, key: string): number | u
  * Whether an opponent can hold `card` this turn: the card is in play and the card clock lets it
  * be in a hand by `turn` (unknown turn: yes).
  */
-function opponentCanHold(settings: GameSettings | undefined, card: string, turn: number | null): boolean {
+export function opponentCanHold(settings: GameSettings | undefined, card: string, turn: number | null): boolean {
   const entry = cardClock(settings)?.cards.find((c) => c.card === card);
   if (!entry) return false;
   const first = entry.firstPlayableTurn.fastest;

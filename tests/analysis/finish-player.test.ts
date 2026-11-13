@@ -5,7 +5,7 @@ import type { BoardSpecialUnit, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { captureCost, guaranteedFallsReaching, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, mine } from './helpers.js';
+import { board, mine, neutral } from './helpers.js';
 
 const ME = 10;
 const VICTIM = 20;
@@ -74,5 +74,52 @@ describe('#179 Local Deployment: finishing off sizes each territory for the depl
     expect(attackOn(on, 5)!.reason).toMatch(/~5 deploy that can reach it/);
     const off = planTurn({ graph: buildGraph(LD_MAP), board: b, me: ME, income: 30, settings: STD });
     expect(attackOn(off, 5)!.armies).toBe(captureCost(2 + 7 + 9, STD));
+  });
+});
+
+// The victim (5 6 7) with its largest stack on 6: the stack that can flee or strike first.
+const KILL_BOARD = board([mine(1, 3), mine(2, 3), mine(3, 3), mine(4, 3), enemy(5, 2), enemy(6, 6), enemy(7, 2)]);
+const killPlan = (options: Parameters<typeof planTurn>[0]['options'] = {}) =>
+  planTurn({ graph: buildGraph(LD_MAP), board: KILL_BOARD, me: ME, income: 70, settings: STD, options });
+
+describe('#179 Order Priority: the killing strike goes first', () => {
+  it('the attack on its largest stack is my first order, and Order Priority is advised for it', () => {
+    const p = killPlan({ holdsOrderPriority: true });
+    expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
+    expect(p.moves[0]).toMatchObject({ kind: 'attack', to: 6 });
+    expect(p.cardAdvice).toBe('order-priority');
+    expect(p.rationale.join('\n')).toMatch(/Play Order Priority: T2 \(#2\) → T6 \(#6\) is the strike that eliminates player 20/);
+  });
+
+  it('without the card it still goes first, and no card is advised', () => {
+    const p = killPlan();
+    expect(p.moves[0]).toMatchObject({ kind: 'attack', to: 6 });
+    expect(p.cardAdvice).toBeNull();
+  });
+
+  it('moving first, the card is not needed unless the opponent may hold one too', () => {
+    const first = killPlan({ holdsOrderPriority: true, movesFirst: true });
+    expect(first.moves[0]).toMatchObject({ kind: 'attack', to: 6 });
+    expect(first.cardAdvice).toBeNull();
+    const contested = killPlan({ holdsOrderPriority: true, movesFirst: true, opponentsMayHoldOrderPriority: true });
+    expect(contested.cardAdvice).toBe('order-priority');
+    expect(contested.rationale.join('\n')).toMatch(/may hold an Order Priority card: two cancel/);
+  });
+});
+
+describe('#179 Order Priority: the commander strike when I move first but the opponent may hold one', () => {
+  // My commander on T1 (3) faces T2 (20 + player 20's commander); T5 (50) kills it.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [5, 2], [1, 3], [3, 4]]));
+  const b = board([withCommander(mine(1, 3), ME), withCommander(enemy(2, 20), VICTIM), mine(3, 2), neutral(4, 2), mine(5, 50)], true);
+  const STRIKE: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true };
+  it('advises it: two cards cancel, and mine keeps the strike first', () => {
+    const base = { graph: g, board: b, me: ME, income: 10, settings: STRIKE };
+    const known = planTurn({ ...base, options: { enemyDeploy: 5, holdsOrderPriority: true, movesFirst: true } });
+    expect(known.cardAdvice).toBeNull();
+    const p = planTurn({ ...base, options: { enemyDeploy: 5, holdsOrderPriority: true, movesFirst: true, opponentsMayHoldOrderPriority: true } });
+    expect(attacks(p)[0]).toMatchObject({ from: 5, to: 2 });
+    expect(p.cardAdvice).toBe('order-priority');
+    expect(p.rationale.some((r) => r.startsWith('Order Priority is not needed for the strike'))).toBe(false);
+    expect(p.rationale.join('\n')).toMatch(/may hold an Order Priority card: two cancel/);
   });
 });

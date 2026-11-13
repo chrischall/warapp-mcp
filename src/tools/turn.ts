@@ -55,7 +55,7 @@ import { type Game, type GameMap, type GameSettings, type Player } from '../norm
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
-import { adviseCards, cardGame, handOwners, TEAM_HAND } from './card-advice.js';
+import { adviseCards, cardGame, handOwners, opponentCanHold, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
   gameIdArg,
@@ -1170,7 +1170,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
+          // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
           ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
+          ...(opponentCanHold(game.settings, 'Order Priority', turn) ? { opponentsMayHoldOrderPriority: true } : {}),
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);
