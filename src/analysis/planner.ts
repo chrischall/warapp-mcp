@@ -4303,7 +4303,9 @@ export function planTurn(input: PlanInput): TurnPlan {
       const before = [...earlier].reduce((n, [id, need]) => n + (exposed.some((e) => e.id === id) ? 0 : need), 0);
       const held = exposed.filter((e) => mineSet.has(e.id)).reduce((sum, e) => sum + e.added, 0);
       const anyway = exposed.filter((e) => e.added < e.need);
-      if (total + before <= nextIncome + Math.min(spare, held)) {
+      // A completion that adds no exposure (total 0) is never refused: refusing it saves nothing,
+      // whatever the earlier completions need (it only adds income).
+      if (total === 0 || total + before <= nextIncome + Math.min(spare, held)) {
         if (anyway.length && guarded)
           rationale.push(
             `Complete bonus ${bonusName(b.id)} though ${anyway.map((e) => label(e.id)).join(', ')} may fall next turn: ${anyway.length === 1 ? 'it is' : 'they are'} exposed whether or not it is completed, so refusing would save nothing.`,

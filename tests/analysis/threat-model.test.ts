@@ -332,4 +332,46 @@ describe('the defensibility veto (R3) judges what a completion changes (#128)', 
     expect(plan.expected.bonusesCompleted).toEqual([100]);
     expect(plan.rationale.join('\n')).toMatch(/Do not complete bonus B101 \(#101\): holding its frontier next turn needs 5 more armies \(T4 \(#4\) 5\), on top of the 5 this turn's other completions need, more than the next income of 9/);
   });
+  // A completion that adds no exposure cannot be refused for the earlier completions' needs: refusing
+  // it saves nothing (and planTurn used to throw naming its "worst" member, of which there was none).
+  it('a completion that adds no exposure is made whatever the earlier completions need (expand)', () => {
+    // +3 bonus 1 2: 2 a 1-army neutral beside an enemy 30-stack (9). +2 bonus 3 4: 4 a 1-army neutral far from it.
+    const g = buildGraph(makeMap([1, 2, 3, 4, 7, 9], [[1, 2], [2, 9], [3, 4], [1, 3], [9, 7]], [[100, 3, [1, 2]], [101, 2, [3, 4]]]));
+    const b = board([mine(1, 10), neutral(2, 1), mine(3, 10), neutral(4, 1), player(9, 30, 20), { territoryId: 7, owner: { kind: 'unknown' }, armies: null, fogLevel: 'Fogged' }]);
+    for (const goal of ['expand', 'complete-bonus'] as const) {
+      const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, options: { goal } });
+      expect(plan.expected.bonusesCompleted).toEqual([100, 101]);
+      expect(plan.warnings.join('\n')).toMatch(/completing B100 \(#100\) leaves T2 \(#2\) indefensible .*: completed anyway/);
+      expect(plan.warnings.join('\n')).not.toMatch(/completing B101/);
+    }
+  });
+  it('a completion that adds no exposure is made whatever the earlier completions need (balanced)', () => {
+    // Found by a randomized sweep: my 9 on 2; the enemy holds 5 (24), 6 (12) and 13 (2); the rest neutral.
+    const g = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+        [[1, 2], [1, 4], [1, 9], [2, 3], [2, 5], [2, 10], [2, 11], [3, 11], [4, 6], [4, 7], [4, 8], [7, 8], [7, 10], [9, 12], [10, 11], [10, 13]],
+        [[100, 5, [3, 6]], [101, 2, [11]], [102, 2, [2, 10]], [103, 1, [5]], [104, 1, [7, 9, 12, 1]], [105, 0, [4, 8, 13]]],
+      ),
+    );
+    const at = (armies: number[]) =>
+      board(
+        armies.map((a, i) => {
+          const id = i + 1;
+          return id === 2 ? mine(id, a) : [5, 6, 13].includes(id) ? player(id, a, 20) : neutral(id, a);
+        }),
+      );
+    const plan = planTurn({
+      graph: g,
+      board: at([1, 9, 3, 3, 24, 12, 3, 5, 4, 1, 3, 1, 2]),
+      previousBoard: at([1, 5, 1, 1, 19, 10, 4, 2, 1, 1, 6, 1, 1]),
+      me: ME,
+      income: 4,
+      settings: { offensiveKillRate: 60, defensiveKillRate: 80, luckModifier: 0, roundingMode: 'StraightRound', oneArmyStandsGuard: true, baseIncome: 5 },
+      options: { goal: 'balanced', holdsOrderPriority: true },
+    });
+    expect(plan.deploys.reduce((s, d) => s + d.armies, 0)).toBe(4);
+    for (const id of plan.expected.bonusesCompleted)
+      expect(plan.warnings.join('\n')).not.toMatch(new RegExp(`completing B${id} \\(#${id}\\) leaves`));
+  });
 });
