@@ -92,7 +92,7 @@ describe('a held bonus a stack two steps away can reach keeps its hold (#172)', 
     // 98 + 5 take T2 and attack on with ~100: T1 needs far more than its 28, so nothing leaves.
     expect(leaving(p, 1)).toBe(0);
     expect(p.rationale.join('\n')).toMatch(
-      /kept 28 on T1 \(#1\): player 20 can reach it next turn from T3 \(#3\) via T2 \(#2\) \(~\d+ attacking; it needs \d+ to hold\)/,
+      /kept 28 on T1 \(#1\): player 20 can reach it next turn from T3 \(#3\) via T2 \(#2\) \(~\d+ attacking; it needs \d+ to hold(; bring \d+ more next turn)?\)/,
     );
     expect(valid(reportedMap, p, b, 40)).toEqual([]);
   });
@@ -191,7 +191,8 @@ describe('a held bonus a stack two steps away can reach keeps its hold (#172)', 
     expect(p.moves).toContainEqual(expect.objectContaining({ from: 1, to: 6, kind: 'attack' }));
     expect(28 + deployedTo(p, 1) - leaving(p, 1)).toBeGreaterThanOrEqual(r.needs);
     expect(p.rationale.join('\n')).toMatch(/Attack T6 \(#6\) from T1 \(#1\) with 3 \(deploy 3 there\)/);
-    expect(p.rationale.join('\n')).toMatch(/The attack on T6 \(#6\) leaves T1 \(#1\) its hold \(kept \d+ on T1 \(#1\): player 20 can reach it next turn from T3 \(#3\) via T2 \(#2\)/);
+    expect(p.rationale.join('\n')).toMatch(/The attack on T6 \(#6\) leaves T1 \(#1\) its hold against a stack two steps away\./);
+    expect(p.rationale.join('\n')).toMatch(/Hold T1 \(#1\) against a stack two steps away \(kept \d+ on T1 \(#1\): player 20 can reach it next turn from T3 \(#3\) via T2 \(#2\)/);
     expect(valid(map, p, b, 40)).toEqual([]);
   });
 
@@ -268,7 +269,7 @@ describe('a held bonus a stack two steps away can reach keeps its hold (#172)', 
     const p = planTurn({ graph: buildGraph(map), board: b, me: ME, income: 4, settings: STD, game: { players: [{ id: ME }, { id: ENEMY }], turn: 1 } });
     expect(p.moves.filter((m) => m.from === 11)).toEqual([]);
     expect(p.rationale.join('\n')).toMatch(
-      /Orders out of T11 \(#11\) leave it its hold \(kept 13 on T11 \(#11\): player 20 can reach it next turn from T12 \(#12\) via T10 \(#10\) \(~\d+ attacking; it needs \d+ to hold\)\)\./,
+      /Hold T11 \(#11\) against a stack two steps away \(kept 13 on T11 \(#11\): player 20 can reach it next turn from T12 \(#12\) via T10 \(#10\) \(~\d+ attacking; it needs \d+ to hold(; bring \d+ more next turn)?\)\)\./,
     );
     expect(valid(map, p, b, 4)).toEqual([]);
   });
@@ -322,7 +323,7 @@ describe('the two-step hold is judged against the plan\'s final concession (#172
   const notedHoldsKept = (b: BoardState, p: TurnPlan) => {
     const broken: string[] = [];
     for (const line of p.rationale)
-      for (const m of line.matchAll(/kept (\d+) on T(\d+) \(#\d+\): .*? it needs (\d+) to hold\)/g)) {
+      for (const m of line.matchAll(/kept (\d+) on T(\d+) \(#\d+\): .*? it needs (\d+) to hold(?:; bring \d+ more next turn)?\)/g)) {
         const [kept, t, needs] = [Number(m[1]), Number(m[2]), Number(m[3])];
         if (finalAt(b, p, t) < Math.min(kept, needs)) broken.push(`T${t} ends ${finalAt(b, p, t)}: ${line}`);
       }
@@ -378,5 +379,63 @@ describe('the two-step hold is judged against the plan\'s final concession (#172
     const p = sweepPlan(shortMap, shortBoard, 20, { ...STD, luckModifier: 0.16 }, { goal: 'expand', minWinChance: 0.75, movesFirst: true, adapt: true });
     expect(notedHoldsKept(shortBoard, p)).toEqual([]);
     expect(valid(shortMap, p, shortBoard, 20)).toEqual([]);
+  });
+});
+
+// Review of #172: each two-step hold is stated once, at the end, with the stay the plan ends on
+// (an order that keeps it says so without numbers), and a hold kept short of what it needs —
+// because next turn's deploy can make up the rest — says how many more to bring.
+describe('a two-step hold is stated once, with the final stay (#172)', () => {
+  const finalAt = (b: BoardState, p: TurnPlan, id: number) =>
+    (b.territories.find((t) => t.territoryId === id)?.armies ?? 0) +
+    deployedTo(p, id) -
+    leaving(p, id) +
+    p.moves.filter((m) => m.kind === 'transfer' && m.to === id).reduce((n, m) => n + m.armies, 0);
+  const statements = (p: TurnPlan) =>
+    p.rationale.flatMap((line) => [...line.matchAll(/kept (\d+) on T(\d+) \(#\d+\): .*? it needs (\d+) to hold(?:; bring (\d+) more next turn)?\)/g)]).map((m) => ({
+      kept: Number(m[1]),
+      t: Number(m[2]),
+      needs: Number(m[3]),
+      bring: m[4] === undefined ? 0 : Number(m[4]),
+    }));
+  // T1 (+12, 28) with a 2-neutral +3 bonus T6 beside it: an attack out of T1 and its idle
+  // armies both meet the hold.
+  const attackMap = makeMap([...IDS, 6], [...EDGES, [1, 6]], [...KEEP, [102, 3, [6]]]);
+  const attackBoard = board([...reported(98).territories, neutral(6, 2)]);
+  const cases: [string, GameMap, BoardState, number][] = [
+    ['reported, income 40', reportedMap, reported(98), 40],
+    ['reported, income 30', reportedMap, reported(98), 30],
+    ['reported, small stack', reportedMap, reported(12), 40],
+    ['an attack out of it', attackMap, attackBoard, 40],
+    ['an attack out of it, income 30', attackMap, attackBoard, 30],
+  ];
+
+  it.each(cases)('%s: one statement per territory, its kept the final stay', (_name, map, b, income) => {
+    const p = plan(map, b, income);
+    const said = statements(p);
+    const ts = said.map((s) => s.t);
+    expect(new Set(ts).size).toBe(ts.length);
+    for (const s of said) {
+      expect(s.kept).toBe(finalAt(b, p, s.t));
+      // Short of the hold: the rest comes next turn, and says how much.
+      expect(s.bring).toBe(Math.max(0, s.needs - s.kept));
+    }
+    expect(valid(map, p, b, income)).toEqual([]);
+  });
+
+  it('an order that keeps the hold names it without restating its numbers', () => {
+    const p = plan(attackMap, attackBoard, 40);
+    const text = p.rationale.join('\n');
+    expect(text).toMatch(/The attack on T6 \(#6\) leaves T1 \(#1\) its hold against a stack two steps away\./);
+    expect(text.match(/can reach it next turn/g)).toHaveLength(1);
+  });
+
+  it('a hold kept short says how many more to bring next turn', () => {
+    const b = reported(98);
+    const p = plan(reportedMap, b, 40);
+    const [s] = statements(p);
+    expect(s).toBeDefined();
+    expect(s!.kept).toBeLessThan(s!.needs);
+    expect(p.rationale.join('\n')).toContain(`it needs ${s!.needs} to hold; bring ${s!.needs - s!.kept} more next turn`);
   });
 });
