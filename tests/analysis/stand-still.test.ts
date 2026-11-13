@@ -191,6 +191,10 @@ describe('never stand still in the opening (#104)', () => {
       expect(p.deploys).toEqual([{ territoryId: 2, armies: 5 }]);
       expect(attacks(p)).toEqual([]);
       expect(p.warnings.join('\n')).toMatch(/standing still.*cheapest expansion.*T4 \(#4\).*Vale \(#202\)/i);
+      // #107: the actual reason — without the hold's 5 deploys it would fit (3 movable + 5).
+      expect(p.warnings.join('\n')).toMatch(
+        /T4 \(#4\), 6 armies, toward bonus Vale \(#202\)\) does not fit what the holds leave: it needs 6, and at most 3 can reach it this turn \(3 movable on T1 \(#1\) \+ 0 to deploy; the holds took 5\)\./,
+      );
       expect(valid(p, b, 5, map)).toEqual([]);
     });
   });
@@ -255,5 +259,105 @@ describe('never stand still in the opening (#104)', () => {
     expect(w).toMatch(/army cap \(8× income\)/);
     expect(w).toMatch(/income model does not apply it/);
     expect(w).not.toMatch(/the model does not apply it/);
+  });
+});
+
+// Issue #107: in a 7-player FFA opening rule 4e ran, but every step it tried failed, and its
+// warning named a far step toward the bonus with the fewest armies to finish — reachable only
+// through a 1-army territory — with only the deploy as its budget, while a 4-army neutral next
+// to my 6-army stack (toward a costlier bonus) was affordable.
+describe('#107: never stand still, live shapes', () => {
+  //   My 6-stack on 1 borders 3 (a 4-neutral in Coast). My 1-army 2 borders 4 (an 8-neutral in
+  //   Hills, 13 to take). Hills (+2) is 1, 2 and 4: 13 to finish, the fewest — but only 4 is
+  //   missing, reachable only from the 1-army 2. Coast (+2) is 3, 6, 7: 6 + 20 + 20 = 46.
+  //   Six opponents sit in the fog beyond 7 and 4.
+  const SEVEN: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80].map((id) => ({ id })), turn: 2 };
+  const CAP: PlannerSettings = { ...STD, armyCap: 8 };
+  const fogged = (territoryId: number): TerritoryState => ({ territoryId, owner: { kind: 'unknown' }, armies: null });
+  const map = makeMap(
+    [1, 2, 3, 4, 6, 7, 20, 21, 22],
+    [[1, 2], [1, 3], [2, 4], [3, 6], [6, 7], [7, 20], [4, 21], [21, 22]],
+    [
+      [401, 'Hills', 2, [1, 2, 4]],
+      [402, 'Coast', 2, [3, 6, 7]],
+    ],
+  );
+  const mg = buildGraph(map);
+  const live = (stack: number, near: number): BoardState =>
+    board([mine(1, stack), mine(2, 1), neutral(3, near), neutral(4, 8), neutral(6, 12), neutral(7, 12), fogged(20), fogged(21), fogged(22)]);
+
+  it('the arithmetic: an 8-neutral takes 13, a 6-neutral 10', () => {
+    expect(armiesToTake(8)).toBe(13);
+    expect(armiesToTake(6)).toBe(10);
+  });
+
+  it('takes the neutral next to my stack, not the far step toward the bonus with fewer armies to finish', () => {
+    const b = live(6, 4);
+    for (const adapt of [false, true]) {
+      const p = planTurn({ graph: mg, board: b, me: ME, income: 5, settings: CAP, game: SEVEN, options: { adapt } });
+      expect(p.profile.phase).toBe('opening');
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 6, kind: 'attack' })]);
+      // Coast is not the bonus with the fewest armies to finish: the reason must not say so.
+      expect(attacks(p)[0]!.reason).toMatch(/Coast \(#402\) \(\+2, 46 armies to finish, the fewest of any bonus with a capture affordable this turn\)/);
+      expect(attacks(p)[0]!.reason).not.toMatch(/the fewest of any bonus in reach/);
+      expect(p.rationale.join('\n')).toMatch(
+        /Hills \(#401\) has fewer armies to finish \(13\), but T4 \(#4\) needs 13 and at most 5 can reach it this turn/,
+      );
+      expect(p.warnings.join('\n')).not.toMatch(/standing still/i);
+      expect(valid(p, b, 5, map)).toEqual([]);
+    }
+  });
+
+  it('the same with the previous board known (nothing moved)', () => {
+    const b = live(6, 4);
+    const p = planTurn({ graph: mg, board: b, me: ME, income: 5, settings: CAP, game: SEVEN, previousBoard: b });
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 6 })]);
+  });
+
+  it('nothing affordable: the warning names the closest step and counts the movable armies next to it', () => {
+    // A 4-stack (3 movable) next to a 6-neutral (10 to take): 3 + 5 = 8 reach it, 2 short.
+    // The far 8-neutral needs 13 and only the 5 deploys reach it: 8 short.
+    const b = live(4, 6);
+    const p = planTurn({ graph: mg, board: b, me: ME, income: 5, settings: CAP, game: SEVEN });
+    expect(attacks(p)).toEqual([]);
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(
+      /Standing still: no capture is planned, and the cheapest expansion \(T3 \(#3\), 10 armies, toward bonus Coast \(#402\)\) does not fit this turn: it needs 10, and at most 8 can reach it this turn \(3 movable on T1 \(#1\) \+ 5 to deploy\)\./,
+    );
+    expect(w).not.toMatch(/T4 \(#4\), 13 armies/);
+    expect(w).not.toMatch(/what the holds leave/);
+  });
+
+  describe("rule 4d's frontier stop", () => {
+    // 3 borders an enemy stack of 12 on 22: a capture of 3 (3 survivors) would need far more than
+    // the next income of 5 to hold, and my 11-stack on 1 faces no enemy now (0 at the start).
+    const fmap = makeMap(
+      [1, 2, 3, 6, 7, 22],
+      [[1, 2], [1, 3], [3, 6], [6, 7], [3, 22]],
+      [[402, 'Coast', 2, [3, 6, 7]]],
+    );
+    const fg = buildGraph(fmap);
+    const b = board([mine(1, 11), mine(2, 1), neutral(3, 4), neutral(6, 12), neutral(7, 12), player(22, 12, P2)]);
+
+    it('in the opening, one capture that grows the frontier beats standing still, and the rationale says so', () => {
+      const p = planTurn({ graph: fg, board: b, me: ME, income: 5, settings: CAP, game: SEVEN });
+      expect(p.profile.phase).toBe('opening');
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 6 })]);
+      const r = p.rationale.join('\n');
+      expect(r).toMatch(/rule 4d's frontier stop is waived for this one capture: in the opening, one capture that grows the frontier is better than none/);
+      expect(r).not.toMatch(/Do not take T3 \(#3\)/);
+      expect(p.warnings.join('\n')).not.toMatch(/not taken/);
+      expect(p.warnings.join('\n')).not.toMatch(/standing still/i);
+      expect(valid(p, b, 5, fmap)).toEqual([]);
+    });
+
+    it('in the expansion phase the stop holds, and the warning names it as the reason', () => {
+      const p = planTurn({ graph: fg, board: b, me: ME, income: 5, settings: CAP, game: { ...SEVEN, turn: 5 } });
+      expect(p.profile.phase).toBe('expansion');
+      expect(attacks(p)).toEqual([]);
+      expect(p.warnings.join('\n')).toMatch(
+        /Standing still: no capture is planned, and the cheapest expansion \(T3 \(#3\), 6 armies, toward bonus Coast \(#402\)\) is refused by rule 4d's frontier stop/,
+      );
+    });
   });
 });

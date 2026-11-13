@@ -373,14 +373,24 @@
 //     facing border without completing a bonus (not focused) is undone when the hold cost
 //     would then exceed the next income and the start-of-turn hold cost; a warning ("Frontier
 //     grows faster than income") names it, and also fires when the plan's frontier ends so.
-//  4e. Never stand still (#104; every goal but `complete-bonus`, after pass 3). A plan that makes
-//     no capture at all (no expansion, break, finishing off or strike) in the opening or expansion
-//     phase takes one neutral capture toward the positive bonus (net > 0, never a negative one)
-//     with the fewest armies to finish (ties: higher value, then id), uneconomic or not: its
-//     reachable members in pass 2's order, the first that the armies left after every hold afford
-//     (usual sizing; rule 4d may still stop it), never one that lowers income. The rationale says
-//     nothing passed the economy test and standing still is worse than the cheapest expansion;
-//     when nothing fits, a warning names that capture. Army cap (`armyCap`, × income): when my
+//  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
+//     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
+//     expansion phase takes one neutral capture toward a positive bonus (net > 0, never a negative
+//     one), uneconomic or not, never one that lowers income. Its candidate steps (#107) are ranked
+//     by what this turn can afford first — each step's shortfall: its cost less the armies that can
+//     reach it (its best usable source's movable armies plus what may still be deployed there,
+//     after every hold) — then by its bonus's armies to finish (ties: higher value, then id), then
+//     pass 2's order; the first that fits is taken (usual sizing). So a cheap neutral next to my
+//     stack beats a far step toward a bonus with fewer armies to finish; the reason says "the
+//     fewest of any bonus in reach" or "… with a capture affordable this turn", and the rationale
+//     names the closer bonus and why it was passed over. Rule 4d may stop a step, except in the
+//     opening: when 4d refused every step that fits, the first of them is taken anyway (one capture
+//     that grows the frontier beats none; the rationale says 4d is waived for it, and 4d still
+//     judges every other capture). The rationale says nothing passed the economy test and standing
+//     still is worse than the cheapest expansion; when nothing is taken, a warning names the
+//     top-ranked step and the actual reason: rule 4d's frontier stop, the holds (it would fit
+//     without what they took), or its size (its cost against the movable armies and deploys that
+//     can reach it). Army cap (`armyCap`, × income): when my
 //     armies after deploy exceed cap × income, armies above it are wasted, so the same fallback
 //     fires in any phase, and the rationale says so. The cap's cut to income is not modelled.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, and
@@ -4229,27 +4239,70 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const t of rest) if (gainWith([t.id]) >= 0 || inFocus(t.id)) tryExpand(t.id, 'expands territory');
   }
 
-  // ---- 4e. never stand still (#104) ----
+  // ---- 4e. never stand still (#104, #107) ----
   // A plan with no capture at all (no expansion, break, finishing off or strike), in the opening
   // or expansion phase or with my armies over the army cap, takes the cheapest affordable neutral
   // capture toward the positive bonus with the fewest armies to finish, uneconomic or not. It runs
-  // after every hold, so it only spends what they leave.
+  // after every hold, so it only spends what they leave. Its steps are ranked by what this turn can
+  // afford (#107): the armies that can reach each (its best source's movable armies plus what may
+  // still be deployed there) against its cost, then by the bonus's armies to finish.
   if (goal !== 'complete-bonus' && captured.size === 0) {
     const early = profile.phase === 'opening' || profile.phase === 'expansion';
     const cap = s.armyCap ?? null;
     const total = mine.reduce((n, id) => n + armiesOf(id), 0) + income;
     const capped = cap !== null && cap > 0 && income > 0 && total > cap * income;
     if (early || capped) {
+      /** Ascending, safe for Infinity (a bonus that cannot be costed): Infinity − Infinity is NaN. */
+      const asc = (a: number, b: number) => (a === b ? 0 : a < b ? -1 : 1);
       const toward = [...finishCost]
         .filter(([, f]) => f.net > 0)
-        .sort(([a, x], [b, y]) => x.cost - y.cost || y.value - x.value || a - b);
-      const steps = toward.flatMap(([id, f]) =>
-        bonusTs
-          .get(id)!
-          .filter((t) => targets.has(t) && !targets.get(t)!.enemy && !captured.has(t) && gainWith([t]) >= 0)
-          .sort((a, b) => targetScoreCost(a) - targetScoreCost(b) || targets.get(a)!.cost - targets.get(b)!.cost || a - b)
-          .map((t) => ({ t, id, f })),
-      );
+        .sort(([a, x], [b, y]) => asc(x.cost, y.cost) || y.value - x.value || a - b);
+      const bonusRank = new Map(toward.map(([id], i) => [id, i]));
+      /**
+       * What can reach `t` this turn, as {@link tryCapture} judges it: its best single source's
+       * movable armies (my commander's territory keeps what holds it) plus what may still be
+       * deployed there (none on a conceded border). No usable source (each one held, conceded or
+       * already ordered): `from` is undefined and nothing reaches it.
+       */
+      const reachOf = (t: number) => {
+        let best: { from: number | undefined; movable: number; deploy: number; reach: number } = {
+          from: undefined,
+          movable: 0,
+          deploy: 0,
+          reach: 0,
+        };
+        const tg = targets.get(t)!;
+        const allConceded = mine.every((id) => conceded.has(id));
+        for (const x of [...tg.sources].sort(byNum)) {
+          if (locked.has(x) || orderOf(x)) continue;
+          const keep = myCommanders.has(x) ? keepFor(x, (n) => n === t) : 0;
+          const movable = Math.max(0, avail.get(x)! - keep);
+          if (conceded.has(x) && !allConceded && movable < tg.cost) continue;
+          const deploy = conceded.has(x) && !allConceded ? 0 : Math.max(0, spareAt(x));
+          if (best.from === undefined || movable + deploy > best.reach)
+            best = { from: x, movable, deploy, reach: movable + deploy };
+        }
+        return best;
+      };
+      const seen = new Set<number>();
+      const steps = toward
+        .flatMap(([id, f]) =>
+          bonusTs
+            .get(id)!
+            .filter((t) => targets.has(t) && !targets.get(t)!.enemy && !captured.has(t) && gainWith([t]) >= 0)
+            .sort((a, b) => targetScoreCost(a) - targetScoreCost(b) || targets.get(a)!.cost - targets.get(b)!.cost || a - b)
+            .map((t, k) => ({ t, id, f, k, cost: targets.get(t)!.cost, ...reachOf(t) })),
+        )
+        // What this turn can afford first (shortfall 0 fits), then the bonus's armies to finish.
+        .sort(
+          (a, b) =>
+            Math.max(0, a.cost - a.reach) - Math.max(0, b.cost - b.reach) ||
+            bonusRank.get(a.id)! - bonusRank.get(b.id)! ||
+            a.k - b.k,
+        )
+        // A territory in several bonuses: once, toward the first.
+        .filter(({ t }) => !seen.has(t) && Boolean(seen.add(t)));
+      const fewest = steps.length ? Math.min(...steps.map((x) => x.f.cost)) : Infinity;
       const economicLeft = plans.some((p) => p.remaining.some(bonusTarget));
       const why = [
         ...(early
@@ -4265,17 +4318,78 @@ export function planTurn(input: PlanInput): TurnPlan {
             ]
           : []),
       ].join('; ');
-      const taken = steps.find(({ t, id, f }) =>
-        tryExpand(
-          t,
-          `cheapest expansion toward bonus ${bonusName(id)} (+${f.value}, ${toFinish(f.cost, f.fogged, f.fogEach)}, the fewest of any bonus in reach)`,
-        ),
-      );
-      if (taken) rationale.push(`Take ${label(taken.t)} though no planned capture is economic: ${why}.`);
-      else if (steps[0])
-        warnings.push(
-          `Standing still: no capture is planned, and the cheapest expansion (${label(steps[0].t)}, ${targets.get(steps[0].t)!.cost} armies, toward bonus ${bonusName(steps[0].id)}) does not fit what the holds leave (${budget - reserve} to deploy).`,
-        );
+      const reasonOf = ({ id, f }: (typeof steps)[number]) =>
+        `cheapest expansion toward bonus ${bonusName(id)} (+${f.value}, ${toFinish(f.cost, f.fogged, f.fogEach)}, ${
+          f.cost === fewest ? 'the fewest of any bonus in reach' : 'the fewest of any bonus with a capture affordable this turn'
+        })`;
+      /** Why a step was not taken: rule 4d's frontier stop (with the frontier it would leave), or its size. */
+      const failed = new Map<number, { holdCost: number; income: number } | 'size'>();
+      let taken: (typeof steps)[number] | undefined;
+      for (const st of steps) {
+        const restore = snapshot();
+        if (!tryCapture(st.t, reasonOf(st))) {
+          failed.set(st.t, 'size');
+          continue;
+        }
+        const stop = outgrows(st.t);
+        if (stop === null) {
+          taken = st;
+          break;
+        }
+        restore();
+        if (!rationale.includes(stop)) rationale.push(stop);
+        const f = stopped.find((x) => x.t === st.t)!;
+        failed.set(st.t, { holdCost: f.holdCost, income: f.income });
+      }
+      // #107: in the opening, rule 4d's frontier stop must not make the plan stand still: one
+      // capture that grows the frontier is better than none (4d still judges every other capture).
+      let waived: { holdCost: number; income: number } | undefined;
+      if (!taken && profile.phase === 'opening') {
+        const st = steps.find((x) => failed.get(x.t) !== 'size' && failed.has(x.t));
+        if (st && tryCapture(st.t, reasonOf(st))) {
+          taken = st;
+          waived = failed.get(st.t) as { holdCost: number; income: number };
+        }
+      }
+      /** "needs C, and at most R can reach it this turn (M movable on S + D to deploy[; the holds took H])". */
+      const reachText = (st: (typeof steps)[number], held: number) =>
+        st.from === undefined
+          ? `its neighbours of mine (${targets.get(st.t)!.sources.map(label).join(', ')}) all stay to hold their borders`
+          : `it needs ${st.cost}, and at most ${st.reach} can reach it this turn (${st.movable} movable on ${label(st.from)} + ${st.deploy} to deploy${held > 0 ? `; the holds took ${held}` : ''})`;
+      if (taken) {
+        rationale.push(`Take ${label(taken.t)} though no planned capture is economic: ${why}.`);
+        if (waived)
+          rationale.push(
+            `Take ${label(taken.t)} though the frontier would then need ${waived.holdCost} next turn to hold, more than the next income of ${waived.income}: rule 4d's frontier stop is waived for this one capture: in the opening, one capture that grows the frontier is better than none (rule 4d still applies to every other capture).`,
+          );
+        // The bonus with the fewest armies to finish was passed over: say why.
+        const closer = taken.f.cost > fewest ? steps.find((x) => x.f.cost === fewest) : undefined;
+        if (closer) {
+          const fail = failed.get(closer.t);
+          rationale.push(
+            `${bonusName(closer.id)} has fewer armies to finish (${closer.f.cost}), but ${
+              fail !== undefined && fail !== 'size'
+                ? `rule 4d's frontier stop refuses ${label(closer.t)}`
+                : closer.from === undefined
+                  ? `${label(closer.t)} cannot be reached: ${reachText(closer, 0)}`
+                  : `${label(closer.t)} needs ${closer.cost} and at most ${closer.reach} can reach it this turn`
+            }.`,
+          );
+        }
+      } else if (steps[0]) {
+        const top = steps[0];
+        const fail = failed.get(top.t);
+        const head = `Standing still: no capture is planned, and the cheapest expansion (${label(top.t)}, ${top.cost} armies, toward bonus ${bonusName(top.id)})`;
+        // What the holds took before this rule ran (no capture spent anything yet).
+        const held = income - budget;
+        let tail: string;
+        if (fail !== undefined && fail !== 'size')
+          tail = `is refused by rule 4d's frontier stop: the frontier would then need ${fail.holdCost} next turn to hold, more than the next income of ${fail.income}.`;
+        else if (held > 0 && (top.from === undefined || top.reach + held >= top.cost))
+          tail = `does not fit what the holds leave: ${reachText(top, held)}.`;
+        else tail = `does not fit this turn: ${reachText(top, 0)}.`;
+        warnings.push(`${head} ${tail}`);
+      }
     }
   }
 
