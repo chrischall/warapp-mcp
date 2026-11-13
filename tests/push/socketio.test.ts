@@ -55,6 +55,8 @@ describe('packet helpers', () => {
     expect(parsePacket('3:1::A:B')).toEqual({ type: 'message', data: 'A:B' });
     expect(parsePacket('3::')).toEqual({ type: 'other', raw: '3::' });
     expect(parsePacket('5:::{}')).toEqual({ type: 'other', raw: '5:::{}' });
+    expect(parsePacket('7:::1+0')).toEqual({ type: 'error', reason: '1+0' });
+    expect(parsePacket('7::')).toEqual({ type: 'error', reason: '' });
   });
 
   it('builds a Subscribe frame with no auth block', () => {
@@ -177,14 +179,15 @@ describe('SocketIoClient', () => {
     expect(r.socket.rejectedPosts()).toBe(1);
   });
 
-  it('reconnects with doubling backoff after failures, and resets it once connected', async () => {
+  it('reconnects with doubling backoff after failures, and resets it once a session has held', async () => {
     const r = rig();
+    let t = 1700000000000;
     r.socket.failHandshake(
       { status: 503, body: '', url: '' },
       { status: 200, body: 'not a handshake', url: '' },
       { status: 200, body: 'x:15:10:websocket', url: '' },
     );
-    const { c, errors } = client(r, { initialBackoffMs: 100, maxBackoffMs: 300 });
+    const { c, errors } = client(r, { initialBackoffMs: 100, maxBackoffMs: 300, now: () => t });
     c.start();
     await c.whenConnected();
     expect(r.sleeps).toEqual([100, 200, 300]);
@@ -192,7 +195,10 @@ describe('SocketIoClient', () => {
     expect(errors[1]).toMatch(/handshake/);
     expect(errors[2]).toMatch(/xhr-polling/);
     expect(c.connectCount).toBe(1);
-    // A disconnect packet ends the session; the next one starts with the initial delay again.
+    // A disconnect packet ends a session that held past the stable mark (not merely connected,
+    // #131): the next one starts with the initial delay again.
+    await r.socket.idle();
+    t += 60_000;
     r.socket.push('0::');
     await until(() => c.connectCount === 2, 'reconnect');
     expect(r.sleeps).toEqual([100, 200, 300, 100]);
@@ -211,6 +217,65 @@ describe('SocketIoClient', () => {
     expect(errors[0]).toMatch(/HTTP 500 to a push-socket poll/);
     await until(() => c.connectCount === 2, 'reconnect');
   });
+  it('paces polls that come back at once with nothing to say, instead of re-polling at once (#131)', async () => {
+    const r = rig();
+    const { c, messages } = client(r, { initialBackoffMs: 100, maxBackoffMs: 300 });
+    c.start();
+    await c.whenConnected();
+    for (const a of ['8::', '', '8::', '8::']) r.socket.push(a);
+    await until(() => r.sleeps.length === 4, 'paced polls');
+    expect(r.sleeps).toEqual([100, 200, 300, 300]);
+    // Something to say resets the pace.
+    r.socket.push('3:::AA');
+    r.socket.push('8::');
+    await until(() => messages.length === 1 && r.sleeps.length === 5, 'reset pace');
+    expect(r.sleeps[4]).toBe(100);
+    expect(c.connectCount).toBe(1);
+  });
+
+  it('a long poll that ends idle after a while is not paced', async () => {
+    const r = rig();
+    let t = 1_700_000_000_000;
+    const { c } = client(r, { now: () => t, initialBackoffMs: 100 });
+    c.start();
+    await c.whenConnected();
+    await r.socket.idle();
+    t += 20_000;
+    r.socket.push('8::');
+    await r.socket.idle();
+    expect(r.sleeps).toEqual([]);
+  });
+
+  it('an error packet ends the session, which reconnects with backoff (#131)', async () => {
+    const r = rig();
+    const { c, errors } = client(r, { initialBackoffMs: 100 });
+    c.start();
+    await c.whenConnected();
+    r.socket.push('7:::1+0');
+    await until(() => c.connectCount === 2, 'reconnect');
+    expect(errors[0]).toMatch(/refused the push socket/);
+    expect(r.sleeps).toEqual([100]);
+  });
+
+  it('keeps backing off across sessions that connect then fail at once; a session that held resets it (#131)', async () => {
+    const r = rig();
+    let t = 1_700_000_000_000;
+    const { c } = client(r, { now: () => t, initialBackoffMs: 100, maxBackoffMs: 1000 });
+    c.start();
+    await c.whenConnected();
+    for (let n = 2; n <= 4; n++) {
+      r.socket.push('0::');
+      await until(() => c.connectCount === n, `connect ${n}`);
+    }
+    expect(r.sleeps).toEqual([100, 200, 400]);
+    // This session stays up past the stable mark before it drops: the next retry starts over.
+    await r.socket.idle();
+    t += 60_000;
+    r.socket.push('0::');
+    await until(() => c.connectCount === 5, 'connect 5');
+    expect(r.sleeps).toEqual([100, 200, 400, 100]);
+  });
+
 
   it('default backoff starts at one second and caps at a minute', async () => {
     const r = rig();

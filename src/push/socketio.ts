@@ -92,13 +92,22 @@ export interface SocketIoClientOptions {
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
-  /** Reconnect backoff: initial delay, doubled per failure up to `maxBackoffMs`. */
+  /**
+   * Reconnect backoff: initial delay, doubled per failure up to `maxBackoffMs`. The same pace
+   * spaces out polls that come back at once with nothing to say.
+   */
   initialBackoffMs?: number;
   maxBackoffMs?: number;
+  /** A session connected this long resets the backoff when it ends (default 30 s). */
+  stableMs?: number;
+  /** A poll answered faster than this with nothing to say is paced (default 1 s). */
+  minPollMs?: number;
 }
 
 export const DEFAULT_INITIAL_BACKOFF_MS = 1_000;
 export const DEFAULT_MAX_BACKOFF_MS = 60_000;
+export const DEFAULT_STABLE_MS = 30_000;
+export const DEFAULT_MIN_POLL_MS = 1_000;
 
 const realSleep = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -128,6 +137,8 @@ export class SocketIoClient {
   private failures = 0;
   private lastErrorMessage: string | undefined;
   private connects = 0;
+  /** When the current session connected; undefined until it does. */
+  private connectedAt: number | undefined;
   private sender: ((packet: string) => Promise<void>) | undefined;
   private closeSession: (() => void) | undefined;
   private active: PushTransportName | undefined;
@@ -215,7 +226,9 @@ export class SocketIoClient {
   private async markConnected(send: (packet: string) => Promise<void>): Promise<void> {
     this.sender = send;
     this.isConnected = true;
-    this.failures = 0;
+    // The backoff is not reset here: a session that connects and fails at once would retry every
+    // second forever. It resets when a session that held for `stableMs` ends (#131).
+    this.connectedAt = this.now();
     this.connects++;
     const w = this.waiters;
     this.waiters = [];
@@ -224,19 +237,22 @@ export class SocketIoClient {
     if (this.connects > 1) this.opts.onReconnect?.();
   }
 
-  private backoffMs(): number {
+  private backoffMs(failures = this.failures): number {
     const initial = this.opts.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
     const max = this.opts.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
-    return Math.min(max, initial * 2 ** Math.min(this.failures, 30));
+    return Math.min(max, initial * 2 ** Math.min(failures, 30));
   }
 
   private async run(): Promise<void> {
     while (this.running) {
+      this.connectedAt = undefined;
       try {
         await this.session();
       } catch (e) {
         this.disconnect();
         if (!this.running) break;
+        const held = this.connectedAt !== undefined && this.now() - this.connectedAt >= (this.opts.stableMs ?? DEFAULT_STABLE_MS);
+        if (held) this.failures = 0;
         const err = e instanceof Error ? e : new Error(String(e));
         this.lastErrorMessage = err.message;
         this.opts.onError?.(err);
@@ -287,7 +303,10 @@ export class SocketIoClient {
     const sid = handshake.sid;
     this.sid = sid;
     let first = true;
+    /** Polls in a row answered at once with nothing to say. */
+    let idle = 0;
     while (this.running && this.sid === sid) {
+      const started = this.now();
       const res = await t.fetch({ method: 'GET', path: this.url(), retryOnTimeout: false });
       if (this.sid !== sid) return;
       if (res.status !== 200) throw new Error(`war.app answered HTTP ${res.status} to a push-socket poll.`);
@@ -295,8 +314,11 @@ export class SocketIoClient {
       if (first && packets[0]?.type !== 'connect') {
         throw new Error('war.app did not open the push socket (no connect packet).');
       }
+      const wasFirst = first;
       first = false;
+      let useful = wasFirst;
       for (const p of packets) {
+        if (p.type === 'connect' || p.type === 'heartbeat' || p.type === 'message') useful = true;
         switch (p.type) {
           case 'connect':
             if (!this.isConnected) await this.markConnected((packet) => this.post(packet));
@@ -309,9 +331,19 @@ export class SocketIoClient {
             break;
           case 'disconnect':
             throw new Disconnected('war.app closed the push socket.');
+          case 'error':
+            throw new Error(`war.app refused the push socket (${p.reason || 'no reason'}).`);
           default:
             break;
         }
+      }
+      // A long poll ends with a noop after a quiet spell; one answered at once with nothing to say
+      // (an empty body, a noop, a packet this client ignores) would otherwise re-poll in a tight
+      // loop. Pace those like the reconnect backoff (#131).
+      if (useful || this.now() - started >= (this.opts.minPollMs ?? DEFAULT_MIN_POLL_MS)) {
+        idle = 0;
+      } else if (this.running && this.sid === sid) {
+        await this.sleep(this.backoffMs(idle++));
       }
     }
   }

@@ -48,6 +48,8 @@ export type Packet =
   | { type: 'heartbeat' }
   | { type: 'message'; data: string }
   | { type: 'noop' }
+  /** `7:::<reason>`: the server refused the session (e.g. `1+0`, "client not handshaken"). */
+  | { type: 'error'; reason: string }
   | { type: 'other'; raw: string };
 
 /** Parse one packet `type:id:endpoint[:data]`. */
@@ -62,6 +64,10 @@ export function parsePacket(raw: string): Packet {
       return { type: 'heartbeat' };
     case '8':
       return { type: 'noop' };
+    case '7': {
+      const parts = raw.split(':');
+      return { type: 'error', reason: parts.slice(3).join(':') };
+    }
     case '3': {
       // Data follows the third colon.
       let at = -1;
