@@ -351,6 +351,8 @@ describe('end-game notes: each is offered only where it applies', () => {
       expect(ids(p, { cardsInPlay: ['Reinforcement'] }), id).not.toContain(id);
       expect(ids({ ...p, settings: { ...p.settings, cards: false } }, { cardsInPlay: [] }), id).not.toContain(id);
     }
+    // Catching a runner by move order ("an even chance", "certain") is a two-player statement.
+    expect(ids(profile({ format: 'ffa', opponents: 2 }, { cards: true }), { cardsInPlay: ['Order Priority'] })).not.toContain('cards-priority-catch-runner');
   });
 
   it('the setup-then-strike pair needs a move order that alternates', () => {
@@ -399,6 +401,9 @@ describe('end-game notes: the data', () => {
     expect(note('reading-leaver-replan').text).toMatch(/report/);
     // A booted seat with AIs off turning neutral is the forum's account only.
     expect(note('ffa-boot-clock').text).toMatch(/report/);
+    expect(note('ffa-neighbour-leaves').text).toMatch(/report/);
+    // The boot rules page is Booting (the digests read /wiki/Booted, which redirects there).
+    expect(note('ffa-boot-clock').source).toBe('https://war.app/wiki/Booting');
     // The eliminator's gain beyond the land is stated by no page.
     expect(note('ffa-buffer-neighbour').text).toMatch(/no rule page/);
   });
@@ -411,7 +416,7 @@ describe('end-game corrections to earlier notes', () => {
   });
 
   it('a stand-off is run forward before its armies count as surplus', () => {
-    expect(note('fighting-standoff-grow-elsewhere').text).toMatch(/run the border forward/);
+    expect(note('fighting-standoff-grow-elsewhere').text).toMatch(/count the next turns out/);
     expect(note('fighting-standoff-grow-elsewhere').text).not.toMatch(/change nothing/);
   });
 
@@ -430,8 +435,8 @@ describe('end-game corrections to earlier notes', () => {
     expect(note('ffa-neighbour-leaves').source).toBe(STRATEGY_SOURCES.playersIntoAis);
   });
 
-  it('an AI teammate may play a card when the team is forced to', () => {
-    expect(note('teams-ai-teammate').text).toMatch(/forced/);
+  it('an AI teammate may play a card when the rules force one for the team', () => {
+    expect(note('teams-ai-teammate').text).toMatch(/force a play/);
   });
 
   it('ahead, an attack at even numbers is not an even trade; behind, waiting helps the richer side', () => {

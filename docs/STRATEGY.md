@@ -358,12 +358,12 @@ delays the orders listed after it; under No-Split the whole stack moves).
   and may throw every army at you. Either take its last territories, or do not cripple it and
   leave it able to fight someone else. **Advice only.** Derived. Source:
   <https://war.app/Forum/699119-kingmaking-reportableagainst-rules>
-- `ffa-neighbour-leaves` — When a neighbour surrenders or is booted, its land passes to an AI or
-  turns neutral (the game sets surrender and boot separately), and any truce is gone. Neutral
-  land keeps its armies, so thin bonuses there are cheap for whoever moves first. An AI fights
-  on, goes for neutral bonuses first, and its player may take the seat back. **Advice only.**
-  Derived. Source: <https://war.app/wiki/Players_turning_into_AIs> (end-game pass: surrender and
-  boot are separate settings, and the player may return)
+- `ffa-neighbour-leaves` — When a neighbour surrenders or is booted, its land goes to an AI or
+  turns neutral (set separately for each; neutral after a boot is players' report, no wiki page
+  says it), and any truce ends. Neutral land keeps its armies, so thin bonuses there are cheap. An
+  AI fights on, goes for neutral bonuses first, and its player may take the seat back. **Advice
+  only.** Derived. Source: <https://war.app/wiki/Players_turning_into_AIs> (end-game pass:
+  surrender and boot are separate settings, and the player may return)
 - `teams-score-team` — Judge your turn by what the team gains. Tying down two opponents while a
   teammate takes bonuses is a good trade even if you stay on base income all game; expanding for
   yourself instead of fighting there is the usual mistake. **Advice only.** Source:
@@ -388,12 +388,12 @@ delays the orders listed after it; under No-Split the whole stack moves).
   failed capture leaves your armies home. In `warapp_submit_turn`, set the move's mode
   "transfer-only" (#165; the option is UNVERIFIED live); a plain order would attack and take the territory. **Advice only.** Source:
   <https://war.app/Forum/139981-team-strategy-question>
-- `teams-ai-teammate` — A teammate replaced by an AI plays no card of its own accord while a
-  human is on the team, though it may when the team is forced to. It may attack a teammate's
-  territory to finish a bonus (players report it taking ones held by a single army: keep two on
-  yours beside it). Armies you transfer to it become the AI's: defend from your own land.
-  **Advice only.** Derived. Source: <https://war.app/wiki/AI> (end-game pass: "unless forced",
-  and the one-army observation)
+- `teams-ai-teammate` — An AI in a teammate's seat plays no card of its own accord while a human
+  is on the team, though the rules can force a play for the team. It may attack a teammate's
+  territory to finish a bonus (one thread reports it taking only one-army ones: keep two on yours
+  beside it). Armies you transfer to it become the AI's: defend from your land. **Advice only.**
+  Derived. Source: <https://war.app/wiki/AI> (end-game pass: a forced play, and the one-army
+  observation)
 
 ## Settings
 
@@ -440,10 +440,10 @@ delays the orders listed after it; under No-Split the whole stack moves).
   the whole stack, and no move from a territory that must hold (#124). Source: No-Split mode.
 - `settings-commander-protect` — Losing your Commander eliminates you and turns everything you
   hold neutral. Each turn, first check that no stack beside it could kill every army with it and
-  deal 7 more in one attack; if one could, deploy on its territory. Orders sent here never carry
-  the Commander unless a move sets `commander` (#165), so do not strip its guard. Never Blockade its
-  territory. **Encoded:** the planner holds its commander's territory before anything else and
-  never carries the commander.
+  deal 7 more in one attack; if one could, deploy on its territory. It moves only when an order
+  sets `commander` (#165), so do not strip its guard. Never Blockade its territory. **Encoded:**
+  the planner holds its commander's territory before anything else and never carries the
+  commander (`warapp_submit_turn` does when a move sets `commander`).
   Source: <https://war.app/wiki/Commanders>
 - `settings-commander-strike` — An enemy Commander dies only to a single attack that kills every
   army with it and then deals 7 more; less leaves it unharmed. That removes its owner, and all it
@@ -816,8 +816,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
   go for the less valuable one more often. Always guarding the big bonus, or always striking at
   it, is a pattern the other side can plan around. **Advice only.** Source:
   <https://warlight.nghood.com/>
-- `fighting-standoff-grow-elsewhere` — When two big stacks face each other, run the border
-  forward before calling it stuck (`fighting-grind-threshold`). If attacking every turn breaks it,
+- `fighting-standoff-grow-elsewhere` — When two big stacks face each other, count the next turns
+  out before calling it stuck (`fighting-grind-threshold`). If attacking every turn breaks it,
   do that; if the opponent could do that to you, keep deploying what holds. Only armies beyond
   that are surplus, for a bonus the opponent cannot see or reach. **Advice only.** Derived
   (end-game pass: a defender that diverts armies from a pinned border loses it). Source:
@@ -849,7 +849,8 @@ or Wikipedia were kept only where a wiki rule page supports them (as *derived*) 
 Fighting:
 
 - `fighting-grind-threshold` — at one border with both sides deploying there, attacking every turn wins
-  from about 1.1–1.15× the defender at 100+ armies (1.2–1.3× at 20); below that is a stand-off. **Advice
+  from about 1.1–1.15× the defender at 100+ armies (1.2–1.3× at 20, more with large incomes); short of
+  that it feeds the defender, and with neither side that far ahead it is a stand-off. **Advice
   only.** Derived. Source: <https://war.app/Forum/664334-skill-evaluation-phakh-gokhn>
 - `fighting-income-lead-clock` — from equal stacks, a fifth more income breaks a border in 8–12 turns,
   half as much again in 4–5, double in 3; a tenth more may never: use it on a second front. **Advice
@@ -869,12 +870,13 @@ Fighting:
   only if it pays back within them and opens no border. **Advice only.** Derived. Source:
   <https://war.app/Forum/376144-people-never-surrender>
 - `fighting-more-threats-than-deploy` — ahead, threaten more captures than one deployment can save, in
-  different bonuses. **Advice only.** Derived. Source: <https://war.app/wiki/Turn_phases>
+  different bonuses, unless it can strike back instead (`warapp_check_plan`). **Advice only.** Derived.
+  Source: <https://war.app/Forum/145784-guess-attack-multibordering>
 - `fighting-behind-take-variance` — well behind in a 1v1, prefer lines that win on one right guess, while
   your stack still outweighs a turn of its income. **Advice only.** Source:
   <https://war.app/Forum/297674-strategy-facing-tougher-opponents>
-- `fighting-raid-back-line` — a stack past the front threatens every bonus it touches; keep it moving,
-  and kill such a stack before advancing. **Advice only.** Derived. Source:
+- `fighting-raid-back-line` — armies that cannot hold a border do more past the front, threatening every
+  bonus they touch; keep the stack moving, and facing one, turn a stack on it while the front advances. **Advice only.** Derived. Source:
   <https://war.app/Forum/101261-fight-over-large-front>
 - `fighting-vote-to-end` — a vote to end needs every living player and does not exist in ladder,
   tournament, quickmatch, clan-war or coin games; cast in the game client. **Advice only.** Source:
@@ -906,14 +908,15 @@ Settings and cards:
   move it with `commander` on a move in `warapp_submit_turn` (not yet verified live). **Advice only.** Derived. Source: <https://war.app/wiki/Commanders>
 - `settings-commander-snipe-behind` — behind in a 1v1, the commander kill is the comeback: track where it
   can be and keep a stack able to make it. **Advice only.** Derived. Source: <https://war.app/wiki/Commanders>
-- `settings-commander-kill-neutral` — with more sides a commander kill turns its land neutral in place:
+- `settings-commander-kill-neutral` — with more than two players a commander kill turns its land neutral in place:
   see who collects it. **Advice only.** Derived. Source: <https://war.app/wiki/Commanders>
-- `cards-priority-catch-runner` — a running stack is caught only when your attack runs first; Order
-  Priority makes that certain unless both play one. **Advice only.** Derived. Source:
+- `cards-priority-catch-runner` — in a 1v1, a running stack is caught only when your attack runs first;
+  Order Priority makes that certain unless both play one. **Advice only.** Derived. Source:
   <https://war.app/wiki/Order_priority_card>
 - `cards-bomb-standoff-size` — after a Bomb the capture needs about five sixths of the stack (83 v 100),
   not five thirds; played in the game client. **Advice only.** Derived. Source: <https://war.app/wiki/Bomb_Card>
-- `cards-diplomacy-three-sides` — with three left, Diplomacy makes a two-on-one; played in the game
+- `cards-diplomacy-three-sides` — with three left, Diplomacy makes a two-on-one (whether a card can put
+  two other players at peace no page says); played in the game
   client. **Advice only.** Derived. Source: <https://war.app/wiki/Diplomacy_Card>
 - `cards-sanctions-on-leader` — Sanctions on the leader, together, the turn before the attack; played in
   the game client. **Advice only.** Derived. Source: <https://war.app/wiki/Sanctions_Card>
@@ -924,7 +927,7 @@ Format:
   playing until the game shows won. **Advice only.** Source: <https://war.app/wiki/Players_turning_into_AIs>
 - `1v1-beaten-opponent-chat` — state the board once, politely; never demand a surrender. **Advice
   only.** Source: <https://war.app/Forum/118844-telling-opponent-surrender>
-- `ffa-last-human` — where AIs give up when one human is left, finish the last other human; where not,
+- `ffa-last-human` — where AIs surrender when one human is left, finish the last other human; where not,
   an AI can win. **Advice only.** Derived. Source: <https://war.app/wiki/AI_surrenders_when_one_human_remains>
 - `ffa-coalition-match-commitment` — against a runaway leader, match the other small player's effort:
   the one that goes all in alone falls first. **Advice only.** Source: <https://war.app/Forum/546500-ffa-competition-league>
@@ -943,9 +946,11 @@ Format:
   notice agreed. **Advice only.** Source: <https://war.app/Forum/5231-ffa-ffa>
 - `ffa-lost-game-exit` — a lost free-for-all may be played on; leaving feeds a neighbour, so choose when.
   **Advice only.** Source: <https://war.app/Forum/642777-bad-surrender>
-- `ffa-boot-clock` — a seat past its boot time can be booted at any moment (in the game client): watch
-  the neighbours' clocks and commit your own in time. **Advice only.** Derived. Source: <https://war.app/wiki/Booted>
-- `teams-commander-weakest` — a commander kill removes one teammate only: aim at the weaker enemy's and
+- `ffa-boot-clock` — a seat past its direct-boot time can be booted at any moment (in the game client);
+  players report it turns neutral when AIs are off: watch the neighbours' clocks and commit your own in
+  time. **Advice only.** Derived. Source: <https://war.app/wiki/Booting> (the digests read
+  `/wiki/Booted`, which redirects there)
+- `teams-commander-weakest` — a commander kill removes one teammate only: aim at the weaker or more exposed enemy's and
   guard your teammate's by transfer. **Advice only.** Derived. Source: <https://war.app/Forum/737712-kabix-2v2-template>
 - `teams-hand-over-before-leaving` — transfer armies about to be lost to a teammate; surrender together.
   **Advice only.** Derived. Source: <https://war.app/wiki/Team_Games>
