@@ -59,7 +59,7 @@ export interface ProfileInput {
    * armies they must have received since the game started (a lower bound). The 'unknown'
    * standing note names them.
    */
-  unseen?: ReadonlyArray<{ playerId: number; turnsUnseen: number; earnedAtLeast: number }>;
+  unseen?: ReadonlyArray<{ playerId: number; turnsUnseen: number; turnsUnseenAtLeast?: boolean; earnedAtLeast: number }>;
 }
 
 export interface GameProfile {
@@ -156,7 +156,7 @@ export function gameProfile(input: ProfileInput): GameProfile {
     .sort((a, b) => a.playerId - b.playerId)
     .map(
       (u) =>
-        ` Player ${u.playerId} has been out of sight for ${u.turnsUnseen} turn${u.turnsUnseen === 1 ? '' : 's'} and has received at least ${u.earnedAtLeast} armies: it could be banking a stack that large.`,
+        ` Player ${u.playerId} has been out of sight for ${u.turnsUnseenAtLeast ? 'at least ' : ''}${u.turnsUnseen} turn${u.turnsUnseen === 1 ? '' : 's'} and has received at least ${u.earnedAtLeast} armies: it could be banking up to roughly that, minus what its expansion cost.`,
     )
     .join('');
   if (!strongest) {

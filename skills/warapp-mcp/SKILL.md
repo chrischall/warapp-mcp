@@ -105,8 +105,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   pass on its `notes`. It needs a history: the boards `warapp_plan_turn` and this tool have read
   on consecutive turns (or the game history when war.app sends it), so early on it may have
   nothing to observe yet. Every opponent still playing is listed, even one with no territory in
-  view (`visible: 0`, `turnsUnseen`): its `earnedAtLeast` is its starting armies plus the base
-  income for every turn so far — a lower bound on armies received, not held. An opponent out of
+  view (`visible: 0`, `turnsUnseen`, "at least" when your boards do not reach back to when it
+  was last seen): its `earnedAtLeast` is its starting armies plus the base income for every turn
+  so far — a lower bound on armies received, not held. An opponent out of
   sight is the most dangerous case: pass on its warnings ("could be banking a stack larger than
   your largest") and keep your stacks in mind against it.
 - **Reading a balanced plan** (the default goal): income goes where it earns most per army —
@@ -211,8 +212,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
    several turns once that opponent has 2 or more observed turns (consecutive turns compared, as `warapp_track_opponents` reports), and caps itself at what the opponent could
    earn, but income hidden in the fog can still be missed. When the figure is off, re-plan with
    `enemy_deploy`. An opponent with nothing in view has no estimate at all: the warning "Player …
-   has been out of sight for N turns and has received at least X armies" is the floor on what it
-   could be banking.
+   has been out of sight for N turns and has received at least X armies" is a floor on what it
+   has received; it could be banking up to roughly that, minus what its expansion cost.
 3. **Income drops.** A `nextIncome` below this turn's income always comes with a warning (a
    focused bonus, or a "Stage bonus …" line with its payback). Accept it only for a reason the
    user agrees with.

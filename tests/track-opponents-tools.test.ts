@@ -37,8 +37,8 @@ const unseenBoard: SyntheticTerritory[] = [
   { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
 ];
 const BOB_WARNINGS = [
-  'Player Bob has been out of sight for 3 turns and has received at least 39 armies (starting armies + base income × turns); it could be banking a stack larger than your largest (6).',
-  'Player Bob has been out of sight for 3 turns and has received at least 39 armies (starting armies + base income × turns); it could be banking more than your total visible armies (9).',
+  'Player Bob has been out of sight for at least 1 turn (no board of mine for turn 2) and has received at least 39 armies (starting armies + base income × turns); it could be banking a stack larger than your largest (6).',
+  'Player Bob has been out of sight for at least 1 turn (no board of mine for turn 2) and has received at least 39 armies (starting armies + base income × turns); it could be banking more than your total visible armies (9).',
 ];
 
 // Ann holds 159 and 161; Bob's 158 borders both. 135 stays fogged.
@@ -152,7 +152,9 @@ describe('warapp_track_opponents', () => {
     expect(bob).toMatchObject({
       firstSeen: null,
       visible: 0,
-      turnsUnseen: 3,
+      // Only the current board (turn 3): it may have been in view on turn 2, so at least 1 turn.
+      turnsUnseen: 1,
+      turnsUnseenAtLeast: true,
       earnedAtLeast: { total: 39, start: 24, baseIncome: 5, turns: 3, largestStack: 6, visibleArmies: 9 },
       warnings: BOB_WARNINGS,
     });
@@ -189,7 +191,7 @@ describe('warapp_plan_turn with a tracked history', () => {
     );
     expect(p.warnings).toEqual(expect.arrayContaining(BOB_WARNINGS));
     expect(p.profile.standing).toBe('unknown');
-    expect(p.profile.notes.join(' ')).toMatch(/has been out of sight for 3 turns and has received at least 39 armies/);
+    expect(p.profile.notes.join(' ')).toMatch(/has been out of sight for at least 1 turn and has received at least 39 armies/);
   });
 
   it('one observed turn: no tracked line (today\'s behaviour)', async () => {

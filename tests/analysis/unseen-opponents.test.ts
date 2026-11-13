@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { trackOpponents, type TrackGame, type TurnBoard } from '../../src/analysis/opponents.js';
+import { trackGame, trackOpponents, type TrackGame, type TurnBoard } from '../../src/analysis/opponents.js';
 import { planTurn, type PlannerSettings } from '../../src/analysis/planner.js';
 import { gameProfile } from '../../src/analysis/profile.js';
 import type { GameMap } from '../../src/normalize.js';
@@ -185,5 +185,93 @@ describe('the profile and the planner mention an unseen opponent (#94)', () => {
       game: { players: [{ id: ME }, { id: ENEMY }], turn: 3 },
     });
     expect(plan.profile.notes.join(' ')).toMatch(/Player 20 has been out of sight for 3 turns and has received at least 21 armies/);
+  });
+});
+
+describe('turnsUnseen when my boards do not cover the whole game (#94 review)', () => {
+  it('a history that starts after turn 1: a floor counted from the oldest board, said as one', () => {
+    // Boards for turns 5..15 only, none showing it: it may have been in view on turn 4 or
+    // earlier, so all I know is turns 5..15 = 11 turns.
+    const boards = history(...Array.from({ length: 11 }, (_, i): [number, BoardState] => [5 + i, hidden()]));
+    const [t] = trackOpponents(g, boards, ME, STD, GAME);
+    expect(t).toMatchObject({ visible: 0, turnsUnseen: 11, turnsUnseenAtLeast: true });
+    // The bound does not depend on the boards: start 6 + 15 turns × 5 = 81.
+    expect(t!.earnedAtLeast).toMatchObject({ total: 81, turns: 15 });
+    expect(t!.warnings[0]).toMatch(/^Player Zed has been out of sight for at least 11 turns \(no board of mine for turn 4\) and has received at least 81 armies/);
+    expect(t!.notes.join(' ')).toMatch(/out of sight for at least 11 turns \(no board of mine for turn 4\)/);
+  });
+
+  it('only the current board at turn 8: at least 1 turn, never 8', () => {
+    const [t] = trackOpponents(g, history([8, hidden()]), ME, STD, GAME);
+    expect(t).toMatchObject({ turnsUnseen: 1, turnsUnseenAtLeast: true });
+    expect(t!.warnings[0]).toMatch(/out of sight for at least 1 turn \(no board of mine for turn 7\)/);
+  });
+
+  it('a gap after it was last seen: counted back to the gap only', () => {
+    // Seen on turn 1, no boards for turns 2 and 3, hidden on 4 and 5: at least 2 turns.
+    const [t] = trackOpponents(g, history([1, seen(4)], [4, hidden()], [5, hidden()]), ME, STD, GAME);
+    expect(t).toMatchObject({ turnsUnseen: 2, turnsUnseenAtLeast: true });
+  });
+
+  it('boards from turn 1 on, or back to the board that last showed it: exact', () => {
+    const [never] = trackOpponents(g, history([1, hidden()], [2, hidden()], [3, hidden()]), ME, STD, GAME);
+    expect(never).toMatchObject({ turnsUnseen: 3, turnsUnseenAtLeast: false });
+    const [fogged] = trackOpponents(g, history([1, seen(4)], [2, hidden()], [3, hidden()]), ME, STD, GAME);
+    expect(fogged).toMatchObject({ turnsUnseen: 2, turnsUnseenAtLeast: false });
+    expect(fogged!.warnings[0]).toMatch(/out of sight for 2 turns and/);
+  });
+
+  it('the profile note keeps the floor', () => {
+    const p = gameProfile({
+      graph: g,
+      board: hidden(),
+      me: ME,
+      players: [{ id: ME }, { id: ENEMY }],
+      turn: 8,
+      income: 5,
+      estimates: [],
+      unseen: [{ playerId: ENEMY, turnsUnseen: 1, turnsUnseenAtLeast: true, earnedAtLeast: 46 }],
+    });
+    expect(p.notes.join(' ')).toMatch(
+      /Player 20 has been out of sight for at least 1 turn and has received at least 46 armies: it could be banking up to roughly that, minus what its expansion cost\./,
+    );
+  });
+});
+
+describe('trackGame and the caveats on the bound (#94 review)', () => {
+  it('full distribution (DistributionMode -1) leaves the starting armies out', () => {
+    const game = trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: -1, cards: [] });
+    expect(game.start).toBeUndefined();
+    expect(game.startUnknown).toMatch(/full distribution/);
+  });
+
+  it('manual or automatic distribution keeps TerritoryLimit × InitialPlayerArmiesPerTerritory', () => {
+    const game = trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] });
+    expect(game.start).toEqual({ territories: 3, armiesPerTerritory: 2 });
+  });
+
+  it('the Sanctions card: the note says the base-income floor may not hold', () => {
+    const game = trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, cards: ['Sanctions'] });
+    const [t] = trackOpponents(g, history([3, hidden()]), ME, STD, game);
+    expect(t!.notes.join(' ')).toMatch(/base income each turn may not hold: .*Sanctions card/);
+  });
+
+  it('a map with a negative bonus: the note says the base-income floor may not hold', () => {
+    const m = line();
+    const neg = buildGraph({ ...m, bonuses: [...m.bonuses, { id: 902, name: 'B902', value: -2, territoryIds: [5, 6], bonusIds: [] }] });
+    const [t] = trackOpponents(neg, history([3, hidden()]), ME, STD, GAME);
+    expect(t!.notes.join(' ')).toMatch(/base income each turn may not hold: .*negative-value bonus/);
+    const [plain] = trackOpponents(g, history([3, hidden()]), ME, STD, GAME);
+    expect(plain!.notes.join(' ')).not.toMatch(/may not hold/);
+  });
+});
+
+describe('teammates in view (#94 review)', () => {
+  it('a visible teammate is not listed', () => {
+    const now = board([mine(1, 5), mine(2, 5), enemy(3, 4, 11), enemy(4, 3), ...FOG.slice(2)]);
+    const game: TrackGame = { players: [{ id: ME, team: 0 }, { id: 11, team: 0 }, { id: ENEMY, team: 1 }], start: GAME.start! };
+    expect(trackOpponents(g, history([3, now]), ME, STD, game).map((t) => t.playerId)).toEqual([ENEMY]);
+    // Without the game, everyone in view is listed as before.
+    expect(trackOpponents(g, history([3, now]), ME, STD).map((t) => t.playerId)).toEqual([11, ENEMY]);
   });
 });

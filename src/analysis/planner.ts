@@ -1155,7 +1155,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     estimates: estimateList,
     // #94: opponents the tracker found with nothing in view, for the 'unknown' standing note.
     unseen: (input.tracks ?? []).flatMap((t) =>
-      t.earnedAtLeast ? [{ playerId: t.playerId, turnsUnseen: t.turnsUnseen, earnedAtLeast: t.earnedAtLeast.total }] : [],
+      t.earnedAtLeast ? [{ playerId: t.playerId, turnsUnseen: t.turnsUnseen, turnsUnseenAtLeast: t.turnsUnseenAtLeast, earnedAtLeast: t.earnedAtLeast.total }] : [],
     ),
   });
   /** The profile picks the goal and tunes the scoring (rule 0p): adapting, with no explicit goal. */

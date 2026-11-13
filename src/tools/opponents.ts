@@ -105,6 +105,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
             firstSeen: t.firstSeen,
             visible: t.visible,
             turnsUnseen: t.turnsUnseen,
+            turnsUnseenAtLeast: t.turnsUnseenAtLeast,
             earnedAtLeast: t.earnedAtLeast,
             warnings: t.warnings,
             observed: t.turns.map(turnView),
