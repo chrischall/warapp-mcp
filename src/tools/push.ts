@@ -52,8 +52,12 @@ export function checkOf(game: Game, playerId: number): GameCheck {
 export interface WaitOptions {
   gameIds: readonly number[];
   timeoutMs: number;
-  /** `onReconnect` (when present): pushes in a reconnect gap are lost, so every game is re-read. */
-  push: Pick<PushListener, 'watch' | 'onUpdate'> & Partial<Pick<PushListener, 'onReconnect'>>;
+  /**
+   * `onConnect` (else `onReconnect`), when present: pushes before a connect's Subscribe are lost —
+   * a reconnect gap, or the first connect of the process after the initial check — so every game
+   * is re-read.
+   */
+  push: Pick<PushListener, 'watch' | 'onUpdate'> & Partial<Pick<PushListener, 'onReconnect' | 'onConnect'>>;
   /** Read one game's current state from GameFeed. */
   check: (gameId: number) => Promise<GameCheck>;
   signal?: AbortSignal;
@@ -100,12 +104,19 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
     queue.push(u.gameId);
     wake?.();
   });
-  const offReconnect = opts.push.onReconnect?.(() => {
-    reconnects++;
-    reconnectNote = true;
+  const requeue = (reconnect: boolean) => {
+    if (reconnect) {
+      reconnects++;
+      reconnectNote = true;
+    }
     for (const id of ids) if (!queue.includes(id)) queue.push(id);
     wake?.();
-  });
+  };
+  // Every connect, the first included: watch() returns before the socket connects, so a turn
+  // that resolves between the initial check and the first Subscribe is only seen by a re-read.
+  const offReconnect = opts.push.onConnect
+    ? opts.push.onConnect((e) => requeue(e.reconnect))
+    : opts.push.onReconnect?.(() => requeue(true));
   const timers: Array<ReturnType<typeof setTimeout>> = [];
   let onAbort: (() => void) | undefined;
   try {

@@ -365,6 +365,21 @@ describe('PushListener', () => {
     await until(() => subscribedTopics(r).length === 2, 're-subscribe');
     expect(subscribedTopics(r)[1]).toEqual({ sid: 'sid2', topics: ['Game.5', 'Game.6'] });
   });
+  it('tells connect listeners about every connect, the first one included, once subscribed (#131)', async () => {
+    const r = rig();
+    const l = listener(r);
+    const seen: Array<{ reconnect: boolean; subscribed: number }> = [];
+    l.onConnect((e) => seen.push({ ...e, subscribed: subscribedTopics(r).length }));
+    await l.watch([5]);
+    await until(() => seen.length === 1, 'first connect');
+    r.socket.push('0::');
+    await until(() => seen.length === 2, 'reconnect');
+    expect(seen).toEqual([
+      { reconnect: false, subscribed: 1 },
+      { reconnect: true, subscribed: 2 },
+    ]);
+  });
+
 
   it('a failed subscribe on a live session does not throw from watch; the reconnect re-subscribes', async () => {
     const r = rig();

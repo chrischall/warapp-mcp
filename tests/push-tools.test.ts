@@ -97,42 +97,45 @@ describe('warapp_wait_for_turn', () => {
   });
 
   it('waits for a GameUpdated push, re-reads GameFeed, and resolves when it is my turn', async () => {
-    const { h, socket } = await setup([COMMITTED(), READY()]);
+    const { h, socket } = await setup([COMMITTED(), COMMITTED(), READY()]);
     const pending = call('warapp_wait_for_turn', { game_ids: [String(GAME), GAME], timeout_seconds: 60 });
-    await until(() => subscribes(socket).length === 1 && h.calls.length === 1, 'subscribe + first check');
+    // The initial check, then a re-read when the socket first connects (#131).
+    await until(() => subscribes(socket).length === 1 && h.calls.length === 2, 'subscribe + first checks');
     socket.push(framed(`3:::${gameUpdatedHex(999)}`, `3:::${gameUpdatedHex(GAME)}`));
     const p = payload(await pending);
     expect(p.status).toBe('your_turn');
     expect(p.updates).toBe(1);
     expect(p.push).toEqual({ connected: true, transport: 'xhr-polling' });
-    expect(h.calls).toHaveLength(2);
-    expect(h.calls[1]!.url).toContain(`GameID=${GAME}`);
+    expect(h.calls).toHaveLength(3);
+    expect(h.calls[2]!.url).toContain(`GameID=${GAME}`);
   });
 
   it('re-reads GameFeed after the push socket reconnects, so a turn that came in the gap is not missed', async () => {
-    const { h, socket } = await setup([COMMITTED(), READY()]);
+    const { h, socket } = await setup([COMMITTED(), COMMITTED(), READY()]);
     const pending = call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 30 });
-    await until(() => subscribes(socket).length === 1 && h.calls.length === 1, 'subscribe + first check');
+    // The initial check, then a re-read when the socket first connects (#131).
+    await until(() => subscribes(socket).length === 1 && h.calls.length === 2, 'subscribe + first checks');
     // The server drops the session; no GameUpdated for the turn ever arrives.
     socket.push('0::');
     const p = payload(await pending);
     expect(p.status).toBe('your_turn');
     expect(p.updates).toBe(0);
     expect(p.reconnects).toBe(1);
-    expect(h.calls).toHaveLength(2);
+    expect(h.calls).toHaveLength(3);
     expect(socket.handshakes()).toBe(2);
   }, 5000);
 
   it('keeps waiting when an update is not my turn, then times out', async () => {
     const { h, socket } = await setup([COMMITTED()]);
     const pending = call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 1 });
-    await until(() => subscribes(socket).length === 1 && h.calls.length === 1, 'subscribe + first check');
+    // The initial check, then a re-read when the socket first connects (#131).
+    await until(() => subscribes(socket).length === 1 && h.calls.length === 2, 'subscribe + first checks');
     socket.push(`3:::${gameUpdatedHex(GAME)}`);
     const p = payload(await pending);
     expect(p.status).toBe('timed_out');
     expect(p).not.toHaveProperty('ready');
     expect(p.updates).toBe(1);
-    expect(h.calls).toHaveLength(2);
+    expect(h.calls).toHaveLength(3);
     expect((p.games as GameCheck[])[0]!.waitingOnYou).toBe(false);
     expect(p.next).toMatch(/again/);
   }, 5000);
@@ -195,7 +198,7 @@ describe('warapp_wait_for_turn', () => {
       signal: ac.signal,
       onprogress: (p) => progress.push(p),
     });
-    await until(() => subscribes(socket).length === 1 && h.calls.length === 1 && progress.length === 1, 'start');
+    await until(() => subscribes(socket).length === 1 && h.calls.length === 2 && progress.length >= 1, 'start');
     expect(progress[0]).toMatchObject({ progress: 0, total: 600 });
     expect(progress[0]!.message).toMatch(/Waiting for your turn in 1 game/);
     socket.push(`3:::${gameUpdatedHex(GAME)}`);
@@ -234,7 +237,7 @@ describe('warapp_recent_events', () => {
 describe('waitForTurn', () => {
   function fakePush() {
     const fns = new Set<(u: GameUpdate) => void>();
-    const reconnectFns = new Set<() => void>();
+    const reconnectFns = new Set<(e: { reconnect: boolean }) => void>();
     const watched: number[][] = [];
     return {
       watched,
@@ -248,13 +251,15 @@ describe('waitForTurn', () => {
           fns.add(f);
           return () => fns.delete(f);
         },
-        onReconnect: (f: () => void) => {
+        onConnect: (f: (e: { reconnect: boolean }) => void) => {
           reconnectFns.add(f);
           return () => reconnectFns.delete(f);
         },
       },
-      reconnect: () => reconnectFns.forEach((f) => f()),
+      reconnect: () => reconnectFns.forEach((f) => f({ reconnect: true })),
+      connect: (reconnect: boolean) => reconnectFns.forEach((f) => f({ reconnect })),
       reconnectListeners: () => reconnectFns.size,
+      connectListeners: () => reconnectFns.size,
     };
   }
   const notReady = (id: number): GameCheck => ({ id, name: null, state: 'Playing', turn: 1, waitingOnYou: false });
@@ -341,6 +346,31 @@ describe('waitForTurn', () => {
     // The initial read, then one re-read: the push and both reconnects collapse while queued.
     expect(checks).toEqual([1, 1]);
   });
+  it('re-reads every game when the socket first connects after the initial check (#131)', async () => {
+    // The first wait of a process: watch() returns before the socket connects, the initial check
+    // runs, and a turn that resolves before the first Subscribe sends no push to this process.
+    const fp = fakePush();
+    const checks: number[] = [];
+    let turnArrived = false;
+    const pending = waitForTurn({
+      gameIds: [1],
+      timeoutMs: 5000,
+      push: fp.push,
+      check: async (id) => {
+        checks.push(id);
+        return turnArrived ? { ...notReady(id), waitingOnYou: true } : notReady(id);
+      },
+    });
+    await until(() => checks.length === 1, 'initial check');
+    turnArrived = true;
+    fp.connect(false);
+    const out = await pending;
+    expect(out.status).toBe('your_turn');
+    expect(checks).toEqual([1, 1]);
+    expect(out.reconnects).toBe(0);
+    expect(fp.connectListeners()).toBe(0);
+  });
+
 
   it('rejects at once for an already-aborted signal', async () => {
     const fp = fakePush();

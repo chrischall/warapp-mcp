@@ -8,8 +8,9 @@
 // Transport: the direct WebSocket while the active transport is the direct leg
 // (src/push/websocket.ts), else — and as the fallback when the WebSocket
 // cannot be brought up — xhr-polling over the bridge. After any reconnect,
-// pushes sent during the gap are lost: `onReconnect` tells consumers to
-// re-read GameFeed.
+// pushes sent during the gap are lost: `onConnect` (every connect, the first
+// included — a turn that resolved before the first Subscribe sent no push
+// either) and `onReconnect` tell consumers to re-read GameFeed.
 import type { ExtrasUp } from '../protocol/codec.js';
 import { gameTopic } from '../protocol/methods.js';
 import {
@@ -87,6 +88,8 @@ export class PushListener {
   private readonly events: GameUpdate[] = [];
   private readonly listeners = new Set<(u: GameUpdate) => void>();
   private readonly reconnectListeners = new Set<() => void>();
+  private readonly connectListeners = new Set<(e: { reconnect: boolean }) => void>();
+  private connects = 0;
   private nextMsgNum = 1;
 
   constructor(opts: PushListenerOptions) {
@@ -105,6 +108,8 @@ export class PushListener {
       onConnect: async () => {
         this.subscribed = new Set();
         await this.subscribePending();
+        const e = { reconnect: ++this.connects > 1 };
+        for (const fn of this.connectListeners) fn(e);
       },
       ...(opts.sleep ? { sleep: opts.sleep } : {}),
       ...(opts.initialBackoffMs !== undefined ? { initialBackoffMs: opts.initialBackoffMs } : {}),
@@ -145,6 +150,18 @@ export class PushListener {
     this.reconnectListeners.add(fn);
     return () => {
       this.reconnectListeners.delete(fn);
+    };
+  }
+
+  /**
+   * Listen for every connect, the first included, once subscribed: a game's turn that resolved
+   * before its Subscribe sent no push here, so re-read GameFeed (#131). `reconnect` is false for
+   * the first connect of the process. Returns the unsubscribe.
+   */
+  onConnect(fn: (e: { reconnect: boolean }) => void): () => void {
+    this.connectListeners.add(fn);
+    return () => {
+      this.connectListeners.delete(fn);
     };
   }
 
