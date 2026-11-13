@@ -37,6 +37,11 @@ export interface LiveContext {
    * re-read (`fresh`) exactly like {@link LiveContext.myInviteToken}.
    */
   myInGameId: (opts?: { fresh?: boolean }) => Promise<number | undefined>;
+  /**
+   * Both of the above from ONE read of the token, for a caller that needs the account a write is
+   * bound to and its in-game id: two separate reads could answer for two accounts.
+   */
+  myIdentity: (opts?: { fresh?: boolean }) => Promise<{ token: number; inGameId: number } | undefined>;
   /** Discard the cached signed-in account (a session was linked: it may be another account). */
   forgetIdentity: () => void;
   /** GET a war.app page as text through the signed-in tab. */
@@ -194,17 +199,14 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     cached = before === after ? { key: after, at: now(), token: t } : undefined;
     return t;
   };
-  const myInviteToken = async (o: { fresh?: boolean } = {}): Promise<number | undefined> => {
+  const myIdentity = async (o: { fresh?: boolean } = {}): Promise<{ token: number; inGameId: number } | undefined> => {
     const t = await tokenText(o);
-    return t === undefined ? undefined : Number(t);
-  };
-  const myInGameId = async (o: { fresh?: boolean } = {}): Promise<number | undefined> => {
-    const t = await tokenText(o);
-    return t === undefined ? undefined : inGameId({ id: Number(t), feedId: t });
+    return t === undefined ? undefined : { token: Number(t), inGameId: inGameId({ id: Number(t), feedId: t }) };
   };
   return {
-    myInviteToken,
-    myInGameId,
+    myInviteToken: async (o) => (await myIdentity(o))?.token,
+    myInGameId: async (o) => (await myIdentity(o))?.inGameId,
+    myIdentity,
     forgetIdentity: () => {
       cached = undefined;
       settled = started;

@@ -553,7 +553,7 @@ describe('a write previews for the account that will act', () => {
       tool: 'warapp_submit_picks',
       args: { game_id: GAME_ID, player: 'Alpha', territories: [1] },
       feed: [gameWithA({ state: 'DistributingTerritories', numberOfTurns: '-1' })],
-      refusal: /Alpha is not the signed-in/i,
+      refusal: /⟦Alpha⟧ is not the signed-in/i,
     },
   ];
 

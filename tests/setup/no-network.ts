@@ -13,10 +13,14 @@
 //   sockets. A Unix-domain socket (a `path`) is local and allowed.
 // - the global fetch: refused up front with the same message (otherwise it
 //   would surface only as the cause of "fetch failed").
-// - DNS: `dns.lookup` and `dns.promises.lookup` refuse a non-loopback name, so
-//   not even a resolver query for war.app leaves.
+// - DNS: `dns.lookup` and `dns.promises.lookup` (what every socket and fetch
+//   uses to resolve a name) refuse a non-loopback name, so connecting by name
+//   sends no resolver query either.
 //
-// NOT covered: a spawned child process (child_process spawn/exec, e.g. a
+// NOT covered: the c-ares resolver API (`dns.resolve*`, `dns.Resolver`) and UDP
+// sockets (`node:dgram`). Neither the server nor the suite uses them.
+//
+// Also not covered: a spawned child process (child_process spawn/exec, e.g. a
 // packaging test running node or npm) has its own runtime and is out of this
 // guard's reach; such a test must not point the child at a live host itself.
 import dns from 'node:dns';

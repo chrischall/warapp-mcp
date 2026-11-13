@@ -256,6 +256,19 @@ describe('direct-transport helpers', () => {
     expect(directFetchOptions('POST').stopBefore(new URL('https://war.app/Services'))).toBe(false);
   });
 
+  it('hasPasswordInput reads a large body of unclosed raw-text openers in linear time', () => {
+    // An opener with no `>` after it runs to the end of the body in ONE match: no rescan per opener.
+    const started = performance.now();
+    expect(hasPasswordInput('<script '.repeat(200_000))).toBe(false);
+    expect(hasPasswordInput(`${'<textarea '.repeat(200_000)}<input type="password">`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('hasPasswordInput ignores text inside a <title>, which is never an element', () => {
+    expect(hasPasswordInput('<title><input type=password></title><p>profile</p>')).toBe(false);
+    expect(hasPasswordInput('<title>Sign in</title><form><input type="password"></form>')).toBe(true);
+  });
+
   it('hasPasswordInput needs a real <input> whose type or name attribute is password', () => {
     expect(hasPasswordInput('<form><input type="password" name="pw"></form>')).toBe(true);
     expect(hasPasswordInput("<INPUT class='x' TYPE='Password'/>")).toBe(true);
@@ -555,6 +568,25 @@ describe('createDirectFirstBridge router', () => {
     expect(String(log.mock.calls[0]?.[0])).toMatch(/edge/);
   });
 
+
+  it('in auto mode, a valid reply frame is war.app\'s own answer whatever the edge added: a POST is NOT re-sent (#131)', async () => {
+    // The request reached war.app and was answered, so an edge header beside the frame must not
+    // send the same write over the bridge a second time.
+    const stub = stubFetch({
+      status: 200,
+      body: HEX_FRAME,
+      url: 'https://war.app/Services',
+      headers: { 'cf-mitigated': 'challenge', server: 'cloudflare' },
+    });
+    const fp = fakeFetchproxy();
+    const bridge = createDirectFirstBridge({ store: linkedStore(), makeBridge: () => fp.bridge, mode: 'auto', directFetch: stub.fn, log: () => {} });
+    const res = await (await bridge.ready()).fetch(servicesPost);
+    expect(res.body).toBe(HEX_FRAME);
+    expect(stub.calls).toHaveLength(1);
+    expect(fp.calls).toHaveLength(0);
+    expect(bridge.status().transport).toBe('direct');
+    expect(bridge.sessionStale()).toBe(false);
+  });
 
   it('clears the stale flag when the direct leg succeeds again (direct mode)', async () => {
     let signedIn = false;

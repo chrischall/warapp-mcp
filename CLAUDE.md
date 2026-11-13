@@ -335,10 +335,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `src/direct/transport.ts`, over mcp-utils `createDirectFirstTransport`; the fetchproxy bridge
   itself is `createWarappBridge` in `src/transport-bridge.ts`): the direct leg issues a plain
   server-side HTTPS request carrying the cookie, falling back to the browser bridge when no session
-  is linked or it has expired. Only a 200 non-frame `/Services` reply (or a sign-in page/redirect)
-  means signed out — a 5xx passes through as an `http` error. A non-GET that reached war.app on the
-  direct leg is **never re-sent over the bridge** (a write must not be sent twice); later calls use
-  the bridge. A relink (`warapp_link_session`, or a new `capturedAt` on disk) clears the stale flag
+  is linked or it has expired. Signed out means a sign-in page or redirect, a 401 or 403 from war.app,
+  or a 200 `/Services` reply that is not a frame — a 5xx passes through as an `http` error. A non-GET
+  that reached war.app on the direct leg is **never re-sent over the bridge** (a write must not be
+  sent twice); later calls use the bridge. The one reply that is re-sent is an edge challenge (a
+  CDN/WAF page or `cf-mitigated` header, mcp-utils `detectEdgeBlock`), which never reached war.app —
+  and a 200 that is a valid frame is war.app's answer, never a challenge, whatever header sits beside
+  it. The direct leg sends the cookie to the exact origin `https://war.app` only: a GET follows
+  redirects within it, a non-GET follows none. A relink (`warapp_link_session`, or a new `capturedAt` on disk) clears the stale flag
   and returns `auto` to the direct leg.
   `WARAPP_TRANSPORT` = `auto` (default) | `direct` | `fetchproxy`; the session is stored at
   `WARAPP_SESSION_FILE` (default `<dataDir>/session.json`). One injection point: `index.ts` builds

@@ -253,10 +253,12 @@ const INPUT_TAG = /<input(?=[\s/>])/gi;
 const TAG_ATTR = /\s*(?:(>)|([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`=]+)))?|\/)/y;
 
 /**
- * Regions whose content is not markup: HTML comments and `<script>`, `<style>`
- * and `<textarea>` blocks (an unclosed one runs to the end of the body).
+ * Regions whose content is not markup: HTML comments and `<script>`, `<style>`,
+ * `<textarea>` and `<title>` blocks. An unclosed one — an opener with no `>`
+ * included — runs to the end of the body, so the opener always matches and a
+ * body of many unclosed openers is read once, not once per opener.
  */
-const NOT_MARKUP = /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+const NOT_MARKUP = /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title)\b[^>]*(?:>|$)[\s\S]*?(?:<\/\1\s*>|$)/gi;
 
 /**
  * Whether an HTML body holds a real password input: an `<input …>` element
@@ -264,8 +266,10 @@ const NOT_MARKUP = /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea)\b[^>]*>[\s\S]
  * (names, taglines) is HTML-escaped, which leaves `=` alone but never yields a
  * tag, and a value such as `value="type=password"` is read as that value, not
  * as an attribute — so nothing a player writes can match. Comments and script,
- * style and textarea blocks are skipped first ({@link NOT_MARKUP}): text a page
- * embeds raw inside one (a JSON string, say) is not an element.
+ * style, textarea and title blocks are skipped first ({@link NOT_MARKUP}): text a
+ * page embeds raw inside one (a JSON string, say) is not an element. The cost: a
+ * sign-in form that only a script writes into the page is not seen here; the
+ * sign-in redirect and the `/Services` non-frame reply still report that session.
  */
 export function hasPasswordInput(raw: string): boolean {
   const body = raw.replace(NOT_MARKUP, ' ');
@@ -348,8 +352,11 @@ export class DirectBridge {
       throw scrubError(err, [token]);
     }
     // A CDN/WAF challenge (a 403 with `cf-mitigated`, a challenge page) never reached war.app: the
-    // router falls back to the browser bridge, whose real browser passes it (#131).
-    if (res.status !== 200 || res.headers?.['cf-mitigated']) {
+    // router falls back to the browser bridge, whose real browser passes it (#131). A 200 that is
+    // a valid reply frame is war.app's own answer whatever header the edge added beside it: read
+    // as a challenge, the router would send a write that already arrived a second time.
+    const answered = res.status === 200 && looksLikeHexFrame(res.body);
+    if (!answered && (res.status !== 200 || res.headers?.['cf-mitigated'])) {
       const edge = detectEdgeBlock({ body: res.body, ...(res.headers ? { headers: res.headers } : {}), status: res.status });
       if (edge) {
         throw new EdgeBlockedError(res.status, edge.vendor, {

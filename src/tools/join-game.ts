@@ -244,9 +244,11 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
           }),
           async plan({ game_id, allow_team, accept_entry_fee, color: requested }) {
             const gameId = parseGameId(game_id);
-            const [html, token] = await Promise.all([openGamesPage(ctx), ctx.myInviteToken({ fresh: true })]);
-            // Sliced from the token TEXT (#130); the fresh read above has just refreshed it.
-            const myId = token === undefined ? undefined : await ctx.myInGameId();
+            // One fresh read gives the account the gate binds and its in-game id (sliced from the
+            // token TEXT, #130), so the already-joined check is for that same account.
+            const [html, me] = await Promise.all([openGamesPage(ctx), ctx.myIdentity({ fresh: true })]);
+            const token = me?.token;
+            const myId = me?.inGameId;
             const bundle = await ctx.bundle();
             const parsed = parseOpenGamesPage(html, bundle);
             const lobby = parsed.lobbies.get(gameId);
