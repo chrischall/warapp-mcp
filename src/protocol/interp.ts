@@ -289,6 +289,14 @@ export interface DialectCheck {
  */
 export const REQUIRED_HELPERS: readonly string[] = ['Ya', 'Yc', 'uq'];
 
+/**
+ * The most object literals assigned to {@link READER_HELPERS} that `verifyDialect` parses (the live
+ * bundle has two `P={…}` sites, neither the helpers). Each parse is host work acorn does before any
+ * step is counted, so the scan is bounded in sites as well as in text; past either bound it stops and
+ * fails closed (#148, the #152 bounds).
+ */
+export const MAX_LITERAL_SITES = 16;
+
 /** Byte strings each helper is run on: small counts, a -1 count, ascending bytes, zeros. */
 const DIALECT_PROBES: readonly Uint8Array[] = [
   Uint8Array.from([2, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]),
@@ -690,7 +698,8 @@ export class BundleInterpreter {
     // Past the budget, a probe is unevaluable (the helper unverified), never a mismatch.
     const budget: ReadBudget = { spent: 0 };
     const forms = this.helperForms(READER_HELPERS, Object.keys(natives), budget);
-    // The required helpers first: a runaway definition of another cannot spend the budget they need.
+    // The required helpers are probed first: a runaway definition of another cannot spend the budget
+    // they need. Object literals assigned to P are parsed under a bound of their own (see helperForms).
     const order = [...forms.keys()].sort((a, b) => Number(REQUIRED_HELPERS.includes(b)) - Number(REQUIRED_HELPERS.includes(a)) || (a < b ? -1 : 1));
     for (const name of order) {
       const native = natives[name]!;
@@ -778,18 +787,45 @@ export class BundleInterpreter {
       // The assigned text is never quoted: it is the bundle's, not ours.
       add(name, { unseen: 'it is assigned in a form this check cannot follow (not a function or an alias of one)' });
     }
-    // `P = { name: function… }` (with `var`, or in a sequence).
+    // `P = { name: function… }` (with `var`, or in a sequence). Each parse is host work acorn finishes
+    // before it can be charged, so the scan has its own bound, one read's worth of text over at most
+    // MAX_LITERAL_SITES sites: each parse is handed only the text left in that bound, every attempt
+    // (a failed one up to where it failed) is charged, and the scan stops when either runs out. It
+    // never charges the budget the definitions are parsed and probed with, so a large literal cannot
+    // starve the count helpers. A scan cut short could have missed a definition: every helper is then
+    // unverified, never verified on the definitions seen before it.
+    let litText = 0;
+    let litSites = 0;
+    let cutShort = false;
     for (const m of src.matchAll(new RegExp(`(?<![\\w$.])${esc}\\s*=\\s*(?=\\{)`, 'g'))) {
+      const room = this.maxSteps - litText;
+      if (litSites >= MAX_LITERAL_SITES || room <= 0) {
+        cutShort = true;
+        break;
+      }
+      litSites++;
       const at = m.index + m[0].length;
+      // The same offsets as the source (a prefix of it), so the nodes found point into the bundle.
+      const end = Math.min(src.length, at + room);
       let obj: AnyNode;
       try {
-        obj = this.budgeted(budget, () => {
-          const node = parseExpressionAt(src, at, { ecmaVersion: 'latest' }) as AnyNode;
-          this.spend(Math.max(1, node.end - at), `${cls}={…}`, at);
-          return node;
-        });
-      } catch {
+        obj = parseExpressionAt(src.slice(0, end), at, { ecmaVersion: 'latest' }) as AnyNode;
+      } catch (e) {
+        const raised = (e as { raisedAt?: unknown }).raisedAt;
+        // A failure with no position (a host stack overflow) is charged the whole of its room.
+        const stop = typeof raised === 'number' && raised > at ? Math.min(raised, end) : end;
+        litText += Math.max(1, stop - at);
+        // It ran into the end of its room (a literal this check cannot read), or spent the scan's bound.
+        if ((stop >= end && end < src.length) || litText >= this.maxSteps) {
+          cutShort = true;
+          break;
+        }
         continue;
+      }
+      litText += Math.max(1, obj.end - at);
+      if (obj.end >= end && end < src.length) {
+        cutShort = true;
+        break;
       }
       if (obj.type !== 'ObjectExpression') continue;
       for (const prop of obj.properties) {
@@ -805,6 +841,11 @@ export class BundleInterpreter {
             ? parseFn(sites[0]!, `${prop.value.object.name}.${prop.value.property.name}`)
             : { unseen: 'it is an object-literal property this check cannot follow' });
         } else add(name, { unseen: 'it is an object-literal property this check cannot follow' });
+      }
+    }
+    if (cutShort) {
+      for (const name of names) {
+        add(name, { unseen: `the bundle assigns ${cls} more object literals than this check reads, so a definition could go unseen` });
       }
     }
     return out;

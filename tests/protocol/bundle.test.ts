@@ -396,6 +396,18 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
     ).toThrow(/P\.ef/);
   });
 
+  it('a large object literal assigned to P cannot spend the budget the count helpers are checked with', () => {
+    // Before, its parse was charged to the probes' budget, which then ran out: P.Ya unverified, the bundle refused.
+    const maxSteps = 50_000;
+    const big = `P={x:[${'1,'.repeat(24_980)}1]};`;
+    const b = new WarappBundle(
+      'var W={};var P={};P.Ya=function(a){return a.Og()};P.uq=function(a){return a.bc()};' + big + READER,
+      'big-literal',
+      { maxSteps },
+    );
+    expect(b.dialectCheck.verified).toEqual(['P.Ya', 'P.uq']);
+  });
+
   it('a bundle that defines no helpers (the test bundles) has nothing to check', () => {
     const b = new WarappBundle(MINI_BUNDLE, 'mini');
     expect(b.dialectCheck).toEqual({ verified: [], unverified: [], mismatched: [] });
