@@ -62,6 +62,12 @@ interface Named {
   id: number;
   name: string;
 }
+interface Coverage {
+  share: number;
+  covered: number;
+  reasonable: number;
+  uncovered: Named[];
+}
 interface PlanPicksPayload {
   game: { id: number; name: string | null; state: string };
   players: number;
@@ -76,8 +82,17 @@ interface PlanPicksPayload {
       maxHops: number | null;
       bonuses: Array<Named & { value: number; turn: number; threats: Named[] }>;
       twoOrderCaptures: Array<{ turn: number; territory: Named; orders: Array<{ from: Named; armies: number }> }>;
+      coverage?: Coverage;
     }
   >;
+  alternative?: {
+    territories: Named[];
+    score: number;
+    maxHops: number | null;
+    coverage: Coverage;
+    fallback: Named[];
+    submitPicks: { game_id: number; territories: number[] };
+  };
   warnings: string[];
   rationale: string[];
   submitPicks: { game_id: number; territories: number[] };
@@ -261,6 +276,47 @@ describe('warapp_plan_picks', () => {
     expect(tool.description).toMatch(/double border/);
     expect(tool.description).toMatch(/two-player game.*answers? the loss/);
     expect(tool.description).not.toMatch(/another area/);
+  });
+
+  it('reports the primary’s coverage, and a coverage-first alternative in a 1v1 when it covers more (#166)', async () => {
+    const duel = () => {
+      const g = game('DistributingTerritories');
+      return { ...g, players: (g.players as unknown[]).slice(0, 2) };
+    };
+    // Bonus 118 (159, 161, 157) and, 13 hops away, 3142 of bonus 136.
+    const far: SyntheticTerritory[] = [159, 161, 157, 3142].map((id) => ({ id, fogLevel: 2, owner: -2, armies: 3 }));
+    h = await liveHarness({ feed: [duel()], warapp: routes({ [Method.GetLatestGameInfo]: board(far) }) });
+    const p = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.groups.primary.territories.map((t) => t.id).sort((a, b) => a - b)).toEqual([157, 159, 161]);
+    expect(p.groups.primary.coverage).toMatchObject({ covered: 1, reasonable: 2 });
+    expect(p.groups.primary.coverage!.uncovered).toEqual([{ id: 136, name: expect.any(String) }]);
+    expect(p.groups.fallback).not.toHaveProperty('coverage');
+    const alt = p.alternative!;
+    expect(alt.territories.map((t) => t.id)).toContain(3142);
+    for (const t of alt.territories) expect(t.name).toBe(mapName(t.id));
+    expect(alt.coverage).toMatchObject({ share: 1, covered: 2, uncovered: [] });
+    expect(typeof alt.score).toBe('number');
+    expect(alt.submitPicks.game_id).toBe(GAME);
+    expect(alt.submitPicks.territories).toEqual([...alt.territories, ...alt.fallback].map((t) => t.id));
+    // The primary's own list is untouched.
+    expect(p.submitPicks.territories.slice(0, 3)).toEqual(p.groups.primary.territories.map((t) => t.id));
+    expect(p.rationale.join(' ')).toMatch(/Prefer the compact primary by default/);
+
+    // The original board: the compact primary already reaches both bonuses, so no alternative.
+    await h.harness.close();
+    h = await liveHarness({ feed: [duel()], warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
+    const q = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(q.groups.primary.coverage).toMatchObject({ share: 1 });
+    expect(q).not.toHaveProperty('alternative');
+  });
+
+  it('describes the coverage-first alternative and when to prefer it (#166)', async () => {
+    h = await liveHarness({ feed: [game('DistributingTerritories')] });
+    const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_plan_picks')!;
+    expect(tool.description).toMatch(/`coverage`/);
+    expect(tool.description).toMatch(/`alternative`/);
+    expect(tool.description).toMatch(/compact primary by default/);
+    expect(tool.description).toMatch(/small board/);
   });
 
   it('refuses outside the picking stage, without touching the bridge', async () => {

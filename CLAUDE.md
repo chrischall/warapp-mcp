@@ -110,7 +110,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the worst set it can yield and the other players' starts that implies; the primary is reordered only when that
   raises the worst outcome. With commanders on, the primary's safest pick (fewest other pickables within 2 hops)
   is listed first, since the first pick awarded carries the commander (#129).
-  Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes. `docs/STRATEGY.md` states the community
+  Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes; in a two-player game without `spread` it also offers a
+  coverage-first `alternative` (a pair, then the picks that most raise `coverage` — the reasonable bonuses reached within 2 moves
+  past no wasteland; `coverageModel`) with its own `submitPicks`, only when it covers more, the primary unchanged (#166). `docs/STRATEGY.md` states the community
   heuristics in our own words with source links (cite, never copy) and marks which are encoded.
 - **The award of picks is read once, from my own list (#166).** The list war.app read back
   (`warapp_submit_picks`, or `warapp_get_my_picks` during distribution for the signed-in account) is kept at
