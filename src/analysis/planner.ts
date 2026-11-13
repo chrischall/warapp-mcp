@@ -627,7 +627,10 @@
 //     while the enemy front was short, and a stack beside one never moved). This turn's
 //     captures count as mine only when they land for sure — a neutral, or an attack on a player
 //     sized for its owner's whole deploy (rule 1e, 1s, or rule 3's #120 sizing): an exact-sized attack on a player fails
-//     if the owner reinforces, and the garrison beside it is not idle. A leftover deploy (rule 5)
+//     if the owner reinforces, and the garrison beside it is not idle. Even a sure one may fail
+//     (#128): a territory interior only once an attack on a player beside it lands keeps what
+//     holds it against the threat there as the board stands (its neighbours' owners' stacks and
+//     deploy) and transfers only the rest. A leftover deploy (rule 5)
 //     to a border short of its margin is never transferred away.
 //     Staging (#125): when the leftover saved toward a step (rule 5), idle armies on my other
 //     territories facing no visible enemy (a border beside neutrals included; never one that
@@ -7591,14 +7594,34 @@ export function planTurn(input: PlanInput): TurnPlan {
         .filter((x) => mineSet.has(x) && !conceded.has(x) && (dist.get(x) ?? Infinity) < d)
         .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
       if (step === undefined) continue;
-      if (orderOf(t)) {
-        warnSplit(t, `its ${n} idle armies are not transferred to ${label(step)}`);
+      // #128: interior only if this turn's attacks on players beside it land. Until they do, it
+      // keeps what holds against the threat there as if they failed (its neighbours' owners'
+      // stacks and deploy as they stand): a +12 bonus was left on 1 beside a capture.
+      const pending = neighborsOf(g, t).filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player');
+      const ifFail = pending.length ? borderAt(t, () => false) : null;
+      const keep = ifFail ? Math.max(0, holdArmies(ifFail.threat) - unitsAt(t)) : 0;
+      const k = Math.min(n, Math.max(0, stayAt(t) - keep));
+      if (k <= 0) {
+        if (pending.length)
+          rationale.push(
+            `Keep the ${n} idle armies on ${label(t)}: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat}.`,
+          );
         continue;
       }
-      avail.set(t, 0);
+      if (orderOf(t)) {
+        warnSplit(t, `its ${k} idle armies are not transferred to ${label(step)}`);
+        continue;
+      }
+      avail.set(t, n - k);
       const reason = 'moves idle interior armies toward the front';
-      moves.push({ from: t, to: step, armies: n, kind: 'transfer', reason });
-      rationale.push(`Transfer ${n} from ${label(t)} to ${label(step)}: ${reason}.`);
+      moves.push({ from: t, to: step, armies: k, kind: 'transfer', reason });
+      rationale.push(
+        `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${
+          k < n
+            ? ` (${stayAt(t)} stay: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat})`
+            : ''
+        }.`,
+      );
     }
   }
 

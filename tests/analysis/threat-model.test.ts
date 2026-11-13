@@ -219,3 +219,20 @@ describe('protected value counts an overlapping negative bonus (#128)', () => {
     expect(text).not.toMatch(/protects \+5/);
   });
 });
+
+describe('a territory interior only once a capture lands keeps a hold until then (#128)', () => {
+  // 1 (mine, a +12 singleton, 30) beside 2 (enemy, 1 army, in its +3 bonus 2 5); 1 - 3 (mine, 15)
+  // - 4 (enemy, 10); 3 - 6 neutral. Taking 2 makes 1 interior, and its idle armies head for 3.
+  const g = buildGraph(
+    makeMap([1, 2, 3, 4, 5, 6], [[1, 2], [1, 3], [3, 4], [2, 5], [3, 6], [4, 5]], [[101, 12, [1]], [102, 3, [2, 5]]]),
+  );
+  const b = board([mine(1, 30), player(2, 1, 20), mine(3, 15), player(4, 10, 20), player(5, 1, 20), neutral(6, 2)]);
+  it('the +12 bonus is not left on 1 army beside the attack', () => {
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 12, settings: STD, game: { players: [{ id: ME }, { id: 20 }], turn: 6 }, options: { adapt: true } });
+    expect(attacksOn(plan, 2).length).toBe(1);
+    const left = 30 + deployedTo(plan, 1) - plan.moves.filter((m) => m.from === 1).reduce((n, m) => n + m.armies, 0);
+    // The threat if the capture fails: player 20's ~8 deploy on 2 (its 1 army cannot move): 6 hold it.
+    expect(left).toBeGreaterThanOrEqual(6);
+    expect(plan.rationale.join('\n')).toMatch(/it is interior only once T2 \(#2\) falls, and until then they hold it against ~8/);
+  });
+});
