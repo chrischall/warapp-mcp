@@ -21,7 +21,7 @@
 //          is `defend`; in a 1v1 (#72) it stays `balanced` — strike: rule 1's ordering puts
 //          breaks before expansion that completes nothing, and held-bonus units that pay for
 //          themselves still come first (rule 1h). Behind on armies in a 1v1 (my visible armies
-//          at most BEHIND_RATIO × the strongest opponent's visible armies): no trade below even —
+//          and special units below BEHIND_RATIO × the strongest opponent's): no trade below even —
 //          a combined capture of a player's territory whose attacks lose more armies than they
 //          kill (its softeners each attack a stack larger than they can take) is not made.
 //          Ahead in a 1v1: pressure is allowed up to AHEAD_PRESSURE_FACTOR typical
@@ -230,8 +230,9 @@
 //     opponent's track over at least TRACKED_MIN_TURNS turns lists it in every combination
 //     fitting its income gap or in the best fit, and every member is that opponent's or
 //     hidden — and counter-attack targets: an enemy stack next to me visible on both boards
-//     that shrank attacking me (every neighbour visible on both, one of them mine on both, the
-//     shrink not absorbed by its own neighbours' growth) and is now cheaper to take than it
+//     that shrank attacking me (every neighbour visible on both, one of them mine on both, every
+//     neighbour neither mine nor its owner's unchanged in owner and armies, the shrink not
+//     absorbed by its own neighbours' growth) and is now cheaper to take than it
 //     was; never under `expand`/`defend`). Fogged or unknown neighbours are never attacked — they
 //     produce a warning.
 //  3. Capture cost: `armiesToTake` (0% luck, straight round). With luck L > 0
@@ -1244,20 +1245,27 @@ export function planTurn(input: PlanInput): TurnPlan {
   );
 
   // ---- rule 0p.3 (#72): behind on armies ----
-  // Adapting in a 1v1: my visible armies against the strongest opponent's visible armies. Behind
-  // (at most BEHIND_RATIO×) means no trade below even: a capture of a player's territory whose
-  // attacks lose more armies than they kill is not made.
+  // Adapting in a 1v1: my visible armies against the strongest opponent's visible armies, each
+  // with the special units standing on them (a commander fights as COMMANDER_STRENGTH). Behind
+  // (below BEHIND_RATIO×, strictly, as the plan states) means no trade below even: a combined
+  // capture of a player's territory whose attacks lose more armies than they kill is not made.
+  // A single capture needs no check: it kills every defender and loses at most
+  // round(defenders × defensive rate) ≤ defenders, so it never trades below even (pinned by
+  // tests at unusual kill rates) — revisit this if single-capture sizing ever changes.
   let armiesBehind = false;
   if (auto && profile.format === '1v1') {
     const totals = new Map<number, number>();
     for (const st of state.values())
       if (st.owner.kind === 'player' && st.armies !== null)
-        totals.set(st.owner.playerId, (totals.get(st.owner.playerId) ?? 0) + st.armies);
+        totals.set(
+          st.owner.playerId,
+          (totals.get(st.owner.playerId) ?? 0) + st.armies + specialUnitStrength(st.specialUnits),
+        );
     const myArmies = totals.get(me) ?? 0;
     const [rival, theirs] = [...totals]
       .filter(([p]) => p !== me)
       .sort((a, b) => b[1] - a[1] || a[0] - b[0])[0] ?? [undefined, 0];
-    if (rival !== undefined && theirs > 0 && myArmies <= BEHIND_RATIO * theirs) {
+    if (rival !== undefined && theirs > 0 && myArmies < BEHIND_RATIO * theirs) {
       armiesBehind = true;
       rationale.push(
         `Behind on armies (${myArmies} visible against player ${rival}'s ${theirs}): no trade below even — a capture of a player's territory whose attacks lose more armies than they kill is not made.`,
@@ -2201,8 +2209,9 @@ export function planTurn(input: PlanInput): TurnPlan {
   // ---- counter-attacks (under `balanced`, #72) ----
   // An enemy stack next to me that shrank since the previous board by attacking me: visible on
   // both boards under the same owner (F1, #69), every neighbour visible on both, one of them a
-  // territory I held on both, and the shrink not absorbed by its own neighbours' growth (a
-  // transfer). When it is now cheaper to take than it was, it is a strike candidate scored like
+  // territory I held on both, every neighbour that was neither mine nor its owner's unchanged in
+  // owner and armies (else it may have expanded or hit a third player), and the shrink not
+  // absorbed by its own neighbours' growth (a transfer). When it is now cheaper to take than it was, it is a strike candidate scored like
   // a break (rule 4a). A member of a breakable bonus is a break instead.
   interface Counter {
     player: number;
@@ -2224,6 +2233,16 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (!heldBy(was, p) || was!.armies! <= st.armies) continue;
       if (!ns.every((n) => visibleState(state.get(n)) && visibleState(before.get(n)))) continue;
       if (!ns.some((n) => mineSet.has(n) && heldBy(before.get(n), me))) continue;
+      // Pinned on me: every neighbour that was neither mine nor theirs keeps its owner and armies.
+      // A neutral it took (an expansion) or a third player it hit could have spent the shrink.
+      const elsewhere = ns.some((n) => {
+        const a = state.get(n)!;
+        const b = before.get(n)!;
+        if (heldBy(b, me) || heldBy(b, p)) return false;
+        const owner = (x: TerritoryState) => (x.owner.kind === 'player' ? x.owner.playerId : x.owner.kind);
+        return owner(a) !== owner(b) || a.armies !== b.armies;
+      });
+      if (elsewhere) continue;
       const absorbed = ns.reduce((sum, n) => {
         const a = state.get(n)!;
         const b = before.get(n)!;

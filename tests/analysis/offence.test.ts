@@ -277,6 +277,55 @@ describe('behind on armies: no trade below even', () => {
     expect(why(p)).toMatch(/Not attacking T5 \(#5\): the combined capture loses 11 armies for the 10 it kills, a trade below even while behind on armies/);
     expect(p.offence).toContainEqual(expect.objectContaining({ target: 5, kind: 'break', taken: false }));
   });
+
+  it('exactly 0.8x (20 against 25) is not behind: the plan says "< 0.8x"', () => {
+    expect(why(plan(15))).not.toMatch(/Behind on armies/);
+  });
+
+  it('a commander counts as 7 on each side: 20 + 7 against 30 is not behind', () => {
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 10), { ...mine(2, 10), specialUnits: [{ kind: 'commander', id: '1'.padStart(32, '0'), playerId: ME }] }, enemy(5, 10), enemy(6, 20)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: ENEMY }] },
+      options: { adapt: true },
+    });
+    expect(why(p)).not.toMatch(/Behind on armies/);
+  });
+
+  // The invariant behind refusing only combined captures: a single capture kills every defender
+  // and loses at most round(defenders x defensive rate) <= defenders, so it never trades below
+  // even, whatever the kill rates.
+  it.each([
+    [100, 100],
+    [30, 100],
+    [60, 70],
+  ])('a single capture while behind is still made (kill rates %i/%i)', (offensiveKillRate, defensiveKillRate) => {
+    const g1 = buildGraph(
+      makeMap(
+        [1, 5, 6],
+        [
+          [1, 5],
+          [5, 6],
+        ],
+        [[905, 1, [5, 6]]],
+      ),
+    );
+    const p = planTurn({
+      graph: g1,
+      board: board([mine(1, 10), enemy(5, 3), enemy(6, 30)]),
+      me: ME,
+      income: 5,
+      settings: { offensiveKillRate, defensiveKillRate, oneArmyStandsGuard: true },
+      game: { players: [{ id: ME }, { id: ENEMY }] },
+      options: { adapt: true },
+    });
+    expect(why(p)).toMatch(/Behind on armies \(10 visible against player 20's 33\)/);
+    expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 5]]);
+    expect(why(p)).not.toMatch(/trade below even while behind on armies \(loses|combined capture loses/);
+  });
 });
 
 // Concentrate. An FFA: T1 (20) faces player 20's T5 (2) and the fogged T7; T2 (20) faces player
@@ -330,6 +379,48 @@ describe('concentrate the spare deploys on the strongest opponent', () => {
   });
 });
 
+// Concentrate takes the leftover ahead of a comfort margin, in an FFA too (rule 0p.3c has no
+// format restriction). I hold B906 (+3) at T3 (8), which faces player 20's T4 (8): it holds
+// without a deploy but is short of a comfortable margin. T1 (20) faces player 30's T5 (2), the
+// strongest opponent (tracked 12; its T6 keeps it from being finished off).
+describe('concentrate outranks a comfort margin on a held bonus border', () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 3, 4, 5, 6],
+      [
+        [1, 3],
+        [3, 4],
+        [1, 5],
+        [5, 6],
+      ],
+      [[906, 3, [3]]],
+    ),
+  );
+  const input = (options: PlanInput['options']): PlanInput => ({
+    graph: g,
+    board: board([mine(1, 20), mine(3, 8), enemy(4, 8), enemy(5, 2, THIRD), enemy(6, 2, THIRD)]),
+    me: ME,
+    income: 10,
+    settings: STD,
+    tracks: [track(THIRD, 12)],
+    game: { players: [{ id: ME }, { id: ENEMY }, { id: THIRD }] },
+    options,
+  });
+
+  it('without the profile, the leftover tops up the short held border', () => {
+    const p = planTurn(input({}));
+    expect(p.deploys).toEqual([{ territoryId: 3, armies: 10 }]);
+    expect(why(p)).toMatch(/Deploy the leftover 10 to T3 \(#3\): the held border with the most at stake \(protects \+3\)/);
+  });
+
+  it('adapting in an FFA: the strike stack facing player 30 takes it instead', () => {
+    const p = planTurn(input({ adapt: true }));
+    expect(p.profile.format).toBe('ffa');
+    expect(p.deploys).toEqual([{ territoryId: 1, armies: 10 }]);
+    expect(why(p)).toMatch(/Deploy the leftover 10 to T1 \(#1\): one strike stack on the border facing player 30/);
+  });
+});
+
 // Counter-attack. Last turn the enemy's T5 (12) attacked my T1 and failed: it shows 4 now, and
 // its only other neighbour, its own 40-stack T6, did not grow (no transfer). Capturing 4
 // defenders costs 6 instead of 20.
@@ -364,5 +455,49 @@ describe('counter-attack a stack that spent itself on me', () => {
     const moved = plan(before(12, 32));
     expect(attacks(moved)).toEqual([]);
     expect(moved.offence).toEqual([]);
+  });
+});
+
+// The shrink must be pinned on me. T5 (12 last turn, 4 now) also borders T7: when T7 changed
+// hands to T5's owner (an expansion into a neutral) or lost armies to anyone (a hit on a third
+// player), the armies T5 spent may have gone there, so it is no counter-attack target — even
+// though my T1 sits next to it untouched.
+describe('a counter-attack needs the shrink pinned on me', () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 5, 6, 7],
+      [
+        [1, 5],
+        [5, 6],
+        [5, 7],
+      ],
+    ),
+  );
+  const plan = (t7Before: TerritoryState, t7Now: TerritoryState) =>
+    planTurn({
+      graph: g,
+      board: board([mine(1, 9), enemy(5, 4), enemy(6, 40), t7Now]),
+      previousBoard: board([mine(1, 9), enemy(5, 12), enemy(6, 40), t7Before]),
+      me: ME,
+      income: 5,
+      settings: STD,
+    });
+
+  it('the stack expanded into a neutral (T7: neutral 2 -> enemy 6): no counter', () => {
+    const p = plan(neutral(7, 2), enemy(7, 6));
+    expect(p.offence.filter((o) => o.kind === 'counter')).toEqual([]);
+    expect(why(p)).not.toMatch(/attacking me last turn/);
+    expect(attacks(p).map((m) => m.to)).not.toContain(5);
+  });
+
+  it("the stack attacked a third player (T7: player 30's 10 -> 4): no counter", () => {
+    const p = plan(enemy(7, 10, THIRD), enemy(7, 4, THIRD));
+    expect(p.offence.filter((o) => o.kind === 'counter')).toEqual([]);
+    expect(why(p)).not.toMatch(/attacking me last turn/);
+  });
+
+  it('the third player untouched (T7 unchanged): the counter stands', () => {
+    const p = plan(enemy(7, 10, THIRD), enemy(7, 10, THIRD));
+    expect(p.offence).toContainEqual(expect.objectContaining({ target: 5, kind: 'counter', taken: true }));
   });
 });
