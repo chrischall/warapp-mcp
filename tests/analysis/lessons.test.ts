@@ -178,9 +178,11 @@ describe('lessons from a lost game', () => {
     // it protects. The old rule sent the leftover to the border with the most enemies next
     // to it — exactly this one. (R1: the opponent's visible income no longer supports ~38 —
     // the old stack rule's round(0.75 × 51) — so the lesson passes it as the estimate.)
+    // (#51: 39 ≤ PAYBACK_TURNS × 5, so the held Homeland would pay it back; it is conceded
+    // because the 20 income cannot cover it.)
     const p = plan(hopelessBoard, 20, { enemyDeploy: 38 });
     expect(p.conceded).toEqual([4]);
-    expect(p.warnings).toContain('T4 (#4) cannot be held economically (needs 39, protects +5): conceded');
+    expect(p.warnings).toContain('T4 (#4) cannot be held with the 20 armies left to deploy (needs 39, protects +5): conceded');
     expect(deployedTo(p, 4)).toBe(0);
     expect(deploySum(p)).toBe(20);
     // Its armies are withdrawn behind it rather than lost.
@@ -188,12 +190,16 @@ describe('lessons from a lost game', () => {
     expect(p.cardAdvice).toBe('order-priority');
     expect(p.rationale.join('\n')).toMatch(/Deploy the leftover \d+ to T3 \(#3\)/);
 
-    // Nor does a conceded border become the source of a break: T3 faces 19 + ~15 = 34 and is
-    // conceded; it withdraws rather than taking 30 deploys to attack the 20 on T8. (R1: the
-    // ~15 — the old stack rule's round(0.75 × 20) — is passed explicitly, as above.)
-    const b = plan(hopelessBreakBoard, 40, { enemyDeploy: 15 });
+    // Nor does a conceded border become the source of a break: T3 faces 19 + ~71 = 90 and is
+    // conceded (holding needs 51, more than PAYBACK_TURNS × the +5 it protects); it withdraws
+    // rather than taking 30 deploys to attack the 20 on T8.
+    // (#51: against ~15 — 34 — the hold is 17, which the held +5 pays back, so T3 is held.)
+    const held = plan(hopelessBreakBoard, 40, { enemyDeploy: 15 });
+    expect(held.conceded).toEqual([]);
+    expect(deployedTo(held, 3)).toBeGreaterThanOrEqual(17);
+    const b = plan(hopelessBreakBoard, 40, { enemyDeploy: 71 });
     expect(b.conceded).toContain(3);
-    expect(b.warnings).toContain('T3 (#3) cannot be held economically (needs 17, protects +5): conceded');
+    expect(b.warnings).toContain('T3 (#3) cannot be held economically (needs 51, protects +5): conceded');
     expect(deployedTo(b, 3)).toBe(0);
     expect(attacks(b).some((m) => m.from === 3)).toBe(false);
     expect(b.moves[0]).toEqual(expect.objectContaining({ from: 3, kind: 'transfer', reason: 'withdraws from a conceded border' }));
