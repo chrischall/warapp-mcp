@@ -371,9 +371,9 @@
 //     reports `frontier` (borders, enemy-facing borders, their hold cost — conceded borders
 //     excluded — and the next income). Under a guarded goal, a capture that adds an enemy-
 //     facing border without completing a bonus (not focused) is undone when the hold cost
-//     would then exceed the next income and the start-of-turn hold cost (in rule 4e's contact/late
-//     fallback it is a cost instead, #114); a warning ("Frontier
-//     grows faster than income") names it, and also fires when the plan's frontier ends so.
+//     would then exceed the next income and the start-of-turn hold cost (in rule 4e's
+//     contact/late fallback it is a cost instead, #114); a warning ("Frontier grows faster than
+//     income") names it, and also fires when the plan's frontier ends so.
 //  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
 //     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
 //     expansion phase takes one neutral capture toward a positive bonus (net > 0, never a negative
@@ -433,16 +433,17 @@
 //     and, for one that opens a second front, "… taken only because it costs nothing"). Every
 //     candidate considered and not taken is named in one rationale line, "Other candidates not
 //     taken: …", with its reason (refused, does not fit, ranked after the capture taken and at
-//     what cost, or — rule 0p.2 — tried only after every other); when nothing is taken, the top
-//     one is in the stand-still warning instead. In an FFA with two or more
-//     opponents (rule 0p.2's setting, applied here whether or not the plan adapts), a capture
-//     against a player that cannot currently attack me (it could take no territory of mine next
-//     turn) opens a second front and is tried only after every other; the rationale says which
-//     ("can already attack me …: opens no new front" / "cannot attack me now: … opens a second
-//     front (no second front in an FFA), taken only because no neutral capture fits"), and the trade ("kills K for L lost"). Outside
+//     what cost, or — rule 0p.2 — tried only after every other); an enemy capture refused as a
+//     trade or for a hold is left to its own warning, and when nothing is taken the top one is in
+//     the stand-still warning instead. In an FFA with two or more opponents (rule 0p.2's setting,
+//     applied here whether or not the plan adapts), a capture against a player that cannot
+//     currently attack me (it could take no territory of mine next turn) opens a second front and
+//     is tried only after every other; the rationale says which ("can already attack me …: opens
+//     no new front" / "cannot attack me now: … opens a second front (no second front in an FFA),
+//     taken only because no neutral capture fits"), and the trade ("kills K for L lost"). Outside
 //     the contact/late fallback (passes 1–3, the opening/expansion and army-cap fallback) rule 4d
-//     keeps its veto. An
-//     enemy capture carries the usual warning that it assumes the owner does not reinforce first.
+//     keeps its veto. An enemy capture carries the usual warning that it assumes the owner does
+//     not reinforce first.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, and
 //     in the opening and expansion phases, completions and advances keep the slots their scores
 //     give them (rules 4, 4a) but fill them closest to completion first: fewest turns to finish at
@@ -4706,6 +4707,9 @@ export function planTurn(input: PlanInput): TurnPlan {
        */
       const attempt = (st: Cand, reason: string): (() => void) | null => {
         const out = st.from !== undefined && conceded.has(st.from) ? st.from : undefined;
+        // Neither the snapshot nor a no-op unreclaim puts back the card advice an attack out of a
+        // conceded border sets (#114: a candidate only tried and undone must leave none behind).
+        const card = cardAdvice;
         const unreclaim = out === undefined ? () => {} : reclaim(out);
         const before = out === undefined ? 0 : movableFor(out, st.t);
         const restore = snapshot();
@@ -4748,6 +4752,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           const unwind = out === undefined || viaOut ? unreclaim : reclaim(out);
           restore();
           unwind();
+          cardAdvice = card;
         };
       };
       /**
@@ -5006,12 +5011,15 @@ export function planTurn(input: PlanInput): TurnPlan {
         const tail = `${failText(top.st, failed.get(top.st.t))}.`;
         warnings.push(`${head} ${tail}`);
       }
-      // #114: every candidate the fallback considered and dropped leaves a reason (the top one,
-      // when nothing is taken, is in the stand-still warning).
-      const dropped = picks.flatMap((p) => {
+      // #114, in contact: every candidate the fallback considered and dropped leaves a reason (the
+      // top one, when nothing is taken, is in the stand-still warning). One already said elsewhere
+      // is not repeated: an enemy capture refused as a trade or for a hold has its "Not attacking"
+      // warning.
+      const dropped = (contact ? picks : []).flatMap((p) => {
         const t = p.st.t;
         if (captured.has(t) || (!taken && p === picks[0])) return [];
         const fail = failed.get(t);
+        if (fail && p.kind === 'enemy' && (fail.kind === 'trade' || fail.kind === 'hold')) return [];
         if (fail) return [`${label(t)} ${failText(p.st, fail)}`];
         const why = freeWhy.get(t);
         if (why) return [`${label(t)} ${why}`];
@@ -5020,7 +5028,6 @@ export function planTurn(input: PlanInput): TurnPlan {
         const after = `is ranked after ${label(taken.st.t)}`;
         if (p.kind === 'enemy' && p.st.secondFront && !(taken.kind === 'enemy' && taken.st.secondFront))
           return [`${label(t)} ${after}: player ${p.st.player} cannot attack me now, so it is tried only after every other capture`];
-        if (!contact) return [`${label(t)} ${after} in rule 4e's order (what this turn can afford, then its bonus's armies to finish)`];
         const c = costOfPick(t);
         const tc = costOfPick(taken.st.t);
         return [

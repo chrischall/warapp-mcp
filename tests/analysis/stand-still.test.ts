@@ -1094,6 +1094,52 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
     expect(valid(p, b, 5, map)).toEqual([]);
   });
 
+  it('a candidate only tried and undone leaves no Order Priority advice behind (conceded source, never withdrawn)', () => {
+    // 7 is conceded and borders only 28 (player 40, empty): no withdrawal path, so trying 28 from 7
+    // attacks out of it and advises Order Priority, which the trial's undo must take back.
+    const base = shape(false);
+    const map = makeMap(
+      [...base.territories.map((t) => t.id), 28],
+      [
+        [1, 2], [8, 1], [8, 2], [8, 3], [1, 23], [1, 24], [2, 4], [2, 22], [2, 25],
+        [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27], [7, 28], [28, 27],
+      ],
+      [[701, 'Crown', 6, [3, 4, 5, 6]]],
+    );
+    const b = board([...shapeBoard().territories, player(28, 0, P3)]);
+    const p = run(b, map);
+    expect(p.profile.phase).toBe('contact');
+    expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 23]]);
+    expect(p.moves.some((m) => m.from === 7)).toBe(false);
+    expect(p.warnings.join('\n')).not.toMatch(/attack out of T7/);
+    expect(p.cardAdvice).toBeNull();
+    expect(valid(p, b, 5, map)).toEqual([]);
+  });
+
+  it('a free capture is taken though 4d would refuse its border, and says when that border may fall', () => {
+    // 28 (player 40, empty) next to 1 and to player 40's 12-stack on 25: it loses nothing, so it
+    // is taken after 23; its survivor cannot hold 28 next turn, and the rationale says so.
+    const base = shape(false);
+    const map = makeMap(
+      [...base.territories.map((t) => t.id), 28],
+      [
+        [1, 2], [8, 1], [8, 2], [8, 3], [1, 23], [1, 24], [2, 4], [2, 22], [2, 25], [2, 7],
+        [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27], [1, 28], [28, 25],
+      ],
+      [[701, 'Crown', 6, [3, 4, 5, 6]]],
+    );
+    const b = board([...shapeBoard().territories, player(28, 0, P3)]);
+    const p = run(b, map);
+    expect(p.profile.phase).toBe('contact');
+    expect(p.expected.captures).toEqual([23, 28]);
+    const r = p.rationale.join('\n');
+    expect(r).not.toMatch(/Do not take T28/);
+    expect(r).toMatch(
+      /Also take T28 \(#28\): it costs nothing \(it loses no armies, every hold stays covered and income does not fall\); its 1 survivor may fall next turn \(a threat of \d+ against them\), no more than the armies it sends\./,
+    );
+    expect(valid(p, b, 5, map)).toEqual([]);
+  });
+
   it('outside the fallback 4d still stops a capture that grows the enemy frontier past income', () => {
     // 9, a 1-neutral next to 8, completes Nook (+2): an economic capture, so no fallback runs.
     // Enemy territories are no plain-expansion target under `balanced`, so 4d's stop is shown on
