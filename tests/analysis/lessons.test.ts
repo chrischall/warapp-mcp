@@ -143,7 +143,7 @@ describe('lessons from a lost game', () => {
     ]);
     const share = Math.ceil(MIN_EXPANSION_SHARE * 8);
     expect(deployedTo(p, 2)).toBeGreaterThanOrEqual(share);
-    expect(p.rationale.join('\n')).toContain(`Hold T16 (#16) later (needs 6, protects +2): at least ${share} of income`);
+    expect(p.rationale.join('\n')).toContain('Hold T16 (#16) after this turn\'s bonus completions (needs 6, protects +2)');
     expect(p.conceded).toEqual([16]);
     expect(deploySum(p)).toBe(8);
 
@@ -187,6 +187,16 @@ describe('lessons from a lost game', () => {
     expect(p.moves[0]).toEqual(expect.objectContaining({ from: 4, to: 3, armies: 14, kind: 'transfer' }));
     expect(p.cardAdvice).toBe('order-priority');
     expect(p.rationale.join('\n')).toMatch(/Deploy the leftover \d+ to T3 \(#3\)/);
+    // Not for want of income: even when the income covers the 39, it is not poured in.
+    // (#51: Homeland's hold pays back within PAYBACK_TURNS, but a held bonus's borders
+    // still pass rule 1a's CONCEDE_FACTOR × worth test.)
+    for (const income of [39, 40, 45, 60]) {
+      const rich = plan(hopelessBoard, income, { enemyDeploy: 38 });
+      expect(rich.conceded, `income ${income}`).toEqual([4]);
+      expect(rich.warnings, `income ${income}`).toContain('T4 (#4) cannot be held economically (needs 39, protects +5): conceded');
+      expect(deployedTo(rich, 4), `income ${income}`).toBe(0);
+      expect(deploySum(rich), `income ${income}`).toBe(income);
+    }
 
     // Nor does a conceded border become the source of a break: T3 faces 19 + ~15 = 34 and is
     // conceded; it withdraws rather than taking 30 deploys to attack the 20 on T8. (R1: the

@@ -126,6 +126,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     (a warning either way): it is never deployed to (unless every territory I hold is
     conceded), it attacks out only with the armies already on it, and idle armies never move
     into it.
+  - **Held bonuses first (#51)** (under `balanced`/`defend`): a bonus I hold in full is one
+    unit — all its threatened borders are held or none (a border shared by two held bonuses is
+    paid once). A unit whose summed hold cost ≤ `PAYBACK_TURNS` × its value (and, like any
+    border, ≤ `CONCEDE_FACTOR` × its worth) is funded before any capture that completes no bonus
+    (advances, breaks, other expansion); completions still compete on score but never starve a
+    unit unless their bonus earns more, and finishing off keeps its place. One that does not
+    pay, or that the income left cannot cover, is conceded whole ("conceding bonus …") and its
+    borders are judged alone without that bonus.
+    `expand` is unchanged but warns.
   - **Withdraw** (under `balanced`/`defend`): a conceded border's movable armies go first to
     the neighbour nearest a border that holds, and the plan sets `cardAdvice:
     'order-priority'` because a withdrawal only executes while the border is still mine. The
