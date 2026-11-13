@@ -180,7 +180,10 @@ and chat text comes back marked as untrusted third-party content.
    what it protects is `conceded`: nothing is deployed there (unless every territory you hold
    is conceded) and no attack from it is funded, its armies withdraw to a border
    that holds, and `cardAdvice: "order-priority"` says to play Order Priority (add it to the
-   `orders` if you hold one) so the withdrawal runs before the border falls.
+   `orders` if you hold one) so the withdrawal runs before the border falls. A held bonus's
+   border is not conceded on a near miss (short of a sure hold by at most 2 armies or 15%) or
+   while it still holds against the expected attack (enemy movable + its deploy estimate):
+   everything left goes there, with a warning that it may fall, and its armies stay.
 2. **Review.** Go through the plan and its warnings; edit the `orders` if you want something
    different (territories by id or name, cards by id or type name).
 3. **Submit.** `warapp_submit_turn` with those `orders`. It always acts as the account signed in

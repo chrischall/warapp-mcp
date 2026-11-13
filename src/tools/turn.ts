@@ -535,7 +535,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'pressure plan may leave some of its territories unattacked. This runs before any border facing it is ' +
           'conceded (holds worth paying for against other players are funded first). Hopeless borders are listed in `conceded` and get no ' +
           'deploys (unless every territory you hold is conceded); under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
-          'Priority so the withdrawal runs before the border falls. A bonus whose new frontier would fall next turn is ' +
+          'Priority so the withdrawal runs before the border falls. A held bonus\'s border short of a sure hold by a near ' +
+          'miss (at most 2 armies or 15%), or still holding against the expected attack, is funded with everything left ' +
+          'instead (a warning says it may fall) and never withdrawn. A bonus whose new frontier would fall next turn is ' +
           'not completed under balanced/defend (a warning says so). A neutral no single stack can afford may be taken by ' +
           'several attacks in a fixed order (`multiSourceCaptures`; 0% luck only). Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
           'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +

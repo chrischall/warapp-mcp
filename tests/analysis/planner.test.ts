@@ -746,18 +746,21 @@ describe('planTurn — balanced', () => {
       [1, 6, 3],
       [1, 4, 6],
     ]);
-    // T2 holds (3 deployed); T3 waits behind the expansion share, then cannot be afforded.
+    // T2 holds (3 deployed); T3 waits behind the expansion share, then only 1 of its 3 is
+    // left: short by 2, a near miss (#59), so it gets that 1 and keeps its armies.
     expect(p.deploys).toEqual([
-      { territoryId: 1, armies: 3 },
+      { territoryId: 1, armies: 2 },
       { territoryId: 2, armies: 3 },
+      { territoryId: 3, armies: 1 },
     ]);
-    expect(p.conceded).toEqual([3]);
-    expect(p.warnings).toContain('T3 (#3) cannot be held with the 1 armies left to deploy (needs 3, protects +1): conceded');
+    expect(p.conceded).toEqual([]);
+    expect(p.warnings.join('\n')).toMatch(
+      /Bonus B803 \(#803\) \(\+1\) is held though short: its 1 threatened border needs 3, only 1 left to deploy, so all 1 go there \(short by 2, within the near-miss margin of 2\); T3 \(#3\) may fall\./,
+    );
     expect(p.rationale.join('\n')).toMatch(/Deploy 3 to T2 \(#2\) so it holds/);
     expect(p.rationale.join('\n')).toMatch(/T3 \(#3\).*after this turn's bonus completions/);
-    // The conceded border withdraws its one movable army first, with Order Priority advice.
-    expect(p.moves[0]).toEqual(expect.objectContaining({ from: 3, to: 1, armies: 1, kind: 'transfer' }));
-    expect(p.cardAdvice).toBe('order-priority');
+    expect(p.moves.some((m) => m.from === 3)).toBe(false);
+    expect(p.cardAdvice).toBeNull();
   });
 
   it('(d) funds a deferred hold once expansion has had its share', () => {
@@ -1731,10 +1734,12 @@ describe('planTurn — threat trend', () => {
     expect(p.conceded).toEqual([]);
   });
 
-  it('(g) concedes per L1 when the projected hold is unaffordable', () => {
+  it('(g) a projected hold one army short is a near miss (#59): all 5 go there, nothing is conceded', () => {
     const p = planTurn({ ...base, income: 5, previousBoard: then, options: { goal: 'defend', enemyDeploy: 10 } });
-    expect(p.conceded).toEqual([1]);
-    expect(p.warnings.join('\n')).toMatch(/T1 \(#1\) cannot be held with the 5 armies left to deploy \(needs 6, protects \+5\)/);
+    expect(p.conceded).toEqual([]);
+    expect(p.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
+    expect(p.warnings.join('\n')).toMatch(/its 1 threatened border needs 6, only 5 left to deploy, so all 5 go there/);
+    expect(p.warnings.join('\n')).not.toMatch(/cannot be held/);
   });
 
   it('(g) balanced uses the projected threat too', () => {

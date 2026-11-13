@@ -144,7 +144,10 @@ describe('lessons from a lost game', () => {
     const share = Math.ceil(MIN_EXPANSION_SHARE * 8);
     expect(deployedTo(p, 2)).toBeGreaterThanOrEqual(share);
     expect(p.rationale.join('\n')).toContain('Hold T16 (#16) after this turn\'s bonus completions (needs 6, protects +2)');
-    expect(p.conceded).toEqual([16]);
+    // #59: the 5 left are one short of T16's hold, a near miss: they all go there, not conceded.
+    expect(p.conceded).toEqual([]);
+    expect(deployedTo(p, 16)).toBe(5);
+    expect(p.warnings.join('\n')).toMatch(/Bonus Marches \(#205\) \(\+2\) is held though short/);
     expect(deploySum(p)).toBe(8);
 
     // What lost the game: all-defence spends the income on the border and the +3 never comes.

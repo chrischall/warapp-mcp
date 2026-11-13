@@ -89,7 +89,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   `conceded` costs more to hold than it is worth (or than the income left): nothing is
   deployed there (unless every territory the user holds is conceded) and no attack from it
   is funded — it attacks out only with the armies already on it — and its armies withdraw
-  toward a border that holds. When `cardAdvice` is
+  toward a border that holds. A held bonus's border is not conceded on a near miss (the
+  income left is short of a sure hold by at most 2 armies or 15%) or while it still holds
+  against the expected attack (enemy movable + its deploy estimate): everything left goes
+  there with a warning that it may fall, and its armies never withdraw. When `cardAdvice` is
   `"order-priority"`, tell the user a withdrawal only runs if the border is still theirs when
   it executes, and suggest adding Order Priority to the `orders` if they hold one (the planner
   only plays it when a card play is required).

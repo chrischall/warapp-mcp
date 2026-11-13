@@ -106,7 +106,13 @@
 //     bonus earns more than the units it starves; otherwise it waits until they are
 //     funded (concede a held bonus only for alternatives that earn more). It waits for
 //     rule 4a's expansion share only until then. Finishing off (rule 1e) keeps its place before
-//     it. A unit the armies left cannot cover is conceded whole ("conceding bonus …:
+//     it. A unit the armies left cannot cover is first tried as a near miss (issue #59):
+//     each border not yet held gets what may still be deployed there, up to its hold
+//     cost (pools respected), and the unit is kept — deploys stay, nothing withdrawn,
+//     a warning "… is held though short …; X may fall" — when the total is short by at
+//     most nearMissMargin(need) = max(NEAR_MISS_ARMIES, NEAR_MISS × need), or when every
+//     short border still holds against the expected attack (movable + deploy estimate,
+//     no trend projection). Otherwise it is conceded whole ("conceding bonus …:
 //     holding all N threatened borders needs X, more than …"; a one-border unit keeps
 //     rule 1a's warnings). Each border of a conceded unit is then judged alone by rule
 //     1a with its protected value less that bonus (other bonuses, per-territory income,
@@ -124,6 +130,10 @@
 //     to the adjacent territory of mine nearest a border that holds (then the
 //     one protecting the most value, then id); the plan advises Order Priority
 //     (`cardAdvice`), because a withdrawal only executes while the border is mine.
+//     A conceded border of a bonus I hold in full whose armies staying still hold
+//     against the expected attack (movable + deploy estimate) is never withdrawn from
+//     (issue #59): its garrison stays, and under Local Deployment its bonus's leftover
+//     pool may go there as if it were not conceded.
 //  2. Targets: visible neutrals adjacent to a territory I held at the start of
 //     the turn (plus visible enemy territories under `goal: 'complete-bonus'`, and
 //     under `balanced` only enemy territories in a breakable bonus — one whose
@@ -234,6 +244,18 @@ export const ENEMY_STACK_SHARE = 0.75;
 export const CONCEDE_FACTOR = 3;
 /** A held border is comfortable once taking it needs more than this many times its threat. */
 export const COMFORT_MARGIN = 1.25;
+/**
+ * A held bonus whose threatened borders are short of a sure hold by at most this share of
+ * the hold they need (or {@link NEAR_MISS_ARMIES}, whichever is larger) is a near miss:
+ * funded with everything available rather than conceded (issue #59).
+ */
+export const NEAR_MISS = 0.15;
+/** The near-miss margin is never below this many armies. */
+export const NEAR_MISS_ARMIES = 2;
+/** The most a held bonus's hold `need` may be short and still be a near miss. */
+export function nearMissMargin(need: number): number {
+  return Math.max(NEAR_MISS_ARMIES, NEAR_MISS * need);
+}
 
 /** Denying +V to the opponent is worth this many times gaining +V yourself (per opponent: divided among them). */
 export const BREAK_WEIGHT = 1.0;
@@ -783,6 +805,19 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     return best;
   };
+  /**
+   * The expected (not worst-case) attack on my `t` next turn (issue #59): per player, its
+   * movable armies next to `t` plus its deploy estimate — no trend projection. 0 with none.
+   */
+  const expectedAt = (t: number): number => {
+    const byPlayer = new Map<number, number>();
+    for (const n of neighborsOf(g, t)) {
+      const st = state.get(n);
+      if (captured.has(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard));
+    }
+    return Math.max(0, ...[...byPlayer].map(([p, movable]) => movable + deployOf(p)));
+  };
   interface Exposure {
     id: number;
     player: number;
@@ -1085,6 +1120,55 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     return true;
   };
+  /**
+   * Rule 1h near miss (issue #59), when {@link fundUnit} cannot cover `u`: give each of its
+   * borders not yet held what may still be deployed there, up to its hold cost (pools
+   * respected). It is kept — those deploys stay, nothing is withdrawn — when the total is
+   * short by at most {@link nearMissMargin} of the need, or when every short border still
+   * holds against the expected attack ({@link expectedAt}: movable + deploy estimate, not the
+   * trend's worst case). Otherwise every deploy is rolled back: false.
+   */
+  const fundNearMiss = (u: Unit): boolean => {
+    const todo = u.members.filter((m) => !heldBorders.has(m.id));
+    if (!todo.length) return false;
+    const given = todo.map((m) => {
+      const n = Math.max(0, Math.min(m.holdCost, roomAt(m.id)));
+      deploy(m.id, n);
+      return { m, n };
+    });
+    const need = todo.reduce((n, m) => n + m.holdCost, 0);
+    const total = given.reduce((n, x) => n + x.n, 0);
+    const short = need - total;
+    const margin = nearMissMargin(need);
+    const shortOnes = given.filter((x) => x.n < x.m.holdCost);
+    const holdsExpected = shortOnes.every(
+      (x) => (armiesToTake(x.m.have + x.n, rates) ?? Infinity) > expectedAt(x.m.id),
+    );
+    if (short > margin && !holdsExpected) {
+      for (const x of given) if (x.n > 0) undeploy(x.m.id, x.n);
+      return false;
+    }
+    const expected = Math.max(...shortOnes.map((x) => expectedAt(x.m.id)));
+    const why =
+      short <= margin
+        ? `short by ${short}, within the near-miss margin of ${Math.round(margin * 10) / 10}`
+        : `enough to hold against the expected ~${expected} attack (movable + deploy estimate), not the worst case`;
+    const one = todo.length === 1;
+    warnings.push(
+      `Bonus ${bonusName(u.bonusId)} (+${u.value}) is held though short: its ${todo.length} threatened border${one ? '' : 's'} need${one ? 's' : ''} ${need}, only ${total} left to deploy, so ${total ? `all ${total} go there` : 'its armies stay'} (${why}); ${shortOnes.map((x) => label(x.m.id)).join(', ')} may fall.`,
+    );
+    for (const { m, n } of given) {
+      noteRecent(m);
+      locked.add(m.id);
+      heldBorders.add(m.id);
+      rationale.push(
+        n > 0
+          ? `Deploy ${n} to ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have + n} armies need ${armiesToTake(m.have + n, rates)} to take, against the ~${m.threat} threat (its armies stay: withdrawing them would guarantee the loss).`
+          : `Keep the armies on ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have} armies need ${armiesToTake(m.have, rates)} to take, against the ~${m.threat} threat.`,
+      );
+    }
+    return true;
+  };
 
   // Under `balanced`, holds worth paying for compete with expansion in the greedy step below.
   const holds: Threatened[] = [];
@@ -1151,7 +1235,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (!heldBorders.has(it.border.id) && !conceded.has(it.border.id)) single(it.border);
         continue;
       }
-      if (!fundUnit(it.unit)) concedeUnit(it.unit, { economic: false, left: leftFor(it.unit) }, single);
+      if (!fundUnit(it.unit) && !fundNearMiss(it.unit))
+        concedeUnit(it.unit, { economic: false, left: leftFor(it.unit) }, single);
     }
   };
 
@@ -1159,6 +1244,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   let cardAdvice: CardAdvice | null = null;
   // Armies withdrawn into each territory this turn (they stay there: armies never move twice).
   const incoming = new Map<number, number>();
+  /** Conceded borders of a held bonus whose garrison stays (it holds against the expected attack). */
+  const stood = new Set<number>();
   const withdraw = () => {
     if (!conceded.size) return;
     const withdrawals: PlannedMove[] = [];
@@ -1168,6 +1255,25 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const t of [...conceded].sort(byNum)) {
       const n = avail.get(t)!;
       if (n <= 0) continue;
+      // Issue #59: a held bonus's border keeps its garrison while it still holds against the
+      // expected attack — withdrawing it would guarantee the loss.
+      const held = g.map.bonuses
+        .filter((b) => {
+          const ts = bonusTerritories(g, b.id);
+          return b.value > 0 && ts.includes(t) && ts.every((x) => mineSet.has(x));
+        })
+        .sort((a, b) => a.id - b.id);
+      const stays = stayAt(t);
+      const take = armiesToTake(stays, rates) ?? Infinity;
+      const expected = expectedAt(t);
+      if (held.length && take > expected) {
+        locked.add(t);
+        stood.add(t);
+        rationale.push(
+          `Keep the ${n} movable armies on ${label(t)} (not withdrawn): it is a border of held bonus ${held.map((b) => bonusName(b.id)).join(', ')}, and its ${stays} armies need ${take} to take, above the expected ~${expected} attack (movable + deploy estimate).`,
+        );
+        continue;
+      }
       const options = neighborsOf(g, t)
         .filter(keep)
         .map((c) => {
@@ -2222,7 +2328,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     const waiting: Unit[] = [];
     const fundOrConcede = (u: Unit) => {
       if (u.conceded) return;
-      if (!fundUnit(u, holdAndBreak)) concedeUnit(u, { economic: false, left: leftFor(u) }, singleNow);
+      if (!fundUnit(u, holdAndBreak) && !fundNearMiss(u))
+        concedeUnit(u, { economic: false, left: leftFor(u) }, singleNow);
     };
     let unitsDue = false;
     const unitOf = new Map<Candidate, Unit>();
@@ -2413,12 +2520,14 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (!b) return -Infinity;
         return b.threat - (armiesToTake(stays(id), rates) ?? Infinity);
       };
+      // A conceded border whose garrison stays (#59) is still defended: its pool goes there.
+      const lost = (id: number) => conceded.has(id) && !stood.has(id);
       const charged = chargeDeploys(pools, deployed).used;
       for (const p of pools.bonuses) {
         const left = p.value - (charged.get(p.bonusId) ?? 0);
         if (left <= 0) continue;
         const m = [...p.territoryIds].sort(
-          (a, b) => Number(conceded.has(a)) - Number(conceded.has(b)) || danger(b) - danger(a) || a - b,
+          (a, b) => Number(lost(a)) - Number(lost(b)) || danger(b) - danger(a) || a - b,
         )[0]!;
         rationale.push(
           `Deploy bonus ${p.name} (#${p.bonusId})'s ${left} to ${label(m)}: Local Deployment keeps them inside the bonus, and it is its most threatened member.`,

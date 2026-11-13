@@ -298,12 +298,22 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
     });
 
     it('concedes it when the room on the border is short, though the income is not', () => {
-      // Income 10: Reef 5, Isle 4, 1 anywhere: T1 may take 6 < 8; Isle's 4 cannot help.
-      const p = local(10);
+      // Income 9: Reef 5, Isle 4, 0 anywhere: T1 may take 5 < 8; Isle's 4 cannot help.
+      // Short by 3, past the near-miss margin of 2 (#59), and 6 armies still fall to 13.
+      const p = local(9);
       expect(p.conceded).toEqual([1]);
       expect(deployedTo(p, 1)).toBe(0);
+      expect(deploySum(p)).toBe(9);
+      expect(p.warnings).toContain('T1 (#1) cannot be held with the 5 armies left to deploy (needs 8, protects +5): conceded');
+    });
+
+    it('a room one or two short of the hold is a near miss (#59): all of it goes to the border', () => {
+      // Income 10: Reef 5, Isle 4, 1 anywhere: T1 may take 6, 2 short of 8.
+      const p = local(10);
+      expect(p.conceded).toEqual([]);
+      expect(deployedTo(p, 1)).toBe(6);
       expect(deploySum(p)).toBe(10);
-      expect(p.warnings).toContain('T1 (#1) cannot be held with the 6 armies left to deploy (needs 8, protects +5): conceded');
+      expect(p.warnings.join('\n')).toMatch(/Bonus Reef \(#501\) \(\+5\) is held though short: its 1 threatened border needs 8, only 6 left to deploy/);
     });
 
     it('rolls back a partly deployed unit: none of its borders keeps a deploy', () => {
