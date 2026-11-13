@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -25,6 +25,15 @@ const outlook = (turn: number, state: GameOutlook['state'] = null): GameOutlook 
 });
 
 describe('outlook log (#178)', () => {
+  it('concurrent writes to one game in one process do not share a temp file: each lands, none is left behind', async () => {
+    await recordOutlook(dir, 7001, 1001, outlook(4));
+    const results = ['Won', 'Eliminated', 'Won', 'SurrenderAccepted', 'Eliminated', 'Won'];
+    const written = await Promise.all(results.map((r) => recordResult(dir, 7001, 1001, r)));
+    expect(written).toEqual(results.map(() => true));
+    expect((await readdir(join(dir, 'outlook'))).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    expect(results).toContain((await readOutlookLog(dir, 7001, 1001))?.result);
+  });
+
   it('keeps a name-free strength ratio per turn and the latest outlook, per game and player', async () => {
     await recordOutlook(dir, 7001, 1001, outlook(4));
     await recordOutlook(dir, 7001, 1001, outlook(5, 'even'));

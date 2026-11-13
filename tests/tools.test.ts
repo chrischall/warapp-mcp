@@ -79,6 +79,17 @@ describe('warapp_get_game', () => {
     expect(l.unverified).toMatch(/lastTurnTime/);
   });
 
+  it('compact lists no leavers in a game with no AutoBoot or DirectBoot: nobody is close to a boot (#178)', async () => {
+    const f = playingFixture();
+    const settings = { ...(f.settings as Record<string, unknown>) };
+    delete settings.AutoBoot;
+    delete settings.DirectBoot;
+    h = await harnessFor({ ...f, settings });
+    const p = payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect((p.waitingOn as unknown[]).length).toBeGreaterThan(0);
+    expect(p.leavers).toBeUndefined();
+  });
+
   it('records my final result in the outlook log of a finished game this server planned, and only then (#178)', async () => {
     const f = lobbyFixture();
     const finished = {

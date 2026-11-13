@@ -44,10 +44,13 @@ function compact(game: Game) {
     boardAvailable: game.standing !== undefined,
   };
   // #178: humans who have not committed, with the time left to each boot (lastTurnTime UNVERIFIED).
+  // Only where a boot setting exists: without AutoBoot or DirectBoot nobody is close to a boot, and
+  // the list would repeat `waitingOn`.
   const l = leavers(game, Date.now());
-  if (l.players.length)
+  const booted = l.players.filter((p) => p.autoBootInMinutes !== undefined || p.directBootInMinutes !== undefined);
+  if (booted.length)
     out.leavers = {
-      players: l.players.map(({ playerId, ...rest }) => ({ id: playerId, name: game.players.find((p) => p.id === playerId)?.name ?? null, ...rest })),
+      players: booted.map(({ playerId, ...rest }) => ({ id: playerId, name: game.players.find((p) => p.id === playerId)?.name ?? null, ...rest })),
       unverified: l.unverified,
     };
   if (game.history !== undefined) out.history = game.history;
@@ -69,7 +72,7 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
           'the turn being played (`turn`; `turnsCompleted` counts the finished ones), the players and who has committed orders (who the game is waiting on), and a digest of ' +
           'its settings — fog, kill rates, luck, rounding, base income, army cap, enabled cards — plus which map it ' +
           'is on and whether the board is available for warapp_analyze_board; the end-of-game, boot and AI settings ' +
-          '(`endRules`) and the humans who have not committed with the time left to each boot (`leavers`, from ' +
+          '(`endRules`) and the humans who have not committed with the time left to each boot (`leavers`, when the game boots; from ' +
           'lastTurnTime, whose meaning is unverified). Optional game history and chat. ' +
           'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
       ),

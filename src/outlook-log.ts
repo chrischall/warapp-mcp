@@ -4,6 +4,7 @@
 // it is the data the outlook's thresholds are to be calibrated from (OUTLOOK_RATIO is borrowed).
 // Best effort: never throws.
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { GameOutlook, OutlookState } from './analysis/outlook.js';
 
@@ -49,7 +50,8 @@ export async function readOutlookLog(dir: string, gameId: number, playerId: numb
 async function write(dir: string, log: OutlookLog): Promise<void> {
   const path = outlookLogPath(dir, log.gameId);
   await mkdir(join(dir, 'outlook'), { recursive: true, mode: 0o700 });
-  const tmp = `${path}.${process.pid}.tmp`;
+  // Unique per write: two plans of one game in this process must not share (and race on) a temp file.
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, JSON.stringify(log), { mode: 0o600 });
   await rename(tmp, path);
 }
