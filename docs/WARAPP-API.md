@@ -200,7 +200,13 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
     would still read as visible.
   - The planner's trend and observed deploy count a previous-board territory only when it shows
     an owner (player or neutral) *and* armies under a fog level that does not hide them
-    (`visibleState`); anything else is a fog reveal.
+    (`visibleState`); anything else is a fog reveal. The enemy deploy estimate's base income
+    and visible bonuses still count an owner-only territory (its owner shows); only its stack
+    is unknown.
+  - *Upgrade transition:* a board cache written before #69 named fog level 2 (truly Visible)
+    `"OwnerOnly"`, so the first plan after the upgrade reads every visible enemy territory on
+    that cached previous board as a reveal: observed deploy 0 and no growth trend for that one
+    turn. It falls back to the visible-bonus estimate and clears on the next turn.
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
   through raw. `GetChat` is passed through raw too, and it is third-party text.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a

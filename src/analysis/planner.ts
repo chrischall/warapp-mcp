@@ -519,6 +519,8 @@ export interface EnemyDeployEstimate {
   playerId: number;
   /** clamp(base + bonusIncome, max(MIN_ENEMY_DEPLOY, base), stackCap); that floor on the opening board. */
   estimate: number;
+  /** The territories it visibly owns (owner shown, armies or not): what `base` is computed from. */
+  held: number;
   /**
    * Its base income: MinimumArmyBonus, or (BonusArmyPer on) its visible
    * territories / BonusArmyPer when larger.
@@ -657,10 +659,12 @@ export function enemyDeployEstimates(
   const armies = new Map<number, number>();
   const seenNow = new Map<number, TerritoryState>();
   for (const t of board.territories) if (g.territoryById.has(t.territoryId)) seenNow.set(t.territoryId, t);
+  // Owners count whatever the armies: an owner-only territory (light fog) is visibly held, so
+  // it counts toward base income and the bonuses held in full. Only stacks need the armies.
   for (const t of board.territories) {
-    if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player' || t.armies === null) continue;
+    if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player') continue;
     owner.set(t.territoryId, t.owner.playerId);
-    armies.set(t.territoryId, t.armies);
+    if (t.armies !== null) armies.set(t.territoryId, t.armies);
   }
   const players = [...new Set([...owner.values()].filter((p) => p !== me))].sort(byNum);
   const opening = openingArmies(g, board) !== null;
@@ -681,7 +685,8 @@ export function enemyDeployEstimates(
     let any = 0;
     for (const [t, p] of owner) {
       if (p !== playerId) continue;
-      const a = armies.get(t)!;
+      const a = armies.get(t);
+      if (a === undefined) continue;
       any = Math.max(any, a);
       if (neighborsOf(g, t).some((n) => owner.get(n) === me)) adjacent = Math.max(adjacent, a);
     }
@@ -714,6 +719,7 @@ export function enemyDeployEstimates(
     return {
       playerId,
       estimate,
+      held,
       base,
       bonusIncome,
       largestStack,
@@ -1128,7 +1134,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           );
           if (e.observedRaw! > e.observedCap!)
             warnings.push(
-              `player ${p} was observed to deploy +${e.observedRaw}/turn, more than it could earn (base ${e.base} for its ${o.counted.length + o.reveals.length} visible territories + bonuses it could hold +${e.observedCap! - e.base} = ${e.observedCap}): capped at ${e.observedCap}. Armies moved in from the fog or a Reinforcement card may explain the rest.`,
+              `player ${p} was observed to deploy +${e.observedRaw}/turn, more than it could earn (base ${e.base} for its ${e.held} visible territories + bonuses it could hold +${e.observedCap! - e.base} = ${e.observedCap}): capped at ${e.observedCap}. Armies moved in from the fog or a Reinforcement card may explain the rest.`,
             );
         }
         if (e.source === 'observed') {

@@ -199,6 +199,38 @@ describe('fog reveals are not enemy income (#69)', () => {
     expect(q.warnings.join('\n')).not.toMatch(/capped at/);
   });
 
+  it('owner-only territories count toward its visible income, whatever their armies', () => {
+    // Light fog: the owner shows everywhere, armies only next to me. The enemy visibly holds
+    // its +30 bonus {10, 11} owner-only (armies null), so the bonus and both territories count.
+    const ownerOnly = (id: number): TerritoryState => ({
+      territoryId: id,
+      owner: { kind: 'player', playerId: ENEMY },
+      armies: null,
+      fogLevel: 'OwnerOnly',
+    });
+    const lightFog = board([mine(1, 6), mine(2, 5), mine(3, 5), enemy(4, 5), enemy(5, 6), fogged(6), fogged(7), fogged(8), neutral(9, 2), ownerOnly(10), ownerOnly(11)]);
+    const [e] = enemyDeployEstimates(g, lightFog, ME, STD);
+    expect(e).toMatchObject({ playerId: ENEMY, held: 4, base: 5, bonusIncome: 30, largestStack: 6 });
+    // An opponent seen only owner-only still gets an estimate, with no stack to size by.
+    const onlyOwnerOnly = board([mine(1, 6), mine(2, 5), mine(3, 5), fogged(4), fogged(5), fogged(6), fogged(7), fogged(8), neutral(9, 2), ownerOnly(10), ownerOnly(11)]);
+    const [f] = enemyDeployEstimates(g, onlyOwnerOnly, ME, STD);
+    expect(f).toMatchObject({ playerId: ENEMY, held: 2, bonusIncome: 30, largestStack: 0, stackCap: 0 });
+    expect(Number.isFinite(f!.estimate)).toBe(true);
+  });
+
+  it('the cap warning counts the territories behind its base', () => {
+    // T10 reads owner-only for the enemy now: in its base (6 territories), but neither counted
+    // nor a reveal in the observation (its armies are hidden).
+    const before = board([mine(1, 6), mine(2, 5), mine(3, 5), enemy(4, 3), enemy(5, 3), enemy(6, 3), enemy(7, 3), enemy(8, 3), mine(9, 4), fogged(10), fogged(11)]);
+    const after = board([
+      mine(1, 6), mine(2, 5), mine(3, 5), enemy(4, 23), enemy(5, 23), enemy(6, 23), enemy(7, 23), enemy(8, 23), mine(9, 4),
+      { territoryId: 10, owner: { kind: 'player', playerId: ENEMY }, armies: null, fogLevel: 'OwnerOnly' },
+      fogged(11),
+    ]);
+    const p = planTurn({ graph: g, board: after, previousBoard: before, me: ME, income: 11, settings: STD });
+    expect(p.warnings.join('\n')).toMatch(/\(base 5 for its 6 visible territories \+ bonuses it could hold \+30 = 35\): capped at 35/);
+  });
+
   it('the rationale names the turns compared and the territories counted vs skipped as reveals', () => {
     const p = planTurn({ graph: g, board: now, previousBoard: previous(fogged), me: ME, income: 11, settings: STD, turn: 15 });
     const r = p.rationale.join('\n');

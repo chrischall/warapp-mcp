@@ -232,6 +232,7 @@ export function toBoardState(territories: readonly LiveTerritory[], players: rea
       const out: TerritoryState = {
         territoryId: t.territoryId,
         owner: ownerOf(t, byInGame),
+        // territoryOf already nulls these; kept for a LiveTerritory built elsewhere.
         armies: t.fogLevel === FOG_LEVEL_OWNER_ONLY ? null : t.armies,
         fogLevel: FOG_LEVEL_NAMES[t.fogLevel] ?? String(t.fogLevel),
       };
