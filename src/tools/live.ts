@@ -96,7 +96,30 @@ export function maxPicks(game: Game, pickable?: number): number | null {
   return clientPickLimits({ territoryLimit: game.settings?.territoryLimit, players: game.players.length, pickable })?.max ?? null;
 }
 
-function liveBoardView(game: Game, territories: LiveTerritory[], rung: string) {
+/** Which territories warapp_get_live_board lists, and which page of them (#130). */
+export interface BoardSelection {
+  /** Only these territory ids. */
+  ids?: ReadonlySet<number>;
+  /** Only territories with this owner (an in-game id, or OWNER_NEUTRAL / OWNER_PICKABLE). */
+  owner?: number;
+  offset?: number;
+  limit?: number;
+}
+
+/** The selected territories of `list`, and the page block when paged. */
+function select<T extends LiveTerritory>(list: readonly T[], sel: BoardSelection) {
+  const matched = list.filter(
+    (t) => (sel.ids === undefined || sel.ids.has(t.territoryId)) && (sel.owner === undefined || (!t.fogged && t.owner === sel.owner)),
+  );
+  if (sel.limit === undefined && sel.offset === undefined) return { shown: matched };
+  const offset = sel.offset ?? 0;
+  const limit = sel.limit ?? matched.length;
+  const shown = matched.slice(offset, offset + limit);
+  const next = offset + shown.length;
+  return { shown, page: { offset, limit, matched: matched.length, nextOffset: next < matched.length ? next : null } };
+}
+
+function liveBoardView(game: Game, territories: LiveTerritory[], rung: string, sel: BoardSelection = {}) {
   const map = mapOf(game);
   const name = nameIn(map);
   const byInGame = playersByInGameId(game.players);
@@ -131,10 +154,12 @@ function liveBoardView(game: Game, territories: LiveTerritory[], rung: string) {
   });
   const pickable = territories.filter((t) => !t.fogged && t.owner === OWNER_PICKABLE).length;
   if (rung === 'full') {
+    const { shown, page } = select(territories, sel);
     return {
       ...header,
       players,
-      territories: territories.map((t) => ({
+      ...(page ? { page } : {}),
+      territories: shown.map((t) => ({
         id: t.territoryId,
         name: name(t.territoryId),
         owner: ownerLabel(t, byInGame),
@@ -153,10 +178,12 @@ function liveBoardView(game: Game, territories: LiveTerritory[], rung: string) {
     };
   }
   const visible = territories.filter((t) => !t.fogged);
+  const { shown, page } = select(visible, sel);
   return {
     ...header,
     players,
-    territories: visible.map((t) => {
+    ...(page ? { page } : {}),
+    territories: shown.map((t) => {
       const commander = commanderOn(t, byInGame);
       return {
         id: t.territoryId,
@@ -180,7 +207,8 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
           'its owner (a player name, "neutral", or "pickable" while territories are being picked), its armies, ' +
           'whether it is fogged and, in a Commanders game, whose commander stands on it (losing your commander ' +
           'eliminates you); plus each player\'s visible territory and army totals. Works in the pick ' +
-          `phase and mid-game, where GameFeed has no board. ${BRIDGE_NOTE} Read-only.`,
+          'phase and mid-game, where GameFeed has no board. On a large map, narrow it with `owner`, `territories` or ' +
+          `\`limit\`/\`offset\` paging (the counts stay whole-board). ${BRIDGE_NOTE} Read-only.`,
       ),
       _meta: lookupMeta(['warzone board', 'live board', 'who owns what', 'pickable territories', 'where is my commander']),
       annotations: readAnnotations('Get a war.app live board'),
@@ -192,12 +220,38 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
             'a commander standing there) with counts of fogged and pickable ones; "full" lists every territory with raw ' +
             'owner ids, fog flags and fog levels, its special units (commanders, bosses) with owners, and in-game player ids.',
         ),
+        owner: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe('Only territories owned by: "me", "neutral", "pickable", or a player (name or GameFeed id).'),
+        territories: z
+          .array(z.union([z.string(), z.number()]))
+          .min(1)
+          .max(MAX_PICK_ARGS)
+          .optional()
+          .describe('Only these territories (ids or names).'),
+        limit: z.coerce.number().int().min(1).max(5000).optional().describe('Page size; omit for every match.'),
+        offset: z.coerce.number().int().min(0).optional().describe('Skip this many matches (from a previous `page.nextOffset`).'),
       }),
     },
-    async ({ game_id, view }) => {
+    async ({ game_id, view, owner, territories: only, limit, offset }) => {
       const game = await ctx.client.getGame(game_id, { settings: true });
+      const sel: BoardSelection = {
+        ...(limit !== undefined ? { limit } : {}),
+        ...(offset !== undefined ? { offset } : {}),
+      };
+      if (only) sel.ids = new Set(only.map((t) => resolveTerritory(mapOf(game), t).id));
+      if (owner !== undefined && String(owner).trim() !== '') {
+        const o = String(owner).trim().toLowerCase();
+        sel.owner =
+          o === 'neutral'
+            ? OWNER_NEUTRAL
+            : o === 'pickable'
+              ? OWNER_PICKABLE
+              : inGameId(await resolveMe(ctx, game.players, o === 'me' ? undefined : owner));
+      }
       const territories = await loadLiveTerritories(ctx, game);
-      return respond(view, VIEWS, (rung) => liveBoardView(game, territories, rung));
+      return respond(view, VIEWS, (rung) => liveBoardView(game, territories, rung, sel));
     },
   );
 

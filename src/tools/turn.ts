@@ -686,58 +686,24 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       title: 'Plan my turn in a war.app game',
       description: untrustedDescription(
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
-          "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
-          'captures, completed bonuses and next income (when the plan concedes borders of a bonus it holds, also ' +
-          '`nextIncomeIfConcededFall` — the next income if those borders fall — and `bonusesAtRisk`), warnings (threats, fog, luck) and the reasoning. Threat ' +
-          'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you, or what it was observed to deploy since the previous turn when larger: territories visible both turns only, never more than it could earn). It reports ' +
-          'your cards and whether you must play or discard (more whole cards than the hold limit), and plays ' +
-          'Reinforcement cards (their armies are planned) and, when cards must go, Order Priority, else discards the ' +
-          'lowest-value cards — never playing Blockade or Order Delay. Its ' +
-          '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Every plan reads ' +
-          'the game profile (`profile`: format 1v1/ffa/teams, phase opening/expansion/contact/late, standing ' +
-          'ahead/even/behind/unknown by your income against the strongest opponent\'s estimate — under heavy fog, its tracked ' +
-          'income when every opponent has one (`standingSource` "tracked"); `full` adds the ' +
-          'settings and notes). With no `goal`, the profile picks it (`goalSource` "profile"): defend when behind on income in an FFA or team game, ' +
-          'else balanced (behind on income in a 1v1 means strike: break their bonuses before expansion that completes nothing), tuned — in a 1v1 in contact breaking an enemy bonus counts like completing one and ' +
-          'expansion that completes nothing ranks below holds and breaks; in an FFA with two or more opponents left ' +
-          'no second front (a player threatening none of your bonuses is not attacked while a neutral of similar ' +
-          'value exists; finishing one off still is); behind, attacks are sized at the minimum; behind on armies in a 1v1, no capture of ' +
-          "a player's territory that loses more armies than it kills; in a 1v1, spare deploys build one strike stack on the border " +
-          'facing the opponent, which attacks every adjacent enemy territory it can take (bonus breaks and retakes first) while ' +
-          `keeping what holds it; ahead in a 1v1, fog ` +
-          `pressure is allowed up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. An explicit \`goal\` overrides the ` +
-          'profile (the rationale says so). Goals: "balanced" (default) — the profile\'s base — ' +
-          'spends income where it earns most per army — holding borders that protect income, completing ' +
-          'cheap bonuses, breaking enemy bonuses (also ones the opponent tracker infers behind the fog, "probable"; a break is sized to land, ' +
-          'not to survive the counter-attack, and is worth their lost income plus what retaking costs them), counter-attacking a stack that ' +
-          'shrank fighting you — with at least 30% on expansion (`full` lists the offensive options in `offence`); "expand" takes neutrals and never ' +
-          'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
-          'borders worth holding before anything else. Under balanced/defend, an opponent whose every territory is ' +
-          'visible and borders yours is attacked at once when, whatever way it splits its one estimated deploy to ' +
-          'save territories, that still eliminates it or cuts it to one territory (or takes at least half); a ' +
-          'pressure plan may leave some of its territories unattacked. One next to the fog is never called ' +
-          'eliminated, but all its visible territories are attacked as pressure (each sized for its full deploy plus a margin) ' +
-          `when each costs at most ${PRESSURE_FACTOR}× a typical neutral capture; one visible territory too costly blocks the pressure on all of them. ` +
-          'This runs before any border facing it is ' +
-          'conceded (holds worth paying for against other players are funded first). Hopeless borders are listed in `conceded` and get no ' +
-          'deploys (unless every territory you hold is conceded); under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
-          'Priority so the withdrawal runs before the border falls (or, in a Commanders game, so a strike on an enemy commander resolves before attacks on yours); when you hold one, `orders` already plays it. ' +
-          'A held bonus\'s border short of a sure hold by a near ' +
-          'miss (at most 2 armies or 15%), or still holding against the expected attack, is funded with everything left ' +
-          'instead (a warning says it may fall) and never withdrawn. A bonus whose new frontier would fall next turn is ' +
-          'not completed under balanced/defend (a warning says so). A neutral no single stack can afford may be taken by ' +
-          'several attacks in a fixed order (`multiSourceCaptures`; 0% luck only). Every capture pays for the borders it adds (those ' +
-          'facing an enemy at what they need to hold), so closing a gap beats opening a front; `frontier` reports the borders left, those facing an enemy, ' +
-          'what they need next turn to hold and the next income, and under balanced/defend expansion that adds enemy borders without completing a bonus ' +
-          'stops when that need outgrows the income. Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
-          'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
-          'server last planned on (`trendSource` says which, or null). Obeys the game\'s rules: every attack and ' +
-          "threat is sized at the game's kill rates; every attack carries `winChance`, its exact probability of " +
-          'capturing (kill rates, luck and rounding; 1 when certain), and `min_win_chance` below 1 sizes captures ' +
-          'for that chance instead of a guarantee. An attack is topped up to its next efficient size (one more kill ' +
-          'for sure) from armies that would sit idle when its target is a player\'s or it is not certain, and the ' +
-          "reasoning names attacks whose extra armies add no kill. Under Local Deployment a held bonus's armies are deployed only " +
-          'inside that bonus; under No-Split each territory issues at most one attack or transfer, with its whole stack. ' +
+          "game's settings: your income, deploys and attacks/transfers by territory name and id (each attack with " +
+          '`winChance`, its exact capture probability), the expected captures, completed bonuses and next income ' +
+          '(with `nextIncomeIfConcededFall` and `bonusesAtRisk` when the plan concedes borders of a bonus you hold), ' +
+          'the borders given up (`conceded`), the `frontier` budget, your cards (plays and discards when you must), ' +
+          'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
+          'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
+          'ahead/even/behind/unknown on income). With no `goal` the profile picks and tunes it (`goalSource` ' +
+          '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
+          'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
+          `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
+          'across holds, bonuses and breaking enemy bonuses, at least 30% on expansion; "expand" — neutrals only; ' +
+          '"complete-bonus" — also attacks players to finish bonuses; "defend" — threatened borders worth holding ' +
+          'first. An opponent next to the fog may be pressured: each of its visible territories attacked, sized for ' +
+          `its full deploy plus a margin, at most ${PRESSURE_FACTOR}× a typical neutral capture each — one visible ` +
+          'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent from its visible bonuses, or ' +
+          'its observed deploy since the previous turn when larger). Obeys the kill rates, luck, rounding, Local ' +
+          'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement and (when cards must go) Order Priority, never ' +
+          "Blockade or Order Delay. The full rule list is in the planner's header and the warapp-mcp skill. " +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -773,10 +739,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .optional()
           .describe(
             'Armies every enemy is assumed to deploy next turn when judging threats. Default, per opponent: base ' +
-              'income plus the bonuses it visibly holds in full, at most 75% of its largest stack next to you but ' +
-              'never below the game\'s base income (at least 5); just that base income on an untouched opening ' +
-              'board; when the previous turn\'s board is known, at least what that opponent was observed to deploy ' +
-              '(the net change of its armies on territories visible both turns plus what its captures cost it; a fog reveal is not income, and it never exceeds its base plus every bonus it could hold) — income in the fog is unseen, so raise it if you know they earn more.',
+              'income plus the bonuses it visibly holds (at most 75% of its largest stack next to you, never below ' +
+              'the base income), or what it was observed to deploy since the previous turn when larger. Income in ' +
+              'the fog is unseen, so raise it if you know they earn more.',
           ),
         min_win_chance: z.coerce
           .number()

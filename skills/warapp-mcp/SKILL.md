@@ -201,7 +201,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   its owner (player name, `neutral`, or `pickable` during picks), armies and fog, read through
   the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game. In a
   Commanders game a territory's `commander` names whose commander stands there (`full` lists
-  every special unit); losing your commander eliminates you.
+  every special unit); losing your commander eliminates you. On a large map ask for less:
+  `owner` ("me", "neutral", "pickable" or a player), `territories` (ids or names) and
+  `limit`/`offset` paging (`page.nextOffset`); the counts stay whole-board.
 - **"What should I pick?"** → `warapp_plan_picks`, then `warapp_submit_picks` once the user agrees.
   Picking stage only, read-only: a ranked pick list by name and id — a compact primary group of the
   territory limit and a disjoint fallback, as long as war.app's client allows (players × territories

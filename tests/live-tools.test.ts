@@ -124,6 +124,23 @@ describe('warapp_get_live_board', () => {
     expect(players[2]).toMatchObject({ visibleTerritories: 0 });
   });
 
+  it('filters by owner and by territory, and pages, keeping the whole-board counts (#130)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp: routes({ [Method.GetLatestGameInfo]: board(MID_BOARD) }) });
+    const ids = async (args: Record<string, unknown>) => {
+      const p = payload(await h!.call('warapp_get_live_board', { game_id: GAME, ...args }));
+      expect(p.counts).toEqual({ territories: 5, visible: 4, fogged: 1, pickable: 0 });
+      return { ids: (p.territories as Array<{ id: number }>).map((t) => t.id), page: p.page };
+    };
+    expect((await ids({ owner: 'me' })).ids).toEqual([159, 161]);
+    expect((await ids({ owner: 'Bob' })).ids).toEqual([158]);
+    expect((await ids({ owner: 'neutral' })).ids).toEqual([157]);
+    expect((await ids({ territories: [158, mapName(159)] })).ids).toEqual([159, 158]);
+    expect(await ids({ limit: 3 })).toEqual({ ids: [159, 161, 157], page: { offset: 0, limit: 3, matched: 4, nextOffset: 3 } });
+    expect(await ids({ limit: 3, offset: 3 })).toEqual({ ids: [158], page: { offset: 3, limit: 3, matched: 4, nextOffset: null } });
+    // Unfiltered and unpaged, nothing changes.
+    expect(await ids({})).toEqual({ ids: [159, 161, 157, 158], page: undefined });
+  });
+
   it('full: every territory with raw owner ids, fog flags and levels, and in-game player ids', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(MID_BOARD) }) });
     const p = payload(await h.call('warapp_get_live_board', { game_id: GAME, view: 'full' }));
