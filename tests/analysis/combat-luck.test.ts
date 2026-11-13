@@ -55,7 +55,7 @@ describe('winChance — 0% luck', () => {
 describe('one kill count for winChance and armiesToTake', () => {
   // n·rate/100 lands exactly on .5 here; n * (rate/100) would read 31.499999999999996 and
   // round down, so winChance would deny the capture armiesToTake sized.
-  it.each([45, 85, 165, 175])('%i armies at 70%% kill half-up, in every model', (n) => {
+  it.each([45, 85, 165, 175])('%i armies at 70 percent kill half-up, in every model', (n) => {
     const kills = Math.round((n * 70) / 100);
     const rates = { offensiveKillRate: 70, defensiveKillRate: 0 };
     expect(armiesToTake(kills, rates)).toBe(n);
