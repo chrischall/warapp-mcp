@@ -126,7 +126,32 @@ export interface BundleLoaderOptions {
 /** A cached bundle file: `<version>.js`. */
 const BUNDLE_FILE = /^([A-Za-z0-9._-]{1,64})\.js$/;
 /** A download that never finished: `<version>.js.tmp-<pid>`. */
-const PARTIAL_FILE = /^[A-Za-z0-9._-]{1,64}\.js\.tmp-\d+$/;
+const PARTIAL_FILE = /^[A-Za-z0-9._-]{1,64}\.js\.tmp-(\d+)$/;
+/** A partial download older than this is abandoned, whoever wrote it (a pid can be reused). */
+const STALE_PARTIAL_MS = 10 * 60_000;
+
+/** Whether process `pid` is running (EPERM: it exists, owned by someone else). */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * A partial download may be pruned when this process wrote it, its writer is gone, or it is
+ * stale; never while another live process may still rename it into place (#140).
+ */
+async function abandoned(file: string, pid: number): Promise<boolean> {
+  if (pid === process.pid || !alive(pid)) return true;
+  try {
+    return Date.now() - (await stat(file)).mtimeMs > STALE_PARTIAL_MS;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Delete every cached bundle but `keep` (each is ~16 MB, one per client release) and any
@@ -135,7 +160,10 @@ const PARTIAL_FILE = /^[A-Za-z0-9._-]{1,64}\.js\.tmp-\d+$/;
 async function pruneBundles(dir: string, keep: string): Promise<void> {
   try {
     for (const name of await readdir(dir)) {
-      if (name === keep || !(BUNDLE_FILE.test(name) || PARTIAL_FILE.test(name))) continue;
+      if (name === keep) continue;
+      const partial = PARTIAL_FILE.exec(name);
+      if (!partial && !BUNDLE_FILE.test(name)) continue;
+      if (partial && !(await abandoned(join(dir, name), Number(partial[1])))) continue;
       await unlink(join(dir, name)).catch(() => undefined);
     }
   } catch {
