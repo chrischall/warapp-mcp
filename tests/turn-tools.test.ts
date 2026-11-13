@@ -1773,6 +1773,65 @@ describe('cards in the turn tools', () => {
     ['a card both played and discarded', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP }, { kind: 'discard', card: OP }, { kind: 'deploy', territory: 159, armies: 5 }], /used twice/],
   ];
 
+  describe('submit_turn in a team game (#163): the hard refusal counts only my cards', () => {
+    const teams = () => (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+    function teamServer(mine: SyntheticCard[], mate: SyntheticCard[]) {
+      const sent: Uint8Array[] = [];
+      const warapp = routes({
+        [Method.GetLatestGameInfo]: () =>
+          ({ body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], { [ANN.inGame]: mine, [BOB.inGame]: mate }) }) satisfies Partial<ReplyFrame>,
+        [Method.SendOrders]: (req) => {
+          sent.push(req.body.raw(req.body.remaining));
+          return { body: (w) => w.bool(true).bool(false) };
+        },
+      });
+      return { sent, warapp };
+    }
+
+    it("warns, not refuses, when only the team's gathered hand is over the limit", async () => {
+      const s = teamServer(
+        [
+          { id: OP, type: 4 },
+          { id: OD, type: 5 },
+          { id: BL, type: 12 },
+        ],
+        [
+          { id: BL2, type: 12 },
+          { id: AL, type: 6 },
+          { id: SP, type: 2 },
+        ],
+      );
+      const feed = { players: teams(), settings: modelledSettings() };
+      h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+      const preview = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
+      expect(preview.isError).toBeFalsy();
+      const w = payload<{ preview: { warnings?: string[] } }>(preview).preview.warnings?.join('\n');
+      expect(w).toMatch(/team's hand .*6 cards.*limit is 5/);
+      expect(w).toMatch(/not yet verified/);
+      expect(s.sent).toEqual([]);
+    });
+
+    it('still refuses when my own cards are over the limit', async () => {
+      const s = teamServer(
+        [
+          { id: OP, type: 4 },
+          { id: OD, type: 5 },
+          { id: BL, type: 12 },
+          { id: BL2, type: 12 },
+          { id: AL, type: 6 },
+          { id: SP, type: 2 },
+        ],
+        [{ id: GF, type: 7 }],
+      );
+      const feed = { players: teams(), settings: modelledSettings() };
+      h = await liveHarness({ feed: [game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+      const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toMatch(/You hold 6; the limit is 5/);
+      expect(s.sent).toEqual([]);
+    });
+  });
+
   it.each(refusals)('submit_turn refuses %s, sending nothing', async (_name, hand, orders, message) => {
     const s = ordersServer(hand);
     h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });

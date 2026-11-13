@@ -138,14 +138,16 @@ export function readHand(info: unknown, myInGameId: number | readonly number[]):
  * Whether my hand can be read at all: the current standing carries a player entry keyed by
  * `myInGameId` (a `[id, value]` pair). Without one, {@link readHand}'s empty hand means "unknown",
  * not "no cards" (#130). Unverified live: assumes war.app sends every player's entry, as the
- * synthetic shape does.
+ * synthetic shape does. Given several ids (a team's hand, as {@link readHand} takes them), an
+ * entry under any of them will do.
  */
-export function handReadable(info: unknown, myInGameId: number): boolean {
+export function handReadable(info: unknown, myInGameId: number | readonly number[]): boolean {
+  const owners = new Set(typeof myInGameId === 'number' ? [myInGameId] : myInGameId);
   let found = false;
   const walk = (v: unknown, depth: number): void => {
     if (found || depth > MAX_DEPTH) return;
     if (Array.isArray(v)) {
-      if (v.length === 2 && v[0] === myInGameId && v[1] !== null && typeof v[1] === 'object') {
+      if (v.length === 2 && typeof v[0] === 'number' && owners.has(v[0]) && v[1] !== null && typeof v[1] === 'object') {
         found = true;
         return;
       }
@@ -421,9 +423,19 @@ export interface ActiveCard {
   target?: number;
   /** Who played it (in-game id). */
   playedBy?: number;
-  /** The last turn it is in effect, as the client reads it. */
+  /** The raw `ExpiresAfterTurn` field. */
   expiresAfterTurn?: number;
+  /**
+   * The turn the card is gone by, as the client shows it ("Expires turn N", "you cannot attack this
+   * player until turn N"): the bundle's ActiveCard returns `ExpiresAfterTurn` for a card whose expire
+   * behaviour is BeginningOfNextTurn (Spy, Reconnaissance, Surveillance) and `ExpiresAfterTurn + 1`
+   * for EndOfTurn (every other built-in card: Diplomacy, Sanctions, Emergency Blockade, …).
+   */
+  untilTurn?: number;
 }
+
+/** Card types whose ActiveCard expires at the beginning of the next turn (the bundle's `CardGame*` overrides). */
+const EXPIRES_AT_NEXT_TURN = new Set([2, 10, 11]); // Spy, Reconnaissance, Surveillance
 
 /** The client's play-order class suffixes (`GameOrderPlayCard<X>`) that are not the card's name. */
 const ORDER_CARD: Readonly<Record<string, string>> = { Abandon: 'Emergency Blockade' };
@@ -449,7 +461,10 @@ function activeCardOf(o: Obj): ActiveCard | undefined {
   if (kind === 'Sanctions' && ints.length >= 2) out.target = ints[0]!;
   if (ints.length) out.playedBy = ints[ints.length - 1]!;
   const expires = intsOf(o)[0];
-  if (expires !== undefined) out.expiresAfterTurn = expires;
+  if (expires !== undefined) {
+    out.expiresAfterTurn = expires;
+    out.untilTurn = type !== undefined && EXPIRES_AT_NEXT_TURN.has(type) ? expires : expires + 1;
+  }
   return out;
 }
 

@@ -698,6 +698,19 @@ export function resolveCardPlays(
   return out;
 }
 
+/**
+ * The team's gathered hand is over the limit while mine is not (#163): a warning, not a refusal,
+ * because how war.app keys a team's hand is unverified — a wrong guess must not block a valid turn.
+ */
+function teamHandOver(held: number, rules: CardRules, shed: number, given: number): string {
+  return (
+    `The team's hand as read (your cards and your teammates') holds ${held} cards; the limit is ${rules.maxCardsHold}, ` +
+    `so ${shed} card${shed === 1 ? '' : 's'} may need to be played or discarded; these orders use ${given}. How war.app keys ` +
+    "a team's hand is not yet verified, so this is not refused: check the hand in the game — war.app refuses the commit " +
+    '(error 51) if the team is over the limit.'
+  );
+}
+
 /** The required-play refusal (war.app's error 51, `MustUseCard`), raised before anything is sent. */
 function mustPlayCard(hand: readonly Card[], rules: CardRules, shed: number, given: number): McpToolError {
   return new McpToolError(
@@ -911,8 +924,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const settings = plannerSettings(game.settings);
       const rules = cardRules(game.settings);
       // A team shares one hand (#163): mine and my teammates' cards.
-      const hand = readHand(info, handOwners(game, me));
-      const handUnknown = rules.inPlay.length > 0 && !handReadable(info, inGameId(me));
+      const owners = handOwners(game, me);
+      const hand = readHand(info, owners);
+      const handUnknown = rules.inPlay.length > 0 && !handReadable(info, owners);
       const inGame = cardGame(game);
       const cards = chooseCardPlays(hand, rules, inGame);
       const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
@@ -1192,14 +1206,21 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const board = boardStateFromLive(territories, me, game.players);
             const playerId = inGameId(me);
             const rules = cardRules(game.settings);
-            const hand = readHand(info, handOwners(game, me));
+            // A team shares one hand (#163): cards under my teammates may be played or discarded too. But how
+            // war.app keys a team's hand is unverified, so the hard refusal (error 51) counts only my own cards,
+            // as before, and the team's gathered count is a warning until a live team board verifies it.
+            const owners = handOwners(game, me);
+            const myHand = readHand(info, playerId);
+            const hand = owners.length > 1 ? readHand(info, owners) : myHand;
             const handUnknown = rules.inPlay.length > 0 && !handReadable(info, playerId);
             const plays = resolveCardPlays(map, hand, rules, cardInputs);
             const discards = resolveDiscards(hand, plays, discardInputs);
             // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
             // than MaxCardsHold remain (verified, #20).
-            const shed = cardsToShed(hand, rules);
-            if (plays.length + discards.length < shed) throw mustPlayCard(hand, rules, shed, plays.length + discards.length);
+            const used = plays.length + discards.length;
+            const shed = cardsToShed(myHand, rules);
+            if (used < shed) throw mustPlayCard(myHand, rules, shed, used);
+            const teamShed = owners.length > 1 ? cardsToShed(hand, rules) : 0;
             for (const p of plays) {
               const t = p.target && territories.find((x) => x.territoryId === p.target!.id);
               if (p.target && (!t || t.fogged || t.owner !== playerId)) {
@@ -1246,6 +1267,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             });
             if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
             if (handUnknown) warnings.push(UNREADABLE_HAND);
+            if (used < teamShed) warnings.push(teamHandOver(hand.length, rules, teamShed, used));
             if (plays.some((p) => p.kind === 'OrderDelay')) {
               // Phase 50, after every move, is the only live-verified position for the card.
               warnings.push(

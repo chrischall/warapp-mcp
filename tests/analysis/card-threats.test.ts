@@ -55,6 +55,20 @@ describe('bombAdvice (#163)', () => {
     expect(a.why).toMatch(/^Hold the Bomb/);
   });
 
+  it("takes the worst case for a bombed stack: the owner deploys on its other stack beside my border, unhalved", () => {
+    // T4's 6 need 10. T5 (10) bombed keeps 5; the 5 deploy goes on T3 (2) instead, unhalved:
+    // 5 + (5 − 1) + (2 − 1) = 10 still takes T4, so bombing T5 holds nothing.
+    const a = bombAdvice(cb([enemy(3, 2), mine(4, 6), enemy(5, 10), neutral(6, 2)]));
+    expect(a.target).toBeUndefined();
+    expect(a.why).toMatch(/^Hold the Bomb/);
+  });
+
+  it('halves the deploy with the stack when the owner has no other stack beside my border', () => {
+    // Only T5 reaches T4: deployed there, (10 + 5) halved keeps 8, 7 attack — short of the 10 needed.
+    const a = bombAdvice(cb([neutral(3, 2), mine(4, 6), enemy(5, 10), neutral(6, 2)]));
+    expect(a).toMatchObject({ target: 5, kind: 'hold' });
+  });
+
   it('never targets a teammate', () => {
     const a = bombAdvice(cb([neutral(3, 2), mine(4, 6), enemy(5, 10), neutral(6, 2)], { friends: new Set([ENEMY]) }));
     expect(a.target).toBeUndefined();
@@ -115,6 +129,11 @@ describe('wallOffer (#163)', () => {
       reach: 34,
       kills: 21,
     });
+  });
+
+  it('never on a conceded border the plan withdraws from: the wall would strand the moves out of it (#163)', () => {
+    const withdraw = { moves: [{ from: 4, to: 3, armies: 9, kind: 'transfer' as const }] };
+    expect(wallOffer(cb([mine(3, 2), mine(4, 10), enemy(5, 30), neutral(6, 2)], withdraw), 3, [4])).toBeUndefined();
   });
 
   it('never on my commander, a member of a bonus I hold, or where the wall kills too little', () => {

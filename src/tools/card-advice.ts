@@ -72,7 +72,7 @@ export interface CardAdviceView {
   orderDelay?: { card: string; before: number; attacks: number[] };
   bomb?: { target: number | null; kind: string | null; why: string };
   emergencyBlockade?: { territory: number; givesUp: number; wall: number; player: number; reach: number; kills: number };
-  active?: Array<{ card: string; players?: number[]; target?: number; playedBy?: number; expiresAfterTurn?: number }>;
+  active?: Array<{ card: string; players?: number[]; target?: number; playedBy?: number; expiresAfterTurn?: number; untilTurn?: number }>;
 }
 
 export interface CardAdviceInput {
@@ -191,13 +191,14 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
       ...(a.target !== undefined ? { target: feed(a.target) ?? a.target } : {}),
       ...(a.playedBy !== undefined ? { playedBy: feed(a.playedBy) ?? a.playedBy } : {}),
       ...(a.expiresAfterTurn !== undefined ? { expiresAfterTurn: a.expiresAfterTurn } : {}),
+      ...(a.untilTurn !== undefined ? { untilTurn: a.untilTurn } : {}),
     }));
     const owner = (t: number) => {
       const o = input.board.territories.find((x) => x.territoryId === t)?.owner;
       return o?.kind === 'player' ? o.playerId : undefined;
     };
     for (const a of view.active) {
-      const until = a.expiresAfterTurn !== undefined ? ` (until turn ${a.expiresAfterTurn})` : '';
+      const until = a.untilTurn !== undefined ? ` (until turn ${a.untilTurn})` : '';
       if (a.card === 'Diplomacy' && a.players?.includes(me.id)) {
         const other = a.players.find((p) => p !== me.id);
         const hit = plan.moves.filter((m) => m.kind === 'attack' && other !== undefined && owner(m.to) === other);

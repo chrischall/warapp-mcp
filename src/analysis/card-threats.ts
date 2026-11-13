@@ -99,18 +99,37 @@ function reader(cb: CardBoard) {
   const after = (t: number) => armiesOf(t) + deployAt(t) - outOf(t) + transfersInto(t);
   const toTake = (d: number) => armiesToTake(d, rates) ?? Infinity;
   const ids = [...state.keys()].sort((a, b) => a - b);
-  /** Each opponent's stacks next to `t` plus its deploy (the strongest one), with `skip` halved by a bomb. */
+  /**
+   * Each opponent's stacks next to `t` plus its deploy (the strongest one), with `bombed` halved by
+   * a bomb. The bomb lands after the deploys, so the worst case is taken: an owner with another
+   * stack next to `t` deploys there, unhalved (d + ⌈a/2⌉ + the other stacks, less the guards); one
+   * whose only stack next to `t` is the bombed one deploys on it, and the deploy is halved with it
+   * (⌈(a + d)/2⌉ less the guard).
+   */
   const reachOf = (t: number, bombed?: number) => {
-    const by = new Map<number, number>();
+    const by = new Map<number, { others: number; hasOther: boolean; bombed?: number }>();
     for (const n of neighborsOf(cb.graph, t)) {
       const p = ownerOf(n);
       if (!foe(p) || state.get(n)?.armies === null) continue;
-      const stack =
-        n === bombed ? Math.max(0, Math.ceil((armiesOf(n) + cb.enemyDeploy) / 2) - guard) - cb.enemyDeploy : Math.max(0, armiesOf(n) - guard);
-      by.set(p, (by.get(p) ?? cb.enemyDeploy) + stack);
+      const e = by.get(p) ?? { others: 0, hasOther: false };
+      if (n === bombed) e.bombed = armiesOf(n);
+      else {
+        e.others += Math.max(0, armiesOf(n) - guard);
+        e.hasOther = true;
+      }
+      by.set(p, e);
     }
+    const d = cb.enemyDeploy;
     let best: { player: number; reach: number } | undefined;
-    for (const [player, reach] of [...by].sort((a, b) => a[0] - b[0])) if (!best || reach > best.reach) best = { player, reach };
+    for (const [player, e] of [...by].sort((a, b) => a[0] - b[0])) {
+      const reach =
+        e.bombed === undefined
+          ? d + e.others
+          : e.hasOther
+            ? d + e.others + Math.max(0, Math.ceil(e.bombed / 2) - guard)
+            : Math.max(0, Math.ceil((e.bombed + d) / 2) - guard);
+      if (!best || reach > best.reach) best = { player, reach };
+    }
     return best;
   };
   return { state, guard, rates, ownerOf, isMine, foe, armiesOf, commanderOf, deployAt, outOf, transfersInto, attacksOn, after, toTake, ids, reachOf };
@@ -216,8 +235,9 @@ export function wallThreats(cb: CardBoard, multiplier: number): WallThreat[] {
 /**
  * Where my Emergency Blockade pays: a border the plan concedes, where the wall of my armies there
  * (this turn's deploy included) times the multiplier kills more of the stack that can reach it
- * than the armies I give up — never on my commander's territory (it would be lost with it) and
- * never on a member of a bonus I hold whole at the start of the turn (I need it). The best by
+ * than the armies I give up — never on my commander's territory (it would be lost with it),
+ * never on one the plan moves armies out of (they would be lost with it: the wall comes before the
+ * moves) and never on a member of a bonus I hold whole at the start of the turn (I need it). The best by
  * kills over armies given up, then ascending id; `undefined` when none pays.
  */
 export function wallOffer(cb: CardBoard, multiplier: number, conceded: readonly number[]): WallOffer | undefined {
@@ -231,7 +251,9 @@ export function wallOffer(cb: CardBoard, multiplier: number, conceded: readonly 
     });
   let best: WallOffer | undefined;
   for (const c of [...conceded].sort((a, b) => a - b)) {
-    if (!r.isMine(c) || r.commanderOf(c, (q) => q === cb.me) || held(c)) continue;
+    // A border the plan withdraws from is skipped: the wall turns it neutral before the moves, so
+    // the armies the plan moves out of it would be lost with it.
+    if (!r.isMine(c) || r.commanderOf(c, (q) => q === cb.me) || held(c) || r.outOf(c) > 0) continue;
     const reach = r.reachOf(c);
     if (!reach) continue;
     const givesUp = r.armiesOf(c) + r.deployAt(c);

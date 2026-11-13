@@ -89,6 +89,12 @@ describe('readHand', () => {
     expect(handReadable(null, ME)).toBe(false);
   });
 
+  it('reads a team hand as readable when any of its owners has an entry, as readHand gathers them (#163)', () => {
+    expect(handReadable(info({}, [OTHER]), [ME, OTHER])).toBe(true);
+    expect(handReadable(info({}, [OTHER]), [ME])).toBe(false);
+    expect(handReadable(info({}, []), [ME, OTHER])).toBe(false);
+  });
+
   it('is empty when I hold no cards or the board carries none', () => {
     expect(readHand(info({}), ME)).toEqual([]);
     expect(readHand(info({ [ME]: [] }), ME)).toEqual([]);
@@ -448,15 +454,26 @@ describe('readActiveCards (#163, unverified live)', () => {
 
   it('reads Diplomacy (the two players) and Sanctions (the target) from the current standing', () => {
     expect(readActiveCards(info([active(diplomacy, 9), active(sanctions, 8)]))).toEqual([
-      { card: 'Diplomacy', players: [ME, OTHER], playedBy: OTHER, expiresAfterTurn: 9 },
-      { card: 'Sanctions', target: ME, playedBy: OTHER, expiresAfterTurn: 8 },
+      { card: 'Diplomacy', players: [ME, OTHER], playedBy: OTHER, expiresAfterTurn: 9, untilTurn: 10 },
+      { card: 'Sanctions', target: ME, playedBy: OTHER, expiresAfterTurn: 8, untilTurn: 9 },
+    ]);
+  });
+
+  it("reads 'until turn' as the client does: ExpiresAfterTurn + 1, except for a card that expires at the beginning of the next turn", () => {
+    // The bundle's ActiveCard: BeginningOfNextTurn (Spy, Reconnaissance, Surveillance) → ExpiresAfterTurn;
+    // EndOfTurn (every other card) → ExpiresAfterTurn + 1.
+    const spy = { $type: 'warlight.shared.GameOrderPlayCardSpy', s1: OTHER, s2: GZ, s3: ME };
+    const recon = { $type: 'warlight.shared.GameOrderPlayCardReconnaissance', r1: 7, r2: GZ, r3: ME };
+    expect(readActiveCards(info([active(spy, 5), active(recon, 6)])).map((a) => [a.card, a.untilTurn])).toEqual([
+      ['Spy', 5],
+      ['Reconnaissance', 6],
     ]);
   });
 
   it('names other cards by their order type, and never reads the previous standing', () => {
     const abandon = { $type: 'warlight.shared.GameOrderPlayCardAbandon', z1: 4, z2: GZ, z3: OTHER };
     expect(readActiveCards(info([active(abandon, 3)], [active(diplomacy, 2)]))).toEqual([
-      { card: 'Emergency Blockade', playedBy: OTHER, expiresAfterTurn: 3 },
+      { card: 'Emergency Blockade', playedBy: OTHER, expiresAfterTurn: 3, untilTurn: 4 },
     ]);
   });
 

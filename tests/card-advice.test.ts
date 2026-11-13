@@ -93,12 +93,12 @@ describe('adviseCards (#163)', () => {
       input({ territories: [neutral(3, 2), me(4, 20), foe(5, 1), neutral(6, 2)], plan, info, game: { players: [ME, FOE], settings: settings({ EmergencyBlockadeCard: 'none' }) } }),
     );
     expect(view.active).toEqual([
-      { card: 'Diplomacy', players: [ME.id, FOE.id], playedBy: FOE.id, expiresAfterTurn: 4 },
-      { card: 'Sanctions', target: ME.id, playedBy: FOE.id, expiresAfterTurn: 3 },
+      { card: 'Diplomacy', players: [ME.id, FOE.id], playedBy: FOE.id, expiresAfterTurn: 4, untilTurn: 5 },
+      { card: 'Sanctions', target: ME.id, playedBy: FOE.id, expiresAfterTurn: 3, untilTurn: 4 },
     ]);
     const w = warnings.join('\n');
-    expect(w).toMatch(/Diplomacy is in effect between you and player 7176543229 \(until turn 4\).*attacks on T5 would do nothing/);
-    expect(w).toMatch(/Sanctions are on you \(until turn 3\): your income is cut by 50%/);
+    expect(w).toMatch(/Diplomacy is in effect between you and player 7176543229 \(until turn 5\).*attacks on T5 would do nothing/);
+    expect(w).toMatch(/Sanctions are on you \(until turn 4\): your income is cut by 50%/);
     expect(w).toMatch(/unverified decoder/);
   });
 });
