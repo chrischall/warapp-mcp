@@ -250,7 +250,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   prior (#119):** in a 1v1 that started even (two players in the game, no teams — not an FFA
   down to two; `PlanGameContext.symmetricStart`, set by `warapp_plan_turn` from
   `symmetricStart(settings, map)`: any distribution but a map scenario),
-  an opponent bordering the fog is estimated at least at my own income (card armies out), capped
+  an opponent bordering the fog is estimated at least at my own income (card armies out) — or, on
+  turns 1–4 when the award of picks proved all its starts, at the income the pick advisor's opening
+  simulation gives it from them (`openingIncome`, `PlanGameContext.opening`, #166) — capped
   at what it could earn on the board, and the warning calls it a prior — every observed figure is
   a lower bound under fog, and without it a finished game's true deploys read 2–3× low. Each border
   is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to

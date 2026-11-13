@@ -239,6 +239,9 @@ it as `award`):
 - **Their commander.** A commander starts on its owner's first awarded territory. When every award
   that fits gives the opponent the same first territory of my list (always the case when my own
   first pick was refused), that is where it started. Reported, not acted on.
+- **Their opening income.** When every start of the opponent's is known, the pick advisor's own
+  opening simulation is run from them (my starts never its captures), and on turns 1–4 its income
+  there is the fog prior for that opponent's deploy in place of my own income (`openingIncome`).
 
 In a two-player game the proven starts that are still fogged are planned on as the opponent's
 territory: with the starting armies on turn 1, when nobody has deployed, and with unknown armies

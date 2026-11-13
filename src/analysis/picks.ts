@@ -386,6 +386,8 @@ interface SimResult {
   twoOrders: TwoOrderCapture[];
   /** The territories held at the horizon. */
   held: ReadonlySet<number>;
+  /** The income of each turn 1..PICK_HORIZON (index 0: turn 1), as the simulation deployed it. */
+  incomes: number[];
   score: number;
 }
 
@@ -453,6 +455,7 @@ function simulate(
   const relevant = () => (touching ??= relevantBonuses(ctx, held));
   const penalties = new Map<number, number>();
   const twoOrders: TwoOrderCapture[] = [];
+  const incomes: number[] = [];
   const checkComplete = (turn: number) => {
     for (const id of relevant()) {
       if (completions.has(id)) continue;
@@ -482,6 +485,7 @@ function simulate(
     // (#129) each positive bonus's income is its own pool, deployable only inside the bonus;
     // the rest (base or territory income, less negative bonuses) goes anywhere.
     const income = boardIncome(ctx.g, held, { base: ctx.baseIncome, per: ctx.bonusArmyPer });
+    incomes.push(income.total);
     const pools: Pool[] = [];
     if (ctx.localDeployments) {
       const local = income.bonuses.filter((b) => b.value > 0);
@@ -719,12 +723,144 @@ function simulate(
     }
   }
   for (const [id, turn] of penalties) score += ctx.penalties.get(id)!.value * (PICK_HORIZON + 1 - turn);
-  return { completions, penalties, progress, threats, risk, twoOrders, held, score };
+  return { completions, penalties, progress, threats, risk, twoOrders, held, incomes, score };
+}
+
+/** What {@link openingIncome} simulates from. */
+export interface OpeningIncomeInput {
+  graph: MapGraph;
+  /** The territories the player starts on (unknown ids are ignored). */
+  starts: readonly number[];
+  settings?: PickSettings;
+  /** Territories someone else holds (my starts, when simulating the opponent's): never captured. */
+  taken?: readonly number[];
+  /**
+   * The territories pickable during distribution, for the neutral sizes: an unpicked one is
+   * InitialNeutralsInDistribution, the rest InitialNonDistributionArmies. Absent: the starts and
+   * `taken` count as the pickables, so every other territory is a non-distribution neutral.
+   */
+  pickable?: readonly number[];
+  /** Neutral armies as a board shows them (wastelands included), by territory id: these win. */
+  neutralArmies?: ReadonlyMap<number, number>;
+}
+
+/**
+ * The income the pick advisor's opening simulation gives a player from `starts` on each turn
+ * 1..PICK_HORIZON + 1 (index 0: turn 1), the last being what it holds after PICK_HORIZON turns
+ * (#166: the opening threat model, from the opponent's starts the award of picks proves). The same
+ * simulation, rules and income rule (`boardIncome`) as {@link planPicks}; the settings it lacks
+ * take its defaults. Pure and deterministic.
+ */
+export function openingIncome(input: OpeningIncomeInput): number[] {
+  const { graph: g } = input;
+  const s = input.settings ?? {};
+  const starts = [...new Set(input.starts)].filter((t) => g.territoryById.has(t)).sort(byNum);
+  const taken = new Set((input.taken ?? []).filter((t) => g.territoryById.has(t) && !starts.includes(t)));
+  const pickSet = new Set(input.pickable ?? [...starts, ...taken]);
+  const known = input.neutralArmies ?? new Map<number, number>();
+  const neutralsIn = s.initialNeutralsInDistribution ?? DEFAULT_NEUTRALS_IN_DISTRIBUTION;
+  const neutralsOut = s.initialNonDistributionArmies ?? DEFAULT_NON_DISTRIBUTION_ARMIES;
+  const off = s.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const def = s.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
+  const rates = { offensiveKillRate: off, defensiveKillRate: def, luckModifier: s.luckModifier };
+  const { armies, cost, lost } = territoryCosts(g, (t) => known.get(t) ?? (pickSet.has(t) ? neutralsIn : neutralsOut), rates);
+  // Defensibility weighs only the score, never the income: no weight.
+  const { bonuses, bonusesOf, penalties, penaltiesOf } = bonusTables(g, 0, 1);
+  const ctx: Ctx = {
+    g,
+    cost,
+    lost,
+    armies,
+    bonuses,
+    bonusesOf,
+    penalties,
+    penaltiesOf,
+    pickArmies: s.initialPlayerArmiesPerTerritory ?? DEFAULT_PICK_ARMIES,
+    guard: s.oneArmyStandsGuard === false ? 0 : 1,
+    baseIncome: s.minimumArmyBonus ?? DEFAULT_BASE_INCOME,
+    bonusArmyPer: s.bonusArmyPer ?? 0,
+    localDeployments: s.localDeployments === true,
+    off,
+    def,
+    twoOrders: luckFraction(s.luckModifier) === 0 && (s.roundingMode === undefined || s.roundingMode === 'StraightRound') && s.noSplit !== true,
+    pickCount: pickSet.size,
+    opponentStarts: 0,
+    threats: new Map(),
+  };
+  const sim = simulate(ctx, starts, taken);
+  const last = boardIncome(g, sim.held, { base: ctx.baseIncome, per: ctx.bonusArmyPer }).total;
+  return [...sim.incomes, last];
 }
 
 function luckPercent(v: number | undefined): number {
   if (!v || v <= 0) return 0;
   return Math.round(Math.min(v > 1 ? v / 100 : v, 0.95) * 100);
+}
+
+/** Neutral armies, capture cost and the armies a capture loses, per territory of the map. */
+function territoryCosts(
+  g: MapGraph,
+  neutralOf: (t: number) => number,
+  rates: { offensiveKillRate: number; defensiveKillRate: number; luckModifier?: number | undefined },
+): { armies: Map<number, number>; cost: Map<number, number | null>; lost: Map<number, number> } {
+  const armies = new Map<number, number>();
+  const cost = new Map<number, number | null>();
+  const lost = new Map<number, number>();
+  for (const t of g.map.territories) {
+    const n = Math.max(0, neutralOf(t.id));
+    armies.set(t.id, n);
+    cost.set(t.id, captureCost(n, rates));
+    lost.set(t.id, straightKills(n, rates.defensiveKillRate));
+  }
+  return { armies, cost, lost };
+}
+
+/** The bonuses the opening steers for (value > 0) and the negative ones it is charged for, by id and by territory. */
+function bonusTables(
+  g: MapGraph,
+  entryWeight: number,
+  hardness: number,
+): {
+  bonuses: Map<number, BonusInfo>;
+  bonusesOf: Map<number, number[]>;
+  penalties: Map<number, BonusInfo>;
+  penaltiesOf: Map<number, number[]>;
+} {
+  // Anchorable bonuses: value > 0, territories listed directly (superbonuses skipped).
+  const bonuses = new Map<number, BonusInfo>();
+  const bonusesOf = new Map<number, number[]>();
+  for (const b of g.map.bonuses) {
+    if (b.value <= 0 || b.bonusIds.length > 0) continue;
+    const a = analyzeBonus(g, b.id)!;
+    const members = a.territoryIds.filter((t) => g.territoryById.has(t));
+    if (!members.length) continue;
+    // Exposure: each entry point counted once per member it borders, so a double border
+    // (one outside territory next to two members) weighs twice (#166).
+    const touches = [...entryTouches(g, b.id)];
+    const exposure = touches.reduce((n, [, k]) => n + k, 0);
+    bonuses.set(b.id, {
+      id: b.id,
+      name: b.name,
+      value: b.value,
+      members,
+      entryPoints: a.entryPointIds.length,
+      doubleBorders: touches.filter(([, k]) => k > 1).map(([territoryId, k]) => ({ territoryId, touches: k })),
+      defense: 1 / (1 + entryWeight * exposure * hardness),
+    });
+    for (const t of members) bonusesOf.set(t, [...(bonusesOf.get(t) ?? []), b.id]);
+  }
+
+  // Negative bonuses: never steered for, but charged when held in full (#129).
+  const penalties = new Map<number, BonusInfo>();
+  const penaltiesOf = new Map<number, number[]>();
+  for (const b of g.map.bonuses) {
+    if (b.value >= 0 || b.bonusIds.length > 0) continue;
+    const members = (analyzeBonus(g, b.id)?.territoryIds ?? []).filter((t) => g.territoryById.has(t));
+    if (!members.length) continue;
+    penalties.set(b.id, { id: b.id, name: b.name, value: b.value, members, entryPoints: 0, doubleBorders: [], defense: 1 });
+    for (const t of members) penaltiesOf.set(t, [...(penaltiesOf.get(t) ?? []), b.id]);
+  }
+  return { bonuses, bonusesOf, penalties, penaltiesOf };
 }
 
 export function planPicks(input: PlanPicksInput): PickPlan {
@@ -787,15 +923,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   const rates = { offensiveKillRate: off, defensiveKillRate: def, luckModifier: s.luckModifier };
 
   // Per-territory capture cost.
-  const armies = new Map<number, number>();
-  const cost = new Map<number, number | null>();
-  const lost = new Map<number, number>();
-  for (const t of g.map.territories) {
-    const n = Math.max(0, known.get(t.id) ?? (pickSet.has(t.id) ? neutralsIn : neutralsOut));
-    armies.set(t.id, n);
-    cost.set(t.id, captureCost(n, rates));
-    lost.set(t.id, straightKills(n, def));
-  }
+  const { armies, cost, lost } = territoryCosts(g, (t) => known.get(t) ?? (pickSet.has(t) ? neutralsIn : neutralsOut), rates);
 
   // Attack hardness vs the standard kill rates, for defensibility.
   const probe = armiesToTake(HARDNESS_PROBE, { offensiveKillRate: off, defensiveKillRate: def });
@@ -805,40 +933,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   /** The size a neutral starts at when nothing special is placed on it. */
   const ordinary = (t: number) => (pickSet.has(t) ? neutralsIn : neutralsOut);
 
-  // Anchorable bonuses: value > 0, territories listed directly (superbonuses skipped).
-  const bonuses = new Map<number, BonusInfo>();
-  const bonusesOf = new Map<number, number[]>();
-  for (const b of g.map.bonuses) {
-    if (b.value <= 0 || b.bonusIds.length > 0) continue;
-    const a = analyzeBonus(g, b.id)!;
-    const members = a.territoryIds.filter((t) => g.territoryById.has(t));
-    if (!members.length) continue;
-    // Exposure: each entry point counted once per member it borders, so a double border
-    // (one outside territory next to two members) weighs twice (#166).
-    const touches = [...entryTouches(g, b.id)];
-    const exposure = touches.reduce((n, [, k]) => n + k, 0);
-    bonuses.set(b.id, {
-      id: b.id,
-      name: b.name,
-      value: b.value,
-      members,
-      entryPoints: a.entryPointIds.length,
-      doubleBorders: touches.filter(([, k]) => k > 1).map(([territoryId, k]) => ({ territoryId, touches: k })),
-      defense: 1 / (1 + entryWeight * exposure * hardness),
-    });
-    for (const t of members) bonusesOf.set(t, [...(bonusesOf.get(t) ?? []), b.id]);
-  }
-
-  // Negative bonuses: never steered for, but charged when held in full (#129).
-  const penalties = new Map<number, BonusInfo>();
-  const penaltiesOf = new Map<number, number[]>();
-  for (const b of g.map.bonuses) {
-    if (b.value >= 0 || b.bonusIds.length > 0) continue;
-    const members = (analyzeBonus(g, b.id)?.territoryIds ?? []).filter((t) => g.territoryById.has(t));
-    if (!members.length) continue;
-    penalties.set(b.id, { id: b.id, name: b.name, value: b.value, members, entryPoints: 0, doubleBorders: [], defense: 1 });
-    for (const t of members) penaltiesOf.set(t, [...(penaltiesOf.get(t) ?? []), b.id]);
-  }
+  const { bonuses, bonusesOf, penalties, penaltiesOf } = bonusTables(g, entryWeight, hardness);
 
   const ctx: Ctx = {
     g,

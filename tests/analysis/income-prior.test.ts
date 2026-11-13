@@ -117,6 +117,68 @@ describe('the fog prior (#119): a symmetric-start 1v1 opponent bordering the fog
   });
 });
 
+describe('the opening prior (#166): the opponent simulated from the starts the award proved', () => {
+  // The same board: my income 50; the opponent could earn 5 + the fogged +80 = 85.
+  const ids = [1, 2, 3, 4, 5, 6, 7, 8];
+  const edges: [number, number][] = [
+    [1, 2],
+    [2, 3],
+    [3, 4],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [1, 8],
+  ];
+  const g = buildGraph(makeMap(ids, edges, [[901, 45, [1, 2, 8]], [902, 80, [4, 5, 6, 7]]]));
+  const s = board([mine(1, 30), mine(2, 40), mine(8, 5), enemy(3, 556), fogged(4), fogged(5), fogged(6), fogged(7)]);
+  const players = [{ id: ME }, { id: ENEMY }];
+  const input = (opening: ReadonlyMap<number, number> | undefined, income = 50): PlanInput => ({
+    graph: g,
+    board: s,
+    me: ME,
+    income,
+    settings: STD,
+    turn: 3,
+    game: { players, turn: 3, symmetricStart: true, ...(opening ? { opening } : {}) },
+  });
+
+  it('its simulated income stands in for my income as the prior', () => {
+    const [e] = enemyDeployEstimates(g, s, ME, STD, undefined, undefined, { myIncome: 50, opening: new Map([[ENEMY, 60]]) });
+    expect(e).toMatchObject({ prior: 60, estimate: 60, source: 'prior' });
+    const p = planTurn(input(new Map([[ENEMY, 60]])));
+    expect(p.enemyDeploy).toBe(60);
+    expect(p.warnings.join('\n')).toMatch(
+      /Enemy deploy estimate for player 20: ~60 \(a prior, not an observation: its opening simulated from the starts the award of picks proved earns 60 this turn, capped at the most it could earn on this board, 85;/,
+    );
+  });
+
+  it('a lower simulated income is the prior too, not my income (the starts are known)', () => {
+    expect(planTurn(input(new Map([[ENEMY, 12]]))).enemyDeploy).toBe(12);
+  });
+
+  it('never lowers an estimate: below what it visibly earns, the visible figure stands', () => {
+    const [e] = enemyDeployEstimates(g, s, ME, STD, undefined, undefined, { myIncome: 50, opening: new Map([[ENEMY, 2]]) });
+    expect(e).toMatchObject({ estimate: 5, source: 'visible' });
+  });
+
+  it('capped at what it could earn on this board', () => {
+    const [e] = enemyDeployEstimates(g, s, ME, STD, undefined, undefined, { myIncome: 50, opening: new Map([[ENEMY, 200]]) });
+    expect(e).toMatchObject({ prior: 85, estimate: 85 });
+  });
+
+  it('another player, or no figure, keeps the my-income prior; no symmetric start, no prior at all', () => {
+    expect(planTurn(input(new Map([[OTHER, 60]]))).enemyDeploy).toBe(50);
+    expect(planTurn(input(undefined)).enemyDeploy).toBe(50);
+    const off = planTurn({ ...input(new Map([[ENEMY, 60]])), game: { players, turn: 3, opening: new Map([[ENEMY, 60]]) } });
+    expect(off.enemyDeploy).toBe(5);
+  });
+
+  it('still only beside the fog', () => {
+    const open = board([mine(1, 30), mine(2, 40), mine(8, 5), enemy(3, 556), neutral(4, 2), neutral(5, 2), neutral(6, 2), neutral(7, 2)]);
+    expect(planTurn({ ...input(new Map([[ENEMY, 60]])), board: open }).enemyDeploy).toBe(5);
+  });
+});
+
 // The tracker over a long fogged history. The enemy shows T3–T5 next to my T1/T2; the fogged T8
 // is a +30 bonus it could hold.
 const ids = [1, 2, 3, 4, 5, 6, 7, 8];
