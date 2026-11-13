@@ -407,9 +407,17 @@
 //     below even"), and every source must still hold its border once the attack leaves: a source
 //     left short gets the deploys still available there that make it hold (a rationale line says
 //     so), and a capture they cannot cover is refused (a conceded source excepted; a warning names
-//     an enemy capture refused so, with what would stay and the deploys left). Order: affordable
-//     first, then one that breaks a bonus (its owner holds it in full) or advances one of mine,
-//     then cheapest, then (neutral steps) the order above, then id. In an FFA with two or more
+//     an enemy capture refused so, with what would stay and the deploys left). Order (#112):
+//     affordable first, then the armies the capture is expected to lose (the defenders' kills on
+//     its attackers at the game's rates; for a combined capture, the total over its attacks), then
+//     the armies it sends, then one that breaks a bonus (its owner holds it in full) or advances
+//     one of mine (a tie-break only), then (neutral steps) the order above, then id; the reason
+//     names the cost ("loses ~3 armies", "loses no armies"). So an enemy 4 taken for ~3 lost, or
+//     an empty one for none, beats a 15-neutral taken for ~11 toward a big bonus. After the
+//     capture taken, every other candidate that loses no armies is taken too (by armies sent,
+//     then id), when every hold stays covered and income does not fall, never attacking out of a
+//     conceded border; a rationale line says "Also take …: it costs nothing" (and, for one that
+//     opens a second front, "… taken only because it costs nothing"). In an FFA with two or more
 //     opponents (rule 0p.2's setting, applied here whether or not the plan adapts), a capture
 //     against a player that cannot currently attack me (it could take no territory of mine next
 //     turn) opens a second front and is tried only after every other; the rationale says which
@@ -4307,7 +4315,9 @@ export function planTurn(input: PlanInput): TurnPlan {
   // after every hold, so it only spends what they leave. Its steps are ranked by what this turn can
   // afford (#107): the armies that can reach each (its best source's movable armies plus what may
   // still be deployed there) against its cost, then by the bonus's armies to finish. In the contact
-  // and late phases (#107) enemy territories it can take at a trade of at least even join them.
+  // and late phases (#107) enemy territories it can take at a trade of at least even join them,
+  // ranked by the armies each capture loses (#112), and every other capture that loses nothing
+  // is taken too.
   if (goal !== 'complete-bonus' && captured.size === 0) {
     const early = profile.phase === 'opening' || profile.phase === 'expansion';
     // In a 1v1 the strike stack (rule 0p.3c, #102) is contact's own answer: it attacks every turn.
@@ -4541,27 +4551,53 @@ export function planTurn(input: PlanInput): TurnPlan {
       };
       /**
        * Every candidate, in the order tried. Outside contact: rule 4e's neutral steps as ranked
-       * above. In contact (#107): the neutral steps and the enemy captures together — affordable
-       * first, then one that breaks or advances a bonus, then cheapest, then (neutral steps) rule
-       * 4e's order, then id; under rule 0p.2 a capture that opens a second front (its owner cannot
-       * attack me now) only after every other.
+       * above. In contact (#107, #112): the neutral steps and the enemy captures together —
+       * affordable first, then the armies lost, then the armies sent, then one that breaks or
+       * advances a bonus, then (neutral steps) rule 4e's order, then id; under rule 0p.2 a capture
+       * that opens a second front (its owner cannot attack me now) only after every other.
        */
       type Pick =
         | { kind: 'neutral'; st: (typeof steps)[number] }
         | { kind: 'enemy'; st: (typeof enemySteps)[number] };
       const shortOf = (x: { cost: number; reach: number }) => Math.max(0, x.cost - x.reach);
       const rank4e = new Map(steps.map((x, i) => [x.t, i]));
-      const keyOf = (p: Pick) => [
-        p.kind === 'enemy' && p.st.secondFront ? 1 : 0,
-        shortOf(p.st),
-        p.kind === 'enemy' && !p.st.bonus ? 1 : 0,
-        p.st.cost,
-        p.kind === 'neutral' ? rank4e.get(p.st.t)! : Infinity,
-        p.st.t,
-      ];
       const picks: Pick[] = [
         ...steps.map((st): Pick => ({ kind: 'neutral', st })),
         ...enemySteps.map((st): Pick => ({ kind: 'enemy', st })),
+      ];
+      /**
+       * What capturing `st` is expected to cost (#112): the defensive kills on its attackers at the
+       * game's rates, and the armies sent. One source that can take it alone sends its cost and
+       * loses the defenders' kills; otherwise the combined capture rule 3a would plan, its every
+       * attack's losses (the softeners' and the finisher's) and armies counted.
+       */
+      const lossOf = (st: Reach & { t: number; cost: number }): { lost: number; sent: number } => {
+        const single = { lost: Math.min(st.cost, straightKills(defendersAt(st.t), rates.defensiveKillRate)), sent: st.cost };
+        if (st.from === undefined || st.reach >= st.cost) return single;
+        const c = combinedPlan(st.t);
+        if (!c) return single;
+        return {
+          lost: c.softeners.reduce((n, x) => n + x.armies - x.survivors, 0) + c.armies - c.survivors,
+          sent: c.softeners.reduce((n, x) => n + x.armies, 0) + c.armies,
+        };
+      };
+      const loss = new Map(picks.map((p) => [p.st.t, lossOf(p.st)]));
+      /** "loses ~N armies" / "loses no armies": what a capture costs (#112). */
+      const lossText = (t: number) => {
+        const n = loss.get(t)!.lost;
+        return n === 0 ? 'loses no armies' : `loses ~${n} ${n === 1 ? 'army' : 'armies'}`;
+      };
+      // In contact (#112): affordable first, then the armies the capture loses, then the armies it
+      // sends; breaking or advancing a bonus is only a tie-break. Under rule 0p.2 a capture that
+      // opens a second front still comes after every other.
+      const keyOf = (p: Pick) => [
+        p.kind === 'enemy' && p.st.secondFront ? 1 : 0,
+        shortOf(p.st),
+        loss.get(p.st.t)!.lost,
+        loss.get(p.st.t)!.sent,
+        p.kind === 'enemy' && !p.st.bonus ? 1 : 0,
+        p.kind === 'neutral' ? rank4e.get(p.st.t)! : Infinity,
+        p.st.t,
       ];
       if (contact)
         picks.sort((a, b) => {
@@ -4570,7 +4606,13 @@ export function planTurn(input: PlanInput): TurnPlan {
           for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
           return 0;
         });
-      const reasonFor = (p: Pick) => (p.kind === 'neutral' ? reasonOf(p.st) : enemyReason(p.st));
+      const reasonFor = (p: Pick) => {
+        const r = p.kind === 'neutral' ? reasonOf(p.st) : enemyReason(p.st);
+        // In contact the reason names what the capture costs (#112).
+        if (!contact) return r;
+        const head = p.kind === 'neutral' ? 'cheapest expansion' : 'cheapest capture';
+        return `${head} (${lossText(p.st.t)})${r.slice(head.length)}`;
+      };
       /** A candidate: what reaches it, as {@link reachOf} judges it. */
       type Cand = Reach & { t: number; cost: number };
       /**
@@ -4716,6 +4758,36 @@ export function planTurn(input: PlanInput): TurnPlan {
           waived = failed.get(st.t) as { holdCost: number; income: number };
         }
       }
+      // #112, in contact: after the fallback's capture, every other candidate that loses no armies
+      // is taken too, by armies sent, then id — when every hold stays covered and income does not
+      // fall. Rule 4d still judges each. A conceded border never attacks out for one.
+      const free: Pick[] = [];
+      if (contact && taken) {
+        evenTradesOnly = true;
+        const others = picks
+          .filter((p) => p !== taken && loss.get(p.st.t)!.lost === 0)
+          .sort((a, b) => loss.get(a.st.t)!.sent - loss.get(b.st.t)!.sent || a.st.t - b.st.t);
+        for (const pick of others) {
+          const t = pick.st.t;
+          if (captured.has(t) || gainWith([t]) < 0) continue;
+          const now: Cand = { ...reachOf(t), t, cost: pick.st.cost };
+          if (now.from === undefined || conceded.has(now.from)) continue;
+          const undo = attempt(now, reasonFor(pick));
+          if (!undo) continue;
+          if (tradeOf(t).lost > 0 || holdLeftShort(t)) {
+            undo();
+            continue;
+          }
+          const stop = outgrows(t);
+          if (stop !== null) {
+            undo();
+            if (!rationale.includes(stop)) rationale.push(stop);
+            continue;
+          }
+          free.push(pick);
+        }
+        evenTradesOnly = false;
+      }
       // Enemy targets added for this rule and not taken are dropped again.
       for (const t of added) if (!captured.has(t)) targets.delete(t);
       /** The bonuses `t` would complete that R3 refused, as "name (#id)". */
@@ -4818,6 +4890,16 @@ export function planTurn(input: PlanInput): TurnPlan {
               }.`,
             );
           }
+        }
+        for (const pick of free) {
+          const t = pick.st.t;
+          rationale.push(
+            `Also take ${label(t)}: it costs nothing (it loses no armies, every hold stays covered and income does not fall).`,
+          );
+          if (pick.kind === 'enemy' && ffaFronts && pick.st.secondFront)
+            rationale.push(
+              `Player ${pick.st.player} cannot attack me now: taking ${label(t)} opens a second front, taken only because it costs nothing.`,
+            );
         }
       } else if (picks[0]) {
         const top = picks[0];

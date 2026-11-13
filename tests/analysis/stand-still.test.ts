@@ -614,26 +614,28 @@ describe('#107: in contact, never stand still either', () => {
     expect(armiesToTake(0)).toBe(1);
   });
 
-  it('takes the enemy territory that advances a bonus, sized, from a 15-stack, holds intact', () => {
+  it('takes the enemy territory that loses the fewest armies, from a 15-stack, holds intact', () => {
     const b = contactBoard();
     for (const adapt of [false, true]) {
       const p = run(b, { adapt });
       expect(p.profile.phase).toBe('contact');
       expect(p.conceded).toEqual([]);
-      // 22 advances Delta; 23 (1 to take) is cheaper but advances nothing. Sized at 6, then topped up
-      // from the stack's idle armies to the next kill breakpoint (8), as every attack on a player's is.
-      expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 22, armies: 8, kind: 'attack' })]);
-      expect(attacks(p)[0]!.reason).toMatch(/advances bonus Delta \(#501\)/);
-      expect(p.expected.captures).toEqual([22]);
+      // #112: 22 advances Delta but loses ~3 armies; 23 (1 to take) loses none, so it goes first —
+      // a bonus is only a tie-break. Sized at 1, then topped up from the stack's idle armies to the
+      // next kill breakpoint (3), as every attack on a player's is. 22 is no free capture.
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 3, kind: 'attack' })]);
+      expect(attacks(p)[0]!.reason).toMatch(/^cheapest capture \(loses no armies\): takes a territory of player 40/);
+      expect(p.expected.captures).toEqual([23]);
       const r = p.rationale.join('\n');
-      expect(r).toMatch(/Take T22 \(#22\) though no planned capture is economic: contact phase: no capture is planned/);
-      expect(r).toMatch(/kills 4 for 3 lost: a trade of at least even/);
-      // No second front in an FFA: player 30 cannot attack me now, so this opens a second front — taken only because no neutral capture fits.
+      expect(r).toMatch(/Take T23 \(#23\) though no planned capture is economic: contact phase: no capture is planned/);
+      expect(r).toMatch(/kills 0 for 0 lost: a trade of at least even/);
+      // No second front in an FFA: player 40 cannot attack me now, so this opens a second front — taken only because no neutral capture fits.
       expect(r).toMatch(
-        /Player 30 cannot attack me now: taking T22 \(#22\) opens a second front \(no second front in an FFA\), taken only because no neutral capture fits this turn\./,
+        /Player 40 cannot attack me now: taking T23 \(#23\) opens a second front \(no second front in an FFA\), taken only because no neutral capture fits this turn\./,
       );
+      expect(r).not.toMatch(/Also take/);
       const w = p.warnings.join('\n');
-      expect(w).toMatch(/Attack on enemy T22 \(#22\) assumes its owner does not reinforce it first\./);
+      expect(w).toMatch(/Attack on enemy T23 \(#23\) assumes its owner does not reinforce it first\./);
       expect(w).not.toMatch(/standing still/i);
       expect(valid(p, b, 5, map)).toEqual([]);
     }
@@ -653,8 +655,9 @@ describe('#107: in contact, never stand still either', () => {
   });
 
   it('a player that can already attack me: no new front, and the rationale says so', () => {
-    // My 1-army 7 borders 24 (player 30, 3 armies): player 30 can take it. Player 30 also holds 26,
-    // out of my reach, so this is no finishing off (rule 1e).
+    // My 1-army 7 borders 24 (player 30, 6 armies: out of 7's reach): player 30 can take it. Player
+    // 30 also holds 26, out of my reach, so this is no finishing off (rule 1e). 23 (player 40, who
+    // cannot attack me) would open a second front, so 22 goes first; 23 then costs nothing (#112).
     const front = makeMap(
       [1, 2, 3, 4, 5, 6, 7, 22, 23, 24, 25, 26],
       [[1, 2], [1, 3], [1, 22], [2, 4], [2, 23], [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 24], [7, 2], [24, 26]],
@@ -663,10 +666,21 @@ describe('#107: in contact, never stand still either', () => {
         [502, 'Fen', 2, [4, 5, 6]],
       ],
     );
-    const b = contactBoard([mine(7, 1), player(26, 3, P2)]);
+    const b = board([
+      ...contactBoard().territories.filter((t) => t.territoryId !== 24),
+      mine(7, 1),
+      player(24, 6, P2),
+      player(26, 3, P2),
+    ]);
     const p = run(b, { map: front });
-    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 22, kind: 'attack' })]);
-    expect(p.rationale.join('\n')).toMatch(/Player 30 can already attack me \(T7 \(#7\)\): taking T22 \(#22\) opens no new front\./);
+    expect(attacks(p).map((m) => [m.from, m.to])).toEqual([
+      [1, 22],
+      [2, 23],
+    ]);
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/Player 30 can already attack me \(T7 \(#7\)\): taking T22 \(#22\) opens no new front\./);
+    expect(r).toMatch(/Also take T23 \(#23\): it costs nothing/);
+    expect(r).toMatch(/Player 40 cannot attack me now: taking T23 \(#23\) opens a second front, taken only because it costs nothing\./);
     expect(valid(p, b, 5, front)).toEqual([]);
   });
 
@@ -783,5 +797,96 @@ describe('#107: in contact, never stand still either', () => {
     expect(w).toMatch(
       /Not attacking T22 \(#22\): the combined capture loses 11 armies for the 10 it kills, a trade below even\./,
     );
+  });
+});
+
+// #112: an 8-player FFA in contact, at 60/70, every neutral 15. With no other capture the contact
+// fallback took a 15-neutral with 25 (≈11 lost) toward a big bonus, while enemy territories of 4
+// (≈3 lost) and 0 (nothing lost) bordered my stacks. In contact and late phases the fallback now
+// ranks by the armies a capture loses, then by the armies it sends, a bonus only as a tie-break;
+// and after it, every other capture that loses nothing is taken too.
+describe('#112: the contact fallback takes the capture that loses the fewest armies', () => {
+  const EIGHT: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80, 90].map((id) => ({ id })), turn: 3 };
+  //   My 25-stacks on 1 and 2, and a 1-army 7. 22 (player 30, 4) borders 1; 23 (player 40, 0)
+  //   borders 2. Crown (+4) is the four 15-neutrals 3 4 5 6 (25 to take each): 3 borders 1, 4
+  //   borders 2. Player 30's 24 (6) borders 7, so player 30 can attack me; so can player 40's 25
+  //   (6) when `bothFront`. Neither is in 7's reach (10 to take). 26 and 27 keep both players out
+  //   of my reach (no finishing off).
+  const shape = (bothFront: boolean) =>
+    makeMap(
+      [1, 2, 3, 4, 5, 6, 7, 22, 23, 24, 25, 26, 27],
+      [
+        [1, 2], [1, 3], [1, 22], [2, 4], [2, 23], [2, 7], [3, 4], [4, 5], [5, 6],
+        [22, 24], [23, 25], [7, 24], [24, 26], [25, 27],
+        ...(bothFront ? ([[7, 25]] as [number, number][]) : []),
+      ],
+      [[601, 'Crown', 4, [3, 4, 5, 6]]],
+    );
+  const shapeBoard = (extra: TerritoryState[] = []): BoardState =>
+    board([
+      mine(1, 25),
+      mine(2, 25),
+      mine(7, 1),
+      neutral(3, 15),
+      neutral(4, 15),
+      neutral(5, 15),
+      neutral(6, 15),
+      player(24, 6, P2),
+      player(25, 6, P3),
+      player(26, 3, P2),
+      player(27, 3, P3),
+      ...extra,
+    ]);
+  const run = (b: BoardState, map: GameMap) =>
+    planTurn({ graph: buildGraph(map), board: b, me: ME, income: 5, settings: STD, game: EIGHT, options: { adapt: false } });
+
+  it('the arithmetic: a 15-neutral loses 11, a 4-army stack 3, an empty one nothing', () => {
+    expect(armiesToTake(15)).toBe(25);
+    expect(Math.round((15 * 70) / 100)).toBe(11);
+    expect(Math.round((4 * 70) / 100)).toBe(3);
+  });
+
+  it('takes the empty enemy territory, not the 15-neutral toward the big bonus', () => {
+    const map = shape(true);
+    const b = shapeBoard([player(22, 4, P2), player(23, 0, P3)]);
+    const p = run(b, map);
+    expect(p.profile.phase).toBe('contact');
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, kind: 'attack' })]);
+    expect(attacks(p)[0]!.reason).toMatch(/loses no armies/);
+    expect(p.expected.captures).toEqual([23]);
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/Take T23 \(#23\) though no planned capture is economic/);
+    expect(r).not.toMatch(/Attack T3 \(#3\)|Attack T4 \(#4\)|Attack T22 \(#22\)/);
+    expect(valid(p, b, 5, map)).toEqual([]);
+  });
+
+  it('when the 4 is picked first (the empty one opens a second front), the empty one is also taken: it costs nothing', () => {
+    const map = shape(false);
+    const b = shapeBoard([player(22, 4, P2), player(23, 0, P3)]);
+    const p = run(b, map);
+    expect(p.profile.phase).toBe('contact');
+    expect(attacks(p).map((m) => [m.from, m.to])).toEqual([
+      [1, 22],
+      [2, 23],
+    ]);
+    expect(attacks(p)[0]!.reason).toMatch(/loses ~3 armies/);
+    expect(p.expected.captures).toEqual([22, 23]);
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/Take T22 \(#22\) though no planned capture is economic/);
+    expect(r).toMatch(/kills 4 for 3 lost: a trade of at least even/);
+    expect(r).toMatch(/Also take T23 \(#23\): it costs nothing/);
+    expect(r).not.toMatch(/Attack T3 \(#3\)|Attack T4 \(#4\)/);
+    expect(valid(p, b, 5, map)).toEqual([]);
+  });
+
+  it('with only neutrals in reach, the neutral step is taken as before', () => {
+    const map = shape(true);
+    // 22 and 23 are out of sight: no enemy capture is in reach.
+    const b = shapeBoard();
+    const p = run(b, map);
+    expect(p.profile.phase).toBe('contact');
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 25, kind: 'attack' })]);
+    expect(attacks(p)[0]!.reason).toMatch(/^cheapest expansion \(loses ~11 armies\) toward bonus Crown \(#601\)/);
+    expect(valid(p, b, 5, map)).toEqual([]);
   });
 });
