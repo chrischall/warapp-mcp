@@ -54,7 +54,7 @@ import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js'
 import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
-import { assumedWarning, awardView, loadAward } from './award.js';
+import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
 import { adviseCards, cardGame, handOwners, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
@@ -1046,6 +1046,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const seen = boardStateFromLive(territories, me, game.players);
       const award = await loadAward(ctx.dataDir, game, me, seen, turn);
       const board = award?.board ?? seen;
+      const opening = openingThreat(award, game, graph, seen, turn);
       const settings = plannerSettings(game.settings);
       const rules = cardRules(game.settings);
       // A team shares one hand (#163): mine and my teammates' cards.
@@ -1085,6 +1086,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           cards: rules.inPlay.length > 0,
           // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
           symmetricStart: symmetricStart(game.settings, map),
+          // #166: the opponent's opening simulated from the starts the award proved, as the prior.
+          ...(opening ? { opening } : {}),
         },
         ...(tracks ? { tracks } : {}),
         options: {

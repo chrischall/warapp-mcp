@@ -1,10 +1,13 @@
 // What the award of picks tells the turn tools (#166): read once from my stored pick list on the
 // first board after distribution (src/analysis/award.ts, src/pick-list.ts), then reused all game.
 import { firstMoverOnTurn, readAward, type AwardReading, type AwardRole } from '../analysis/award.js';
+import type { MapGraph } from '../analysis/graph.js';
+import { openingIncome, PICK_HORIZON } from '../analysis/picks.js';
 import type { BoardState, TerritoryState } from '../board.js';
 import { FOG_LEVEL_NAMES, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_VISIBLE } from '../live.js';
 import type { Game, Player } from '../normalize.js';
 import { readPickRecord, writeAward } from '../pick-list.js';
+import { pickSettings } from './picks.js';
 
 export interface AwardContext {
   reading: AwardReading;
@@ -21,6 +24,8 @@ export interface AwardContext {
   assumed: number[];
   /** Armies each assumed territory is given (turn 1: the starting armies); `null` when only its owner is. */
   assumedArmies: number | null;
+  /** The territories that were pickable during distribution, when the pick record kept them. */
+  pickable?: number[];
 }
 
 const isMine = (t: TerritoryState, me: number) => t.owner.kind === 'player' && t.owner.playerId === me;
@@ -62,11 +67,12 @@ export async function loadAward(
     await writeAward(dataDir, game.id, me.id, reading);
   }
   if (!reading) return undefined;
+  const pickable = record.pickable ? { pickable: record.pickable } : {};
 
   const duel = game.players.length === 2;
   const opponent = duel ? game.players.find((p) => p.id !== me.id) : undefined;
   const firstMover = duel ? firstMoverOnTurn({ role: reading.role, turn, moveOrder: game.settings?.moveOrder }) : null;
-  if (!opponent) return { reading, firstMover, board, assumed: [], assumedArmies: null };
+  if (!opponent) return { reading, firstMover, board, assumed: [], assumedArmies: null, ...pickable };
 
   // A fogged start of the opponent's is its territory until the board shows otherwise. On turn 1
   // nobody has deployed, so it holds the starting armies; later only its owner is known.
@@ -85,7 +91,37 @@ export async function loadAward(
   });
   const order = new Map(reading.opponentStarts.map((t, i) => [t, i]));
   assumed.sort((a, b) => order.get(a)! - order.get(b)!);
-  return { reading, opponent, firstMover, board: assumed.length ? { ...board, territories } : board, assumed, assumedArmies };
+  return { reading, opponent, firstMover, board: assumed.length ? { ...board, territories } : board, assumed, assumedArmies, ...pickable };
+}
+
+/**
+ * The opening threat model (#166): in a two-player game whose award proved every start the
+ * opponent has, its income on `turn` as the pick advisor's opening simulation gives it from those
+ * starts (`openingIncome`; my starts are never its captures), keyed by its GameFeed id, for the
+ * planner's fog prior (`PlanGameContext.opening`). Only on turns 1..PICK_HORIZON + 1, the turns the
+ * simulation covers; `undefined` otherwise. Neutral sizes are the ones `seen` (the board as war.app
+ * showed it) gives, then the settings.
+ */
+export function openingThreat(
+  a: AwardContext | undefined,
+  game: Game,
+  graph: MapGraph,
+  seen: BoardState,
+  turn: number | null,
+): ReadonlyMap<number, number> | undefined {
+  if (!a?.opponent || game.players.length !== 2 || !a.reading.allStartsKnown || !a.reading.opponentStarts.length) return undefined;
+  if (turn === null || turn < 1 || turn > PICK_HORIZON + 1) return undefined;
+  const neutralArmies = new Map<number, number>();
+  for (const t of seen.territories) if (t.owner.kind === 'neutral' && t.armies !== null) neutralArmies.set(t.territoryId, t.armies);
+  const income = openingIncome({
+    graph,
+    starts: a.reading.opponentStarts,
+    settings: pickSettings(game.settings),
+    taken: [...a.reading.granted, ...a.reading.unlisted],
+    neutralArmies,
+    ...(a.pickable ? { pickable: a.pickable } : {}),
+  });
+  return new Map([[a.opponent.id, income[turn - 1]!]]);
 }
 
 /** On the first board: a territory the award calls another player's that the board shows as mine, a neutral or pickable. */

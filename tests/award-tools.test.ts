@@ -5,9 +5,14 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { openingIncome } from '../src/analysis/picks.js';
+import { normalizeGame, normalizeMap } from '../src/normalize.js';
 import { readPickRecord, writePickList } from '../src/pick-list.js';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
+import { graphOf } from '../src/tools/common.js';
+import { mapOf } from '../src/tools/map.js';
+import { pickSettings } from '../src/tools/picks.js';
 import { boardCachePath } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
@@ -204,6 +209,71 @@ describe('warapp_plan_turn — the award of picks', () => {
     expect(ids(p.award!.opponentStarts)).toEqual([158]);
     expect(p.award).toMatchObject({ awarded: null, firstMover: null, assumedOnBoard: [] });
     expect(p.award!.notes.join(' ')).toMatch(/another player's start/);
+  });
+});
+
+describe('the opening threat model (#166): the opponent simulated from the starts the award proved', () => {
+  /** The opening simulation's income for the opponent from 158 and 157, my 159 and 161 taken. */
+  const simulated = () => {
+    const raw = game();
+    const g = { ...normalizeGame(raw), map: normalizeMap(lobbyFixture().map) };
+    return openingIncome({ graph: graphOf(mapOf(g)), starts: [158, 157], settings: pickSettings(g.settings), taken: [159, 161] });
+  };
+  const OPENING = /its opening simulated from the starts the award of picks proved earns (\d+) this turn/;
+  /** Later turns: the opponent shows on 158, beside the fog; 157 is still fogged. */
+  const BOB_ON_158 = { fogLevel: 2, owner: BOB.inGame, armies: 8 };
+  /** Plans turn 1 (the award is read), then `turn`. */
+  const planOn = async (list: number[], turn: number) => {
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, list);
+    h = await live(board({ 157: FOG }), game(1), dir);
+    await plan(h);
+    await h.harness.close();
+    h = await live(board({ 157: FOG, 158: BOB_ON_158 }, 9), game(turn), dir);
+    return plan(h);
+  };
+
+  it('every start known: on turn 3 the opponent is estimated at its simulated income, more than my own', async () => {
+    const income = simulated();
+    // From 158 and 157 it completes a bonus by turn 3 on this map: more than the base 5 I earn.
+    expect(income[2]).toBeGreaterThan(5);
+    const p = await planOn([159, 158, 157, 161], 3);
+    const warning = p.warnings.find((w) => ESTIMATE_FOR_BOB.test(w))!;
+    expect(warning).toMatch(OPENING);
+    expect(Number(OPENING.exec(warning)![1])).toBe(income[2]);
+    expect(warning).toMatch(new RegExp(`~${income[2]} \\(a prior`));
+  });
+
+  it('past the simulated turns the prior is my own income again', async () => {
+    const p = await planOn([159, 158, 157, 161], 5);
+    expect(p.warnings.join(' ')).not.toMatch(OPENING);
+  });
+
+  it('not when the award proves only some of its starts', async () => {
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, [159, 158, 161, 157]);
+    h = await live(board(), game(1), dir);
+    await plan(h);
+    await h.harness.close();
+    h = await live(board({ 158: BOB_ON_158 }, 9), game(3), dir);
+    const p = await plan(h);
+    expect(p.award!.allStartsKnown).toBe(false);
+    expect(p.warnings.join(' ')).toMatch(ESTIMATE_FOR_BOB);
+    expect(p.warnings.join(' ')).not.toMatch(OPENING);
+  });
+
+  it('warapp_check_plan tries the orders against the same figure', async () => {
+    const income = simulated();
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, [159, 158, 157, 161]);
+    h = await live(board({ 157: FOG }), game(1), dir);
+    await plan(h);
+    await h.harness.close();
+    h = await live(board({ 157: FOG, 158: BOB_ON_158 }, 9), game(3), dir);
+    const p = payload<{ enemyDeploy: Array<{ player: Named; deploy: number }> }>(
+      await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [{ kind: 'deploy', territory: 159, armies: 5 }] }),
+    );
+    expect(p.enemyDeploy).toEqual([expect.objectContaining({ player: expect.objectContaining({ id: Number(BOB.feed) }), deploy: income[2] })]);
   });
 });
 

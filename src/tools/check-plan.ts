@@ -14,7 +14,7 @@ import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.
 import { boardStateFromLive } from '../live.js';
 import type { GameMap } from '../normalize.js';
 import { carriesTeam } from '../teams.js';
-import { assumedWarning, awardView, loadAward } from './award.js';
+import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
@@ -137,6 +137,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const seen = boardStateFromLive(territories, me, game.players);
       const award = await loadAward(ctx.dataDir, game, me, seen, turn);
       const board = award?.board ?? seen;
+      const opening = openingThreat(award, game, graph, seen, turn);
       const settings = plannerSettings(game.settings);
 
       const deploys: { territoryId: number; armies: number }[] = [];
@@ -213,6 +214,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           })),
           turn,
           symmetricStart: symmetricStart(game.settings, map),
+          // #166: the opponent's opening simulated from the starts the award proved, as the prior.
+          ...(opening ? { opening } : {}),
         },
         turn,
       });
