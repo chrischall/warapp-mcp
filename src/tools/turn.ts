@@ -700,7 +700,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const focusBonusIds = (focus ?? []).map((b) => resolveBonus(map, b).id);
       const turn = currentTurn(game);
       // The signed-in account, the live board and the board history are independent reads: in
-      // parallel, not in series (#131).
+      // parallel, not in series (#131). Accepted trade-offs of not serializing them: when the board
+      // read fails, a history read already under way still reaches GameFeed after the tool has
+      // returned (one wasted, harmless read; boardHistory never throws); and when the account and
+      // board reads both fail, whichever fails first is the error reported (each is a true error).
       const meRead = resolveMe(ctx, game.players, player);
       const [me, { territories, info }, history] = await Promise.all([
         meRead,

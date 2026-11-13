@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
@@ -612,15 +612,21 @@ describe('warapp_plan_turn — threat trend', () => {
   });
 
   it('(h) a failed board read fails the plan while the history read runs (#131)', async () => {
-    h = await liveHarness({
+    const live = await liveHarness({
       feed: [game('Playing', { history: [{ turn: 0, standing: [] }, { turn: 1, standing: previous }] })],
       warapp: routes({
         [Method.GetLatestGameInfo]: () => ({ error: { code: 42, message: 'board unavailable' } }),
       }),
     });
-    const res = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    h = live;
+    const res = await live.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
     expect(res.isError).toBe(true);
-    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(true);
+    // The tool returns as soon as the board read fails; the history read, chained behind the
+    // account read and the cache read, may not have reached GameFeed yet. Wait for it (bounded).
+    await vi.waitFor(() => expect(live.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(true), {
+      timeout: 2000,
+      interval: 5,
+    });
   });
 
   it('(h) planning the same turn twice keeps the trend (the previous turn stays cached)', async () => {
