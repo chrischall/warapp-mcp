@@ -64,6 +64,7 @@ describe('move order within a turn (#127)', () => {
     // Decision order was 1>3, 1>2, 4>1: the transfer into T1 (it faces T2) goes first, the attack
     // sized for player 20's whole deploy next, the uncontested neutral capture after them.
     expect(legs(p)).toEqual(['4>1', '1>2', '1>3']);
+    expect(p.moveSlots).toEqual(['early', 'sure', 'filler']);
     expect(p.rationale.join('\n')).toMatch(/Move order \(#127\)/);
   });
 
@@ -78,6 +79,8 @@ describe('move order within a turn (#127)', () => {
     // The exact-sized attack on T2 and the 3-army capture of T8 (player 20 can reach it, and its
     // 2 survivors would not hold) go last; the uncontested T3 first.
     expect(legs(p)).toEqual(['1>3', '1>2', '4>8']);
+    // #163: the slots ride along with the moves, so the card advice can place an Order Delay.
+    expect(p.moveSlots).toEqual(['filler', 'last', 'last']);
     const line = p.rationale.find((l) => l.startsWith('Move order (#127)'))!;
     expect(line).toMatch(/T2 \(#2\)/);
     expect(line).toMatch(/survivors/);

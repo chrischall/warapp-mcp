@@ -7,6 +7,8 @@ import {
   chooseCardPlays,
   holdsOrderPriority,
   advisedOrderPriority,
+  adviseOrderDelay,
+  readActiveCards,
   playRequired,
   handReadable,
   readHand,
@@ -87,6 +89,12 @@ describe('readHand', () => {
     expect(handReadable(null, ME)).toBe(false);
   });
 
+  it('reads a team hand as readable when any of its owners has an entry, as readHand gathers them (#163)', () => {
+    expect(handReadable(info({}, [OTHER]), [ME, OTHER])).toBe(true);
+    expect(handReadable(info({}, [OTHER]), [ME])).toBe(false);
+    expect(handReadable(info({}, []), [ME, OTHER])).toBe(false);
+  });
+
   it('is empty when I hold no cards or the board carries none', () => {
     expect(readHand(info({}), ME)).toEqual([]);
     expect(readHand(info({ [ME]: [] }), ME)).toEqual([]);
@@ -141,6 +149,14 @@ describe('readHand', () => {
   it("still excludes another player's cards in the current standing", () => {
     const hand = readHand(liveInfo(standing({ [ME]: [inst(GA, 5)], [OTHER]: [inst(GF, 12)] })), ME);
     expect(hand.map((c) => c.id)).toEqual([GA]);
+  });
+
+  it("in a team game reads the team's hand: every teammate's entry, one card once (#163, unverified live)", () => {
+    const hand = readHand(
+      liveInfo(standing({ [ME]: [inst(GA, 5)], [OTHER]: [inst(GA, 5), inst(GB, 1, 5)], 999999: [inst(GF, 12)] })),
+      [ME, OTHER],
+    );
+    expect(hand.map((c) => c.id)).toEqual([GA, GB]);
   });
 
   it('is empty when the info carries no GameStanding', () => {
@@ -203,12 +219,24 @@ describe('chooseCardPlays', () => {
   const al: Card = { id: '77777777777777777777777777777777', type: 6, name: 'Airlift' };
   const bl2: Card = { ...bl, id: '99999999999999999999999999999998' };
 
-  it('over the hold limit discards Order Delay before spending Order Priority (#127)', () => {
-    // A strong opponent discarded Order Delay and kept Order Priority for its decisive hits.
+  it('over the hold limit keeps Order Delay: the information card goes first (#163)', () => {
+    // Every ranking read keeps the timing cards longest: an unplayed Order Delay is a threat in itself.
     const c = chooseCardPlays([op, od, bl, sp, al], { maxCardsHold: 4, inPlay: [] });
     expect(c.required).toBe(true);
     expect(c.plays).toEqual([]);
-    expect(c.discards).toEqual([od]);
+    expect(c.discards).toEqual([sp]);
+  });
+
+  it('keeps the timing cards longest: Order Delay, Order Priority, Emergency Blockade, Bomb, Airlift (#163)', () => {
+    const eb: Card = { id: '55555555555555555555555555555555', type: 3, name: 'Emergency Blockade' };
+    const bo: Card = { id: '44444444444444444444444444444444', type: 13, name: 'Bomb' };
+    const gi: Card = { id: '33333333333333333333333333333333', type: 7, name: 'Gift' };
+    const c = chooseCardPlays([od, op, eb, bo, al, gi, bl], { maxCardsHold: 5, inPlay: [] });
+    expect(c.discards).toEqual([gi, bl]);
+    // Seven must go down to one: Order Delay is the card kept; Order Priority, when it must go, is played.
+    const d = chooseCardPlays([od, op, eb, bo, al, gi, bl], { maxCardsHold: 1, inPlay: [] });
+    expect(d.plays).toEqual([op]);
+    expect(d.discards).toEqual([gi, bl, al, bo, eb]);
   });
 
   it('plays Order Priority rather than discarding it when it is the card that must go', () => {
@@ -239,13 +267,13 @@ describe('chooseCardPlays', () => {
   });
 
   it('discards the lowest-value card when no play is useful (only Blockade, Order Delay, …)', () => {
-    // Order Delay would hold back my own attacks, Blockade gives a territory away: discard instead.
     const c = chooseCardPlays([bl, od, bl2, al, sp], { maxCardsHold: 4, inPlay: [] });
     expect(c.required).toBe(true);
     expect(c.plays).toEqual([]);
-    expect(c.discards).toEqual([od]);
-    expect(c.warnings.join('\n')).toMatch(/Discarding Order Delay/);
+    expect(c.discards).toEqual([sp]);
+    expect(c.warnings.join('\n')).toMatch(/Discarding Spy/);
     expect(c.warnings.join('\n')).not.toMatch(/must play a card/);
+    expect(c.warnings.join('\n')).not.toMatch(/holds back your own attacks/);
   });
 
   it('discards a Blockade when Blockades are all it holds', () => {
@@ -257,7 +285,7 @@ describe('chooseCardPlays', () => {
   it('sheds as many cards as the hand is over the limit: plays first, then the lowest-value discards', () => {
     expect(chooseCardPlays([bl, al, od, sp, bl2, op], { maxCardsHold: 3, inPlay: [] })).toMatchObject({
       plays: [],
-      discards: [od, sp, bl],
+      discards: [sp, bl, bl2],
     });
     expect(chooseCardPlays([r(5), op, bl, al, sp, bl2], { maxCardsHold: 4, inPlay: [] })).toMatchObject({
       plays: [r(5)],
@@ -268,6 +296,58 @@ describe('chooseCardPlays', () => {
   it('discards a Reinforcement whose armies are unknown only as a last resort', () => {
     const c = chooseCardPlays([r(), al], { maxCardsHold: 1, inPlay: [] });
     expect(c.discards).toEqual([al]);
+  });
+
+  describe('keep values depend on the game (#163)', () => {
+    const dip: Card = { id: '22222222222222222222222222222222', type: 8, name: 'Diplomacy' };
+    const gi: Card = { id: '33333333333333333333333333333333', type: 7, name: 'Gift' };
+    const rules = { maxCardsHold: 1, inPlay: [] };
+
+    it('a Spy-type card goes first in a fogged game with several players', () => {
+      expect(chooseCardPlays([dip, sp], rules, { players: 4, fog: 'Foggy' }).discards).toEqual([sp]);
+    });
+
+    it('Gift and Diplomacy are worth little in a 1v1: they go before an information card', () => {
+      expect(chooseCardPlays([sp, dip], rules, { players: 2, fog: 'Foggy' }).discards).toEqual([dip]);
+      expect(chooseCardPlays([sp, gi], rules, { players: 2, fog: 'Foggy' }).discards).toEqual([gi]);
+    });
+
+    it('the Spy-type cards are worth nothing without fog', () => {
+      expect(chooseCardPlays([dip, sp], rules, { players: 2, fog: 'NoFog' }).discards).toEqual([sp]);
+      const recon: Card = { id: '11111111111111111111111111111110', type: 10, name: 'Reconnaissance' };
+      expect(chooseCardPlays([bl, recon], rules, { players: 4, fog: 'NoFog' }).discards).toEqual([recon]);
+    });
+
+    it('a team game of two teams is not a 1v1', () => {
+      expect(chooseCardPlays([sp, dip], rules, { players: 4, team: true, fog: 'Foggy' }).discards).toEqual([sp]);
+    });
+  });
+
+  describe('Reinforcement in a team game (#163)', () => {
+    const r2: Card = { id: '12121212121212121212121212121212', type: 1, name: 'Reinforcement', armies: 5 };
+
+    it('is not auto-played: the team shares one hand, and a teammate may need it more', () => {
+      const c = chooseCardPlays([r(5), op], { maxCardsHold: 4, inPlay: [] }, { team: true });
+      expect(c.plays).toEqual([]);
+      expect(c.extraArmies).toBe(0);
+      expect(c.warnings.join('\n')).toMatch(/team shares one hand/);
+    });
+
+    it('is played when cards must be shed: one per card over the limit, before any discard', () => {
+      const c = chooseCardPlays([r(5), r2, bl], { maxCardsHold: 2, inPlay: [] }, { team: true });
+      expect(c.plays).toEqual([r(5)]);
+      expect(c.discards).toEqual([]);
+      expect(c.extraArmies).toBe(5);
+    });
+  });
+
+  it('outside a team game says the Reinforcement play is a default, not a must (#163)', () => {
+    const c = chooseCardPlays([r(5)], { maxCardsHold: 4, inPlay: [] });
+    expect(c.plays).toEqual([r(5)]);
+    expect(c.warnings.join('\n')).toMatch(/by default/);
+    // A play that must happen (over the limit) is not called a default.
+    const d = chooseCardPlays([r(5), bl], { maxCardsHold: 1, inPlay: [] });
+    expect(d.warnings.join('\n')).not.toMatch(/by default/);
   });
 
   it('no play needed below the limit with no Reinforcement', () => {
@@ -329,5 +409,76 @@ describe('advisedOrderPriority', () => {
     expect(advisedOrderPriority([op], choice([op], []))).toBeUndefined();
     expect(advisedOrderPriority([op], choice([], [op]))).toBeUndefined();
     expect(advisedOrderPriority([od], choice([], []))).toBeUndefined();
+  });
+});
+
+describe('adviseOrderDelay (#163)', () => {
+  const od: Card = { id: G3, type: 5, name: 'Order Delay' };
+  const op: Card = { id: G2, type: 4, name: 'Order Priority' };
+  const none = { required: false, plays: [], discards: [], extraArmies: 0, warnings: [] };
+  const mv = (from: number, to: number, kind: 'attack' | 'transfer' = 'attack') => ({ from, to, kind });
+  const moves = [mv(4, 1, 'transfer'), mv(1, 3), mv(1, 2)];
+
+  it('advises the card above the first order that is not urgent when an answerable attack is planned', () => {
+    const a = adviseOrderDelay([op, od], none, moves, ['early', 'filler', 'last']);
+    expect(a).toEqual({ card: od, before: 2, attacks: [3] });
+  });
+
+  it('goes above every move when none is urgent', () => {
+    expect(adviseOrderDelay([od], none, moves, ['filler', 'sure', 'last'])?.before).toBe(1);
+  });
+
+  it('is not advised without a late attack, without the card, or when the card is discarded', () => {
+    expect(adviseOrderDelay([od], none, moves, ['early', 'filler', 'sure'])).toBeUndefined();
+    expect(adviseOrderDelay([op], none, moves, ['early', 'filler', 'last'])).toBeUndefined();
+    expect(adviseOrderDelay([od], { ...none, discards: [od] }, moves, ['early', 'filler', 'last'])).toBeUndefined();
+    expect(adviseOrderDelay([od], none, moves, undefined)).toBeUndefined();
+    // A transfer put last is not an attack the opponent can answer.
+    expect(adviseOrderDelay([od], none, [mv(1, 2, 'transfer')], ['last'])).toBeUndefined();
+  });
+});
+
+describe('readActiveCards (#163, unverified live)', () => {
+  // The client's ActiveCard is { Card: the GameOrderPlayCard<X> that was played, ExpiresAfterTurn }.
+  // A Diplomacy order reads its two players, then the card GUID, then the player who played it;
+  // a Sanctions order its target, then the GUID and the player.
+  const GZ = 'abababababababababababababababab';
+  const diplomacy = { $type: 'warlight.shared.GameOrderPlayCardDiplomacy', x1: ME, x2: OTHER, x3: GZ, x4: OTHER, x5: null };
+  const sanctions = { $type: 'warlight.shared.GameOrderPlayCardSanctions', y1: ME, y2: GZ, y3: OTHER, y4: null };
+  const active = (card: unknown, expires: number) => ({ $type: 'warlight.shared.ActiveCard', k1: card, k2: expires });
+  const info = (current: unknown[], previous: unknown[] = []) => ({
+    $type: 'warlight.shared.LatestGameInfo',
+    b: { $type: 'warlight.shared.GameStanding', t: [], c: [], a: current },
+    d: { $type: 'warlight.shared.GameStanding', t: [], c: [], a: previous },
+  });
+
+  it('reads Diplomacy (the two players) and Sanctions (the target) from the current standing', () => {
+    expect(readActiveCards(info([active(diplomacy, 9), active(sanctions, 8)]))).toEqual([
+      { card: 'Diplomacy', players: [ME, OTHER], playedBy: OTHER, expiresAfterTurn: 9, untilTurn: 10 },
+      { card: 'Sanctions', target: ME, playedBy: OTHER, expiresAfterTurn: 8, untilTurn: 9 },
+    ]);
+  });
+
+  it("reads 'until turn' as the client does: ExpiresAfterTurn + 1, except for a card that expires at the beginning of the next turn", () => {
+    // The bundle's ActiveCard: BeginningOfNextTurn (Spy, Reconnaissance, Surveillance) → ExpiresAfterTurn;
+    // EndOfTurn (every other card) → ExpiresAfterTurn + 1.
+    const spy = { $type: 'warlight.shared.GameOrderPlayCardSpy', s1: OTHER, s2: GZ, s3: ME };
+    const recon = { $type: 'warlight.shared.GameOrderPlayCardReconnaissance', r1: 7, r2: GZ, r3: ME };
+    expect(readActiveCards(info([active(spy, 5), active(recon, 6)])).map((a) => [a.card, a.untilTurn])).toEqual([
+      ['Spy', 5],
+      ['Reconnaissance', 6],
+    ]);
+  });
+
+  it('names other cards by their order type, and never reads the previous standing', () => {
+    const abandon = { $type: 'warlight.shared.GameOrderPlayCardAbandon', z1: 4, z2: GZ, z3: OTHER };
+    expect(readActiveCards(info([active(abandon, 3)], [active(diplomacy, 2)]))).toEqual([
+      { card: 'Emergency Blockade', playedBy: OTHER, expiresAfterTurn: 3, untilTurn: 4 },
+    ]);
+  });
+
+  it('is empty, never throwing, on odd or missing shapes', () => {
+    expect(readActiveCards(null)).toEqual([]);
+    expect(readActiveCards(info([active(null, 1), { $type: 'warlight.shared.ActiveCard' }]))).toEqual([]);
   });
 });

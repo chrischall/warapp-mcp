@@ -90,6 +90,31 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   deploy-total refusal even when nobody is sanctioned; the check is a preview warning and war.app's
   error 11 is the backstop. Decoding the active cards would let the warning (and the soft check)
   apply only when I am sanctioned this turn.
+- **Active cards (#163) — UNVERIFIED live.** The client bundle's `GameStanding` carries
+  `ActiveCards`, a list of `warlight.shared.ActiveCard { Card, ExpiresAfterTurn }` whose `Card` is
+  the `GameOrderPlayCard<X>` that started it (read-only, from the bundle's readers: Diplomacy reads
+  its two player ids, Sanctions its target, then the base reads the card GUID and the player who
+  played it; Emergency Blockade's order class is `GameOrderPlayCardAbandon`). `readActiveCards`
+  (`src/cards.ts`) reads them loosely from the current standing; "until turn" follows the client's
+  ActiveCard (read-only, from the bundle): `ExpiresAfterTurn` for a card whose expire behaviour is
+  `BeginningOfNextTurn` (Spy, Reconnaissance, Surveillance), `ExpiresAfterTurn + 1` for `EndOfTurn`
+  (every other built-in card). `warapp_plan_turn` warns of a
+  Diplomacy between the user and a player the plan attacks, and of Sanctions on the user. No live
+  board with an active card has been decoded, and whether fogged card plays hide them is unknown;
+  the income model still does not apply a Sanction (submit's soft deploy check stays).
+- **A team's hand (#163) — UNVERIFIED live.** The wiki says a team shares one hand and one card
+  limit. `warapp_plan_turn` and `warapp_submit_turn` read the hand as every card under the user's
+  and the teammates' in-game ids (each GUID once); how war.app keys a team's hand has not been
+  seen on a team board. So `warapp_submit_turn`'s hard error-51 refusal counts only the user's own
+  cards (a wrong guess must not block a valid turn); the team's gathered count over the limit is a
+  preview warning until a live team board verifies the keying.
+- **Bomb reach** — a bomb lands after the deploys, so the advice takes the opponent's worst case:
+  with another stack beside the border it deploys there, unhalved (deploy + ⌈bombed/2⌉ + its other
+  stacks, less the guards); with only the bombed stack it deploys on it and is halved with it.
+- **Bomb and Emergency Blockade (#163) — rounding UNVERIFIED.** The advice reads a bombed stack
+  in its worst case for the user (an enemy keeps the larger half, the user the smaller) and the
+  wall as `round((armies + deploy) × MultiplyAmount)`; the commander is taken as unharmed by a
+  bomb (players' reports, not the wiki).
 - **Error 11 hint:** when war.app refuses a deploy total (error 11), the hint names the modelled
   number. The live board (`GetLatestGameInfo`) carries no income figure — the client computes it
   from the standing — so the authoritative number is the game's "armies per turn".

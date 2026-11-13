@@ -95,8 +95,14 @@ function cardOf(o: Obj, key: unknown): Card | undefined {
  * standing still carry instances already played — playing one is refused with
  * error 50 `CardInstanceUnavailable` — so they are never walked. Empty when there
  * is no standing or it carries no cards; never throws.
+ *
+ * A team shares one hand and one card limit (the wiki's Team Games). Given several in-game
+ * ids (mine and my teammates'), the hand is every card under any of them, each GUID once.
+ * UNVERIFIED live (#163): how war.app keys a team's hand — under each player, under one, or
+ * repeated under all — has not been seen on a team board.
  */
-export function readHand(info: unknown, myInGameId: number): Card[] {
+export function readHand(info: unknown, myInGameId: number | readonly number[]): Card[] {
+  const owners = new Set(typeof myInGameId === 'number' ? [myInGameId] : myInGameId);
   const out: Card[] = [];
   const seen = new Set<string>();
   const walk = (v: unknown, owner: number | undefined, key: unknown, depth: number): void => {
@@ -113,7 +119,7 @@ export function readHand(info: unknown, myInGameId: number): Card[] {
     }
     if (!isObj(v)) return;
     if (typeof v.$type === 'string' && CARD_INSTANCE.test(v.$type)) {
-      if (owner !== undefined && owner !== myInGameId) return;
+      if (owner !== undefined && !owners.has(owner)) return;
       const card = cardOf(v, key);
       if (card && !seen.has(card.id)) {
         seen.add(card.id);
@@ -132,14 +138,16 @@ export function readHand(info: unknown, myInGameId: number): Card[] {
  * Whether my hand can be read at all: the current standing carries a player entry keyed by
  * `myInGameId` (a `[id, value]` pair). Without one, {@link readHand}'s empty hand means "unknown",
  * not "no cards" (#130). Unverified live: assumes war.app sends every player's entry, as the
- * synthetic shape does.
+ * synthetic shape does. Given several ids (a team's hand, as {@link readHand} takes them), an
+ * entry under any of them will do.
  */
-export function handReadable(info: unknown, myInGameId: number): boolean {
+export function handReadable(info: unknown, myInGameId: number | readonly number[]): boolean {
+  const owners = new Set(typeof myInGameId === 'number' ? [myInGameId] : myInGameId);
   let found = false;
   const walk = (v: unknown, depth: number): void => {
     if (found || depth > MAX_DEPTH) return;
     if (Array.isArray(v)) {
-      if (v.length === 2 && v[0] === myInGameId && v[1] !== null && typeof v[1] === 'object') {
+      if (v.length === 2 && typeof v[0] === 'number' && owners.has(v[0]) && v[1] !== null && typeof v[1] === 'object') {
         found = true;
         return;
       }
@@ -207,26 +215,51 @@ export const cardsToShed = (hand: readonly Card[], rules: CardRules): number =>
 export const playRequired = (hand: readonly Card[], rules: CardRules): boolean => cardsToShed(hand, rules) > 0;
 
 /**
- * How much a card is worth keeping, for choosing a discard (lowest goes first). A
- * heuristic: Order Delay holds back my own attacks and the information cards are
- * cheap; Reinforcement (only kept when its armies are unknown) is the last resort.
+ * How much a card is worth keeping, for choosing a discard (lowest goes first). A heuristic
+ * (#163): every ranking read keeps the timing and combat cards longest — Order Delay (an unplayed
+ * one is a threat in itself), Order Priority, Emergency Blockade, Bomb and Airlift — and the
+ * information cards go first. Order Priority sits below Order Delay because one that must go is
+ * played, not thrown away. Reinforcement is kept only when its armies are unknown (or, in a team
+ * game, when it is not auto-played) and is the last resort. {@link keepValue} adjusts it per game.
  */
 const KEEP_VALUE: Readonly<Record<number, number>> = {
-  5: 0, // Order Delay
   2: 1, // Spy
   10: 2, // Reconnaissance
   11: 3, // Surveillance
-  8: 4, // Diplomacy
-  9: 5, // Sanctions
-  7: 6, // Gift
-  3: 7, // Emergency Blockade
-  12: 8, // Blockade
+  7: 4, // Gift
+  8: 5, // Diplomacy
+  9: 6, // Sanctions
+  12: 7, // Blockade
+  6: 8, // Airlift
   13: 9, // Bomb
-  6: 10, // Airlift
+  3: 10, // Emergency Blockade
   4: 11, // Order Priority
-  1: 12, // Reinforcement
+  5: 12, // Order Delay
+  1: 13, // Reinforcement
 };
-const keepValue = (c: Card): number => KEEP_VALUE[c.type] ?? 5;
+const INFORMATION_CARDS = new Set([2, 10, 11]);
+const ONE_V_ONE_CHEAP = new Set([7, 8]); // Gift, Diplomacy
+
+/** The game around a hand, for the card policy (#163). Every field optional: unknown is "not". */
+export interface CardGame {
+  /** Players in the game (seats, eliminated included or not: only "two" matters). */
+  players?: number;
+  /** A team game: the team shares one hand and one card limit. */
+  team?: boolean;
+  /** GameFeed's `Fog` setting (`NoFog`, `Foggy`, …). */
+  fog?: string;
+}
+
+/**
+ * A card's keep value in this game: the information cards (Spy, Reconnaissance, Surveillance)
+ * are worth nothing without fog; Gift and Diplomacy are worth little in a 1v1 (there is no third
+ * player to buy off or to set against the opponent), below the information cards.
+ */
+export function keepValue(c: Card, game: CardGame = {}): number {
+  if (game.fog === 'NoFog' && INFORMATION_CARDS.has(c.type)) return -2;
+  if (game.players === 2 && !game.team && ONE_V_ONE_CHEAP.has(c.type)) return 0;
+  return KEEP_VALUE[c.type] ?? 5;
+}
 
 export interface CardChoice {
   /** The hand is over the hold limit, so cards must be played or discarded. */
@@ -240,19 +273,21 @@ export interface CardChoice {
 }
 
 /**
- * The cards the planner plays: every Reinforcement card (it only adds armies). Over
- * the hold limit, with plays still short of what must leave the hand, the lowest-value
- * cards leave it (#127): discarded, except an Order Priority, which is played (my first
- * order goes first; one at most, a second is discarded) — so Order Delay is discarded before
- * Order Priority is spent. Order Delay (it holds back my own attacks) and Blockade (it gives a
- * territory away) are never auto-played — discarding one costs nothing this turn.
+ * The cards the planner plays. Outside a team game, every Reinforcement card (it only adds
+ * armies) — said to be a default, since holding one is a choice. In a team game (#163) the team
+ * shares one hand, so a Reinforcement is played only when cards must be shed (one per card over
+ * the limit, before any discard). Over the hold limit, with plays still short of what must leave
+ * the hand, the lowest-value cards in this game ({@link keepValue}) leave it: discarded, except an
+ * Order Priority, which is played (my first order goes first; one at most, a second is
+ * discarded). Order Delay, Blockade and the targeted cards are never auto-played.
  */
-export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardChoice {
+export function chooseCardPlays(hand: readonly Card[], rules: CardRules, game: CardGame = {}): CardChoice {
   const shed = cardsToShed(hand, rules);
   const plays: Card[] = [];
   const discards: Card[] = [];
   const warnings: string[] = [];
   let extraArmies = 0;
+  let heldForTeam = 0;
   for (const c of hand) {
     if (c.type !== CARD_REINFORCEMENT) continue;
     const armies = reinforcementArmies(c, rules);
@@ -260,16 +295,34 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
       warnings.push(`Not playing Reinforcement card ${c.id}: the armies it adds are unknown.`);
       continue;
     }
+    if (game.team && plays.length >= shed) {
+      heldForTeam++;
+      continue;
+    }
     plays.push(c);
     extraArmies += armies;
+  }
+  if (heldForTeam) {
+    warnings.push(
+      `Holding ${heldForTeam === 1 ? 'a Reinforcement card' : `${heldForTeam} Reinforcement cards`}: in a team game the team shares one hand, ` +
+        'so a teammate may need it more. Play it yourself (warapp_submit_turn) if the team agrees.',
+    );
+  }
+  const defaults = plays.length - Math.min(plays.length, shed);
+  if (!game.team && defaults > 0) {
+    warnings.push(
+      `Playing ${defaults === 1 ? 'the Reinforcement card' : `${defaults} Reinforcement cards`} by default (+${extraArmies} armies this turn): ` +
+        'holding one is a choice — with no enemy in sight, or so the opponent undercounts your income — and the card keeps.',
+    );
   }
   if (plays.length < shed) {
     const used = new Set(plays.map((c) => c.id));
     const rest = hand.filter((c) => !used.has(c.id));
-    // A stable sort: equal-value cards go in hand order. The lowest-value cards leave the hand
-    // (#127: Order Delay goes before Order Priority, which is kept for a turn that needs it); an
+    // A stable sort: equal-value cards go in hand order. The lowest-value cards leave the hand; an
     // Order Priority that must go anyway is played rather than discarded.
-    const byValue = rest.map((c, i) => ({ c, i })).sort((a, b) => keepValue(a.c) - keepValue(b.c) || a.i - b.i);
+    const byValue = rest
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => keepValue(a.c, game) - keepValue(b.c, game) || a.i - b.i);
     // At most one Order Priority is played: a second adds nothing over the first, and whether
     // war.app takes two plays of it in one turn is unverified, so the rest are discarded.
     const playOne = (c: Card): boolean => c.type === CARD_ORDER_PRIORITY && !plays.some((p) => p.type === CARD_ORDER_PRIORITY);
@@ -286,8 +339,8 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
   if (discards.length) {
     warnings.push(
       `You hold ${hand.length} cards (the limit is ${rules.maxCardsHold}), so ${shed} must be played or discarded this ` +
-        `turn. Discarding ${discards.map((c) => c.name).join(', ')} — no play of ${discards.length === 1 ? 'it' : 'them'} ` +
-        'is useful (Blockade gives a territory away, Order Delay holds back your own attacks). Swap in a card play if you prefer.',
+        `turn. Discarding ${discards.map((c) => c.name).join(', ')}, the cards worth least in this game (the timing and ` +
+        'combat cards — Order Delay, Order Priority, Emergency Blockade, Bomb, Airlift — are kept longest). Swap in a card play if you prefer.',
     );
   }
   return { required: shed > 0, plays, discards, extraArmies, warnings };
@@ -316,4 +369,132 @@ export function advisedOrderPriority(hand: readonly Card[], choice: CardChoice):
   if (choice.plays.some((c) => c.type === CARD_ORDER_PRIORITY)) return undefined;
   const discarded = new Set(choice.discards.map((c) => c.id));
   return hand.find((c) => c.type === CARD_ORDER_PRIORITY && !discarded.has(c.id));
+}
+
+/** Where to play an Order Delay this turn (#163). */
+export interface OrderDelayAdvice {
+  card: Card;
+  /** The move (1-based, in the plan's order) the card goes above. */
+  before: number;
+  /** The attacks (1-based) the opponent can answer first: the reason the card is advised. */
+  attacks: number[];
+}
+
+/** A move as the card advice reads it. */
+interface AdviceMove {
+  from: number;
+  to: number;
+  kind: 'attack' | 'transfer';
+}
+
+/**
+ * The Order Delay to play, and where: when the schedule (#127) puts an attack last because the
+ * opponent can answer it first (`moveSlots` `last`) and I hold an Order Delay the choice neither
+ * plays nor discards, the card goes above every order that is not urgent — after the protected
+ * and early orders (withdrawals, transfers into a threatened border), before the rest — as the
+ * sources and the developer's own bot play it. `undefined` otherwise. The planner never plays it:
+ * warapp_submit_turn writes the card after every move (its only live-verified position), where it
+ * delays nothing, so the advice is for the game client.
+ */
+export function adviseOrderDelay(
+  hand: readonly Card[],
+  choice: CardChoice,
+  moves: readonly AdviceMove[],
+  moveSlots: readonly string[] | undefined,
+): OrderDelayAdvice | undefined {
+  if (!moveSlots) return undefined;
+  const gone = new Set([...choice.plays, ...choice.discards].map((c) => c.id));
+  const card = hand.find((c) => c.type === CARD_ORDER_DELAY && !gone.has(c.id));
+  if (!card) return undefined;
+  const attacks = moves.flatMap((m, i) => (m.kind === 'attack' && moveSlots[i] === 'last' ? [i + 1] : []));
+  if (!attacks.length) return undefined;
+  const firstCalm = moveSlots.findIndex((s) => s !== 'protected' && s !== 'early');
+  const before = firstCalm < 0 ? moves.length + 1 : firstCalm + 1;
+  return { card, before, attacks };
+}
+
+/** A card in effect on the board (#163): Diplomacy, Sanctions and the like, while they last. */
+export interface ActiveCard {
+  /** The card's display name (`Diplomacy`, `Sanctions`, `Emergency Blockade`, …). */
+  card: string;
+  /** Diplomacy: the two players (in-game ids) who cannot attack each other. */
+  players?: [number, number];
+  /** Sanctions: the player (in-game id) whose income it cuts. */
+  target?: number;
+  /** Who played it (in-game id). */
+  playedBy?: number;
+  /** The raw `ExpiresAfterTurn` field. */
+  expiresAfterTurn?: number;
+  /**
+   * The turn the card is gone by, as the client shows it ("Expires turn N", "you cannot attack this
+   * player until turn N"): the bundle's ActiveCard returns `ExpiresAfterTurn` for a card whose expire
+   * behaviour is BeginningOfNextTurn (Spy, Reconnaissance, Surveillance) and `ExpiresAfterTurn + 1`
+   * for EndOfTurn (every other built-in card: Diplomacy, Sanctions, Emergency Blockade, …).
+   */
+  untilTurn?: number;
+}
+
+/** Card types whose ActiveCard expires at the beginning of the next turn (the bundle's `CardGame*` overrides). */
+const EXPIRES_AT_NEXT_TURN = new Set([2, 10, 11]); // Spy, Reconnaissance, Surveillance
+
+/** The client's play-order class suffixes (`GameOrderPlayCard<X>`) that are not the card's name. */
+const ORDER_CARD: Readonly<Record<string, string>> = { Abandon: 'Emergency Blockade' };
+const PLAY_ORDER = /GameOrderPlayCard([A-Za-z]+)$/;
+const ACTIVE_CARD = /\.ActiveCard$/;
+
+const intsOf = (o: Obj): number[] =>
+  Object.entries(o)
+    .filter(([k, v]) => k !== '$type' && typeof v === 'number' && Number.isInteger(v))
+    .map(([, v]) => v as number);
+
+function activeCardOf(o: Obj): ActiveCard | undefined {
+  const order = Object.values(o).find((v): v is Obj => isObj(v) && typeof v.$type === 'string' && PLAY_ORDER.test(v.$type));
+  if (!order) return undefined;
+  const kind = PLAY_ORDER.exec(order.$type as string)![1]!;
+  const type = cardTypeByName(kind);
+  const card = ORDER_CARD[kind] ?? (type !== undefined ? cardTypeName(type) : kind);
+  const ints = intsOf(order);
+  const out: ActiveCard = { card };
+  // The order's own fields are read before the base's card GUID and player: Diplomacy's two
+  // players, Sanctions' target, then the player who played it (the last integer).
+  if (kind === 'Diplomacy' && ints.length >= 3) out.players = [ints[0]!, ints[1]!];
+  if (kind === 'Sanctions' && ints.length >= 2) out.target = ints[0]!;
+  if (ints.length) out.playedBy = ints[ints.length - 1]!;
+  const expires = intsOf(o)[0];
+  if (expires !== undefined) {
+    out.expiresAfterTurn = expires;
+    out.untilTurn = type !== undefined && EXPIRES_AT_NEXT_TURN.has(type) ? expires : expires + 1;
+  }
+  return out;
+}
+
+/**
+ * The cards in effect, from a decoded LatestGameInfo's CURRENT GameStanding (its `ActiveCards`:
+ * each a `warlight.shared.ActiveCard { Card, ExpiresAfterTurn }`, the card being the play order
+ * that started it). Fields are minified, so they are found by type name and read order (read from
+ * the client bundle). Loose: an unexpected shape yields fewer entries, never an error.
+ *
+ * UNVERIFIED live (#163): the reader follows the client bundle's ActiveCard and play-order
+ * readers, but no live board carrying an active card has been decoded yet, and whether a fogged
+ * player sees the cards played on others (card plays can be fogged) is not known.
+ */
+export function readActiveCards(info: unknown): ActiveCard[] {
+  const out: ActiveCard[] = [];
+  const walk = (v: unknown, depth: number): void => {
+    if (depth > MAX_DEPTH) return;
+    if (Array.isArray(v)) {
+      for (const item of v) walk(item, depth + 1);
+      return;
+    }
+    if (!isObj(v)) return;
+    if (typeof v.$type === 'string' && ACTIVE_CARD.test(v.$type)) {
+      const card = activeCardOf(v);
+      if (card) out.push(card);
+      return;
+    }
+    for (const [k, f] of Object.entries(v)) if (k !== '$type') walk(f, depth + 1);
+  };
+  const standing = currentStanding(info);
+  if (standing) walk(standing, 0);
+  return out;
 }

@@ -1075,7 +1075,19 @@ export interface TurnPlan {
    * then being that member; the strike stack: whether it attacks this turn), `why` the reason.
    */
   offence: OffenceEntry[];
+  /**
+   * Each move's place in the schedule (#127), parallel to `moves`: `protected` (the one order
+   * Order Priority protects), `early` (withdrawals, transfers into a border the enemy can break),
+   * `sure`, `filler`, and `last` (an attack the opponent can answer first: its stack can attack
+   * before mine lands, or it can reach a contested neutral). Read by the card advice (#163: Order
+   * Delay goes above every order that is not urgent when a `last` attack is planned).
+   */
+  moveSlots?: MoveSlotName[];
 }
+
+/** The names of {@link MoveSlot}, earliest first. */
+export type MoveSlotName = 'protected' | 'early' | 'sure' | 'filler' | 'last';
+const SLOT_NAMES: readonly MoveSlotName[] = ['protected', 'early', 'sure', 'filler', 'last'];
 
 export interface OffenceEntry {
   target: number;
@@ -8138,5 +8150,6 @@ export function planTurn(input: PlanInput): TurnPlan {
     multiSourceCaptures: [...combined].sort(byNum),
     frontier,
     offence: offenceList,
+    moveSlots: moves.map((m) => SLOT_NAMES[slotOf(m)]!),
   };
 }
