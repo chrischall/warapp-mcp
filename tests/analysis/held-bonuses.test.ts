@@ -183,7 +183,7 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
     expect(p.expected.bonusesCompleted).toEqual([602]);
     expect(p.conceded).toEqual([]);
     for (const t of [1, 2, 3]) expect(armiesToTake(2 + deployedTo(p, t), STD)!).toBeGreaterThan(3);
-    expect(p.warnings.join('\n')).toMatch(/Bonus Keep \(#601\) \(\+4\) is not safe against the whole enemy deploy .* only where it lands/);
+    expect(p.warnings.join('\n')).toMatch(/Bonus Keep \(#601\) \(\+4\) is not safe against the whole enemy deploy .* falls only to armies deployed against it/);
   });
 
   it('(b) floors the +4 bonus when its three borders cannot all be held: nothing is conceded or withdrawn (#118)', () => {

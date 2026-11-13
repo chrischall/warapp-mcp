@@ -142,8 +142,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   bonus that fails the cost tests is held anyway when the captures leave enough. One the
   enemy deploy must choose among is floored instead of conceded — each border first beats the
   stack already next to it, the rest spread over them — with a warning that it "is not safe
-  against the whole enemy deploy … one deploy can break it only where it lands": tell the
-  user which border is thinnest. A held bonus's border is not conceded on a near miss (the
+  against the whole enemy deploy … it falls only to armies deployed against it", and a line
+  per opponent "Player P's ~D deploy can still break … (N of it needed): +V at risk this
+  turn" — that line, not the per-bonus ones, says how many can fall at once: tell the user
+  which border is thinnest and what is at risk. A "could be taken next turn" warning on a
+  border the plan deploys to ends with what the deploy leaves there. A held bonus's border is not conceded on a near miss (the
   income left is short of a sure hold by at most 2 armies or 15%) or while it still holds
   against the expected attack (enemy movable + its deploy estimate): everything left goes
   there with a warning that it may fall, and its armies never withdraw. When `cardAdvice` is

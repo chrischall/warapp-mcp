@@ -220,7 +220,8 @@
 //     to it; ties: the higher bonus value, then id), each up to its full hold — the way
 //     `guaranteedFalls` sizes the opponent's single budget on offence (rule 1e). A warning names
 //     a bonus left short ("… is not safe against the whole enemy deploy …, but it is not
-//     conceded: … one deploy can break it only where it lands"). Idle armies next to a border
+//     conceded: … it falls only to armies deployed against it", then one line per opponent:
+//     "Player P's ~D deploy can still break … (N of it needed): +V at risk this turn"). Idle armies next to a border
 //     are not counted as hold funding: a transfer runs in move order, interleaved with the
 //     opponent's attacks, so it may arrive after the attack it was meant to stop.
 //     Each border of a conceded unit is then judged alone by rule
@@ -1952,15 +1953,17 @@ export function planTurn(input: PlanInput): TurnPlan {
    * Fill `threatened` from `borders`, judging each by the armies that stay on it (its
    * armies at the start of the turn unless a finishing-off attack already left).
    */
+  /** Rule 1a's pre-deploy threat warning per border, restated once the deploys are known. */
+  const threatWarnings = new Map<number, { text: string; threat: number }>();
   const assessThreats = () => {
     for (const b of borders.values()) {
       const have = stayAt(b.id);
       const units = unitsAt(b.id);
       const take = armiesToTake(have + units, rates);
       if (take === null || take > b.threat) continue;
-      warnings.push(
-        `${label(b.id)} (${have} armies${units ? ' and my commander' : ''}) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${take} would do.`,
-      );
+      const text = `${label(b.id)} (${have} armies${units ? ' and my commander' : ''}) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${take} would do.`;
+      threatWarnings.set(b.id, { text, threat: b.threat });
+      warnings.push(text);
       // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.
       let d = 1;
       while ((armiesToTake(have + units + d, rates) ?? Infinity) <= b.threat) d++;
@@ -2241,7 +2244,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   // it conceded every bonus once the deploy outgrew them, though the stacks already next to the
   // borders could take none. So a held bonus first gets its floor — every threatened border beats
   // the armies already next to it — and, when it is not then held whole, what is left is spread
-  // over its borders so the deploy breaks it only where it lands.
+  // over its borders so the deploy must be aimed at a border to break it.
   /** The most movable armies (special units included) one visible enemy player has next to my `t`. */
   const adjacentMovable = (t: number) => {
     const byPlayer = new Map<number, number>();
@@ -2361,7 +2364,7 @@ export function planTurn(input: PlanInput): TurnPlan {
    * unit broken through its cheapest short border facing that player; a 0/1 knapsack), as
    * `guaranteedFalls` sizes a single budget on offence.
    */
-  const bestResponseLoss = (us: readonly Unit[], have: ReadonlyMap<Threatened, number>, short: (m: Threatened) => boolean) => {
+  const bestResponse = (us: readonly Unit[], have: ReadonlyMap<Threatened, number>, short: (m: Threatened) => boolean) => {
     const players = new Map<number, { deploy: number; items: Map<Unit, number> }>();
     for (const u of us)
       for (const m of u.members) {
@@ -2375,17 +2378,29 @@ export function planTurn(input: PlanInput): TurnPlan {
         players.set(p, e);
       }
     let loss = 0;
-    for (const { deploy, items } of players.values()) {
+    const by: { player: number; deploy: number; units: Unit[]; of: Unit[]; cost: number; value: number }[] = [];
+    for (const [player, { deploy, items }] of [...players].sort((a, b) => a[0] - b[0])) {
       const d = Math.max(0, Math.floor(deploy));
-      const best = new Array<number>(d + 1).fill(0);
+      // best[x]: the most value x armies of the deploy break, with the cheapest such pick.
+      type Pick = { value: number; cost: number; units: Unit[] };
+      const best: Pick[] = Array.from({ length: d + 1 }, () => ({ value: 0, cost: 0, units: [] }));
       for (const [u, c] of items) {
         if (c > d) continue;
-        for (let x = d; x >= c; x--) best[x] = Math.max(best[x]!, best[x - c]! + u.value);
+        for (let x = d; x >= c; x--) {
+          const prev = best[x - c]!;
+          const cand = { value: prev.value + u.value, cost: prev.cost + c, units: [...prev.units, u] };
+          const cur = best[x]!;
+          if (cand.value > cur.value || (cand.value === cur.value && cand.cost < cur.cost)) best[x] = cand;
+        }
       }
-      loss += best[d]!;
+      const pick = best[d]!;
+      loss += pick.value;
+      if (pick.value > 0) by.push({ player, deploy: d, units: pick.units, of: [...items.keys()], cost: pick.cost, value: pick.value });
     }
-    return loss;
+    return { loss, by };
   };
+  const bestResponseLoss = (us: readonly Unit[], have: ReadonlyMap<Threatened, number>, short: (m: Threatened) => boolean) =>
+    bestResponse(us, have, short).loss;
   const settleContested = () => {
     const open = units.filter((u) => u.contested && !u.conceded);
     if (!open.length) return;
@@ -2488,6 +2503,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           : `Deploy ${n} more to ${label(m.id)} against the one shared deploy: ${m.have} armies, so player ${borders.get(m.id)?.player}'s deploy needs ${breakCost(m)} of its ~${deployShare(m)} there to take it.`,
       );
     for (const m of members) if (m.holdCost <= 0) heldBorders.add(m.id);
+    const stillShort: Unit[] = [];
     for (const u of units) {
       if (!u.contested || u.conceded) continue;
       const left = u.members.filter((m) => !heldBorders.has(m.id));
@@ -2495,9 +2511,21 @@ export function planTurn(input: PlanInput): TurnPlan {
         u.contested = false;
         continue;
       }
+      stillShort.push(u);
       warnings.push(
-        `Bonus ${bonusName(u.bonusId)} (+${u.value}) is not safe against the whole enemy deploy (its ${unitBorders(u)} would need ${left.reduce((n, m) => n + m.holdCost, 0)} more), but it is not conceded: every border beats the armies already next to it, so one deploy can break it only where it lands — ${left.map((m) => `${label(m.id)} (${m.have} armies; ${breakCost(m)} of the ~${deployShare(m)} deploy take it)`).join(', ')}.`,
+        `Bonus ${bonusName(u.bonusId)} (+${u.value}) is not safe against the whole enemy deploy (its ${unitBorders(u)} would need ${left.reduce((n, m) => n + m.holdCost, 0)} more), but it is not conceded: every border beats the armies already next to it, so it falls only to armies deployed against it — ${left.map((m) => `${label(m.id)} (${m.have} armies; ${breakCost(m)} of the ~${deployShare(m)} deploy take it)`).join(', ')}.`,
       );
+    }
+    // Read together, the lines above can suggest one deploy breaks only one bonus: say what
+    // each opponent's best use of its one deploy breaks (the same knapsack the spread used).
+    const have = new Map(stillShort.flatMap((u) => u.members.map((m) => [m, m.have] as const)));
+    for (const r of bestResponse(stillShort, have, (m) => !heldBorders.has(m.id)).by) {
+      const list = (us: readonly Unit[]) => {
+        const names = us.map((u) => bonusName(u.bonusId));
+        return `bonus${names.length > 1 ? 'es' : ''} ${names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]}`;
+      };
+      const what = r.units.length === r.of.length ? `${list(r.units)}${r.units.length > 1 ? ' at once' : ''}` : `${r.units.length} of ${list(r.of)}`;
+      warnings.push(`Player ${r.player}'s ~${r.deploy} deploy can still break ${what} (${r.cost} of it needed): +${r.value} at risk this turn.`);
     }
   };
 
@@ -6280,6 +6308,18 @@ export function planTurn(input: PlanInput): TurnPlan {
       );
   /** What the final orders send at `t` (a top-up of idle armies can raise a capture's size). */
   const sentAt = (t: number) => moves.reduce((n, m) => (m.kind === 'attack' && m.to === t ? n + m.armies : n), 0);
+  // A border warned about before the deploys may have been deployed to since: say what the
+  // plan leaves there, so the warning does not contradict the hold, floor or spread lines.
+  for (let i = 0; i < warnings.length; i++) {
+    const hit = [...threatWarnings].find(([, w]) => w.text === warnings[i]);
+    if (!hit) continue;
+    const [id, { threat }] = hit;
+    const n = deployed.get(id) ?? 0;
+    if (n <= 0) continue;
+    const have = stayAt(id);
+    const take = armiesToTake(have + unitsAt(id), rates);
+    warnings[i] += ` Before this turn's deploys: the plan deploys ${n} there, leaving ${have} armies (${take ?? 'none can'} to take${take !== null && take > threat ? `, more than the ${threat} that can reach it: it holds` : `; the ${threat} that can reach it still could`}).`;
+  }
   const offenceList = [...offence.values()].map(({ bonusId, ...o }): OffenceEntry => {
     // A strike attack's cost is what the final orders send (a top-up can raise it).
     // The strike stack's own entry is final as built.

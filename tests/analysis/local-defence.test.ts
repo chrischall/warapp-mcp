@@ -115,7 +115,7 @@ describe('Local Deployment: a bonus\'s own armies defend it (#103)', () => {
     expect(withdrawals(p)).toEqual([]);
     expect(p.conceded).toEqual([]);
     const w = p.warnings.join('\n');
-    expect(w).toMatch(/Bonus Fort \(#50\) \(\+3\) is not safe against the whole enemy deploy .* only where it lands/);
+    expect(w).toMatch(/Bonus Fort \(#50\) \(\+3\) is not safe against the whole enemy deploy .* falls only to armies deployed against it/);
     expect(w).not.toMatch(/withdrawal from/);
     expect(deploySum(p)).toBe(15);
     expect(valid(ALL, p, b, 15, true)).toEqual([]);

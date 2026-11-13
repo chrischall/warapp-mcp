@@ -4,7 +4,10 @@
 // here is made up):
 //  (a) three held +4 bonuses, one 2-army border each facing an enemy 6-stack, income 17, the
 //      opponent deploying 30: each border first beats the armies already next to it (the floor
-//      tier), then the rest is spread so the deploy can break a bonus only where it lands.
+//      tier), then the rest is spread over the borders. The issue hoped "at most one bonus can
+//      fall" here; that is unattainable at this income: keeping two of them would need break
+//      costs above 30 combined (about 36 armies on the borders), and only 6 + 17 = 23 exist.
+//      So the plan says plainly that the ~30 deploy can still break all three (22 needed).
 //  (b) a +4 bonus whose two threatened borders cost 12 each to hold (a third safe), income 35
 //      and nothing else to spend it on: both are held (24), nothing conceded or withdrawn.
 import { describe, expect, it } from 'vitest';
@@ -84,9 +87,20 @@ describe('#118 (a): three held bonuses facing one big deploy', () => {
         expect(Math.min(...ds)).toBeGreaterThanOrEqual(5);
         expect(Math.max(...ds) - Math.min(...ds)).toBeLessThanOrEqual(1);
       });
-      it('says the deploy can break a bonus only where it lands', () => {
+      it('says each bonus falls only to deploy aimed at it', () => {
         expect(plan.rationale.join('\n')).toMatch(/floor/i);
-        expect(plan.warnings.join('\n')).toMatch(/only where it lands/);
+        expect(plan.warnings.join('\n')).toMatch(/falls only to armies deployed against it/);
+        expect(plan.warnings.join('\n')).not.toMatch(/only where it lands/);
+      });
+      it("says the one deploy can still break all three (the issue's \"at most one\" is out of reach at income 17)", () => {
+        // 8/8/7 on the borders: 13, 13 and 11 to take, less the 5 movable next to each — 8 + 8 + 6 = 22 of the 30.
+        expect(plan.warnings).toContain(
+          "Player 20's ~30 deploy can still break bonuses Alder (#601), Birch (#602) and Cedar (#603) at once (22 of it needed): +12 at risk this turn.",
+        );
+      });
+      it('does not call a border it deploys to merely "could be taken" without saying what the deploy leaves', () => {
+        const w = plan.warnings.find((x) => x.startsWith('T1 (#1) (2 armies) could be taken next turn'))!;
+        expect(w).toMatch(new RegExp(`Before this turn's deploys: the plan deploys ${deployedTo(plan, 1)} there, leaving ${2 + deployedTo(plan, 1)} armies`));
       });
     });
   }
@@ -103,6 +117,12 @@ describe('#118 (a), income 36: spread, not one whole hold, when that loses less 
   });
   it('says why', () => {
     expect(plan.rationale.join('\n')).toMatch(/Spread what is left over the floored bonuses' borders rather than hold one whole/);
+  });
+  it('says the one deploy can now break only one of them', () => {
+    // 14 armies on each border: 23 to take, less the 5 movable next to it — 18 each, so the 30 breaks one (+4).
+    expect(plan.warnings).toContain(
+      "Player 20's ~30 deploy can still break 1 of bonuses Alder (#601), Birch (#602) and Cedar (#603) (18 of it needed): +4 at risk this turn.",
+    );
   });
   it('still holds every bonus whole when the income covers them all', () => {
     const rich = planTurn({ graph: gA, board: BOARD_A, me: ME, income: 60, settings: STD, options: { enemyDeploy: 30 } });

@@ -191,7 +191,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     faces a player with two or more of my threatened borders) is **floored** when it cannot be
     held whole — every border first beats the armies already next to it — and kept: the rest
     is spread over its borders against the one shared enemy deploy, never conceded or withdrawn
-    from. Otherwise, one that does not pay or that the income left cannot cover is conceded
+    from; a warning per opponent says what its one deploy can still break at once ("+V at
+    risk"), which may be all of them. Otherwise, one that does not pay or that the income left cannot cover is conceded
     whole ("conceding bonus …") and its borders are judged alone without that bonus.
     `expand` is unchanged but warns.
   - **Withdraw** (under `balanced`/`defend`): a conceded border's movable armies go first to
