@@ -497,7 +497,8 @@
 //     territory does (rule 1k): a capture from it spends only its armies above that, plus deploys
 //     (a rationale line names those that keep it holding), so it never ends the turn takeable
 //     after starting safe. The threat counts its captured neighbours as gone. A target no source
-//     affords on its surplus may still fall to a combined capture (rule 3a); in rule 4e a step
+//     affords on its surplus may still fall to a combined capture (rule 3a), whose softeners and
+//     finisher keep what holds a safe border too; in rule 4e a step
 //     that fails only because of a keep is reported as the hold it would leave short.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border: it goes to the held border with the highest
@@ -3556,7 +3557,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const x of eligible.slice(1, k).sort(byNum)) {
         // Never kill the last defender: the finisher's attack is the one that moves in. Under
         // No-Split the whole stack goes (#124): a stack that would kill the last one is no softener.
-        let a = avail.get(x)!;
+        // #121: a safe border keeps what holds it (its survivors come home, but may arrive late).
+        let a = noSplit ? avail.get(x)! : Math.min(avail.get(x)!, movableFor(x, t));
         while (a > 0 && straightKills(a, off) >= Math.min(left, real)) {
           if (noSplit) a = 0;
           else a--;
@@ -3573,7 +3575,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (take === null) return null;
       // No-Split: the finisher sends its whole stack too.
       const armies = noSplit ? Math.max(take, avail.get(finisher)!) : take;
-      const need = Math.max(0, armies - avail.get(finisher)!);
+      // #121: the finisher keeps what holds a safe border too; deploys cover the rest.
+      const need = Math.max(0, armies - (noSplit ? avail.get(finisher)! : movableFor(finisher, t)));
       if (need > spareAt(finisher)) continue;
       const survivors = armies - straightKills(left, def);
       return { softeners, finisher, armies, need, left, survivors };

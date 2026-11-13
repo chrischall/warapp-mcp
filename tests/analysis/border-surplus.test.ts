@@ -105,6 +105,22 @@ describe('#121 a capture keeps what holds a safe border', () => {
   });
 });
 
+describe('#121 a combined capture keeps what holds its finisher', () => {
+  // E1(6) – 2(10) – 3(neutral 8) – 4(6); T2 holds (10 need 17 against 5 + 5 = 10). No single
+  // source affords the 14 that take T3 on its surplus; T4 wears it down and T2 finishes.
+  // Before, the finisher could spend T2's garrison and leave it beside the enemy.
+  const g = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [2, 3], [3, 4]], [[70, 3, [3]]]));
+  const s = board([enemy(1, 6), mine(2, 10), neutral(3, 8), mine(4, 6)]);
+
+  for (const income of [0, 6]) {
+    it(`T2 still holds after the plan (income ${income})`, () => {
+      const input: PlanInput = { graph: g, board: s, me: ME, income, settings: STD };
+      const p = plan(input);
+      expect(takes(endsOn(input, p, 2))).toBeGreaterThan(10);
+    });
+  }
+});
+
 describe('#121 transfers: what counts as held, and where the front is', () => {
   const FFA: PlanGameContext = { players: [{ id: ME }, { id: ENEMY }, { id: 21 }], turn: 14, fog: 'NoFog' };
   const transfersFrom = (p: TurnPlan, id: number) => p.moves.filter((m) => m.kind === 'transfer' && m.from === id);
