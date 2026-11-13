@@ -16,11 +16,28 @@
 //    it could hold (none of their territories visibly held by anyone else, neutral included)
 //    whose values come closest to the gap. Every combination that fits equally well is listed:
 //    they are candidates, never an assertion.
+//
+// Given the game's players (#94), every opponent still playing is listed — teammates and
+// players out of the game are not — even with no territory in view: `visible` counts its
+// territories in view on the newest board, `turnsUnseen` the latest turns none was, counted back
+// over my boards to the one that last showed it, or to turn 1 (every turn of the game). Where my
+// boards stop first (the oldest board, or a gap), it is a floor (`turnsUnseenAtLeast`) and the
+// text says "at least". For one with nothing in view,
+// `earnedAtLeast` is a LOWER BOUND on the armies it has received since the game started: its
+// starting armies (TerritoryLimit × InitialPlayerArmiesPerTerritory, when the settings give
+// them) + the base income (the one income rule, `boardIncome`, over no territory: the
+// MinimumArmyBonus floor, never a bonus) for every turn so far, the turn being played included
+// (its income is paid at the start of the turn). Armies received, not held: neutral captures
+// cost armies, so it could be banking up to roughly that, minus what its expansion cost. A
+// warning says when the bound beats my largest stack, and separately my total visible armies.
 import type { BoardState } from '../board.js';
+import type { GameMap, GameSettings } from '../normalize.js';
+import { carriesTeam } from '../teams.js';
 import { bonusTerritories } from './bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import type { MapGraph } from './graph.js';
 import { enemyDeployEstimates, ownerShown, visibleState, type PlannerSettings } from './planner.js';
+import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 
 /** One of my boards and the turn it was seen on (the turn being played on it). */
 export interface TurnBoard {
@@ -85,10 +102,50 @@ export interface InferredBonuses {
   more: number;
 }
 
+/** One player of the game (GameFeed ids, like the board's). */
+export interface TrackPlayer {
+  id: number;
+  /** Its display name, for the warnings (else `Player <id>`). */
+  name?: string;
+  /** Its team; absent or -1 (`NO_TEAM`) in a no-team game. */
+  team?: number;
+  /** GameFeed state, e.g. `Playing`, `Eliminated`; absent counts as `Playing`. */
+  state?: string;
+}
+
+/** The game around the boards (#94): who is still playing, and what each started with. */
+export interface TrackGame {
+  players: readonly TrackPlayer[];
+  /** Territories each player started with, and the armies on each, when the settings give them. */
+  start?: { territories: number; armiesPerTerritory: number };
+  /** Why `start` is absent (said in the note). */
+  startUnknown?: string;
+  /** Settings under which the base income each turn may not be a floor (e.g. Sanctions), said in the note. */
+  incomeCaveats?: string[];
+}
+
+/** What an opponent with no territory in view must have received since the game started (#94). */
+export interface EarnedBound {
+  /** (start ?? 0) + baseIncome × turns: a lower bound on armies received, not on armies held. */
+  total: number;
+  /** Its starting armies; `null` when the settings do not give them (left out of `total`). */
+  start: number | null;
+  /** The base income it surely earned each turn (no bonus counted). */
+  baseIncome: number;
+  /** Turns of income paid so far: every turn of the game, the one being played included. */
+  turns: number;
+  /** My largest stack on the newest board. */
+  largestStack: number;
+  /** My total visible armies on the newest board. */
+  visibleArmies: number;
+  exceedsLargest: boolean;
+  exceedsTotal: boolean;
+}
+
 export interface OpponentTrack {
   playerId: number;
-  /** The first turn whose board showed any territory of it. */
-  firstSeen: number;
+  /** The first turn whose board showed any territory of it; `null` when none ever did. */
+  firstSeen: number | null;
   /** The newest turn in the history. */
   lastTurn: number;
   /** Observed turns since first seen, oldest first. */
@@ -107,9 +164,70 @@ export interface OpponentTrack {
   unaccounted: number | null;
   /** Bonuses that could explain `income − visibleIncome`; `null` when there is no gap. */
   inferred: InferredBonuses | null;
+  /** Its territories in view on the newest board. */
+  visible: number;
+  /**
+   * The latest turns with none of its territories in view (0 when some are in view), counted
+   * over my boards: back to the board that last showed it, or to turn 1.
+   */
+  turnsUnseen: number;
+  /**
+   * `true` when my boards stop before that (the oldest board, or a gap, comes after it could
+   * last have been in view): `turnsUnseen` is then a floor, counted from the boards I have.
+   */
+  turnsUnseenAtLeast: boolean;
+  /** With nothing in view: what it must have received since the game started; else `null`. */
+  earnedAtLeast: EarnedBound | null;
+  /** Unseen-banking warnings (also in `notes`), naming it. */
+  warnings: string[];
   /** Confidence notes, plain sentences. */
   notes: string[];
 }
+
+/**
+ * {@link TrackGame} from GameFeed's players and settings: each player's starting armies are
+ * TerritoryLimit × InitialPlayerArmiesPerTerritory, unless either is missing, the game uses full
+ * distribution (DistributionMode -1: every territory is split among the players, TerritoryLimit
+ * ignored — unverified, docs/WARAPP-API.md) or a map distribution that is not `normal` (a
+ * scenario sets its own starts). A Sanctions card is an income caveat: it can cut income below
+ * the base the bound counts.
+ */
+export function trackGame(
+  players: readonly TrackPlayer[],
+  settings:
+    | (Pick<GameSettings, 'territoryLimit' | 'initialPlayerArmiesPerTerritory' | 'distributionMode'> & { cards?: readonly string[] })
+    | undefined,
+  map?: Pick<GameMap, 'distributionModes'>,
+): TrackGame {
+  const list = players.map((p) => ({
+    id: p.id,
+    ...(p.name !== undefined ? { name: p.name } : {}),
+    ...(p.team !== undefined ? { team: p.team } : {}),
+    ...(p.state !== undefined ? { state: p.state } : {}),
+  }));
+  const caveats = settings?.cards?.includes('Sanctions')
+    ? ['the game has the Sanctions card, which can cut a sanctioned player\'s income below the base']
+    : [];
+  const base = { players: list, ...(caveats.length ? { incomeCaveats: caveats } : {}) };
+  if (settings?.distributionMode === FULL_DISTRIBUTION)
+    return { ...base, startUnknown: 'the game uses full distribution, which splits every territory among the players whatever the territory limit' };
+  const mode = map?.distributionModes.find((d) => d.id === settings?.distributionMode);
+  if (mode?.type !== undefined && mode.type !== 'normal')
+    return { ...base, startUnknown: `the game uses the map's "${mode.name}" distribution (${mode.type}), which sets its own starting armies` };
+  const territories = settings?.territoryLimit;
+  const armiesPerTerritory = settings?.initialPlayerArmiesPerTerritory;
+  if (territories === undefined || territories <= 0)
+    return { ...base, startUnknown: "the settings do not give the territories each player started with (TerritoryLimit)" };
+  if (armiesPerTerritory === undefined)
+    return { ...base, startUnknown: 'the settings do not give the armies each starting territory had (InitialPlayerArmiesPerTerritory)' };
+  return { ...base, start: { territories, armiesPerTerritory: Math.max(0, armiesPerTerritory) } };
+}
+
+/** GameFeed's DistributionMode for full distribution (unverified, docs/WARAPP-API.md). */
+export const FULL_DISTRIBUTION = -1;
+
+/** Player states still in the game (absent counts as playing), as the profile counts them. */
+const playing = (p: TrackPlayer) => (p.state ?? 'Playing') === 'Playing';
 
 const byNum = (a: number, b: number) => a - b;
 
@@ -220,16 +338,18 @@ function inferBonuses(options: { id: number; value: number }[], gap: number): In
 }
 
 /**
- * Per opponent (visible on the newest board, sorted by id): its observed deploys turn by turn,
- * an income estimate, the armies that must be in the fog and the bonuses that could explain an
- * income gap. `boards` are my views of the same game, any order; only consecutive turns are
- * compared. See the module comment for the rules.
+ * Per opponent: its observed deploys turn by turn, an income estimate, the armies that must be
+ * in the fog and the bonuses that could explain an income gap. Those visible on the newest
+ * board come first (by id); given `game`, every other opponent still playing follows (by id),
+ * with its received lower bound (#94). `boards` are my views of the same game, any order; only
+ * consecutive turns are compared. See the module comment for the rules.
  */
 export function trackOpponents(
   g: MapGraph,
   boards: readonly TurnBoard[],
   me: number,
   settings: PlannerSettings = {},
+  game?: TrackGame,
 ): OpponentTrack[] {
   // One board per turn (the last given wins), oldest first.
   const byTurn = new Map<number, BoardState>();
@@ -247,15 +367,49 @@ export function trackOpponents(
     }
     return m;
   };
-  return [...visibleAt(lastTurn).values()].map(({ playerId }) => {
-    const firstSeen = turns.find((t) => seesPlayer(byTurn.get(t)!, g, playerId)) ?? lastTurn;
+  const players = game?.players ?? [];
+  const teams = players.some((p) => carriesTeam(p.team));
+  const myTeam = players.find((p) => p.id === me)?.team;
+  const ally = (p: TrackPlayer) => p.id === me || (teams && carriesTeam(myTeam) && p.team === myTeam);
+  // A teammate in view is not an opponent either (given the game's players).
+  const visibleIds = [...visibleAt(lastTurn).keys()].filter((id) => {
+    const p = players.find((x) => x.id === id);
+    return !p || !ally(p);
+  });
+  const unseenIds = players
+    .filter((p) => !ally(p) && playing(p) && !visibleIds.includes(p.id))
+    .map((p) => p.id)
+    .sort(byNum);
+  const nameOf = (id: number) => players.find((p) => p.id === id)?.name ?? String(id);
+  // My stacks on the newest board, against which an unseen opponent's bound is weighed.
+  let largestStack = 0;
+  let visibleArmies = 0;
+  for (const t of latest.territories) {
+    if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player' || t.owner.playerId !== me || t.armies === null) continue;
+    largestStack = Math.max(largestStack, t.armies);
+    visibleArmies += t.armies;
+  }
+  const rules = { base: Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME)), per: settings.bonusArmyPer ?? 0 };
+  // The one income rule over no territory: the base income floor, never a bonus. With nothing in
+  // view it may hold as little as one territory, and floor(1 / BonusArmyPer) never beats the base.
+  const baseIncome = boardIncome(g, new Set(), rules).total;
+  // When the base income each turn may not be a floor: a held negative bonus can take income
+  // below it (boardIncome clamps only the total at 0), and so can a Sanctions card.
+  const caveats = [
+    ...(g.map.bonuses.some((b) => b.value < 0) ? ['the map has a negative-value bonus, which can take income below the base'] : []),
+    ...(game?.incomeCaveats ?? []),
+  ];
+
+  return [...visibleIds, ...unseenIds].map((playerId) => {
+    const seenOn = turns.filter((t) => seesPlayer(byTurn.get(t)!, g, playerId));
+    const firstSeen = seenOn[0] ?? null;
     const observed: ObservedTurn[] = [];
     const missing: number[] = [];
     const unseen: number[] = [];
     for (let i = 1; i < turns.length; i++) {
       const from = turns[i - 1]!;
       const to = turns[i]!;
-      if (from < firstSeen) continue;
+      if (firstSeen === null || from < firstSeen) continue;
       for (let m = from + 1; m < to; m++) missing.push(m);
       if (to !== from + 1) continue;
       const before = byTurn.get(from)!;
@@ -296,8 +450,18 @@ export function trackOpponents(
         losses,
       });
     }
-    const v = visibleAt(lastTurn).get(playerId)!;
+    const v = visibleAt(lastTurn).get(playerId) ?? { base: baseIncome, bonusIncome: 0 };
     const visibleIncome = v.base + v.bonusIncome;
+    const visible = latest.territories.filter(
+      (t) => g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.owner.playerId === playerId && ownerShown(t),
+    ).length;
+    // Back from the newest board while consecutive boards show none of its territories: we stop
+    // on a board that shows it (exact), on turn 0 (the whole game, exact) or on a turn I have no
+    // board for (a gap or the oldest board): then all I know is the turns after it, a floor.
+    let back = lastTurn;
+    while (back >= 1 && byTurn.has(back) && !seesPlayer(byTurn.get(back)!, g, playerId)) back--;
+    const turnsUnseen = visible ? 0 : lastTurn - back;
+    const turnsUnseenAtLeast = turnsUnseen > 0 && back >= 1 && !byTurn.has(back);
     const recent = observed.slice(-MEDIAN_TURNS);
     const income = recent.length ? Math.max(visibleIncome, median(recent.map((x) => x.observed))) : null;
     const unaccounted = observed.length
@@ -307,7 +471,44 @@ export function trackOpponents(
     const inferred = gap > 0 ? inferBonuses(possibleBonuses(g, latest, playerId), gap) : null;
 
     const notes: string[] = [];
-    if (observed.length < 2)
+    const warnings: string[] = [];
+    let earnedAtLeast: EarnedBound | null = null;
+    if (!visible) {
+      const start = game?.start ? game.start.territories * game.start.armiesPerTerritory : null;
+      const paid = Math.max(0, lastTurn);
+      const total = (start ?? 0) + baseIncome * paid;
+      earnedAtLeast = {
+        total,
+        start,
+        baseIncome,
+        turns: paid,
+        largestStack,
+        visibleArmies,
+        exceedsLargest: total > largestStack,
+        exceedsTotal: total > visibleArmies,
+      };
+      const s = (n: number) => (n === 1 ? '' : 's');
+      const outOfSight = turnsUnseenAtLeast
+        ? `out of sight for at least ${turnsUnseen} turn${s(turnsUnseen)} (no board of mine for turn ${back})`
+        : `out of sight for ${turnsUnseen} turn${s(turnsUnseen)}`;
+      const startText =
+        start !== null ? `starting armies ${start} (${game!.start!.territories} territories × ${game!.start!.armiesPerTerritory}) + ` : '';
+      notes.push(
+        `It has been ${outOfSight} and has received at least ${total} armies since the game started (${startText}base income ${baseIncome} × ${paid} turn${s(paid)}, no bonus counted): a lower bound on armies received, not held — it could be banking up to roughly this, minus what its expansion cost.${
+          start === null ? ` Its starting armies are not counted: ${game?.startUnknown ?? 'the settings do not give them'}.` : ''
+        }${caveats.length ? ` The base income each turn may not hold: ${caveats.join('; ')}.` : ''}`,
+      );
+      const head = `Player ${nameOf(playerId)} has been ${outOfSight} and has received at least ${total} armies since the game started (${
+        start !== null ? `starting armies ${start} + ` : ''
+      }base income ${baseIncome} × ${paid} turn${s(paid)})`;
+      if (earnedAtLeast.exceedsLargest)
+        warnings.push(`${head}; it could be banking a stack larger than your largest (${largestStack}).`);
+      if (earnedAtLeast.exceedsTotal)
+        warnings.push(`${head}; it could be banking more than your total visible armies (${visibleArmies}).`);
+    }
+    if (firstSeen === null) {
+      // Never in view: there is nothing else to say about it.
+    } else if (observed.length < 2)
       notes.push(
         `Only ${observed.length} observed turn${observed.length === 1 ? '' : 's'} (fewer than 2 observed turns): the planner keeps its single-turn estimate.`,
       );
@@ -349,6 +550,7 @@ export function trackOpponents(
           `${n} combination${n === 1 ? '' : 's'} fit${n === 1 ? 's' : ''} its income gap of ${gap}${inferred.exact ? '' : ' approximately'}: candidates, not facts.`,
         );
     }
+    notes.push(...warnings);
     return {
       playerId,
       firstSeen,
@@ -361,6 +563,11 @@ export function trackOpponents(
       incomeTurns: recent.map((x) => x.from),
       unaccounted,
       inferred,
+      visible,
+      turnsUnseen,
+      turnsUnseenAtLeast,
+      earnedAtLeast,
+      warnings,
       notes,
     };
   });

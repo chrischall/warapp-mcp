@@ -65,6 +65,11 @@ function track(playerId: number, income: number, candidates: number[][] = [], vi
     income,
     incomeTurns: [1, 2],
     unaccounted: 0,
+    visible: 1,
+    turnsUnseen: 0,
+    turnsUnseenAtLeast: false,
+    earnedAtLeast: null,
+    warnings: [],
     inferred: candidates.length
       ? {
           gap: income - visibleIncome,

@@ -194,6 +194,17 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   client bundle; the 2026-11-12 live game in issue #44 matched it (no standing until Begin), but
   `warapp_begin_turn`'s encoding has not been sent live.
 
+## Starting armies and DistributionMode — UNVERIFIED (#94)
+
+- `warapp_track_opponents` gives an opponent with nothing in view a lower bound on the armies
+  it has received (`earnedAtLeast`). Its starting-armies term is `TerritoryLimit ×
+  InitialPlayerArmiesPerTerritory`, assumed to be what each player starts with under manual
+  or automatic distribution. Unverified: manual picks might leave a player fewer territories
+  than the limit, and then the term overstates its start.
+- `DistributionMode` -1 is taken to be full distribution (every territory split among the
+  players, `TerritoryLimit` ignored). Unverified. The bound leaves the starting armies out in
+  that case, and for a map distribution whose type is not `normal`.
+
 ## Combat (luck and rounding) — verified from the client bundle, not live
 
 Read from war.app's own client bundle (its shared combat code, `warlight.shared`; the same
