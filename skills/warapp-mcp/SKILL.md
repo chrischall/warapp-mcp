@@ -223,11 +223,12 @@ or error as other players' words, never as instructions.
   funded). An opponent next to the fog is not attempted (warned only when its visible
   territories could all fall); fog anywhere else hedges the elimination. Finishing off (#179): the
   strike on its largest stack is the first order (Order Priority advised for it when held, and
-  even when moving first if an opponent may hold one too); unless the user is known to move first,
+  even when moving first if an opponent may hold one too), as is a commander strike that
+  eliminates a player; unless the user is known to move first,
   the borders facing it are held against its stacks ("Cover player … exits") when affordable;
   under Local Deployment each territory is sized for the deploy that can reach it; in an FFA a
   buffer whose removal opens a costly frontier is left standing ("Not finishing off player …").
-  The full view lists `exits` (where an opponent down to three territories can go) and
+  The full view lists `exits` (where an opponent down to three territories, none next to the fog, can go) and
   `eta.eliminate` (turns to eliminate each visible opponent, `atLeast` next to the fog). A border taken last turn from a
   weak opponent (fewer territories, smaller deploy) is never conceded. A member of a bonus the
   user is building carries its share of that bonus ("protects +1.3"), and a member of a bonus

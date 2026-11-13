@@ -770,7 +770,10 @@
 //     dropped too, unless `opponentsMayHoldOrderPriority` (two cards cancel, so mine keeps it
 //     first; #179). The strike that eliminates a finished-off player (#179: the attack on its
 //     largest stack, by armies plus special units) is my first order after a commander strike, and
-//     Order Priority is advised for it on the same terms (no minimum armies). When a combined
+//     Order Priority is advised for it on the same terms (no minimum armies). With no finish-off and
+//     no strike the threat to my commander advised the card for, a commander strike (rule 1s) that
+//     eliminates a player is that first order instead, on the same terms: its commander could
+//     walk away before it lands. When a combined
 //     capture (rule 3a) takes that stack, its first attack only wears it down: no card is advised
 //     for it, and a warning says the card cannot secure the kill. Finishing a player off (rule 1e)
 //     assumes my attacks land before its own orders: unless `movesFirst`, a warning says it can move between its territories or take my
@@ -1214,7 +1217,10 @@ export interface TurnPlan {
    * view). Present for every opponent with a visible territory my land can reach.
    */
   eta?: { eliminate: Record<number, EliminateEta> };
-  /** #179: the exits of each visible opponent down to {@link FEW_TERRITORIES} or fewer. */
+  /**
+   * #179: the exits of each visible opponent down to {@link FEW_TERRITORIES} or fewer — none
+   * whose land borders the fog (it may hold more there) unless it is being finished off.
+   */
   exits?: OpponentExits[];
 }
 
@@ -5683,6 +5689,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
               break;
             }
             const keep = Math.max(need - guard, straightKills(threat, rates.offensiveKillRate));
+            // It keeps the loss buffer too through the later passes, not only the hold.
+            coverAt.set(x, keep);
             const extra = keep - (keepAt.get(x) ?? 0);
             if (extra > 0) {
               keepAt.set(x, keep);
@@ -8992,6 +9000,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /**
    * #179: the strike that eliminates a player finished off (rule 1e) — the attack on its largest
    * stack (most armies plus special units, then lowest id): the one that can flee or strike first.
+   * Else a commander strike (rule 1s) the threat to my commander did not already protect
+   * (`commander`): it ends a player too, and the commander can walk away before it lands.
    * A combined capture there (rule 3a) has no such strike: its first attack only wears the stack
    * down, and Order Priority moves only my first order ahead, so the card cannot secure it.
    */
@@ -9001,7 +9011,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         .filter((t) => moves.some((m) => m.kind === 'attack' && m.to === t))
         .sort((a, b) => armiesOf(b) + unitsAt(b) - (armiesOf(a) + unitsAt(a)) || a - b)[0];
       const order = target === undefined ? undefined : moves.find((m) => m.kind === 'attack' && m.to === target);
-      if (order) return { p, order, attacks: moves.filter((m) => m.kind === 'attack' && m.to === target).length };
+      if (order) return { p, order, attacks: moves.filter((m) => m.kind === 'attack' && m.to === target).length, commander: false };
+    }
+    // Else a strike on a commander (rule 1s) that no threat to mine advised the card for: it too
+    // ends a player, and the commander can walk away before it lands.
+    if (strikeOrder) return undefined;
+    for (const t of [...strikes].sort(byNum)) {
+      const st = state.get(t);
+      if (st?.owner.kind !== 'player' || !struck.has(st.owner.playerId)) continue;
+      const order = moves.find((m) => m.kind === 'attack' && m.to === t);
+      if (order) return { p: st.owner.playerId, order, attacks: moves.filter((m) => m.kind === 'attack' && m.to === t).length, commander: true };
     }
     return undefined;
   })();
@@ -9074,7 +9093,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // leaves there).
   const exits: OpponentExits[] = [];
   for (const [p, theirs] of [...ownedBy].sort((a, b) => a[0] - b[0])) {
-    if (theirs.length > FEW_TERRITORIES) continue;
+    // Its land bordering the fog, it may hold more there: not known to be down to a few.
+    if (theirs.length > FEW_TERRITORIES || (fogEdge(p).length && !finishedOff.has(p))) continue;
     const stacks = theirs.map((t) => {
       const movable = Math.max(0, armiesOf(t) - guard) + unitsAt(t);
       const reach = movable + deployReaching(p, [t]);
@@ -9150,8 +9170,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (firstOrder === killOrder && cardAdvice) {
       const units = unitsAt(firstOrder.to);
       const stack = `${armiesOf(firstOrder.to)}${units ? ` armies and special units worth ${units}` : ''}`;
+      const what = kill!.commander
+        ? `the strike on player ${kill!.p}'s commander, which eliminates it (${stack} there), before the commander can move away`
+        : `the strike that eliminates player ${kill!.p}, on its largest stack (${stack}), the one that could flee or strike first`;
       rationale.push(
-        `Play Order Priority: ${label(firstOrder.from)} → ${label(firstOrder.to)} is the strike that eliminates player ${kill!.p}, on its largest stack (${stack}), the one that could flee or strike first; ${contested ? mayHold(`player ${kill!.p}`) : `with the card it is my first order and runs before player ${kill!.p}'s first`}.`,
+        `Play Order Priority: ${label(firstOrder.from)} → ${label(firstOrder.to)} is ${what}; ${contested ? mayHold(`player ${kill!.p}`) : `with the card it is my first order and runs before player ${kill!.p}'s first`}.`,
       );
     }
     if (firstOrder === strikeOrder && contested) {

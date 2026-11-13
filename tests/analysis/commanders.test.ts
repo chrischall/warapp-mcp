@@ -460,9 +460,11 @@ describe('planner: commander rules after review (C2b, #61)', () => {
     const gd = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [5, 2], [1, 3], [3, 4]]));
     const b = board([withCommander(mine(1, 3), ME), withCommander(enemy(2, 20), ENEMY), mine(3, 2), neutral(4, 2), mine(5, 50)], true);
 
-    it('does not spend Order Priority when only a third player threatens my commander', () => {
+    it('does not spend Order Priority for my commander when only a third player threatens it', () => {
       // T2 (1 + player 20's commander) cannot take T1 (3 + my commander); player 30's T6 (60) can.
-      // Moving first does not stop player 30, so the card is not advised for the strike.
+      // Moving first does not stop player 30, so the card is not advised to protect my commander;
+      // #179: it is advised for the strike itself, which eliminates player 20 (its commander
+      // could walk away before it lands).
       const g3 = buildGraph(makeMap([1, 2, 3, 4, 5, 6], [[1, 2], [5, 2], [1, 3], [3, 4], [1, 6]]));
       const b3 = board(
         [withCommander(mine(1, 3), ME), withCommander(enemy(2, 1), ENEMY), mine(3, 2), neutral(4, 2), mine(5, 50), enemy(6, 60, 30)],
@@ -470,8 +472,9 @@ describe('planner: commander rules after review (C2b, #61)', () => {
       );
       const plan = planTurn({ graph: g3, board: b3, me: ME, income: 10, settings: STD, options: { goal: 'balanced', enemyDeploy: 5, holdsOrderPriority: true } });
       expect(attacks(plan).some((m) => m.to === 2)).toBe(true);
-      expect(plan.cardAdvice).toBeNull();
-      expect(plan.rationale.some((r) => r.startsWith('Play Order Priority'))).toBe(false);
+      expect(plan.rationale.some((r) => r.startsWith("Play Order Priority: my commander's territory"))).toBe(false);
+      expect(plan.cardAdvice).toBe('order-priority');
+      expect(plan.rationale.join('\n')).toMatch(/Play Order Priority: T5 \(#5\) → T2 \(#2\) is the strike on player 20's commander, which eliminates it/);
     });
 
     it('advises playing my Order Priority card so the strike resolves first, and says so', () => {
@@ -539,7 +542,7 @@ describe('planner: commander rules after review (C2b, #61)', () => {
       });
     });
 
-    it('no advice when my commander is not threatened', () => {
+    it('no advice for my commander when it is not threatened: only the eliminating strike\'s (#179)', () => {
       // My commander on T1 (16) defends as 23, far above T2's ~12.
       const g2 = buildGraph(makeMap([1, 2, 3, 5], [[1, 2], [1, 3], [2, 5]]));
       const plan = planTurn({
@@ -551,8 +554,10 @@ describe('planner: commander rules after review (C2b, #61)', () => {
         options: { goal: 'expand', holdsOrderPriority: true },
       });
       expect(attacks(plan)[0]).toMatchObject({ from: 1, to: 2 });
-      expect(plan.cardAdvice).toBeNull();
       expect(plan.warnings.some((w) => w.includes('Order Priority'))).toBe(false);
+      expect(plan.rationale.some((r) => r.startsWith("Play Order Priority: my commander's territory"))).toBe(false);
+      expect(plan.cardAdvice).toBe('order-priority');
+      expect(plan.rationale.join('\n')).toMatch(/Play Order Priority: T1 \(#1\) → T2 \(#2\) is the strike on player 20's commander, which eliminates it/);
     });
   });
 

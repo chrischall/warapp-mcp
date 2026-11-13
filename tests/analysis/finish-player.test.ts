@@ -354,3 +354,63 @@ describe('#179 Order Priority for the kill: no minimum armies, and never for a w
     }
   });
 });
+
+describe('#179 Order Priority for a commander strike that eliminates a player (rule 1s)', () => {
+  // My 1 (40) strikes player 20's commander on 2 (5); it also holds 3 and 4. My commander is
+  // nowhere, so no threat to it advises the card: the strike itself is the decisive first order.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [2, 3], [3, 4], [1, 5], [4, 5]]));
+  const b = board([mine(1, 40), withCommander(enemy(2, 5), VICTIM), enemy(3, 8), enemy(4, 8), neutral(5, 2)], true);
+  const STRIKE: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true };
+  const plan = (options: Parameters<typeof planTurn>[0]['options'] = {}) =>
+    planTurn({ graph: g, board: b, me: ME, income: 10, settings: STRIKE, options: { enemyDeploy: 5, ...options } });
+  const LINE = /Play Order Priority: T1 \(#1\) → T2 \(#2\) is the strike on player 20's commander, which eliminates it/;
+
+  it('is my first order, and Order Priority is advised for it when I hold the card', () => {
+    const p = plan({ holdsOrderPriority: true });
+    expect(p.moves[0]).toMatchObject({ kind: 'attack', from: 1, to: 2 });
+    expect(p.moves[0]!.reason).toMatch(/kills player 20's commander, which eliminates it/);
+    expect(p.cardAdvice).toBe('order-priority');
+    expect(p.rationale.join('\n')).toMatch(LINE);
+  });
+
+  it('without the card it still goes first, and no card is advised', () => {
+    const p = plan();
+    expect(p.moves[0]).toMatchObject({ kind: 'attack', from: 1, to: 2 });
+    expect(p.cardAdvice).toBeNull();
+  });
+
+  it('moving first, the card is advised only when the opponent may hold one too', () => {
+    expect(plan({ holdsOrderPriority: true, movesFirst: true }).cardAdvice).toBeNull();
+    const p = plan({ holdsOrderPriority: true, movesFirst: true, opponentsMayHoldOrderPriority: true });
+    expect(p.moves[0]).toMatchObject({ kind: 'attack', from: 1, to: 2 });
+    expect(p.cardAdvice).toBe('order-priority');
+    expect(p.rationale.join('\n')).toMatch(LINE);
+    expect(p.rationale.join('\n')).toMatch(/player 20 may hold an Order Priority card: two cancel/);
+  });
+});
+
+describe('#179 exits: only an opponent known to be down to a few territories', () => {
+  it('an opponent whose land borders the fog is not listed: it may hold more there', () => {
+    const g = buildGraph(makeMap([1, 2, 3], [[1, 2], [2, 3]]));
+    const fogged: TerritoryState = { territoryId: 3, owner: { kind: 'unknown' }, armies: null, fogLevel: 'Fogged' };
+    const p = planTurn({ graph: g, board: board([mine(1, 2), enemy(2, 20), fogged]), me: ME, income: 5, settings: STD });
+    expect((p.exits ?? []).find((e) => e.player === VICTIM)).toBeUndefined();
+    const clear = planTurn({ graph: g, board: board([mine(1, 2), enemy(2, 20), neutral(3, 2)]), me: ME, income: 5, settings: STD });
+    expect(clear.exits!.find((e) => e.player === VICTIM)).toBeDefined();
+  });
+});
+
+describe('#179 cover: a covered source keeps its loss buffer through the later passes', () => {
+  it('a source with my commander keeps what the victim kills, not only its (unit-reduced) hold', () => {
+    // My 1 (10 + my commander) finishes off player 20 (2: 3, 3: 1) and faces a cheap neutral 4.
+    // The victim's ~5 (2 movable + ~3 deploy) can strike 1 first: my commander holds it (need 0),
+    // but what the attack would lose defending, 3, stays too, so the expansion into 4 waits.
+    const g = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [1, 3], [1, 4], [2, 3], [4, 5]]));
+    const b = board([withCommander(mine(1, 10), ME), enemy(2, 3), enemy(3, 1), neutral(4, 2), neutral(5, 2)], true);
+    const STRIKE: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true };
+    const p = planTurn({ graph: g, board: b, me: ME, income: 10, settings: STRIKE, options: { adapt: false, enemyDeploy: 3 } });
+    expect(p.rationale.join('\n')).toMatch(/Cover player 20's exits \(#179\)/);
+    const stay = 10 + (p.deploys.find((d) => d.territoryId === 1)?.armies ?? 0) - p.moves.filter((m) => m.from === 1).reduce((n, m) => n + m.armies, 0);
+    expect(stay).toBeGreaterThanOrEqual(1 + 3);
+  });
+});
