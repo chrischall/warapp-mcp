@@ -28,7 +28,7 @@ const MAP = {
   distributionModes: [],
 };
 
-function game(over: { state?: string; players?: number; settings?: Record<string, unknown> } = {}) {
+function game(over: { state?: string; players?: number; settings?: Record<string, unknown>; standing?: unknown[] } = {}) {
   const n = over.players ?? 2;
   return {
     termsOfUse: 'synthetic',
@@ -60,6 +60,7 @@ function game(over: { state?: string; players?: number; settings?: Record<string
       ...over.settings,
     },
     map: MAP,
+    ...(over.standing ? { standing: over.standing } : {}),
   };
 }
 
@@ -119,6 +120,19 @@ describe('warapp_strategy', () => {
     expect(p.map!.chokepoints.length).toBeGreaterThan(0);
     expect(p.map!.incomeTargets).toBeUndefined();
     expect(h.calls).toHaveLength(1);
+  });
+
+  it('reads the GameFeed standing when the game has one: bordering the opponent is contact', async () => {
+    const standing = [
+      { terrID: '4', ownedBy: '1000', armies: '3', fogLevel: 'Visible' },
+      { terrID: '5', ownedBy: '1001', armies: '3', fogLevel: 'Visible' },
+    ];
+    h = await harnessFor(game({ standing }));
+    const withBoard = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(withBoard.profile!.phase).toBe('contact');
+    await h.harness.close();
+    h = await harnessFor(game());
+    expect(payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME })).profile!.phase).toBe('expansion');
   });
 
   it('an FFA with cards and luck selects those notes', async () => {

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildGraph } from '../../src/analysis/graph.js';
 import type { GameProfile } from '../../src/analysis/profile.js';
+import type { BoardState } from '../../src/board.js';
 import type { GameMap } from '../../src/normalize.js';
 import {
   feedProfile,
@@ -166,6 +167,26 @@ describe('feedProfile: a profile from GameFeed alone', () => {
   it('teams when a player carries a team', () => {
     const p = feedProfile({ graph, players: [{ id: 7, team: 0 }, { id: 9, team: 1 }, { id: 11, team: 1 }, { id: 13, team: 0 }] });
     expect(p.format).toBe('teams');
+  });
+
+  const board = (owners: Array<[number, number]>): BoardState => ({
+    source: 'gamefeed',
+    verified: false,
+    territories: owners.map(([territoryId, playerId]) => ({ territoryId, owner: { kind: 'player', playerId }, armies: 3 })),
+  });
+
+  it('with no board the phase falls back to expansion after the opening', () => {
+    expect(feedProfile({ graph, players: [{ id: 7 }, { id: 9 }], turn: 5 }).phase).toBe('expansion');
+  });
+
+  it('a standing from GameFeed is read: bordering the opponent is contact', () => {
+    const p = feedProfile({ graph, players: [{ id: 7 }, { id: 9 }], turn: 5, board: board([[1, 7], [2, 9]]) });
+    expect(p.phase).toBe('contact');
+  });
+
+  it('a standing from GameFeed is read: one side over half the map is late', () => {
+    const p = feedProfile({ graph, players: [{ id: 7 }, { id: 9 }], turn: 5, board: board([[1, 7], [2, 9], [3, 9]]) });
+    expect(p.phase).toBe('late');
   });
 
   it('players that are out do not count: two of three still playing is a 1v1 late game', () => {

@@ -150,6 +150,7 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
         },
         turn: currentTurn(game),
         picking: game.state === PICK_PHASE_STATE,
+        ...(game.standing ? { board: game.standing } : {}),
       });
       const notes = notesFor(profile, topic);
       const mapped = withMap ? gameMapNotes(game, map) : undefined;

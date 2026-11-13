@@ -5,6 +5,7 @@
 
 import { gameProfile, type GameProfile, type ProfilePlayer, type ProfileSettings } from '../analysis/profile.js';
 import type { MapGraph } from '../analysis/graph.js';
+import type { BoardState } from '../board.js';
 
 export const NOTE_TOPICS = ['format', 'settings', 'cards', 'reading', 'map'] as const;
 export type NoteTopic = (typeof NOTE_TOPICS)[number];
@@ -354,19 +355,23 @@ export interface FeedProfileInput {
   settings?: ProfileSettings;
   turn?: number | null;
   picking?: boolean;
+  /** GameFeed's standing when it sends one (`game.standing`): contact and late phases read it. */
+  board?: BoardState;
 }
 
 /**
- * A game's profile from GameFeed alone (no board): format, settings and phase. It is
- * seen from the first seated player — the format and phase do not depend on the seat —
- * and the standing is `unknown` (it needs the board; warapp_plan_turn judges it).
+ * A game's profile from GameFeed alone: format, settings and phase. It is seen from the
+ * first seated player — the format does not depend on the seat — and the phase reads
+ * GameFeed's standing when there is one (without it no contact or territory-share late
+ * game can be seen). The standing is `unknown`: it needs income estimates, which
+ * warapp_plan_turn makes.
  */
 export function feedProfile(input: FeedProfileInput): GameProfile {
   const playing = input.players.filter((p) => (p.state ?? 'Playing') === 'Playing');
   const me = (playing[0] ?? input.players[0])?.id ?? 0;
   return gameProfile({
     graph: input.graph,
-    board: { source: 'gamefeed', territories: [], verified: false },
+    board: input.board ?? { source: 'gamefeed', territories: [], verified: false },
     me,
     players: input.players.length ? input.players : [{ id: me }],
     ...(input.settings ? { settings: input.settings } : {}),
