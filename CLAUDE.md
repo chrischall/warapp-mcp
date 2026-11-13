@@ -231,7 +231,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     reachable), a capture of a player's territory sized without a reserve does not make the
     garrison beside it idle, and my commander's stack beside a conceded border stays.
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
-    margin (with several, each is brought to its margin first, #121), else the top expansion's stack — never to a conceded border (the old "most enemies
+    margin (with several, each is brought to its margin first, and a conceded border the leftover
+    can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border).
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
     the threat (see the threat model above), and warns "is building".

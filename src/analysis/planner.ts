@@ -502,7 +502,11 @@
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border: it goes to the held border with the highest
 //     protected value still short of COMFORT_MARGIN × its threat (counting armies
-//     withdrawn into it) — with two or more such borders, each is first brought to that
+//     withdrawn into it) — but first (#121), when it would go to such margins (no strike stack),
+//     a conceded border the leftover can make hold is held after all, from what is left once
+//     every held border that would fall as it stands has its hold (best worth per army; its
+//     withdrawal taken back unless the territory it went to needs it to hold; never one that
+//     attacks out or whose garrison already stays); with two or more such borders, each is first brought to that
 //     margin in the same order (#121: two symmetric borders at an exact hold ended as 16 and 7),
 //     the rest to the first — else the source of the top expansion (which then makes
 //     no transfer), else the border with the most fogged neighbours, else
@@ -5773,6 +5777,71 @@ export function planTurn(input: PlanInput): TurnPlan {
         );
         deploy(b.id, d);
       }
+    // #121: before any comfort margin, a conceded border that the leftover can make hold is held
+    // after all (live, a border short by 2 was conceded while 5 went to one that already held,
+    // and it fell with 15 armies). Only where the leftover would otherwise buy comfort margins
+    // (no strike stack), from what is left once every held border that would fall as it stands
+    // has its hold; best worth per army first. Its withdrawal is taken back, unless the
+    // territory it went to needs those armies to hold; a border that attacks out, my
+    // commander's, or one whose garrison already stays is not revived.
+    if (!stack && short.length) {
+      let falling = 0;
+      for (const b of borders.values()) {
+        if (conceded.has(b.id) || orderOf(b.id)) continue;
+        let d = 0;
+        while ((armiesToTake(stayAt(b.id) + d + unitsAt(b.id), rates) ?? Infinity) <= b.threat) d++;
+        falling += d;
+      }
+      const revivable = threatened
+        .filter(
+          (t) =>
+            conceded.has(t.id) &&
+            !stood.has(t.id) &&
+            !moves.some((m) => m.from === t.id && m.reason !== 'withdraws from a conceded border'),
+        )
+        .map((t) => {
+          const b = borders.get(t.id)!;
+          const out = moves.find((m) => m.from === t.id);
+          const back = out?.armies ?? 0;
+          let d = 0;
+          while ((armiesToTake(stayAt(t.id) + back + d + unitsAt(t.id), rates) ?? Infinity) <= b.threat) d++;
+          return { t, d, out, threat: b.threat };
+        })
+        .filter(({ out }) => {
+          if (!out) return true;
+          // The territory the withdrawal went to keeps holding without it.
+          const dest = borders.get(out.to);
+          if (!dest || conceded.has(out.to)) return true;
+          const at = stayAt(out.to) + unitsAt(out.to);
+          const heldWith = (armiesToTake(at, rates) ?? Infinity) > dest.threat;
+          return !heldWith || (armiesToTake(at - out.armies, rates) ?? Infinity) > dest.threat;
+        })
+        .sort((a, b) => b.t.worth / Math.max(1, b.d) - a.t.worth / Math.max(1, a.d) || a.d - b.d || a.t.id - b.t.id);
+      for (const { t, d, out, threat } of revivable) {
+        if (d > budget - falling || d > roomAt(t.id)) continue;
+        if (out) {
+          moves.splice(moves.indexOf(out), 1);
+          avail.set(t.id, avail.get(t.id)! + out.armies);
+          const inc = (incoming.get(out.to) ?? 0) - out.armies;
+          if (inc > 0) incoming.set(out.to, inc);
+          else incoming.delete(out.to);
+          const r = rationale.findIndex((l) => l.startsWith(`Withdraw ${out.armies} from ${label(t.id)} to `));
+          if (r >= 0) rationale.splice(r, 1);
+          const w = warnings.findIndex((l) => l.startsWith(`The withdrawal from ${label(t.id)} only executes`));
+          if (w >= 0) warnings.splice(w, 1);
+        }
+        conceded.delete(t.id);
+        const conceding = `${label(t.id)} cannot be held `;
+        for (let i = warnings.length - 1; i >= 0; i--)
+          if (warnings[i]!.startsWith(conceding) && warnings[i]!.endsWith(': conceded')) warnings.splice(i, 1);
+        if (d > 0) deploy(t.id, d);
+        locked.add(t.id);
+        rationale.push(
+          `Hold ${label(t.id)} after all (not conceded): deploy ${d} there${out ? `, and keep the ${out.armies} that would have withdrawn` : ''}; the leftover covers it before any comfort margin (${stayAt(t.id) + unitsAt(t.id)} armies need ${armiesToTake(stayAt(t.id) + unitsAt(t.id), rates)} to take, above the ~${threat} threat; protects +${t.value}).`,
+        );
+      }
+      if (cardAdvice === 'order-priority' && !moves.some((m) => conceded.has(m.from))) cardAdvice = null;
+    }
     let where: number;
     let why: string;
     let lock = false;

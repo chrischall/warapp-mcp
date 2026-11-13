@@ -211,3 +211,31 @@ describe('#121 the leftover deploy', () => {
     expect(p.rationale.join('\n')).toMatch(/Deploy 1 of the leftover to T3 \(#3\): it brings it to a comfortable margin/);
   });
 });
+
+describe('#121 a nearly holdable border before a comfort margin', () => {
+  // E6(1) – E1(6) – 2(7) – 3(1) – 4(3) – E5(3) – E7(1); bonus B60 (+3) = 2, 3, held. T2 holds
+  // (7 need 11 against 5 + 5 = 10) but is short of a comfortable margin. T4 protects +0 and is
+  // conceded economically (2 deploys make it hold against 2 + 5 = 7, more than 3 × its worth).
+  // Before, its 2 armies withdrew and all 5 went to T2's margin; the leftover now holds T4 first.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7], [[1, 2], [2, 3], [3, 4], [4, 5], [1, 6], [5, 7]], [[60, 3, [2, 3]]]));
+  const s = board([enemy(1, 6), mine(2, 7), mine(3, 1), mine(4, 3), enemy(5, 3), enemy(6, 1), enemy(7, 1)]);
+  const input: PlanInput = { graph: g, board: s, me: ME, income: 5, settings: STD, options: { goal: 'defend' } };
+
+  it('holds T4 with 2 of the leftover, keeps its garrison, and gives T2 the rest', () => {
+    const p = plan(input);
+    expect(p.conceded).toEqual([]);
+    expect(deployedOn(p, 4)).toBe(2);
+    expect(deployedOn(p, 2)).toBe(3);
+    expect(p.moves.some((m) => m.from === 4)).toBe(false);
+    expect(p.cardAdvice).toBeNull();
+    expect(takes(endsOn(input, p, 4))).toBeGreaterThan(7);
+    expect(p.warnings.join('\n')).not.toMatch(/T4 \(#4\) cannot be held|withdrawal from T4/);
+    expect(p.rationale.join('\n')).toMatch(/Hold T4 \(#4\) after all \(not conceded\): deploy 2 there, and keep the 2 that would have withdrawn/);
+  });
+
+  it('a leftover too small for the hold leaves the concession as it was', () => {
+    const p = plan({ ...input, income: 1 });
+    expect(p.conceded).toEqual([4]);
+    expect(deployedOn(p, 4)).toBe(0);
+  });
+});
