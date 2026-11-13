@@ -267,7 +267,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         });
       }
       const check = async (id: number) => {
-        const game = await ctx.client.getGame(id);
+        // A turn check reads only the game's state: no map (a cold map is ~190 KB per game, #131).
+        const game = await ctx.client.getGame(id, { map: false });
         if (!game.players.some((p) => p.id === token)) {
           throw new McpToolError(`The signed-in war.app account is not a player in game ${id}.`, {
             hint: 'Watch only games you play in.',

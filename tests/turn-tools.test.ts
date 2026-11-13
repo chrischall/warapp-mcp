@@ -568,6 +568,25 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(second.trendSource).toBe('cache');
     expect(second.warnings.join('\n')).toMatch(building(7, 12));
     expect(Object.keys((JSON.parse(readFileSync(cacheFile(dir), 'utf8')) as { turns: object }).turns)).toEqual(['3', '4']);
+    // The previous turn's verified board is cached: no history call (#131).
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
+  });
+
+  it('(h) the verified cached board of the previous turn beats an unverified history standing (#131)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    const dir = h.dataDir;
+    await h.harness.close();
+    // Turn 4: history says Bob had 3 on turn 3; the board this server planned on (verified) said 7.
+    const grown = BOARD.map((t) => (t.id === 158 ? { ...t, armies: 12 } : t));
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3', history: [{ turn: 0, standing: [] }, { turn: 1, standing: [] }, { turn: 2, standing: previous }] })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(grown) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBe('cache');
+    expect(p.warnings.join('\n')).toMatch(building(7, 12));
   });
 
   it('(h) planning the same turn twice keeps the trend (the previous turn stays cached)', async () => {

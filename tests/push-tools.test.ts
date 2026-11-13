@@ -94,6 +94,8 @@ describe('warapp_wait_for_turn', () => {
     expect(p.next).toMatch(/warapp_plan_turn/);
     await until(() => subscribes(socket).length === 1, 'subscribe');
     expect(subscribes(socket)).toEqual([[`Game.${GAME}`]]);
+    // A turn check needs no map: never download one for it (#131).
+    expect(h!.calls.every((c) => c.url.includes('GetMap=false'))).toBe(true);
   });
 
   it('waits for a GameUpdated push, re-reads GameFeed, and resolves when it is my turn', async () => {

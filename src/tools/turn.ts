@@ -550,15 +550,21 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
   if (ctx.dataDir)
     for (const b of await readBoardHistory(ctx.dataDir, game.id, me.id, turn))
       if (b.turn >= turn - CACHED_TURNS) byTurn.set(b.turn, { source: 'cache', board: b.board });
-  try {
-    const withHistory = await ctx.client.getGame(game.id, { history: true });
-    // Turn k is played on the board after k − 1 completed turns.
-    for (let k = Math.max(1, turn - CACHED_TURNS); k < turn; k++) {
-      const board = boardFromHistory(withHistory.history, k - 1, game.players);
-      if (board) byTurn.set(k, { source: 'history', board });
+  // The cached boards are the live boards this server planned on (verified); GameFeed's history
+  // standing for a game in progress is unverified. So history only fills turns the cache lacks,
+  // and is not fetched at all when the previous turn is cached (#131).
+  if (!byTurn.has(turn - 1)) {
+    try {
+      const withHistory = await ctx.client.getGame(game.id, { history: true });
+      // Turn k is played on the board after k − 1 completed turns.
+      for (let k = Math.max(1, turn - CACHED_TURNS); k < turn; k++) {
+        if (byTurn.has(k)) continue;
+        const board = boardFromHistory(withHistory.history, k - 1, game.players);
+        if (board) byTurn.set(k, { source: 'history', board });
+      }
+    } catch {
+      // History is optional: the cache stands.
     }
-  } catch {
-    // History is optional: the cache stands.
   }
   const boards = [...byTurn].sort(([a], [b]) => a - b).map(([t, b]) => ({ turn: t, board: b.board }));
   const previous = byTurn.get(turn - 1);
@@ -687,8 +693,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       requireTurnPhase(game);
       const map = mapOf(game);
       const focusBonusIds = (focus ?? []).map((b) => resolveBonus(map, b).id);
-      const me = await resolveMe(ctx, game.players, player);
-      const { territories, info } = await loadLiveGame(ctx, game);
+      const turn = currentTurn(game);
+      // The signed-in account, the live board and the board history are independent reads: in
+      // parallel, not in series (#131).
+      const meRead = resolveMe(ctx, game.players, player);
+      const [me, { territories, info }, history] = await Promise.all([
+        meRead,
+        loadLiveGame(ctx, game),
+        meRead.then((m) => boardHistory(ctx, game, m, turn)),
+      ]);
       const graph = graphOf(map);
       const board = boardStateFromLive(territories, me, game.players);
       const settings = plannerSettings(game.settings);
@@ -696,8 +709,6 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const hand = readHand(info, inGameId(me));
       const cards = chooseCardPlays(hand, rules);
       const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
-      const turn = currentTurn(game);
-      const history = await boardHistory(ctx, game, me, turn);
       const trend = history.previous;
       // The opponents over my board history: one observed over 2+ turns gets its tracked income;
       // one still playing with nothing in view gets a received lower bound and a warning (#94).
