@@ -72,6 +72,17 @@ function ownerLabel(t: LiveTerritory, byInGame: ReadonlyMap<number, Player>): st
   return 'unknown';
 }
 
+/** A unit owner's name, as {@link ownerLabel} names a territory's player owner. */
+function playerLabel(id: number, byInGame: ReadonlyMap<number, Player>): string {
+  return byInGame.get(id)?.name ?? `player ${id}`;
+}
+
+/** The commander(s) on a territory, by owner name; `undefined` when there is none. */
+function commanderOn(t: LiveTerritory, byInGame: ReadonlyMap<number, Player>): string | undefined {
+  const owners = (t.specialUnits ?? []).filter((u) => u.kind === 'commander').map((u) => playerLabel(u.owner, byInGame));
+  return owners.length ? owners.join(', ') : undefined;
+}
+
 const nameIn = (map: GameMap) => {
   const names = new Map(map.territories.map((t) => [t.id, t.name]));
   return (id: number) => names.get(id) ?? String(id);
@@ -131,6 +142,13 @@ function liveBoardView(game: Game, territories: LiveTerritory[], rung: string) {
         armies: t.armies,
         fogged: t.fogged,
         fogLevel: FOG_LEVEL_NAMES[t.fogLevel] ?? t.fogLevel,
+        specialUnits: (t.specialUnits ?? []).map((u) => ({
+          kind: u.kind,
+          ...(u.type ? { type: u.type } : {}),
+          id: u.id,
+          owner: playerLabel(u.owner, byInGame),
+          ownerId: u.owner,
+        })),
       })),
     };
   }
@@ -138,12 +156,16 @@ function liveBoardView(game: Game, territories: LiveTerritory[], rung: string) {
   return {
     ...header,
     players,
-    territories: visible.map((t) => ({
-      id: t.territoryId,
-      name: name(t.territoryId),
-      owner: ownerLabel(t, byInGame),
-      armies: t.armies,
-    })),
+    territories: visible.map((t) => {
+      const commander = commanderOn(t, byInGame);
+      return {
+        id: t.territoryId,
+        name: name(t.territoryId),
+        owner: ownerLabel(t, byInGame),
+        armies: t.armies,
+        ...(commander ? { commander } : {}),
+      };
+    }),
     counts: { territories: territories.length, visible: visible.length, fogged: territories.length - visible.length, pickable },
   };
 }
@@ -156,17 +178,19 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
       description: untrustedDescription(
         'The current board of a war.app (Warzone) game as the web client shows it: every territory by name with ' +
           'its owner (a player name, "neutral", or "pickable" while territories are being picked), its armies, ' +
-          'and whether it is fogged; plus each player\'s visible territory and army totals. Works in the pick ' +
+          'whether it is fogged and, in a Commanders game, whose commander stands on it (losing your commander ' +
+          'eliminates you); plus each player\'s visible territory and army totals. Works in the pick ' +
           `phase and mid-game, where GameFeed has no board. ${BRIDGE_NOTE} Read-only.`,
       ),
-      _meta: lookupMeta(['warzone board', 'live board', 'who owns what', 'pickable territories']),
+      _meta: lookupMeta(['warzone board', 'live board', 'who owns what', 'pickable territories', 'where is my commander']),
       annotations: readAnnotations('Get a war.app live board'),
       inputSchema: z.object({
         game_id: gameIdArg,
         view: viewArg(
           VIEWS,
-          'compact (default) lists the territories you can see (owner by name, armies) with counts of fogged and ' +
-            'pickable ones; "full" lists every territory with raw owner ids, fog flags and fog levels, and in-game player ids.',
+          'compact (default) lists the territories you can see (owner by name, armies, `commander` naming the owner of ' +
+            'a commander standing there) with counts of fogged and pickable ones; "full" lists every territory with raw ' +
+            'owner ids, fog flags and fog levels, its special units (commanders, bosses) with owners, and in-game player ids.',
         ),
       }),
     },

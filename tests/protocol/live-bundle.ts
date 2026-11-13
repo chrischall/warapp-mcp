@@ -1,15 +1,18 @@
-// A hand-written synthetic bundle carrying the four classes the live board reads
-// (LatestGameInfo → GameStanding → TerritoryStanding → Armies), in the same
-// *shape* as war.app's generated readers and with TerritoryStanding fields read
-// in the documented order: fog level, territory id, Armies, owner, then a
-// trailing field. Every var, field name and value here is made up; nothing is
+// A hand-written synthetic bundle carrying the classes the live board reads
+// (LatestGameInfo → GameStanding → TerritoryStanding → Armies → SpecialUnit), in
+// the same *shape* as war.app's generated readers and with TerritoryStanding
+// fields read in the documented order: fog level, territory id, Armies, owner,
+// then a trailing field. Armies is read as the client reads it: fogged, count,
+// then (protocol ≥ 107) a byte count of special units, each dispatched on a
+// byte tag (1 Commander, 2 Boss1, 6 CustomSpecialUnit) and ending with the
+// shared unit fields GUID, owner — then built through its constructor. Every var, field name and value here is made up; nothing is
 // taken from the real bundle. `writeLatestGameInfo` encodes a matching reply
 // body with this project's own Writer.
 import type { Writer } from '../../src/protocol/codec.js';
 
 export const LIVE_BUNDLE = [
   'var W={};',
-  'function Lg(){this.k1=0}function Gs(){}function Ts(){}function Am(){}function Pc(){}',
+  'function Lg(){this.k1=0}function Gs(){}function Ts(){}function Pc(){}',
   'W["warlight.shared.LatestGameInfo"]=Lg;',
   'Lg.Ha=function(a,b,d){null==d&&(d=242);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;e.k3=P.Ya(a);return e};',
   'W["warlight.shared.GameStanding"]=Gs;',
@@ -32,9 +35,42 @@ export const LIVE_BUNDLE = [
   'Ts.Ha=function(a,b,d){var e=new Ts;e.f1=P.Ya(a);e.f2=P.Ya(a);e.f3=Am.Ha(a,e,d);e.f4=P.Ya(a);' +
     'e.f5=a.Ua()?P.Ya(a):null;return e};',
   'W["warlight.shared.Armies"]=Am;',
-  'Am.Ha=function(a,b,d){var e=new Am;e.g1=P.Yc(a);e.g2=P.Ya(a);' +
-    'e.g3=a.Ua()?P.Sd(a,function(){return P.Ya(a)}):null;return e};',
+  'Am.Ha=function(a,b,d){null==d&&(d=0);return Am.r(a,d)};' +
+    'Am.r=function(a,b){null==b&&(b=0);var d=P.Yc(a),e=P.Ya(a);if(107>b)var f=null;else f=P.uq(a),' +
+    'f=0==f?null:E.Sa(E.Za(E.Range(0,f),function(){return Su.Ha(a,null,b)}));return new Am(e,f,d)};',
+  'function Am(a,b,d){null==d&&(d=!1);null==a&&(a=0);this.g1=!1;this.g2=0;this.g1=d;this.g2=a;' +
+    'this.g3=null!=b&&0==b.length?null:b}',
+  'function Su(){}function Cm(){}function Bs(){}function Cu(){}',
+  'W["warlight.shared.SpecialUnit"]=Su;',
+  'Su.Ha=function(a,b){return Su.k(a,b)};' +
+    'Su.k=function(a,b){var d=a.bc();switch(d){case 1:return Cm.r(a,b);case 2:return Bs.r(a,b);' +
+    'case 6:return Cu.r(a,b);default:throw Y.sa(new Pa("Unexpected token "+d));}};' +
+    'Su.E=function(a,b){b.u1=P.tL(a);b.u2=P.Ya(a)};',
+  'W["warlight.shared.Commander"]=Cm;',
+  'Cm.r=function(a,b){b=Cm.mc(b);Su.E(a,b);return b};Cm.mc=function(){return new Cm};',
+  'W["warlight.shared.Boss1"]=Bs;',
+  'Bs.r=function(a,b){b=Bs.mc(b);b.h1=P.Ya(a);Su.E(a,b);return b};Bs.mc=function(){return new Bs};',
+  'W["warlight.shared.CustomSpecialUnit"]=Cu;',
+  'Cu.r=function(a,b){b=Cu.mc(b);b.h1=a.Ua()?new Z(P.Ya(a)):new Z;b.h2=P.wc(a);Su.E(a,b);return b};' +
+    'Cu.mc=function(){return new Cu};',
 ].join('\n');
+
+/** A synthetic special unit: a made-up GUID and an in-game owner id. */
+export type SyntheticUnit =
+  | { kind: 'commander'; id: string; owner: number }
+  | { kind: 'boss'; id: string; owner: number; health: number }
+  | { kind: 'custom'; id: string; owner: number; power: number | null; name: string };
+
+function writeUnit(w: Writer, u: SyntheticUnit): void {
+  if (u.kind === 'commander') w.u8(1);
+  else if (u.kind === 'boss') w.u8(2).int32(u.health);
+  else {
+    w.u8(6).bool(u.power !== null);
+    if (u.power !== null) w.int32(u.power);
+    w.string(u.name);
+  }
+  w.guid(u.id).int32(u.owner);
+}
 
 /** A synthetic card instance: a made-up GUID, the card type id and, for Reinforcement, its armies. */
 export interface SyntheticCard {
@@ -51,6 +87,8 @@ export interface SyntheticTerritory {
   owner: number;
   armies: number;
   fogged?: boolean;
+  /** Special units on the territory (commanders, bosses), none by default. */
+  units?: readonly SyntheticUnit[];
 }
 
 /** The result of GetLatestGameInfo (present flag first), as the synthetic bundle reads it. */
@@ -81,7 +119,10 @@ export function writeLatestGameInfo(
       });
     });
     w.bool(true).list(territories, (ww, t) => {
-      ww.int32(t.id).bool(true).int32(t.fogLevel).int32(t.id).bool(t.fogged ?? false).int32(t.armies).bool(false);
+      ww.int32(t.id).bool(true).int32(t.fogLevel).int32(t.id).bool(t.fogged ?? false).int32(t.armies);
+      const units = t.units ?? [];
+      ww.u8(units.length);
+      for (const u of units) writeUnit(ww, u);
       ww.int32(t.owner).bool(false);
     });
   }

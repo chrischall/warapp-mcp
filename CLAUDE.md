@@ -73,6 +73,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   from the reply:** its bool is the "vacation ended" flag. After sending, GameFeed is re-read:
   `numberOfTurns` advanced → `resolved`; my `hasCommittedOrders` true → `committed`; neither,
   or a transport failure after sending → `unknown` (never suggest resending blindly).
+- **Special units (`src/live.ts`, #61).** An `Armies` record ends with its special units
+  (Commander, Boss1–4, CustomSpecialUnit), each dispatched on a byte tag; every unit class
+  ends with the shared fields GUID, owner (in-game id), so the owner is the LAST field and the
+  kind comes from the registered class name. Fogged territories report no units.
+  `BoardState.specialUnits` keys owners by GameFeed id like territory owners.
 - **Cards (`src/cards.ts`).** The hand is read from the live board (`LatestGameInfo` standing →
   my in-game id → GUID → card instance, by bundle type name); the card **type is `Gb`, the LAST
   integer field** (the base reader sets it last) and a Reinforcement card's armies are `tc`, the

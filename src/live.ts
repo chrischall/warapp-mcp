@@ -7,10 +7,12 @@
 // name (`$type`), and a TerritoryStanding's fields by read order — verified
 // through the bridge (docs/WEB-PROTOCOL.md): fog level, territory id, Armies,
 // owner. The territory id also keys the standing's dict, which is checked, so a
-// reordered layout is an error rather than a silently wrong board.
+// reordered layout is an error rather than a silently wrong board. An Armies
+// record carries its special units (commanders, bosses) as a list; every unit
+// class ends with the shared fields GUID, owner (read from the bundle, #61).
 
 import { McpToolError } from '@chrischall/mcp-utils';
-import type { BoardState, TerritoryOwner } from './board.js';
+import type { BoardSpecialUnit, BoardState, TerritoryOwner, TerritoryState } from './board.js';
 import type { Player } from './normalize.js';
 import type { Reader } from './protocol/codec.js';
 
@@ -18,6 +20,30 @@ export const LATEST_GAME_INFO = 'warlight.shared.LatestGameInfo';
 export const GAME_STANDING = 'warlight.shared.GameStanding';
 export const TERRITORY_STANDING = 'warlight.shared.TerritoryStanding';
 export const ARMIES = 'warlight.shared.Armies';
+export const COMMANDER = 'warlight.shared.Commander';
+
+/** What a special unit is: the registered unit classes, by kind. */
+export type SpecialUnitKind = BoardSpecialUnit['kind'];
+
+const UNIT_KINDS: Readonly<Record<string, SpecialUnitKind>> = {
+  [COMMANDER]: 'commander',
+  'warlight.shared.Boss1': 'boss',
+  'warlight.shared.Boss2': 'boss',
+  'warlight.shared.Boss3': 'boss',
+  'warlight.shared.Boss4': 'boss',
+  'warlight.shared.CustomSpecialUnit': 'custom',
+};
+
+/** A special unit on a territory, as the standing has it. */
+export interface LiveSpecialUnit {
+  kind: SpecialUnitKind;
+  /** The unit's GUID (32 hex digits). */
+  id: string;
+  /** In-game id of the player the unit belongs to. */
+  owner: number;
+  /** The registered class name, kept only when the kind is `unknown`. */
+  type?: string;
+}
 
 /** TerritoryStanding owner values that are not players. */
 export const OWNER_NEUTRAL = 0;
@@ -37,6 +63,8 @@ export interface LiveTerritory {
   owner: number;
   /** Army count, `null` when fogged. */
   armies: number | null;
+  /** Special units (commanders, bosses) on the territory; absent when there are none or it is fogged. */
+  specialUnits?: LiveSpecialUnit[];
 }
 
 /** Reads a registered class from the reply (a loaded `WarappBundle`). */
@@ -68,6 +96,20 @@ function entries(v: unknown): Array<{ key?: unknown; value: unknown }> | undefin
   );
 }
 
+const GUID = /^[0-9a-f]{32}$/i;
+
+/** One decoded special unit: its class names the kind; GUID and owner are its last two fields. */
+function specialUnitOf(u: unknown): LiveSpecialUnit {
+  if (!isObj(u) || typeof u.$type !== 'string') throw new LiveBoardFormatError('a special unit is not a unit');
+  const values = fields(u);
+  const [id, owner] = values.slice(-2);
+  if (typeof id !== 'string' || !GUID.test(id) || typeof owner !== 'number') {
+    throw new LiveBoardFormatError(`a special unit (${u.$type}) lacks its GUID and owner`);
+  }
+  const kind = UNIT_KINDS[u.$type] ?? 'unknown';
+  return kind === 'unknown' ? { kind, type: u.$type, id, owner } : { kind, id, owner };
+}
+
 function territoryOf(key: unknown, ts: Obj): LiveTerritory {
   const values = fields(ts);
   const ints = values.filter((v): v is number => typeof v === 'number');
@@ -81,13 +123,16 @@ function territoryOf(key: unknown, ts: Obj): LiveTerritory {
   const armyFogged = armyFields.find((v) => typeof v === 'boolean') === true;
   const count = armyFields.find((v) => typeof v === 'number');
   const fogged = armyFogged || fogLevel === FOG_LEVEL_FOGGED;
-  return {
+  const out: LiveTerritory = {
     territoryId,
     fogLevel,
     fogged,
     owner,
     armies: fogged || typeof count !== 'number' ? null : count,
   };
+  const units = armyFields.find((v): v is unknown[] => Array.isArray(v));
+  if (!fogged && units?.length) out.specialUnits = units.map(specialUnitOf);
+  return out;
 }
 
 /**
@@ -176,12 +221,22 @@ export function toBoardState(territories: readonly LiveTerritory[], players: rea
   return {
     source: 'browser',
     verified: true,
-    territories: territories.map((t) => ({
-      territoryId: t.territoryId,
-      owner: ownerOf(t, byInGame),
-      armies: t.armies,
-      fogLevel: FOG_LEVEL_NAMES[t.fogLevel] ?? String(t.fogLevel),
-    })),
+    territories: territories.map((t) => {
+      const out: TerritoryState = {
+        territoryId: t.territoryId,
+        owner: ownerOf(t, byInGame),
+        armies: t.armies,
+        fogLevel: FOG_LEVEL_NAMES[t.fogLevel] ?? String(t.fogLevel),
+      };
+      if (t.specialUnits?.length) {
+        out.specialUnits = t.specialUnits.map((u) => ({
+          kind: u.kind,
+          id: u.id,
+          playerId: byInGame.get(u.owner)?.id ?? u.owner,
+        }));
+      }
+      return out;
+    }),
   };
 }
 
