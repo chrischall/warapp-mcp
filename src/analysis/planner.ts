@@ -491,6 +491,13 @@
 //     kept or gave way. Armies to finish count every missing member: a fogged one at its bonus's
 //     costliest visible missing member (counted as free before, the figure jumped when it came into
 //     view), named in every "N armies to finish".
+//  3b. One surplus per territory (#121). A border that holds at the start of the turn (its armies
+//     beat its visible threat, rule 1) and is not conceded keeps what holds it, as my commander's
+//     territory does (rule 1k): a capture from it spends only its armies above that, plus deploys
+//     (a rationale line names those that keep it holding), so it never ends the turn takeable
+//     after starting safe. The threat counts its captured neighbours as gone. A target no source
+//     affords on its surplus may still fall to a combined capture (rule 3a); in rule 4e a step
+//     that fails only because of a keep is reported as the hold it would leave short.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border: it goes to the held border with the highest
 //     protected value still short of COMFORT_MARGIN × its threat (counting armies
@@ -1827,6 +1834,15 @@ export function planTurn(input: PlanInput): TurnPlan {
     const b = borderAt(t, () => false);
     if (b) borders.set(t, b);
   }
+  /**
+   * Borders that hold at the start of the turn on the armies they have (#121): their surplus is
+   * what they hold beyond that, and a capture from one keeps what holds it.
+   */
+  const safeAtStart = new Set(
+    [...borders.values()]
+      .filter((b) => (armiesToTake(armiesOf(b.id) + unitsAt(b.id), rates) ?? Infinity) > b.threat)
+      .map((b) => b.id),
+  );
   for (const [e, gr] of growthOf) {
     // Name the most exposed of my territories next to it (fewest armies, then id).
     const t = neighborsOf(g, e)
@@ -3342,8 +3358,20 @@ export function planTurn(input: PlanInput): TurnPlan {
    */
   let evenTradesOnly = false;
   let belowEven: { lost: number; killed: number } | undefined;
-  /** Armies on my `x` free to attack `t`: my commander's territory keeps what holds it (rule 1k). */
-  const movableFor = (x: number, t: number) => avail.get(x)! - (myCommanders.has(x) ? keepFor(x, (n) => n === t) : 0);
+  /**
+   * Armies on my `x` free to attack `t`: my commander's territory keeps what holds it (rule 1k),
+   * and so does a border that held at the start of the turn and is not conceded (#121: one surplus
+   * per territory — a capture never spends the garrison that holds a safe border).
+   */
+  const movableFor = (x: number, t: number) => avail.get(x)! - keepOf(x, t);
+  /**
+   * Set only while rule 4e retries a step that failed on its size, to name the border it would
+   * have stripped (its hold check then reports it, as before #121).
+   */
+  let spendKeeps = false;
+  /** What `x` keeps back from an attack on `t` (see {@link movableFor}). */
+  const keepOf = (x: number, t: number) =>
+    myCommanders.has(x) || (!spendKeeps && safeAtStart.has(x) && !conceded.has(x)) ? keepFor(x, (n) => n === t) : 0;
   /**
    * A conceded border attacks out only with the armies already on it (it is never deployed to),
    * unless every territory I hold is conceded, when there is nowhere better.
@@ -3420,6 +3448,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       } else if (trade) refusal = { kind: 'trade', ...trade };
       return false;
     }
+    // #121: the deploys beyond what the attack alone needs keep a safe border holding.
+    const forHold = noSplit || force ? 0 : Math.min(need, keepOf(src, t));
     deploy(src, need);
     // No-Split: the whole stack goes, every army deployed there so far included (#124).
     const sent = noSplit ? Math.max(tg.cost, avail.get(src)!) : tg.cost;
@@ -3449,6 +3479,13 @@ export function planTurn(input: PlanInput): TurnPlan {
         sent > tg.cost ? `, the whole stack (No-Split; ${tg.cost} would take it)` : ''
       }: ${reason}.`,
     );
+    if (forHold > 0) {
+      const th = borderAt(src, (n) => captured.has(n));
+      if (th)
+        rationale.push(
+          `Deploy ${forHold} to ${label(src)} so it still holds its border after the attack on ${label(t)} (${stayAt(src)} stay against a threat of ${th.threat}).`,
+        );
+    }
     return true;
   };
   if (reserve) rationale.push(`Hold a reserve of ${reserve} out of captures.`);
@@ -5180,6 +5217,25 @@ export function planTurn(input: PlanInput): TurnPlan {
         }
         return undefined;
       };
+      /**
+       * Why a step that does not fit failed (#121): a source that keeps what holds its border could
+       * have afforded it by spending that garrison — then it is the hold it would leave short (as
+       * {@link holdLeftShort} words it), else its size. Tried with the keeps off and undone.
+       */
+      const sizeOrHold = (st: Cand, reason: string): Fail => {
+        const restore = snapshot();
+        spendKeeps = true;
+        let short: ReturnType<typeof holdLeftShort>;
+        try {
+          if (st.from !== undefined && conceded.has(st.from)) return { kind: 'size' };
+          const ok = tryCapture(st.t, reason);
+          short = ok ? holdLeftShort(st.t) : undefined;
+        } finally {
+          spendKeeps = false;
+          restore();
+        }
+        return short ? { kind: 'hold', ...short } : { kind: 'size' };
+      };
       /** The trade of the planned capture of `t`: defenders killed against attackers lost (every attack on it). */
       const tradeOf = (t: number): { lost: number; killed: number } => {
         const sent = moves.filter((m) => m.kind === 'attack' && m.to === t);
@@ -5287,7 +5343,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         const undo = attempt(st, reasonFor(pick));
         if (!undo) {
           const r = refusal as typeof refusal;
-          failed.set(st.t, r ?? { kind: 'size' });
+          failed.set(st.t, r ?? sizeOrHold(st, reasonFor(pick)));
           continue;
         }
         // Every phase, not only contact: a capture that leaves its source to fall is worse than

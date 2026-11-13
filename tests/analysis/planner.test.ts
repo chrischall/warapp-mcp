@@ -876,7 +876,9 @@ describe('planTurn — balanced', () => {
 
   it('weighs a break by the number of opponents', () => {
     // T1 can fund one 3-army capture: a neutral +3 (score 1) or breaking an enemy +4 (4/3,
-    // or 2/3 with two opponents).
+    // or 2/3 with two opponents). T1 keeps what holds it against T5 when it takes the neutral
+    // (#121): with an enemy deploy of 2 (threat 3) that is 1 army, so 4 of its 5 are spare, enough for one
+    // capture, not both.
     const g = buildGraph(
       makeMap(
         [1, 2, 5, 9],
@@ -891,12 +893,12 @@ describe('planTurn — balanced', () => {
       ),
     );
     const s = board([mine(1, 6), neutral(2, 2), enemy(5, 2)]);
-    const one = planTurn({ graph: g, board: s, me: ME, income: 0, settings: STD });
+    const one = planTurn({ graph: g, board: s, me: ME, income: 0, settings: STD, options: { enemyDeploy: 2 } });
     expect(attacks(one).map((m) => m.to)).toEqual([5]);
-    const two = planTurn({ graph: g, board: s, me: ME, income: 0, settings: STD, options: { opponents: 2 } });
+    const two = planTurn({ graph: g, board: s, me: ME, income: 0, settings: STD, options: { opponents: 2, enemyDeploy: 2 } });
     expect(attacks(two).map((m) => m.to)).toEqual([2]);
     // By default the opponents are the enemy players in sight.
-    const seen = planTurn({ graph: g, board: board([...s.territories, enemy(9, 1, 30)]), me: ME, income: 0, settings: STD });
+    const seen = planTurn({ graph: g, board: board([...s.territories, enemy(9, 1, 30)]), me: ME, income: 0, settings: STD, options: { enemyDeploy: 2 } });
     expect(attacks(seen).map((m) => m.to)).toEqual([2]);
   });
 

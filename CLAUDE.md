@@ -224,6 +224,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     first (equally close ones by score); a bonus advanced last turn keeps priority unless another
     is strictly closer. "N armies to finish" counts fogged members at the bonus's costliest
     visible missing member.
+  - **One surplus per territory (#121).** A border that holds at the start of the turn keeps
+    what holds it, as my commander's territory does: a capture from it spends only the armies
+    above that (plus deploys), so a capture never leaves a safe border takeable.
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin, else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border).

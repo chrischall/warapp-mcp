@@ -986,11 +986,26 @@ describe('never stand still, but never by emptying a border that holds (every ph
   });
 
   it('one army fewer and the deploys cannot make it hold: no attack', () => {
-    // 13 − 6 leaves 7; with all 5 deploys 12, which 20 take.
-    const b = shape(13, 1, 4);
+    // 13 − 6 leaves 7; with all 5 deploys 12, which 20 take. (T2 is empty: with 1 army there it
+    // softens the neutral to 3, and 5 from T1 take it while T1 keeps 13 — the next case.)
+    const b = shape(13, 0, 4);
     const p = plan(b);
     expect(attacks(p)).toEqual([]);
     expect(p.warnings.join('\n')).toMatch(/is not taken: attacking it would leave T1 \(#1\) unable to hold its border \(7 would stay, 12 with the 5 deploys left there, against a threat of 20\)/);
+    expect(ok(p, b)).toEqual([]);
+  });
+
+  it('#121: a safe border keeps what holds it, so a combined capture spares it', () => {
+    // T1 alone would send 6 and fall (as above). T1 keeps the 13 that hold it, so no single source
+    // affords the 4-neutral: T2's 1 army wears it to 3, and T1 takes it with 5, deploying 5 to keep 13.
+    const b = shape(13, 1, 4);
+    const p = plan(b);
+    expect(attacks(p)).toEqual([
+      expect.objectContaining({ from: 2, to: 3, armies: 1 }),
+      expect.objectContaining({ from: 1, to: 3, armies: 5 }),
+    ]);
+    expect(13 + deployedTo(p, 1) - 5).toBe(13);
+    expect(armiesToTake(13)!).toBeGreaterThan(20);
     expect(ok(p, b)).toEqual([]);
   });
 
