@@ -57,7 +57,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   distances and never calls a group compact unless it is one such cluster. The primary is the best-scoring
   group any of the best seeds grows, and the fallback is scored with the primary taken (it is granted only
   then); a list past twice the limit (the client allows players × territories per player,
-  `clientPickLimits`, docs/WARAPP-API.md) runs in tiers of the primary's size (#129).
+  `clientPickLimits`, docs/WARAPP-API.md) runs in tiers of the primary's size. The list is judged by the award
+  order (rounds in a reversing move order, each player getting their best free pick: `pickOutcomes`), reporting
+  the worst set it can yield and the other players' starts that implies; the primary is reordered only when that
+  raises the worst outcome (#129).
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes. `docs/STRATEGY.md` states the community
   heuristics in our own words with source links (cite, never copy) and marks which are encoded.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a

@@ -74,6 +74,12 @@
 //     spread (farthest pair, and the longest step linking its picks into one cluster) and
 //     call it compact only when that step is at most COMPACT_DISTANCE: one cluster, not
 //     merely each pick with a group-mate nearby.
+//  5b. Award order (#129). Picks are awarded round by round in move order, reversing each
+//     round, each player getting their highest-ranked territory still free (`pickOutcomes`
+//     enumerates the sets a list can yield, other players' lists unknown). The list's worst
+//     outcome is scored with the other players on the starts it implies
+//     (`impliedOpponentStarts`) and reported; the primary is reordered (up to MAX_REORDER
+//     picks) only when another order raises that worst outcome.
 //  6. Reasons. reasons[0] is the bonus the pick anchors (worth most to it alone) and its
 //     completion turn and the income it adds, or how much of it is held by the horizon;
 //     then the other bonuses it completes or advances; negatives (shortfalls,
@@ -111,6 +117,8 @@ export const DEFAULT_NEUTRALS_IN_DISTRIBUTION = 4;
 export const DEFAULT_NON_DISTRIBUTION_ARMIES = 2;
 /** Seeds (best score first) each group search grows from; every one when the pool is no larger (#129). */
 export const MAX_SEEDS = 12;
+/** The primary's order is searched for the best worst outcome only up to this size (#129). */
+export const MAX_REORDER = 5;
 /** Neutral size used to compare attack hardness against the standard kill rates. */
 const HARDNESS_PROBE = 10;
 
@@ -180,9 +188,20 @@ export interface PickGroup {
   maxHops: number | null;
 }
 
+export interface AwardReport {
+  /** Distinct sets of picks the award order can grant from this list (see {@link pickOutcomes}). */
+  outcomes: number;
+  /** The outcome scoring least in the opening simulation, with the other players' starts it implies. */
+  worst: { territoryIds: number[]; score: number; opponentStarts: number[] };
+  /** The primary was reordered from score order because that raises the worst outcome. */
+  reordered: boolean;
+}
+
 export interface PickPlan {
   picks: PickChoice[];
   groups: { primary: PickGroup; fallback: PickGroup };
+  /** The list judged by what the award order can give; absent when too many outcomes to enumerate (#129). */
+  award?: AwardReport;
   warnings: string[];
   rationale: string[];
 }
@@ -882,6 +901,51 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     return { territoryIds: ids, score: round2(sim.score), bonuses: done, maxHops: Number.isFinite(far) ? far : null };
   };
 
+  // The award order (#129): a list is judged by the sets it can actually yield. The worst
+  // outcome is scored with the other players holding the picks it implies they took; the
+  // primary's order is changed only when another order raises that worst outcome.
+  const outcomeCache = new Map<string, number>();
+  const outcomeScore = (list: number[], ids: number[]) => {
+    const taken = impliedOpponentStarts(list, ids);
+    const key = `${[...ids].sort(byNum).join(',')}|${[...taken].sort(byNum).join(',')}`;
+    if (!outcomeCache.has(key)) outcomeCache.set(key, round2(simulate(ctx, ids, new Set(taken)).score));
+    return outcomeCache.get(key)!;
+  };
+  const worstOf = (list: number[], sets: number[][]) => {
+    let worst: { territoryIds: number[]; score: number } | null = null;
+    for (const set of sets) {
+      const ids = set.map((i) => list[i]!);
+      const sc = outcomeScore(list, ids);
+      if (!worst || sc < worst.score) worst = { territoryIds: ids, score: sc };
+    }
+    return worst!;
+  };
+  const outcomeSets =
+    primary.length > 0 ? pickOutcomes({ listLength: primary.length + fallback.length, perPlayer: primary.length, players }) : null;
+  let award: AwardReport | undefined;
+  if (outcomeSets) {
+    const base = [...primary];
+    let bestOrder = base;
+    let bestWorst = worstOf([...base, ...fallback], outcomeSets);
+    if (primary.length <= MAX_REORDER) {
+      for (const order of permutations(base)) {
+        const w = worstOf([...order, ...fallback], outcomeSets);
+        if (w.score > bestWorst.score) {
+          bestOrder = order;
+          bestWorst = w;
+        }
+      }
+    }
+    const reordered = bestOrder !== base;
+    primary.splice(0, primary.length, ...bestOrder);
+    const list = [...primary, ...fallback];
+    award = {
+      outcomes: outcomeSets.length,
+      worst: { ...bestWorst, opponentStarts: impliedOpponentStarts(list, bestWorst.territoryIds) },
+      reordered,
+    };
+  }
+
   const pickOf = (t: number) => {
     const a = viewFor(t).of.get(t)!;
     return { score: a.score, reasons: a.reasons };
@@ -948,7 +1012,18 @@ export function planPicks(input: PlanPicksInput): PickPlan {
             : 'one compact cluster, so the start has one front; the fallback covers a counter-pick.') +
         ' Weigh the trade before submitting.',
     );
-  return { picks, groups, warnings, rationale };
+  if (award) {
+    const names = (ids: number[]) => ids.map(terrName).join(', ') || 'none of this list';
+    rationale.push(
+      `Picks are awarded round by round in move order, the award order reversing each round, each player getting their highest-ranked territory still free: ` +
+        `this list can yield ${award.outcomes} different set${award.outcomes === 1 ? '' : 's'}. The worst (score ${award.worst.score}) is ${names(award.worst.territoryIds)}` +
+        (award.worst.opponentStarts.length ? `, with other players starting on ${names(award.worst.opponentStarts)}` : '') +
+        '.' +
+        (award.reordered ? ' The primary is ordered to raise that worst outcome, not by score.' : ''),
+    );
+  } else if (primary.length)
+    rationale.push('Picks are awarded round by round in a reversing move order; this list has too many possible outcomes to enumerate.');
+  return { picks, groups, ...(award ? { award } : {}), warnings, rationale };
 }
 
 export interface PickLimits {
@@ -980,4 +1055,84 @@ export function clientPickLimits(input: { territoryLimit: number | undefined; pl
     if (limit) perPlayer = Math.min(perPlayer, limit);
   }
   return { perPlayer, min: Math.min(10, perPlayer), max: players * perPlayer };
+}
+
+/** Most search states {@link pickOutcomes} explores before giving up (`null`). */
+export const MAX_AWARD_STATES = 50_000;
+
+/**
+ * Every set of list positions (0 = first pick) the award order can grant (#129). Picks are
+ * awarded round by round in move order, the order reversing each round, each player getting
+ * the highest-ranked territory still free on their own list (the community wiki). The other
+ * players' lists are unknown, so each of their picks may be any free territory of this list
+ * or one outside it; this player's move position is unknown too. A position set shorter than
+ * `perPlayer` means the list ran out (war.app then grants what is left). Sorted ascending,
+ * each set ascending; `null` when the search would pass {@link MAX_AWARD_STATES} states.
+ */
+export function pickOutcomes(input: { listLength: number; perPlayer: number; players: number }): number[][] | null {
+  const n = Math.max(0, Math.floor(input.listLength));
+  const rounds = Math.max(0, Math.floor(input.perPlayer));
+  const players = Math.max(1, Math.floor(input.players));
+  if (n > 30) return null;
+  const outcomes = new Set<number>();
+  const seen = new Set<string>();
+  let states = 0;
+  // step: index into the whole pick sequence; taken: bitmask of list positions anyone holds; mine: mine.
+  const visit = (pos: number, step: number, taken: number, mine: number): boolean => {
+    const key = `${pos}:${step}:${taken}:${mine}`;
+    if (seen.has(key)) return true;
+    seen.add(key);
+    if (++states > MAX_AWARD_STATES) return false;
+    if (step === rounds * players) {
+      outcomes.add(mine);
+      return true;
+    }
+    const round = Math.floor(step / players);
+    const slot = step % players;
+    const mover = round % 2 === 0 ? slot : players - 1 - slot;
+    if (mover === pos) {
+      let first = -1;
+      for (let i = 0; i < n; i++)
+        if (!(taken & (1 << i))) {
+          first = i;
+          break;
+        }
+      return first < 0 ? visit(pos, step + 1, taken, mine) : visit(pos, step + 1, taken | (1 << first), mine | (1 << first));
+    }
+    // Another player: a territory outside this list, or any free one on it.
+    if (!visit(pos, step + 1, taken, mine)) return false;
+    for (let i = 0; i < n; i++) if (!(taken & (1 << i)) && !visit(pos, step + 1, taken | (1 << i), mine)) return false;
+    return true;
+  };
+  for (let pos = 0; pos < players; pos++) if (!visit(pos, 0, 0, 0)) return null;
+  const sets = [...outcomes].map((m) => Array.from({ length: n }, (_, i) => i).filter((i) => m & (1 << i)));
+  return sets.sort((a, b) => {
+    for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i]! - b[i]!;
+    return a.length - b.length;
+  });
+}
+
+/**
+ * The other players' starts a pick list implies once picks are awarded (#129): every
+ * territory ranked above the last one granted that was not granted went to another player
+ * (an opponent, or a teammate in a team game) — the award gives each player their
+ * highest-ranked territory still free.
+ */
+export function impliedOpponentStarts(list: readonly number[], granted: readonly number[]): number[] {
+  const got = new Set(granted);
+  let last = -1;
+  list.forEach((t, i) => {
+    if (got.has(t)) last = i;
+  });
+  return list.slice(0, last + 1).filter((t) => !got.has(t));
+}
+
+/** Every ordering of `xs`, starting with `xs` itself (lexicographic by position). */
+function permutations<T>(xs: readonly T[]): T[][] {
+  if (xs.length <= 1) return [[...xs]];
+  const out: T[][] = [];
+  xs.forEach((x, i) => {
+    for (const rest of permutations([...xs.slice(0, i), ...xs.slice(i + 1)])) out.push([x, ...rest]);
+  });
+  return out;
 }

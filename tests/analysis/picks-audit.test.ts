@@ -1,7 +1,7 @@
 // Pick advisor audit (#129). Every map, id and name here is made up.
 import { describe, expect, it } from 'vitest';
 import { buildGraph, type MapGraph } from '../../src/analysis/graph.js';
-import { clientPickLimits, planPicks, type PickPlan, type PickSettings, type PlanPicksInput } from '../../src/analysis/picks.js';
+import { clientPickLimits, impliedOpponentStarts, pickOutcomes, planPicks, type PickPlan, type PickSettings, type PlanPicksInput } from '../../src/analysis/picks.js';
 import type { GameMap } from '../../src/normalize.js';
 
 type Edge = [number, number];
@@ -217,5 +217,68 @@ describe('planPicks — a list longer than twice the limit runs in tiers (#129)'
     expect(p.groups.fallback.territoryIds).toEqual([5, 8]);
     expect(p.groups.fallback.bonuses.map((b) => b.name)).toEqual(['PairB']);
     expect(p.rationale.join(' ')).toMatch(/2 tiers of up to 1/);
+  });
+});
+
+describe('pickOutcomes — the award order (#129)', () => {
+  // Rounds in move order, reversing each round; each player gets their best-ranked free pick.
+  const key = (o: number[]) => o.join(',');
+  it('a 3-pick 1v1 list of 6 has exactly 11 outcomes, and never loses both of the top two', () => {
+    const out = pickOutcomes({ listLength: 6, perPlayer: 3, players: 2 });
+    expect(out).not.toBeNull();
+    expect(out!.length).toBe(11);
+    expect(new Set(out!.map(key)).size).toBe(11);
+    for (const o of out!) {
+      expect(o).toHaveLength(3);
+      expect(o.includes(0) || o.includes(1)).toBe(true);
+    }
+    expect(out!.map(key)).toContain('0,1,2');
+  });
+
+  it('impliedOpponentStarts: a pick ranked above the last one granted, not granted, is another player’s start', () => {
+    expect(impliedOpponentStarts([10, 11, 12, 13, 14], [10, 12, 14])).toEqual([11, 13]);
+    expect(impliedOpponentStarts([10, 11, 12], [10, 11, 12])).toEqual([]);
+    expect(impliedOpponentStarts([10, 11, 12], [])).toEqual([]);
+  });
+});
+
+describe('planPicks — a list is judged by the sets the award order can give (#129)', () => {
+  it('reports the worst outcome of a 1v1 list and the opponent starts it implies', () => {
+    const g = mkGraph(
+      [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8]],
+      [
+        { id: 100, name: 'West', value: 3, territoryIds: [1, 2] },
+        { id: 101, name: 'East', value: 3, territoryIds: [7, 8] },
+      ],
+    );
+    const p = plan({ graph: g, pickable: [1, 2, 4, 5, 7, 8], territoryLimit: 2, maxPicks: 4 });
+    expect(p.award).toBeDefined();
+    const list = p.picks.map((x) => x.territoryId);
+    expect(p.award!.outcomes).toBe(pickOutcomes({ listLength: 4, perPlayer: 2, players: 2 })!.length);
+    const worst = p.award!.worst;
+    expect(worst.territoryIds.every((t) => list.includes(t))).toBe(true);
+    expect(worst.score).toBeLessThanOrEqual(p.groups.primary.score);
+    expect(worst.opponentStarts).toEqual(impliedOpponentStarts(list, worst.territoryIds));
+    expect(p.rationale.join(' ')).toMatch(/award order/);
+    expect(p.award!.reordered).toBe(false);
+  });
+
+  it('orders the primary to raise the worst outcome when score order would lose the better start', () => {
+    // 4 is a single-territory bonus twice over (+4 and +3) hanging off 1; Pair (+6) = {2,6}.
+    // Pick 1 scores more alone (it captures 4), but losing 4 to the opponent costs more than
+    // losing 1, so 4 goes first.
+    const g = mkGraph(
+      [[1, 2], [2, 3], [1, 4], [2, 5], [2, 6], [6, 7], [2, 8], [3, 9]],
+      [
+        { id: 100, name: 'SoloA', value: 4, territoryIds: [4] },
+        { id: 101, name: 'Pair', value: 6, territoryIds: [6, 2] },
+        { id: 102, name: 'SoloB', value: 3, territoryIds: [4] },
+      ],
+    );
+    const p = plan({ graph: g, pickable: [1, 4, 5, 6, 9], territoryLimit: 2, maxPicks: 4 });
+    expect(pick(p, 1).score).toBeGreaterThan(pick(p, 4).score);
+    expect(p.groups.primary.territoryIds).toEqual([4, 1]);
+    expect(p.award!.reordered).toBe(true);
+    expect(p.rationale.join(' ')).toMatch(/ordered to raise that worst outcome/);
   });
 });

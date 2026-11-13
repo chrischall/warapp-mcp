@@ -72,6 +72,7 @@ interface PlanPicksPayload {
   warnings: string[];
   rationale: string[];
   submitPicks: { game_id: number; territories: number[] };
+  award: { outcomes: number; worst: { territories: Named[]; score: number; opponentStarts: Named[] }; reordered: boolean } | null;
   settings?: Record<string, unknown>;
   untrusted_content?: boolean;
 }
@@ -158,6 +159,9 @@ describe('warapp_plan_picks', () => {
     expect(p.maxPicks).toBe(6);
     expect(p.picks.map((x) => x.territory.id).sort((a, b) => a - b)).toEqual(PICKABLE);
     expect(p.groups.fallback.territories).toHaveLength(3);
+    // The list judged by the award order: a 3-pick 1v1 list of 6 can yield 11 sets.
+    expect(p.award).toMatchObject({ outcomes: 11, reordered: expect.any(Boolean) });
+    for (const t of [...p.award!.worst.territories, ...p.award!.worst.opponentStarts]) expect(t.name).toBe(mapName(t.id));
   });
 
   it('in a 1v1 keeps the primary compact by default, and spreads it only with spread: true (#73)', async () => {
