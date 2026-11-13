@@ -160,22 +160,27 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
   // relink, or an expired direct session falling back to a tab signed in as
   // someone else), so a success is kept only under the state key it was read
   // in, and only for IDENTITY_TTL_MS. A failure (bridge down, signed out) is
-  // never kept: the next call retries. `generation` lets forgetIdentity win over
-  // a read already in flight. The token is kept as TEXT: its check digits,
-  // a leading 0 included, are part of it (#130).
+  // never kept: the next call retries. Every read takes a generation number
+  // when it starts, and only a read newer than the last one that settled may
+  // set or clear the cache, so a slow, older read finishing after a fresh one
+  // never overwrites it; forgetIdentity makes every read in flight older. The
+  // token is kept as TEXT: its check digits, a leading 0 included, are part of
+  // it (#130).
   let cached: { key: string; at: number; token: string } | undefined;
-  let generation = 0;
+  let started = 0;
+  let settled = 0;
   const tokenText = async (o: { fresh?: boolean } = {}): Promise<string | undefined> => {
     if (!o.fresh && cached && now() - cached.at < IDENTITY_TTL_MS && cached.key === (await identity())) {
       return cached.token;
     }
-    const gen = generation;
+    const gen = ++started;
     const before = await identity();
     const t = await fetchText(INVITE_TOKEN_URL)
       .then(parseInviteTokenText)
       .catch(() => undefined);
-    if (gen !== generation) return t;
+    if (gen <= settled) return t;
     if (t === undefined) {
+      settled = gen;
       cached = undefined;
       return t;
     }
@@ -184,7 +189,8 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     // may come from either leg, so it is returned but not cached: the next
     // resolve re-reads under the settled state.
     const after = await identity();
-    if (gen !== generation) return t;
+    if (gen <= settled) return t;
+    settled = gen;
     cached = before === after ? { key: after, at: now(), token: t } : undefined;
     return t;
   };
@@ -201,7 +207,7 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     myInGameId,
     forgetIdentity: () => {
       cached = undefined;
-      generation += 1;
+      settled = started;
     },
     fetchPage: fetchText,
     dataDir: dir,

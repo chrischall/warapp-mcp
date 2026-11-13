@@ -247,6 +247,11 @@ describe('direct-transport helpers', () => {
     expect(get.maxRedirects).toBeGreaterThan(0);
     expect(get.stopBefore(new URL('https://war.app/InviteToken'))).toBe(false);
     expect(get.stopBefore(new URL('https://war.app/SignIn'))).toBe(false);
+    // Only the exact origin: war.app on another port (or scheme) is stopped before it is requested.
+    expect(get.stopBefore(new URL('https://war.app:8443/x'))).toBe(true);
+    expect(get.stopBefore(new URL('https://war.app:443/x'))).toBe(false);
+    expect(get.stopBefore(new URL('http://war.app/x'))).toBe(true);
+    expect(get.stopBefore(new URL('https://www.war.app/x'))).toBe(true);
     // Fresh state per call: a second POST's first URL is requested too.
     expect(directFetchOptions('POST').stopBefore(new URL('https://war.app/Services'))).toBe(false);
   });
@@ -264,6 +269,15 @@ describe('direct-transport helpers', () => {
     expect(hasPasswordInput('<input value=\'x" type="password\'>')).toBe(false);
     expect(hasPasswordInput('<inputs type="password">')).toBe(false);
     expect(hasPasswordInput('')).toBe(false);
+    // Markup inside a script, a style, a textarea or a comment is not an element.
+    expect(hasPasswordInput('<script>var p={"tagline":"<input type=password>"};</script>')).toBe(false);
+    expect(hasPasswordInput('<SCRIPT type="text/x">x<input type="password"></SCRIPT >')).toBe(false);
+    expect(hasPasswordInput('<style>/* <input type=password> */</style>')).toBe(false);
+    expect(hasPasswordInput('<textarea><input type=password></textarea>')).toBe(false);
+    expect(hasPasswordInput('<!-- <input type=password> -->')).toBe(false);
+    // A real input outside those blocks still counts, and an unclosed script hides the rest.
+    expect(hasPasswordInput('<script>1</script><!-- x --><input type=password>')).toBe(true);
+    expect(hasPasswordInput('<script>var s="<input type=password>"')).toBe(false);
   });
 
   it('looksSignedOut: a profile page whose player-written text says type=password is NOT signed out', () => {
@@ -281,7 +295,8 @@ describe('direct-transport helpers', () => {
 
   it('toDirectResult maps a stopped (unfollowed) redirect; a POST stopped at the sign-in page is signed out', () => {
     const stopped = toDirectResult({ stopped: true, url: 'https://war.app/SignIn?r=%2F', hops: 1 });
-    expect(stopped).toEqual({ status: UNFOLLOWED_REDIRECT_STATUS, body: '', url: 'https://war.app/SignIn?r=%2F' });
+    expect(UNFOLLOWED_REDIRECT_STATUS).toBe(302);
+    expect(stopped).toEqual({ status: 302, body: '', url: 'https://war.app/SignIn?r=%2F' });
     expect(looksSignedOut('https://war.app/Services?m=x&js=1', stopped)).toBe(true);
     // A redirect elsewhere on war.app is not a sign-out: it passes through as a non-200.
     const other = toDirectResult({ stopped: true, url: 'https://war.app/Elsewhere', hops: 1 });

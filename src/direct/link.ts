@@ -17,6 +17,7 @@
 // LOCAL-ONLY — the hosted path keeps the browser bridge and stores no token.
 import { McpToolError, readPortEnv } from '@chrischall/mcp-utils';
 import { captureBearerHeader, type CaptureBearerHeaderOptions } from '@chrischall/mcp-utils/fetchproxy';
+import { isHosted } from '../hosted.js';
 import { DEFAULT_WS_PORT, SERVER_NAME, WS_PORT_ENV } from '../transport-bridge.js';
 import { VERSION } from '../version.js';
 import { scrubError, SESSION_HOST, writeSession, type Session } from './session.js';
@@ -113,6 +114,13 @@ function captureWarappCookie(opts: LinkSessionOptions): Promise<string> {
  * when the captured cookie carries no `AuthToken`.
  */
 export async function linkSession(opts: LinkSessionOptions = {}): Promise<LinkResult> {
+  // Local-only: a hosted child never pulls the full-account cookie into memory
+  // (the tool is not registered there, and writeSession refuses too).
+  if (isHosted(opts.env ?? process.env)) {
+    throw new McpToolError('The direct transport is local-only: a hosted server never links a war.app session.', {
+      kind: 'unknown',
+    });
+  }
   const cookie = await (opts.capture ?? (() => captureWarappCookie(opts)))();
   const authToken = authTokenFromCookie(cookie);
   if (!authToken) throw new NoAuthTokenError();

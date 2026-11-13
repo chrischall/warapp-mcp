@@ -6,8 +6,11 @@ import { MapCache, WarappClient } from '../src/client.js';
 import { SESSION_HOST, writeSession, type Session } from '../src/direct/session.js';
 import { createDirectFirstBridge, type DirectFetch, type SessionStore } from '../src/direct/transport.js';
 import { createLiveContext, IDENTITY_TTL_MS } from '../src/tools/live-context.js';
+import { Writer } from '../src/protocol/codec.js';
+import { OPEN_GAMES_URL } from '../src/open-games.js';
 import { mockWarappBridge } from './bridge-mock.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
+import { writeGameInfo } from './protocol/my-games-bundle.js';
 
 /**
  * "Me" is whoever the InviteToken page says is signed in. Which account that is
@@ -104,6 +107,53 @@ describe('createLiveContext: the cached identity', () => {
     expect(await c.ctx.myInviteToken({ fresh: true })).toBeUndefined();
     who = B;
     expect(await c.ctx.myInviteToken()).toBe(Number(B));
+  });
+
+  it('an older read finishing after a fresh one never overwrites it', async () => {
+    // The first InviteToken read is held open and answers A; the fresh read that
+    // starts after it answers B at once.
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    const { bridge } = mockWarappBridge(async () => {
+      calls += 1;
+      if (calls === 1) {
+        await held;
+        return { status: 200, body: page(A), url: INVITE };
+      }
+      return { status: 200, body: page(B), url: INVITE };
+    });
+    const ctx = createLiveContext({ client, bridge, bundle: unusedBundle, identity: async () => 'k' });
+    const slow = ctx.myInviteToken();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await ctx.myInviteToken({ fresh: true })).toBe(Number(B));
+    release();
+    expect(await slow).toBe(Number(A));
+    // The cache holds the fresh read's B, not the slower, older A.
+    expect(await ctx.myInviteToken()).toBe(Number(B));
+    expect(calls).toBe(2);
+  });
+
+  it('an older failed read finishing after a fresh success does not discard it', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    const { bridge } = mockWarappBridge(async () => {
+      calls += 1;
+      if (calls === 1) {
+        await held;
+        return { status: 500, body: '', url: INVITE };
+      }
+      return { status: 200, body: page(B), url: INVITE };
+    });
+    const ctx = createLiveContext({ client, bridge, bundle: unusedBundle, identity: async () => 'k' });
+    const slow = ctx.myInviteToken();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await ctx.myInviteToken({ fresh: true })).toBe(Number(B));
+    release();
+    expect(await slow).toBeUndefined();
+    expect(await ctx.myInviteToken()).toBe(Number(B));
+    expect(calls).toBe(2);
   });
 });
 
@@ -365,4 +415,160 @@ describe('a write previews for the account that will act', () => {
     expect(textOf(r)).toMatch(/account changed/i);
     expect(sent(h, 'Surrender')).toBe(false);
   });
+
+  /**
+   * Every write re-reads the account for its plan (`fresh: true`), not only
+   * surrender. First the account is A, then it becomes C, who holds no seat
+   * that would let the write through. A first call reads A (warming the cache);
+   * after the switch nothing moves the transport state before the plan reads
+   * "me", so a cached read would still say A and a fresh one finds C.
+   * - `expiry` (as for surrender): a linked direct session answers as A and the
+   *   tab behind the bridge is C; the session then expires. The direct leg
+   *   serves the same fake war.app (frames and pages) as the bridge.
+   * - `tab`: no direct session; the tab itself signs in as C. Used for join,
+   *   whose plan reads the open games page alongside "me": over an expired
+   *   session that read moves the router, which would discard the cache anyway.
+   */
+  const C = '5598765499';
+  const C_IN_GAME = 987654;
+
+  async function switchingAccount(opts: { feed: unknown[]; pages?: Record<string, string>; via: 'expiry' | 'tab' }) {
+    const dataDir = mkdtempSync(join(tmpdir(), 'warapp-mcp-identity-'));
+    const pages: Record<string, string> = { ...opts.pages, [INVITE]: page(opts.via === 'tab' ? A : C) };
+    const state = { expired: false };
+    let ref: Harness | undefined;
+    let invitesAsA = 0;
+    let directFetch: DirectFetch | undefined;
+    if (opts.via === 'expiry') {
+      await writeSession({ authToken: 'test-auth-token', capturedAt: '2026-11-12T10:00:00.000Z', host: SESSION_HOST }, {
+        MCP_DATA_DIR: dataDir,
+      });
+      directFetch = async (url, init) => {
+        if (state.expired) return SIGNED_OUT;
+        const r =
+          url === INVITE
+            ? { status: 200, body: page(A), url }
+            : await ref!.bridge.server.request(init.method, url, {
+                headers: init.headers,
+                ...(init.body !== undefined ? { body: init.body } : {}),
+              });
+        if (url === INVITE) invitesAsA += 1;
+        return { status: r.status, body: r.body, url: r.url ?? url };
+      };
+    }
+    ref = await liveHarness({ dataDir, ...(directFetch ? { directFetch } : {}), pages, feed: opts.feed });
+    const bridged = () => ref!.bridge.requests.filter((r) => r.path === INVITE).length;
+    return {
+      h: ref,
+      /** InviteToken reads that answered A. */
+      readsAsA: () => (opts.via === 'tab' ? bridged() : invitesAsA),
+      switchAccount: () => {
+        if (opts.via === 'tab') pages[INVITE] = page(C);
+        else state.expired = true;
+      },
+    };
+  }
+
+  /** GameFeed game GAME_ID with A and an opponent seated (C is not). */
+  function gameWithA(extra: Record<string, unknown> = {}, me: Record<string, string> = {}): Record<string, unknown> {
+    const f = lobbyFixture();
+    const template = (f.players as Array<Record<string, string>>)[0]!;
+    return {
+      ...f,
+      id: String(GAME_ID),
+      name: 'Synthetic Duel',
+      state: 'Playing',
+      numberOfTurns: '5',
+      players: [
+        { ...template, id: A, name: 'Alpha', state: 'Playing', hasCommittedOrders: 'False', ...me },
+        { ...template, id: '1001', name: 'Opponent', state: 'Playing', hasCommittedOrders: 'False' },
+      ],
+      ...extra,
+    };
+  }
+
+  const hexOf = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+  /** An OpenGames page listing lobby 3001, which C has already joined (A has not). */
+  function lobbyWithC(): string {
+    const w = new Writer().int32(1);
+    writeGameInfo(w, {
+      id: 3001,
+      name: 'Plain FFA',
+      lastTurn: -1,
+      state: 2,
+      players: [
+        { id: 111111, name: 'Host', state: 2, committed: false },
+        { id: C_IN_GAME, name: 'Charlie', state: 2, committed: false },
+      ],
+      openSeats: [-1],
+      maxPlayers: null,
+    });
+    return `<html><script type="text/plain" id="AllOpenGamesData">${hexOf(w.bytes())}</script></html>`;
+  }
+
+  const freshCases: Array<{
+    tool: string;
+    args: Record<string, unknown>;
+    feed: unknown[];
+    pages?: Record<string, string>;
+    via?: 'expiry' | 'tab';
+    /** What the second call says once the plan reads C. */
+    refusal: RegExp;
+  }> = [
+    {
+      tool: 'warapp_uncommit_turn',
+      args: { game_id: GAME_ID },
+      feed: [gameWithA({}, { hasCommittedOrders: 'True' })],
+      refusal: /not a player in game/i,
+    },
+    {
+      tool: 'warapp_begin_turn',
+      args: { game_id: GAME_ID },
+      feed: [gameWithA({ numberOfTurns: '0', settings: { ...(lobbyFixture().settings as object), MoveOrder: 'NoLuckCycle' } })],
+      refusal: /not playing in game 4001/i,
+    },
+    {
+      tool: 'warapp_join_game',
+      args: { game_id: 3001 },
+      feed: [{ ...lobbyFixture(), id: '3001', state: 'WaitingForPlayers' }],
+      pages: { [OPEN_GAMES_URL]: lobbyWithC() },
+      via: 'tab',
+      refusal: /already joined/i,
+    },
+    {
+      tool: 'warapp_submit_turn',
+      args: { game_id: GAME_ID, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] },
+      feed: [gameWithA()],
+      refusal: /signed-in war\.app account is not a player in game/i,
+    },
+    {
+      // `player` omitted: "me" is resolved fresh, and C holds no seat.
+      tool: 'warapp_submit_picks',
+      args: { game_id: GAME_ID, territories: [1] },
+      feed: [gameWithA({ state: 'DistributingTerritories', numberOfTurns: '-1' })],
+      refusal: /say which player/i,
+    },
+    {
+      // `player` named: the signed-in check itself is fresh.
+      tool: 'warapp_submit_picks',
+      args: { game_id: GAME_ID, player: 'Alpha', territories: [1] },
+      feed: [gameWithA({ state: 'DistributingTerritories', numberOfTurns: '-1' })],
+      refusal: /Alpha is not the signed-in/i,
+    },
+  ];
+
+  for (const c of freshCases) {
+    it(`${c.tool}${'player' in c.args ? ' (player named)' : ''}: the plan re-reads the account, so an account that changed since is not still read as A`, async () => {
+      const s = await switchingAccount({ feed: c.feed, via: c.via ?? 'expiry', ...(c.pages ? { pages: c.pages } : {}) });
+      h = s.h;
+      const first = await h.call(c.tool, c.args);
+      // The first plan read A (and cached it), whatever it then decided.
+      expect(s.readsAsA()).toBeGreaterThan(0);
+      expect(textOf(first)).not.toMatch(c.refusal);
+      s.switchAccount();
+      const second = await h.call(c.tool, c.args);
+      expect(second.isError, textOf(second)).toBe(true);
+      expect(textOf(second)).toMatch(c.refusal);
+    });
+  }
 });

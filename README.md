@@ -43,7 +43,7 @@ game chat.
 | `WARAPP_ENV_FILE` | no | A dotenv file to read the two above from (default `~/.config/warapp-mcp/.env`). Values already in the environment win. |
 | `WARAPP_WS_PORT` | no | The fetchproxy bridge port (default `37149`, shared by the whole fetchproxy fleet and ContextMint Bridge). Override it only for local testing, or when a host injects a per-registration port. |
 | `WARAPP_TRANSPORT` | no | How the live-game tools reach war.app: `auto` (default — try the chrome-less direct transport when a session is linked, else the browser bridge), `direct` (only direct), or `fetchproxy` (only the browser bridge, today's behaviour). See [Direct transport](#direct-transport-no-browser). |
-| `WARAPP_SESSION_FILE` | no | Where the linked direct-transport session is stored (default `<data dir>/session.json`). Local-only; a full-account credential, kept at file mode `0600`. |
+| `WARAPP_SESSION_FILE` | no | Where the linked direct-transport session is stored (default `<data dir>/session.json`). Local-only; a full-account credential, kept at file mode `0600`. Its directory is made `0700`, so name a file in a directory of its own. |
 | `WARAPP_STATS` | no | `1` turns on `warapp_map_stats` on a **local** install (off by default; always off when hosted). It then fetches finished ladder games — at most `max_new_games` a call, one request a second — and caches them under `<data dir>/stats/`. |
 | `WARAPP_DEBUG` | no | Truthy logs the bridge's role and lifecycle to stderr. |
 | `MCP_DATA_DIR` | no | Where the downloaded war.app client bundle is cached (default `~/.config/warapp-mcp`). A host with persistent state sets it. |

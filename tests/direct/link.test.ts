@@ -31,6 +31,14 @@ describe('authTokenFromCookie', () => {
 });
 
 describe('linkSession', () => {
+  it('refuses on a hosted child before the cookie is ever captured', async () => {
+    const capture = vi.fn(async () => COOKIE);
+    const save = vi.fn(async () => {});
+    await expect(linkSession({ env: { MCP_HOST_METER_FILE: '/x' }, capture, save })).rejects.toThrow(/local-only/i);
+    expect(capture).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('parses the AuthToken out of the captured cookie, ignores the others, and stores it', async () => {
     let saved: Session | undefined;
     const now = new Date('2026-11-12T10:20:30.000Z');

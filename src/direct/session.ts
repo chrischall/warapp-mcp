@@ -53,6 +53,8 @@ const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !
 /**
  * Where the session is stored: `WARAPP_SESSION_FILE` if set, else
  * `<dataDir>/session.json` (the same `dataDir` the client bundle cache uses).
+ * {@link writeSession} makes the containing directory `0700`, so the variable
+ * should name a file in a directory of its own, not a shared folder.
  */
 export function sessionFilePath(env: EnvSource = process.env): string {
   return readEnvVar('WARAPP_SESSION_FILE', { env }) ?? join(dataDir(env), 'session.json');
@@ -128,10 +130,21 @@ const run = promisify(execFile);
  */
 const MACOS_ACLS = process.platform === 'darwin';
 
+/**
+ * Whether `ls -led` output lists an ACL entry (` 0: group:everyone allow …` on
+ * a line after the first). The mode string's `+` is not enough: with extended
+ * attributes as well, macOS prints `@` there instead.
+ */
+export function lsShowsAcl(stdout: string): boolean {
+  return stdout
+    .split('\n')
+    .slice(1)
+    .some((line) => /^\s*\d+: /.test(line));
+}
+
 async function hasAcl(path: string): Promise<boolean> {
-  // `ls -led`: the mode string is followed by '+' when an extended ACL is set.
   const { stdout } = await run('/bin/ls', ['-led', path]);
-  return /^\S{10}\+/.test(stdout);
+  return lsShowsAcl(stdout);
 }
 
 /** Remove every ACL entry from `path` (ours), then refuse unless none is left. */

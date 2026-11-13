@@ -11,11 +11,12 @@
 // session store (src/direct/session.ts) per call and issues an HTTPS request
 // through mcp-utils netguard `fetchPublic` (pinned to public addresses, so a
 // name that resolves or rebinds inward is refused). Every hop must be the exact
-// host war.app; a non-GET follows no redirect at all, so its body (the account
-// email, the orders) is never re-sent anywhere ({@link directFetchOptions}). It maps the reply into the same `FetchproxyFetchResult`
-// shape the browser bridge returns, so the ONE injection point every consumer
-// shares (WarappRpc, the page fetches, the healthcheck, the push socket) gains
-// direct mode at once.
+// origin https://war.app; a non-GET follows no redirect at all, so its body (the
+// account email, the orders) is never re-sent anywhere
+// ({@link directFetchOptions}). It maps the reply into the same
+// `FetchproxyFetchResult` shape the browser bridge returns, so the ONE
+// injection point every consumer shares (WarappRpc, the page fetches, the
+// healthcheck, the push socket) gains direct mode at once.
 //
 // {@link createDirectFirstBridge} wires the direct leg and the existing
 // fetchproxy bridge (src/transport-bridge.ts `createWarappBridge`) through
@@ -28,10 +29,10 @@
 // SECURITY: the AuthToken is a full-account credential. It is never logged,
 // never put in a tool result, never in an error or hint string — upstream
 // errors are scrubbed BY VALUE ({@link scrubError}: message, hint, stack and
-// cause chain). The direct leg
-// refuses to attach the cookie to any host but war.app itself (no subdomain),
-// so the token can never be sent elsewhere. Direct mode is LOCAL-ONLY, enforced here: on a hosted
-// child (src/hosted.ts) {@link createDirectFirstBridge} pins the router to the browser bridge
+// cause chain). The direct leg refuses to attach the cookie to any host but
+// war.app itself (no subdomain), so the token can never be sent elsewhere.
+// Direct mode is LOCAL-ONLY, enforced here: on a hosted child (src/hosted.ts)
+// {@link createDirectFirstBridge} pins the router to the browser bridge
 // whatever WARAPP_TRANSPORT says, and its session store reads as empty.
 import { detectEdgeBlock, EdgeBlockedError, McpToolError } from '@chrischall/mcp-utils';
 import {
@@ -121,6 +122,9 @@ const decoder = new TextDecoder();
 /** Whether a request may be re-sent (after it reached war.app, or by a redirect): only a read-only GET/HEAD. */
 const isSafeToReplay = (method: string): boolean => /^(?:GET|HEAD)$/i.test(method);
 
+/** The one origin the direct leg talks to: scheme, host and default port. */
+const SESSION_ORIGIN = `https://${SESSION_HOST}`;
+
 /** Redirects a direct GET may follow (all within war.app). */
 export const MAX_DIRECT_GET_REDIRECTS = 5;
 
@@ -146,7 +150,8 @@ export interface DirectFetchOptions {
  * How the direct leg may follow redirects. Every hop must be the exact host
  * war.app (netguard `allowHosts`, checked on the first URL and on each target
  * before it is requested). A GET follows at most
- * {@link MAX_DIRECT_GET_REDIRECTS} redirects within war.app. A non-GET follows
+ * {@link MAX_DIRECT_GET_REDIRECTS} redirects within the exact origin
+ * https://war.app (another port or scheme is stopped, not requested). A non-GET follows
  * none: netguard would re-send the method and body on a 307/308, and that body
  * holds the account email and the orders, so the first redirect target is
  * stopped before it is requested (`stopBefore` lets the request itself through
@@ -156,7 +161,10 @@ export interface DirectFetchOptions {
  */
 export function directFetchOptions(method: string): DirectFetchOptions {
   const base = { requireHttps: true as const, allowHosts: [SESSION_HOST] };
-  if (isSafeToReplay(method)) return { ...base, maxRedirects: MAX_DIRECT_GET_REDIRECTS, stopBefore: () => false };
+  if (isSafeToReplay(method)) {
+    // allowHosts compares the host name only: war.app on another port or scheme is stopped here.
+    return { ...base, maxRedirects: MAX_DIRECT_GET_REDIRECTS, stopBefore: (url) => url.origin !== SESSION_ORIGIN };
+  }
   let first = true;
   return {
     ...base,
@@ -245,13 +253,22 @@ const INPUT_TAG = /<input(?=[\s/>])/gi;
 const TAG_ATTR = /\s*(?:(>)|([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`=]+)))?|\/)/y;
 
 /**
+ * Regions whose content is not markup: HTML comments and `<script>`, `<style>`
+ * and `<textarea>` blocks (an unclosed one runs to the end of the body).
+ */
+const NOT_MARKUP = /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+
+/**
  * Whether an HTML body holds a real password input: an `<input …>` element
  * whose `type` or `name` ATTRIBUTE is `password`. Player-written text on a page
  * (names, taglines) is HTML-escaped, which leaves `=` alone but never yields a
  * tag, and a value such as `value="type=password"` is read as that value, not
- * as an attribute — so nothing a player writes can match.
+ * as an attribute — so nothing a player writes can match. Comments and script,
+ * style and textarea blocks are skipped first ({@link NOT_MARKUP}): text a page
+ * embeds raw inside one (a JSON string, say) is not an element.
  */
-export function hasPasswordInput(body: string): boolean {
+export function hasPasswordInput(raw: string): boolean {
+  const body = raw.replace(NOT_MARKUP, ' ');
   INPUT_TAG.lastIndex = 0;
   for (let m = INPUT_TAG.exec(body); m; m = INPUT_TAG.exec(body)) {
     TAG_ATTR.lastIndex = INPUT_TAG.lastIndex;
@@ -405,7 +422,6 @@ export const RELINK_CHECK_MS = 5_000;
 
 /** Why the router left the direct leg: a session problem (lifted by a relink) or an edge block (sticky). */
 type Wall = { kind: 'session'; capturedAt: string | null } | { kind: 'edge' };
-
 
 /**
  * Wire the direct leg and the fetchproxy bridge into a direct-first router,

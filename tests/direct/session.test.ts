@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearSession,
+  lsShowsAcl,
   readSession,
   readSessionSync,
   scrubToken,
@@ -201,9 +202,34 @@ describe('sessionDirVerdict', () => {
   });
 });
 
+describe('lsShowsAcl', () => {
+  it('reads the ACL entries, not the mode string, which shows @ when there are also extended attributes', () => {
+    expect(lsShowsAcl('drwx------  2 me  staff  64 Nov 13 10:00 /x\n')).toBe(false);
+    expect(lsShowsAcl('drwx------+ 2 me  staff  64 Nov 13 10:00 /x\n 0: group:everyone allow list,search\n')).toBe(true);
+    expect(lsShowsAcl('drwx------@ 2 me  staff  64 Nov 13 10:00 /x\n 0: group:everyone allow list,file_inherit\n')).toBe(true);
+    expect(lsShowsAcl('drwx------@ 2 me  staff  64 Nov 13 10:00 /x\n')).toBe(false);
+    // A file name holding a colon on the first line is not an entry.
+    expect(lsShowsAcl('-rw-------  1 me  staff  64 Nov 13 10:00 /x 0: y\n')).toBe(false);
+  });
+});
+
 describe('writeSession and macOS ACLs', () => {
   const run = promisify(execFile);
-  const hasAcl = async (p: string) => /^\S{10}\+/.test((await run('/bin/ls', ['-led', p])).stdout);
+  const hasAcl = async (p: string) => lsShowsAcl((await run('/bin/ls', ['-led', p])).stdout);
+
+  it.skipIf(process.platform !== 'darwin')('detects an ACL on a directory that also has an extended attribute', async () => {
+    const both = join(dir, 'both');
+    await mkdir(both, { mode: 0o700 });
+    await run('/usr/bin/xattr', ['-w', 'com.example.test', 'x', both]);
+    await run('/bin/chmod', ['+a', 'everyone allow list,file_inherit', both]);
+    expect((await run('/bin/ls', ['-led', both])).stdout).toMatch(/^\S{10}@/);
+    expect(await hasAcl(both)).toBe(true);
+    await writeSession({ authToken: FAKE_TOKEN, capturedAt: '2026-11-12T00:00:00.000Z', host: SESSION_HOST }, {
+      WARAPP_SESSION_FILE: join(both, 'session.json'),
+    });
+    expect(await hasAcl(both)).toBe(false);
+    expect(await hasAcl(join(both, 'session.json'))).toBe(false);
+  });
 
   // The mode bits do not govern an ACL: chmod 0700 leaves an inheritable
   // "everyone allow read" entry in place, and a file created under it inherits it.
@@ -239,10 +265,10 @@ describe('writeSession and macOS ACLs', () => {
 describe('writeSession into a directory others can write to', () => {
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     'refuses, naming the directory and never the token',
-    async () => {
+    async (ctx) => {
       // The sticky world-writable temp directory belongs to root, not to us.
       const shared = await realpath('/tmp').catch(() => null);
-      if (!shared || (await stat(shared)).uid === process.getuid?.()) return;
+      if (!shared || (await stat(shared)).uid === process.getuid?.()) return ctx.skip();
       const file = join(shared, `warapp-session-test-${process.pid}.json`);
       const err = await writeSession(
         { authToken: FAKE_TOKEN, capturedAt: '2026-11-12T00:00:00.000Z', host: SESSION_HOST },

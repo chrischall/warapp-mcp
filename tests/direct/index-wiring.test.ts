@@ -6,7 +6,7 @@ import { SESSION_HOST, writeSession } from '../../src/direct/session.js';
 import { HOSTED_MARKERS } from '../../src/hosted.js';
 import type { Writer } from '../../src/protocol/codec.js';
 import { Method } from '../../src/protocol/methods.js';
-import { liveHarness, payload, type Harness } from '../helpers.js';
+import { liveHarness, lobbyFixture, payload, textOf, type Harness } from '../helpers.js';
 import { writeMyGamesReturn, type SyntheticGame } from '../protocol/my-games-bundle.js';
 
 /**
@@ -133,6 +133,16 @@ describe('hosted: the direct transport is never used', () => {
           expect(res.isError, tool).toBe(true);
           expect(JSON.stringify(res), tool).not.toContain(LINK);
         }
+      });
+
+      it("uncommit's signed-in hint leaves linking a session out (the game is in a turn phase)", async () => {
+        // GameFeed serves game 1001 mid-turn, and no InviteToken page answers, so
+        // the call gets past the phase check to the signed-in account refusal.
+        h = await liveHarness({ env: { [marker]: 'x' }, feed: [{ ...lobbyFixture(), id: '1001', state: 'Playing', numberOfTurns: '3' }] });
+        const res = await h.call('warapp_uncommit_turn', { game_id: 1001 });
+        expect(res.isError).toBe(true);
+        expect(textOf(res)).toMatch(/Could not tell which war\.app account is signed in/);
+        expect(JSON.stringify(res)).not.toContain(LINK);
       });
     });
   }

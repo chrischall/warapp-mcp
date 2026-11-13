@@ -1,58 +1,70 @@
 // By-value scrubbing of the credentials this server holds (the account email,
 // the GameFeed API token, the AuthToken cookie) out of upstream text.
 //
-// mcp-utils' `redactValues` replaces a value's raw and JSON-escaped spellings.
-// An upstream page that echoes a request body or URL shows the value encoded
-// instead — percent-encoded, or form-encoded (spaces as `+`, `@` as `%40`) —
-// and may print hex digits or, for an email, letters in another case. This
-// helper adds those spellings and wraps `redactValues`; an `anyCase` value
-// (the email) is matched case-insensitively, its encoded spellings included.
-import { redactValues } from '@chrischall/mcp-utils';
+// An upstream page that echoes a request body or URL may show a value raw,
+// JSON-escaped, or encoded — percent-encoded by any encoder (strict RFC 3986
+// writes `*` as `%2A`, JS encoders do not), partly encoded, with hex digits in
+// either case, or form-encoded (spaces as `+`). So rather than listing
+// spellings, each secret becomes one pattern in which every character matches
+// itself, its percent-encoded UTF-8 bytes (hex in any case), its JSON escape
+// (`\"`, `\uXXXX`) or, for a space, `+` — the same as comparing after decoding.
+// An `anyCase` value (the email) also matches its letters in any case.
 
 /** A secret to scrub: a bare string is matched case-sensitively. */
 export type SecretValue = string | null | undefined | { value: string | null | undefined; anyCase?: boolean };
 
-const lowerHex = (s: string) => s.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase());
-
-/**
- * Every spelling of `value` an upstream echo may carry: raw, percent-encoded
- * (`encodeURIComponent`), form-encoded (`URLSearchParams`), and each encoded
- * spelling with lowercase hex digits. Distinct; empty for an empty value.
- */
-export function secretSpellings(value: string): string[] {
-  if (!value) return [];
-  const uri = encodeURIComponent(value);
-  const form = new URLSearchParams({ v: value }).toString().slice(2);
-  return [...new Set([value, uri, form, lowerHex(uri), lowerHex(form)])];
-}
-
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** One hex digit, matching either case even in a case-sensitive pattern. */
+const hexDigit = (d: string) => (/[0-9]/.test(d) ? d : `[${d.toLowerCase()}${d.toUpperCase()}]`);
+const hexPattern = (n: number, width: number) =>
+  n
+    .toString(16)
+    .padStart(width, '0')
+    .split('')
+    .map(hexDigit)
+    .join('');
+
+/** Every way one character of a secret may be written in an echo, as a regex alternation. */
+function charPattern(ch: string): string {
+  const alts = new Set<string>([escapeRegExp(ch)]);
+  // Percent-encoded UTF-8 bytes (a lone surrogate has none worth matching).
+  if (!/[\uD800-\uDFFF]/.test(ch) || ch.length === 2) {
+    alts.add([...Buffer.from(ch, 'utf8')].map((b) => `%${hexPattern(b, 2)}`).join(''));
+  }
+  if (ch === ' ') alts.add('\\+');
+  const json = JSON.stringify(ch).slice(1, -1);
+  if (json !== ch) alts.add(escapeRegExp(json));
+  // A \uXXXX escape of each UTF-16 unit (`+` for '+', `@` for '@').
+  alts.add(
+    ch
+      .split('')
+      .map((u) => `\\\\u${hexPattern(u.charCodeAt(0), 4)}`)
+      .join(''),
+  );
+  return `(?:${[...alts].join('|')})`;
+}
+
+/** The pattern matching every spelling of `value` (see the file header). */
+export function secretPattern(value: string, anyCase = false): RegExp {
+  return new RegExp(Array.from(value, charPattern).join(''), anyCase ? 'gi' : 'g');
+}
+
 /**
- * `text` with every {@link secretSpellings} spelling of each secret (and its
- * JSON-escaped form) replaced by `placeholder`. Case-sensitive values go
- * through mcp-utils `redactValues` (longest first); `anyCase` values are
- * replaced first, case-insensitively, as escaped literals.
+ * `text` with every spelling of each secret replaced by `placeholder`
+ * ({@link secretPattern}); the longest secrets first, so the longer of two
+ * overlapping secrets goes whole.
  */
 export function scrubSecrets(text: string, secrets: Iterable<SecretValue>, placeholder = '[REDACTED]'): string {
-  const exact: string[] = [];
-  const anyCase: string[] = [];
+  const values = new Map<string, boolean>();
   for (const s of secrets) {
-    const { value, anyCase: ci = false } = typeof s === 'object' && s !== null ? s : { value: s };
+    const { value, anyCase = false } = typeof s === 'object' && s !== null ? s : { value: s };
     if (!value) continue;
-    for (const spelling of secretSpellings(value)) {
-      if (!ci) {
-        exact.push(spelling);
-        continue;
-      }
-      anyCase.push(spelling);
-      const json = JSON.stringify(spelling).slice(1, -1);
-      if (json !== spelling) anyCase.push(json);
-    }
+    values.set(value, (values.get(value) ?? false) || anyCase);
   }
   let out = String(text ?? '');
-  for (const needle of [...new Set(anyCase)].sort((a, b) => b.length - a.length)) {
-    out = out.replace(new RegExp(escapeRegExp(needle), 'gi'), () => placeholder);
+  for (const [value, anyCase] of [...values].sort((a, b) => b[0].length - a[0].length)) {
+    out = out.replace(secretPattern(value, anyCase), () => placeholder);
   }
-  return redactValues(out, exact, { placeholder });
+  return out;
 }
