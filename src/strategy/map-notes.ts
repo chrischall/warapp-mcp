@@ -27,7 +27,7 @@ export interface MapNotesInput {
   settings?: PickSettings;
   /** Simulate the opening (picks still ahead): the players and each one's territory limit. */
   opening?: { players: number; territoryLimit: number };
-  /** Bonus and chokepoint rows (default {@link MAP_NOTES_LIMIT}). */
+  /** Bonus and chokepoint rows (default {@link MAP_NOTES_LIMIT} and {@link MAP_CHOKEPOINTS_LIMIT}). */
   limit?: number;
   /** The game overrides bonus values that could not all be read (`settings.overriddenBonusesUnparsed`). */
   overridesUnparsed?: boolean;
@@ -128,7 +128,7 @@ export function mapNotes(input: MapNotesInput): MapNotes {
 
   // ---- chokepoints ----
   const chokepoints = findChokepoints(g)
-    .slice(0, Math.max(limit, MAP_CHOKEPOINTS_LIMIT))
+    .slice(0, input.limit ?? MAP_CHOKEPOINTS_LIMIT)
     .map((c) => ({
       territoryId: c.territoryId,
       name: c.name,

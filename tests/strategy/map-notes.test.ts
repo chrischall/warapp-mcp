@@ -65,6 +65,11 @@ describe('mapNotes: chokepoints', () => {
     expect(five.name).toBe('T5');
     expect(five.connects).toContain('Charlie');
   });
+
+  it('limit caps the chokepoint rows too', () => {
+    expect(mapNotes({ graph }).chokepoints.length).toBeGreaterThan(2);
+    expect(mapNotes({ graph, limit: 2 }).chokepoints).toHaveLength(2);
+  });
 });
 
 describe('mapNotes: income targets from the opening simulation', () => {
