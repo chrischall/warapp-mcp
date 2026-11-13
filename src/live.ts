@@ -125,10 +125,18 @@ function territoryOf(key: unknown, ts: Obj): LiveTerritory {
   if (typeof key === 'number' && key !== territoryId) {
     throw new LiveBoardFormatError(`territory standing ${key} reads as territory ${territoryId}`);
   }
+  // A constructor the interpreter could not run (the client changed how it builds Armies) leaves
+  // a half-built record: its count would be a default, not the territory's armies (#131).
+  if (typeof armies.$ctorError === 'string') {
+    throw new LiveBoardFormatError(`territory ${territoryId}'s armies: the client's Armies constructor failed (${armies.$ctorError})`);
+  }
   const armyFields = fields(armies);
   const armyFogged = armyFields.find((v) => typeof v === 'boolean') === true;
   const count = armyFields.find((v) => typeof v === 'number');
   const fogged = armyFogged || fogLevel === FOG_LEVEL_FOGGED;
+  if (!fogged && fogLevel !== FOG_LEVEL_OWNER_ONLY && typeof count !== 'number') {
+    throw new LiveBoardFormatError(`visible territory ${territoryId} has no army count`);
+  }
   const out: LiveTerritory = {
     territoryId,
     fogLevel,
@@ -159,6 +167,9 @@ export function readLatestGameInfo(bundle: ClassReader, body: Reader): unknown {
   if (!body.bool()) return null;
   const info = bundle.readClass(LATEST_GAME_INFO, body);
   if (!isObj(info)) throw new LiveBoardFormatError('no LatestGameInfo');
+  // The result is the whole body: bytes left over mean the readers and the reply disagree
+  // on the layout, so what was read cannot be trusted (#131).
+  if (body.remaining !== 0) throw new LiveBoardFormatError(`${body.remaining} bytes left unread after the LatestGameInfo`);
   return info;
 }
 

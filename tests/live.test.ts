@@ -127,6 +127,64 @@ describe('readLiveStanding', () => {
   });
 });
 
+describe('a changed client fails loudly, never a wrong verified board (#131)', () => {
+  const CTOR =
+    'function Am(a,b,d){null==d&&(d=!1);null==a&&(a=0);this.g1=!1;this.g2=0;this.g1=d;this.g2=a;' +
+    'this.g3=null!=b&&0==b.length?null:b}';
+  const variant = (from: string, to: string) => {
+    expect(LIVE_BUNDLE).toContain(from);
+    return new WarappBundle(LIVE_BUNDLE.replace(from, to), 'variant');
+  };
+  const board = () =>
+    body(
+      [
+        { id: 1, fogLevel: 1, owner: 123456, armies: 12 },
+        { id: 2, fogLevel: 2, owner: 765432, armies: 30 },
+        { id: 3, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+      ],
+      [123456],
+    );
+
+  it('the Armies constructor emitted in a form the interpreter cannot find', () => {
+    const b = variant('function Am(a,b,d){', 'var Am=function(a,b,d){');
+    expect(() => readLiveStanding(b, board())).toThrow(LiveBoardFormatError);
+    expect(() => readLiveStanding(b, board())).toThrow(/army count/);
+  });
+
+  it('the Armies constructor calling a super constructor first', () => {
+    const b = variant(CTOR, 'function Bz(){}' + CTOR.replace('{null==d', '{Bz.call(this);null==d'));
+    expect(() => readLiveStanding(b, board())).toThrow(LiveBoardFormatError);
+    expect(() => readLiveStanding(b, board())).toThrow(/constructor/);
+  });
+
+  it('the Armies constructor failing midway', () => {
+    const b = variant('this.g2=a;', 'this.g2="number"==typeof a?a:0;');
+    expect(() => readLiveStanding(b, board())).toThrow(LiveBoardFormatError);
+  });
+
+  it('a reply with bytes left over after the LatestGameInfo', () => {
+    const w = new Writer();
+    writeLatestGameInfo(w, [{ id: 1, fogLevel: 1, owner: 123456, armies: 12 }], [123456]);
+    w.int32(7);
+    expect(() => readLiveStanding(bundle, new Reader(w.bytes()))).toThrow(/4 bytes left unread/);
+  });
+
+  it('a visible territory whose Armies carry no count', () => {
+    const fake: ClassReader = {
+      readClass: () => ({
+        $type: 'L',
+        s: {
+          $type: 'warlight.shared.GameStanding',
+          t: [[3, { $type: 'warlight.shared.TerritoryStanding', a: 1, b: 3, c: { $type: 'warlight.shared.Armies', f: false }, d: 0 }]],
+        },
+      }),
+    };
+    const w = new Writer();
+    w.bool(true);
+    expect(() => readLiveStanding(fake, new Reader(w.bytes()))).toThrow(/army count/);
+  });
+});
+
 describe('special units', () => {
   const CMDR_A = '0123456789abcdef0123456789abcdef';
   const CMDR_B = 'fedcba9876543210fedcba9876543210';
