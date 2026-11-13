@@ -578,7 +578,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               'income plus the bonuses it visibly holds in full, at most 75% of its largest stack next to you but ' +
               'never below the game\'s base income (at least 5); just that base income on an untouched opening ' +
               'board; when the previous turn\'s board is known, at least what that opponent was observed to deploy ' +
-              '(its visible growth plus its captures) — income in the fog is unseen, so raise it if you know they earn more.',
+              '(the net change of its visible armies plus what its captures cost it) — income in the fog is unseen, so raise it if you know they earn more.',
           ),
         view: viewArg(
           VIEWS,

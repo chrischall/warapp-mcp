@@ -16,9 +16,10 @@
 //     every base-income opponent look like ~11). On the opening board (every
 //     visible territory still holds the same count) every opponent gets the
 //     floor. Given `previousBoard`, each estimate is at least the deploy observed since
-//     then (`observedDeploy`, issue #57: visible growth under the same owner, the armies
-//     lost on territories it took from a player, and what sits on a visible neutral it
-//     captured) — never cut by the stack cap; the warning names which source won.
+//     then (`observedDeploy`, issue #57: the net change of its armies visible on both
+//     boards — shrinks included, so a transfer between its own territories is not deploy —
+//     plus, on each territory it captured, its armies there and what the previous owner held
+//     there) — never cut by the stack cap; the warning names which source won.
 //     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
 //     enemy territory next to me that was visible then under the same owner and
@@ -412,13 +413,20 @@ export interface EnemyDeployEstimate {
 }
 
 /**
- * One opponent's deploy last turn as seen across two boards (issue #57): the positive
- * growth of its territories visible both times under it; the armies the previous owner
- * lost on territories it took from another player (me included) — never their growth,
- * since what moved in is not deploy; and the armies now on a territory that was a
- * visible neutral last time (a capture it made). A territory fogged last time is never
- * counted: it may only have come into view. Shrinking stacks add nothing (their armies
- * moved). A lower bound on income under fog, where unseen bonuses still pay.
+ * One opponent's deploy last turn as seen across two boards (issue #57): the *net* change
+ * of its visible armies plus what it visibly lost attacking, floored at 0. Only territories
+ * visible on both boards count (one fogged last time may only have come into view):
+ * - under it both times: armies now − armies then, shrinks included — a transfer between
+ *   its own territories nets to zero, so it is never read as deploy;
+ * - taken from another player (me included) or from a visible neutral: the armies now on it
+ *   (they moved in from a neighbour, whose shrink they cancel) plus the armies the previous
+ *   owner held there (what the capture roughly cost it).
+ * Not counted: armies it lost on a territory it attacked but did not take. The defender's
+ * count there also moves with the defender's own deploys and transfers (mine included —
+ * this board says nothing about my orders), so the loss cannot be read off it; leaving it
+ * out keeps the figure a lower bound (the failed attack's losses still shrink its source).
+ * One turn only, not smoothed: the planner sees a single previous board. Transfers in from
+ * (or out to) the fog still bias it — income in the fog is unseen anyway.
  */
 export function observedDeploy(g: MapGraph, board: BoardState, previous: BoardState, playerId: number): number {
   const before = new Map(previous.territories.map((t) => [t.territoryId, t]));
@@ -427,13 +435,11 @@ export function observedDeploy(g: MapGraph, board: BoardState, previous: BoardSt
     if (!g.territoryById.has(t.territoryId) || t.armies === null) continue;
     if (t.owner.kind !== 'player' || t.owner.playerId !== playerId) continue;
     const was = before.get(t.territoryId);
-    if (!was || was.armies === null) continue;
-    if (was.owner.kind === 'player') {
-      if (was.owner.playerId === playerId) total += Math.max(0, t.armies - was.armies);
-      else total += was.armies;
-    } else if (was.owner.kind === 'neutral') total += t.armies;
+    if (!was || was.armies === null || was.owner.kind === 'unknown') continue;
+    if (was.owner.kind === 'player' && was.owner.playerId === playerId) total += t.armies - was.armies;
+    else total += t.armies + was.armies;
   }
-  return total;
+  return Math.max(0, total);
 }
 
 /** The army count every visible territory holds, when they all hold the same one (the initial allotment). */

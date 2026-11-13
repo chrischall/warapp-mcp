@@ -114,9 +114,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`enemyDeploy` / `enemy_deploy` overrides all of them). On the opening board (every visible
   territory holds the same count) every opponent gets that floor — live, the old 0.75 × 15 guess made every base-income opponent look like ~11. A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also
-  *observed* (`observedDeploy`, #57): positive growth of its territories visible both times
-  under it, plus the previous owner's armies on territories it took from a player, plus the
-  armies now on a visible neutral it captured (fogged-last-time territories never count). The
+  *observed* (`observedDeploy`, #57): the *net* change of its armies on territories visible
+  both times (shrinks included — a transfer between its own territories is not deploy; counting
+  only growth once read a 30-army back-line move as +35 and conceded a bonus), where a territory
+  it captured from a player or a visible neutral counts its armies now plus the previous owner's
+  armies there, floored at 0 (fogged-last-time territories never count; losses in an attack it
+  did not win are not counted — the defender's own orders hide them). The
   estimate is max(visible-bonus figure, observed) — the stack cap never cuts an observed figure —
   and the warning names the source ("observed +N/turn" vs "base + visible bonuses").
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
