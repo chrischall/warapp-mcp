@@ -322,6 +322,7 @@ import {
   luckFraction,
   nextBreakpoint,
   specialUnitStrength,
+  straightKills,
   winChance,
   type CombatSettings,
 } from './combat.js';
@@ -1921,7 +1922,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const exposed = exposure(ts, (n) => rem.has(n), (m) => {
         if (!rem.has(m)) return armiesOf(m);
         const c = targets.get(m)!.cost;
-        return c - Math.round((defenceAt(m) * rates.defensiveKillRate) / 100);
+        return c - straightKills(defenceAt(m), rates.defensiveKillRate);
       });
       defenseCost = exposed.reduce((sum, e) => sum + e.need, 0);
       if (defenseCost > 0)
@@ -1949,6 +1950,17 @@ export function planTurn(input: PlanInput): TurnPlan {
       Number(b.focus) - Number(a.focus) || ratio(b) - ratio(a) || a.borders - b.borders || a.bonusId - b.bonusId,
   );
   const bonusName = (id: number) => `${g.bonusById.get(id)!.name} (#${id})`;
+  /**
+   * A break's retake check, by its target: the warning it raised (if any) and what it was
+   * judged on, so a top-up that adds survivors re-judges it.
+   */
+  const retakeChecks = new Map<number, { bonusId: number; survivors: number; counter: number; warning?: string }>();
+  const retakeWarning = (t: number, bonusId: number, survivors: number, counter: number): string | undefined => {
+    const take = armiesToTake(survivors, rates);
+    return take !== null && take <= counter
+      ? `${label(t)} can be retaken after it breaks ${bonusName(bonusId)}: ${survivors} survivors need ${take} to take, against ~${counter} next turn.`
+      : undefined;
+  };
 
   // ---- R3: a completion must leave a frontier I can hold ----
   /**
@@ -2056,7 +2068,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     deploy(src, need);
     avail.set(src, avail.get(src)! - tg.cost);
     captured.add(t);
-    const survivors = tg.cost - Math.round((defendersAt(t) * rates.defensiveKillRate) / 100);
+    const survivors = tg.cost - straightKills(defendersAt(t), rates.defensiveKillRate);
     // A commander strike is never refused by R3: killing the commander eliminates a player.
     if (!strikes.has(t) && !defensible(t, survivors)) {
       // Undo: under a guarded goal a bonus that falls next turn is not completed.
@@ -2123,10 +2135,10 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const x of eligible.slice(1, k).sort(byNum)) {
         // Never kill the last defender: the finisher's attack is the one that moves in.
         let a = avail.get(x)!;
-        while (a > 0 && Math.round((a * off) / 100) >= Math.min(left, real)) a--;
-        const kills = Math.round((a * off) / 100);
+        while (a > 0 && straightKills(a, off) >= Math.min(left, real)) a--;
+        const kills = straightKills(a, off);
         if (a <= 0 || kills <= 0) continue;
-        const lost = Math.min(a, Math.round((left * def) / 100));
+        const lost = Math.min(a, straightKills(left, def));
         softeners.push({ from: x, armies: a, kills, before: left, survivors: a - lost });
         left -= kills;
         real -= kills;
@@ -2136,7 +2148,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (armies === null) return null;
       const need = Math.max(0, armies - avail.get(finisher)!);
       if (need > spareAt(finisher)) continue;
-      const survivors = armies - Math.round((left * def) / 100);
+      const survivors = armies - straightKills(left, def);
       return { softeners, finisher, armies, need, left, survivors };
     }
     return null;
@@ -2472,7 +2484,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           const finisher = at[at.length - 1]!;
           const kills = at
             .slice(0, -1)
-            .reduce((n, m) => n + Math.round((m.armies * rates.offensiveKillRate) / 100), 0);
+            .reduce((n, m) => n + straightKills(m.armies, rates.offensiveKillRate), 0);
           return Math.max(0, kills + takesUpTo(finisher.armies) - defenceAt(t) + 1);
         });
         const falls = guaranteedFalls(saveCost, deployP);
@@ -2825,10 +2837,6 @@ export function planTurn(input: PlanInput): TurnPlan {
       rationale.push(
         '1v1 in contact: breaking an enemy bonus counts like completing one of equal value (the opponent loses that income), and expansion that completes no bonus this turn ranks below holding, breaking and completing.',
       );
-    if (ffa)
-      rationale.push(
-        `FFA with ${profile.opponents} opponents left: no second front — a player that threatens no bonus of mine and is not being finished off is not attacked while a neutral capture of similar value exists.`,
-      );
     const weight = oneVsOne ? 1 : BREAK_WEIGHT / opponents;
     /** Bonuses I hold in full (value > 0). */
     const heldBonusMembers = g.map.bonuses
@@ -2861,12 +2869,20 @@ export function planTurn(input: PlanInput): TurnPlan {
       });
     /** The best neutral bonus capture per army (complete or advance), 0 with none. */
     const bestNeutral = Math.max(0, ...plans.map(ratio));
-    /** Rule 0p.2: breaking `b` would open a second front (said once per bonus). */
+    /**
+     * Rule 0p.2: breaking `b` would open a second front (said once per bonus; the general rule
+     * is said with the first break it skips). Call it only for a break the plan could afford.
+     */
     const secondFrontSaid = new Set<number>();
+    const opensSecondFront = (b: Breakable, score: number): boolean =>
+      ffa && !threatensMyBonus(b.player) && !beingFinished(b.player) && bestNeutral >= SECOND_FRONT_SIMILAR * score;
     const secondFront = (b: Breakable, score: number): boolean => {
-      if (!ffa || threatensMyBonus(b.player) || beingFinished(b.player)) return false;
-      if (bestNeutral < SECOND_FRONT_SIMILAR * score) return false;
+      if (!opensSecondFront(b, score)) return false;
       if (!secondFrontSaid.has(b.bonusId)) {
+        if (!secondFrontSaid.size)
+          rationale.push(
+            `FFA with ${profile.opponents} opponents left: no second front — a player that threatens no bonus of mine and is not being finished off is not attacked while a neutral capture of similar value exists.`,
+          );
         secondFrontSaid.add(b.bonusId);
         rationale.push(
           `Not breaking ${bonusName(b.bonusId)} (+${b.value} from player ${b.player}): no second front in an FFA — player ${b.player} threatens no bonus of mine and is not being finished off, and a neutral capture earns ${bestNeutral.toFixed(2)} per army against ${score.toFixed(2)}.`,
@@ -2918,20 +2934,28 @@ export function planTurn(input: PlanInput): TurnPlan {
     // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
     const breakOption = (t: number) => {
       const cost = targets.get(t)!.cost;
-      const survivors = cost - Math.round((defenceAt(t) * rates.defensiveKillRate) / 100);
+      const survivors = cost - straightKills(defenceAt(t), rates.defensiveKillRate);
       const counter = counterThreat(t);
       const take = armiesToTake(survivors, rates);
       return { t, cost, survivors, counter, take, survives: take === null || take > counter };
     };
     type BreakOption = ReturnType<typeof breakOption>;
+    /**
+     * At most what a capture of `t` could draw on now: every source free to attack plus the
+     * deployable budget. Below its cost the capture cannot be planned this turn.
+     */
+    const affordable = (t: number) => {
+      const tg = targets.get(t)!;
+      const free = tg.sources.filter((x) => !locked.has(x) && !orderOf(x)).reduce((n, x) => n + Math.max(0, avail.get(x)!), 0);
+      return free + Math.max(0, budget - reserve) >= tg.cost;
+    };
     const broken = (b: Breakable) => bonusTerritories(g, b.bonusId).some((x) => captured.has(x));
     const breakReason = (b: Breakable) =>
       `breaks enemy bonus ${bonusName(b.bonusId)} (+${b.value} from player ${b.player})`;
     const warnRetake = (b: Breakable, o: BreakOption) => {
-      if (!o.survives)
-        warnings.push(
-          `${label(o.t)} can be retaken after it breaks ${bonusName(b.bonusId)}: ${o.survivors} survivors need ${o.take} to take, against ~${o.counter} next turn.`,
-        );
+      const warning = retakeWarning(o.t, b.bonusId, o.survivors, o.counter);
+      retakeChecks.set(o.t, { bonusId: b.bonusId, survivors: o.survivors, counter: o.counter, warning });
+      if (warning) warnings.push(warning);
     };
     const breakOf = new Map<number, Breakable>();
     for (const b of breakable) for (const t of bonusTerritories(g, b.bonusId)) breakOf.set(t, b);
@@ -2951,8 +2975,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       const b = breakOf.get(n);
       if (!b || !targets.has(n) || broken(b) || orderOf(t.id)) return false;
       const o = breakOption(n);
-      if (secondFront(b, (weight * b.value) / Math.max(1, o.cost))) return false;
       if (t.holdCost + o.cost > spareAt(t.id) - rest) return false;
+      if (secondFront(b, (weight * b.value) / Math.max(1, o.cost))) return false;
       const before = budget;
       noteRecent(t);
       deploy(t.id, t.holdCost);
@@ -2980,6 +3004,9 @@ export function planTurn(input: PlanInput): TurnPlan {
       const o = options[0];
       if (!o) continue;
       const score = (weight * b.value) / Math.max(1, o.cost);
+      // An FFA skips a second-front break, but only one the plan could pay for is named as
+      // skipped: an unaffordable one is dropped quietly (it could not run either way).
+      if (opensSecondFront(b, score) && !affordable(o.t)) continue;
       if (secondFront(b, score)) continue;
       candidates.push({
         kind: 'break',
@@ -3315,6 +3342,15 @@ export function planTurn(input: PlanInput): TurnPlan {
       m.armies = next;
       m.winChance = chanceOf(next, d);
       if (survivorsAt.has(m.to)) survivorsAt.set(m.to, survivorsAt.get(m.to)! + add);
+      // A break's retake warning was judged on the survivors before the top-up: re-judge it.
+      const check = retakeChecks.get(m.to);
+      const at = check?.warning === undefined ? -1 : warnings.indexOf(check.warning);
+      if (check && at >= 0) {
+        check.survivors += add;
+        check.warning = retakeWarning(m.to, check.bonusId, check.survivors, check.counter);
+        if (check.warning) warnings[at] = check.warning;
+        else warnings.splice(at, 1);
+      }
       const why = enemyTarget ? 'its owner may reinforce it' : `the win chance rises from ${pct(chance)} to ${pct(m.winChance)}`;
       rationale.push(
         `Top up the attack on ${label(m.to)} from ${label(m.from)} from ${before} to ${next} with ${add} idle armies there: ${next} is the next efficient size, killing ${killsBy(next)} for sure instead of ${killsBy(before)} (${why}).`,

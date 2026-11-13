@@ -52,6 +52,18 @@ describe('winChance — 0% luck', () => {
   });
 });
 
+describe('one kill count for winChance and armiesToTake', () => {
+  // n·rate/100 lands exactly on .5 here; n * (rate/100) would read 31.499999999999996 and
+  // round down, so winChance would deny the capture armiesToTake sized.
+  it.each([45, 85, 165, 175])('%i armies at 70%% kill half-up, in every model', (n) => {
+    const kills = Math.round((n * 70) / 100);
+    const rates = { offensiveKillRate: 70, defensiveKillRate: 0 };
+    expect(armiesToTake(kills, rates)).toBe(n);
+    expect(winChance(n, kills, rates)).toBe(1);
+    expect(guaranteedKills(n, 70)).toBe(kills);
+  });
+});
+
 describe('winChance — with luck', () => {
   it('luck 0.5, straight: 1 vs 1', () => {
     // Attacker: x = 0.5·0.6 + 0.5·G, G ~ Bin(1, 0.6): x = 0.3 (p 0.4) → 0, 0.8 (p 0.6) → 1.

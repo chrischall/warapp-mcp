@@ -222,6 +222,16 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
     const p = planTurn({ ...input({ adapt: true }), graph: g1 });
     expect(attacks(p).map((m) => m.to)).toContain(5);
     expect(why(p)).not.toMatch(/Not breaking/);
+    // Nothing was skipped, so the general rule is not claimed either.
+    expect(why(p)).not.toMatch(/no second front/);
+  });
+
+  it('never claims to skip a break it could not afford', () => {
+    // T5 holds 8: taking it needs 13, more than T1's 6 plus the income of 5.
+    const heavy = board([mine(1, 6), neutral(2, 2), enemy(5, 8), enemy(6, 2), enemy(9, 2, THIRD)]);
+    const p = planTurn(input({ adapt: true }, heavy));
+    expect(attacks(p).map((m) => m.to)).toEqual([2]);
+    expect(why(p)).not.toMatch(/no second front/);
   });
 
   it('does not fire in a 1v1', () => {

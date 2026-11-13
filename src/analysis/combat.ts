@@ -17,14 +17,30 @@ export interface KillRates {
  * (`a − round(d·def) ≥ 1`). `null` when attackers cannot kill at all.
  */
 export function armiesToTake(defenders: number, rates: KillRates = {}): number | null {
+  // Both terms are the luck-free share `expectedKills` rounded half up, solved for exactly.
   const off = rates.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
   const def = rates.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
   if (defenders <= 0) return 1;
   if (off <= 0) return null;
   // round(a·off/100) ≥ d  ⇔  a·off ≥ 100d − 50 (integer-exact for integer rates).
   const toKill = Math.ceil((100 * defenders - 50) / off);
-  const lost = Math.round((defenders * def) / 100);
+  const lost = straightKills(defenders, def);
   return Math.max(toKill, lost + 1);
+}
+
+/**
+ * The luck-free kill share of `n` armies at `ratePct`%: `n·rate/100`, computed in that order
+ * so a share that is exactly .5 stays .5 (`n * (rate / 100)` reads 45 at 70% as
+ * 31.499999999999996 and rounds it down). Every kill count — {@link armiesToTake},
+ * {@link winChance}, {@link guaranteedKills} — starts from this, so they always agree.
+ */
+export function expectedKills(n: number, ratePct: number): number {
+  return (n * ratePct) / 100;
+}
+
+/** {@link expectedKills} rounded half up: the kills of a luck-free straight-rounded round. */
+export function straightKills(n: number, ratePct: number): number {
+  return Math.round(expectedKills(n, ratePct));
 }
 
 /**
@@ -93,7 +109,7 @@ function binomial(n: number, k: number, p: number): number {
  */
 function killProbability(n: number, ratePct: number, luck: number, rounding: string | undefined, k: number, atLeast: boolean): number {
   const r = ratePct / 100;
-  const f = n * r;
+  const f = expectedKills(n, ratePct);
   /** P(the kills meet the bound | the expected-plus-random share is x). */
   const meets = (x: number): number => {
     if (weighted(rounding)) {
@@ -148,7 +164,7 @@ export function winChance(attackers: number, defenders: number, settings: Combat
  */
 export function guaranteedKills(n: number, ratePct: number, luck = 0, rounding: RoundingMode | string = 'StraightRound'): number {
   if (n <= 0 || ratePct <= 0) return 0;
-  const x = (1 - luckFraction(luck)) * n * (ratePct / 100);
+  const x = (1 - luckFraction(luck)) * expectedKills(n, ratePct);
   return weighted(rounding) ? Math.floor(x) : Math.round(x);
 }
 

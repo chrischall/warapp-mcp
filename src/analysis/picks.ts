@@ -67,7 +67,7 @@
 
 import type { GameSettings } from '../normalize.js';
 import { analyzeBonus } from './bonuses.js';
-import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from './combat.js';
+import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { captureCost, WASTELAND_FACTOR } from './planner.js';
 import { DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
@@ -381,7 +381,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     const n = Math.max(0, known.get(t.id) ?? (pickSet.has(t.id) ? neutralsIn : neutralsOut));
     armies.set(t.id, n);
     cost.set(t.id, captureCost(n, rates));
-    lost.set(t.id, Math.round((n * def) / 100));
+    lost.set(t.id, straightKills(n, def));
   }
 
   // Attack hardness vs the standard kill rates, for defensibility.

@@ -137,7 +137,8 @@ export function gameProfile(input: ProfileInput): GameProfile {
   let standing: GameStanding;
   const enemies = input.estimates.filter((e) => !ally(e.playerId)).sort((a, b) => b.estimate - a.estimate || a.playerId - b.playerId);
   const visible = new Map(board.territories.filter((t) => g.territoryById.has(t.territoryId)).map((t) => [t.territoryId, t]));
-  const notMine = [...g.territoryById.keys()].filter((t) => !mine.includes(t));
+  const mineSet = new Set(mine);
+  const notMine = [...g.territoryById.keys()].filter((t) => !mineSet.has(t));
   const foggedCount = notMine.filter((t) => {
     const st = visible.get(t);
     return !st || st.owner.kind === 'unknown' || st.armies === null;
