@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Reader, Writer } from '../../src/protocol/codec.js';
-import { BundleError, BundleProvider, discoverBundleUrl, loadBundle } from '../../src/protocol/bundle.js';
+import { BundleError, BundleProvider, discoverBundleUrl, loadBundle, WarappBundle } from '../../src/protocol/bundle.js';
 import { MINI_BUNDLE } from './mini-bundle.js';
 
 const PAGE = 'https://war.app/MultiPlayer';
@@ -135,6 +135,114 @@ describe('BundleProvider', () => {
     const [a, b] = await Promise.all([p.get(), p.get()]);
     expect(a).toBe(b);
     expect(await p.get()).toBe(a);
+    expect(calls).toEqual([PAGE, PAGE, CDN]);
+  });
+});
+
+describe('the built-in reader helpers are checked against the bundle at load (#131)', () => {
+  // A reader that reads a one-byte field then a four-byte field through two P helpers.
+  const READER = 'function Dx(){}W["t.Dx"]=Dx;Dx.Ha=function(a,b,d){var e=new Dx;e.small=P.uq(a);e.big=P.Ya(a);return e};';
+
+  it('loads a bundle whose helpers do what the built-ins do, and reports them verified', () => {
+    const b = new WarappBundle(
+      'var W={};var P={};P.Ya=function(a){return a.Og()};P.uq=function(a){return a.bc()};' +
+        'P.wc=function(a){return a.Ua()?a.FJ():null};' +
+        'P.Sd=function(a,b){a=a.Og();if(-1==a)return null;for(var d=[],e=0;e<a;)d.push(b()),++e;return d};' +
+        READER,
+      'same',
+    );
+    expect(b.dialectCheck.verified).toEqual(['P.Sd', 'P.Ya', 'P.uq', 'P.wc']);
+    expect(b.dialectCheck.mismatched).toEqual([]);
+    expect(b.readClass('t.Dx', new Reader(new Writer().u8(7).int32(100000).bytes()))).toEqual({ $type: 't.Dx', small: 7, big: 100000 });
+  });
+
+  it('refuses a bundle that swapped two helpers rather than mis-reading every field', () => {
+    // A new minification gave the names to each other: P.Ya now reads a byte, P.uq four.
+    const swapped = 'var W={};var P={};P.Ya=function(a){return a.MGb()};P.uq=function(a){return a.Og()};' + READER;
+    expect(() => new WarappBundle(swapped, 'swapped')).toThrow(BundleError);
+    expect(() => new WarappBundle(swapped, 'swapped')).toThrow(/P\.Ya.*P\.uq|P\.uq.*P\.Ya/);
+  });
+
+  it('the provider remembers a refused bundle for a while instead of re-reading it on every call', async () => {
+    const swapped = 'var W={};var P={};P.Ya=function(a){return a.MGb()};P.uq=function(a){return a.Og()};' + READER;
+    let now = 1_000_000;
+    const { calls, fetchText } = fakeFetch({ [PAGE]: html(CDN), [CDN]: swapped });
+    const p = new BundleProvider({ dataDir: tempDir(), fetchText, pageUrl: PAGE, now: () => now });
+    await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-mismatch' });
+    await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-mismatch' });
+    expect(calls).toEqual([PAGE, CDN]);
+    now += 5 * 60_000;
+    await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-mismatch' });
+    expect(calls).toEqual([PAGE, CDN, PAGE]); // looked up again; the refused version was cached on disk
+  });
+
+  it('leaves a helper it cannot evaluate unverified, not refused', () => {
+    const b = new WarappBundle('var W={};var P={};P.Td=function(a){return O.N3c(a)};' + READER, 'opaque');
+    expect(b.dialectCheck.unverified).toContain('P.Td');
+    expect(b.dialectCheck.mismatched).toEqual([]);
+  });
+
+  it('a bundle that defines no helpers (the test bundles) has nothing to check', () => {
+    const b = new WarappBundle(MINI_BUNDLE, 'mini');
+    expect(b.dialectCheck).toEqual({ verified: [], unverified: [], mismatched: [] });
+  });
+});
+
+describe('the bundle cache is pruned and survives a failed version lookup (#131)', () => {
+  const seed = (dataDir: string, files: Record<string, string>, mtimeSec?: Record<string, number>) => {
+    mkdirSync(join(dataDir, 'bundle'), { recursive: true });
+    for (const [name, body] of Object.entries(files)) {
+      const f = join(dataDir, 'bundle', name);
+      writeFileSync(f, body);
+      const t = mtimeSec?.[name];
+      if (t !== undefined) utimesSync(f, t, t);
+    }
+  };
+
+  it('keeps only the version in use once it loads', async () => {
+    const dataDir = tempDir();
+    seed(dataDir, { '111.js': MINI_BUNDLE, '222.js': MINI_BUNDLE, '987.js.tmp-1': 'x', 'notes.txt': 'keep' });
+    await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }).fetchText, pageUrl: PAGE });
+    expect(readdirSync(join(dataDir, 'bundle')).sort()).toEqual(['987.js', 'notes.txt']);
+  });
+
+  it('falls back to the newest cached copy when the page naming the version cannot be read', async () => {
+    const dataDir = tempDir();
+    seed(dataDir, { '111.js': MINI_BUNDLE, '222.js': MINI_BUNDLE }, { '111.js': 1_700_000_000, '222.js': 1_700_000_500 });
+    const fetchText = async () => {
+      throw new Error('did not respond within 30000ms');
+    };
+    const b = await loadBundle({ dataDir, fetchText, pageUrl: PAGE });
+    expect(b.version).toBe('222');
+    expect(b.fallback).toBe(true);
+    // Nothing is pruned on a fallback: the lookup did not say which version is current.
+    expect(readdirSync(join(dataDir, 'bundle')).sort()).toEqual(['111.js', '222.js']);
+  });
+
+  it('still fails when there is no cached copy to fall back to', async () => {
+    const fetchText = async () => {
+      throw new Error('offline');
+    };
+    await expect(loadBundle({ dataDir: tempDir(), fetchText, pageUrl: PAGE })).rejects.toThrow('offline');
+  });
+
+  it('the provider keeps a fallback copy only for a while, then looks the version up again', async () => {
+    const dataDir = tempDir();
+    seed(dataDir, { '111.js': MINI_BUNDLE });
+    let now = 1_000_000;
+    let up = false;
+    const calls: string[] = [];
+    const fetchText = async (url: string) => {
+      calls.push(url);
+      if (!up) throw new Error('offline');
+      return url === PAGE ? html(CDN) : MINI_BUNDLE;
+    };
+    const p = new BundleProvider({ dataDir, fetchText, pageUrl: PAGE, now: () => now });
+    expect((await p.get()).version).toBe('111');
+    up = true;
+    expect((await p.get()).version).toBe('111');
+    now += 5 * 60_000;
+    expect((await p.get()).version).toBe('987');
     expect(calls).toEqual([PAGE, PAGE, CDN]);
   });
 });

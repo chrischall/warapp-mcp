@@ -4,6 +4,9 @@ import {
   LiveBoardFormatError,
   playersByInGameId,
   readLiveStanding,
+  readLatestGameInfo,
+  currentStanding,
+  standingFromInfo,
   boardStateFromLive,
   toBoardState,
   type ClassReader,
@@ -87,6 +90,32 @@ describe('readLiveStanding', () => {
     const out = readLiveStanding(bundle, body([{ id: 9, fogLevel: 3, owner: 123456, armies: 0 }], [123456]));
     expect(out).toEqual([{ territoryId: 9, fogLevel: 3, fogged: false, owner: 123456, armies: null }]);
   });
+  it('Light Fog: an owner-only territory keeps its owner though its Armies say fogged (#131)', () => {
+    // war.app marks the army count of a fog level 3 standing as fogged; the owner is still real.
+    const out = readLiveStanding(
+      bundle,
+      body(
+        [
+          { id: 9, fogLevel: 3, owner: 765432, armies: 0, fogged: true },
+          { id: 10, fogLevel: 3, owner: 0, armies: 0, fogged: true },
+          { id: 11, fogLevel: 4, owner: 765432, armies: 0, fogged: true },
+        ],
+        [123456],
+      ),
+    );
+    expect(out).toEqual([
+      { territoryId: 9, fogLevel: 3, fogged: false, owner: 765432, armies: null },
+      { territoryId: 10, fogLevel: 3, fogged: false, owner: 0, armies: null },
+      { territoryId: 11, fogLevel: 4, fogged: true, owner: 765432, armies: null },
+    ]);
+    const board = toBoardState(out!, [player('3376543244', 'Them')]);
+    expect(board.territories.map((t) => t.owner)).toEqual([
+      { kind: 'player', playerId: 3376543244 },
+      { kind: 'neutral' },
+      { kind: 'unknown' },
+    ]);
+  });
+
 
   it('no result, or no standing, is null', () => {
     const w = new Writer();
@@ -124,6 +153,114 @@ describe('readLiveStanding', () => {
     expect(reading(standing([ts({ a: 1, b: 3, c: armies, d: 0 })]))()).toEqual([
       { territoryId: 3, fogLevel: 1, fogged: false, owner: 0, armies: 3 },
     ]);
+  });
+});
+
+describe('a changed client fails loudly, never a wrong verified board (#131)', () => {
+  const CTOR =
+    'function Am(a,b,d){null==d&&(d=!1);null==a&&(a=0);this.g1=!1;this.g2=0;this.g1=d;this.g2=a;' +
+    'this.g3=null!=b&&0==b.length?null:b}';
+  const variant = (from: string, to: string) => {
+    expect(LIVE_BUNDLE).toContain(from);
+    return new WarappBundle(LIVE_BUNDLE.replace(from, to), 'variant');
+  };
+  const board = () =>
+    body(
+      [
+        { id: 1, fogLevel: 1, owner: 123456, armies: 12 },
+        { id: 2, fogLevel: 2, owner: 765432, armies: 30 },
+        { id: 3, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+      ],
+      [123456],
+    );
+
+  it('the Armies constructor emitted in a form the interpreter cannot find', () => {
+    const b = variant('function Am(a,b,d){', 'var Am=function(a,b,d){');
+    expect(() => readLiveStanding(b, board())).toThrow(LiveBoardFormatError);
+    expect(() => readLiveStanding(b, board())).toThrow(/army count/);
+  });
+
+  it('the Armies constructor calling a super constructor first', () => {
+    const b = variant(CTOR, 'function Bz(){}' + CTOR.replace('{null==d', '{Bz.call(this);null==d'));
+    expect(() => readLiveStanding(b, board())).toThrow(LiveBoardFormatError);
+    expect(() => readLiveStanding(b, board())).toThrow(/constructor/);
+  });
+
+  it('the Armies constructor failing midway', () => {
+    const b = variant('this.g2=a;', 'this.g2="number"==typeof a?a:0;');
+    expect(() => readLiveStanding(b, board())).toThrow(LiveBoardFormatError);
+  });
+
+  it('a reply with bytes left over after the LatestGameInfo', () => {
+    const w = new Writer();
+    writeLatestGameInfo(w, [{ id: 1, fogLevel: 1, owner: 123456, armies: 12 }], [123456]);
+    w.int32(7);
+    expect(() => readLiveStanding(bundle, new Reader(w.bytes()))).toThrow(/4 bytes left unread/);
+  });
+
+  it('a visible territory whose Armies carry no count', () => {
+    const fake: ClassReader = {
+      readClass: () => ({
+        $type: 'L',
+        s: {
+          $type: 'warlight.shared.GameStanding',
+          t: [[3, { $type: 'warlight.shared.TerritoryStanding', a: 1, b: 3, c: { $type: 'warlight.shared.Armies', f: false }, d: 0 }]],
+        },
+      }),
+    };
+    const w = new Writer();
+    w.bool(true);
+    expect(() => readLiveStanding(fake, new Reader(w.bytes()))).toThrow(/army count/);
+  });
+});
+
+describe('the current standing is the current field, not the first one present (#131)', () => {
+  // LatestGameInfo as the client builds it: the current standing, a turn number, then the previous
+  // turn's standing, each through a temporary (`e=…;d.f=e`).
+  const LG_LINE =
+    'Lg.Ha=function(a,b,d){null==d&&(d=242);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;e.k3=P.Ya(a);return e};';
+  const TWO_STANDINGS =
+    'Lg.Ha=function(a,b,d){null==d&&(d=242);return Lg.R(a,d)};' +
+    'Lg.R=function(a,b){var d=new Lg,e=a.Ua()?Gs.Ha(a,d,b):null;d.cur=e;e=P.Ya(a);d.turn=e;' +
+    'e=a.Ua()?Gs.Ha(a,d,b):null;d.prev=e;return d};';
+  const twoStandings = () => {
+    expect(LIVE_BUNDLE).toContain(LG_LINE);
+    return new WarappBundle(LIVE_BUNDLE.replace(LG_LINE, TWO_STANDINGS), 'two-standings');
+  };
+  const writeStanding = (w: Writer, id: number, armies: number) => {
+    w.bool(false); // no per-player data
+    w.bool(true).list([id], (ww, t) => {
+      ww.int32(t).bool(true).int32(1).int32(t).bool(false).int32(armies).u8(0).int32(123456).bool(false);
+    });
+  };
+  const reply = (current: boolean) => {
+    const w = new Writer();
+    w.bool(true);
+    w.bool(current);
+    if (current) writeStanding(w, 5, 20);
+    w.int32(3);
+    w.bool(true);
+    writeStanding(w, 5, 9);
+    return new Reader(w.bytes());
+  };
+
+  it('reads the current standing when both are sent', () => {
+    expect(readLiveStanding(twoStandings(), reply(true))).toEqual([
+      { territoryId: 5, fogLevel: 1, fogged: false, owner: 123456, armies: 20 },
+    ]);
+  });
+
+  it('a withheld current standing is no board, not last turn’s', () => {
+    const b = twoStandings();
+    const info = readLatestGameInfo(b, reply(false));
+    expect(currentStanding(info)).toBeUndefined();
+    expect(standingFromInfo(info)).toBeNull();
+  });
+
+  it('the bundle names the fields its reader fills from a class, in read order', () => {
+    expect(twoStandings().fieldsReadAs('warlight.shared.LatestGameInfo', 'warlight.shared.GameStanding')).toEqual(['cur', 'prev']);
+    expect(bundle.fieldsReadAs('warlight.shared.LatestGameInfo', 'warlight.shared.GameStanding')).toEqual(['k2']);
+    expect(bundle.fieldsReadAs('warlight.shared.LatestGameInfo', 'warlight.shared.Nope')).toEqual([]);
   });
 });
 

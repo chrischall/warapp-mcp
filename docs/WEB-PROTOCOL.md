@@ -57,6 +57,9 @@ MessageExtrasUp             (below)
 params                      per method
 ```
 
+Every reader (the bundle's and `methods.ts`) reads protocol 242's layout, so `WarappRpc` refuses a
+reply whose header names another version rather than decode it into wrong values (#131).
+
 ### MessageExtrasUp (`warlight.shared.MessageExtrasUp`)
 
 ```
@@ -137,6 +140,21 @@ Reader primitives (`P.*`): `Ya` int32 · `wc` string · `Yc` bool · `uq` byte �
 `Ao` float32 · `ak`/`uy` float64 (8 bytes the client reassembles as a double — kill rates, luck, TimeSpans in ms; not an int64) · `Td` datetime · `tL` GUID (16 bytes, .NET order:
 3,2,1,0,5,4,7,6,8…15) · `sL` int32-length bytes · `Sd`/`ms`/`uL` int32-count list (-1 = null) ·
 `ef` int32-count dict (-1 = null).
+
+**Checked against the bundle at load (#131).** These primitives are built in (`DEFAULT_DIALECT`,
+pinned to one client release) and shadow the bundle's own definitions, while the bundle itself
+floats. So loading a bundle runs `verifyDialect`: each `P.*` static above is evaluated from the
+bundle's own definition on a few probe byte strings and must read the same value and the same
+number of bytes as the built-in; a mismatch refuses the bundle. What that check covers:
+
+- **verified:** the `P.*` statics whose bundle definition the interpreter evaluates to a plain
+  value on the probes (the int, string, bool, byte, float, bytes and list reads).
+- **unverified (a known blind spot):** a `P.*` static the probes cannot compare — `P.Td` (datetime)
+  and `P.tL` (GUID), and one that builds a client collection (a dictionary such as `P.ef`) — is
+  reported unverified, not refused; and the reader methods called on the reader itself (`a.Og()`,
+  `a.Ua()` and the rest, the dialect's `readerMethods`) are not checked at all. A client release
+  that renames or repurposes one of these decodes through the old read without an error; suspect
+  them first when a new client misreads a reply.
 
 The project does not redistribute the bundle: the decoder loads it from War.app's CDN at
 runtime, so class layouts track the live client. Field names in the bundle are minified and
@@ -223,11 +241,19 @@ fetchproxy bridge, so the request runs inside the signed-in tab:
 | `SendOrders` (auth, write) | accepted, turn resolved, captures happened — see Orders |
 | `GetTerritoryPicks` (auth) | read back exactly the submitted ids in priority order |
 
+**Unverified: the whole-body rule (#131).** `readLatestGameInfo` refuses a `GetLatestGameInfo` reply
+with any bytes left after the `LatestGameInfo` (`LiveBoardFormatError`), on the strength of the
+capture above, which was consumed to the last byte. No live reply has been read since the rule
+went in: if war.app ever appends trailing bytes to that reply, every live board read fails with
+"bytes left unread after the LatestGameInfo". The owner confirms it on the next live board read.
+
 `TerritoryStanding`: territory id, owner, `Armies { count, fogged, specialUnits }`, fog level.
 Owner `0` = neutral, `-2` = available to pick, otherwise an in-game player id.
 Fog level (`StandingFogLevel`, from the bundle): 1 You, 2 Visible, 3 OwnerOnly, 4 Fogged. The client
 refuses a deploy on 3 or 4 as "fogged"; a fully fogged standing is fog level 4, owner `-1`,
-`Armies(0, fogged)`. The reader keeps an owner-only territory's owner but not its army count (#69).
+`Armies(0, fogged)`. The reader keeps an owner-only territory's owner but not its army count (#69). Whether the owner
+shows is read from the fog level alone: a Light Fog owner-only standing carries a real owner under
+`Armies(…, fogged)` (#131, seen in a live board's raw standing).
 
 **Special units (from the bundle, #61; the commander layout matches a live standing decoded
 for the issue).** `Armies` is read as `bool fogged, int32 count`, then — protocol ≥ 107 — a
@@ -484,7 +510,13 @@ dict means every topic was accepted.
 no auth) with message number `0x80000000`, 61 bytes, that **starts with the game id and carries no
 other detail**. On receipt, re-read the game from GameFeed — it arrives within ~1 s of the turn
 resolving. `src/push/listener.ts` holds one socket per process, (re)subscribes to every watched
-`Game.<id>` on each connect, answers heartbeats, and reconnects with backoff.
+`Game.<id>` on each connect, answers heartbeats, and reconnects with backoff. A Subscribe that fails
+(not sent, or answered with a server error) is retried on the same session; when the retry goes
+through, consumers are told to re-read GameFeed too, since a turn that resolved before it sent no
+push. A game is watched only while a wait holds it and only after the wait has checked the account
+plays in it; no Unsubscribe is sent, so a released game stays subscribed until the session ends but
+is not re-subscribed. Over xhr-polling, a poll answered at once with nothing to say is paced (doubling from the
+initial backoff, capped at 5 s), so a push is at most a few seconds late.
 
 ### WebSocket transport (verified live 2026-11-12, GitHub issue #32)
 

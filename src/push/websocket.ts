@@ -220,6 +220,9 @@ export async function runWebSocketSession(leg: WebSocketLeg, hooks: WebSocketSes
         case 'disconnect':
           finish('war.app closed the push WebSocket.');
           break;
+        case 'error':
+          finish(`war.app refused the push socket (${p.reason || 'no reason'}).`);
+          break;
         default:
           break;
       }

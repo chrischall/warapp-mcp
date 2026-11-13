@@ -31,7 +31,7 @@
 // refuses to attach the cookie to any host but war.app, so the token can never
 // be sent elsewhere. Direct mode is LOCAL-ONLY — the hosted path keeps the
 // browser bridge and stores no token on the host.
-import { EdgeBlockedError, McpToolError } from '@chrischall/mcp-utils';
+import { detectEdgeBlock, EdgeBlockedError, McpToolError } from '@chrischall/mcp-utils';
 import {
   createDirectFirstTransport,
   readTransportMode,
@@ -103,6 +103,8 @@ export interface DirectFetchResult {
   status: number;
   body: string;
   url: string;
+  /** Response headers, lower-cased (an edge challenge is read from them). */
+  headers?: Record<string, string>;
 }
 
 /** The HTTPS primitive the direct leg issues; the default wraps netguard `fetchPublic`. A test seam. */
@@ -114,8 +116,21 @@ export type DirectFetch = (
 const decoder = new TextDecoder();
 
 /** Map a netguard `fetchPublic` final response to {@link DirectFetchResult}. */
-export function toDirectResult(res: { status: number; body: Uint8Array; url: string }): DirectFetchResult {
-  return { status: res.status, body: decoder.decode(res.body), url: res.url };
+export function toDirectResult(res: {
+  status: number;
+  body: Uint8Array;
+  url: string;
+  headers?: { forEach(cb: (value: string, key: string) => void): void };
+}): DirectFetchResult {
+  const out: DirectFetchResult = { status: res.status, body: decoder.decode(res.body), url: res.url };
+  if (res.headers) {
+    const headers: Record<string, string> = {};
+    res.headers.forEach((v, k) => {
+      headers[k.toLowerCase()] = v;
+    });
+    out.headers = headers;
+  }
+  return out;
 }
 
 /** The default direct leg: a real HTTPS request through netguard `fetchPublic` (public-only, https-only). */
@@ -178,6 +193,8 @@ export function looksSignedOut(requestedUrl: string, res: DirectFetchResult): bo
     finalPath = '';
   }
   if (SIGNIN_PATH.test(finalPath)) return true;
+  // The origin refused the credential (an edge challenge is told apart first, by the caller).
+  if (res.status === 401 || res.status === 403) return true;
   if (res.status !== 200) return false;
   if (SIGNIN_BODY.test(res.body)) return true;
   let reqPath = '';
@@ -217,6 +234,18 @@ export class DirectBridge {
       });
     } catch (err) {
       throw scrubError(err, [token]);
+    }
+    // A CDN/WAF challenge (a 403 with `cf-mitigated`, a challenge page) never reached war.app: the
+    // router falls back to the browser bridge, whose real browser passes it (#131).
+    if (res.status !== 200 || res.headers?.['cf-mitigated']) {
+      const edge = detectEdgeBlock({ body: res.body, ...(res.headers ? { headers: res.headers } : {}), status: res.status });
+      if (edge) {
+        throw new EdgeBlockedError(res.status, edge.vendor, {
+          service: SESSION_HOST,
+          method: init.method,
+          path: new URL(url).pathname,
+        });
+      }
     }
     if (looksSignedOut(url, res)) throw new SessionExpiredError({ capturedAt: sess.capturedAt });
     return { status: res.status, body: res.body, url: res.url };

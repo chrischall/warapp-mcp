@@ -130,7 +130,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the game id, so `warapp_wait_for_turn` re-reads GameFeed on each one. **A reconnect loses the
   pushes sent during the gap** (war.app has closed a healthy socket after ~60 s): close, error
   or a missed heartbeat reconnects (new handshake, new sid, re-subscribe) and `onReconnect`
-  fires, on which `warapp_wait_for_turn` re-reads every watched game. The push transport shows
+  fires, on which `warapp_wait_for_turn` re-reads every watched game — as it does when a failed
+  `Subscribe` goes through on a retry (`onConnect` with `resubscribed: true`). A wait checks every
+  game (membership included) before it watches any, so a game not mine is never subscribed; a
+  released game is unwatched (not re-subscribed on a reconnect); at most `MAX_WATCHED_GAMES` games
+  are watched at once; and GameFeed re-reads are debounced per game (one in flight, one queued).
+  The push transport shows
   in `warapp_session_status` (`pushTransport`) and the push tools. One listener per process
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
   Tests drive a scripted fake bridge and a fake WebSocket, never a real socket.
@@ -296,8 +301,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it
   from `warappcdn.com` and caches it at `<dataDir>/bundle/<version>.js` (`MCP_DATA_DIR`, else
-  `~/.config/warapp-mcp`). Never commit the bundle or snippets of it; tests use a hand-written
-  mini-bundle in the same shape.
+  `~/.config/warapp-mcp`), deleting older versions once the current one loads; when the page naming
+  the version cannot be read, the newest cached copy stands in for 5 minutes. Loading checks the
+  built-in reader helpers against the bundle's own (a mismatch refuses the bundle). Never commit the
+  bundle or snippets of it; tests use a hand-written mini-bundle in the same shape.
 - **No captures in the repo.** No recorded frame, `*.hex` capture, or live reply goes into the
   repo — fixtures are synthetic (built by the encoder), with `test@example.com` and made-up
   ids. `git grep` for the real account email before committing. Tests and agents never call

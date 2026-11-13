@@ -16,6 +16,9 @@ import { fetchMyGames } from './my-games.js';
 /** Game states in which a player has something to submit (picks or orders). */
 export const ACTION_STATES: ReadonlySet<string> = new Set(['Playing', 'DistributingTerritories']);
 
+/** Game states that never change again: the push listener forgets such a game. */
+export const TERMINAL_STATES: ReadonlySet<string> = new Set(['Finished']);
+
 export const MAX_WAIT_GAMES = 20;
 export const DEFAULT_TIMEOUT_SECONDS = 300;
 export const MAX_TIMEOUT_SECONDS = 1800;
@@ -52,9 +55,18 @@ export function checkOf(game: Game, playerId: number): GameCheck {
 export interface WaitOptions {
   gameIds: readonly number[];
   timeoutMs: number;
-  /** `onReconnect` (when present): pushes in a reconnect gap are lost, so every game is re-read. */
-  push: Pick<PushListener, 'watch' | 'onUpdate'> & Partial<Pick<PushListener, 'onReconnect'>>;
-  /** Read one game's current state from GameFeed. */
+  /**
+   * `onConnect` (else `onReconnect`), when present: pushes before a connect's Subscribe are lost —
+   * a reconnect gap, the first connect of the process after the initial check, or a Subscribe that
+   * failed and later went through on a retry — so every game is re-read.
+   */
+  /** `watch` resolving true: it sent a Subscribe on a live session, so every game is re-read (the check-to-Subscribe gap). */
+  push: { watch: (gameIds: readonly number[]) => Promise<boolean | void> } & Pick<PushListener, 'onUpdate'> &
+    Partial<Pick<PushListener, 'onReconnect' | 'onConnect' | 'release' | 'forget'>>;
+  /**
+   * Read one game's current state from GameFeed. Throws for a game the account does not play in:
+   * every game is checked before any is watched (#131).
+   */
   check: (gameId: number) => Promise<GameCheck>;
   signal?: AbortSignal;
   /** Called at start, on each relevant push, and every `progressEveryMs` while waiting. */
@@ -81,7 +93,9 @@ export interface WaitOutcome {
  * start, again for a game on every GameUpdated push for it, and again for
  * every game after the push socket reconnects (pushes sent during the gap are
  * lost) — or when `timeoutMs` passes. A cancelled `signal` rejects with its
- * reason.
+ * reason. The games are checked before they are watched, so a game the check
+ * refuses (not mine) is never subscribed; a finished game is not watched. Re-reads
+ * are debounced per game: at most one in flight and one queued (#131).
  */
 export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
   const now = opts.now ?? Date.now;
@@ -97,23 +111,44 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
   const off = opts.push.onUpdate((u) => {
     if (!ids.has(u.gameId)) return;
     updates++;
-    queue.push(u.gameId);
+    // Debounced (#131): a burst of pushes while the game is queued is one re-read; one arriving
+    // while its re-read is in flight queues one more (the read in flight may predate the change).
+    if (!queue.includes(u.gameId)) queue.push(u.gameId);
     wake?.();
   });
-  const offReconnect = opts.push.onReconnect?.(() => {
-    reconnects++;
-    reconnectNote = true;
+  const requeue = (reconnect: boolean) => {
+    if (reconnect) {
+      reconnects++;
+      reconnectNote = true;
+    }
     for (const id of ids) if (!queue.includes(id)) queue.push(id);
     wake?.();
-  });
+  };
+  // Every connect, the first included: watch() returns before the socket connects, so a turn
+  // that resolves between the initial check and the first Subscribe is only seen by a re-read.
+  const offReconnect = opts.push.onConnect
+    ? opts.push.onConnect((e) => requeue(e.reconnect))
+    : opts.push.onReconnect?.(() => requeue(true));
   const timers: Array<ReturnType<typeof setTimeout>> = [];
+  /** The games this wait watches (released when it ends). */
+  let watched: number[] = [];
+  /** A finished game cannot need me again: the listener stops watching it. */
+  const settle = (c: GameCheck) => {
+    if (TERMINAL_STATES.has(c.state)) opts.push.forget?.([c.id]);
+  };
   let onAbort: (() => void) | undefined;
   try {
     opts.signal?.throwIfAborted();
-    await opts.push.watch([...ids]);
+    // Check first, watch second (#131): the check refuses a game the account does not play in, and
+    // such a game must never be subscribed. The gap this opens (a turn resolving between the check
+    // and the Subscribe sends no push) is closed by a re-read: on the connect when the socket is not
+    // up yet, or right after `watch` when it subscribed on a live session.
     const latest = new Map<number, GameCheck>();
     const first = await Promise.all([...ids].map(async (id) => [id, await opts.check(id)] as const));
-    for (const [id, c] of first) latest.set(id, c);
+    for (const [id, c] of first) {
+      latest.set(id, c);
+      settle(c);
+    }
     const outcome = (status: WaitOutcome['status']): WaitOutcome => ({
       status,
       games: [...ids].map((id) => latest.get(id)!),
@@ -123,6 +158,13 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
       errors,
     });
     if ([...latest.values()].some((c) => c.waitingOnYou)) return outcome('your_turn');
+    opts.signal?.throwIfAborted();
+    const live = [...ids].filter((id) => !TERMINAL_STATES.has(latest.get(id)!.state));
+    if (live.length) {
+      const subscribedNow = await opts.push.watch(live);
+      watched = live;
+      if (subscribedNow === true) for (const id of live) if (!queue.includes(id)) queue.push(id);
+    }
     opts.progress?.(0, `Waiting for your turn in ${ids.size} game(s).`);
 
     let timedOut = false;
@@ -161,6 +203,7 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
         try {
           const c = await opts.check(id);
           latest.set(id, c);
+          settle(c);
           if (c.waitingOnYou) return outcome('your_turn');
           opts.progress?.(now() - start, `Game ${id} updated; not your turn there yet.`);
         } catch (e) {
@@ -177,12 +220,47 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
   } finally {
     off();
     offReconnect?.();
+    if (watched.length) opts.push.release?.(watched);
     timers.forEach((t) => clearTimeout(t));
     if (onAbort) opts.signal?.removeEventListener('abort', onAbort);
   }
 }
 
+/**
+ * Coalesce reads per key (#131): at most one read in flight and one queued. A call while a read is
+ * in flight gets the queued read, which starts once the one in flight settles, so it sees data read
+ * after it asked; every call while that read is queued shares it.
+ */
+export function coalesced<K, T>(read: (key: K) => Promise<T>): (key: K) => Promise<T> {
+  const inFlight = new Map<K, Promise<T>>();
+  const queued = new Map<K, Promise<T>>();
+  const start = (key: K): Promise<T> => {
+    const p: Promise<T> = read(key).finally(() => {
+      if (inFlight.get(key) === p) inFlight.delete(key);
+    });
+    inFlight.set(key, p);
+    return p;
+  };
+  return (key) => {
+    const waiting = queued.get(key);
+    if (waiting) return waiting;
+    const current = inFlight.get(key);
+    if (!current) return start(key);
+    const next = current.then(
+      () => undefined,
+      () => undefined,
+    ).then(() => {
+      queued.delete(key);
+      return start(key);
+    });
+    queued.set(key, next);
+    return next;
+  };
+}
+
 export function registerPushTools(server: McpServer, ctx: LiveContext, push: PushListener): void {
+  // One GameFeed read per game at a time across every wait in the process, one queued (#131).
+  const readGame = coalesced((id: number) => ctx.client.getGame(id, { map: false }));
   server.registerTool(
     'warapp_wait_for_turn',
     {
@@ -241,7 +319,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         });
       }
       const check = async (id: number) => {
-        const game = await ctx.client.getGame(id);
+        // A turn check reads only the game's state: no map (a cold map is ~190 KB per game, #131).
+        const game = await readGame(id);
         if (!game.players.some((p) => p.id === token)) {
           throw new McpToolError(`The signed-in war.app account is not a player in game ${id}.`, {
             hint: 'Watch only games you play in.',

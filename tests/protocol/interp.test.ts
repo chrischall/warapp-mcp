@@ -185,6 +185,34 @@ describe('BundleInterpreter', () => {
     const read = () => i.readClass('demo.shared.Point', new Reader(new Writer().int32(1).int32(2).bytes()));
     expect(read()).toEqual(read());
   });
+  it('hoists var declarations: a var declared in an untaken branch reads as undefined (#131)', () => {
+    const b = parseBundle(
+      'W["t.Hx"]=Hx;Hx.Ha=function(a,b,d){if(P.Yc(a))var f=P.Ya(a);var e=new Hx;e.v=null!=f?f:-1;e.w=f?1:0;' +
+        'for(var i=0;2>i;i++){var g;if(0==i)g=5}e.g=g;return e};',
+    );
+    const i = new BundleInterpreter(b);
+    expect(i.readClass('t.Hx', new Reader(new Writer().bool(false).bytes()))).toEqual({ $type: 't.Hx', v: -1, w: 0, g: 5 });
+    expect(i.readClass('t.Hx', new Reader(new Writer().bool(true).int32(7).bytes()))).toEqual({ $type: 't.Hx', v: 7, w: 1, g: 5 });
+  });
+
+  it('caches a failed static lookup instead of rescanning the bundle (#131)', () => {
+    const parsed = parseBundle('W["t.Q"]=Qq;Qq.Ha=function(a){return Qq.nope(a)};');
+    let scans = 0;
+    const src = parsed.src;
+    Object.defineProperty(parsed, 'src', {
+      get: () => {
+        scans++;
+        return src;
+      },
+    });
+    const i = new BundleInterpreter(parsed);
+    const read = () => interpError(() => i.readClass('t.Q', new Reader(new Uint8Array())));
+    expect(read().kind).toBe('no-definition');
+    const after = scans;
+    expect(read().kind).toBe('no-definition');
+    expect(scans).toBe(after);
+  });
+
 
   it('reports an unbalanced function body', () => {
     const b = parseBundle('W["d.U"]=Uu;Uu.Ha=function(a){return "}"');

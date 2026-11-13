@@ -156,6 +156,16 @@ describe('push WebSocket transport', () => {
     expect(r.ws.sockets[0]!.closed).toBe(true);
     expect(r.ws.sockets[1]!.closed).toBe(true);
   });
+  it('a 7::: error packet ends the WebSocket session (#131)', async () => {
+    const r = rig();
+    const { c, errors } = client(r);
+    c.start();
+    await c.whenConnected();
+    r.ws.sockets[0]!.receive('7:::1+0');
+    await until(() => c.connectCount === 2, 'reconnect after 7:::');
+    expect(errors[0]).toMatch(/refused the push socket \(1\+0\)/);
+  });
+
 
   it('missed heartbeats (the handshake heartbeat timeout) reconnect', async () => {
     const r = rig({ ws: { heartbeat: 25 } });

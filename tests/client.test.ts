@@ -86,6 +86,13 @@ describe('WarappClient.getGame', () => {
     expect(second.map).toBe(first.map);
   });
 
+  it('fetches an unseen game without its map when asked (map: false) (#131)', async () => {
+    const { calls, fetchImpl } = stubFetch({ body: WITHOUT_MAP });
+    const game = await client(fetchImpl).getGame(12345678, { map: false });
+    expect(calls[0]!.url).toBe('https://war.app/API/GameFeed?GameID=12345678&GetMap=false');
+    expect(game.map).toBeUndefined();
+  });
+
   it('shares the cache across clients (one per process by default)', async () => {
     const cache = new MapCache();
     const a = stubFetch({ body: FIXTURE });

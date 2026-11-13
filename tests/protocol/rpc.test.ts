@@ -286,6 +286,13 @@ describe('WarappRpc transport failures', () => {
     expect(err).toBeInstanceOf(McpToolError);
     expect(err.message).toMatch(/method/i);
   });
+  it('rejects a reply framed for another protocol version: the readers would mis-read it (#131)', async () => {
+    const { rpc } = setup(() => ({ version: 106, body: (w) => w.bool(true) }));
+    const err = (await rejection(rpc.call('GetTerritoryPicks', Method.GetTerritoryPicks, picks))) as McpToolError;
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err.message).toMatch(/protocol version 106/);
+  });
+
 
   it('lets bridge errors through unchanged', async () => {
     const boom = new Error('bridge down');

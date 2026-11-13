@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
@@ -566,6 +566,65 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(second.trendSource).toBe('cache');
     expect(second.warnings.join('\n')).toMatch(building(7, 12));
     expect(Object.keys((JSON.parse(readFileSync(cacheFile(dir), 'utf8')) as { turns: object }).turns)).toEqual(['3', '4']);
+    // Only one earlier turn is cached: history is still read for the turns the cache lacks (#131).
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(true);
+    await h.harness.close();
+
+    // Turn 5: turns 3 and 4 are both cached, so the trend has two verified turns — no history call.
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '4' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(grown) }),
+    });
+    const third = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(third.trendSource).toBe('cache');
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
+  });
+
+  it('(h) the verified cached board of the previous turn beats an unverified history standing (#131)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    const dir = h.dataDir;
+    await h.harness.close();
+    // Turn 4: history says Bob had 3 on turn 3; the board this server planned on (verified) said 7.
+    const grown = BOARD.map((t) => (t.id === 158 ? { ...t, armies: 12 } : t));
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3', history: [{ turn: 0, standing: [] }, { turn: 1, standing: [] }, { turn: 2, standing: previous }] })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(grown) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.trendSource).toBe('cache');
+    expect(p.warnings.join('\n')).toMatch(building(7, 12));
+  });
+
+  it('(h) a failed account read fails the plan while the board read runs; history is never fetched (#131)', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { history: [{ turn: 0, standing: [] }, { turn: 1, standing: previous }] })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const res = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Nobody' });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Nobody/);
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
+  });
+
+  it('(h) a failed board read fails the plan while the history read runs (#131)', async () => {
+    const live = await liveHarness({
+      feed: [game('Playing', { history: [{ turn: 0, standing: [] }, { turn: 1, standing: previous }] })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () => ({ error: { code: 42, message: 'board unavailable' } }),
+      }),
+    });
+    h = live;
+    const res = await live.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    expect(res.isError).toBe(true);
+    // The tool returns as soon as the board read fails; the history read, chained behind the
+    // account read and the cache read, may not have reached GameFeed yet. Wait for it (bounded).
+    await vi.waitFor(() => expect(live.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(true), {
+      timeout: 2000,
+      interval: 5,
+    });
   });
 
   it('(h) planning the same turn twice keeps the trend (the previous turn stays cached)', async () => {

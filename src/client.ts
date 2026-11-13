@@ -104,6 +104,11 @@ export interface GetGameOptions {
   settings?: boolean;
   /** `GetChat=true`: the game chat (third-party text). */
   chat?: boolean;
+  /**
+   * `false`: never download the map (`GetMap=false`) — for callers that only read the game's
+   * state; the map is still attached when cached. Default: download it unless cached.
+   */
+  map?: boolean;
 }
 
 export interface WarappClientOptions {
@@ -204,7 +209,7 @@ export class WarappClient {
   async getGame(id: unknown, opts: GetGameOptions = {}): Promise<Game> {
     const gameId = parseGameId(id);
     const known = this.#cache.forGame(gameId);
-    const body = await this.#feed(gameId, { ...opts, noMap: known !== undefined });
+    const body = await this.#feed(gameId, { ...opts, noMap: known !== undefined || opts.map === false });
     const game = normalizeGame(body);
 
     let map = known;

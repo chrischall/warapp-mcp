@@ -92,13 +92,25 @@ export interface SocketIoClientOptions {
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
-  /** Reconnect backoff: initial delay, doubled per failure up to `maxBackoffMs`. */
+  /**
+   * Reconnect backoff: initial delay, doubled per failure up to `maxBackoffMs`. The same pace,
+   * capped at `maxPollPaceMs`, spaces out polls that come back at once with nothing to say.
+   */
   initialBackoffMs?: number;
   maxBackoffMs?: number;
+  /** A session connected this long resets the backoff when it ends (default 30 s). */
+  stableMs?: number;
+  /** A poll answered faster than this with nothing to say is paced (default 1 s). */
+  minPollMs?: number;
+  /** The longest pause between such polls (default 5 s): a push waits at most this long. */
+  maxPollPaceMs?: number;
 }
 
 export const DEFAULT_INITIAL_BACKOFF_MS = 1_000;
 export const DEFAULT_MAX_BACKOFF_MS = 60_000;
+export const DEFAULT_STABLE_MS = 30_000;
+export const DEFAULT_MIN_POLL_MS = 1_000;
+export const DEFAULT_MAX_POLL_PACE_MS = 5_000;
 
 const realSleep = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -122,12 +134,21 @@ export class SocketIoClient {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
   private running = false;
+  /**
+   * The run each loop belongs to, bumped by `start()` and `stop()`. A loop stopped while a poll or
+   * a backoff sleep was in flight wakes to a newer generation and exits, even when a later
+   * `start()` has set `running` again — otherwise two loops would keep replacing each other's sid
+   * (#131).
+   */
+  private generation = 0;
   private sid: string | undefined;
   private isConnected = false;
   private waiters: Array<() => void> = [];
   private failures = 0;
   private lastErrorMessage: string | undefined;
   private connects = 0;
+  /** When the current session connected; undefined until it does. */
+  private connectedAt: number | undefined;
   private sender: ((packet: string) => Promise<void>) | undefined;
   private closeSession: (() => void) | undefined;
   private active: PushTransportName | undefined;
@@ -146,7 +167,7 @@ export class SocketIoClient {
     return this.running;
   }
 
-  /** How many times a session has connected. */
+  /** How many times a session has connected since the last `start()`. */
   get connectCount(): number {
     return this.connects;
   }
@@ -163,12 +184,16 @@ export class SocketIoClient {
   start(): void {
     if (this.running) return;
     this.running = true;
-    void this.run();
+    // A restart begins afresh: its first connect is not a reconnect (no push gap on this run).
+    this.connects = 0;
+    this.failures = 0;
+    void this.run(++this.generation);
   }
 
   /** Stop. An in-flight poll is abandoned, not awaited; an open WebSocket is closed. */
   stop(): void {
     this.running = false;
+    this.generation++;
     const close = this.closeSession;
     this.closeSession = undefined;
     close?.();
@@ -212,10 +237,13 @@ export class SocketIoClient {
   }
 
   /** A session saw its connect packet: record it, (re)subscribe, then signal a reconnect. */
-  private async markConnected(send: (packet: string) => Promise<void>): Promise<void> {
+  private async markConnected(gen: number, send: (packet: string) => Promise<void>): Promise<void> {
+    if (!this.live(gen)) return;
     this.sender = send;
     this.isConnected = true;
-    this.failures = 0;
+    // The backoff is not reset here: a session that connects and fails at once would retry every
+    // second forever. It resets when a session that held for `stableMs` ends (#131).
+    this.connectedAt = this.now();
     this.connects++;
     const w = this.waiters;
     this.waiters = [];
@@ -224,19 +252,28 @@ export class SocketIoClient {
     if (this.connects > 1) this.opts.onReconnect?.();
   }
 
-  private backoffMs(): number {
+  private backoffMs(failures = this.failures): number {
     const initial = this.opts.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
     const max = this.opts.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
-    return Math.min(max, initial * 2 ** Math.min(this.failures, 30));
+    return Math.min(max, initial * 2 ** Math.min(failures, 30));
   }
 
-  private async run(): Promise<void> {
-    while (this.running) {
+  /** Whether a loop of generation `gen` should keep going. */
+  private live(gen: number): boolean {
+    return this.running && this.generation === gen;
+  }
+
+  private async run(gen: number): Promise<void> {
+    while (this.live(gen)) {
+      this.connectedAt = undefined;
       try {
-        await this.session();
+        await this.session(gen);
       } catch (e) {
+        // A stale loop must not touch the state of the run that replaced it.
+        if (!this.live(gen)) break;
         this.disconnect();
-        if (!this.running) break;
+        const held = this.connectedAt !== undefined && this.now() - this.connectedAt >= (this.opts.stableMs ?? DEFAULT_STABLE_MS);
+        if (held) this.failures = 0;
         const err = e instanceof Error ? e : new Error(String(e));
         this.lastErrorMessage = err.message;
         this.opts.onError?.(err);
@@ -248,19 +285,20 @@ export class SocketIoClient {
   }
 
   /** One session: the WebSocket when selected and available, else xhr-polling. */
-  private async session(): Promise<void> {
+  private async session(gen: number): Promise<void> {
     const leg = this.opts.webSocket;
     if (leg && (await leg.select())) {
       this.active = 'websocket';
       try {
         await runWebSocketSession(leg, {
-          running: () => this.running,
+          running: () => this.live(gen),
           now: this.now,
           setTimer: this.opts.setTimer ?? realSetTimer,
-          onConnected: (send) => this.markConnected(send),
+          onConnected: (send) => this.markConnected(gen, send),
           onMessage: (data) => this.opts.onMessage(data),
           setCloser: (close) => {
-            this.closeSession = close;
+            if (this.live(gen)) this.closeSession = close;
+            else close?.();
           },
         });
         return;
@@ -270,15 +308,16 @@ export class SocketIoClient {
         this.lastErrorMessage = e.message;
       }
     }
-    if (!this.running) return;
+    if (!this.live(gen)) return;
     this.active = 'xhr-polling';
-    await this.pollSession();
+    await this.pollSession(gen);
   }
 
   /** One xhr-polling session: handshake, then poll until it fails or the client stops. */
-  private async pollSession(): Promise<void> {
+  private async pollSession(gen: number): Promise<void> {
     const t = await this.opts.transport();
     const hs = await t.fetch({ method: 'GET', path: `${SOCKET_URL}?t=${this.now()}`, retryOnTimeout: false });
+    if (!this.live(gen)) return;
     if (hs.status !== 200) throw new Error(`war.app answered HTTP ${hs.status} to the socket handshake.`);
     const handshake = parseHandshake(hs.body);
     if (!handshake.transports.includes('xhr-polling')) {
@@ -287,19 +326,25 @@ export class SocketIoClient {
     const sid = handshake.sid;
     this.sid = sid;
     let first = true;
-    while (this.running && this.sid === sid) {
+    /** Polls in a row answered at once with nothing to say. */
+    let idle = 0;
+    while (this.live(gen) && this.sid === sid) {
+      const started = this.now();
       const res = await t.fetch({ method: 'GET', path: this.url(), retryOnTimeout: false });
-      if (this.sid !== sid) return;
+      if (!this.live(gen) || this.sid !== sid) return;
       if (res.status !== 200) throw new Error(`war.app answered HTTP ${res.status} to a push-socket poll.`);
       const packets = splitPayload(res.body).map(parsePacket);
       if (first && packets[0]?.type !== 'connect') {
         throw new Error('war.app did not open the push socket (no connect packet).');
       }
+      const wasFirst = first;
       first = false;
+      let useful = wasFirst;
       for (const p of packets) {
+        if (p.type === 'connect' || p.type === 'heartbeat' || p.type === 'message') useful = true;
         switch (p.type) {
           case 'connect':
-            if (!this.isConnected) await this.markConnected((packet) => this.post(packet));
+            if (!this.isConnected) await this.markConnected(gen, (packet) => this.post(packet));
             break;
           case 'heartbeat':
             await this.post('2::');
@@ -309,9 +354,20 @@ export class SocketIoClient {
             break;
           case 'disconnect':
             throw new Disconnected('war.app closed the push socket.');
+          case 'error':
+            throw new Error(`war.app refused the push socket (${p.reason || 'no reason'}).`);
           default:
             break;
         }
+      }
+      // A long poll ends with a noop after a quiet spell; one answered at once with nothing to say
+      // (an empty body, a noop, a packet this client ignores) would otherwise re-poll in a tight
+      // loop. Pace those like the reconnect backoff, but capped low: a push that arrives during the
+      // pause waits for the next poll (#131).
+      if (useful || this.now() - started >= (this.opts.minPollMs ?? DEFAULT_MIN_POLL_MS)) {
+        idle = 0;
+      } else if (this.live(gen) && this.sid === sid) {
+        await this.sleep(Math.min(this.opts.maxPollPaceMs ?? DEFAULT_MAX_POLL_PACE_MS, this.backoffMs(idle++)));
       }
     }
   }
