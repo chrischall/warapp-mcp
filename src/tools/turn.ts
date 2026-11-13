@@ -798,8 +798,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           '"complete-bonus" — also attacks players to finish bonuses; "defend" — threatened borders worth holding ' +
           'first. An opponent next to the fog may be pressured: each of its visible territories attacked, sized for ' +
           `its full deploy plus a margin, at most ${PRESSURE_FACTOR}× a typical neutral capture each — one visible ` +
-          'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent from its visible bonuses, or ' +
-          'its observed deploy since the previous turn when larger). Obeys the kill rates, luck, rounding, Local ' +
+          'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent: ' +
+          'base income plus its visible bonuses, or its observed deploy when larger — its tracked income, carried across turns, once ' +
+          'warapp_track_opponents has 2+ turns of it — and in an even-start 1v1 at least your income when it borders the fog; ' +
+          'growth beside the fog beyond twice what it was expected to deploy reads as a move out of the fog, not a deploy). Obeys the kill rates, luck, rounding, Local ' +
           'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement, and Order ' +
           'Priority only when the plan advises it (a withdrawal worth a card, a commander strike) or it is the card that must ' +
           'go (over the hold limit the lowest-value cards leave first); never Blockade or Order Delay. Moves are listed in the ' +
@@ -845,7 +847,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .describe(
             'Armies every enemy is assumed to deploy next turn when judging threats. Default, per opponent: base ' +
               'income plus every bonus it visibly holds, whatever its stack next to you (never below the base income), ' +
-              'or what it was observed to deploy when larger, carried across turns. In an even-start 1v1 an opponent ' +
+              'or what it was observed to deploy when larger, carried across turns (growth beside the fog beyond twice ' +
+              'what it was expected to deploy reads as a move out of the fog, not a deploy). In an even-start 1v1 an opponent ' +
               'bordering the fog is assumed to earn at least your income. Income in the fog is unseen, so raise it if ' +
               'you know they earn more.',
           ),

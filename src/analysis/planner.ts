@@ -1394,19 +1394,29 @@ export interface ObserveContext {
  *   its own territories nets to zero, so it is never read as deploy;
  * - taken from another visible owner (another player, me included, or a visible neutral): what
  *   the capture cost it — the attackers the previous defenders killed at the game's defensive
- *   kill rate (`straightKills`, as in `armiesToTake`) — plus the armies now on it up to what its
- *   territories next to it, shown on both boards, visibly sent away (their total shrink, each
- *   army claimed by one capture only): those moved in from a visible source, whose shrink they
- *   cancel, so source shrink + destination gain nets to the attrition (issue #86). An unchanged
- *   visible neighbour sent nothing, so it explains nothing. The rest arrived from the fog when a
- *   neighbour was hidden on either board — a move, never income (`fromFog`), still a threat to
- *   the borders next to it; with every neighbour in view it can only be a deploy on the source.
+ *   kill rate (`straightKills`, as in `armiesToTake`); taken from me (given `context.me`), the
+ *   defenders are the guard I may have left, not my stack last turn (#123, `emptied`: I may have
+ *   attacked out of it) — plus the armies now on it up to what its territories next to it, shown
+ *   on both boards, visibly sent away (their total shrink, each army claimed by one capture only):
+ *   those moved in from a visible source, whose shrink they cancel, so source shrink + destination
+ *   gain nets to the attrition (issue #86). An unchanged visible neighbour sent nothing, so it
+ *   explains nothing. The rest, when a neighbour was hidden on either board, is ambiguous (#123):
+ *   a deploy on a visible source that shrank into it (`reinforced`), or a move out of the fog —
+ *   never income (`fromFog`), still a threat to the borders next to it. With every neighbour in
+ *   view it can only be a deploy on the source.
+ * - growth on its territory next to a hidden one is ambiguous the same way (`grewFromFog`).
+ * Ambiguous armies count as deploy while the turn's total stays within {@link ambiguousBound}
+ * (twice `context.expected`, never past `context.most`); the rest are moves. Without `expected`,
+ * growth is all deploy and a capture's surplus counts up to `most` (none without it, #86).
+ * `low` and `high` read every ambiguous army one way or the other (fog moves and the guard, or
+ * deploys and my stack standing there).
  * Not counted: armies it lost on a territory it attacked but did not take. The defender's
  * count there also moves with the defender's own deploys and transfers (mine included —
  * this board says nothing about my orders), so the loss cannot be read off it; leaving it
- * out keeps the figure a lower bound (the failed attack's losses still shrink its source).
- * One turn only, not smoothed: the planner sees a single previous board. Transfers in from
- * (or out to) the fog still bias it — income in the fog is unseen anyway.
+ * out keeps the figure a lower bound (the failed attack's losses still shrink its source). The
+ * opponent tracker adds it back when my orders that turn are known (#119, `measureOrders`).
+ * One turn only, not smoothed (the tracker reads a history). Transfers in from (or out to) the
+ * fog still bias it — income in the fog is unseen anyway.
  */
 export function observeDeploy(
   g: MapGraph,
