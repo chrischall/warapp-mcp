@@ -161,6 +161,11 @@ export interface Player {
   color?: string;
   /** e.g. `Playing`, `Invited`, `Eliminated`, `Booted`, `Won`. */
   state?: string;
+  /**
+   * Its team, when GameFeed sends one (UNVERIFIED: no team game has been read; see
+   * docs/WARAPP-API.md). Absent, or -1, means no team.
+   */
+  team?: number;
 }
 
 export function normalizePlayer(raw: unknown): Player {
@@ -177,6 +182,8 @@ export function normalizePlayer(raw: unknown): Player {
   if (color !== undefined) p.color = color;
   const state = asStr(r.state);
   if (state !== undefined) p.state = state;
+  const team = asInt(r.team);
+  if (team !== undefined) p.team = team;
   return p;
 }
 

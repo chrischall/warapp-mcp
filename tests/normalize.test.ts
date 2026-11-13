@@ -167,6 +167,11 @@ describe('normalizePlayer', () => {
       state: 'Playing',
     });
   });
+
+  it('keeps a team when the feed sends one (unverified), as a number', () => {
+    expect(normalizePlayer({ id: '1112345699', name: 'P', team: '1' }).team).toBe(1);
+    expect(normalizePlayer({ id: '1112345699', name: 'P' })).not.toHaveProperty('team');
+  });
 });
 
 describe('normalizeSettings', () => {

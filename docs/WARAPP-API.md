@@ -44,6 +44,12 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   The fixture uses ISO, which is synthetic. Both are kept as strings.
 - Player: `id, name, isAI, humanTurnedIntoAI, hasCommittedOrders, color, state`
   (`state` is `Playing` even in a lobby).
+- Player `team` — **UNVERIFIED**: no team game has been read through GameFeed. `normalizePlayer`
+  keeps an integer `team` when one is sent, and the game profile (S1) treats a game as a team
+  game when any player carries a team other than -1 (the web client's own test, see
+  docs/WEB-PROTOCOL.md "Open games"). The in-game `LatestGameInfo` carries no player list (read
+  from the client bundle: orders, standings, turn, teammate orders, toasts), so GameFeed is the
+  only source the plan reads; without `team` a team game reads as an FFA.
 - `settings` uses real JSON types (numbers, booleans, objects). A card is enabled when its
   `<Name>Card` value is an object and disabled when the value is the string `"none"`.
   `ArmyCap` is the string `"null"` when there is no cap. `Map` is the map id.

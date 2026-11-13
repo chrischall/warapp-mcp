@@ -5,7 +5,7 @@ import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/co
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { normalizeMap } from '../src/normalize.js';
-import { PRESSURE_FACTOR } from '../src/analysis/planner.js';
+import { AHEAD_PRESSURE_FACTOR, PRESSURE_FACTOR } from '../src/analysis/planner.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
@@ -70,6 +70,8 @@ interface PlanPayload {
   game: { id: number; name: string | null; turn: number | null };
   player: { id: number; name: string };
   goal: string;
+  goalSource: 'profile' | 'explicit';
+  profile: Record<string, unknown>;
   income: number;
   enemyDeploy: number;
   deploys: Array<{ territory: Named; armies: number }>;
@@ -312,6 +314,47 @@ describe('warapp_plan_turn', () => {
       localDeployments: false,
       noSplit: false,
     });
+  });
+
+  it('with no goal the game profile picks it; compact shows format, phase and standing (S1)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.goalSource).toBe('profile');
+    expect(Object.keys(p.profile).sort()).toEqual(['format', 'phase', 'standing']);
+    // The lobby fixture seats nine players, all still playing: an FFA.
+    expect(p.profile.format).toBe('ffa');
+    expect(p.rationale[0]).toMatch(/^Goal (balanced|defend) from the game profile \(ffa, /);
+    expect(p.goal).toBe(p.profile.standing === 'behind' ? 'defend' : 'balanced');
+  });
+
+  it('an explicit goal overrides the profile, and full echoes the whole profile (S1)', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: { ...(lobbyFixture().settings as Record<string, unknown>), Fog: 'NoFog' } })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand', view: 'full' }),
+    );
+    expect(p.goal).toBe('expand');
+    expect(p.goalSource).toBe('explicit');
+    expect(p.rationale.join('\n')).toMatch(/Goal expand was given explicitly, so it overrides the game profile/);
+    expect(p.profile).toMatchObject({
+      format: 'ffa',
+      opponents: (lobbyFixture().players as unknown[]).length - 1,
+      settings: { fog: 'NoFog', cards: true, localDeployments: false, noSplit: false, commanders: false, luck: 0 },
+    });
+    expect(Array.isArray(p.profile.notes)).toBe(true);
+  });
+
+  it('the plan description explains the profile and its rules (S1)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({}) });
+    const { tools } = await h.harness.client.listTools();
+    const tool = tools.find((t) => t.name === 'warapp_plan_turn')!;
+    expect(tool.description).toMatch(/game profile/);
+    expect(tool.description).toContain(`up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture`);
+    expect(tool.description).toMatch(/no second front/);
+    const props = (tool.inputSchema as { properties: Record<string, { description?: string }> }).properties;
+    expect(props.goal!.description).toMatch(/Omit to let the game profile pick/);
   });
 
   it('the plan description states the fog pressure gate from PRESSURE_FACTOR, its margin and that it is all or nothing (#60)', async () => {
