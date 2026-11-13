@@ -143,7 +143,7 @@ describe('lessons from a lost game', () => {
     ]);
     const share = Math.ceil(MIN_EXPANSION_SHARE * 8);
     expect(deployedTo(p, 2)).toBeGreaterThanOrEqual(share);
-    expect(p.rationale.join('\n')).toContain(`Hold T16 (#16) later (needs 6, protects +2): at least ${share} of income`);
+    expect(p.rationale.join('\n')).toContain('Hold T16 (#16) after this turn\'s bonus completions (needs 6, protects +2)');
     expect(p.conceded).toEqual([16]);
     expect(deploySum(p)).toBe(8);
 

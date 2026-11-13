@@ -754,7 +754,7 @@ describe('planTurn — balanced', () => {
     expect(p.conceded).toEqual([3]);
     expect(p.warnings).toContain('T3 (#3) cannot be held with the 1 armies left to deploy (needs 3, protects +1): conceded');
     expect(p.rationale.join('\n')).toMatch(/Deploy 3 to T2 \(#2\) so it holds/);
-    expect(p.rationale.join('\n')).toMatch(/T3 \(#3\).*expansion/i);
+    expect(p.rationale.join('\n')).toMatch(/T3 \(#3\).*after this turn's bonus completions/);
     // The conceded border withdraws its one movable army first, with Order Priority advice.
     expect(p.moves[0]).toEqual(expect.objectContaining({ from: 3, to: 1, armies: 1, kind: 'transfer' }));
     expect(p.cardAdvice).toBe('order-priority');

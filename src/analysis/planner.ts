@@ -2186,7 +2186,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           if (cost <= budget && cost > budget - pending) {
             waiting.push(u);
             rationale.push(
-              `Hold ${u.members.map((m) => label(m.id)).join(', ')} later (needs ${cost}, protects +${u.value}): at least ${floor} of income (${MIN_EXPANSION_SHARE * 100}%) goes to expansion first, worth up to +${topValue}.`,
+              `Hold ${u.members.map((m) => label(m.id)).join(', ')} after this turn's bonus completions (needs ${cost}, protects +${u.value}): a completion worth up to +${topValue} may go first, but the hold is funded before any capture that completes nothing.`,
             );
             return;
           }
