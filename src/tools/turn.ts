@@ -579,15 +579,19 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Every plan reads ' +
           'the game profile (`profile`: format 1v1/ffa/teams, phase opening/expansion/contact/late, standing ' +
           'ahead/even/behind/unknown by your income against the strongest opponent\'s estimate; `full` adds the ' +
-          'settings and notes). With no `goal`, the profile picks it (`goalSource` "profile"): defend when behind, ' +
-          'else balanced, tuned — in a 1v1 in contact breaking an enemy bonus counts like completing one and ' +
+          'settings and notes). With no `goal`, the profile picks it (`goalSource` "profile"): defend when behind on income in an FFA or team game, ' +
+          'else balanced (behind on income in a 1v1 means strike: break their bonuses before expansion that completes nothing), tuned — in a 1v1 in contact breaking an enemy bonus counts like completing one and ' +
           'expansion that completes nothing ranks below holds and breaks; in an FFA with two or more opponents left ' +
           'no second front (a player threatening none of your bonuses is not attacked while a neutral of similar ' +
-          `value exists; finishing one off still is); behind, attacks are sized at the minimum; ahead in a 1v1, fog ` +
+          'value exists; finishing one off still is); behind, attacks are sized at the minimum; behind on armies in a 1v1, no capture of ' +
+          "a player's territory that loses more armies than it kills; facing an opponent, spare deploys build one strike stack on the border " +
+          `facing the strongest opponent; ahead in a 1v1, fog ` +
           `pressure is allowed up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. An explicit \`goal\` overrides the ` +
           'profile (the rationale says so). Goals: "balanced" (default) — the profile\'s base — ' +
           'spends income where it earns most per army — holding borders that protect income, completing ' +
-          'cheap bonuses, breaking enemy bonuses — with at least 30% on expansion; "expand" takes neutrals and never ' +
+          'cheap bonuses, breaking enemy bonuses (also ones the opponent tracker infers behind the fog, "probable"; a break is sized to land, ' +
+          'not to survive the counter-attack, and is worth their lost income plus what retaking costs them), counter-attacking a stack that ' +
+          'shrank attacking you — with at least 30% on expansion (`full` lists the offensive options in `offence`); "expand" takes neutrals and never ' +
           'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
           'borders worth holding before anything else. Under balanced/defend, an opponent whose every territory is ' +
           'visible and borders yours is attacked at once when, whatever way it splits its one estimated deploy to ' +
@@ -626,7 +630,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .enum(GOALS)
           .optional()
           .describe(
-            'Omit to let the game profile pick (defend when behind on income, else balanced, tuned to the format). ' +
+            'Omit to let the game profile pick (defend when behind on income outside a 1v1, else balanced, tuned to the format). ' +
               'balanced (default): best income per army across holds, bonuses and breaking enemy bonuses; expand: take ' +
               'neutrals only; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first. ' +
               'A goal given here overrides the profile.',
@@ -775,6 +779,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           rung === 'full'
             ? plan.frontier
             : `${plan.frontier.borders} borders (${plan.frontier.enemyBorders} facing an enemy): holding them next turn needs ${plan.frontier.holdCost}, next income ${plan.frontier.income}`,
+        // #72: the offensive options considered, full view only.
+        ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
         cards: {
           hand: hand.map(cardView),
           maxCardsHold: rules.maxCardsHold ?? null,

@@ -167,8 +167,11 @@ The pages were read on 2026-11-13; nothing is quoted.
 - `reading-idle-armies` — walk backline armies to the front. **Advice only.** Source: FFA strategy.
 - `reading-ahead` — ahead, trade and keep pressure. **Encoded:** 1v1 pressure when ahead (profile
   rule 0p). Derived. Source: Good 1v1 strategies.
-- `reading-behind` — behind, avoid even trades and defend. **Encoded:** the defend goal and
-  minimal sizes when behind (profile rule 0p). Derived. Source: Good 1v1 strategies.
+- `reading-behind` — behind, avoid even trades and defend. **Encoded, revised by #72:** minimal
+  sizes when behind on income; the defend goal only outside a 1v1. In a 1v1, behind on income
+  means strike (break their bonuses before expansion that completes nothing — the owner's losses
+  argued against passivity), and behind on armies means no trade below even (profile rule 0p).
+  Derived. Source: Good 1v1 strategies; owner retrospective (#72).
 
 ## Map (general)
 
