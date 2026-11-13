@@ -76,16 +76,17 @@ describe('planTurn — No-Split (G3)', () => {
 
   it('(b) flag on: one attack only (the better one: it completes the bonus); a warning names the dropped one', () => {
     const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: NOSPLIT });
-    // armiesToTake(2) at 60/70 = max(ceil(150 / 60) = 3, round(1.4) + 1 = 2) = 3.
-    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 3 })]);
+    // armiesToTake(2) at 60/70 = max(ceil(150 / 60) = 3, round(1.4) + 1 = 2) = 3, but No-Split sends
+    // the whole stack (#124): 10 + the 5 deployed there − the guard.
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 14 })]);
     expect(p.moves).toHaveLength(1);
     expect(p.expected.captures).toEqual([3]);
     expect(p.expected.bonusesCompleted).toEqual([50]);
     expect(deploySum(p)).toBe(5);
     const w = p.warnings.join('\n');
     expect(w).toMatch(/No-Split: T1 \(#1\) already attacks T3 \(#3\), so the attack on T2 \(#2\) is not planned/);
-    // The planned amount is kept; whether No-Split also forces all-in is unverified.
-    expect(w).toMatch(/No-Split is on: .*unverified/);
+    // The whole stack moves (#124); whether the guard stays behind is unverified.
+    expect(w).toMatch(/No-Split is on: each order sends its territory's whole stack less the one army that stands guard; .*unverified/);
     expect(p.rationale.join('\n')).toMatch(/No-Split: each territory issues at most one attack or transfer/);
   });
 
@@ -116,7 +117,7 @@ describe('planTurn — No-Split (G3)', () => {
     expect(p.warnings.join('\n')).not.toMatch(/is not planned/);
   });
 
-  it('(c) a transfer and an attack from one source: only the attack is kept, the transfer is warned', () => {
+  it('(c) a transfer and an attack from one source: only the attack is kept, with the whole stack (#124)', () => {
     // T2 ─ T1 ─ T4 ─ T5(fogged). T1 takes T2; its idle remainder would walk to T4.
     const g3 = buildGraph(
       makeMap(
@@ -135,13 +136,12 @@ describe('planTurn — No-Split (G3)', () => {
       [1, 4, 'transfer'],
     ]);
     const on = planTurn({ graph: g3, board: s3, me: ME, income: 0, settings: NOSPLIT, options: { goal: 'expand' } });
-    expect(on.moves.map((m) => [m.from, m.to, m.kind, m.armies])).toEqual([[1, 2, 'attack', 2]]);
-    expect(on.warnings.join('\n')).toMatch(
-      /No-Split: T1 \(#1\) already attacks T2 \(#2\), so its 7 idle armies are not transferred to T4 \(#4\)/,
-    );
+    // The attack carries the 7 that would have walked to T4: nothing is left to transfer.
+    expect(on.moves.map((m) => [m.from, m.to, m.kind, m.armies])).toEqual([[1, 2, 'attack', 9]]);
+    expect(on.warnings.join('\n')).not.toMatch(/not transferred/);
   });
 
-  it('(d) a combined (R4) capture is still planned: each source issues one order', () => {
+  it('(d) a combined (R4) capture is still planned: each source issues one order, with its whole stack (#124)', () => {
     //   T1 ─ T3 ─ T2
     const g4 = buildGraph(
       makeMap(
@@ -155,17 +155,22 @@ describe('planTurn — No-Split (G3)', () => {
     const s4 = board([mine(1, 15), mine(2, 15), neutral(3, 15)]);
     const off = planTurn({ graph: g4, board: s4, me: ME, income: 5, settings: STD });
     const on = planTurn({ graph: g4, board: s4, me: ME, income: 5, settings: NOSPLIT });
-    expect(attacks(on)).toEqual([
+    expect(attacks(off)).toEqual([
       expect.objectContaining({ from: 2, to: 3, armies: 14 }),
       expect.objectContaining({ from: 1, to: 3, armies: 11 }),
     ]);
-    expect(on.moves).toEqual(off.moves);
-    expect(on.deploys).toEqual(off.deploys);
+    // No-Split sends each whole stack: the finisher carries all 14 of T1 and the leftover 5 (the
+    // leftover goes to the finisher, not to the softener, whose extra armies would only come home).
+    expect(attacks(on)).toEqual([
+      expect.objectContaining({ from: 2, to: 3, armies: 14 }),
+      expect.objectContaining({ from: 1, to: 3, armies: 19 }),
+    ]);
+    expect(on.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
     expect(on.multiSourceCaptures).toEqual([3]);
     expect([...perSource(on).values()].every((n) => n === 1)).toBe(true);
   });
 
-  it('a conceded border that already attacked out keeps its remainder (no withdrawal split)', () => {
+  it('a conceded border that attacks out sends its whole stack: nothing is left to withdraw (#124)', () => {
     // T1 (6) is threatened by a big enemy on T4 and protects nothing: conceded. It
     // completes bonus B60 (+1, T2 alone: a 1-army neutral) with what is on it; the
     // rest would withdraw to T3.
@@ -187,10 +192,8 @@ describe('planTurn — No-Split (G3)', () => {
     const fromOne = off.moves.filter((m) => m.from === 1).map((m) => m.kind);
     expect(fromOne.sort()).toEqual(['attack', 'transfer']);
     const on = planTurn({ graph: g5, board: s5, me: ME, income: 5, settings: NOSPLIT });
-    expect(on.moves.filter((m) => m.from === 1)).toEqual([expect.objectContaining({ to: 2, kind: 'attack' })]);
-    expect(on.warnings.join('\n')).toMatch(
-      /No-Split: T1 \(#1\) already attacks T2 \(#2\), so its 3 remaining armies are not withdrawn to T3 \(#3\)/,
-    );
+    expect(on.moves.filter((m) => m.from === 1)).toEqual([expect.objectContaining({ to: 2, kind: 'attack', armies: 5 })]);
+    expect(on.warnings.join('\n')).not.toMatch(/not withdrawn/);
   });
 
   it('property: on random boards, flag on → at most one order per source; flag off → identical to absent', () => {

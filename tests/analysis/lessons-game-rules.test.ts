@@ -140,17 +140,20 @@ describe('game rules: kill rates, Local Deployment and No-Split (issues #28, #29
         if (noSplit) {
           for (const id of IDS) expect(ordersFrom(p, id).length, `orders from T${id}`).toBeLessThanOrEqual(1);
           expect(p.rationale.join('\n')).toMatch(/No-Split/);
+          // #124: every order is the whole stack, so the validator has nothing to warn about.
+          expect(validate(p, settings).warnings.filter((w) => w.startsWith('No-Split'))).toEqual([]);
         }
       });
     }
   }
 
-  it('No-Split: T3 attacks both 1-army neutrals with 3 each only when splitting is allowed', () => {
+  it('No-Split: T3 attacks both 1-army neutrals with 3 each only when splitting is allowed (else one, with its whole stack)', () => {
     const attacksFrom3 = (p: TurnPlan) =>
       ordersFrom(p, 3).filter((m) => m.kind === 'attack').map((m) => [m.to, m.armies]);
     expect(attacksFrom3(plan(RATES))).toEqual([[4, 3], [5, 3]]);
     const one = plan({ ...RATES, noSplit: true });
-    expect(ordersFrom(one, 3)).toEqual([expect.objectContaining({ kind: 'attack', to: 4, armies: 3 })]);
+    // #124: the one attack carries T3's whole stack (12, plus its deploys, less the guard).
+    expect(ordersFrom(one, 3)).toEqual([expect.objectContaining({ kind: 'attack', to: 4, armies: 11 + deploySum(one, [3]) })]);
     expect(one.warnings.join('\n')).toMatch(/No-Split: T3 \(#3\) already attacks T4 \(#4\), so the attack on T5 \(#5\) is not planned/);
   });
 

@@ -255,9 +255,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       A bonus's own pool defends it (#103): its hold cost is judged net of the pool, the pool
       goes to its most threatened border and stays there, and a conceded bonus's garrisons are
       withdrawn only when one of its borders needs more than its pools plus every free army.
-    - **No-Split (#31).** With `noSplit`, a territory issues at most one attack or transfer (its
-      best; the rest are dropped with a warning, planned amounts kept, not forced all-in);
-      `warapp_submit_turn` refuses a split.
+    - **No-Split (#31, #124).** With `noSplit`, a territory issues at most one attack or transfer
+      (its best; the rest are dropped with a warning), and it sends the whole stack — this turn's
+      deploys there included, less the guard (verified live with the guard off; whether the guard
+      stays is unverified). A territory that must hold issues no order; a strike stack's one order
+      goes to the strike before a small expansion. `warapp_submit_turn` refuses a split and warns
+      when an order sends less than the whole stack.
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it

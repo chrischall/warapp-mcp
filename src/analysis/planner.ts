@@ -477,12 +477,25 @@
 // pool deployed on a border is never moved out the same turn. A rationale line names
 // each pool. Off (the default), plans are unchanged.
 // No-Split (`noSplit`): a territory issues at most one order (attack or transfer)
-// this turn. Orders are planned in decision order, so a territory's first order is
-// its best by the scoring above; any later attack, withdrawal or transfer from it is
-// not planned (a warning names it), and another source may take that target instead.
-// Combined captures (rule 3a) use only sources with no order yet: each still issues
-// one. The planned armies are kept (not forced all-in; whether No-Split also requires
-// all movable armies is unverified). Off (the default), plans are unchanged.
+// this turn, and the order sends its whole stack (#124; the wiki, and a live turn with the
+// guard off that left every source at 0): every army there, this turn's deploys included,
+// less the guard (whether the guard stays behind under No-Split is unverified; a warning says
+// so). Orders are planned in decision order, so a territory's first order is its best by the
+// scoring above; any later attack, withdrawal or transfer from it is not planned (a warning
+// names it), and another source may take that target instead. Nothing is kept back on a
+// source (no keep for a hold, rule 1e's or rule 1k's): a territory that must hold issues no
+// order — one that protects something (a bonus, income, my commander), is not conceded, and
+// would fall to the visible threat left once this turn's captures land with only the guard
+// (and armies withdrawn into it) on it; the target counts as gone only when the whole stack
+// takes it even if its owner deploys there first (a warning names the attack not planned).
+// Combined captures (rule 3a) use only sources with no order yet that need not hold, a
+// softener only when its whole stack leaves the last defender alive; each still issues one.
+// A deploy that reaches a source after its order was planned (the leftover, a pool) leaves
+// with it, a rationale line says so; the leftover never goes to a softener, nor a hold top-up
+// to a territory with an order. The strike stack (rule 0p.3c) attacks one target with the
+// whole stack, only when it need not hold; its one order goes to the strike before a small
+// expansion (an attack on a neutral that completes no bonus this turn: taken back, its armies
+// rejoin the stack). Efficient sizes (S2) do not apply. Off (the default), plans are unchanged.
 // Special units: a commander fights as COMMANDER_STRENGTH (7) armies, attacking and
 // defending, and takes no partial damage (armies die first; it falls to 7 damage left
 // over), so a stack of d armies plus a commander defends exactly as d + 7: every capture
@@ -1501,7 +1514,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const noSplit = s.noSplit === true;
   if (noSplit) {
     rationale.push(
-      'No-Split: each territory issues at most one attack or transfer this turn; a territory that would split keeps its first (best) order.',
+      'No-Split: each territory issues at most one attack or transfer this turn, and it sends the whole stack (every army there, this turn\'s deploys included, less the guard); a territory that would split keeps its first (best) order, and one that must hold issues none.',
     );
   }
 
@@ -2910,13 +2923,49 @@ export function planTurn(input: PlanInput): TurnPlan {
     return ok;
   };
 
+  // ---- No-Split: the whole stack moves (#124) ----
+  /** Territories a pass assumes fall this turn (finishing a player off): they threaten nothing. */
+  let assumeGone: (n: number) => boolean = () => false;
+  interface MustHold {
+    from: number;
+    value: number;
+    stays: number;
+    threat: number;
+  }
+  /**
+   * No-Split (#124): an order sends `x`'s whole stack, so only the guard (and armies withdrawn into
+   * it) stay. `x` must hold — it issues no order — when it protects something (a bonus, income, my
+   * commander), is not conceded, and what stays would fall to the visible threat left once this
+   * turn's captures land. The target `t` stops threatening only when the `sent` armies take it for
+   * sure even if its owner deploys there first. `null` when the order may go (always with No-Split off).
+   */
+  const mustHold = (x: number, t: number, sent: number): MustHold | null => {
+    if (!noSplit || conceded.has(x)) return null;
+    const value = valueOf(x);
+    if (value <= 0 && !myCommanders.has(x)) return null;
+    const st = state.get(t);
+    const owner = st?.owner.kind === 'player' && st.owner.playerId !== me ? st.owner.playerId : undefined;
+    const sure = owner === undefined || (costOf(defenceAt(t) + deployOf(owner)) ?? Infinity) <= sent;
+    const b = borderAt(x, (n) => captured.has(n) || assumeGone(n) || (n === t && sure));
+    if (!b) return null;
+    const stays = guard + (incoming.get(x) ?? 0);
+    if ((armiesToTake(stays + unitsAt(x), rates) ?? Infinity) > b.threat) return null;
+    return { from: x, value, stays, threat: b.threat };
+  };
+  /** A No-Split warning: `h.from` must hold, so `what` is not planned. Never repeated. */
+  const warnHold = (h: MustHold, what: string) => {
+    const w = `No-Split: ${label(h.from)} must hold (${h.value > 0 ? `protects +${h.value}` : 'my commander stands there'}): an order would send its whole stack, leaving ${h.stays} against the ~${h.threat} threat, so ${what}.`;
+    if (!warnings.includes(w)) warnings.push(w);
+  };
+
   // ---- capture helper ----
   let anchor: number | undefined;
-  /** Why the last {@link tryCapture} refused (R3, or No-Split on a source that could take it); else size. */
+  /** Why the last {@link tryCapture} refused (R3, No-Split on a source that could take it); else size. */
   let refusal:
     | { kind: 'r3' }
     | { kind: 'split'; from: number }
     | { kind: 'trade'; lost: number; killed: number }
+    | ({ kind: 'must-hold' } & MustHold)
     | undefined;
   /**
    * Rule 4e in contact (#107): a capture of a player's territory must trade at least even. Set while
@@ -2956,11 +3005,23 @@ export function planTurn(input: PlanInput): TurnPlan {
   ): boolean => {
     refusal = undefined;
     const tg = targets.get(t)!;
-    // My commander's territory keeps what holds it (rule 1k).
-    const spare = (x: number) => (force ? avail.get(x)! - force.keep : movableFor(x, t));
+    // My commander's territory keeps what holds it (rule 1k). Under No-Split nothing is kept: the
+    // whole stack moves, and a territory that must hold issues no order (#124).
+    const spare = (x: number) => (noSplit ? avail.get(x)! : force ? avail.get(x)! - force.keep : movableFor(x, t));
     if (force && orderOf(force.from)) return false;
-    const usable = (x: number) =>
+    /** No-Split: why `x` must hold instead (it would send at least the capture's cost). */
+    const held = (x: number) => mustHold(x, t, Math.max(avail.get(x)!, tg.cost));
+    if (force) {
+      // The caller says why (another source may still take it).
+      const h = held(force.from);
+      if (h) {
+        refusal = { kind: 'must-hold', ...h };
+        return false;
+      }
+    }
+    const open = (x: number) =>
       !locked.has(x) && (!conceded.has(x) || x === fromConceded || concededSource(x, t, tg.cost));
+    const usable = (x: number) => open(x) && !held(x);
     const sources = force
       ? [force.from]
       : tg.sources.filter((x) => usable(x) && !orderOf(x)).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
@@ -2975,21 +3036,32 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (tryCombined(t, reason)) return true;
       const trade = belowEven;
       // No-Split: name a source that could have taken it alone but already issues an order.
-      const split = tg.sources.find((x) => usable(x) && orderOf(x) && needAt(x) <= spareAt(x));
+      // Its order already carries its whole stack (#124): count that stack as what it could have sent.
+      const split = tg.sources.find(
+        (x) => usable(x) && orderOf(x) && Math.max(0, needAt(x) - orderOf(x)!.armies) <= spareAt(x),
+      );
+      // No-Split: or one that could, but must hold its border (#124).
+      const holder = split === undefined ? tg.sources.find((x) => open(x) && !orderOf(x) && held(x) && needAt(x) <= spareAt(x)) : undefined;
       if (split !== undefined) {
         warnSplit(split, `the attack on ${label(t)} is not planned`);
         refusal = { kind: 'split', from: split };
+      } else if (holder !== undefined) {
+        const h = held(holder)!;
+        warnHold(h, `the attack on ${label(t)} is not planned`);
+        refusal = { kind: 'must-hold', ...h };
       } else if (trade) refusal = { kind: 'trade', ...trade };
       return false;
     }
     deploy(src, need);
-    avail.set(src, avail.get(src)! - tg.cost);
+    // No-Split: the whole stack goes, every army deployed there so far included (#124).
+    const sent = noSplit ? Math.max(tg.cost, avail.get(src)!) : tg.cost;
+    avail.set(src, avail.get(src)! - sent);
     captured.add(t);
-    const survivors = tg.cost - straightKills(defendersAt(t), rates.defensiveKillRate);
+    const survivors = sent - straightKills(defendersAt(t), rates.defensiveKillRate);
     // A commander strike is never refused by R3: killing the commander eliminates a player.
     if (!strikes.has(t) && !defensible(t, survivors)) {
       // Undo: under a guarded goal a bonus that falls next turn is not completed.
-      avail.set(src, avail.get(src)! + tg.cost - need);
+      avail.set(src, avail.get(src)! + sent - need);
       const left = (deployed.get(src) ?? 0) - need;
       if (left > 0) deployed.set(src, left);
       else deployed.delete(src);
@@ -3000,12 +3072,14 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     survivorsAt.set(t, survivors);
     captureOrder.push(t);
-    captureUndo.set(t, () => avail.set(src, avail.get(src)! + tg.cost));
-    moves.push({ from: src, to: t, armies: tg.cost, kind: 'attack', reason, winChance: chanceOf(tg.cost, defenceAt(t)) });
+    captureUndo.set(t, () => avail.set(src, avail.get(src)! + sent));
+    moves.push({ from: src, to: t, armies: sent, kind: 'attack', reason, winChance: chanceOf(sent, defenceAt(t)) });
     if (tg.enemy && !worstCase.has(t))
       warnings.push(`Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`);
     rationale.push(
-      `Attack ${label(t)} from ${label(src)} with ${tg.cost}${need ? ` (deploy ${need} there)` : ''}: ${reason}.`,
+      `Attack ${label(t)} from ${label(src)} with ${sent}${need ? ` (deploy ${need} there)` : ''}${
+        sent > tg.cost ? `, the whole stack (No-Split; ${tg.cost} would take it)` : ''
+      }: ${reason}.`,
     );
     return true;
   };
@@ -3041,7 +3115,15 @@ export function planTurn(input: PlanInput): TurnPlan {
     // A commander takes no partial damage, so softening one is not plain arithmetic: never combined.
     if (unitsAt(t) > 0) return null;
     const eligible = tg.sources
-      .filter((x) => !locked.has(x) && !conceded.has(x) && !myCommanders.has(x) && avail.get(x)! > 0 && !orderOf(x))
+      .filter(
+        (x) =>
+          !locked.has(x) &&
+          !conceded.has(x) &&
+          !myCommanders.has(x) &&
+          avail.get(x)! > 0 &&
+          !orderOf(x) &&
+          !mustHold(x, t, avail.get(x)!),
+      )
       .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
     const off = rates.offensiveKillRate;
     const def = rates.defensiveKillRate;
@@ -3053,9 +3135,13 @@ export function planTurn(input: PlanInput): TurnPlan {
       let real = armiesOf(t);
       const softeners: Softener[] = [];
       for (const x of eligible.slice(1, k).sort(byNum)) {
-        // Never kill the last defender: the finisher's attack is the one that moves in.
+        // Never kill the last defender: the finisher's attack is the one that moves in. Under
+        // No-Split the whole stack goes (#124): a stack that would kill the last one is no softener.
         let a = avail.get(x)!;
-        while (a > 0 && straightKills(a, off) >= Math.min(left, real)) a--;
+        while (a > 0 && straightKills(a, off) >= Math.min(left, real)) {
+          if (noSplit) a = 0;
+          else a--;
+        }
         const kills = straightKills(a, off);
         if (a <= 0 || kills <= 0) continue;
         const lost = Math.min(a, straightKills(left, def));
@@ -3064,8 +3150,10 @@ export function planTurn(input: PlanInput): TurnPlan {
         real -= kills;
       }
       if (!softeners.length) continue;
-      const armies = armiesToTake(left, rates);
-      if (armies === null) return null;
+      const take = armiesToTake(left, rates);
+      if (take === null) return null;
+      // No-Split: the finisher sends its whole stack too.
+      const armies = noSplit ? Math.max(take, avail.get(finisher)!) : take;
       const need = Math.max(0, armies - avail.get(finisher)!);
       if (need > spareAt(finisher)) continue;
       const survivors = armies - straightKills(left, def);
@@ -3497,6 +3585,9 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (!h) continue;
         const { need, cost, worth } = h;
         if (sources.has(x)) {
+          // No-Split (#124): nothing is kept back, the whole stack moves; a source that must hold
+          // against what is left issues no order instead (tryCapture asks `mustHold`).
+          if (noSplit) continue;
           const keep = Math.max(0, need - guard);
           keepAt.set(x, keep);
           avail.set(x, avail.get(x)! - keep);
@@ -3529,12 +3620,17 @@ export function planTurn(input: PlanInput): TurnPlan {
           .map((t, i) => ({ t, e: sizes[i]! }))
           .filter((x) => x.e !== SKIP)
           .sort((a, b) => targets.get(a.t)!.cost - targets.get(b.t)!.cost || a.t - b.t);
+        // No-Split (#124): a source must hold only against what stays; each target sized for the
+        // full deploy is taken for sure, so it threatens nothing once attacked.
+        const sure = new Set(order.filter((x) => x.e >= deployP).map((x) => x.t));
+        assumeGone = (n) => sure.has(n);
         const attacked = order
           .filter(({ t, e }) =>
             tryCapture(t, e >= deployP ? fullReason : `presses player ${p}: sized for ${e} of its ~${deployP} deploy landing there`),
           )
           .map((x) => x.t)
           .sort(byNum);
+        assumeGone = () => false;
         const ours = moves.slice(reserved.moves).filter((m) => m.kind === 'attack');
         const saveCost = attacked.map((t) => {
           const at = ours.filter((m) => m.to === t);
@@ -3795,8 +3891,13 @@ export function planTurn(input: PlanInput): TurnPlan {
         ? [`${reserved} of the income is held back for my commander's territory`]
         : []),
       ...could
-        .filter(({ keep }) => keep > 0)
+        .filter(({ keep }) => !noSplit && keep > 0)
         .map(({ x, keep }) => `${label(x)} keeps ${keep} to hold ${myCommanders.has(x) ? 'my commander' : 'its other borders'}`),
+      // No-Split (#124): the whole stack would go, so a source that must hold sends nothing.
+      ...could.flatMap(({ x }) => {
+        const h = mustHold(x, t, most.get(x)!);
+        return h ? [`No-Split: ${label(x)} must hold its border and would send its whole stack`] : [];
+      }),
       ...(order.length && !could.length
         ? [`unaffordable: at most ${Math.max(...most.values())} attackers from any one territory (every movable army and every deploy)`]
         : []),
@@ -4064,7 +4165,9 @@ export function planTurn(input: PlanInput): TurnPlan {
       anchor ??= moves[moves.length - 1]!.from;
       rationale.push(
         `${label(n)} is the only visible threat to ${label(t.id)}: capturing it removes that threat and breaks the bonus.`,
-        `Deploy ${t.holdCost} to ${label(t.id)} so it still holds (protects +${t.value}) after attacking ${label(n)}: ${heldStack(t)} stay, needing ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat if the attack fails.`,
+        noSplit
+          ? `Deploy ${t.holdCost} to ${label(t.id)}: under No-Split its whole stack attacks ${label(n)} and nothing stays behind, so ${label(t.id)} (protects +${t.value}) is safe only once ${label(n)} falls.`
+          : `Deploy ${t.holdCost} to ${label(t.id)} so it still holds (protects +${t.value}) after attacking ${label(n)}: ${heldStack(t)} stay, needing ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat if the attack fails.`,
       );
       warnRetake(b, o);
       // Its own offence entry (#72): the break option may be another member, which never runs.
@@ -4675,6 +4778,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         | { kind: 'split'; from: number }
         | { kind: 'trade'; lost: number; killed: number }
         | { kind: 'hold'; from: number; stays: number; spare: number; threat: number }
+        | ({ kind: 'must-hold' } & MustHold)
         | { kind: 'size' };
       const failed = new Map<number, Fail>();
       /**
@@ -4686,6 +4790,9 @@ export function planTurn(input: PlanInput): TurnPlan {
        * armies are given up anyway.
        */
       const holdLeftShort = (t: number): { from: number; stays: number; spare: number; threat: number } | undefined => {
+        // No-Split (#124): deploys there would leave with the attack, and a source that must hold
+        // never attacks (tryCapture): one that protects nothing may be emptied.
+        if (noSplit) return undefined;
         for (const m of moves) {
           if (m.kind !== 'attack' || m.to !== t || conceded.has(m.from)) continue;
           const th = threatAt(m.from, (n) => captured.has(n));
@@ -4895,6 +5002,8 @@ export function planTurn(input: PlanInput): TurnPlan {
           return `is not planned under No-Split: ${label(fail.from)} could take it but already issues an order (one attack or transfer per territory)`;
         if (fail?.kind === 'trade')
           return `is not taken: no single source can afford it, and the combined capture loses ${fail.lost} armies for the ${fail.killed} it kills, a trade below even`;
+        if (fail?.kind === 'must-hold')
+          return `is not planned under No-Split: ${label(fail.from)} could take it, but its whole stack would go and leave ${fail.stays} against the ~${fail.threat} threat to a border that must hold`;
         if (fail?.kind === 'hold')
           return `is not taken: attacking it would leave ${label(fail.from)} unable to hold its border (${holdText(fail)})`;
         if (st.from === undefined) return `cannot be reached: ${blockedText(st)}`;
@@ -5141,6 +5250,20 @@ export function planTurn(input: PlanInput): TurnPlan {
   // A 1v1 rule: in an FFA or a team game the comfort margins keep the leftover (several fronts).
   // Chosen even when holds and captures leave no leftover (#102): the stack is still spent.
   let stack: { id: number; player: number; income: number; source: string } | undefined;
+  /**
+   * No-Split (#124): `x`'s one order when it is a small expansion a strike may take over — a single
+   * attack on a neutral that completes no bonus this turn, stages none and is not focused.
+   */
+  const smallExpansion = (x: number): PlannedMove | undefined => {
+    const m = orderOf(x);
+    if (!m || m.kind !== 'attack' || !captured.has(m.to) || combined.has(m.to)) return undefined;
+    if (state.get(m.to)?.owner.kind !== 'neutral' || staged.has(m.to) || inFocus(m.to)) return undefined;
+    const now = heldNow();
+    const before = completedBy(new Set([...now].filter((y) => y !== m.to)));
+    return completedBy(now).some((id) => !before.includes(id)) ? undefined : m;
+  };
+  /** The stack on `x` a strike could send: what stays, plus a small expansion's armies (No-Split). */
+  const stackAt = (x: number) => stays(x) + (smallExpansion(x)?.armies ?? 0);
   if (auto && profile.format === '1v1' && goal !== 'defend' && facing.size) {
     const player = [...facing]
       .map((p) => ({ p, e: estimates.get(p) }))
@@ -5149,12 +5272,14 @@ export function planTurn(input: PlanInput): TurnPlan {
       .filter(
         (x) =>
           open(x) &&
+          // No-Split: a territory whose one order is not a small expansion has nothing left to strike with.
+          (!orderOf(x) || smallExpansion(x) !== undefined) &&
           neighborsOf(g, x).some((n) => {
             const st = state.get(n);
             return !captured.has(n) && st?.owner.kind === 'player' && st.owner.playerId === player.p && st.armies !== null;
           }),
       )
-      .sort((a, b) => stays(b) - stays(a) || a - b)[0];
+      .sort((a, b) => stackAt(b) - stackAt(a) || a - b)[0];
     if (id !== undefined)
       stack = {
         id,
@@ -5171,12 +5296,21 @@ export function planTurn(input: PlanInput): TurnPlan {
         return !captured.has(n) && (!st || st.owner.kind === 'unknown' || st.armies === null);
       }).length;
     const short = [...borders.values()]
-      .filter((b) => open(b.id))
+      // No-Split (#124): a deploy on a territory that issues an order leaves with it, holding nothing.
+      .filter((b) => open(b.id) && !orderOf(b.id))
       .map((b) => ({ ...b, take: armiesToTake(stays(b.id) + unitsAt(b.id), rates) }))
       .filter((b) => b.take !== null && b.take <= COMFORT_MARGIN * b.threat)
       .sort((a, b) => valueOf(b.id) - valueOf(a.id) || a.take! / a.threat - b.take! / b.threat || a.id - b.id);
-    const expansion = anchor ?? moves.find((m) => m.kind === 'attack')?.from;
-    const fogged = [...mine].filter(open).sort((a, b) => foggedNext(b) - foggedNext(a) || a - b).find((id) => foggedNext(id) > 0);
+    /** No-Split (#124): an attack that only softens its target; deploys there would leave with it, killing nothing more that matters. */
+    const softens = (m: PlannedMove) =>
+      noSplit && moves.some((o, i) => i > moves.indexOf(m) && o.kind === 'attack' && o.to === m.to);
+    const expansion = anchor ?? moves.find((m) => m.kind === 'attack' && !softens(m))?.from;
+    /** Not a softener's source (No-Split): the leftover there would only leave with its failing attack. */
+    const notSoftening = (x: number) => {
+      const m = orderOf(x);
+      return !m || !softens(m);
+    };
+    const fogged = [...mine].filter((x) => open(x) && notSoftening(x)).sort((a, b) => foggedNext(b) - foggedNext(a) || a - b).find((id) => foggedNext(id) > 0);
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
     // Holds before the strike stack: a border kept for the bonus this turn completes (rule 1c:
@@ -5222,7 +5356,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       where = fogged;
       why = 'the border with the most fogged neighbours';
     } else {
-      const b = biggest(mine.filter(open));
+      const b = biggest(mine.filter((x) => open(x) && notSoftening(x)));
       if (b !== undefined) {
         where = b;
         why = 'my biggest stack';
@@ -5261,6 +5395,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         // border the plan gave up: the pool can be deployed nowhere else.
         const m = [...p.territoryIds].sort(
           (a, b) =>
+            // No-Split (#124): a member that issues an order would send the pool away with it.
+            Number(orderOf(a) !== undefined) - Number(orderOf(b) !== undefined) ||
             Number(borders.has(b)) - Number(borders.has(a)) ||
             Number(lost(a)) - Number(lost(b)) ||
             danger(b) - danger(a) ||
@@ -5385,9 +5521,27 @@ export function planTurn(input: PlanInput): TurnPlan {
       const threat = Math.max(th?.threat ?? 0, deployOf(strikeStack!.player));
       return { threat, need: Math.max(0, holdArmies(threat) - unitsAt(S)) };
     };
-    const taken: { c: StrikeTarget; effect: string | null; value: number }[] = [];
+    const taken: { c: StrikeTarget; effect: string | null; value: number; armies: number; chance: number }[] = [];
     const refused = new Map<number, string>();
     let sent = 0;
+    /**
+     * No-Split (#124): the stack's one order goes to the strike on `t`, not to the small expansion
+     * `m` it already made: that capture is taken back, and its armies rejoin the stack.
+     */
+    const dropExpansion = (m: PlannedMove, t: number) => {
+      const undo = captureUndo.get(m.to);
+      if (undo) undo();
+      else avail.set(S, avail.get(S)! + m.armies);
+      captured.delete(m.to);
+      survivorsAt.delete(m.to);
+      moves.splice(moves.indexOf(m), 1);
+      const head = `Attack ${label(m.to)} from ${label(S)} with `;
+      for (let i = rationale.length - 1; i >= 0; i--) if (rationale[i]!.startsWith(head)) rationale.splice(i, 1);
+      rationale.push(
+        `No-Split: ${label(S)}'s one order goes to the strike on ${label(t)}, not the expansion into ${label(m.to)} (it completes no bonus): the whole stack strikes.`,
+      );
+      skipOffence(m.to, `No-Split: ${label(S)}'s one order goes to the strike on ${label(t)}`);
+    };
     for (let again = true; again; ) {
       again = false;
       for (const c of rank()) {
@@ -5401,9 +5555,43 @@ export function planTurn(input: PlanInput): TurnPlan {
           refused.set(c.id, `with this turn's other captures it lowers next income: it completes ${negs.join(', ')} (rule 4c)`);
           continue;
         }
-        if (noSplit && (orderOf(S) || taken.length)) {
+        const expansion = noSplit && !taken.length ? smallExpansion(S) : undefined;
+        if (noSplit && ((orderOf(S) && !expansion) || taken.length)) {
           refused.set(c.id, `No-Split: ${label(S)} issues one order this turn`);
           continue;
+        }
+        if (noSplit) {
+          // The whole stack goes (#124): nothing stays to hold S but the guard, so it strikes only
+          // when it need not hold (it protects nothing, or the strike leaves no visible threat to it).
+          const whole = avail.get(S)! + (expansion?.armies ?? 0);
+          if (pinned > 0) {
+            refused.set(c.id, `No-Split: the ${pinned} Local Deployment armies defending ${label(S)} would leave with the whole stack`);
+            continue;
+          }
+          if (c.cost > whole) {
+            refused.set(c.id, `it needs ${c.cost}, more than the ${Math.max(0, whole)} the stack can send`);
+            continue;
+          }
+          const h = mustHold(S, c.id, whole);
+          if (h) {
+            refused.set(
+              c.id,
+              `No-Split: the whole stack would go, leaving ${h.stays} against the ~${h.threat} threat, and ${label(S)} must hold (${h.value > 0 ? `protects +${h.value}` : 'my commander stands there'})`,
+            );
+            continue;
+          }
+          if (expansion) dropExpansion(expansion, c.id);
+          const armies = avail.get(S)!;
+          plannedHere.add(c.id);
+          refused.delete(c.id);
+          taken.push({ c, effect: effectOf(c), value: strikeValue(c), armies, chance: chanceOf(armies, defenceAt(c.id)) });
+          avail.set(S, 0);
+          sent += armies;
+          captured.add(c.id);
+          survivorsAt.set(c.id, armies - straightKills(defenceAt(c.id), rates.defensiveKillRate));
+          captureOrder.push(c.id);
+          again = true;
+          break;
         }
         const gone = new Set([...plannedHere, c.id]);
         const { threat, need } = holdAfter(gone);
@@ -5424,7 +5612,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         const value = strikeValue(c);
         plannedHere.add(c.id);
         refused.delete(c.id);
-        taken.push({ c, effect, value });
+        taken.push({ c, effect, value, armies: c.cost, chance: c.chance });
         avail.set(S, avail.get(S)! - c.cost);
         sent += c.cost;
         captured.add(c.id);
@@ -5442,22 +5630,27 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     const { threat: finalThreat, need: finalNeed } = holdAfter(new Set());
     const stays = avail.get(S)! + guard + (incoming.get(S) ?? 0);
-    for (const { c, effect, value } of taken) {
+    for (const { c, effect, value, armies, chance } of taken) {
       const reason = `the strike stack ${effect ?? 'takes an adjacent enemy territory'}`;
-      moves.push({ from: S, to: c.id, armies: c.cost, kind: 'attack', reason, winChance: c.chance });
+      moves.push({ from: S, to: c.id, armies, kind: 'attack', reason, winChance: chance });
       warnings.push(`Attack on enemy ${label(c.id)} assumes its owner does not reinforce it first.`);
+      const keeps = noSplit
+        ? `No-Split sends the whole stack (${c.cost} would take it), and ${label(S)} need not hold: ${
+            valueOf(S) > 0 || myCommanders.has(S) ? 'no visible threat to it is left' : 'it protects nothing'
+          }`
+        : `the stack keeps ${stays}, enough to hold against the ~${finalThreat} threat after the attacks (needs ${finalNeed})`;
       rationale.push(
-        `Attack ${label(c.id)} from the strike stack ${label(S)} with ${c.cost} (win chance ${pct(c.chance)}): ${
+        `Attack ${label(c.id)} from the strike stack ${label(S)} with ${armies} (win chance ${pct(chance)}): ${
           effect ?? 'it can take this adjacent enemy territory'
-        }; the stack keeps ${stays}, enough to hold against the ~${finalThreat} threat after the attacks (needs ${finalNeed}).`,
+        }; ${keeps}.`,
       );
       offence.set(`strike:${c.id}`, {
         target: c.id,
         kind: 'strike-attack',
-        cost: c.cost,
+        cost: armies,
         value,
         taken: true,
-        why: `from the strike stack ${label(S)} with ${c.cost} (win chance ${pct(c.chance)}): ${effect ?? 'takes an adjacent enemy territory'}`,
+        why: `from the strike stack ${label(S)} with ${armies} (win chance ${pct(chance)}): ${effect ?? 'takes an adjacent enemy territory'}`,
       });
     }
     for (const c of rank()) {
@@ -5503,6 +5696,49 @@ export function planTurn(input: PlanInput): TurnPlan {
       );
   }
 
+  // ---- No-Split: every order carries the whole stack (#124) ----
+  // An order already sends everything on its source when it is planned; a deploy that reached the
+  // source afterwards (the leftover, a Local Deployment pool) leaves with it too.
+  if (noSplit)
+    for (const m of moves) {
+      const extra = avail.get(m.from)!;
+      if (extra <= 0) continue;
+      const was = m.armies;
+      avail.set(m.from, 0);
+      m.armies += extra;
+      const at = moves.filter((o) => o.kind === 'attack' && o.to === m.to);
+      if (m.kind === 'transfer') incoming.set(m.to, (incoming.get(m.to) ?? 0) + extra);
+      else if (at[at.length - 1] === m) {
+        // The attack that moves in: more survivors, against what the attacks before it leave.
+        const before = at.slice(0, -1).reduce((n, o) => n + straightKills(o.armies, rates.offensiveKillRate), 0);
+        if (survivorsAt.has(m.to)) survivorsAt.set(m.to, survivorsAt.get(m.to)! + extra);
+        m.winChance = chanceOf(m.armies, Math.max(0, defenceAt(m.to) - before));
+      } else {
+        // A softener: its survivors come home.
+        incoming.set(m.from, (incoming.get(m.from) ?? 0) + extra);
+        const before = at.slice(0, at.indexOf(m)).reduce((n, o) => n + straightKills(o.armies, rates.offensiveKillRate), 0);
+        if (straightKills(m.armies, rates.offensiveKillRate) >= defenceAt(m.to) - before)
+          warnings.push(
+            `No-Split: ${label(m.from)}'s deploys leave with its softening attack on ${label(m.to)}, which may then take it alone; the attacks after it would then move in as transfers.`,
+          );
+      }
+      // Its rationale line names the new size.
+      const heads = (n: number) => [
+        `Attack ${label(m.to)} from ${label(m.from)} with ${n}`,
+        `Attack ${label(m.to)} from the strike stack ${label(m.from)} with ${n}`,
+        `Withdraw ${n} from ${label(m.from)} to ${label(m.to)}`,
+      ];
+      const old = heads(was);
+      const r = rationale.findIndex((l) => old.some((h) => l.startsWith(h) && /^[:,( ]/.test(l.slice(h.length))));
+      if (r >= 0) {
+        const i = old.findIndex((h) => rationale[r]!.startsWith(h) && /^[:,( ]/.test(rationale[r]!.slice(h.length)));
+        rationale[r] = `${heads(m.armies)[i]}${rationale[r]!.slice(old[i]!.length)}`;
+      }
+      rationale.push(
+        `No-Split: the ${extra} deployed on ${label(m.from)} after its order was planned leave with it (${m.kind === 'attack' ? 'attacking' : 'moving to'} ${label(m.to)} with ${m.armies}, the whole stack).`,
+      );
+    }
+
   // ---- efficient sizes (S2) ----
   // An attack below its next kill breakpoint is topped up to it from armies that would sit
   // idle on its source — never from a hold, a conceded border, my commander's territory, or
@@ -5521,7 +5757,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (borderAt(src, (x) => captured.has(x))) return 0;
     return Math.max(0, avail.get(src)!);
   };
-  for (const m of moves) {
+  // No-Split (#124): every attack already sends its whole stack; there is nothing to top up or trim.
+  for (const m of noSplit ? [] : moves) {
     if (m.kind !== 'attack' || combined.has(m.to)) continue;
     // Sized for a worst case already (finishing a player off, fog pressure, a commander strike).
     const worst = worstCase.has(m.to) || strikes.has(m.to);
@@ -5689,9 +5926,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     );
   }
 
-  if (noSplit && moves.length)
+  if (noSplit && moves.length && guard)
     warnings.push(
-      'No-Split is on: each order sends the planned armies, not every movable army; whether war.app also requires sending all movable armies from a territory is unverified.',
+      'No-Split is on: each order sends its territory\'s whole stack less the one army that stands guard; whether war.app leaves that army behind under No-Split is unverified (a live turn with the guard off left every source at 0).',
     );
 
   // ---- offence report (#72) ----
