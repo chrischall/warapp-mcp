@@ -1437,7 +1437,7 @@ describe('cards in the turn tools', () => {
           }) satisfies Partial<ReplyFrame>,
       }),
     });
-    const p = payload<CardsPayload & { cards: { advice?: { orderDelay?: { card: string; before: number; attacks: number[] } } } }>(
+    const p = payload<CardsPayload & { cards: { advice?: { orderDelay?: { card: string; before: number; attacks: number[]; order: unknown } } } }>(
       await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }),
     );
     // The contested neutral captures are put last (#127): the opponent can answer them first.
@@ -1447,9 +1447,21 @@ describe('cards in the turn tools', () => {
       [159, 135, 'attack'],
     ]);
     expect(p.cardAdvice).toBe('order-delay');
-    expect(p.cards.advice?.orderDelay).toEqual({ card: OD, before: 1, attacks: [2, 3] });
+    // #186: the advice carries the card order ready to pass to warapp_submit_turn (`before` counts the
+    // moves of `orders` in their order, which is the plan's move order).
+    expect(p.cards.advice?.orderDelay).toEqual({
+      card: OD,
+      before: 1,
+      attacks: [2, 3],
+      order: { kind: 'card', card: OD, before: 1 },
+    });
+    expect(
+      p.orders.flatMap((o) => (o.kind === 'move' ? [[o.from, o.to]] : [])),
+    ).toEqual(p.moves.map((m) => [m.from.id, m.to.id]));
+    expect(turnOrdersArg.safeParse([p.cards.advice!.orderDelay!.order, ...p.orders]).success).toBe(true);
     expect(p.warnings.join('\n')).toMatch(/Play Order Delay above move 1 \(Hornwood \(#159\) → Bolton Moors \(#158\)\)/);
-    // Advice only: the card is neither played nor discarded by the plan (submit would write it after every move).
+    expect(p.warnings.join('\n')).toMatch(/`before`.*UNVERIFIED/);
+    // Advice only (#186: until one live commit verifies the placement): the plan neither plays nor discards it.
     expect(p.orders.some((o) => o.kind === 'card' || o.kind === 'discard')).toBe(false);
   });
 
@@ -1732,7 +1744,109 @@ describe('cards in the turn tools', () => {
     );
   });
 
+  it('submit_turn writes an Order Delay above a chosen move with `before` (#186), marked unverified with how to read it back', async () => {
+    const s = ordersServer([{ id: OD, type: 5 }]);
+    h = await liveHarness({ feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    const args = {
+      game_id: GAME,
+      orders: [
+        { kind: 'card', card: 'Order Delay', before: 2 },
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 159, to: 158, armies: 5 },
+        { kind: 'move', from: 161, to: 157, armies: 2 },
+      ],
+    };
+    const preview = payload(await h.call('warapp_submit_turn', args));
+    const text = JSON.stringify(preview);
+    expect(text).toMatch(/Order Delay is written above move 2 \(.*Sheepshead Hills.*\(161\) → .*\(157\)\).*UNVERIFIED/);
+    expect(text).not.toMatch(/delays none of this turn's orders/);
+    expect(text).toMatch(/"before":2/);
+    const r = payload(await h.call('warapp_submit_turn', { ...args, confirmToken: preview.confirmToken }));
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes(
+        [
+          { kind: 'deploy', territoryId: 159, armies: 5 },
+          { kind: 'move', from: 159, to: 158, armies: 5 },
+          { kind: 'card', card: 'OrderDelay', cardId: OD, beforeMove: 1 },
+          { kind: 'move', from: 161, to: 157, armies: 2 },
+        ],
+        3,
+      ),
+    );
+    // The card sits between the two moves on the wire, not after them (the default).
+    expect(Array.from(s.sent[0]!)).not.toEqual(
+      expectedBytes(
+        [
+          { kind: 'deploy', territoryId: 159, armies: 5 },
+          { kind: 'move', from: 159, to: 158, armies: 5 },
+          { kind: 'move', from: 161, to: 157, armies: 2 },
+          { kind: 'card', card: 'OrderDelay', cardId: OD },
+        ],
+        3,
+      ),
+    );
+    expect(JSON.stringify(r)).toMatch(/orderDelayCheck.*error 10.*hand.*after the opponents/);
+  });
+
+  it('submit_turn names a refused placement when war.app answers error 10 to a placed Order Delay (#186)', async () => {
+    h = await liveHarness({
+      feed: [game('Playing'), game('Playing')],
+      pages: ME_PAGE,
+      warapp: routes({
+        [Method.GetLatestGameInfo]: withHand([{ id: OD, type: 5 }]),
+        [Method.SendOrders]: () => ({ error: { code: 10, message: 'x' } }),
+      }),
+    });
+    const args = {
+      game_id: GAME,
+      orders: [
+        { kind: 'card', card: 'Order Delay', before: 1 },
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 159, to: 158, armies: 5 },
+      ],
+    };
+    const preview = payload(await h.call('warapp_submit_turn', args));
+    const res = await h.call('warapp_submit_turn', { ...args, confirmToken: preview.confirmToken });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/error 10.*Order Delay placed among the moves.*Nothing was committed/);
+    expect(textOf(res)).toMatch(/Resend without `before`/);
+  });
+
+  it('submit_turn treats `before` one past the last move as the verified default: after every move', async () => {
+    const s = ordersServer([{ id: OD, type: 5 }]);
+    h = await liveHarness({ feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    const args = {
+      game_id: GAME,
+      orders: [
+        { kind: 'card', card: 'Order Delay', before: 2 },
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 159, to: 158, armies: 5 },
+      ],
+    };
+    const preview = payload(await h.call('warapp_submit_turn', args));
+    expect(JSON.stringify(preview)).toMatch(/Order Delay is written after every move.*delays none of this turn's orders/);
+    const r = payload(await h.call('warapp_submit_turn', { ...args, confirmToken: preview.confirmToken }));
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes(
+        [
+          { kind: 'deploy', territoryId: 159, armies: 5 },
+          { kind: 'move', from: 159, to: 158, armies: 5 },
+          { kind: 'card', card: 'OrderDelay', cardId: OD },
+        ],
+        3,
+      ),
+    );
+    expect(JSON.stringify(r)).not.toMatch(/orderDelayCheck/);
+  });
+
   const refusals: Array<[string, SyntheticCard[], Array<Record<string, unknown>>, RegExp]> = [
+    ['`before` on a card other than Order Delay', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP, before: 1 }, { kind: 'deploy', territory: 159, armies: 5 }], /Only an Order Delay takes `before`/],
+    [
+      'an Order Delay `before` past the moves',
+      [{ id: OD, type: 5 }],
+      [{ kind: 'card', card: 'Order Delay', before: 3 }, { kind: 'deploy', territory: 159, armies: 5 }, { kind: 'move', from: 159, to: 158, armies: 5 }],
+      /`before` 3 .*1 move/,
+    ],
     ['a card not in the hand', [{ id: OP, type: 4 }], [{ kind: 'card', card: R1 }, { kind: 'deploy', territory: 159, armies: 5 }], /not in your hand/],
     ['a card type not held', [{ id: OP, type: 4 }], [{ kind: 'card', card: 'Order Delay' }, { kind: 'deploy', territory: 159, armies: 5 }], /hold no Order Delay card/],
     ['an unknown card name', [], [{ kind: 'card', card: 'Joker' }, { kind: 'deploy', territory: 159, armies: 5 }], /No card type matches "Joker"/],

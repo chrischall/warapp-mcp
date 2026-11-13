@@ -394,7 +394,8 @@ interface AdviceMove {
  * and early orders (withdrawals, transfers into a threatened border), before the rest — as the
  * sources and the developer's own bot play it. `undefined` otherwise. The planner never plays it:
  * warapp_submit_turn writes the card after every move (its only live-verified position), where it
- * delays nothing, so the advice is for the game client.
+ * delays nothing, unless the card order carries `before` (#186) — a placement unverified live, so
+ * the advice stays advice until one commit verifies it.
  */
 export function adviseOrderDelay(
   hand: readonly Card[],

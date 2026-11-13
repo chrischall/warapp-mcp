@@ -143,6 +143,16 @@ export const turnOrderArg = z.discriminatedUnion('kind', [
     target: territoryRef
       .optional()
       .describe('Blockade only: your territory to blockade (id or name).'),
+    before: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        'Order Delay only: the move (1-based, counting the moves of this list in order) the card is written above, ' +
+          'so that move and the ones after it wait for the opponents — e.g. `cards.advice.orderDelay.order` from ' +
+          'warapp_plan_turn. UNVERIFIED live. Omit (or one past the last move) to write it after every move.',
+      ),
   }),
   z.object({
     kind: z.literal('discard'),
@@ -260,6 +270,8 @@ interface NamedOrder {
   from?: { id: number; name: string };
   to?: { id: number; name: string };
   armies?: number;
+  /** An Order Delay written above this move (1-based, #186), only when placed among the moves. */
+  before?: number;
   /** Move options (#165), only when set. */
   mode?: 'attack-only' | 'transfer-only';
   percent?: true;
@@ -295,6 +307,8 @@ interface TurnState {
   income: number;
   /** True when that income is the caller's `income` override, not the model. */
   incomeGiven?: boolean;
+  /** How to read back an Order Delay placed among the moves (#186, unverified live), when one was. */
+  orderDelayCheck?: string;
 }
 
 /**
@@ -302,6 +316,30 @@ interface TurnState {
  * number. The live board carries no income figure — war.app's client computes it
  * from the standing — so its own number is the "armies per turn" the game shows.
  */
+/**
+ * How to read back an Order Delay placed among the moves (#186) — a position no live commit has
+ * used yet. Error 10 on the commit would mean it is not allowed there; accepted, the card leaves
+ * the hand, and the turn's replay shows whether the moves after it ran after the opponents'.
+ */
+function orderDelayCheck(at: readonly number[]): string {
+  return (
+    `The Order Delay was placed above move ${at.join(' and ')}, a position not yet verified live. war.app did not refuse it ` +
+    'with error 10 (OrdersInIncorrectOrder). Once the turn resolves, check: the card is gone ' +
+    "from your hand (warapp_plan_turn's `cards.hand`, or a played Order Delay in the turn's replay), and in the game's replay " +
+    "of this turn your moves from that one on ran after the opponents' attacks instead of alternating with them. Report " +
+    'what you see, so docs/WEB-PROTOCOL.md can mark the placement verified.'
+  );
+}
+
+/** war.app's error 10 on a turn with an Order Delay placed among the moves (#186): the position is refused. */
+function orderDelayRefused(e: WarappServerError): McpToolError {
+  return new McpToolError(
+    `war.app refused the orders with error 10 (OrdersInIncorrectOrder): an Order Delay placed among the moves is not ` +
+      `accepted there (${failureText(e)}). Nothing was committed.`,
+    { hint: 'Resend without `before` on the Order Delay (it is then written after every move), or play the card in the game client.' },
+  );
+}
+
 function incomeRefused(e: WarappServerError, income: number, given = false): McpToolError {
   return new McpToolError(e.message, {
     kind: 'unknown',
@@ -710,6 +748,8 @@ export interface ResolvedCardPlay {
   target?: { id: number; name: string };
   /** Armies it adds to this turn's deploys (Reinforcement). */
   armies: number;
+  /** Order Delay only (#186): the move (1-based) it is written above, as given. */
+  before?: number;
 }
 
 const handHint = (hand: readonly Card[], ids: boolean) =>
@@ -775,7 +815,7 @@ export function resolveCardPlays(
   map: GameMap,
   hand: readonly Card[],
   rules: CardRules,
-  inputs: ReadonlyArray<{ card: string; target?: string | number | undefined }>,
+  inputs: ReadonlyArray<{ card: string; target?: string | number | undefined; before?: number | undefined }>,
 ): ResolvedCardPlay[] {
   const used = new Set<string>();
   const out: ResolvedCardPlay[] = [];
@@ -797,6 +837,11 @@ export function resolveCardPlays(
     if (kind !== 'Blockade' && hasTarget) {
       throw new McpToolError(`A ${card.name} card takes no target.`, { hint: 'Only Blockade takes a `target`.' });
     }
+    if (input.before !== undefined && kind !== 'OrderDelay') {
+      throw new McpToolError(`Only an Order Delay takes \`before\`, not a ${card.name} card.`, {
+        hint: '`before` places an Order Delay among the moves; other card plays run in their own phase.',
+      });
+    }
     let armies = 0;
     if (kind === 'Reinforcement') {
       const a = reinforcementArmies(card, rules);
@@ -807,7 +852,7 @@ export function resolveCardPlays(
       }
       armies = a;
     }
-    const play: ResolvedCardPlay = { card, kind, armies };
+    const play: ResolvedCardPlay = { card, kind, armies, ...(input.before !== undefined ? { before: input.before } : {}) };
     if (hasTarget) {
       const t = resolveTerritory(map, input.target!);
       play.target = { id: t.id, name: t.name };
@@ -1272,7 +1317,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Commit your orders for the current turn of a war.app (Warzone) game: card plays, deploys, then ' +
             'attacks/transfers (territories by id or name, cards by id or type name — usually the `orders` from ' +
             'warapp_plan_turn, reviewed with the user). Plays Reinforcement, Order Priority, Order Delay and Blockade ' +
-            '(with a `target` of yours) from your hand, and discards any card (`{ kind: "discard", card }`); refuses ' +
+            '(with a `target` of yours; an Order Delay goes after every move unless it has `before`: a move number to ' +
+            'place it above, unverified live) from your hand, and discards any card (`{ kind: "discard", card }`); refuses ' +
             'when your hand is over the hold limit and the orders do not play or discard enough cards. The ' +
             'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
             'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
@@ -1329,11 +1375,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               commander?: boolean;
               attackTeammates?: boolean;
             }> = [];
-            const cardInputs: Array<{ card: string; target?: string | number | undefined }> = [];
+            const cardInputs: Array<{ card: string; target?: string | number | undefined; before?: number | undefined }> = [];
             const discardInputs: Array<{ card: string }> = [];
             for (const o of orders) {
               if (o.kind === 'card') {
-                cardInputs.push({ card: o.card, target: o.target });
+                cardInputs.push({ card: o.card, target: o.target, before: o.before });
               } else if (o.kind === 'discard') {
                 discardInputs.push({ card: o.card });
               } else if (o.kind === 'deploy') {
@@ -1365,6 +1411,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const hand = owners.length > 1 ? readHand(info, owners) : myHand;
             const handUnknown = rules.inPlay.length > 0 && !handReadable(info, playerId);
             const plays = resolveCardPlays(map, hand, rules, cardInputs);
+            // #186: an Order Delay's `before` names a move of this list (1-based); one past the last is the default.
+            for (const p of plays) {
+              if (p.before !== undefined && p.before > moves.length + 1) {
+                throw new McpToolError(
+                  `Order Delay \`before\` ${p.before} is past this turn's ${moves.length} move${moves.length === 1 ? '' : 's'}.`,
+                  { hint: `Give a move number 1–${moves.length + 1} (${moves.length + 1}, or no \`before\`, writes it after every move).` },
+                );
+              }
+            }
+            /** The move (1-based) an Order Delay is placed above, when it is placed among the moves. */
+            const placedAt = (p: ResolvedCardPlay) => (p.before !== undefined && p.before <= moves.length ? p.before : undefined);
             const discards = resolveDiscards(hand, plays, discardInputs);
             // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
             // than MaxCardsHold remain (verified, #20).
@@ -1443,11 +1500,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             );
             if (handUnknown) warnings.push(UNREADABLE_HAND);
             if (used < teamShed) warnings.push(teamHandOver(hand.length, rules, teamShed, used));
-            if (plays.some((p) => p.kind === 'OrderDelay')) {
+            const placedDelays = plays.filter((p) => placedAt(p) !== undefined);
+            for (const p of placedDelays) {
+              const m = moves[placedAt(p)! - 1]!;
+              warnings.push(
+                `Order Delay is written above move ${placedAt(p)} (${label(m.from)} → ${label(m.to)}), so that move and the ones ` +
+                  "after it wait until the opponents' attacks have run. UNVERIFIED live: no commit has yet placed the card among " +
+                  "the moves. war.app refusing it with error 10 (OrdersInIncorrectOrder) means it is not allowed there — resend " +
+                  'without `before`.',
+              );
+            }
+            if (plays.some((p) => p.kind === 'OrderDelay' && placedAt(p) === undefined)) {
               // Phase 50, after every move, is the only live-verified position for the card.
               warnings.push(
                 "Order Delay is written after every move (its only verified position), so it delays none of this turn's " +
-                  'orders: playing it only spends the card, as a discard would.',
+                  'orders: playing it only spends the card, as a discard would. Give it `before` (a move number) to place it ' +
+                  'among the moves (unverified live).',
               );
             }
             const attacks = attackSizes(
@@ -1478,6 +1546,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 card: p.kind,
                 cardId: p.card.id,
                 ...(p.target ? { target: p.target.id } : {}),
+                ...(placedAt(p) !== undefined ? { beforeMove: placedAt(p)! - 1 } : {}),
               })),
               ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territoryId: d.territory.id, armies: d.armies })),
               ...moves.map((m, i) => {
@@ -1496,7 +1565,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             ];
             const named: NamedOrder[] = [
               ...discards.map((c) => ({ kind: 'discard' as const, card: cardView(c) })),
-              ...plays.map((p) => ({ kind: 'card' as const, card: cardView(p.card), ...(p.target ? { target: p.target } : {}) })),
+              ...plays.map((p) => ({
+                kind: 'card' as const,
+                card: cardView(p.card),
+                ...(p.target ? { target: p.target } : {}),
+                ...(placedAt(p) !== undefined ? { before: placedAt(p)! } : {}),
+              })),
               ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territory: d.territory, armies: d.armies })),
               ...moves.map((m) => ({
                 kind: 'move' as const,
@@ -1537,12 +1611,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 named,
                 income,
                 ...(givenIncome !== undefined ? { incomeGiven: true } : {}),
+                ...(placedDelays.length ? { orderDelayCheck: orderDelayCheck(placedDelays.map((p) => placedAt(p)!)) } : {}),
               } satisfies TurnState,
             };
           },
           async execute(st: TurnState) {
             await requireApprovedAccount(ctx, writeAccount(st.feedPlayerId));
-            const base = { game: st.gameId, turn: st.turnNumber, orders: st.named };
+            const base = {
+              game: st.gameId,
+              turn: st.turnNumber,
+              orders: st.named,
+              ...(st.orderDelayCheck ? { orderDelayCheck: st.orderDelayCheck } : {}),
+            };
             const check =
               `Check warapp_get_game: a \`turn\` above ${st.turnNumber} means this turn resolved; still ${st.turnNumber} with ` +
               'your `committed` true means the orders are in. Do not resend these orders blindly — a second commit for ' +
@@ -1557,6 +1637,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             } catch (e) {
               // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.
               if (e instanceof WarappServerError && e.code === 11) throw incomeRefused(e, st.income, st.incomeGiven);
+              if (e instanceof WarappServerError && e.code === 10 && st.orderDelayCheck) throw orderDelayRefused(e);
               if (e instanceof WarappServerError) throw e;
               return {
                 status: 'unknown' as const,

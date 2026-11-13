@@ -250,10 +250,31 @@ advanced).
 | Blockade | 18 | 60 |
 
 Within one phase the encoder writes card plays after the other orders (an Order Delay after
-every AttackTransfer, whatever position it was given): the shape of the 2026-11-12 commit that
-verified phase 50. **Unverified live:** whether war.app accepts an Order Delay ahead of an
-AttackTransfer in phase 50 (one live commit with `[deploy, OrderDelay, attack]` settles it; an
-error 10 would mean card plays must close the phase). Until then the encoder never writes it there.
+every AttackTransfer): the shape of the 2026-11-12 commit that verified phase 50, and still the
+default.
+
+**Order Delay placed among the moves (#186) — UNVERIFIED live.** `warapp_submit_turn` takes
+`before: <move>` on an Order Delay card order (1-based, counting the moves of the given list in
+order; one past the last move, or no `before`, is the default above). The encoder
+(`sendOrderSequence`, `beforeMove` 0-based) then writes the card just above that move — after
+every deploy, still in phase 50 — e.g. `[deploy, attack, OrderDelay, transfer]`; golden tests pin
+the bytes. `warapp_plan_turn` does not emit it: it advises the card in `cards.advice.orderDelay`
+with `before` and the ready card order (`order`) a caller can add to the orders as is. The preview
+of a placed card says UNVERIFIED. **Reading the result back** after the first live commit that
+uses it: (1) a refusal with error 10 `OrdersInIncorrectOrder` means card plays must close the
+phase — nothing is committed, and the tool says to resend without `before`; (2) accepted, the card
+leaves the hand (the next turn's `cards.hand`), and in the resolved turn's order list (the game's
+replay, the `GameTurn` in `LatestGameInfo`) my moves from the placed one on run after the
+opponents' phase-50 orders instead of alternating with them. Then mark this verified and let
+`warapp_plan_turn` emit the card.
+
+How the client places it (bundle, read 2026-11-13): `GameOrderPlayCardOrderDelay` writes tag 11,
+the card GUID and the order base — **no position or index field** — and `Vd()` (its phase) is 50, the
+moves' phase. So the card's place in the order list is its position. The turn executor runs each
+phase from per-player queues: a player whose next order is an Order Delay waits while the others'
+orders of that phase run, and the Delay cards are taken off only when every player still holding
+orders in the phase is at one (or out). So an Order Delay above move *k* holds moves *k*… until the
+opponents' attacks/transfers have run; at the end of the list it holds nothing.
 
 What the client bundle says (read 2026-11-13, not live): a new order is inserted after the last
 order of its phase or an earlier one, so a freshly played Order Delay lands after every move; the

@@ -765,7 +765,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'on the turn it decides a fight, not on the first turn you can.',
     source: S.forumKeepDelayCard,
     basis: 'source',
-    encoded: 'forced discards keep Order Delay longest; warapp_plan_turn advises it (cards.advice.orderDelay) only when an attack the opponent can answer first is planned',
+    encoded: 'forced discards keep Order Delay longest; warapp_plan_turn advises it (cards.advice.orderDelay, with the card order and its `before` for warapp_submit_turn — a placement unverified live) only when an attack the opponent can answer first is planned',
   },
   {
     id: 'cards-delay-opponent-holds',
