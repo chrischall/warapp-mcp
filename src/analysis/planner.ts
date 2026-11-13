@@ -2699,7 +2699,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const without = new Set([...held].filter((x) => x !== t));
     if (frontierDelta(without, [t], stays).enemy <= 0) return null;
     const f = frontierOf(held, stays);
-    const next = income + incomeGain(held);
+    const next = incomeAfter(held);
     const start = startHold();
     if (f.holdCost <= next || f.holdCost <= start) return null;
     const why = `${stoppedLine(t)} and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.`;
@@ -3979,7 +3979,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   // Rule 4d's frontier budget (#71): the frontier this plan leaves against the next income.
   const frontier: FrontierBudget = {
     ...frontierOf(after, (x) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0))),
-    income: income + gained,
+    income: incomeAfter(after),
   };
   const startCost = startHold();
   const outgrown = frontier.holdCost > frontier.income && frontier.holdCost > startCost;

@@ -132,6 +132,16 @@ describe('frontier cost (#71): every capture pays for the frontier it adds', () 
     );
   });
 
+  it("the frontier budget's income is the plan's next income: one income rule, card armies left out", () => {
+    // Income 8, of which 3 are card armies war.app does not pay again next turn: the frontier is
+    // judged against the next income of 5 (#85's rule, as expected.nextIncome reads it), not 8.
+    const b = board([mine(1, 30), mine(2, 1), neutral(3, 2), mine(4, 1), enemy(5, 20), enemy(6, 20), neutral(7, 2), neutral(8, 40)]);
+    const q = planTurn({ graph: G, board: b, me: ME, income: 8, cardArmies: 3, settings: STD, options: { goal: 'expand', enemyDeploy: 5 } });
+    expect(q.expected.nextIncome).toBe(5);
+    expect(q.frontier.income).toBe(q.expected.nextIncome);
+    expect(q.warnings.join('\n')).toMatch(/more than the next income of 5 \(0 at the start of the turn\)/);
+  });
+
   it('advancing a bonus is stopped the same way (it completes nothing), and said once', () => {
     const FG = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7, 8], EDGES, [[900, 'Front', 1, [3, 8]]]));
     // Bonus Front (+1): T3 (3 to take) and T8 (2: 3 to take, not next to me): 6 to finish,
