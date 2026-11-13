@@ -1,8 +1,11 @@
 // Resolve a territory or player named by a caller: an id, an exact name
-// (case-insensitive), or a unique part of a name.
+// (case-insensitive), or a unique part of a name. Errors listing candidates show
+// each name through `untrustedText` (names are other players' and map makers'
+// words, and errors are not inside the untrusted envelope) and cap the list.
 
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { Bonus, GameMap, Player, Territory } from '../normalize.js';
+import { untrustedList, untrustedText } from './common.js';
 
 const SHOW = 10;
 
@@ -17,16 +20,15 @@ function pick<T extends { id: number; name: string }>(items: readonly T[], input
   const exact = items.filter((i) => i.name.toLowerCase() === q);
   const hits = exact.length ? exact : items.filter((i) => i.name.toLowerCase().includes(q));
   if (hits.length === 1) return hits[0]!;
-  const label = (i: T) => `${i.name} (${i.id})`;
+  const label = (i: T) => `${untrustedText(i.name)} (${i.id})`;
   if (hits.length === 0) {
     throw new McpToolError(`No ${what} matches ${JSON.stringify(raw)}.`, {
       hint: `Use the ${what}'s id, or part of its name as spelled in the game.`,
     });
   }
-  const shown = hits.slice(0, SHOW).map(label).join(', ');
   throw new McpToolError(
-    `${JSON.stringify(raw)} matches ${hits.length} ${what === 'territory' ? 'territories' : `${what}${what.endsWith('s') ? 'es' : 's'}`}: ${shown}` +
-      `${hits.length > SHOW ? ', …' : ''}.`,
+    `${JSON.stringify(raw)} matches ${hits.length} ${what === 'territory' ? 'territories' : `${what}${what.endsWith('s') ? 'es' : 's'}`}: ` +
+      `${untrustedList(hits, SHOW, label)}.`,
     { hint: `Pass the id of the one you mean.` },
   );
 }
@@ -42,7 +44,7 @@ export function resolveBonus(map: GameMap, input: string | number): Bonus {
 /** A player by id or name; with no input, an error listing who to choose from. */
 export function resolvePlayer(players: readonly Player[], input: string | number | undefined): Player {
   if (input === undefined || String(input).trim() === '') {
-    const list = players.map((p) => `${p.name} (${p.id})`).join(', ');
+    const list = untrustedList(players, SHOW, (p) => `${untrustedText(p.name)} (${p.id})`);
     throw new McpToolError(`Say which player to analyze the board for: ${list || 'the game lists no players'}.`, {
       hint: 'Pass `player` as a name or id — usually your own war.app name.',
     });

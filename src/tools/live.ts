@@ -16,7 +16,18 @@ import {
 } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
 import { Method, writeSendTerritoryPicksParams } from '../protocol/methods.js';
-import { currentTurn, gameIdArg, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
+import {
+  currentTurn,
+  gameIdArg,
+  readAnnotations,
+  respond,
+  turnsCompleted,
+  UNTRUSTED_PREVIEW_NOTE,
+  untrustedDescription,
+  untrustedList,
+  untrustedText,
+  viewArg,
+} from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { loadLiveTerritories, loadPicks, type LiveContext } from './live-context.js';
 import { mapOf } from './map.js';
@@ -56,7 +67,7 @@ async function assertSignedInAccount(ctx: LiveContext, player: Player): Promise<
   }
   if (player.id !== token) {
     throw new McpToolError(
-      `${player.name} is not the signed-in war.app account, so nothing was sent: writes always act as the signed-in account.`,
+      `${untrustedText(player.name)} is not the signed-in war.app account, so nothing was sent: writes always act as the signed-in account.`,
       { hint: 'Omit `player` (it defaults to the signed-in account), or sign in to war.app as that player.' },
     );
   }
@@ -332,7 +343,9 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
             const picks = territories.map((t) => resolveTerritory(map, t));
             const seen = new Set<number>();
             for (const t of picks) {
-              if (seen.has(t.id)) throw new McpToolError(`${t.name} (${t.id}) is listed twice.`, { hint: 'List each territory once.' });
+              if (seen.has(t.id)) {
+                throw new McpToolError(`${untrustedText(t.name)} (${t.id}) is listed twice.`, { hint: 'List each territory once.' });
+              }
               seen.add(t.id);
             }
             const board = await loadLiveTerritories(ctx, game);
@@ -343,7 +356,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
             });
             if (unpickable.length) {
               throw new McpToolError(
-                `Not pickable on the live board: ${unpickable.map((t) => `${t.name} (${t.id})`).join(', ')}.`,
+                `Not pickable on the live board: ${untrustedList(unpickable, 10, (t) => `${untrustedText(t.name)} (${t.id})`)}.`,
                 {
                   hint:
                     game.state === 'DistributingTerritories'
@@ -376,13 +389,20 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
             return {
               gate: {
                 action: 'warapp.submit_picks',
-                summary: `Submit ${picks.length} territory pick${picks.length === 1 ? '' : 's'} for ${me.name} in game ${game.id}`,
+                // By id only: player and territory names are other people's words and go,
+                // delimited, in labelled fields.
+                summary: `Submit ${picks.length} territory pick${picks.length === 1 ? '' : 's'} for player ${me.id} in game ${game.id}`,
                 account: undefined,
                 target: game.id,
                 payload: { method: 'SendTerritoryPicks', gameId: game.id, playerId, territoryIds },
-                willSend: { game: game.id, player: me.name, picksInPriorityOrder: named },
+                willSend: {
+                  game: game.id,
+                  player: untrustedText(me.name),
+                  picksInPriorityOrder: named.map((t) => ({ id: t.id, name: untrustedText(t.name) })),
+                },
                 preview: {
                   note: 'Replaces any picks already submitted for this game.',
+                  untrusted: UNTRUSTED_PREVIEW_NOTE,
                   ...(lengthWarnings.length ? { warnings: lengthWarnings } : {}),
                 },
               },

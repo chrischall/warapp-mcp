@@ -41,7 +41,9 @@ GAME=45670418                                          # the number in the game'
   `WARAPP_CACHE_DIR` (default `~/.cache/warapp-mcp`).
 - `warapp_feed <id> [Param=value…]` — the raw GameFeed body (map included unless you pass
   `GetMap=false`).
-- Return codes: `0` ok · `1` bad game id · `2` no credentials · `3` `Auth failed` (wrong
+- Extra params are `Name=value` only: a name of letters and digits, a value of letters,
+  digits, `.`, `_` or `-`. Anything else is refused (exit `1`) before a request is made.
+- Return codes: `0` ok · `1` bad game id or extra param · `2` no credentials · `3` `Auth failed` (wrong
   email or token) · `4` no such game · `5` anything else (network, HTTP, non-JSON, other
   error). war.app reports errors as HTTP 200 `{"error": …}`; the helper turns those into the
   codes, so `0` always means a real game body.

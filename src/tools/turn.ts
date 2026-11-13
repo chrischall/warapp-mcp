@@ -48,7 +48,17 @@ import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
 import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
 import { Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
-import { currentTurn, gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
+import {
+  currentTurn,
+  gameIdArg,
+  graphOf,
+  readAnnotations,
+  respond,
+  UNTRUSTED_PREVIEW_NOTE,
+  untrustedDescription,
+  untrustedText,
+  viewArg,
+} from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { failureText, loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
@@ -143,7 +153,7 @@ export function requireTurnPhase(game: Game): void {
 /** Throw unless my seat is still `Playing` (#130): an eliminated, booted or surrendered seat has no turn. */
 export function requirePlayingSeat(game: Game, me: Player): void {
   if (me.state === undefined || me.state === 'Playing') return;
-  throw new McpToolError(`${me.name} is no longer playing in game ${game.id} (state: ${me.state}), so there is no turn to play.`, {
+  throw new McpToolError(`${untrustedText(me.name)} (${me.id}) is no longer playing in game ${game.id} (state: ${me.state}), so there is no turn to play.`, {
     hint: 'warapp_get_game shows each player\'s state.',
   });
 }
@@ -186,8 +196,8 @@ export async function requireSignedInMe(
     const named = resolvePlayer(game.players, input);
     if (named.id !== me.id) {
       throw new McpToolError(
-        `Orders are always sent as the signed-in account (${me.name}), not ${named.name}.`,
-        { hint: `Omit \`player\` (or name ${me.name}); to play as ${named.name}, sign in to war.app as them.` },
+        `Orders are always sent as the signed-in account (${untrustedText(me.name)}), not ${untrustedText(named.name)}.`,
+        { hint: `Omit \`player\` (or name player ${me.id}); to play as player ${named.id}, sign in to war.app as them.` },
       );
     }
   }
@@ -202,6 +212,20 @@ interface NamedOrder {
   from?: { id: number; name: string };
   to?: { id: number; name: string };
   armies?: number;
+}
+
+/** A territory as a preview shows it: its map-maker name delimited. */
+const shownPlace = (x: { id: number; name: string }) => ({ id: x.id, name: untrustedText(x.name) });
+
+/** An order as the preview shows it: every territory name delimited. */
+function shownOrder(o: NamedOrder): NamedOrder {
+  const t = (x: { id: number; name: string } | undefined) => (x ? { id: x.id, name: untrustedText(x.name) } : undefined);
+  const out: NamedOrder = { ...o };
+  for (const k of ['target', 'territory', 'from', 'to'] as const) {
+    const v = t(o[k]);
+    if (v) out[k] = v;
+  }
+  return out;
 }
 
 interface TurnState {
@@ -238,7 +262,8 @@ function incomeRefused(e: WarappServerError, income: number, given = false): Mcp
   });
 }
 
-const label = (t: { id: number; name: string }) => `${t.name} (${t.id})`;
+/** A territory in an error: its map-maker name delimited (errors are outside the untrusted envelope). */
+const label = (t: { id: number; name: string }) => `${untrustedText(t.name)} (${t.id})`;
 
 /** plan_turn's note when its income counts Reinforcement plays: the deploys need the card orders (#85). */
 function cardIncomeNote(income: number, cardArmies: number): string {
@@ -398,14 +423,20 @@ export function validateTurn(args: {
     if (use.anywhereUsed > pools.anywhere) {
       const short = pools.bonuses
         .map((p) => ({ p, used: use.used.get(p.bonusId) ?? 0 }))
-        .filter(({ p, used }) => used < p.value)
-        .map(({ p, used }) => `${p.name} (bonus ${p.bonusId}): +${p.value} earned, only ${used} deployed inside it`);
-      const problem =
+        .filter(({ p, used }) => used < p.value);
+      // The refusal names each bonus (delimited); the preview warning, which sits beside
+      // the confirmToken, names bonuses by id only.
+      const shortfall = (named: boolean) =>
+        short
+          .map(({ p, used }) => `${named ? `${untrustedText(p.name)} ` : ''}(bonus ${p.bonusId}): +${p.value} earned, only ${used} deployed inside it`)
+          .join('; ');
+      const overspend =
         `Local Deployment: these orders deploy ${use.anywhereUsed} armies outside the held bonuses' own pools, but only ` +
-        `${pools.anywhere} may go anywhere this turn (${use.anywhereUsed - pools.anywhere} too many). ${short.join('; ')}.`;
+        `${pools.anywhere} may go anywhere this turn (${use.anywhereUsed - pools.anywhere} too many).`;
+      const problem = `${overspend} ${shortfall(true)}.`;
       if (args.poolsUncertain?.length) {
         warnings.push(
-          `${problem} The modelled pools may be off (${args.poolsUncertain.join(' ')}), so they are not refused here: ` +
+          `${overspend} ${shortfall(false)}. The modelled pools may be off (${args.poolsUncertain.join(' ')}), so they are not refused here: ` +
             "check the game's deploy panel — war.app refuses deploys outside a bonus's own pool.",
         );
       } else {
@@ -1169,15 +1200,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             return {
               gate: {
                 action: 'warapp.submit_turn',
-                summary: `Commit ${send.length} order${send.length === 1 ? '' : 's'} for ${me.name} in game ${game.id}, turn ${turnNumber}`,
+                // By id only: player and territory names are other people's words and go,
+                // delimited, in the labelled fields of `willSend`.
+                summary: `Commit ${send.length} order${send.length === 1 ? '' : 's'} for player ${me.id} in game ${game.id}, turn ${turnNumber}`,
                 account: undefined,
                 target: game.id,
                 payload: { method: 'SendOrders', gameId: game.id, playerId, turnNumber, orders: send },
-                willSend: { game: game.id, player: me.name, turn: turnNumber, income, orders: named },
+                willSend: { game: game.id, player: untrustedText(me.name), turn: turnNumber, income, orders: named.map(shownOrder) },
                 preview: {
                   note: 'These orders reach the game; once the turn resolves, other players see the results.',
-                  ...(attacks.length ? { attacks } : {}),
+                  ...(attacks.length ? { attacks: attacks.map((a) => ({ ...a, from: shownPlace(a.from), to: shownPlace(a.to) })) } : {}),
                   ...(warnings.length ? { warnings } : {}),
+                  untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
               state: {

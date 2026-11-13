@@ -13,7 +13,11 @@
 # on curl's command line (the body goes in on stdin) and never printed — an
 # upstream error has both scrubbed before it reaches stderr.
 #
-# Return codes: 0 ok · 1 usage (bad game id) · 2 no credentials ·
+# Extra Param=value arguments are checked against a conservative character set and
+# curl runs with URL globbing off, so one call is always exactly one request.
+#
+# Return codes: 0 ok · 1 usage (bad game id, bad extra argument, refused
+# WARAPP_BASE_URL) · 2 no credentials ·
 # 3 Auth failed (wrong email/token) · 4 no such game · 5 anything else
 # (network, HTTP error, non-JSON answer, other GameFeed error).
 #
@@ -22,16 +26,62 @@
 #
 # Variable names avoid `path` and `status` (special in zsh).
 
+# Character classes are spelled out, never ranges: under a UTF-8 locale some shells
+# (macOS /bin/bash 3.2) match [A-Za-z0-9] by collation order, letting accented and
+# fullwidth letters through. Spelled out, the sets hold ASCII only in every shell and locale.
+
 # _warapp_gameid <id>: a positive whole number below 2^31.
 _warapp_gameid() {
   case "${1:-}" in
-    '' | *[!0-9]* | 0*)
+    '' | *[!0123456789]* | 0*)
       echo "warapp: game id must be a positive whole number, got '${1:-}'" >&2
       return 1
       ;;
   esac
   if [ "${#1}" -gt 10 ] || [ "$1" -gt 2147483647 ]; then
     echo "warapp: game id must be below 2^31, got '$1'" >&2
+    return 1
+  fi
+}
+
+# _warapp_base: print the GameFeed origin. WARAPP_BASE_URL is a test seam only: the
+# credentials go in every request, so it is honoured only when it is exactly
+# https://war.app or a loopback stand-in (http://127.0.0.1:<port> or
+# http://localhost:<port>). Anything else is refused before a request is made.
+_warapp_base() {
+  local url="${WARAPP_BASE_URL:-https://war.app}" port=''
+  case "$url" in
+    https://war.app) printf '%s' "$url"; return 0 ;;
+    http://127.0.0.1:*) port="${url#http://127.0.0.1:}" ;;
+    http://localhost:*) port="${url#http://localhost:}" ;;
+  esac
+  case "$port" in
+    '' | *[!0123456789]*) ;;
+    *)
+      if [ "${#port}" -le 5 ] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+        printf '%s' "$url"
+        return 0
+      fi
+      ;;
+  esac
+  echo "warapp: refusing WARAPP_BASE_URL: it must be https://war.app or http://127.0.0.1:<port> / http://localhost:<port>" >&2
+  return 1
+}
+
+# _warapp_arg <Name=value>: an extra query parameter. Name is a letter then letters or
+# digits; value is letters, digits, '.', '_' or '-' (possibly empty). Nothing that could
+# change the query, the URL or the shell's reading of it gets through.
+_warapp_arg() {
+  local name="${1%%=*}" val="${1#*=}"
+  case "$1" in *=*) ;; *) name='' ;; esac
+  case "$name" in
+    '' | [!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]*) name='' ;;
+  esac
+  case "$val" in
+    *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) name='' ;;
+  esac
+  if [ -z "$name" ]; then
+    echo "warapp: refusing extra argument: expected Name=value (letters/digits, value also . _ -)" >&2
     return 1
   fi
 }
@@ -73,12 +123,14 @@ _warapp_uri() {
 
 # warapp_feed <game-id> [Param=value …]: the raw GameFeed body for one game.
 # Extra arguments are appended to the query, e.g. GetSettings=true GetMap=false
-# GetHistory=true GetChat=true.
+# GetHistory=true GetChat=true (each checked by _warapp_arg; anything else exits 1).
 warapp_feed() {
-  local game="${1:-}" query='' arg body rc err _warapp_email _warapp_token
+  local game="${1:-}" query='' arg body rc err origin _warapp_email _warapp_token
   _warapp_gameid "$game" || return 1
   shift
+  origin="$(_warapp_base)" || return 1
   for arg in "$@"; do
+    _warapp_arg "$arg" || return 1
     query="$query&$arg"
   done
   _warapp_load || return 2
@@ -86,10 +138,10 @@ warapp_feed() {
     printf 'Email=%s&APIToken=%s' \
       "$(printf '%s' "$_warapp_email" | _warapp_uri)" \
       "$(printf '%s' "$_warapp_token" | _warapp_uri)" |
-      curl -sS --fail-with-body --max-time 30 --retry 1 \
+      curl --globoff -sS --fail-with-body --max-time 30 --retry 1 \
         -H 'Content-Type: application/x-www-form-urlencoded' \
         --data-binary @- \
-        "${WARAPP_BASE_URL:-https://war.app}/API/GameFeed?GameID=$game$query"
+        "$origin/API/GameFeed?GameID=$game$query"
   )"
   rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -140,7 +192,7 @@ warapp_map() {
   if [ -r "$dir/game-$game.map" ]; then
     mapid="$(cat "$dir/game-$game.map")"
     case "$mapid" in
-      '' | *[!0-9]*) ;;
+      '' | *[!0123456789]*) ;;
       *)
         if [ -r "$dir/map-$mapid.json" ]; then
           cat "$dir/map-$mapid.json"
@@ -154,7 +206,7 @@ warapp_map() {
   [ "$rc" -eq 0 ] || return "$rc"
   mapid="$(printf '%s' "$out" | jq -r '.map.id // empty | tostring')"
   case "$mapid" in
-    '' | *[!0-9]*)
+    '' | *[!0123456789]*)
       echo "warapp: the response for game $game carries no usable map id" >&2
       return 5
       ;;

@@ -17,7 +17,7 @@ import { parseGameId } from '../client.js';
 import type { Game, Player } from '../normalize.js';
 import { Method, writeUnCommitParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, respond } from './common.js';
+import { gameIdArg, respond, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
 import { failureText, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
@@ -111,18 +111,20 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
             return {
               gate: {
                 action: 'warapp.uncommit_turn',
-                summary: `Withdraw ${seat.name}'s committed orders for ${turnLabel} of ${name} (war.app game ${game.id})`,
+                // By id only: the game and player names (other people's words) go, delimited,
+                // in labelled fields.
+                summary: `Withdraw your committed orders for ${turnLabel} of war.app game ${game.id}`,
                 account: undefined,
                 target: game.id,
                 payload: { method: 'UnCommit', gameId: game.id },
-                willSend: { game: game.id, player: seat.name, turn },
+                willSend: { game: game.id, player: untrustedText(seat.name), turn },
                 preview: {
                   warning:
-                    `This withdraws your committed orders for ${turnLabel} of ${name}. The game then waits on you ` +
+                    `This withdraws your committed orders for ${turnLabel} of game ${game.id}. The game then waits on you ` +
                     'again: submit corrected orders with warapp_submit_turn before the boot timer runs out, or you ' +
                     'may be booted.',
-                  game: { id: game.id, name, turn },
-                  untrusted: 'The game name is written by its creator.',
+                  game: { id: game.id, name: untrustedText(name), turn },
+                  untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
               state: {

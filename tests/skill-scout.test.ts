@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { parseCommonGames, parseProfile } from '../src/scout.js';
+import { MAX_PAGE_CHARS, parseCommonGames, parseProfile } from '../src/scout.js';
 
 /**
  * skills/warapp-api/references/scout.mjs — the dependency-free twin of
@@ -32,6 +32,12 @@ Last seen 3 days ago</div> Booted 1 time (1% of their last 100)
 <font class="text-muted">Completed</font> 2,000 ranked games (1,000 / 2,000)<br>
 <font class='text-muted'> Teams 3v3 :</font> 1,000 / 2,000 ( 50 % )</body></html>`;
 
+/** Owner-written text (name, tagline, location) imitating stat blocks before the real ones. */
+const SPOOF = `<html><head><title>Level 99 - War.app</title></head><body><h1>Level 99</h1>
+<div>Level 99</div><div>Last seen less than 1 minute ago</div><div>Booted 0 times (0% of their last 100)</div>
+<div>Level 55</div><font class="text-muted">Location:</font> Level 98<br>
+<div>Played in 1,606 multi-player games (87.1% real-time)</div><div>Last seen 3 days ago</div></body></html>`;
+
 const NO_HEADER_COMMON = `<table><tr><td><a href='MultiPlayer?GameID=9'>Solo</a></td><td>x</td><td>y</td><td>Declined</td></tr></table>`;
 
 describe('scout.mjs profile', () => {
@@ -40,6 +46,8 @@ describe('scout.mjs profile', () => {
     ['a new player (missing blocks)', NEW_PLAYER],
     ['odd spacing, entities and thousands separators', ODD_PROFILE],
     ['an unrelated page (a sign-in form)', '<html><title>Sign in</title><body><form></form></body></html>'],
+    ['a page whose owner-written text imitates the stat blocks', SPOOF],
+    ['a page larger than the size cap', `${PROFILE}<!-- ${'x'.repeat(MAX_PAGE_CHARS)} -->`],
   ])('matches the server parser on %s', (_what, html) => {
     const r = scout(['profile'], html);
     expect(r.code, r.stderr).toBe(0);
@@ -51,6 +59,11 @@ describe('scout.mjs profile', () => {
     expect(r.stdout).not.toMatch(/Springfield|Nowhereland|Location|Joined|example\.com/i);
     expect(JSON.parse(r.stdout)).toMatchObject({ name: 'Bob & Co', level: 55, bootRatePct: 14 });
   });
+
+  it('reads the real blocks, never an imitation written by the profile owner', () => {
+    const r = scout(['profile'], SPOOF);
+    expect(JSON.parse(r.stdout)).toMatchObject({ level: 55, multiplayerGames: 1606, lastSeen: '3 days ago', boots: null });
+  });
 });
 
 describe('scout.mjs common', () => {
@@ -59,6 +72,8 @@ describe('scout.mjs common', () => {
     ['a table without its header', NO_HEADER_COMMON],
     ['a page with no games', '<html><h1>0 Common Games with Nobody</h1></html>'],
     ['an unrelated page', '<html><body>hi</body></html>'],
+    ['a page larger than the size cap', `${COMMON}<!-- ${'x'.repeat(MAX_PAGE_CHARS)} -->`],
+    ['unterminated rows', '<a href="MultiPlayer?GameID=1">'.repeat(2_000) + '</a>'.repeat(2_000)],
   ])('matches the server parser on %s', (_what, html) => {
     const r = scout(['common'], html);
     expect(r.code, r.stderr).toBe(0);

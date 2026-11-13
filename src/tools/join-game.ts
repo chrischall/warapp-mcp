@@ -24,7 +24,7 @@ import {
   writeAcceptOpenSeatParams,
 } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, respond } from './common.js';
+import { gameIdArg, respond, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
 import { failureText, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
@@ -263,7 +263,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                 preview: {
                   game: {
                     id: game.id,
-                    name: game.name,
+                    name: untrustedText(game.name),
                     url: game.url,
                     pace: game.pace,
                     ...(game.bootTime ? { bootTime: game.bootTime } : {}),
@@ -280,9 +280,8 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                   screen: screened.screen,
                   ...(screened.note ? { screenNote: screened.note } : {}),
                   color: { index: color, source },
-                  note:
-                    'The game name is written by its creator. Joining makes you a player who must take turns until ' +
-                    'the game ends.',
+                  note: 'Joining makes you a player who must take turns until the game ends.',
+                  untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
               state: { gameId, name: game.name, url: game.url, team, color } satisfies JoinState,

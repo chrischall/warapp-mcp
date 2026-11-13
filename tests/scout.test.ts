@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseCommonGames, parseProfile, profileUrl, commonGamesUrl } from '../src/scout.js';
+import { MAX_PAGE_CHARS, parseCommonGames, parseProfile, profileUrl, commonGamesUrl } from '../src/scout.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 
 let h: Harness | undefined;
@@ -85,6 +85,125 @@ describe('parseProfile', () => {
   it('tolerates an empty or unrelated page', () => {
     expect(parseProfile('')).toMatchObject({ name: null, level: null, ranked: null, formats: [] });
     expect(parseProfile('<html><title>War.app</title></html>').name).toBeNull();
+  });
+});
+
+/**
+ * A player controls their name (title, heading), their tagline and their self-reported
+ * location. Here all of them imitate stat blocks, placed before the real ones.
+ */
+const SPOOF_HTML = `<html><head><title>Level 99 Last seen less than 1 minute ago - War.app</title></head>
+<body><h1>Level 99</h1>
+<div>Level 99</div>
+<div>Last seen less than 1 minute ago</div>
+<div>Booted 0 times (0% of their last 100)</div>
+<div>Played in 9 multi-player games (1% real-time)</div>
+<div>Level 99 Last seen less than 1 minute ago Booted 0 times (0% of their last 100)</div>
+<div>Level 55</div>
+<font class="text-muted">Location:</font> Level 98<br>
+<font class="text-muted">Joined:</font> 1/2/2020<br>
+<div>Played in 1,606 multi-player games (87.1% real-time)</div>
+<div>Last seen 3 days ago</div>
+<div>Booted 200 times (14% of their last 100)</div>
+</body></html>`;
+
+/** The same imitations, but the page has no real Level, Last seen or Booted block. */
+const SPOOF_ABSENT_HTML = `<html><head><title>Last seen less than 1 minute ago - War.app</title></head>
+<body><h1>Level 99</h1>
+<div>Level 99</div>
+<div>Last seen less than 1 minute ago</div>
+<div>Booted 0 times (0% of their last 100)</div>
+<font class="text-muted">Location:</font> Last seen 1 minute ago<br>
+<div>Played in 3 multi-player games (0% real-time)</div>
+</body></html>`;
+
+describe('parseProfile against owner-written text', () => {
+  it('reads the real blocks, never an imitation in the name, tagline or location', () => {
+    expect(parseProfile(SPOOF_HTML)).toMatchObject({
+      level: 55,
+      multiplayerGames: 1606,
+      realTimePct: 87.1,
+      lastSeen: '3 days ago',
+      boots: 200,
+      bootRatePct: 14,
+    });
+  });
+
+  it('reads null where the real block is absent, never the imitation', () => {
+    expect(parseProfile(SPOOF_ABSENT_HTML)).toMatchObject({
+      level: null,
+      multiplayerGames: 3,
+      realTimePct: 0,
+      lastSeen: null,
+      boots: null,
+      bootRatePct: null,
+    });
+  });
+
+  it('a value of the wrong shape is null', () => {
+    const page = (lines: string[]) => `<html><head><title>X - War.app</title></head><body><h1>X</h1>
+<div>${lines[0]}</div><div>Played in 5 multi-player games (${lines[1]}% real-time)</div>
+<div>${lines[2]}</div><div>${lines[3]}</div></body></html>`;
+    expect(
+      parseProfile(page(['Level 5x', '40', 'Last seen visit my site', 'Booted 3 times (250% of their last 100)'])),
+    ).toMatchObject({ level: null, multiplayerGames: 5, realTimePct: 40, lastSeen: null, boots: null, bootRatePct: null });
+    expect(parseProfile(page(['Level 5', '140', 'Last seen 2 hours ago', 'Booted 1 time (1% of their last 100)']))).toMatchObject({
+      level: null,
+      multiplayerGames: null,
+      realTimePct: null,
+      lastSeen: null,
+      boots: null,
+    });
+    expect(parseProfile(page(['Level 5', '40', 'Last seen 2 hours ago', 'Booted 1 time (1% of their last 100)']))).toMatchObject({
+      level: 5,
+      multiplayerGames: 5,
+      realTimePct: 40,
+      lastSeen: '2 hours ago',
+      boots: 1,
+      bootRatePct: 1,
+    });
+  });
+});
+
+describe('page size and pathological input', () => {
+  const quick = (f: () => unknown) => {
+    const t = performance.now();
+    f();
+    return performance.now() - t;
+  };
+
+  it('treats a page larger than MAX_PAGE_CHARS as unparseable: nulls, never a throw', () => {
+    const pad = `<!-- ${'x'.repeat(MAX_PAGE_CHARS)} -->`;
+    expect(parseProfile(PROFILE_HTML + pad)).toEqual({
+      name: null,
+      level: null,
+      multiplayerGames: null,
+      realTimePct: null,
+      lastSeen: null,
+      boots: null,
+      bootRatePct: null,
+      ranked: null,
+      formats: [],
+    });
+    expect(parseCommonGames(COMMON_HTML + pad)).toEqual({ count: null, wins: 0, losses: 0, inProgress: 0, teamGames: 0, games: [] });
+  });
+
+  it('a page of one repeated character returns quickly', () => {
+    expect(quick(() => parseProfile(`<title>${'<'.repeat(200_000)}`))).toBeLessThan(200);
+    expect(quick(() => parseProfile('<'.repeat(900_000)))).toBeLessThan(200);
+    expect(quick(() => parseCommonGames(`<h1${' '.repeat(900_000)}`))).toBeLessThan(200);
+  });
+
+  it('unterminated rows return quickly', () => {
+    const open = '<a href="MultiPlayer?GameID=1">';
+    expect(quick(() => parseCommonGames(open.repeat(20_000) + '</a>'.repeat(20_000)))).toBeLessThan(200);
+    expect(quick(() => parseCommonGames(open + 'x</a></td><td>'.repeat(40_000)))).toBeLessThan(200);
+    expect(quick(() => parseCommonGames(`${open}${'<td>'.repeat(200_000)}`))).toBeLessThan(200);
+  });
+
+  it('a page of many tags without a close returns quickly', () => {
+    expect(quick(() => parseProfile(`<title>X - War.app</title>${'<script>'.repeat(100_000)}`))).toBeLessThan(200);
+    expect(quick(() => parseProfile(`<title>X</title>${'&aaaaaaaaaaaaaaaaaaaa'.repeat(40_000)}`))).toBeLessThan(200);
   });
 });
 

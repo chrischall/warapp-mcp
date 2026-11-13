@@ -20,7 +20,7 @@ import { readLatestGameInfo, standingFromInfo, type LiveTerritory } from '../liv
 import type { Game } from '../normalize.js';
 import { Method, writeBeginFirstTurnParams, writeGetLatestGameInfoParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, respond } from './common.js';
+import { gameIdArg, respond, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
 import { failureText, SPEED_FIRST_TURN_MOVE_ORDER, type LiveContext } from './live-context.js';
 
@@ -137,22 +137,24 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
             const name = gameLabel(game);
             const picking = game.state === DISTRIBUTING;
             const warning = picking
-              ? `Begin STARTS YOUR PICK TIMER in ${name}: the players who pick fastest get their picks in a conflict. ` +
+              ? `Begin STARTS YOUR PICK TIMER in game ${gameId}: the players who pick fastest get their picks in a conflict. ` +
                 'Choose and submit your picks straight after.'
-              : `Begin STARTS YOUR FIRST-TURN TIMER in ${name}: the players who commit fastest move first. ` +
+              : `Begin STARTS YOUR FIRST-TURN TIMER in game ${gameId}: the players who commit fastest move first. ` +
                 'Plan and submit straight after (warapp_plan_turn, then warapp_submit_turn).';
+            // The sentences name the game by id only; its name (its creator's words) goes,
+            // delimited, in `game.name`.
             return {
               gate: {
                 action: 'warapp.begin_first_turn',
-                summary: `Press Begin in ${name} (war.app game ${gameId}) — this starts your turn timer`,
+                summary: `Press Begin in war.app game ${gameId} — this starts your turn timer`,
                 account: undefined,
                 target: gameId,
                 payload: { method: 'BeginFirstTurn', gameId },
                 willSend: { game: gameId },
                 preview: {
                   warning,
-                  game: { id: gameId, name, state: game.state, turn: 1 },
-                  untrusted: 'The game name is written by its creator.',
+                  game: { id: gameId, name: untrustedText(name), state: game.state, turn: 1 },
+                  untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
               state: { gameId, name, picking } satisfies BeginState,

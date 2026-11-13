@@ -216,7 +216,7 @@ describe('warapp_analyze_board', () => {
     h = await harnessFor(playingFixture());
     const res = await h.call('warapp_analyze_board', { game_id: GAME });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toMatch(/Player 1 \(1000\)/);
+    expect(textOf(res)).toMatch(/⟦Player 1⟧ \(1000\)/);
   });
 
   it('rejects an unknown player', async () => {

@@ -278,7 +278,7 @@ describe('validateTurn — No-Split (G3)', () => {
         ],
         true,
       ),
-    ).toThrow(/No-Split: T1 \(1\) issues 2 attacks\/transfers \(to T2 \(2\), T3 \(3\)\), but this game allows one per territory/);
+    ).toThrow(/No-Split: ⟦T1⟧ \(1\) issues 2 attacks\/transfers \(to ⟦T2⟧ \(2\), ⟦T3⟧ \(3\)\), but this game allows one per territory/);
   });
 
   it('(e) accepts one order per source, and splits when the flag is off', () => {
