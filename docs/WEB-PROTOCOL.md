@@ -227,7 +227,9 @@ fetchproxy bridge, so the request runs inside the signed-in tab:
 Owner `0` = neutral, `-2` = available to pick, otherwise an in-game player id.
 Fog level (`StandingFogLevel`, from the bundle): 1 You, 2 Visible, 3 OwnerOnly, 4 Fogged. The client
 refuses a deploy on 3 or 4 as "fogged"; a fully fogged standing is fog level 4, owner `-1`,
-`Armies(0, fogged)`. The reader keeps an owner-only territory's owner but not its army count (#69).
+`Armies(0, fogged)`. The reader keeps an owner-only territory's owner but not its army count (#69). Whether the owner
+shows is read from the fog level alone: a Light Fog owner-only standing carries a real owner under
+`Armies(…, fogged)` (#131, seen in a live board's raw standing).
 
 **Special units (from the bundle, #61; the commander layout matches a live standing decoded
 for the issue).** `Armies` is read as `bool fogged, int32 count`, then — protocol ≥ 107 — a

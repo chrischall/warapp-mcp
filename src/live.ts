@@ -58,12 +58,13 @@ export const OWNER_PICKABLE = -2;
 export const FOG_LEVEL_NAMES: Readonly<Record<number, string>> = { 1: 'You', 2: 'Visible', 3: 'OwnerOnly', 4: 'Fogged' };
 export const FOG_LEVEL_OWNER_ONLY = 3;
 export const FOG_LEVEL_FOGGED = 4;
+const KNOWN_FOG_LEVELS: ReadonlySet<number> = new Set([1, 2, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_FOGGED]);
 
 /** One territory as the viewer's standing has it. */
 export interface LiveTerritory {
   territoryId: number;
   fogLevel: number;
-  /** Hidden by fog: owner and armies are not evidence. */
+  /** Hidden by fog (fog level 4): owner and armies are not evidence. An owner-only (3) standing is not fogged: its owner shows. */
   fogged: boolean;
   /** Raw owner: an in-game player id, {@link OWNER_NEUTRAL}, {@link OWNER_PICKABLE}, or negative when hidden. */
   owner: number;
@@ -133,8 +134,13 @@ function territoryOf(key: unknown, ts: Obj): LiveTerritory {
   const armyFields = fields(armies);
   const armyFogged = armyFields.find((v) => typeof v === 'boolean') === true;
   const count = armyFields.find((v) => typeof v === 'number');
-  const fogged = armyFogged || fogLevel === FOG_LEVEL_FOGGED;
-  if (!fogged && fogLevel !== FOG_LEVEL_OWNER_ONLY && typeof count !== 'number') {
+  // The fog level alone says whether the owner shows: Light Fog's owner-only standings (3) carry a
+  // real owner under an Armies record marked fogged (#131). A level this server does not know
+  // falls back to the Armies' flag.
+  const fogged = KNOWN_FOG_LEVELS.has(fogLevel) ? fogLevel === FOG_LEVEL_FOGGED : armyFogged;
+  // Owner-only: the owner shows, any army count is a placeholder (#69).
+  const armiesHidden = fogged || armyFogged || fogLevel === FOG_LEVEL_OWNER_ONLY;
+  if (!armiesHidden && typeof count !== 'number') {
     throw new LiveBoardFormatError(`visible territory ${territoryId} has no army count`);
   }
   const out: LiveTerritory = {
@@ -142,11 +148,10 @@ function territoryOf(key: unknown, ts: Obj): LiveTerritory {
     fogLevel,
     fogged,
     owner,
-    // Owner-only: the owner shows, any army count is a placeholder (#69).
-    armies: fogged || fogLevel === FOG_LEVEL_OWNER_ONLY || typeof count !== 'number' ? null : count,
+    armies: armiesHidden || typeof count !== 'number' ? null : count,
   };
   const units = armyFields.find((v): v is unknown[] => Array.isArray(v));
-  if (!fogged && units?.length) out.specialUnits = units.map(specialUnitOf);
+  if (!armiesHidden && units?.length) out.specialUnits = units.map(specialUnitOf);
   return out;
 }
 

@@ -87,6 +87,32 @@ describe('readLiveStanding', () => {
     const out = readLiveStanding(bundle, body([{ id: 9, fogLevel: 3, owner: 123456, armies: 0 }], [123456]));
     expect(out).toEqual([{ territoryId: 9, fogLevel: 3, fogged: false, owner: 123456, armies: null }]);
   });
+  it('Light Fog: an owner-only territory keeps its owner though its Armies say fogged (#131)', () => {
+    // war.app marks the army count of a fog level 3 standing as fogged; the owner is still real.
+    const out = readLiveStanding(
+      bundle,
+      body(
+        [
+          { id: 9, fogLevel: 3, owner: 765432, armies: 0, fogged: true },
+          { id: 10, fogLevel: 3, owner: 0, armies: 0, fogged: true },
+          { id: 11, fogLevel: 4, owner: 765432, armies: 0, fogged: true },
+        ],
+        [123456],
+      ),
+    );
+    expect(out).toEqual([
+      { territoryId: 9, fogLevel: 3, fogged: false, owner: 765432, armies: null },
+      { territoryId: 10, fogLevel: 3, fogged: false, owner: 0, armies: null },
+      { territoryId: 11, fogLevel: 4, fogged: true, owner: 765432, armies: null },
+    ]);
+    const board = toBoardState(out!, [player('3376543244', 'Them')]);
+    expect(board.territories.map((t) => t.owner)).toEqual([
+      { kind: 'player', playerId: 3376543244 },
+      { kind: 'neutral' },
+      { kind: 'unknown' },
+    ]);
+  });
+
 
   it('no result, or no standing, is null', () => {
     const w = new Writer();
