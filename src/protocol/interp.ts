@@ -6,9 +6,11 @@
 // changes between client releases), this module parses those functions with acorn and
 // evaluates them against a codec `Reader`. Only the small JS subset the readers use is
 // supported: primitive reads, present-flag ternaries, lists/dicts of nested classes via
-// closures, version checks, `switch` on a type tag, `instanceof` by registered type name
-// and constructors that assign `this.*`. Anything else raises an {@link InterpError}
-// naming the function and the bundle offset of the construct.
+// closures, version checks, `switch` on a type tag, the client's runtime type checks (`instanceof`
+// through the superclass chain the bundle declares, a class's static data such as its interface
+// list, a decoded object's class through its prototype's class field) and constructors that
+// assign `this.*`. Anything else raises an {@link InterpError} naming the function and the
+// bundle offset of the construct.
 //
 // The primitive helpers (`P.Ya`, the dialect) are built in and shadow the bundle's own
 // definitions; `verifyDialect` checks them against those definitions when a bundle loads.
@@ -37,6 +39,13 @@
 // - a string built by `+` is capped at MAX_STRING characters and its length is charged to the step
 //   budget, as is comparing two strings, so string work cannot outrun the budget or the heap.
 // - statics and reader methods are looked up as own entries of the dialect tables only.
+// - a class's static data comes only from the bundle's source text: a static reads as a value only when
+//   every assignment to it is the same literal, null, class or list of classes (never a host object, a
+//   function or an expression's result), a list afresh on each read; statics are never written. A
+//   class is one value per name (`ClassRef`), so classes compare by identity as in JS; nothing reads
+//   through it to a prototype or constructor. A host global's own members (Math.PI) are not answered.
+//   The class structure (static sites, superclass links, the class field) is indexed in one pass over
+//   the source, once per interpreter, and walking a superclass chain costs a step per link and ends on a cycle.
 // - natives call back only into interpreter closures (`toNative` brands the functions it makes and
 //   `callback` checks the brand), and no call or read hands a host function back to the bundle.
 // - every `readClass` has one budget: a step count and a call depth (options with defaults), so
@@ -379,6 +388,9 @@ function compareProbe(mine: ProbeOutcome, theirs: ProbeOutcome, arity: number): 
 function sameValue(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (a instanceof Date && b instanceof Date) return Object.is(a.getTime(), b.getTime());
+  // The client's date is a wrapper class (unwrapped, see `wrappers`) around Unix milliseconds, built by
+  // adding a static epoch: the same instant as the built-in's Date when the two read alike.
+  if (a instanceof Date && typeof b === 'number') return Object.is(a.getTime(), b);
   if (a instanceof Uint8Array && b instanceof Uint8Array) return a.length === b.length && a.every((x, i) => x === b[i]);
   if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => sameValue(x, b[i]));
   return false;
@@ -559,6 +571,29 @@ interface Definitions {
   registrations: Map<string, number>;
 }
 
+/**
+ * What the bundle declares about its classes, for runtime type checks (see `BundleInterpreter.types`):
+ * found in one pass over the source the first time a read needs it.
+ */
+interface TypeIndex {
+  /** `Cls.key` → offsets of the value of each other `Cls.key = …` (a static's data), in source order. */
+  assigns: Map<string, number[]>;
+  /** `Cls.key`s the bundle also changes in place (`Cls.key++`, `Cls.key += …`, `Cls.key ??= …`): never a constant. */
+  updated: Set<string>;
+  /** Names the bundle defines as classes: a constructor, a registration or a prototype. */
+  classes: Set<string>;
+  /** `Cls` → its superclass, from the prototype built out of the superclass's (`Cls.prototype = extend(Sup.prototype, …)`). */
+  superOf: Map<string, string>;
+  /**
+   * The prototype field that names an instance's class (`Cls.prototype = {<key>: Cls, …}`), and the
+   * classes whose prototypes carry it; null when the bundle shows no such field.
+   */
+  classLink: { key: string; classes: Set<string> } | null;
+}
+
+/** A static's data: its value, or why it has no value the interpreter can give. */
+type StaticData = { value: unknown } | { unsupported: true } | { absent: true };
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 
 /** Descend from a parsed expression to the function expression that starts it. */
@@ -600,6 +635,7 @@ export class BundleInterpreter {
   /** Resolved functions by `Cls.fn` / `new Cls`: a hit, `null` (no constructor) or the cached failure. */
   private readonly fnCache = new Map<string, ResolvedFn | InterpError | null>();
   private defs: Definitions | null = null;
+  private typeIndex: TypeIndex | null = null;
   private readonly maxIterations: number;
   private readonly maxSteps: number;
   private readonly maxDepth: number;
@@ -610,6 +646,10 @@ export class BundleInterpreter {
   /** When this read must end (the interpreter's clock), and the step count at which the clock is next read. */
   private deadline = Infinity;
   private nextClock = 0;
+  /** One class value per name (see `classRef`). */
+  private readonly classRefs = new Map<string, ClassRef>();
+  /** Statics read as data, classified once each (see `staticData`). */
+  private readonly staticCache = new Map<string, StaticData>();
   /** `reader threw: …` per throw site, built once (see `throwMessage`). */
   private readonly throwMessages = new WeakMap<AcornNode, string>();
 
@@ -965,10 +1005,206 @@ export class BundleInterpreter {
     return this.defs;
   }
 
+  /**
+   * The bundle's class structure — static data sites, superclass links, the class-link prototype
+   * field — indexed in one pass the first time a read needs it (a static read, `instanceof`, a member
+   * a decoded object lacks), so a bundle whose readers never check a type does not pay for it.
+   */
+  private types(): TypeIndex {
+    if (this.typeIndex) return this.typeIndex;
+    const { src, typeNameOf } = this.bundle;
+    const { ctors, registrations } = this.definitions();
+    // Every other `Cls.key = …` (not `==`, `=>` or a function): the candidates for a static's data. A
+    // site inside a function body is indexed too, so a static assigned more than one way is never a constant.
+    const assigns = new Map<string, number[]>();
+    for (const m of src.matchAll(/(?<![\w$.])([\w$]+)\.([\w$]+)\s*=(?![=>])\s*(?!function\b)/g)) {
+      const key = `${m[1]}.${m[2]}`;
+      const list = assigns.get(key);
+      const at = m.index + m[0].length;
+      if (list) list.push(at);
+      else assigns.set(key, [at]);
+    }
+    const updated = new Set<string>();
+    for (const m of src.matchAll(/(?<![\w$.])([\w$]+)\.([\w$]+)\s*(?:\+\+|--|(?:\*\*|<<|>>>?|\|\||&&|\?\?|[-+*/%&|^])=)/g)) updated.add(`${m[1]}.${m[2]}`);
+    for (const m of src.matchAll(/(?:\+\+|--)\s*([\w$]+)\.([\w$]+)/g)) updated.add(`${m[1]}.${m[2]}`);
+    // Prototypes: who has one, and who builds theirs from another class's. The builder (the compiler's
+    // `extend`, minified) is whichever function most prototypes are built with, so a stray call cannot
+    // pose as a superclass link.
+    const protoOwners = new Set<string>();
+    const built: Array<[fn: string, cls: string, sup: string]> = [];
+    const builders = new Map<string, number>();
+    for (const m of src.matchAll(/(?<![\w$.])([\w$]+)\.prototype\s*=(?!=)\s*(?:([\w$]+)\(\s*([\w$]+)\.prototype\s*,)?/g)) {
+      protoOwners.add(m[1]);
+      if (m[2] && m[3]) {
+        built.push([m[2], m[1], m[3]]);
+        builders.set(m[2], (builders.get(m[2]) ?? 0) + 1);
+      }
+    }
+    let builder: string | undefined;
+    for (const [fn, n] of builders) if (builder === undefined || n > builders.get(builder)!) builder = fn;
+    const superOf = new Map<string, string>();
+    for (const [fn, cls, sup] of built) if (fn === builder && !superOf.has(cls)) superOf.set(cls, sup);
+    const classes = new Set([...ctors.keys(), ...registrations.keys(), ...typeNameOf.keys(), ...protoOwners]);
+    // The class-link field: the object-literal key whose value is a class with a prototype, for by far
+    // the most classes (each class's prototype names itself under it).
+    const linked = new Map<string, Set<string>>();
+    for (const m of src.matchAll(/[{,]([\w$]+):([\w$]+)(?=\s*[,}])/g)) {
+      if (!protoOwners.has(m[2])) continue;
+      const set = linked.get(m[1]);
+      if (set) set.add(m[2]);
+      else linked.set(m[1], new Set([m[2]]));
+    }
+    const ranked = [...linked].sort((a, b) => b[1].size - a[1].size);
+    const top = ranked[0];
+    const classLink = top && top[1].size >= 2 * (ranked[1]?.[1].size ?? 0) ? { key: top[0], classes: top[1] } : null;
+    this.typeIndex = { assigns, updated, classes, superOf, classLink };
+    return this.typeIndex;
+  }
+
+  /** The one class value per name, so `==`, `===` and `switch` compare classes as JS compares constructors. */
+  private classRef(name: string): ClassRef {
+    let ref = this.classRefs.get(name);
+    if (!ref) this.classRefs.set(name, (ref = new ClassRef(name)));
+    return ref;
+  }
+
+  /**
+   * `Cls.key` read as data. A static whose every assignment is the same simple value — a number,
+   * string, boolean (`!0` / `!1`), null, a class, or an array of classes — reads as that value (an
+   * array afresh on each read, so no read can change another). A key a bundle class never assigns
+   * reads undefined, as in JS. Anything else (a static function, an expression, two different
+   * values, a key changed in place, a host global's member) is unsupported.
+   */
+  private staticData(cls: string, key: string, n: AcornNode, where: string): unknown {
+    const id = `${cls}.${key}`;
+    let data = this.staticCache.get(id);
+    if (!data) {
+      data = this.classifyStatic(cls, key, id, where, n);
+      // Only a key the source names is kept: a computed key (`Cls["k" + i]`) can invent a new one per
+      // step, and keeping each would grow the cache without bound. Its answer is cheap to recompute.
+      if (this.namedStatic(id)) this.staticCache.set(id, data);
+    }
+    if ('unsupported' in data) throw this.unsupported(`static read ${id}`, n, where);
+    if ('absent' in data) return undefined;
+    if (Array.isArray(data.value)) {
+      this.spend(data.value.length, where, n.start);
+      return [...data.value];
+    }
+    return data.value;
+  }
+
+  /** Whether the source names `Cls.key` (an assignment, a static function or an update): a bounded set. */
+  private namedStatic(id: string): boolean {
+    const defs = this.types();
+    return defs.assigns.has(id) || defs.updated.has(id) || this.definitions().statics.has(id);
+  }
+
+  private classifyStatic(cls: string, key: string, id: string, where: string, n: AcornNode): StaticData {
+    const defs = this.types();
+    const sites = defs.assigns.get(id);
+    if (this.definitions().statics.has(id) || defs.updated.has(id)) return { unsupported: true };
+    if (!sites) {
+      // A host global (Math, Array, …) has members of its own the bundle never assigns: not the
+      // bundle's to answer, so only a key the host object lacks too reads undefined. Accepted: `key in
+      // host` lets a bundle learn whether a host global has a member of that name (names only, no values).
+      const host = hostGlobal(cls);
+      if (host === undefined) return defs.classes.has(cls) ? { absent: true } : { unsupported: true };
+      return host !== null && !(key in host) ? { absent: true } : { unsupported: true };
+    }
+    let value: unknown;
+    let source: string | undefined;
+    for (const at of sites) {
+      SIMPLE_STATIC.lastIndex = at;
+      const m = SIMPLE_STATIC.exec(this.bundle.src);
+      this.spend(1 + (m ? m[0].length : 0), where, n.start);
+      if (!m) return { unsupported: true };
+      const text = m[1]!;
+      if (source === undefined) {
+        const v = this.staticValue(text, defs);
+        if (v === UNDECLARED) return { unsupported: true };
+        value = v;
+        source = text;
+      } else if (text !== source) {
+        return { unsupported: true };
+      }
+    }
+    return { value };
+  }
+
+  /** The value of a simple static's source text, or UNDECLARED when it names something other than a class. */
+  private staticValue(text: string, defs: TypeIndex): unknown {
+    if (text === '!0' || text === 'true') return true;
+    if (text === '!1' || text === 'false') return false;
+    if (text === 'null') return null;
+    if (text === 'undefined') return undefined;
+    if (text[0] === '"' || text[0] === "'") {
+      try {
+        const lit = parseExpressionAt(text, 0, { ecmaVersion: 'latest' }) as AnyNode;
+        return lit.type === 'Literal' && typeof lit.value === 'string' && lit.end === text.length ? lit.value : UNDECLARED;
+      } catch {
+        return UNDECLARED;
+      }
+    }
+    if (/^-?(?:\d|\.\d)/.test(text)) {
+      const v = Number(text);
+      return Number.isNaN(v) ? UNDECLARED : v;
+    }
+    const isClass = (name: string) => defs.classes.has(name) && hostGlobal(name) === undefined;
+    if (text[0] === '[') {
+      const inner = text.slice(1, -1).trim();
+      const names = inner ? inner.split(',').map((x) => x.trim()) : [];
+      return names.every((x) => /^[A-Za-z_$][\w$]*$/.test(x) && isClass(x)) ? names.map((x) => this.classRef(x)) : UNDECLARED;
+    }
+    return isClass(text) ? this.classRef(text) : UNDECLARED;
+  }
+
+  /**
+   * `o instanceof cls`: true for an object the interpreter decoded as `cls` or as any subclass of it,
+   * following the superclass links the bundle builds its prototypes with (exact type only when it
+   * builds none); `Array` matches arrays. Each link walked is a step, and a cycle ends the walk.
+   */
+  private instanceOf(o: unknown, cls: unknown, n: AcornNode, where: string): boolean {
+    if (!(cls instanceof ClassRef)) throw this.unsupported('instanceof of a non-class', n, where);
+    if (Array.isArray(o)) return cls.name === 'Array';
+    // A decoded object is a plain object, so `o instanceof Object` is false for it (unlike JS).
+    if (!isDecoded(o)) return false;
+    // The exact registered type first: two class vars registered under one type name both match an
+    // object built as either (`classOf` gives back only the first var). The cached client bundle
+    // registered each of its 2310 type names once when checked (2026-11): a guard, not a known case.
+    if (o.$type === (this.bundle.typeNameOf.get(cls.name) ?? cls.name)) return true;
+    const { superOf } = this.types();
+    const seen = new Set<string>();
+    for (let v: string | undefined = this.classOf(o); v !== undefined && !seen.has(v); v = superOf.get(v)) {
+      this.spend(1, where, n.start);
+      if (v === cls.name) return true;
+      seen.add(v);
+    }
+    return false;
+  }
+
+  /** The class var a decoded object was constructed as. */
+  private classOf(o: DecodedObject): string {
+    return this.bundle.varOf.get(o.$type) ?? o.$type;
+  }
+
+  /** `o[k]` for a decoded object: an own field, else its class when `k` is the class-link field, else undefined. */
+  private decodedMember(o: DecodedObject, k: string): unknown {
+    const v = readMember(o, k);
+    if (v !== undefined || Object.hasOwn(o, k)) return v;
+    const link = this.types().classLink;
+    if (link && k === link.key) {
+      const cls = this.classOf(o);
+      if (link.classes.has(cls)) return this.classRef(cls);
+    }
+    return undefined;
+  }
+
   private resolveStatic(cls: string, fn: string): ResolvedFn {
     const where = `${cls}.${fn}`;
     const cached = this.fnCache.get(where);
-    // A failure is cached too, so a missing or unparsable function costs one lookup per interpreter.
+    // An unparsable function's failure is cached, so it is parsed once per interpreter. A missing one is
+    // not: its name can be computed (`Cls["f" + i]()`), so caching each would grow without bound, and the
+    // lookup is one map read.
     if (cached instanceof InterpError) throw cached;
     if (cached) return cached;
     try {
@@ -981,7 +1217,7 @@ export class BundleInterpreter {
       this.fnCache.set(where, resolved);
       return resolved;
     } catch (e) {
-      if (e instanceof InterpError && (e.kind === 'no-definition' || e.kind === 'parse')) this.fnCache.set(where, e);
+      if (e instanceof InterpError && e.kind === 'parse') this.fnCache.set(where, e);
       throw e;
     }
   }
@@ -1209,7 +1445,7 @@ export class BundleInterpreter {
         const v = this.lookup(scope, n.name, where, n);
         if (v !== UNDECLARED) return v;
         if (n.name === 'undefined') return undefined;
-        return new ClassRef(n.name);
+        return this.classRef(n.name);
       }
       case 'ThisExpression': {
         const v = this.lookup(scope, 'this', where, n);
@@ -1291,11 +1527,11 @@ export class BundleInterpreter {
       case 'MemberExpression': {
         const o = this.eval(n.object as Expression, scope, where);
         const k = this.memberKey(n, scope, where);
-        if (o instanceof ClassRef) throw this.unsupported(`static read ${o.name}.${k}`, n, where);
+        if (o instanceof ClassRef) return this.staticData(o.name, k, n, where);
         if (o instanceof Reader) throw this.unsupported(`reader member ${k}`, n, where);
         if (o === null || o === undefined) throw new InterpError('bad-value', `read of ${k} of ${String(o)}`, where, n.start);
         if (o instanceof Closure || o instanceof Scope) throw new InterpError('forbidden', `read of ${k} of an interpreter value`, where, n.start);
-        return readMember(o, k);
+        return isDecoded(o) ? this.decodedMember(o, k) : readMember(o, k);
       }
       case 'CallExpression':
         return this.call(n.callee as Expression, n.arguments as Expression[], scope, where, n);
@@ -1375,12 +1611,8 @@ export class BundleInterpreter {
         return l | r;
       case '&':
         return l & r;
-      case 'instanceof': {
-        const cls = r as unknown;
-        if (!(cls instanceof ClassRef)) throw this.unsupported('instanceof of a non-class', n, where);
-        const o = l as unknown;
-        return isObject(o) && o.$type === (this.bundle.typeNameOf.get(cls.name) ?? cls.name);
-      }
+      case 'instanceof':
+        return this.instanceOf(l, r, n, where);
       default:
         throw this.unsupported(`operator ${op}`, n, where);
     }
@@ -1638,6 +1870,43 @@ function readMember(o: unknown, k: string): unknown {
   return fromNative(v);
 }
 
+/**
+ * The host's global of that name: its object or function when it is a plain data property, null when
+ * it is anything else (an accessor, a primitive), undefined when there is none. Read through the
+ * property descriptor, so no getter runs; the value is only ever tested with `in`, never handed out.
+ */
+function hostGlobal(name: string): object | null | undefined {
+  const d = Object.getOwnPropertyDescriptor(globalThis, name);
+  if (!d) return undefined;
+  return 'value' in d && (typeof d.value === 'function' || (typeof d.value === 'object' && d.value !== null)) ? d.value : null;
+}
+
+/** An object the interpreter constructed (`{ $type, … }`, a plain object), not an array, date, bytes or interpreter value. */
+function isDecoded(v: unknown): v is DecodedObject {
+  if (!isObject(v) || Array.isArray(v) || !Object.hasOwn(v, '$type') || typeof v.$type !== 'string') return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+/** The longest string literal, class list or whitespace run a simple static's source may have. */
+const MAX_STATIC_SOURCE = 4000;
+
+/**
+ * A static's value when it is simple: `!0`/`!1`, true/false/null, a number, a string literal, a name
+ * or an array of names, and nothing after it but the end of the expression: `;`, `,`, `}` or `)`, the
+ * end of the source, or a line break before a name (where a new statement starts). Sticky: matched at
+ * the value's offset in the whole source. Every repeat is bounded and the number has one way to match
+ * (no leading-zero integer, which JS reads as octal), so one match is linear in a bounded length: a
+ * longer string, class list, number or whitespace run does not match, and the static is unsupported.
+ */
+const SIMPLE_STATIC = new RegExp(
+  String.raw`(!0|!1|-?(?:0x[\da-fA-F]{1,16}|(?:(?:0|[1-9]\d{0,399})(?:\.\d{0,400})?|\.\d{1,400})(?:[eE][-+]?\d{1,4})?)` +
+    String.raw`|"(?:[^"\\\r\n]|\\.){0,${MAX_STATIC_SOURCE}}"|'(?:[^'\\\r\n]|\\.){0,${MAX_STATIC_SOURCE}}'` +
+    String.raw`|[A-Za-z_$][\w$]{0,255}(?![\w$])|\[[\s\w$,]{0,${MAX_STATIC_SOURCE}}\])` +
+    String.raw`(?=\s{0,${MAX_STATIC_SOURCE}}(?:[;,})]|$)|[ \t]{0,${MAX_STATIC_SOURCE}}\r?\n\s{0,${MAX_STATIC_SOURCE}}(?!in(?:stanceof)?\b)[A-Za-z_$])`,
+  'y',
+);
+
 /** `typeof` over interpreter values: a class, a closure or a callback is a function. */
 function typeOf(v: unknown): string {
   if (v instanceof ClassRef || v instanceof Closure || (typeof v === 'function' && CALLBACKS.has(v))) return 'function';
@@ -1649,6 +1918,7 @@ function describe(v: unknown): string {
   if (v === null || v === undefined) return String(v);
   if (Array.isArray(v)) return 'an array';
   if (isObject(v) && typeof v.$type === 'string') return `a ${v.$type}`;
+  if (v instanceof ClassRef) return `class ${v.name}`;
   return typeof v;
 }
 

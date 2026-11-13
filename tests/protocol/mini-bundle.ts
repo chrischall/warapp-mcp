@@ -71,3 +71,40 @@ export const MINI_BUNDLE = [
   'W["demo.shared.Spin"]=Sp;Sp.Ha=function(a){for(;;){}};',
   'W["demo.shared.BadCtor"]=Bk;Bk.Ha=function(a){return new Bk(1)};',
 ].join('\n');
+
+/**
+ * Runtime type checks in the shape the client's compiler emits (a cast helper that switches on the
+ * built-in types, then `instanceof`, then — for an interface — walks the class's interface list and
+ * superclass link). Classes carry statics (`Xx.If=[…]` interfaces, `Xx.Sup=…` superclass, `Xx.Ifc=!0`
+ * on an interface) and a prototype field naming their class (`Xx.prototype={ty:Xx}`); a subclass's
+ * prototype is built from its superclass's (`Xx.prototype=Ex(Yy.prototype,{…})`). Every name is made up.
+ */
+export const TYPES_BUNDLE = [
+  'var W={};',
+  REQUIRED_HELPER_DEFS,
+  'function Ex(a,b){var d=Object.create(a);for(var e in b)d[e]=b[e];return d}',
+  'var Kn=Number,Rt={};',
+  'Rt.loop=function(a,b){if(null==a)return!1;if(a==b)return!0;var d=a.If;if(null!=d)for(var e=0,f=d.length;e<f;){var g=e++;' +
+    'g=d[g];if(g==b||Rt.loop(g,b))return!0}return Rt.loop(a.Sup,b)};',
+  'Rt.cls=function(a){if(null==a)return null;if(a instanceof Array)return Array;var b=a.ty;return null!=b?b:null};',
+  'Rt.is=function(a,b){if(null==b)return!1;switch(b){case Array:return a instanceof Array;case Kn:return"number"==typeof a;' +
+    'case String:return"string"==typeof a;default:if(null!=a&&"function"==typeof b){if(a instanceof b)return!0;' +
+    'if(b.Ifc)return Rt.loop(Rt.cls(a),b)}return!1}};',
+  'Rt.cast=function(a,b){if(null==a||Rt.is(a,b))return a;throw Y.sa("Cannot cast to the class")};',
+  // Two interfaces, one extending the other.
+  'function Ib(){}Ib.Ifc=!0;Ib.prototype={ty:Ib};',
+  'function Ia(){}Ia.Ifc=!0;Ia.If=[Ib];Ia.prototype={ty:Ia};',
+  // A three-level hierarchy; the base implements Ia (so, through it, Ib).
+  'function Bo(){}W["demo.shared.BaseOrder"]=Bo;Bo.aa="demo.shared.BaseOrder";Bo.If=[Ia];',
+  'Bo.Ver=3;Bo.Nm=\'it\\\'s\';Bo.Neg=-2;Bo.Off=!1;Bo.Nil=null;Bo.None=[];',
+  'Bo.Cx=new Ot;Bo.Two=1;Bo.Lc=Qq;',
+  'Bo.Ha=function(a,b,d){switch(P.uq(a)){case 1:return new Bo;case 2:return new Mo;case 3:return new Lo;default:return new Ot}};',
+  'Bo.prototype={ty:Bo,wr:function(){return 1}};',
+  'function Mo(){}W["demo.shared.MidOrder"]=Mo;Mo.aa="demo.shared.MidOrder";Mo.Sup=Bo;',
+  'Mo.Ha=function(a,b,d){return Rt.cast(Bo.Ha(a,b,d),Mo)};',
+  'Mo.prototype=Ex(Bo.prototype,{ty:Mo});',
+  'function Lo(){}W["demo.shared.LeafOrder"]=Lo;Lo.Sup=Mo;Lo.prototype=Ex(Mo.prototype,{ty:Lo});',
+  'function Ot(){}W["demo.shared.Other"]=Ot;Ot.prototype={ty:Ot};',
+  // A static assigned twice with different values, and one changed at run time.
+  'Bo.Two=2;Bo.Ctr=0;Bo.bump=function(){Bo.Ctr++};',
+].join('\n');

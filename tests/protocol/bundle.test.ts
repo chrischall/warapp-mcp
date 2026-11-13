@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Reader, Writer } from '../../src/protocol/codec.js';
+import { DATE_EPOCH_MS, Reader, Writer } from '../../src/protocol/codec.js';
 import { BundleError, BundleProvider, discoverBundleUrl, loadBundle, WarappBundle } from '../../src/protocol/bundle.js';
 import { MINI_BUNDLE } from './mini-bundle.js';
 
@@ -310,6 +310,17 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
     const b = new WarappBundle('var W={};var P={};P.Td=function(a){return O.N3c(a)};' + COUNTS + READER, 'opaque');
     expect(b.dialectCheck.unverified).toContain('P.Td');
     expect(b.dialectCheck.mismatched).toEqual([]);
+  });
+
+  it('verifies a date helper that returns the instant as milliseconds through a static epoch', () => {
+    // The client's date is a wrapper class (unwrapped by the dialect) around Unix milliseconds: the
+    // wire's milliseconds since 2000-01-01 plus an epoch the bundle keeps as a static.
+    const dated = (epoch: string) =>
+      `var W={};var P={};function Dt(){}Dt.Ep=${epoch};P.Td=function(a){return new fc(a.E3a()+Dt.Ep)};` + COUNTS + READER;
+    const right = new WarappBundle(dated(String(DATE_EPOCH_MS)), 'dated');
+    expect(right.dialectCheck.verified).toContain('P.Td');
+    expect(right.dialectCheck.mismatched).toEqual([]);
+    expect(() => new WarappBundle(dated('0'), 'wrong-epoch')).toThrow(/P\.Td/);
   });
 
   it("runs the bundle's helpers under the interpreter's step budget: a runaway helper is unverified, not a hang", () => {
