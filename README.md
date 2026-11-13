@@ -175,7 +175,8 @@ What a preview shows:
    changes nothing. It reports your cards: Reinforcement cards are always played (their armies
    are planned), and when you hold more whole cards than the limit — war.app then requires a play
    or discard per card over — the lowest-value cards leave first: Order Delay is discarded before
-   Order Priority is spent, and an Order Priority that must go is played rather than discarded. It
+   Order Priority is spent, and an Order Priority that must go is played rather than discarded (one
+   at most). It
    never plays Blockade (that gives a territory away) or Order Delay (it holds back your attacks).
    Threat warnings assume each enemy deploys `enemy_deploy` armies; enemy income is unseen, so
    raise it if you know better. With last turn's board, an opponent's deploy is at least what it

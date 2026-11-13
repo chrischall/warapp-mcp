@@ -169,7 +169,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   be played or discarded and `warapp_submit_turn` refuses up front. The planner always plays
   Reinforcement (its armies join the income); when cards must go, the lowest-value cards leave
   first (#127: Order Delay is discarded before Order Priority is spent; an Order Priority that
-  must go is played, not discarded) — never playing Blockade (it gives a territory away) or
+  must go is played, not discarded, one at most) — never playing Blockade (it gives a territory away) or
   Order Delay (it holds back my attacks). A discard (`GameOrderDiscard`) is tag 9, the GUID, the
   base — from the bundle's writer, not yet live-verified. Card plays must come in war.app's
   turn-phase order or the server answers **error 10 `OrdersInIncorrectOrder`**, so
@@ -177,8 +177,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   Reinforcement 20, deploys 25, moves 50, Order Delay 50, Blockade 60). Order Delay (tag 11) runs
   in phase 50, verified live 2026-11-12 (sent in phase 12 it drew error 10). Within a phase,
   card plays are written after the other orders (an Order Delay after every move, wherever it
-  was listed: the live-verified shape); that war.app accepts it ahead of a move is unverified.
-  Order Delay may be combined with other card plays.
+  was listed: the live-verified shape); that war.app accepts it ahead of a move is unverified,
+  so an Order Delay play delays nothing and the submit preview warns so. Order Delay may be
+  combined with other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
 - **Turn notifications are a socket.io v0.9 client with two transports.** While the active
   transport is the direct leg, a **WebSocket** (`src/push/websocket.ts`): handshake GET with the

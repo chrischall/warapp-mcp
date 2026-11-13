@@ -1757,7 +1757,9 @@ export function enemyDeployEstimates(
 
 /**
  * Default enemy deploy: the largest {@link enemyDeployEstimates} figure among the
- * players with a visible stack next to me, at least {@link MIN_ENEMY_DEPLOY}.
+ * players with a visible stack next to me, at least {@link MIN_ENEMY_DEPLOY}. Pass the
+ * turn (`when`) and the fog prior {@link planEnemyEstimates} uses, or a mid-game board of
+ * equal stacks reads as the opening board (#128) and the figure disagrees with the planner's.
  */
 export function defaultEnemyDeploy(
   g: MapGraph,
@@ -1767,6 +1769,7 @@ export function defaultEnemyDeploy(
   previous?: BoardState,
   tracks?: readonly OpponentTrack[],
   prior?: EnemyIncomePrior,
+  when: { turn?: number | null } = {},
 ): number {
   const mineIds = new Set(
     board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me ? [t.territoryId] : [])),
@@ -1777,7 +1780,7 @@ export function defaultEnemyDeploy(
     if (!g.territoryById.has(t.territoryId)) continue;
     if (neighborsOf(g, t.territoryId).some((n) => mineIds.has(n))) next.add(t.owner.playerId);
   }
-  return enemyDeployEstimates(g, board, me, settings, previous, tracks, prior).reduce(
+  return enemyDeployEstimates(g, board, me, settings, previous, tracks, prior, when).reduce(
     (m, e) => (next.has(e.playerId) ? Math.max(m, e.estimate) : m),
     MIN_ENEMY_DEPLOY,
   );
@@ -8003,8 +8006,12 @@ export function planTurn(input: PlanInput): TurnPlan {
             ? `it saves only ${n} ${n === 1 ? 'army' : 'armies'}, under the ${ORDER_PRIORITY_MIN_ARMIES} a card is worth`
             : undefined;
     cardAdvice = why === undefined ? 'order-priority' : null;
-    if (firstOrder === strikeOrder && opts.movesFirst)
+    if (firstOrder === strikeOrder && opts.movesFirst) {
+      // Rule 1s advised the card before it knew I move first: take that line back.
+      const r = rationale.findIndex((l) => l.startsWith("Play Order Priority: my commander's territory"));
+      if (r >= 0) rationale.splice(r, 1);
       rationale.push("Order Priority is not needed for the strike: I move first this turn, so my first order already runs before any of the opponent's.");
+    }
   }
   // Each move out of a conceded border says where it stands: the protected first order, or early
   // but possibly too late (the card protects one order only).

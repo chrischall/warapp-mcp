@@ -483,6 +483,23 @@ describe('planner: commander rules after review (C2b, #61)', () => {
       }
     });
 
+    it('when I move first, neither advises nor mentions playing the card for the strike', () => {
+      for (const goal of ['balanced', 'defend', 'expand'] as const) {
+        const plan = planTurn({
+          graph: gd,
+          board: b,
+          me: ME,
+          income: 10,
+          settings: STD,
+          options: { goal, enemyDeploy: 5, holdsOrderPriority: true, movesFirst: true },
+        });
+        expect(attacks(plan)[0], goal).toMatchObject({ from: 5, to: 2 });
+        expect(plan.cardAdvice, goal).toBeNull();
+        expect(plan.rationale.some((r) => r.startsWith('Play Order Priority')), goal).toBe(false);
+        expect(plan.rationale.some((r) => r.startsWith('Order Priority is not needed for the strike')), goal).toBe(true);
+      }
+    });
+
     it('without the card, warns that the attacks interleave', () => {
       const plan = planTurn({ graph: gd, board: b, me: ME, income: 10, settings: STD, options: { goal: 'expand', enemyDeploy: 5 } });
       expect(attacks(plan)[0]).toMatchObject({ from: 5, to: 2 });

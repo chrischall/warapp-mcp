@@ -243,9 +243,9 @@ export interface CardChoice {
  * The cards the planner plays: every Reinforcement card (it only adds armies). Over
  * the hold limit, with plays still short of what must leave the hand, the lowest-value
  * cards leave it (#127): discarded, except an Order Priority, which is played (my first
- * order goes first) — so Order Delay is discarded before Order Priority is spent. Order
- * Delay (it holds back my own attacks) and Blockade (it gives a territory away) are never
- * auto-played — discarding one costs nothing this turn.
+ * order goes first; one at most, a second is discarded) — so Order Delay is discarded before
+ * Order Priority is spent. Order Delay (it holds back my own attacks) and Blockade (it gives a
+ * territory away) are never auto-played — discarding one costs nothing this turn.
  */
 export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardChoice {
   const shed = cardsToShed(hand, rules);
@@ -270,7 +270,10 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
     // (#127: Order Delay goes before Order Priority, which is kept for a turn that needs it); an
     // Order Priority that must go anyway is played rather than discarded.
     const byValue = rest.map((c, i) => ({ c, i })).sort((a, b) => keepValue(a.c) - keepValue(b.c) || a.i - b.i);
-    for (const { c } of byValue.slice(0, shed - plays.length)) (c.type === CARD_ORDER_PRIORITY ? plays : discards).push(c);
+    // At most one Order Priority is played: a second adds nothing over the first, and whether
+    // war.app takes two plays of it in one turn is unverified, so the rest are discarded.
+    const playOne = (c: Card): boolean => c.type === CARD_ORDER_PRIORITY && !plays.some((p) => p.type === CARD_ORDER_PRIORITY);
+    for (const { c } of byValue.slice(0, shed - plays.length)) (playOne(c) ? plays : discards).push(c);
   }
   const forced = plays.filter((c) => c.type === CARD_ORDER_PRIORITY);
   if (forced.length) {

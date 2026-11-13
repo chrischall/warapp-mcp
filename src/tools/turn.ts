@@ -1228,6 +1228,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             });
             if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
             if (handUnknown) warnings.push(UNREADABLE_HAND);
+            if (plays.some((p) => p.kind === 'OrderDelay')) {
+              // Phase 50, after every move, is the only live-verified position for the card.
+              warnings.push(
+                "Order Delay is written after every move (its only verified position), so it delays none of this turn's " +
+                  'orders: playing it only spends the card, as a discard would.',
+              );
+            }
             // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
             const teammates = new Set(
               me.team !== undefined && me.team >= 0

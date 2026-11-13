@@ -217,6 +217,13 @@ describe('chooseCardPlays', () => {
     expect(c.discards).toEqual([]);
   });
 
+  it('plays at most one Order Priority when two must go: the second adds nothing, so it is discarded', () => {
+    const op2: Card = { ...op, id: '66666666666666666666666666666666' };
+    const c = chooseCardPlays([op, op2, r()], { maxCardsHold: 1, inPlay: [] });
+    expect(c.plays).toEqual([op]);
+    expect(c.discards).toEqual([op2]);
+  });
+
   it('says it plays an Order Priority because it must go, not because the plan advises it', () => {
     const c = chooseCardPlays([op, r()], { maxCardsHold: 1, inPlay: [] });
     expect(c.warnings).toContain(

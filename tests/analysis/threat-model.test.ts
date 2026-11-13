@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { enemyDeployEstimates, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import { defaultEnemyDeploy, enemyDeployEstimates, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, mine, neutral } from './helpers.js';
 
@@ -229,6 +229,9 @@ describe('opening-board detection reads only the players\' stacks (#128)', () =>
     expect(first).toMatchObject({ opening: true, estimate: 5 });
     const plan = planTurn({ graph: g2, board: b, me: ME, income: 5, settings: STD, turn: 6, options: { goal: 'defend' } });
     expect(plan.warnings.join('\n')).toMatch(/Enemy deploy estimate for player 20: ~13 \(base 5 \+ visible bonuses \+8/);
+    // defaultEnemyDeploy takes the turn too, so it agrees with the planner, not the opening read.
+    expect(plan.enemyDeploy).toBe(13);
+    expect(defaultEnemyDeploy(g2, b, ME, STD, undefined, undefined, undefined, { turn: 6 })).toBe(plan.enemyDeploy);
   });
   it('one player stack off the starting count is not', () => {
     const b = board([mine(1, 5), player(2, 8, 20), neutral(3, 2), player(4, 5, 20), player(5, 5, 30)]);

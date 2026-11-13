@@ -1648,6 +1648,8 @@ describe('cards in the turn tools', () => {
     const text = JSON.stringify(preview);
     expect(text).toContain('Order Delay');
     expect(text).toContain('Order Priority');
+    // Written last (the only verified position), the card delays none of these orders: say so.
+    expect(text).toMatch(/Order Delay is written after every move.*delays none of this turn's orders/);
     await h.call('warapp_submit_turn', { ...args, confirmToken: preview.confirmToken });
     expect(Array.from(s.sent[0]!)).toEqual(
       expectedBytes(
