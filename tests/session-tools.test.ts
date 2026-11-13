@@ -60,7 +60,8 @@ describe('warapp_session_status', () => {
 
   it('shows what decodes the board once a bundle has loaded: version, stand-in, helper check (#148)', async () => {
     h = await harnessWith({ decoder: () => undefined });
-    expect(payload(await call('warapp_session_status'))).not.toHaveProperty('decoder');
+    // Before any board is decoded: said, not left out (#155 live check).
+    expect(payload(await call('warapp_session_status')).decoder).toEqual({ checked: false, note: expect.stringMatching(/^Not checked yet/) });
     await h.close();
     const report = {
       bundleVersion: '42',
