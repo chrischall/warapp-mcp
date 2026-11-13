@@ -68,6 +68,17 @@
 //  1. Defence. A visible enemy next to my territory T threatens it when
 //     `armiesToTake(armies(T)) ≤ E + enemyDeploy`, where E is that player's
 //     movable armies (minus the guard) summed over its territories bordering T.
+//     #128: that one attack is not the whole threat. Separate stacks attack separately and
+//     each rounds on its own (a 1-army softener kills 1 at 60%), so the threat is the single
+//     attack equivalent to the most the stacks take sent one after another: Σ kills of the
+//     softeners + what the last (the deploy on it) takes, best last stack (`forceAt`).
+//     Opponents on one team attack together (their stacks and deploys combine); two FFA
+//     players are judged alone, and a border that holds against each but not against both in
+//     one turn gets a warning. Teammates (the game's team list) are never a threat, an
+//     estimate or a target. Under Local Deployment an opponent's visibly held bonus pays
+//     only into its own territories: what reaches T is its estimate less its visible pools
+//     plus the pools that contain one of its stacks next to T. An enemy commander counts in
+//     the expected attack too (rule 1h's near miss, kept garrisons).
 //     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
 //     income (the larger of MinimumArmyBonus and, with BonusArmyPer on, its
 //     visible territories / BonusArmyPer) plus the bonuses that player
@@ -2330,13 +2341,49 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
   }
   /**
+   * Local Deployment (#128): each opponent's bonuses it visibly holds in full, as deploy pools that
+   * land only on their own territories. Empty without Local Deployment or under the override.
+   */
+  /** Each opponent's team, in a team game (#128): opponents on one team attack together. */
+  const teamOf = new Map<number, number>();
+  for (const p of ctx.players ?? []) if (carriesTeam(p.team) && foe(p.id)) teamOf.set(p.id, p.team);
+  const enemyPools = new Map<number, { value: number; members: ReadonlySet<number> }[]>();
+  if (s.localDeployments && !custom) {
+    const ownerAt = (t: number) => {
+      const o = ownerShown(state.get(t))?.owner;
+      return o?.kind === 'player' ? o.playerId : undefined;
+    };
+    for (const b of g.map.bonuses) {
+      if (b.value <= 0) continue;
+      const ts = bonusTerritories(g, b.id);
+      const p = ts.length ? ownerAt(ts[0]!) : undefined;
+      if (p === undefined || !foe(p) || !ts.every((t) => ownerAt(t) === p)) continue;
+      enemyPools.set(p, [...(enemyPools.get(p) ?? []), { value: b.value, members: new Set(ts) }]);
+    }
+  }
+  /**
+   * What `player` may deploy on any of `on` (#128): its whole estimate, except under Local
+   * Deployment, where a bonus it visibly holds pays only into that bonus's territories — the
+   * estimate less every visible pool (unseen income counts as deployable anywhere) plus the
+   * pools that contain one of `on`.
+   */
+  const deployReaching = (player: number, on: readonly number[]): number => {
+    const all = deployOf(player);
+    const pools = enemyPools.get(player);
+    if (!pools?.length) return all;
+    const pooled = pools.reduce((n, q) => n + q.value, 0);
+    const here = pools.reduce((n, q) => n + (on.some((t) => q.members.has(t)) ? q.value : 0), 0);
+    return Math.min(all, Math.max(0, all - pooled) + here);
+  };
+  /**
    * #120: what the owner of enemy territory `t` may add there before my attack lands — its deploy
-   * estimate, or its growth there per turn when larger (rule 1t). 0 for a territory no player holds.
+   * estimate (under Local Deployment, what reaches `t`), or its growth there per turn when larger
+   * (rule 1t). 0 for a territory no opponent holds.
    */
   const reinforcementAt = (t: number): number => {
     const st = state.get(t);
     if (st?.owner.kind !== 'player' || !foe(st.owner.playerId)) return 0;
-    return Math.max(deployOf(st.owner.playerId), growthOf.get(t)?.growth ?? 0);
+    return Math.max(deployReaching(st.owner.playerId, [t]), growthOf.get(t)?.growth ?? 0);
   };
   /** Fewest armies on a territory that hold against `threat` attackers. */
   const holdArmies = (threat: number) => {
@@ -2344,42 +2391,120 @@ export function planTurn(input: PlanInput): TurnPlan {
     while ((toTake(a) ?? Infinity) <= threat) a++;
     return a;
   };
+  /** The most defenders one attack of `attackers` takes ({@link toTake}); -1 when it takes none. */
+  const reachMemo = new Map<number, number>();
+  const takesAlone = (attackers: number): number => {
+    if (!reachMemo.has(attackers)) reachMemo.set(attackers, holdArmies(attackers) - 1);
+    return reachMemo.get(attackers)!;
+  };
+  /** The armies `n` armies kill whatever happens next: the luck-free share, rounded (S2). */
+  const killsOf = (n: number) => guaranteedKills(n, rates.offensiveKillRate, 0, 'StraightRound');
+  interface Force {
+    player: number;
+    /** That player's movable armies (and units) next to the territory. */
+    movable: number;
+    /** That player's fastest-growing stack next to it (0 without a trend, or not projected). */
+    growth: number;
+    /** What that player may deploy there (its estimate; under Local Deployment what reaches it). */
+    deploy: number;
+    /**
+     * The attack that takes as much as the force can (#128): the larger of that player's movable
+     * plus max(deploy, growth) as one attack, and the single attack equivalent to several
+     * separate attacks (each stack its own, and with `allPlayers`, every opponent's too).
+     */
+    threat: number;
+    /** When separate attacks beat one: what they are, for the rationale. */
+    split?: { attacks: number[]; takes: number; players: number[] };
+  }
   /**
-   * The strongest visible enemy force that could hit `t` next turn: per player, its
-   * movable armies next to `t` (territories in `gone` excluded: captured this turn)
-   * plus max(its deploy estimate, its fastest growth there). `null` with no enemy next to it.
+   * The enemy force that can hit my `t` next turn (#128). Per opponent: each of its stacks next
+   * to `t` (territories in `gone` excluded) is movable armies plus its units, and it may deploy
+   * {@link deployReaching} there — onto one stack — plus, with `trend`, its fastest growth when
+   * larger. One attack of all of it is the old model (a transfer then an attack); separate attacks
+   * each round on their own, so a 1-army softener kills 1 at 60% and the last attack takes the
+   * rest: the force reaches max over the last attack L of Σ kills(others) + reach(L). With
+   * `allPlayers`, every opponent next to `t` may attack it in the same turn (worst case); else
+   * each opponent alone. `player` is the strongest one alone. `null` with no opponent next to it.
    */
-  const threatAt = (t: number, gone: (n: number) => boolean): { player: number; threat: number } | null => {
-    const byPlayer = new Map<number, { movable: number; growth: number }>();
-    for (const n of neighborsOf(g, t)) {
+  const forceAt = (
+    t: number,
+    gone: (n: number) => boolean,
+    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean },
+  ): Force | null => {
+    const byPlayer = new Map<number, { stacks: { id: number; movable: number }[]; growth: number }>();
+    for (const n of [...neighborsOf(g, t)].sort(byNum)) {
       const st = state.get(n);
       if (gone(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
-      const p = byPlayer.get(st.owner.playerId) ?? { movable: 0, growth: 0 };
+      const p = byPlayer.get(st.owner.playerId) ?? { stacks: [], growth: 0 };
       // An enemy commander can join the attack: it fights as COMMANDER_STRENGTH armies.
-      p.movable += Math.max(0, st.armies - guard) + unitsAt(n);
-      p.growth = Math.max(p.growth, growthOf.get(n)?.growth ?? 0);
+      p.stacks.push({ id: n, movable: Math.max(0, st.armies - guard) + unitsAt(n) });
+      if (o.trend) p.growth = Math.max(p.growth, growthOf.get(n)?.growth ?? 0);
       byPlayer.set(st.owner.playerId, p);
     }
-    let best: { player: number; threat: number } | null = null;
-    for (const [player, p] of [...byPlayer].sort((a, b) => a[0] - b[0])) {
-      const threat = p.movable + Math.max(deployOf(player), p.growth);
-      if (!best || threat > best.threat) best = { player, threat };
+    if (!byPlayer.size) return null;
+    const each = [...byPlayer]
+      .sort((a, b) => a[0] - b[0])
+      .map(([player, p]) => {
+        const deploy = deployReaching(player, p.stacks.map((x) => x.id));
+        const movable = p.stacks.reduce((n, x) => n + x.movable, 0);
+        const add = Math.max(deploy, p.growth);
+        return { player, stacks: p.stacks, growth: p.growth, deploy, movable, add, single: movable + add };
+      });
+    const best = [...each].sort((a, b) => b.single - a.single || a.player - b.player)[0]!;
+    // Separate attacks: try each stack as the last attack, its owner's deploy on it; every other
+    // opponent in the group lands its deploy on its own largest stack.
+    let split: Force['split'];
+    let splitTakes = -1;
+    // Opponents on one team coordinate; players of an FFA each attack alone (two of them landing
+    // on one border in the same turn is a warning, {@link pileOnAt}, not a hold).
+    const groups: (typeof each)[] = [];
+    for (const e of each) {
+      const team = o.allPlayers ? teamOf.get(e.player) : undefined;
+      const mates = team === undefined ? undefined : groups.find((gr) => teamOf.get(gr[0]!.player) === team);
+      if (mates) mates.push(e);
+      else groups.push([e]);
     }
-    return best;
+    if (o.pileOn) groups.splice(0, groups.length, each);
+    for (const group of groups) {
+      const count = group.reduce((n, e) => n + e.stacks.length, 0);
+      if (count < 2) continue;
+      for (const last of group)
+        for (const L of last.stacks) {
+          const attacks: number[] = [];
+          for (const e of group) {
+            const big = [...e.stacks].sort((a, b) => b.movable - a.movable || a.id - b.id)[0]!;
+            const on = e === last ? L : big;
+            for (const x of e.stacks) if (x !== L) attacks.push(x.movable + (x === on ? e.add : 0));
+          }
+          const lastArmies = L.movable + last.add;
+          const softeners = attacks.filter((a) => a > 0);
+          const takes = softeners.reduce((n, a) => n + killsOf(a), 0) + takesAlone(lastArmies);
+          if (takes > splitTakes) {
+            splitTakes = takes;
+            split = { attacks: [...softeners, lastArmies], takes, players: group.map((e) => e.player) };
+          }
+        }
+    }
+    let threat = best.single;
+    if (split && split.takes > takesAlone(best.single)) threat = Math.max(threat, toTake(split.takes) ?? threat);
+    else split = undefined;
+    return { player: best.player, movable: best.movable, growth: best.growth, deploy: best.deploy, threat, ...(split ? { split } : {}) };
+  };
+  /**
+   * The strongest visible enemy force that could hit `t` next turn ({@link forceAt}, every
+   * opponent next to it, trend included). `null` with no enemy next to it.
+   */
+  const threatAt = (t: number, gone: (n: number) => boolean): { player: number; threat: number } | null => {
+    const f = forceAt(t, gone, { trend: true, allPlayers: true });
+    return f ? { player: f.player, threat: f.threat } : null;
   };
   /**
    * The expected (not worst-case) attack on my `t` next turn (issue #59): per player, its
-   * movable armies next to `t` plus its deploy estimate — no trend projection. 0 with none.
+   * movable armies (and units, #128) next to `t` plus its deploy estimate — no trend projection,
+   * one opponent at a time, its stacks attacking separately when that takes more. 0 with none.
    */
-  const expectedAt = (t: number): number => {
-    const byPlayer = new Map<number, number>();
-    for (const n of neighborsOf(g, t)) {
-      const st = state.get(n);
-      if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
-      byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard));
-    }
-    return Math.max(0, ...[...byPlayer].map(([p, movable]) => movable + deployOf(p)));
-  };
+  const expectedAt = (t: number): number =>
+    forceAt(t, (n) => captured.has(n), { trend: false, allPlayers: false })?.threat ?? 0;
   interface Exposure {
     id: number;
     player: number;
@@ -2404,38 +2529,17 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
 
   // ---- 1. defence ----
-  interface Border {
+  /** A border's threat ({@link forceAt}): the strongest player's force, separate attacks included. */
+  interface Border extends Force {
     id: number;
-    player: number;
-    movable: number;
-    /** That player's fastest-growing stack next to this border (0 without a trend). */
-    growth: number;
-    /** That player's deploy estimate (or the override). */
-    deploy: number;
-    /** movable + max(deploy, growth). */
-    threat: number;
   }
   const borders = new Map<number, Border>();
   /** Every visible enemy player with a stack next to one of my territories. */
   const facing = new Set<number>();
   /** The strongest visible enemy threat to my `t` (territories in `gone` excluded), or `null` with none next to it. */
   const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
-    const byPlayer = new Map<number, { movable: number; growth: number }>();
-    for (const n of neighborsOf(g, t)) {
-      const st = state.get(n);
-      if (gone(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
-      const p = byPlayer.get(st.owner.playerId) ?? { movable: 0, growth: 0 };
-      // An enemy commander can join the attack: it fights as COMMANDER_STRENGTH armies.
-      p.movable += Math.max(0, st.armies - guard) + unitsAt(n);
-      p.growth = Math.max(p.growth, growthOf.get(n)?.growth ?? 0);
-      byPlayer.set(st.owner.playerId, p);
-    }
-    if (!byPlayer.size) return null;
-    const [player, { movable, growth }] = [...byPlayer]
-      .map(([id, p]) => [id, p, p.movable + Math.max(deployOf(id), p.growth)] as const)
-      .sort((a, b) => b[2] - a[2] || a[0] - b[0])[0]!;
-    const deploy = deployOf(player);
-    return { id: t, player, movable, growth, deploy, threat: movable + Math.max(deploy, growth) };
+    const f = forceAt(t, gone, { trend: true, allPlayers: true });
+    return f ? { id: t, ...f } : null;
   };
   for (const t of mine) {
     for (const n of neighborsOf(g, t)) {
@@ -2619,7 +2723,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const units = unitsAt(b.id);
       const take = toTake(have + units);
       if (take === null || take > b.threat) continue;
-      const text = `${label(b.id)} (${have} armies${units ? ' and my commander' : ''}) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${take} would do.`;
+      const text = `${label(b.id)} (${have} armies${units ? ' and my commander' : ''}) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${take} would do${b.split ? ` — sent as separate attacks (${b.split.attacks.join(' then ')}), its stacks take up to ${b.split.takes}` : ''}.`;
       threatWarnings.set(b.id, { text, threat: b.threat });
       warnings.push(text);
       // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.
@@ -7569,6 +7673,20 @@ export function planTurn(input: PlanInput): TurnPlan {
     const have = stayAt(id);
     const take = toTake(have + unitsAt(id));
     warnings[i] += ` Before this turn's deploys: the plan deploys ${n} there, leaving ${have} armies (${take ?? 'none can'} to take${take !== null && take > threat ? `, more than the ${threat} that can reach it: it holds` : `; the ${threat} that can reach it still could`}).`;
+  }
+  // #128: a border that holds against each opponent alone but not against two of them attacking
+  // it in the same turn (FFA players do not coordinate, so this is a warning, not a hold).
+  for (const id of [...borders.keys()].sort(byNum)) {
+    if (conceded.has(id) || !mineSet.has(id)) continue;
+    const alone = borderAt(id, (n) => captured.has(n));
+    const pile = forceAt(id, (n) => captured.has(n), { trend: true, allPlayers: true, pileOn: true });
+    if (!alone || !pile?.split || pile.split.players.length < 2) continue;
+    const have = stayAt(id) + unitsAt(id);
+    const take = toTake(have);
+    if (take === null || take <= alone.threat || have > pile.split.takes) continue;
+    warnings.push(
+      `${label(id)} holds against each opponent alone, but players ${pile.split.players.join(' and ')} attacking it in the same turn (${pile.split.attacks.join(' then ')}) could take up to ${pile.split.takes} armies, and ${have} stay there.`,
+    );
   }
   // ---- 7. schedule the moves (#127) ----
   // Orders zigzag (the first mover's 1st, the other's 1st and 2nd, …), so the place of a move in
