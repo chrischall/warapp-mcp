@@ -104,7 +104,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
       }),
     },
     async ({ game_id, limit }) => {
-      const game = await ctx.client.getGame(game_id, { chat: true });
+      const game = await ctx.client.getGame(game_id, { chat: true, map: false });
       const n = limit ?? DEFAULT_LIMIT;
       const messages = normalizeChat(game.chat, game.players);
       return respond(undefined, ['compact'], () => {
@@ -159,7 +159,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
           async plan({ game_id, message, to }) {
             const gameId = parseGameId(game_id);
             // Read the game for every message (#130): one GameFeed does not know is refused here.
-            const game = await ctx.client.getGame(gameId);
+            const game = await ctx.client.getGame(gameId, { map: false });
             // The message goes out as whoever is signed in: bind that account, so an
             // approval given while one account was signed in never posts as another.
             const me = await ctx.myInviteToken({ fresh: true });

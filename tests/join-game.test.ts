@@ -228,6 +228,9 @@ describe('warapp_join_game', () => {
     });
     const preview = payload(await h.call('warapp_join_game', { game_id: 3001 }));
     expect(JSON.stringify(preview)).toContain('"color":{"index":1,"source":"free"}');
+    // The lobby screen reads only GameFeed's settings: no map download (#148).
+    expect(h.calls.length).toBeGreaterThan(0);
+    for (const c of h.calls) expect(c.url).toContain('GetMap=false');
   });
 
   it('joins with the colour asked for, and refuses one a lobby player has', async () => {

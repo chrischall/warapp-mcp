@@ -20,7 +20,7 @@ async function tokenOf(ctx: LiveContext, gameId: string | number | undefined, pl
       hint: 'warapp_get_game lists each player with their id; warapp_my_games lists game ids.',
     });
   }
-  const game = await ctx.client.getGame(gameId);
+  const game = await ctx.client.getGame(gameId, { map: false });
   const p = resolvePlayer(game.players, raw);
   return p.feedId ?? String(p.id);
 }

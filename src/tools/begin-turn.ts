@@ -129,7 +129,7 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
                 signedInHint(ctx.hosted),
               );
             }
-            const game = await ctx.client.getGame(gameId, { settings: true });
+            const game = await ctx.client.getGame(gameId, { settings: true, map: false });
             beginnable(game, me);
             if (await liveBoard(ctx, gameId)) {
               refuse(

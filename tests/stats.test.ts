@@ -107,11 +107,30 @@ describe('StatsCollector', () => {
     const res = await collector.collect(0);
     expect(res).toMatchObject({ ladderId: 0, feedGames: 2, cacheHits: 0, fetched: 2, newlyCached: 2, failed: 0 });
     expect(requests.map((r) => r.what)).toEqual(['feed:0', 'game:12', 'game:11']);
-    expect(requests[1]!.opts).toEqual({ history: true, settings: true });
+    // No map download: the fake (like WarappClient with the map cached) attaches it (#148).
+    expect(requests[1]!.opts).toEqual({ history: true, settings: true, map: false });
     const rec = JSON.parse(readFileSync(recordPath(dir, 777, 11), 'utf8'));
     expect(rec).toMatchObject({ gameId: 11, mapId: 777 });
     expect(JSON.stringify(rec)).not.toMatch(/p1001|Test Map|North/); // ids only, no names
     expect((await collector.records(777)).map((r) => r.gameId)).toEqual([11, 12]);
+  });
+
+  it('downloads a map only for a finished game whose map is not cached, one more request, still 1 s apart (#148)', async () => {
+    // The first call (no map download) comes back without a map when it is not cached.
+    let calls21 = 0;
+    const { collector, requests } = fake([22, 21], {
+      21: () => (++calls21 === 1 ? game(21, 'Finished', null) : game(21)),
+      22: () => game(22, 'Playing', null),
+    });
+    const res = await collector.collect(0);
+    expect(res).toMatchObject({ fetched: 2, newlyCached: 1, notFinished: 1, failed: 0 });
+    expect(requests.map((r) => [r.what, r.opts])).toEqual([
+      ['feed:0', undefined],
+      ['game:22', { history: true, settings: true, map: false }],
+      ['game:21', { history: true, settings: true, map: false }],
+      ['game:21', { settings: true }],
+    ]);
+    expect(requests[3]!.at - requests[2]!.at).toBeGreaterThanOrEqual(MIN_GAP_MS);
   });
 
   it('leaves at least 1 s between requests (the fake clock sees the gaps), across calls too', async () => {

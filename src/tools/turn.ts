@@ -1254,7 +1254,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             }
             let after: Game;
             try {
-              after = await ctx.client.getGame(st.gameId);
+              after = await ctx.client.getGame(st.gameId, { map: false });
             } catch (e) {
               return {
                 status: 'unknown' as const,
