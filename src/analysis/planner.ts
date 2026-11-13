@@ -1194,6 +1194,8 @@ export interface TurnPlan {
    * view). Present for every opponent with a visible territory my land can reach.
    */
   eta?: { eliminate: Record<number, EliminateEta> };
+  /** #179: the exits of each visible opponent down to {@link FEW_TERRITORIES} or fewer. */
+  exits?: OpponentExits[];
 }
 
 /**
@@ -1210,6 +1212,19 @@ export interface EliminateEta {
   distance: number;
   /** The armies that takes, at `turns` (at `distance` when `turns` is null). */
   armies: number;
+}
+
+/** An opponent with at most this many visible territories has its exits listed (#179). */
+export const FEW_TERRITORIES = 3;
+
+/**
+ * Where an opponent down to a few territories can go this turn (#179), per stack: its own
+ * neighbours, the visible neutrals its movable armies plus the deploy that can reach it take, and
+ * my territories that fall to that once this plan's orders are in. Sorted by id.
+ */
+export interface OpponentExits {
+  player: number;
+  stacks: { territory: number; movable: number; own: number[]; neutrals: number[]; mine: number[] }[];
 }
 
 /** The most turns {@link EliminateEta} looks ahead. */
@@ -2549,6 +2564,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // May start at −1 (a 0-army territory still owes its guard): deploys there pay for it first.
   const avail = new Map(mine.map((id) => [id, armiesOf(id) - guard]));
   const locked = new Set<number>();
+  /**
+   * #179: what a territory covering a finished-off player's exit keeps (in `avail` terms): its
+   * stacks may attack before my attacks land. Every later keep ({@link keepFor}) honours it.
+   */
+  const coverKeep = new Map<number, number>();
   const captured = new Set<number>();
   /** Targets taken by a combined (multi-source) capture. */
   const combined = new Set<number>();
@@ -3181,12 +3201,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    */
   const keepFor = (x: number, gone: (n: number) => boolean, room = Infinity) => {
     const a = avail.get(x)!;
+    const covering = Math.max(0, Math.min(a, coverKeep.get(x) ?? 0));
     const b = borderAt(x, (n) => captured.has(n) || gone(n));
-    if (!b) return 0;
+    if (!b) return covering;
     const need = Math.max(0, holdArmies(b.threat) - unitsAt(x));
     const short = need - stayAt(x);
-    if (short > room && !myCommanders.has(x)) return 0;
-    return a - Math.max(0, Math.min(a, -short));
+    if (short > room && !myCommanders.has(x)) return covering;
+    return Math.max(covering, a - Math.max(0, Math.min(a, -short)));
   };
   // ---- #172: two steps away ----
   /**
@@ -5566,7 +5587,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
      * while the captures are sized, so neither the captures nor a Local Deployment pool can
      * spend that room; one that does not fit is left to triage.
      */
-    const reserve = (stay: ReadonlySet<number>) => {
+    const reserve = (stay: ReadonlySet<number>, cover = false) => {
       const tried = ts.filter((t) => !stay.has(t));
       const sources = new Set(tried.flatMap((t) => neighborsOf(g, t).filter((n) => mineSet.has(n))));
       const keepAt = new Map<number, number>();
@@ -5603,6 +5624,47 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         deploy(h.x, h.cost);
         funded.set(h.x, h.cost);
       }
+      // #179: cover its exits onto my land. Unless I move first, its stacks may attack before my
+      // attacks land, so each of my territories next to it holds against its stacks there plus the
+      // deploy that can reach them: a source keeps that (and what the attack would lose defending,
+      // so the attack still goes out whole), a border that attacks nothing is deployed to. These
+      // stay after the commit (the territory is locked), unlike the holds above.
+      const covers = new Set<number>();
+      /** What each covered territory keeps, in `avail` terms. */
+      const coverAt = new Map<number, number>();
+      let uncoverable = false;
+      if (cover)
+        for (const x of mine) {
+          const adj = ts.filter((t) => neighborsOf(g, x).includes(t));
+          if (!adj.length) continue;
+          const threat = deployReaching(p, adj) + adj.reduce((n, t) => n + Math.max(0, armiesOf(t) - guard) + unitsAt(t), 0);
+          const need = Math.max(0, holdArmies(threat) - unitsAt(x));
+          covers.add(x);
+          coverAt.set(x, Math.max(0, need - guard));
+          if (sources.has(x)) {
+            if (noSplit) {
+              uncoverable = true;
+              break;
+            }
+            const keep = Math.max(need - guard, straightKills(threat, rates.offensiveKillRate));
+            coverAt.set(x, Math.max(0, need - guard));
+            const extra = keep - (keepAt.get(x) ?? 0);
+            if (extra > 0) {
+              keepAt.set(x, keep);
+              avail.set(x, avail.get(x)! - extra);
+            }
+          } else {
+            const cost = Math.max(0, need - armiesOf(x)) - (funded.get(x) ?? 0);
+            if (cost > roomAt(x)) {
+              uncoverable = true;
+              break;
+            }
+            if (cost > 0) {
+              deploy(x, cost);
+              funded.set(x, (funded.get(x) ?? 0) + cost);
+            }
+          }
+        }
       const reserved = checkpoint(ts);
       const fullReason = (t: number) => `takes player ${p}'s territory, sized for ${reachText(t)} landing there`;
       /** Size and plan the attacks for `sizes` (from `reserved`), and judge the result. */
@@ -5637,6 +5699,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           .sort(byNum);
         assumeGone = () => false;
         const ours = moves.slice(reserved.moves).filter((m) => m.kind === 'attack');
+        // #179: a covered territory that attacks nothing gets the deploys its kept hold still lacks.
+        let uncovered = false;
+        for (const x of [...covers].sort(byNum)) {
+          const short = -avail.get(x)!;
+          if (short <= 0 || ours.some((m) => m.from === x)) continue;
+          if (short > roomAt(x)) uncovered = true;
+          else deploy(x, short);
+        }
         const saveCost = attacked.map((t) => {
           const at = ours.filter((m) => m.to === t);
           const finisher = at[at.length - 1]!;
@@ -5671,7 +5741,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           all,
           armies: ours.reduce((n, m) => n + m.armies, 0),
           deploys: reserved.budget - budget,
-          enough: falls > 0 && (all || ts.length - falls <= 1 || falls * 2 >= ts.length),
+          enough: falls > 0 && !uncovered && (all || ts.length - falls <= 1 || falls * 2 >= ts.length),
           freed,
           unfunded,
           left,
@@ -5695,6 +5765,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         let best: Attempt | null = null;
         let bestUnfunded: Attempt | null = null;
         let canEliminate = false;
+        if (uncoverable) return { best, bestUnfunded, canEliminate };
         const sizes = tried.map(() => 0);
         const visit = (i: number) => {
           if (i === tried.length) {
@@ -5718,8 +5789,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       /** Plan `chosen`, then release the reservations: the triage (or the greedy step) deploys the holds. */
       const commit = (chosen: Attempt) => {
         attempt(chosen.sizes);
+        // #179: a covered exit keeps its hold: every later keep honours it.
+        for (const [x, k] of coverAt) coverKeep.set(x, Math.max(coverKeep.get(x) ?? 0, k));
         for (const [x, k] of keepAt) avail.set(x, avail.get(x)! + k);
         for (const [x, k] of funded) {
+          if (covers.has(x)) continue;
           const d = deployed.get(x)! - k;
           if (d) deployed.set(x, d);
           else deployed.delete(x);
@@ -5727,17 +5801,27 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           budget += k;
         }
       };
-      return { search, commit };
+      return { search, commit, covers };
     };
     const found = reserve(new Set()).search();
     restore(start);
     if (probe) return found.canEliminate;
     let chosen = found.best;
     let stay: ReadonlySet<number> = new Set();
+    /** #179: the elimination covers its exits onto my land (not known to move first). */
+    let cover = false;
+    if (chosen?.all && !pressure && opts.movesFirst !== true) {
+      const c = reserve(new Set(), true).search();
+      restore(start);
+      if (c.best?.all) {
+        chosen = c.best;
+        cover = true;
+      }
+    }
     // A better attempt that left a hold facing what it left unattacked unfunded: once more,
     // with those holds reserved first and those territories left alone.
     const retry = found.bestUnfunded;
-    if (retry && (!chosen || better(retry, chosen) > 0)) {
+    if (!cover && retry && (!chosen || better(retry, chosen) > 0)) {
       const again = reserve(new Set(retry.left)).search();
       restore(start);
       if (again.best && (!chosen || better(again.best, chosen) > 0)) {
@@ -5746,7 +5830,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       }
     }
     if (!chosen) return false;
-    reserve(stay).commit(chosen);
+    const committed = reserve(stay, cover);
+    committed.commit(chosen);
     const { attacked, falls, left } = chosen;
     const local = attacked.filter((t) => reachOn.get(t)! < deployP);
     if (local.length)
@@ -5778,8 +5863,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (chosen.all) {
       finishedOff.add(p);
       rationale.push(
-        `Finish off player ${p}: attack all ${ts.length} of its territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there, so it is eliminated ${fogAnywhere ? 'if it holds nothing in the fog, ' : ''}even if it reinforces; the borders facing it need no holding.`,
+        `Finish off player ${p}: attack all ${ts.length} of its territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there, so it is eliminated ${fogAnywhere ? 'if it holds nothing in the fog, ' : ''}even if it reinforces; the borders facing it need no holding${cover ? ' once my attacks land' : ''}.`,
       );
+      if (cover && committed.covers.size)
+        rationale.push(
+          `Cover player ${p}'s exits (#179): I am not known to move first, so its stacks may attack before my attacks land; ${[...committed.covers].sort(byNum).map(label).join(', ')} keep${committed.covers.size === 1 ? 's' : ''} what holds against its stacks next to ${committed.covers.size === 1 ? 'it' : 'them'} plus its deploy, so it cannot break out onto my land.`,
+        );
       warnings.push(
         `Eliminating player ${p} assumes it deploys at most ~${deployP} (its estimate); more income than that (unseen bonuses, cards) could still save one of its territories.`,
       );
@@ -8464,7 +8553,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // this turn and attack it next. The larger hold binds (never the two added together).
       const far = twoStepHold(t);
       const twoStep = far !== null && far.stay > keep128 ? far : null;
-      const keep = Math.max(keep128, twoStep?.stay ?? 0);
+      const keep = Math.max(keep128, twoStep?.stay ?? 0, coverKeep.has(t) ? coverKeep.get(t)! + guard : 0);
       // No-Split (#124): a transfer sends the whole stack, so one that must keep some sends none.
       const part = Math.min(n, Math.max(0, stayAt(t) - keep));
       const k = noSplit && part < n ? 0 : part;
@@ -8877,6 +8966,38 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       `Eliminating player ${p} assumes my attacks land before its own orders: they interleave, so if it moves first it can move between its territories${exposed.length ? `, or take ${exposed.map(label).join(' or ')} (what this plan leaves there falls to its ~${most})` : ''}, and survive.`,
     );
   }
+  // ---- #179: the exits of an opponent down to a few territories ----
+  // Each of its stacks can move to its own neighbours, take a neutral its movable armies plus the
+  // deploy that can reach it take, or take a territory of mine that falls to that (what this plan
+  // leaves there).
+  const exits: OpponentExits[] = [];
+  for (const [p, theirs] of [...ownedBy].sort((a, b) => a[0] - b[0])) {
+    if (theirs.length > FEW_TERRITORIES) continue;
+    const stacks = theirs.map((t) => {
+      const movable = Math.max(0, armiesOf(t) - guard) + unitsAt(t);
+      const reach = movable + deployReaching(p, [t]);
+      const next = [...neighborsOf(g, t)].sort(byNum);
+      return {
+        territory: t,
+        movable,
+        own: next.filter((n) => theirs.includes(n)),
+        neutrals: next.filter((n) => {
+          const st = state.get(n);
+          return st?.owner.kind === 'neutral' && st.armies !== null && !captured.has(n) && (captureCost(defenceAt(n), s) ?? Infinity) <= reach;
+        }),
+        mine: next.filter((n) => mineSet.has(n) && (toTake(stayAt(n) + unitsAt(n)) ?? Infinity) <= reach),
+      };
+    });
+    exits.push({ player: p, stacks });
+    if (!finishedOff.has(p) || opts.movesFirst) continue;
+    for (const x of stacks)
+      for (const n of x.neutrals) {
+        const by = neighborsOf(g, n).filter((y) => mineSet.has(y) || captured.has(y)).sort(byNum);
+        warnings.push(
+          `player ${p}'s stack on ${label(x.territory)} can flee onto ${label(n)} before my attack lands and survive there; ${by.length ? `${by.map(label).join(' or ')} borders it: retake it next turn` : 'nothing of mine borders it'}.`,
+        );
+      }
+  }
   const decided = [...moves];
   /** Within a slot, a larger early move first: one grouped early transfer beats several small ones. */
   const rankOf = (m: PlannedMove) => (slotOf(m) === MoveSlot.Early ? m.armies : 0);
@@ -9107,5 +9228,6 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     moveSlots: moves.map((m) => SLOT_NAMES[slotOf(m)]!),
     ...(exchanges.length ? { exchanges } : {}),
     ...(Object.keys(eliminateEta).length ? { eta: { eliminate: eliminateEta } } : {}),
+    ...(exits.length ? { exits } : {}),
   };
 }

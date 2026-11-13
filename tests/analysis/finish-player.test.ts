@@ -158,3 +158,49 @@ describe('#179 eta.eliminate: the turns to finish each visible opponent', () => 
     expect(p.eta!.eliminate[VICTIM]).toMatchObject({ turns: null });
   });
 });
+
+describe('#179 exits: an opponent down to a few territories', () => {
+  // As KILL_BOARD, and my 4 (behind 3) also faces the victim's 7; 8 is a neutral next to its 6.
+  const map = makeMap(
+    [1, 2, 3, 4, 5, 6, 7, 8],
+    [[1, 2], [2, 3], [3, 4], [1, 5], [2, 6], [3, 7], [5, 6], [6, 7], [4, 7], [6, 8]],
+  );
+  const b = board([mine(1, 3), mine(2, 3), mine(3, 3), mine(4, 2), enemy(5, 2), enemy(6, 6), enemy(7, 2), neutral(8, 2)]);
+  const plan = (options: Parameters<typeof planTurn>[0]['options'] = {}, income = 90) =>
+    planTurn({ graph: buildGraph(map), board: b, me: ME, income, settings: STD, options });
+  const stays = (p: TurnPlan, id: number, start: number) =>
+    start + (p.deploys.find((d) => d.territoryId === id)?.armies ?? 0) - p.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0);
+
+  it('lists each stack\'s exits: its own neighbours, the neutrals it can take, and my territories it can take', () => {
+    const p = plan({ movesFirst: true }, 0);
+    const ex = p.exits!.find((e) => e.player === VICTIM)!;
+    expect(ex.stacks.find((x) => x.territory === 6)).toEqual({ territory: 6, movable: 5, own: [5, 7], neutrals: [8], mine: [2] });
+    expect(ex.stacks.find((x) => x.territory === 7)).toMatchObject({ own: [6], mine: [3, 4] });
+  });
+
+  it('not known to move first: covers its exits onto my land while finishing it off, and says so', () => {
+    const p = plan();
+    expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
+    expect(p.rationale.join('\n')).toMatch(/Cover player 20's exits \(#179\)/);
+    // 4 attacks nothing but faces 7 (1 movable + ~5): it is held (6 attackers do not take 4).
+    expect(stays(p, 4, 2)).toBeGreaterThanOrEqual(4);
+    // Its stacks plus its deploy take none of my borders: the exits onto my land are closed.
+    expect(p.exits!.find((e) => e.player === VICTIM)!.stacks.every((x) => x.mine.length === 0)).toBe(true);
+    expect(p.warnings.join('\n')).not.toMatch(/or take T/);
+    // Its flight onto the neutral is named, with who can retake it.
+    expect(p.warnings.join('\n')).toMatch(/player 20's stack on T6 \(#6\) can flee onto T8 \(#8\)/);
+  });
+
+  it('known to move first: no cover is needed', () => {
+    const p = plan({ movesFirst: true });
+    expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
+    expect(p.rationale.join('\n')).not.toMatch(/Cover player 20's exits/);
+  });
+
+  it('when covering is unaffordable, finishes it off uncovered as before, with the caveat', () => {
+    const p = plan({}, 40);
+    expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
+    expect(p.rationale.join('\n')).not.toMatch(/Cover player 20's exits/);
+    expect(p.warnings.join('\n')).toMatch(/assumes my attacks land before its own orders/);
+  });
+});

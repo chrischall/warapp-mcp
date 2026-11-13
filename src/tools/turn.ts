@@ -1267,6 +1267,21 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           : {}),
         // #179: turns to eliminate each visible opponent, full view only.
         ...(rung === 'full' && plan.eta ? { eta: plan.eta } : {}),
+        // #179: where an opponent down to a few territories can go this turn, full view only.
+        ...(rung === 'full' && plan.exits
+          ? {
+              exits: plan.exits.map((e) => ({
+                player: e.player,
+                stacks: e.stacks.map((x) => ({
+                  territory: name(x.territory),
+                  movable: x.movable,
+                  own: x.own.map(name),
+                  neutrals: x.neutrals.map(name),
+                  mine: x.mine.map(name),
+                })),
+              })),
+            }
+          : {}),
         cards: {
           hand: hand.map(cardView),
           ...(handUnknown ? { handReadable: false } : {}),
