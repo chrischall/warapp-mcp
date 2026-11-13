@@ -14,6 +14,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { BoardSpecialUnit, BoardState, TerritoryOwner, TerritoryState } from './board.js';
 import type { Player } from './normalize.js';
+import type { DecoderReport } from './protocol/bundle.js';
 import type { Reader } from './protocol/codec.js';
 import type { ReadBudget } from './protocol/interp.js';
 
@@ -81,6 +82,8 @@ export interface ClassReader {
   readClass(typeName: string, reader: Reader, budget?: ReadBudget): unknown;
   /** The fields a class's reader fills from another class, in read order (a loaded bundle has it). */
   fieldsReadAs?(ownerType: string, fieldType: string): string[];
+  /** What the decoding rests on: version, stand-in flag, reader-helper check (a loaded bundle has it). */
+  report?(): DecoderReport;
 }
 
 /** On a decoded LatestGameInfo: the name of its CURRENT standing's field, from the bundle's reader. */

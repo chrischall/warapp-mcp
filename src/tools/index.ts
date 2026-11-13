@@ -128,6 +128,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
       sessionLinked: () => bridge.sessionLinked(),
     },
     pushTransport: () => push.status().transport,
+    decoder: () => live.decoderReport(),
     identityChanged: () => live.forgetIdentity(),
     hosted,
     ...(env ? { env } : {}),

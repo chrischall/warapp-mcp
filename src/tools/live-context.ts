@@ -6,7 +6,7 @@ import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
 import { inGameId, readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
 import type { Game } from '../normalize.js';
-import { BUNDLE_FETCH_TIMEOUT_MS, BUNDLE_MAX_BYTES, BundleProvider } from '../protocol/bundle.js';
+import { BUNDLE_FETCH_TIMEOUT_MS, BUNDLE_MAX_BYTES, BundleProvider, type DecoderReport } from '../protocol/bundle.js';
 import {
   Method,
   readTerritoryPicks,
@@ -23,6 +23,8 @@ export interface LiveContext {
   rpc: WarappRpc;
   /** The loaded client bundle (cached per process). */
   bundle: () => Promise<ClassReader>;
+  /** What the last loaded bundle's decoding rests on (#148); undefined before one has loaded. Never loads one. */
+  decoderReport: () => DecoderReport | undefined;
   /**
    * The signed-in account's invite token (= its GameFeed player id), read from
    * war.app's InviteToken page through the bridge; `undefined` when it cannot be read.
@@ -233,6 +235,7 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     fetchText: bundleFetcher(opts.bridge, opts.fetchImpl),
   });
   const load = opts.bundle ?? (() => provider.get());
+  let lastBundle: ClassReader | undefined;
   const fetchText = bundleFetcher(opts.bridge, opts.fetchImpl);
   const identity = opts.identity ?? (async () => '');
   const now = opts.now ?? Date.now;
@@ -291,9 +294,12 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     hosted: isHosted(opts.env ?? process.env),
     client: opts.client,
     rpc,
+    decoderReport: () => lastBundle?.report?.(),
     bundle: async () => {
       try {
-        return await load();
+        const b = await load();
+        lastBundle = b;
+        return b;
       } catch (e) {
         if (e instanceof McpToolError) throw e;
         throw new McpToolError(`Could not load war.app's client bundle: ${e instanceof Error ? e.message : String(e)}`, {

@@ -97,6 +97,16 @@ export function discoverBundleUrl(html: string, pageUrl: string): BundleSource {
   return { url: `https://${BUNDLE_HOST}${BUNDLE_PATH}?v=${version}`, version };
 }
 
+/** What decoded a board: the bundle version, whether a stand-in did, and its reader-helper check. */
+export interface DecoderReport {
+  /** The client bundle version the board was decoded with. */
+  bundleVersion: string;
+  /** A cached copy stood in because the current version could not be looked up (#131). */
+  fallback: boolean;
+  /** The reader helpers checked at load (#148): verified, and the ones that are not, with why. */
+  helpers: { verified: string[]; unverified: string[]; reasons?: Record<string, string> };
+}
+
 /** A loaded bundle: reads wire classes by stable type name. */
 export class WarappBundle {
   private readonly interp: BundleInterpreter;
@@ -137,6 +147,16 @@ export class WarappBundle {
 
   /** The built-in reader helpers checked against this bundle's own definitions at load. */
   readonly dialectCheck: DialectCheck;
+
+  /** What this bundle's decoding rests on, for the tools to show (#148). */
+  report(): DecoderReport {
+    const { verified, unverified, reasons } = this.dialectCheck;
+    return {
+      bundleVersion: this.version,
+      fallback: this.fallback,
+      helpers: { verified: [...verified], unverified: [...unverified], ...(reasons ? { reasons: { ...reasons } } : {}) },
+    };
+  }
 
   /** Whether a type name is registered in this bundle. */
   has(typeName: string): boolean {

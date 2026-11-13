@@ -3,7 +3,9 @@ import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Method } from '../src/protocol/methods.js';
 import { EMAIL, liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
-import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { WarappBundle } from '../src/protocol/bundle.js';
+import { LIVE_BUNDLE, writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { MY_GAMES_BUNDLE } from './protocol/my-games-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -77,6 +79,32 @@ async function confirmed(name: string, args: Record<string, unknown>) {
 }
 
 describe('warapp_get_live_board', () => {
+  it('says what decoded the board: the full view always, the compact one when a cached stand-in did (#148)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(MID_BOARD) }) });
+    expect(payload(await h.call('warapp_get_live_board', { game_id: GAME }))).not.toHaveProperty('decoder');
+    expect(payload(await h.call('warapp_get_live_board', { game_id: GAME, view: 'full' })).decoder).toEqual({
+      bundleVersion: 'test',
+      fallback: false,
+      helpers: { verified: [], unverified: [] },
+    });
+    await h.harness.close();
+
+    const standIn = new WarappBundle(
+      `var P={};P.Ya=function(a){return a.Og()};P.tL=function(a){return O.Q3c(a)};\n${LIVE_BUNDLE}\n${MY_GAMES_BUNDLE}`,
+      'cached-1',
+    );
+    standIn.fallback = true;
+    h = await liveHarness({ feed: [game('Playing')], bundle: standIn, warapp: routes({ [Method.GetLatestGameInfo]: board(MID_BOARD) }) });
+    const compact = payload(await h.call('warapp_get_live_board', { game_id: GAME }));
+    expect(compact.decoder).toEqual({ bundleVersion: 'cached-1', fallback: true, note: expect.stringMatching(/cached copy/) });
+    const full = payload<{ decoder: Record<string, unknown> }>(await h.call('warapp_get_live_board', { game_id: GAME, view: 'full' }));
+    expect(full.decoder).toMatchObject({
+      bundleVersion: 'cached-1',
+      fallback: true,
+      helpers: { verified: ['P.Ya'], unverified: ['P.tL'], reasons: { 'P.tL': expect.any(String) } },
+    });
+  });
+
   it('pick phase: owners as pickable / neutral, by territory name, through GetLatestGameInfo', async () => {
     let params: number | undefined;
     h = await liveHarness({

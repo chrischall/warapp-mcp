@@ -215,6 +215,10 @@ function liveBoardView(game: Game, territories: LiveTerritory[], rung: string, s
   };
 }
 
+const FALLBACK_NOTE =
+  "Decoded by a cached copy of war.app's client: the current version could not be looked up (a frozen or " +
+  'signed-out tab?). Reload or focus a war.app tab; warapp_session_status shows the decoder.';
+
 export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_get_live_board',
@@ -269,7 +273,19 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
               : inGameId(await resolveMe(ctx, game.players, o === 'me' ? undefined : owner));
       }
       const territories = await loadLiveTerritories(ctx, game);
-      return respond(view, VIEWS, (rung) => liveBoardView(game, territories, rung, sel));
+      const decoder = ctx.decoderReport();
+      return respond(view, VIEWS, (rung) => {
+        const out = liveBoardView(game, territories, rung, sel);
+        // What the decoding rests on (#148): always on full; on compact only when a stand-in decoded it.
+        if (!decoder || (rung !== 'full' && !decoder.fallback)) return out;
+        return {
+          ...out,
+          decoder:
+            rung === 'full'
+              ? decoder
+              : { bundleVersion: decoder.bundleVersion, fallback: true, note: FALLBACK_NOTE },
+        };
+      });
     },
   );
 

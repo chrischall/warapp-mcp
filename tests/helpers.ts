@@ -76,14 +76,24 @@ export async function liveHarness(
     directFetch?: DirectFetch;
     /** Answer form elicitation (the client then advertises it, so writes confirm by elicitation). */
     elicitation?: TestHarnessOptions['elicitation'];
+    /** The client bundle (default: the synthetic live + my-games bundle). */
+    bundle?: WarappBundle;
+    /** Called before each GameFeed call is answered (e.g. to hold one back); default none. */
+    beforeFeed?: (url: string) => Promise<void>;
   } = {},
 ): Promise<Harness> {
   const dataDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'warapp-mcp-test-'));
   const feed = opts.feed?.length ? opts.feed : [lobbyFixture()];
-  const { calls, fetchImpl } = stubFetch(...feed);
+  const { calls, fetchImpl: answer } = stubFetch(...feed);
+  const fetchImpl = (opts.beforeFeed
+    ? async (url: string | URL, init?: RequestInit) => {
+        await opts.beforeFeed!(String(url));
+        return answer(url, init);
+      }
+    : answer) as typeof fetch;
   const fake = fakeWarapp(opts.warapp ?? NO_RESULT, opts.pages);
   const { bridge, mock } = mockWarappBridge(opts.socket ? withSocket(opts.socket, fake.handler) : fake.handler);
-  const bundle = new WarappBundle(`${LIVE_BUNDLE}\n${MY_GAMES_BUNDLE}`, 'test');
+  const bundle = opts.bundle ?? new WarappBundle(`${LIVE_BUNDLE}\n${MY_GAMES_BUNDLE}`, 'test');
   const harness = await createTestHarness((s) =>
     registerAllTools(s, {
       env: { ...CREDS, MCP_DATA_DIR: dataDir, ...opts.env },

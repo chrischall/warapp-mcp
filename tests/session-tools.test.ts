@@ -58,6 +58,22 @@ describe('warapp_session_status', () => {
     expect(payload(await call('warapp_session_status'))).not.toHaveProperty('pushTransport');
   });
 
+  it('shows what decodes the board once a bundle has loaded: version, stand-in, helper check (#148)', async () => {
+    h = await harnessWith({ decoder: () => undefined });
+    expect(payload(await call('warapp_session_status'))).not.toHaveProperty('decoder');
+    await h.close();
+    const report = {
+      bundleVersion: '42',
+      fallback: true,
+      helpers: { verified: ['P.Ya'], unverified: ['P.tL'], reasons: { 'P.tL': 'its definition cannot be evaluated here' } },
+    };
+    h = await harnessWith({ decoder: () => report });
+    expect(payload(await call('warapp_session_status')).decoder).toEqual({ ...report, note: expect.stringMatching(/cached copy/) });
+    await h.close();
+    h = await harnessWith({ hosted: true, decoder: () => ({ ...report, fallback: false }) });
+    expect(payload(await call('warapp_session_status')).decoder).toEqual({ ...report, fallback: false });
+  });
+
   it('reports not-linked and points to warapp_link_session', async () => {
     h = await harnessWith({ read: async () => null });
     const p = payload(await call('warapp_session_status'));
