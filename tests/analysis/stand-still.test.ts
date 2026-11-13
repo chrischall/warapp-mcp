@@ -430,6 +430,58 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
     expect(w).not.toMatch(/hold their borders/);
     expect(valid(p, b, 5, map)).toEqual([]);
   });
+
+  describe('the capture goes from other sources: rule 1b withdrawal survives every undo', () => {
+    //   Conceded 6-stack on 1 (a 25-army enemy on 22) has the best reach to 3, a 7-neutral in Pair
+    //   (+2, with 12-neutrals on 6 and 7). 3 also borders my 4-stacks on 4 and 5, and a 15-army enemy
+    //   on 23: the combined capture from 4 and 5 is stopped by rule 4d (waived only in the opening).
+    const cmap = makeMap(
+      [1, 2, 3, 4, 5, 6, 7, 22, 23],
+      [[1, 2], [1, 3], [1, 22], [3, 4], [3, 5], [4, 2], [5, 2], [3, 6], [6, 7], [3, 23]],
+      [[401, 'Pair', 2, [3, 6, 7]]],
+    );
+    const cg = buildGraph(cmap);
+    const cb = board([
+      mine(1, 6),
+      mine(2, 1),
+      neutral(3, 7),
+      mine(4, 4),
+      mine(5, 4),
+      neutral(6, 12),
+      neutral(7, 12),
+      player(22, 25, P2),
+      player(23, 15, P3),
+    ]);
+    const withdrawal = (p: TurnPlan) => {
+      expect(p.conceded).toEqual([1]);
+      expect(p.moves.filter((m) => m.from === 1)).toEqual([expect.objectContaining({ to: 2, armies: 5, kind: 'transfer' })]);
+      expect(p.rationale.join('\n')).toMatch(/Withdraw 5 from T1 \(#1\) to /);
+      expect(p.rationale.join('\n')).not.toMatch(/Attack out of conceded/);
+      expect(p.warnings.join('\n')).toMatch(/The withdrawal from T1 \(#1\) only executes/);
+      expect(p.cardAdvice).toBe('order-priority');
+    };
+
+    it('opening: the waived capture goes ahead from 4 and 5, and the withdrawal stands', () => {
+      for (const adapt of [false, true]) {
+        const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: CAP, game: SEVEN, options: { adapt } });
+        expect(p.profile.phase).toBe('opening');
+        expect(attacks(p).map((m) => m.to)).toEqual([3, 3]);
+        expect(attacks(p).every((m) => m.from !== 1)).toBe(true);
+        withdrawal(p);
+        expect(valid(p, cb, 5, cmap)).toEqual([]);
+      }
+    });
+
+    it('later, with no waiver (contact, over the army cap): rule 4d stops it, and the withdrawal stands', () => {
+      // An army cap of 1× income: my 20 armies after deploy exceed 5, so 4e runs in contact.
+      const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: { ...STD, armyCap: 1 }, game: { ...SEVEN, turn: 5 } });
+      expect(p.profile.phase).toBe('contact');
+      expect(p.rationale.join('\n')).toMatch(/Do not take T3 \(#3\)/);
+      expect(attacks(p)).toEqual([]);
+      withdrawal(p);
+      expect(valid(p, cb, 5, cmap)).toEqual([]);
+    });
+  });
 });
 
 describe('#107: the stand-still warning names the actual reason', () => {

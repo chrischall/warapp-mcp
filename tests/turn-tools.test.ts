@@ -629,6 +629,36 @@ describe('warapp_plan_turn — threat trend', () => {
   });
 });
 
+describe('warapp_plan_turn — never stand still (#107)', () => {
+  // Turn 2 of a several-player game. Ann's 6-stack on 158 borders Bob's 25 on 134, so it is
+  // conceded; 157 (a 4-neutral in bonus 118, whose other members are 12-neutral 161 and Ann's
+  // 1-army 159) is the only cheap capture. Every bonus is uneconomic: the tool's planner (game
+  // settings mapped, adapt on) attacks out of 158 rather than withdraw and stand still.
+  const OPENING: SyntheticTerritory[] = [
+    { id: 158, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+    { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 1 },
+    { id: 157, fogLevel: 1, owner: 0, armies: 4 },
+    { id: 161, fogLevel: 1, owner: 0, armies: 12 },
+    { id: 135, fogLevel: 1, owner: 0, armies: 12 },
+    { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 25 },
+  ];
+
+  it('the conceded stack attacks out to take the cheap neutral', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { numberOfTurns: '1', settings: modelledSettings() })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OPENING) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.profile.phase).toBe('opening');
+    expect(p.conceded.map((t) => t.id)).toEqual([158]);
+    expect(p.moves.map((m) => [m.from.id, m.to.id, m.armies, m.kind])).toEqual([[158, 157, 6, 'attack']]);
+    expect(p.deploys.find((d) => d.territory.id === 158)?.armies).toBe(1);
+    expect(p.cardAdvice).toBeNull();
+    expect(p.rationale.join('\n')).toMatch(/Attack out of conceded .* \(#158\) rather than withdraw/);
+    expect(p.warnings.join('\n')).not.toMatch(/standing still/i);
+  });
+});
+
 describe('plannerSettings', () => {
   it('maps game settings; AllowTransferOnly (the per-order mode toggle) never turns transfers off', () => {
     expect(plannerSettings(undefined)).toEqual({});

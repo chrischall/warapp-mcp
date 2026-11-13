@@ -2867,14 +2867,14 @@ export function planTurn(input: PlanInput): TurnPlan {
    * Capture `t` from its best source. A conceded border is never deployed to: it attacks
    * out only with the armies already on it (unless every territory I hold is conceded,
    * when there is nowhere better). `force` names the source (it may be locked) and the
-   * armies on it that stay out of the attack. `fromConceded` (rule 4e only) lets a conceded
-   * border attack out with deploys too: they leave with the attack.
+   * armies on it that stay out of the attack. `fromConceded` (rule 4e only) names the one conceded
+   * border that may attack out with deploys too: they leave with the attack.
    */
   const tryCapture = (
     t: number,
     reason: string,
     force?: { from: number; keep: number },
-    fromConceded = false,
+    fromConceded?: number,
   ): boolean => {
     refusal = undefined;
     const tg = targets.get(t)!;
@@ -2882,7 +2882,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const spare = (x: number) => (force ? avail.get(x)! - force.keep : movableFor(x, t));
     if (force && orderOf(force.from)) return false;
     const usable = (x: number) =>
-      !locked.has(x) && (!conceded.has(x) || fromConceded || concededSource(x, t, tg.cost));
+      !locked.has(x) && (!conceded.has(x) || x === fromConceded || concededSource(x, t, tg.cost));
     const sources = force
       ? [force.from]
       : tg.sources.filter((x) => usable(x) && !orderOf(x)).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
@@ -4415,7 +4415,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         const unreclaim = out === undefined ? () => {} : reclaim(out);
         const before = out === undefined ? 0 : movableFor(out, st.t);
         const restore = snapshot();
-        if (!tryCapture(st.t, reasonOf(st), undefined, out !== undefined)) {
+        if (!tryCapture(st.t, reasonOf(st), undefined, out)) {
           unreclaim();
           return null;
         }
@@ -4426,9 +4426,14 @@ export function planTurn(input: PlanInput): TurnPlan {
             `Attack out of conceded ${label(out)} rather than withdraw: its ${before} movable armies${need ? ` (and ${need} deployed there, which leave with the attack)` : ''} take ${label(st.t)}; one capture is worth more than saving them.`,
           );
         } else unreclaim();
+        const viaOut = out !== undefined && move.from === out;
         return () => {
+          // restore() rewinds to the snapshot, taken after the reclaim and counting moves, lines
+          // and warnings by length: a withdrawal already put back is taken out again first, so
+          // the rewind removes only this step and the withdrawal is then put back once.
+          const unwind = out === undefined || viaOut ? unreclaim : reclaim(out);
           restore();
-          if (out !== undefined && move.from === out) unreclaim();
+          unwind();
         };
       };
       let taken: (typeof steps)[number] | undefined;
