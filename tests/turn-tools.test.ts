@@ -93,6 +93,17 @@ describe('warapp_plan_turn', () => {
     expect(p.warnings.join('\n')).toMatch(/income 5 may be off.*army cap/i);
   });
 
+  it('a speed first turn with no board yet says to call warapp_begin_turn, then plan and submit at once', async () => {
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), MoveOrder: 'NoLuckCycle' };
+    h = await liveHarness({
+      feed: [game('Playing', { numberOfTurns: '0', settings })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(null) }),
+    });
+    const res = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/press Begin.*warapp_begin_turn.*Begin starts the turn timer/s);
+  });
+
   it('plans from the live board: deploys and moves by name and id, expected bonuses, and submit-shaped orders', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     // R3: completing bonus 118 leaves all three members facing Bob's ~11 with a next income

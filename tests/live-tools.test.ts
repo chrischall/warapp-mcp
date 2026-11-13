@@ -26,6 +26,9 @@ function game(state: string, extra: Record<string, unknown> = {}): Record<string
   return { ...f, state, numberOfTurns: state === 'Playing' ? '2' : '-1', players, ...extra };
 }
 
+/** A fresh copy of the fixture's GameFeed settings. */
+const settingsOf = (): Record<string, unknown> => ({ ...(lobbyFixture().settings as Record<string, unknown>) });
+
 /** Territory names on the fixture map, by id. */
 function mapName(id: number): string {
   const map = lobbyFixture().map as { territories: Array<{ id: string; name: string }> };
@@ -159,6 +162,45 @@ describe('warapp_get_live_board', () => {
     const res = await h.call('warapp_get_live_board', { game_id: GAME });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/no board for game 12345678 yet \(game state: WaitingForPlayers\)/);
+  });
+
+  it('a speed first turn (No-luck cycle, turn 1, no standing) says to Begin, not that it is a lobby', async () => {
+    const speed = game('Playing', { numberOfTurns: '0', settings: { ...settingsOf(), MoveOrder: 'NoLuckCycle' } });
+    h = await liveHarness({ feed: [speed], warapp: routes({ [Method.GetLatestGameInfo]: board(null) }) });
+    const res = await h.call('warapp_get_live_board', { game_id: GAME });
+    expect(res.isError).toBe(true);
+    const text = textOf(res);
+    expect(text).toMatch(/first turn starts when you press Begin/);
+    expect(text).toMatch(/warapp_begin_turn/);
+    expect(text).toMatch(/plan and submit at once: Begin starts the turn timer/);
+    expect(text).not.toMatch(/lobby/i);
+  });
+
+  it('a speed first turn whose move order GameFeed does not send is still read as awaiting Begin', async () => {
+    const settings = settingsOf();
+    delete settings.MoveOrder;
+    h = await liveHarness({
+      feed: [game('Playing', { numberOfTurns: '0', settings })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(null) }),
+    });
+    const res = await h.call('warapp_get_live_board', { game_id: GAME });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/press Begin/);
+  });
+
+  it('a missing board past turn 1, or in a game without the speed first turn, is not blamed on Begin', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(null) }) });
+    const later = await h.call('warapp_get_live_board', { game_id: GAME });
+    expect(later.isError).toBe(true);
+    expect(textOf(later)).toMatch(/no board for game 12345678 yet \(game state: Playing\)/);
+    expect(textOf(later)).not.toMatch(/Begin/);
+    await h.harness.close();
+    h = await liveHarness({
+      feed: [game('Playing', { numberOfTurns: '0' })], // the fixture's MoveOrder is Cycle
+      warapp: routes({ [Method.GetLatestGameInfo]: board(null) }),
+    });
+    const cycle = await h.call('warapp_get_live_board', { game_id: GAME });
+    expect(textOf(cycle)).not.toMatch(/Begin/);
   });
 
   it('a war.app server error surfaces with the client wording', async () => {

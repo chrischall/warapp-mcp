@@ -217,14 +217,22 @@ function readSettings(v: unknown): SettingsRead | undefined {
   if (isInt(waste) && waste > 0 && !scenario) rules.push('Wastelands');
   if (bool('oneArmyStandsGuard')) rules.push('One army must stand guard');
   const luck = f[GS.luck];
-  if (isNum(luck) && luck !== 0) rules.push(`Luck modifier ${pct(luck)}%`);
+  const lucky = isNum(luck) && luck !== 0;
+  if (lucky) rules.push(`Luck modifier ${pct(luck)}%`);
   const rounding = f[GS.roundingMode];
-  if (isInt(rounding) && rounding !== DEFAULT_ROUNDING) rules.push(`Non-default rounding mode (${rounding})`);
+  const oddRounding = isInt(rounding) && rounding !== DEFAULT_ROUNDING;
+  if (oddRounding) rules.push(`Non-default rounding mode (${rounding})`);
+  if (lucky || oddRounding) {
+    gaps.push('Luck or rounding — attack sizing assumes straight rounding and adds only a luck margin');
+  }
   if (f[GS.ranked] === false) rules.push('Practice game');
   const minArmies = f[GS.minArmies];
   if (isInt(minArmies) && minArmies !== DEFAULT_MIN_ARMIES) rules.push(`Minimum armies per turn is ${minArmies}`);
   const per = f[GS.bonusArmiesPer];
-  if (isInt(per) && per > 0) rules.push(`Extra army for every ${per} ${per === 1 ? 'territory' : 'territories'}`);
+  if (isInt(per) && per > 0) {
+    rules.push(`Extra army for every ${per} ${per === 1 ? 'territory' : 'territories'}`);
+    gaps.push(`Extra army per ${per} ${per === 1 ? 'territory' : 'territories'} — income model unverified, see #38`);
+  }
   if (bool('overriddenBonuses')) rules.push('Overridden bonuses');
   if (bool('attackOnly') || bool('transferOnly')) {
     rules.push(

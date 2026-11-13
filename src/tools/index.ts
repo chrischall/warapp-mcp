@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { WarappClient, type WarappClientOptions } from '../client.js';
 import type { ClassReader } from '../live.js';
+import { registerBeginTurnTool } from './begin-turn.js';
 import { registerBoardTool } from './board.js';
 import { registerChatTools } from './chat.js';
 import { registerGameTool } from './game.js';
@@ -74,6 +75,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerOpenGamesTool(server, live);
   registerJoinGameTool(server, live);
   registerSurrenderTool(server, live);
+  registerBeginTurnTool(server, live);
   registerScoutTool(server, live);
   registerTurnTools(server, live);
   registerChatTools(server, live);

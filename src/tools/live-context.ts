@@ -118,6 +118,45 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
   };
 }
 
+/**
+ * The MoveOrder that makes the first turn a speed race ("No-luck cycle": the
+ * players who enter their first orders — or, in manual distribution, their
+ * picks — fastest move first). Read from the client bundle: in such a game
+ * war.app withholds the board until the player presses Begin (BeginFirstTurn,
+ * method 78), which starts their first-turn timer.
+ */
+export const SPEED_FIRST_TURN_MOVE_ORDER = 'NoLuckCycle';
+
+/**
+ * Whether a game with no board is waiting for this player to press Begin: it is
+ * on its first turn (or picking), and its move order is the speed first turn —
+ * or GameFeed did not say, since the web client shows Begin whenever a playing
+ * seat has no standing.
+ */
+export function awaitsBegin(game: Game): boolean {
+  if (game.state !== 'Playing' && game.state !== 'DistributingTerritories') return false;
+  if ((game.numberOfTurns ?? 0) > 0) return false;
+  const order = game.settings?.moveOrder;
+  return order === undefined || order === SPEED_FIRST_TURN_MOVE_ORDER;
+}
+
+/** What to say when the board is hidden until Begin. */
+export function beginFirstError(game: Game): McpToolError {
+  const picking = game.state === 'DistributingTerritories';
+  return new McpToolError(
+    `war.app has no board for game ${game.id} yet: this game's first turn starts when you press Begin — call ` +
+      (picking
+        ? 'warapp_begin_turn, then choose and submit your picks at once: Begin starts the timer.'
+        : 'warapp_begin_turn, then plan and submit at once: Begin starts the turn timer.'),
+    {
+      hint:
+        'The first turn is a speed race (move order "No-luck cycle"): the players who ' +
+        (picking ? 'pick fastest get their picks in a conflict.' : 'commit their first orders fastest move first.') +
+        ' Call warapp_begin_turn only when ready to act straight away.',
+    },
+  );
+}
+
 /** The game's live board through the bridge; throws when war.app has none for it. */
 export async function loadLiveTerritories(ctx: LiveContext, game: Game): Promise<LiveTerritory[]> {
   return (await loadLiveGame(ctx, game)).territories;
@@ -132,6 +171,7 @@ export async function loadLiveGame(ctx: LiveContext, game: Game): Promise<{ terr
   const info = readLatestGameInfo(bundle, env.body);
   const territories = standingFromInfo(info);
   if (!territories) {
+    if (awaitsBegin(game)) throw beginFirstError(game);
     throw new McpToolError(`war.app has no board for game ${game.id} yet (game state: ${game.state}).`, {
       hint: 'A lobby has no board until territories are distributed. warapp_get_map works without one.',
     });

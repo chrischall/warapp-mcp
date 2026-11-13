@@ -117,6 +117,15 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   consistent with either rule, so the planner keeps its planned amounts (not forced all-in)
   and says so in a warning.
 
+## Move order and the speed first turn — key verified, Begin UNVERIFIED
+
+- `settings.MoveOrder` is a string (verified key: the lobby fixture sends `"Cycle"`), read into
+  `GameSettings.moveOrder`. The client's enum is `Random`, `Cycle` and `NoLuckCycle`.
+- With `NoLuckCycle` the first turn is a speed race, and war.app shows no board until the player
+  presses Begin (`BeginFirstTurn`, 78 — `docs/WEB-PROTOCOL.md` "Begin first turn"). Read from the
+  client bundle; the 2026-11-12 live game in issue #44 matched it (no standing until Begin), but
+  `warapp_begin_turn`'s encoding has not been sent live.
+
 ## Map — verified
 
 - `map: { id, name, territories[], bonuses[], distributionModes[] }`. Territory and bonus

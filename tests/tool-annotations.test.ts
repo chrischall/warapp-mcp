@@ -9,7 +9,14 @@ import { harnessFor, type Harness } from './helpers.js';
  * one confirm-gated LOCAL write that reaches no one but this machine — linking
  * the direct-transport session (it only stores a cookie locally).
  */
-const WRITES = ['warapp_join_game', 'warapp_send_chat', 'warapp_submit_picks', 'warapp_submit_turn', 'warapp_surrender'];
+const WRITES = [
+  'warapp_begin_turn',
+  'warapp_join_game',
+  'warapp_send_chat',
+  'warapp_submit_picks',
+  'warapp_submit_turn',
+  'warapp_surrender',
+];
 const LOCAL_WRITES = ['warapp_link_session'];
 
 interface Ann {
@@ -36,6 +43,7 @@ describe('tool annotations', () => {
   it('covers the full surface (guards against a registrar being dropped)', () => {
     expect(Object.keys(ann).sort()).toEqual([
       'warapp_analyze_board',
+      'warapp_begin_turn',
       'warapp_get_chat',
       'warapp_get_game',
       'warapp_get_live_board',
@@ -75,6 +83,7 @@ describe('tool annotations', () => {
     expect(ann.warapp_submit_turn?.idempotentHint).toBe(false);
     expect(ann.warapp_join_game?.idempotentHint).toBe(false);
     expect(ann.warapp_surrender?.idempotentHint).toBe(false);
+    expect(ann.warapp_begin_turn?.idempotentHint).toBe(false);
   });
 
   it('marks linking the session a write, but a local one that reaches no other people', () => {

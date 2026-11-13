@@ -192,6 +192,8 @@ export interface GameSettings {
   defensiveKillRate?: number;
   luckModifier?: number;
   roundingMode?: string;
+  /** `Random`, `Cycle`, or `NoLuckCycle` (the first turn is a speed race, the board hidden until Begin). */
+  moveOrder?: string;
   oneArmyStandsGuard?: boolean;
   minimumArmyBonus?: number;
   bonusArmyPer?: number;
@@ -230,7 +232,7 @@ const BOOL_SETTINGS = {
   noSplit: 'NoSplit',
   commanders: 'Commanders',
 } as const;
-const STR_SETTINGS = { pace: 'Pace', fog: 'Fog', roundingMode: 'RoundingMode' } as const;
+const STR_SETTINGS = { pace: 'Pace', fog: 'Fog', roundingMode: 'RoundingMode', moveOrder: 'MoveOrder' } as const;
 
 export function normalizeSettings(raw: unknown): GameSettings {
   const r: Rec = isRec(raw) ? raw : {};

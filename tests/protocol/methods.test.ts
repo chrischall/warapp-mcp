@@ -433,3 +433,39 @@ describe('discard orders', () => {
     expect(TurnPhase.Discards).toBeLessThan(TurnPhase.OrderPriorityCards);
   });
 });
+
+describe('BeginFirstTurn (method 78)', () => {
+  it('has the client method-table id and takes the auth block', async () => {
+    const { Method, methodName } = await import('../../src/protocol/methods.js');
+    const { methodTakesAuth } = await import('../../src/protocol/rpc.js');
+    expect(Method.BeginFirstTurn).toBe(78);
+    expect(methodName(78)).toBe('BeginFirstTurn');
+    expect(methodTakesAuth(Method.BeginFirstTurn)).toBe(true);
+  });
+
+  // Read from the client's writer (not verified live): after the auth block the
+  // client writes the game id alone (int32 LE) — no trailing bools.
+  // 0x00BC614E = 4E 61 BC 00.
+  it('writes the game id alone (golden, from the bundle)', async () => {
+    const { writeBeginFirstTurnParams } = await import('../../src/protocol/methods.js');
+    expect(hex((w) => writeBeginFirstTurnParams(w, 0x00bc614e))).toBe('4E61BC00');
+    expect(hex((w) => writeBeginFirstTurnParams(w, 7))).toBe('07000000');
+  });
+
+  it('round-trips through a request frame as method 78 with the game id after the auth block', async () => {
+    const { Method, writeBeginFirstTurnParams } = await import('../../src/protocol/methods.js');
+    const { decodeRequest, encodeRequest } = await import('../../src/protocol/codec.js');
+    const bytes = encodeRequest({
+      msgNum: 3,
+      method: Method.BeginFirstTurn,
+      extras: { dict: null, client: 'v0', serverInfoVersionA: 1, serverInfoVersionB: 2, fDb: null, kFa: null, platform: 15 },
+      email: 'test@example.com',
+      params: (w) => writeBeginFirstTurnParams(w, 4001),
+    });
+    const req = decodeRequest(bytes, { hasAuth: true });
+    expect(req.method).toBe(78);
+    expect(req.email).toBe('test@example.com');
+    expect(req.body.int32()).toBe(4001);
+    expect(req.body.remaining).toBe(0);
+  });
+});
