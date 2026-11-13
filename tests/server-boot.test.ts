@@ -106,6 +106,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_scout_player',
       'warapp_send_chat',
       'warapp_session_status',
+      'warapp_strategy',
       'warapp_submit_picks',
       'warapp_submit_turn',
       'warapp_surrender',

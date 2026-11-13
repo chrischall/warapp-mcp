@@ -126,6 +126,10 @@
       "description": "Advise a player from the board (GameFeed or live): income, closest bonuses, armies needed, threats"
     },
     {
+      "name": "warapp_strategy",
+      "description": "Strategy notes with sources, fitted to a game's format and settings, plus map notes: efficient bonuses, entry points, chokepoints"
+    },
+    {
       "name": "warapp_plan_route",
       "description": "Shortest path between two territories on a game's map"
     },

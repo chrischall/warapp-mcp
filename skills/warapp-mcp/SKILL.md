@@ -56,6 +56,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   one bonus with `bonus: "<part of its name>"`; `sort` is `easiest` / `value` / `name`;
   `view: "full"` includes zero/negative bonuses and lists territories by name. Works in a
   lobby — no board needed.
+- **"How should I play this game / map?" / "any strategy tips?"** → `warapp_strategy` with
+  `game_id`: short heuristics fitted to the game's format and settings, each with its source
+  link (pass the link on), plus map notes — bonuses by value per army, entry points,
+  chokepoints, and income targets by turn while picks are open. `topic` narrows to format /
+  settings / cards / reading / map; with no arguments it lists every note.
 - **"What should I do this turn?"** → `warapp_analyze_board` with `player` (the user's war.app
   name, or part of it; omit it to list the players). It gives income, the bonuses closest to
   completion with armies needed at the game's kill rates, and visible threats. When GameFeed
@@ -217,10 +222,10 @@ with intent **lookup** (but `warapp_wait_for_turn`, intent **whats-new**), `wara
 `warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_map_stats`, `warapp_analyze_board`, `warapp_plan_route`,
-  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_picks`, `warapp_plan_turn`, `warapp_get_chat` and
+  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_picks`, `warapp_plan_turn`, `warapp_strategy`, `warapp_get_chat` and
   `warapp_scout_player` and `warapp_recent_events` are lookups the group reaches by their
   aliases ("warzone game", "whose turn is it", "best bonuses", "chokepoints", "analyze my
-  board", "what should i attack", "warzone route", "scout player", "head to head", …).
+  board", "what should i attack", "warzone route", "warzone strategy", "scout player", "head to head", …).
 - **`warapp_my_games` is the canonical "what's new" read**: which games are waiting on the
   user. It accepts `view: "brief"` — one line per game, `name — turn N (or the state) —
   waiting on you | waiting on others`. warapp answers neither "what's due" nor "what's on".

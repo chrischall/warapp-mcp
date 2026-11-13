@@ -39,6 +39,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `MCP_CONFIRM_MODE`). `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
   is read-only, `warapp_plan_turn` included.
+- **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
+  `warapp://strategy` resources: each in our own words with a source link from the researched war.app pages, marked
+  `source` or `derived`; never paste guide text. `docs/STRATEGY.md` names every note id (a test checks it). With a
+  game the profile comes from GameFeed alone (`feedProfile`, standing `unknown`); a `map_id` alone works only for a
+  map this process has cached, since GameFeed serves maps only with a game.
 - **The pick advisor `warapp_plan_picks` is read-only** and refuses outside `DistributingTerritories` or when the
   live board has nothing pickable. Its scorer (`src/analysis/picks.ts`) is pure and deterministic like the turn
   planner; neutral sizes come from the live board when shown (wastelands at their real size), else the settings.
