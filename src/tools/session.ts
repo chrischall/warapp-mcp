@@ -90,9 +90,17 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
   const now = deps.now ?? Date.now;
   const hosted = deps.hosted ?? isHosted(deps.env ?? process.env);
   /** The board decoder, once a live tool has loaded the client bundle (#148). */
-  const decoderView = (): { decoder?: DecoderReport & { note?: string } } => {
-    const d = deps.decoder?.();
-    if (!d) return {};
+  const decoderView = (): { decoder?: (DecoderReport & { note?: string }) | { checked: false; note: string } } => {
+    if (!deps.decoder) return {};
+    const d = deps.decoder();
+    // Not loaded yet in this process: say so rather than leave the field out.
+    if (!d)
+      return {
+        decoder: {
+          checked: false,
+          note: "Not checked yet: no live board has been decoded in this process. The check runs when war.app's client first loads (any live tool).",
+        },
+      };
     return {
       decoder: {
         ...d,
