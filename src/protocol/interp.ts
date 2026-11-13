@@ -296,7 +296,7 @@ function runProbe(probe: Uint8Array, arity: number, call: (args: unknown[]) => u
   const args: unknown[] = [r];
   for (let i = 1; i < arity; i++) {
     // An item reader the host made: registered as a callback, so a native list helper (and the
-    // bundle's own definition, through \`call\`) may call it like an interpreter closure.
+    // bundle's own definition, through `call`) may call it like an interpreter closure.
     const item = () => r.u8();
     CALLBACKS.add(item);
     args.push(item);
@@ -463,7 +463,6 @@ class Scope {
   hasOwn(name: string): boolean {
     return this.vars.has(name);
   }
-
 
   declare(name: string, value: unknown): void {
     this.vars.set(name, value);
@@ -724,15 +723,25 @@ export class BundleInterpreter {
    * bundle could otherwise make one step parse megabytes.
    */
   private parseFunctionAt(pos: number, where: string): FunctionExpression {
-    let node: AnyNode;
+    let node: AnyNode | undefined;
+    let failure: InterpError | undefined;
+    let cost: number;
     try {
       node = parseExpressionAt(this.bundle.src, pos, { ecmaVersion: 'latest' }) as AnyNode;
+      cost = Math.max(1, node.end - pos);
     } catch (e) {
       const at = (e as { raisedAt?: unknown }).raisedAt;
-      this.spend(typeof at === 'number' && at > pos ? at - pos : 1, where, pos);
-      throw new InterpError('parse', `cannot parse function: ${(e as Error).message}`, where, pos);
+      cost = typeof at === 'number' && at > pos ? at - pos : 1;
+      failure = new InterpError('parse', `cannot parse function: ${(e as Error).message}`, where, pos);
     }
-    this.spend(Math.max(1, node.end - pos), where, pos);
+    // A parse is host work that can only be charged once it is over. One that costs more than a
+    // whole read's budget would end every read in a budget error, which is never cached, and be
+    // parsed again each time: it is a parse failure instead, which the callers cache.
+    if (cost > this.maxSteps) {
+      throw new InterpError('parse', `function too large to interpret within one read (${cost} characters)`, where, pos);
+    }
+    this.spend(cost, where, pos);
+    if (failure || !node) throw failure ?? new InterpError('parse', 'no function expression', where, pos);
     const fn = leadingFunction(node);
     if (!fn || fn.start !== pos) throw new InterpError('parse', 'no function expression', where, pos);
     return fn;

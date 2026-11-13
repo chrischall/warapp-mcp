@@ -361,6 +361,23 @@ describe('BundleInterpreter containment', () => {
     for (let k = 0; k < 5; k++) expect(ok.readClass('h.D', new Reader(new Uint8Array()))).toBe(10);
   });
 
+  it('parses a function too large for one read once, not again on every read', () => {
+    // A parse is host work the budget can only charge afterwards. One that costs more than a whole
+    // read's budget fails the same way every time, so it is a cached parse failure, never re-parsed.
+    const big = `Hb.Ha=function(a){${'a;'.repeat(2_000)}return 1};`;
+    const i = new BundleInterpreter(parseBundle(`function Hb(){}W["h.B"]=Hb;${big}`), { maxSteps: 500 });
+    const first = interpError(() => i.readClass('h.B', new Reader(new Uint8Array())));
+    expect(first.kind).toBe('parse');
+    expect(first.message).toMatch(/too large/);
+    // The same cached error: the second read did not parse it again.
+    expect(interpError(() => i.readClass('h.B', new Reader(new Uint8Array())))).toBe(first);
+    // A source that does not parse and is larger than the budget is cached the same way.
+    const broken = new BundleInterpreter(parseBundle(`function Hc(){}W["h.C"]=Hc;Hc.Ha=function(a){${'a;'.repeat(2_000)}return (};`), { maxSteps: 500 });
+    const e1 = interpError(() => broken.readClass('h.C', new Reader(new Uint8Array())));
+    expect(e1.kind).toBe('parse');
+    expect(interpError(() => broken.readClass('h.C', new Reader(new Uint8Array())))).toBe(e1);
+  });
+
   it('does not let a constructor swallow a budget or containment error', () => {
     const b = parseBundle('function Hc(a){this.x=a.__proto__}W["h.C"]=Hc;Hc.Ha=function(a){return new Hc([])};');
     expect(interpError(() => new BundleInterpreter(b).readClass('h.C', new Reader(new Uint8Array()))).kind).toBe('forbidden');
