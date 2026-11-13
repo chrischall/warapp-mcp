@@ -189,6 +189,10 @@ class Scope {
     return this.vars.has(name) || (this.parent?.has(name) ?? false);
   }
 
+  hasOwn(name: string): boolean {
+    return this.vars.has(name);
+  }
+
   get(name: string): unknown {
     if (this.vars.has(name)) return this.vars.get(name);
     return this.parent?.get(name);
@@ -335,8 +339,11 @@ export class BundleInterpreter {
 
   private resolveStatic(cls: string, fn: string): ResolvedFn {
     const where = `${cls}.${fn}`;
-    const cached = this.fnCache.get(where);
-    if (cached) return cached;
+    if (this.fnCache.has(where)) {
+      const cached = this.fnCache.get(where);
+      if (cached) return cached;
+      throw new InterpError('no-definition', `no definition for ${where}`);
+    }
     const { src } = this.bundle;
     // Prefer the definition that follows the class's registration.
     const typeName = this.bundle.typeNameOf.get(cls);
@@ -348,7 +355,11 @@ export class BundleInterpreter {
       re.lastIndex = 0;
       m = re.exec(src);
     }
-    if (!m) throw new InterpError('no-definition', `no definition for ${where}`);
+    if (!m) {
+      // Cached too: a miss scans the whole bundle, and a reader can ask again for every item.
+      this.fnCache.set(where, null);
+      throw new InterpError('no-definition', `no definition for ${where}`);
+    }
     const resolved = { node: this.parseFunctionAt(m.index + m[0].length - 'function'.length, where), where };
     this.fnCache.set(where, resolved);
     return resolved;
@@ -383,6 +394,9 @@ export class BundleInterpreter {
     const scope = new Scope(outer);
     if (self !== undefined) scope.declare('this', self);
     node.params.forEach((p, i) => scope.declare(this.paramName(p, where), args[i]));
+    // `var` is function-scoped and hoisted: a var declared only in an untaken branch is undefined,
+    // not an unknown name (which would read as a class reference).
+    for (const name of hoistedVars(node)) if (!scope.hasOwn(name)) scope.declare(name, undefined);
     const c = this.execBlock(node.body.body, scope, where);
     return c?.type === 'return' ? c.value : undefined;
   }
@@ -411,7 +425,10 @@ export class BundleInterpreter {
     switch (st.type) {
       case 'VariableDeclaration':
         for (const d of st.declarations) {
-          scope.declare(this.paramName(d.id, where), d.init ? this.eval(d.init, scope, where) : undefined);
+          const name = this.paramName(d.id, where);
+          // `var x;` re-run (in a loop) keeps x's value; hoisting already declared it.
+          if (d.init) scope.declare(name, this.eval(d.init, scope, where));
+          else if (!scope.hasOwn(name)) scope.declare(name, undefined);
         }
         return undefined;
       case 'ExpressionStatement':
@@ -636,6 +653,27 @@ export class BundleInterpreter {
     if (f instanceof Closure) return this.invoke(f.node, args, f.scope, f.where);
     throw this.unsupported('call of a non-function', n, where);
   }
+}
+
+const hoistCache = new WeakMap<FunctionExpression, string[]>();
+
+/** The names a function declares with `var` anywhere in its body (not in nested functions). */
+function hoistedVars(fn: FunctionExpression): string[] {
+  let out = hoistCache.get(fn);
+  if (out) return out;
+  const names: string[] = [];
+  const walk = (n: AstNode): void => {
+    if (n.type === 'FunctionExpression' || n.type === 'FunctionDeclaration' || n.type === 'ArrowFunctionExpression') return;
+    if (n.type === 'VariableDeclarator') {
+      const id = n.id as AstNode;
+      if (id.type === 'Identifier' && !names.includes(id.name as string)) names.push(id.name as string);
+    }
+    for (const c of childrenOf(n)) walk(c);
+  };
+  for (const st of fn.body.body) walk(st as unknown as AstNode);
+  out = names;
+  hoistCache.set(fn, out);
+  return out;
 }
 
 type AstNode = AcornNode & Record<string, unknown>;

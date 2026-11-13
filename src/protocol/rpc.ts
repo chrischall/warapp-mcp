@@ -8,6 +8,7 @@ import { readEmail } from '../config.js';
 import {
   decodeReplyEnvelope,
   encodeRequest,
+  PROTOCOL_VERSION,
   fromHex,
   ProtocolError,
   toHex,
@@ -150,6 +151,14 @@ export class WarappRpc {
       throw new McpToolError(
         `war.app answered ${methodName} with message number ${env.msgNum}, expected ${msgNum}.`,
         { kind: 'unknown' },
+      );
+    }
+    if (env.version !== PROTOCOL_VERSION) {
+      // Every reader (the bundle's, and methods.ts) reads the layout of PROTOCOL_VERSION: a reply
+      // framed for another version would decode into wrong values, not an error (#131).
+      throw new McpToolError(
+        `war.app answered ${methodName} in protocol version ${env.version}; this server reads version ${PROTOCOL_VERSION}.`,
+        { kind: 'unknown', hint: 'The war.app client may have changed; this server needs an update to read it.' },
       );
     }
     if (env.method !== methodId) {
