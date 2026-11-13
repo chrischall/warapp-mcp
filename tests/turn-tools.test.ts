@@ -2752,6 +2752,23 @@ describe('warapp_plan_turn finishing a player off (#179): the move order, the ca
     expect(on.rationale.join('\n')).toMatch(new RegExp(`player ${BOB.feed} may hold an Order Priority card: two cancel`));
   });
 
+  it('the card clock sizes holds for an opponent\'s Bomb (#163)', async () => {
+    h = await liveHarness({ feed: [duel()], warapp });
+    const off = await plan();
+    expect(off.rationale.join('\n')).not.toMatch(/may hold a Bomb/);
+    await h.harness.close();
+    // In play with every piece at the start: Bob may hold one by now.
+    const settings = { BombCard: { NumPieces: 1, InitialPieces: 1, MinimumPiecesPerTurn: 0, Weight: 1.0 } };
+    h = await liveHarness({ feed: [duel(settings)], warapp });
+    const on = await plan();
+    expect(on.rationale.join('\n')).toMatch(/An opponent may hold a Bomb \(#163\)/);
+    await h.harness.close();
+    // Pieces only from captures, none yet: no Bomb can be in a hand on turn 3.
+    const later = { BombCard: { NumPieces: 10, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1.0 }, NumberOfCardsToReceiveEachTurn: 1 };
+    h = await liveHarness({ feed: [duel(later)], warapp });
+    expect((await plan()).rationale.join('\n')).not.toMatch(/may hold a Bomb/);
+  });
+
   it('eta and exits come in the full view only, with territory names', async () => {
     h = await liveHarness({ feed: [duel()], warapp });
     const compact = await plan();

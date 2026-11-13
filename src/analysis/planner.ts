@@ -809,6 +809,15 @@
 // whole stack, only when it need not hold; its one order goes to the strike before a small
 // expansion (an attack on a neutral that completes no bonus this turn: taken back, its armies
 // rejoin the stack). Efficient sizes (S2) do not apply. Off (the default), plans are unchanged.
+// Bomb (#163; `opponentsMayHoldBomb`: the card clock lets an opponent hold one by now, its hand
+// hidden). A bomb halves one territory of mine next to the bomber after the deploys and before any
+// move (my stack keeps the smaller half; a commander is unharmed), so every threat to my territory
+// (rule 1's `forceAt`) becomes the attack that twice the armies just hold against: every hold, near
+// miss, keep and comfort margin is sized as if halved first (one bomb, but it may land on any
+// border, so each is sized for it, as each is for the whole deploy). The threat warning names the
+// bombed take. And the leftover deploy (rule 5), when it goes to a border facing an enemy, gives
+// half to a second open border facing an enemy (the same opponent first, then the bigger stack,
+// then id): one bomb halves only one of two stacks. Off (the default), plans are unchanged.
 // Guard off (#165; `oneArmyStandsGuard: false`, not under No-Split): every army may move, but an
 // empty territory falls to any single army, so each territory of mine next to a visible enemy at the
 // start of the turn keeps one army all the same (never my commander's: it is not empty; a rationale
@@ -1043,6 +1052,13 @@ export interface PlanOptions {
    * what keeps the killing strike (rule 1e) or the commander strike (rule 1s) first. Default false.
    */
   opponentsMayHoldOrderPriority?: boolean;
+  /**
+   * An opponent may hold a Bomb card this turn (#163): the card clock says one can exist by now and
+   * its hand is hidden. A bomb halves one territory of mine next to the bomber after the deploys and
+   * before any move, so every hold is sized as if its stack were halved first (the commander
+   * unharmed), and the leftover goes to two stacks rather than one. Default false.
+   */
+  opponentsMayHoldBomb?: boolean;
   /**
    * Adapt to the game profile (rule 0p): with no `goal`, pick it from the profile (behind:
    * `defend`, else `balanced`) and apply the profile's rules. An explicit `goal` always wins
@@ -2335,6 +2351,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /** The deploy assumed for one opponent's threat: the override, else its own estimate. */
   const deployOf = (player: number) => (custom ? enemyDeploy : (estimates.get(player)?.estimate ?? MIN_ENEMY_DEPLOY));
   const guard = (s.oneArmyStandsGuard ?? true) ? 1 : 0;
+  /** #163: an opponent may hold a Bomb: every hold is sized as if its stack were halved first. */
+  const bombOn = opts.opponentsMayHoldBomb === true;
   const rates = {
     offensiveKillRate: s.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
     defensiveKillRate: s.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
@@ -2571,6 +2589,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   if (!exactCombat)
     rationale.push(
       `Holds are sized so the attack assumed wins at most ${Math.round(HOLD_FALL_CHANCE * 100)}%: "need N to take" is the smallest attack that wins more often than that${luck > 0 ? ` at ${Math.round(luck * 100)}% luck` : ''}${weightedRounding ? ` under ${s.roundingMode} rounding` : ''}.`,
+    );
+  if (bombOn)
+    rationale.push(
+      'An opponent may hold a Bomb (#163): it halves one territory of mine next to it after the deploys and before any move, so every hold here is sized as if its stack were halved first (my commander unharmed), and the leftover goes to two stacks, not one.',
     );
   if (s.multiAttack)
     rationale.push('Multi-attack is on, but the plan does not chain attacks from captured territories.');
@@ -3041,6 +3063,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     let threat = best.single;
     if (split && split.takes > takesAlone(best.single)) threat = Math.max(threat, toTake(split.takes) ?? threat);
     else split = undefined;
+    // #163: a Bomb halves my stack before the attack (the smaller half stays; a commander is
+    // unharmed), so it holds only with twice the armies: the threat becomes the attack that the
+    // doubled stack just holds against.
+    if (bombOn) {
+      const u = mineSet.has(t) ? unitsAt(t) : 0;
+      const armies = Math.max(0, holdArmies(threat) - u);
+      if (armies > 0) threat = Math.max(threat, toTake(2 * armies + u - 1) ?? threat);
+    }
     return { player: best.player, movable: best.movable, growth: best.growth, deploy: best.deploy, threat, ...(split ? { split } : {}) };
   };
   /**
@@ -3451,7 +3481,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const units = unitsAt(b.id);
       const take = toTake(have + units);
       if (take === null || take > b.threat) continue;
-      const text = `${label(b.id)} (${have} armies${units ? ' and my commander' : ''}) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${take} would do${b.split ? ` — sent as separate attacks (${b.split.attacks.join(' then ')}), its stacks take up to ${b.split.takes}` : ''}.`;
+      const text = `${label(b.id)} (${have} armies${units ? ' and my commander' : ''}) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${bombOn ? toTake(Math.floor(have / 2) + units) : take} would do${b.split ? ` — sent as separate attacks (${b.split.attacks.join(' then ')}), its stacks take up to ${b.split.takes}` : ''}${bombOn ? ' once a Bomb halves it (an opponent may hold one)' : ''}.`;
       threatWarnings.set(b.id, { text, threat: b.threat });
       warnings.push(text);
       // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.
@@ -8019,8 +8049,31 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         warnings.push(`Every territory I hold is conceded; the leftover ${budget} goes to ${label(where)} anyway.`);
       }
     }
-    const n = roomAt(where);
+    let n = roomAt(where);
     if (saving && where === saving.from) staging = saving;
+    // #163: an opponent may hold a Bomb: a second stack on another open border facing an enemy takes
+    // half the leftover, so one bomb halves only one of them (same opponent first, then the bigger
+    // stack, then id).
+    if (bombOn && n >= 2 && borders.has(where)) {
+      const facingP = borders.get(where)!.player;
+      const second = [...borders.values()]
+        .filter((b) => b.id !== where && open(b.id) && !orderOf(b.id) && notSoftening(b.id) && roomAt(b.id) >= 1)
+        .sort(
+          (a, b) =>
+            Number(b.player === facingP) - Number(a.player === facingP) ||
+            stays(b.id) - stays(a.id) ||
+            a.id - b.id,
+        )[0];
+      if (second) {
+        const half = Math.min(Math.floor(n / 2), roomAt(second.id));
+        rationale.push(
+          `Deploy ${half} of the leftover to ${label(second.id)}: an opponent may hold a Bomb, which halves one stack before any move, so the leftover makes two stacks rather than one (${label(where)} gets the rest).`,
+        );
+        deploy(second.id, half);
+        locked.add(second.id);
+        n = roomAt(where);
+      }
+    }
     if (n > 0) {
       rationale.push(`Deploy the leftover ${n} to ${label(where)}: ${why}.`);
       deploy(where, n);

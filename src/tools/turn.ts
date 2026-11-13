@@ -1182,6 +1182,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
           ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
           ...(opponentCanHold(game.settings, 'Order Priority', turn) ? { opponentsMayHoldOrderPriority: true } : {}),
+          // #163: an opponent may hold a Bomb by now: holds are sized as if halved, two stacks over one.
+          ...(opponentCanHold(game.settings, 'Bomb', turn) ? { opponentsMayHoldBomb: true } : {}),
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);
