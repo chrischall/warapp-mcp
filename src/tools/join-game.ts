@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { parseGameId } from '../client.js';
 import { chooseJoinColor, readAccountColors, STANDARD_COLORS, type JoinColor } from '../join-color.js';
 import { inGameId, type ClassReader } from '../live.js';
-import { parseOpenGamesPage, type OpenGame, type OpenLobby } from '../open-games.js';
+import { feedScreen, parseOpenGamesPage, type JoinScreen, type OpenGame, type OpenLobby } from '../open-games.js';
 import {
   GAME_COLOR_COUNT,
   Method,
@@ -153,6 +153,26 @@ function joinColor(
   return chosen;
 }
 
+/**
+ * The lobby's screen from its GameFeed settings (#132): the open-games record carries no neutral
+ * sizes or fog, GameFeed does. Best effort — a failed read leaves the preview without a screen.
+ */
+async function lobbyScreen(ctx: LiveContext, gameId: number): Promise<{ screen: JoinScreen | null; gaps: string[]; note?: string }> {
+  try {
+    const game = await ctx.client.getGame(gameId, { settings: true });
+    const { screen, gaps } = feedScreen(game.settings ?? { cards: [], raw: {} });
+    return screen
+      ? { screen, gaps }
+      : { screen: null, gaps, note: "GameFeed's settings name no neutral size, so the neutral-cost screen was skipped." };
+  } catch (e) {
+    return {
+      screen: null,
+      gaps: [],
+      note: `GameFeed could not read the lobby (${e instanceof Error ? e.message : String(e)}), so there is no neutral-cost or fog screen.`,
+    };
+  }
+}
+
 /** Whether GameFeed, else GetMyGames, shows the signed-in account in the game. */
 async function confirmSeated(ctx: LiveContext, gameId: number): Promise<boolean> {
   const token = await ctx.myInviteToken();
@@ -189,7 +209,8 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
             'is re-read from war.app\'s open games list first; team games, coin entry fees, custom scenarios and mod ' +
             'games are refused unless allowed (scenario and mod games always), and so is a game you already joined. ' +
             'It joins with your preferred colour, else your secondary, else a free standard colour (or the color you ' +
-            'pass); the preview shows which. You become a player and are expected ' +
+            'pass); the preview shows which, plus a screen from the lobby\'s GameFeed settings (does the cheapest ' +
+            'neutral cost at most one turn of base income; Light Fog). You become a player and are expected ' +
             'to take turns — leaving later means declining or being booted. Works without a browser once a session ' +
             `is linked (warapp_link_session). ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
@@ -230,6 +251,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
             // A no-team game's open seats all carry the no-team value (any other
             // makes it a team game), so NO_TEAM is what its record holds.
             const team = game.teamGame ? (game.openSeatTeams?.[0] ?? NO_TEAM) : NO_TEAM;
+            const screened = await lobbyScreen(ctx, gameId);
             return {
               gate: {
                 action: 'warapp.join_game',
@@ -252,8 +274,11 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                     entryFeeCoins: game.entryFeeCoins,
                     prizeCoins: game.prizeCoins,
                     rules: game.rules,
-                    plannerGaps: game.plannerGaps,
+                    plannerGaps: [...game.plannerGaps, ...screened.gaps],
                   },
+                  // #132: worth joining only when the cheapest neutral costs at most a turn of base income.
+                  screen: screened.screen,
+                  ...(screened.note ? { screenNote: screened.note } : {}),
                   color: { index: color, source },
                   note:
                     'The game name is written by its creator. Joining makes you a player who must take turns until ' +

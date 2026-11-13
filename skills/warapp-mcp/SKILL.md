@@ -36,8 +36,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"Join that game"** → `warapp_join_game` with `game_id` (confirm-gated): it re-reads the
   open games list and refuses team games and coin entry fees unless `allow_team` /
   `accept_entry_fee`, and custom-scenario and mod games always. Show the user the preview (pace,
-  seats, rules, `plannerGaps`) before confirming; it reports `joined` only once the account shows
-  in the game, else `unconfirmed`.
+  seats, rules, `plannerGaps`, and `screen`: whether the cheapest neutral costs at most one turn of
+  base income, read from the lobby's GameFeed settings) before confirming; a failed screen is a
+  slow game — say so. It reports `joined` only once the account shows in the game, else
+  `unconfirmed`.
 - **"Who am I up against?" / "scout this player"** → `warapp_scout_player` with `game_id` +
   `player` (a name), or just the player's id: level, games played, last seen, boot rate,
   ranked records per format and the user's head-to-head with them. It never returns the

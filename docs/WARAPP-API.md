@@ -307,6 +307,15 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
 When an in-progress game is captured live, record its shape here, add an anonymized fixture,
 tighten `boardFromStanding`, and set `verified: true`.
 
+## A lobby's settings for the join screen — UNVERIFIED (#132)
+
+`warapp_join_game`'s preview reads the lobby with `GetSettings=true` for what the open-games record
+lacks: `InitialNonDistributionArmies` / `InitialNeutralsInDistribution` (the cheapest neutral,
+costed with `armiesToTake` at the game's kill rates, no luck margin, against `MinimumArmyBonus`)
+and `Fog` (`LightFog` is flagged). The fixture lobby carries these settings, but GameFeed has not
+been seen answering for a lobby the account has **not** joined; a failed read leaves the preview
+with `screen: null` and a `screenNote`, never a refusal.
+
 ## Game-ID feed (`GameIDFeed`) — UNVERIFIED
 
 Used only by the opt-in `warapp_map_stats` (`WARAPP_STATS=1`, never hosted). From war.app's

@@ -79,6 +79,8 @@ export interface SyntheticSettings {
   localDeployments?: boolean;
   luck?: number;
   minArmies?: number;
+  /** MoveOrderEnum: 0 Random, 1 Cycle (default), 2 NoLuckCycle (a speed first turn). */
+  moveOrder?: number;
   multiAttack?: boolean;
   noSplit?: boolean;
   wastelands?: number;
@@ -132,7 +134,7 @@ export function writeSettings(w: Writer, s: SyntheticSettings = {}): void {
   writeOptionalInt(w, s.commerce);
   w.float64(s.defensiveKillRate ?? 0.7).bool(false).int32(s.distribution ?? 0);
   w.bool(s.commanders ?? false).bool(s.overriddenBonuses ?? false).float64(s.bankingBootMs ?? 0);
-  w.bool(s.localDeployments ?? false).float64(s.luck ?? 0).int32(s.minArmies ?? 5).u8(1);
+  w.bool(s.localDeployments ?? false).float64(s.luck ?? 0).int32(s.minArmies ?? 5).u8(s.moveOrder ?? 1);
   w.bool(s.multiAttack ?? false).bool(s.noSplit ?? false).int32(s.wastelands ?? 0);
   w.float64(s.offensiveKillRate ?? 0.6).bool(s.oneArmyStandsGuard ?? false).bool(s.ranked ?? true);
   w.u8(s.roundingMode ?? 1);
