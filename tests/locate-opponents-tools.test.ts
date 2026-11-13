@@ -347,6 +347,24 @@ describe('warapp_locate_opponents', () => {
     // The compact view names what the boards ruled out only in the full one.
     expect(cat.starts).not.toHaveProperty('ruledOut');
   });
+
+  it('keeps on the full view every hidden territory the compact view shows, however unlikely', async () => {
+    const dir = tmp();
+    // Many pickable territories: two starts among ~30 puts every one under 0.15.
+    const f = lobbyFixture() as { map: { territories: Array<{ id: string | number }> } };
+    const extra = f.map.territories.map((t) => Number(t.id)).filter((id) => !PICKABLE.includes(id)).slice(0, 30);
+    await writePickable(dir, GAME, ME, [...PICKABLE, ...extra]);
+    h = await live(board(), game(1), { dataDir: dir });
+    const compact = bob(await locate(h));
+    const full = bob(await locate(h, { view: 'full' }));
+    expect(compact.presence).toHaveLength(10);
+    expect(compact.presence.every((x) => x.likelihood < 0.15)).toBe(true);
+    // The full view adds to the compact one: the same first ten, nothing dropped.
+    expect(full.presence.slice(0, 10)).toEqual(compact.presence);
+    // Past the first ten, only those at 0.15 or more; the rest are counted.
+    expect(full.presence.slice(10).every((x) => x.likelihood >= 0.15)).toBe(true);
+    expect(full.presence.length + (full.presenceMore ?? 0)).toBe(compact.presence.length + (compact.presenceMore ?? 0));
+  });
 });
 
 describe('the pickable territories are kept during distribution', () => {

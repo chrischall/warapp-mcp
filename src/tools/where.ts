@@ -146,8 +146,8 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
         view: viewArg(
           VIEWS,
           `compact (default) gives each opponent's facts, its likely starts, the ${LIST_MAX} likeliest hidden territories, the bonuses it probably ` +
-            `holds, its ${COMPACT_APPROACHES} soonest approaches and what it is doing, then what to prepare for; "full" adds every hidden ` +
-            `territory at a likelihood of ${PRESENCE_LISTED} or more, every approach (up to ${MAX_APPROACHES}), the candidates the boards ruled out and the model's assumptions.`,
+            `holds, its ${COMPACT_APPROACHES} soonest approaches and what it is doing, then what to prepare for; "full" adds every other hidden ` +
+            `territory at a likelihood of ${PRESENCE_LISTED} or more (the rest are counted), every approach (up to ${MAX_APPROACHES}), the candidates the boards ruled out and the model's assumptions.`,
         ),
       }),
     },
@@ -227,7 +227,11 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
         const some = <T>(rows: readonly T[], max = LIST_MAX) => (full ? [...rows] : rows.slice(0, max));
         const more = (rows: readonly unknown[], key: string, max = LIST_MAX) => (!full && rows.length > max ? { [key]: rows.length - max } : {});
         const opponentView = (o: OpponentWhereabouts) => {
-          const presence = full ? o.presence.filter((p) => p.likelihood >= PRESENCE_LISTED) : o.presence.slice(0, LIST_MAX);
+          // Likeliest first: the full view keeps the compact view's first entries, however unlikely,
+          // and adds every other one at PRESENCE_LISTED or more.
+          const presence = full
+            ? o.presence.filter((p, i) => i < LIST_MAX || p.likelihood >= PRESENCE_LISTED)
+            : o.presence.slice(0, LIST_MAX);
           return {
             player: playerOf(o.playerId),
             summary: o.summary,
