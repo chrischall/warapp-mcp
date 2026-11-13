@@ -600,6 +600,29 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(p.warnings.join('\n')).toMatch(building(7, 12));
   });
 
+  it('(h) a failed account read fails the plan while the board read runs; history is never fetched (#131)', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { history: [{ turn: 0, standing: [] }, { turn: 1, standing: previous }] })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const res = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Nobody' });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Nobody/);
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
+  });
+
+  it('(h) a failed board read fails the plan while the history read runs (#131)', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { history: [{ turn: 0, standing: [] }, { turn: 1, standing: previous }] })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () => ({ error: { code: 42, message: 'board unavailable' } }),
+      }),
+    });
+    const res = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    expect(res.isError).toBe(true);
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(true);
+  });
+
   it('(h) planning the same turn twice keeps the trend (the previous turn stays cached)', async () => {
     // Turn 3 planned and cached.
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
