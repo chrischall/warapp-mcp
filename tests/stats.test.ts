@@ -9,6 +9,7 @@ import {
   MAX_NEW_GAMES,
   MIN_GAP_MS,
   recordPath,
+  UNFINISHED_RETRY_MS,
   StatsCollector,
   statsGate,
   type StatsClient,
@@ -74,7 +75,10 @@ function fake(ids: number[], games: Record<number, () => Game> = {}) {
       clock += ms;
     },
   });
-  return { collector, requests, dir };
+  const advance = (ms: number) => {
+    clock += ms;
+  };
+  return { collector, requests, dir, advance };
 }
 
 const finished = (...ids: number[]) => Object.fromEntries(ids.map((id) => [id, () => game(id)]));
@@ -213,6 +217,44 @@ describe('StatsCollector', () => {
     requests.length = 0;
     expect(await collector.collect(0)).toMatchObject({ fetched: 0, notFinished: 1 });
     expect(requests.map((r) => r.what)).toEqual(['feed:0']);
+  });
+
+  it('retries a game seen unfinished once UNFINISHED_RETRY_MS (1 hour) has passed', async () => {
+    let state = 'Playing';
+    const { collector, requests, advance, dir } = fake([4], { 4: () => game(4, state) });
+    expect(UNFINISHED_RETRY_MS).toBe(60 * 60 * 1000);
+    expect(await collector.collect(0)).toMatchObject({ fetched: 1, notFinished: 1 });
+    advance(UNFINISHED_RETRY_MS - 5_000);
+    requests.length = 0;
+    expect(await collector.collect(0)).toMatchObject({ fetched: 0, notFinished: 1 });
+    expect(requests.map((r) => r.what)).toEqual(['feed:0']);
+    advance(5_000);
+    state = 'Finished';
+    requests.length = 0;
+    expect(await collector.collect(0)).toMatchObject({ fetched: 1, notFinished: 0, newlyCached: 1 });
+    expect(requests.map((r) => r.what)).toEqual(['feed:0', 'game:4']);
+    expect(existsSync(recordPath(dir, 777, 4))).toBe(true);
+  });
+
+  it('overlapping collect() calls writing the same records never collide on the temp file', async () => {
+    const ids = Array.from({ length: 40 }, (_, i) => 100 + i);
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-stats-test-'));
+    const client: StatsClient = {
+      async getGameIds() {
+        return ids;
+      },
+      async getGame(id) {
+        return game(id);
+      },
+    };
+    // Separate collectors (separate throttles) on one data dir, all in this process.
+    const collectors = Array.from(
+      { length: 4 },
+      () => new StatsCollector({ client, dir: () => dir, now: () => 0, sleep: async () => {} }),
+    );
+    const results = await Promise.all(collectors.map((c) => c.collect(0, MAX_NEW_GAMES)));
+    for (const r of results) expect(r.failed).toBe(0);
+    expect((await collectors[0]!.records(777)).map((r) => r.gameId)).toEqual(ids);
   });
 
   it('ignores an unreadable record when reading a map, and drops it so it is fetched again', async () => {

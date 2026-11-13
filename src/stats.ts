@@ -14,6 +14,7 @@
 // forever at `<dataDir>/stats/<mapId>/<gameId>.json` (its compact
 // {@link GameRecord}: ids, wins and turn numbers, no names), so a cache hit
 // costs no request. A failing game is skipped and counted, never fatal.
+import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
@@ -40,6 +41,8 @@ export const DEFAULT_NEW_GAMES = 10;
 export const MAX_NEW_GAMES = 50;
 /** The least time between two requests the collector makes. */
 export const MIN_GAP_MS = 1000;
+/** How long a game seen unfinished is skipped before it is fetched again. */
+export const UNFINISHED_RETRY_MS = 60 * 60 * 1000;
 
 const truthy = (v: string | undefined) => v !== undefined && /^(1|true|yes|on)$/i.test(v.trim());
 
@@ -79,7 +82,7 @@ export interface CollectResult {
   fetched: number;
   /** Of those, newly cached finished games. */
   newlyCached: number;
-  /** Fetched games not finished yet (not cached; skipped for the rest of this process). */
+  /** Fetched games not finished yet (not cached; skipped for {@link UNFINISHED_RETRY_MS}). */
   notFinished: number;
   /** Games whose request or parse failed — skipped, not cached. */
   failed: number;
@@ -157,7 +160,8 @@ async function cacheIndex(dir: string): Promise<Map<number, number>> {
 async function writeRecord(dir: string, r: GameRecord): Promise<void> {
   const path = recordPath(dir, r.mapId, r.gameId);
   await mkdir(join(statsDir(dir), String(r.mapId)), { recursive: true, mode: 0o700 });
-  const tmp = `${path}.${process.pid}.tmp`;
+  // Unique per write, so overlapping writes of one record never share (and lose) a temp file.
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, JSON.stringify(r), { mode: 0o600 });
   await rename(tmp, path);
 }
@@ -168,8 +172,8 @@ export class StatsCollector {
   readonly #dir: () => string;
   readonly #now: () => number;
   readonly #sleep: (ms: number) => Promise<void>;
-  /** Games seen unfinished this process: not worth a request again soon. */
-  readonly #unfinished = new Set<number>();
+  /** Games seen unfinished → when: not worth a request again until {@link UNFINISHED_RETRY_MS} has passed. */
+  readonly #unfinished = new Map<number, number>();
   /** Games that failed this process: tried again only after every untried game. */
   readonly #failed = new Set<number>();
   #last: number | undefined;
@@ -225,7 +229,8 @@ export class StatsCollector {
         res.cacheHits++;
         continue;
       }
-      if (this.#unfinished.has(id)) {
+      const seen = this.#unfinished.get(id);
+      if (seen !== undefined && this.#now() - seen < UNFINISHED_RETRY_MS) {
         res.notFinished++;
         continue;
       }
@@ -238,13 +243,14 @@ export class StatsCollector {
         await this.#throttle();
         const game = await this.#client.getGame(id, { history: true, settings: true });
         if (game.state !== 'Finished') {
-          this.#unfinished.add(id);
+          this.#unfinished.set(id, this.#now());
           res.notFinished++;
           continue;
         }
         if (!game.map) throw new Error('no map');
         await writeRecord(dir, recordFromGame(game, game.map));
         this.#failed.delete(id);
+        this.#unfinished.delete(id);
         res.newlyCached++;
       } catch {
         this.#failed.add(id);

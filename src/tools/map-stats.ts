@@ -8,7 +8,7 @@ import { z } from 'zod';
 import type { MapCache } from '../client.js';
 import { MIN_SAMPLE, mapStats, type MapStats } from '../map-stats.js';
 import type { GameMap } from '../normalize.js';
-import { DEFAULT_NEW_GAMES, MAX_NEW_GAMES, STATS_ENV, statsGate, type StatsCollector, type StatsGate } from '../stats.js';
+import { DEFAULT_NEW_GAMES, MAX_NEW_GAMES, STATS_ENV, statsGate, type CollectResult, type StatsCollector, type StatsGate } from '../stats.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta } from './hints.js';
 
@@ -86,12 +86,32 @@ export function registerMapStatsTool(
     async ({ map_id, ladder_id, max_new_games }) => {
       const gate = statsGate(deps.env);
       if (!gate.enabled) throw refusal(gate);
-      const collected = await deps.collector.collect(ladder_id ?? 0, max_new_games ?? DEFAULT_NEW_GAMES);
-      const [stats] = mapStats(await deps.collector.records(map_id));
+      const ladderId = ladder_id ?? 0;
+      // 0 reads the cache only: no feed request, so no throttle either.
+      let collected: CollectResult | { ladderId: number; cacheOnly: true } | undefined = { ladderId, cacheOnly: true };
+      let warning: string | undefined;
+      let feedError: unknown;
+      if (max_new_games !== 0) {
+        try {
+          collected = await deps.collector.collect(ladderId, max_new_games ?? DEFAULT_NEW_GAMES);
+        } catch (e) {
+          collected = undefined;
+          feedError = e;
+        }
+      }
+      const records = await deps.collector.records(map_id);
+      if (feedError !== undefined) {
+        // The feed failed: the cache can still answer; with nothing cached the error stands.
+        if (records.length === 0) throw feedError;
+        const why = feedError instanceof Error ? feedError.message : String(feedError);
+        warning = `The game-ID feed failed (${why}), so no new games were collected; these stats are from the cache.`;
+      }
+      const [stats] = mapStats(records);
       const map = deps.mapCache.get(map_id);
       return respond(undefined, ['compact'], () => ({
         map: map ? { id: map.id, name: map.name } : { id: map_id },
-        collected,
+        ...(collected ? { collected } : {}),
+        ...(warning ? { warning } : {}),
         ...(stats
           ? { stats: named(stats, map) }
           : {

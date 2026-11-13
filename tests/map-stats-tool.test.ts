@@ -56,11 +56,17 @@ afterEach(async () => {
 });
 
 /** A harness whose fake war.app answers GameIDFeed with `ids` and GameFeed per game id. */
-async function harness(env: Record<string, string>, ids: number[] = [], games: Record<number, unknown> = {}): Promise<H> {
+async function harness(
+  env: Record<string, string>,
+  ids: number[] = [],
+  games: Record<number, unknown> = {},
+  feed: { fail: boolean } = { fail: false },
+): Promise<H> {
   const urls: string[] = [];
   const fetchImpl = (async (url: string | URL) => {
     const u = String(url);
     urls.push(u);
+    if (feed.fail && /GameIDFeed/.test(u)) return new Response('upstream down', { status: 503 });
     const id = Number(/GameID=(\d+)/.exec(u)?.[1]);
     const body = /GameIDFeed/.test(u) ? { gameIDs: ids } : (games[id] ?? { error: 'ServerGameKeyNotFound' });
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -148,6 +154,37 @@ describe('warapp_map_stats', () => {
     const p = payload<Record<string, any>>(await h.call({ map_id: 5 }));
     expect(p.stats).toBeUndefined();
     expect(p.message).toMatch(/no finished games/i);
+  });
+
+  it('max_new_games: 0 reads the cache only — no feed request', async () => {
+    const ids = [51, 52];
+    const h = await harness({ WARAPP_STATS: '1' }, ids, Object.fromEntries(ids.map((id) => [id, rawGame(id)])));
+    await h.call({ map_id: 777 });
+    h.urls.length = 0;
+    const p = payload<Record<string, any>>(await h.call({ map_id: 777, max_new_games: 0 }));
+    expect(h.urls).toEqual([]);
+    expect(p.collected).toMatchObject({ cacheOnly: true });
+    expect(p.stats.sampleSize).toBe(2);
+  });
+
+  it('when the feed fails but the map has cached games, returns them with a warning', async () => {
+    const ids = [61, 62];
+    const feed = { fail: false };
+    const h = await harness({ WARAPP_STATS: '1' }, ids, Object.fromEntries(ids.map((id) => [id, rawGame(id)])), feed);
+    await h.call({ map_id: 777 });
+    feed.fail = true;
+    const res = await h.call({ map_id: 777 });
+    expect(res.isError).toBeFalsy();
+    const p = payload<Record<string, any>>(res);
+    expect(p.stats.sampleSize).toBe(2);
+    expect(p.warning).toMatch(/feed/i);
+    expect(p.collected).toBeUndefined();
+  });
+
+  it('when the feed fails and nothing on the map is cached, the error stands', async () => {
+    const h = await harness({ WARAPP_STATS: '1' }, [], {}, { fail: true });
+    const res = await h.call({ map_id: 777 });
+    expect(res.isError).toBe(true);
   });
 
   it('rejects a bad max_new_games before any request', async () => {
