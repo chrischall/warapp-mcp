@@ -141,6 +141,21 @@ Reader primitives (`P.*`): `Ya` int32 · `wc` string · `Yc` bool · `uq` byte �
 3,2,1,0,5,4,7,6,8…15) · `sL` int32-length bytes · `Sd`/`ms`/`uL` int32-count list (-1 = null) ·
 `ef` int32-count dict (-1 = null).
 
+**Checked against the bundle at load (#131).** These primitives are built in (`DEFAULT_DIALECT`,
+pinned to one client release) and shadow the bundle's own definitions, while the bundle itself
+floats. So loading a bundle runs `verifyDialect`: each `P.*` static above is evaluated from the
+bundle's own definition on a few probe byte strings and must read the same value and the same
+number of bytes as the built-in; a mismatch refuses the bundle. What that check covers:
+
+- **verified:** the `P.*` statics whose bundle definition the interpreter evaluates to a plain
+  value on the probes (the int, string, bool, byte, float, bytes and list reads).
+- **unverified (a known blind spot):** a `P.*` static the probes cannot compare — `P.Td` (datetime)
+  and `P.tL` (GUID), and one that builds a client collection (a dictionary such as `P.ef`) — is
+  reported unverified, not refused; and the reader methods called on the reader itself (`a.Og()`,
+  `a.Ua()` and the rest, the dialect's `readerMethods`) are not checked at all. A client release
+  that renames or repurposes one of these decodes through the old read without an error; suspect
+  them first when a new client misreads a reply.
+
 The project does not redistribute the bundle: the decoder loads it from War.app's CDN at
 runtime, so class layouts track the live client. Field names in the bundle are minified and
 change between releases; semantic mapping is by class name (`W["warlight.shared.*"]`, stable)
@@ -225,6 +240,12 @@ fetchproxy bridge, so the request runs inside the signed-in tab:
 | `SendTerritoryPicks` (auth, write) | accepted; result bool `false` (also what the real client got) — not a success signal |
 | `SendOrders` (auth, write) | accepted, turn resolved, captures happened — see Orders |
 | `GetTerritoryPicks` (auth) | read back exactly the submitted ids in priority order |
+
+**Unverified: the whole-body rule (#131).** `readLatestGameInfo` refuses a `GetLatestGameInfo` reply
+with any bytes left after the `LatestGameInfo` (`LiveBoardFormatError`), on the strength of the
+capture above, which was consumed to the last byte. No live reply has been read since the rule
+went in: if war.app ever appends trailing bytes to that reply, every live board read fails with
+"bytes left unread after the LatestGameInfo". The owner confirms it on the next live board read.
 
 `TerritoryStanding`: territory id, owner, `Armies { count, fogged, specialUnits }`, fog level.
 Owner `0` = neutral, `-2` = available to pick, otherwise an in-game player id.
