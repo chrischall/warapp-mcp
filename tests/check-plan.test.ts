@@ -395,28 +395,48 @@ describe('warapp_check_plan', () => {
     expect(held.summary).not.toMatch(/Next turn/);
   });
 
-  it('counts what every capped at-risk list leaves out (#154)', async () => {
-    // Twelve captures of 1-army neutrals around my stacks, all beside Bob's 60: each can be undone.
-    const targets = [157, 158];
-    h = await live([
-      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 6 },
-      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 6 },
-      { id: 157, fogLevel: 2, owner: 0, armies: 1 },
-      { id: 158, fogLevel: 2, owner: 0, armies: 1 },
-      { id: 135, fogLevel: 1, owner: BOB.inGame, armies: 60 },
-      { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 60 },
-    ]);
-    const p = await check({
-      orders: [
-        { kind: 'move', from: 161, to: 157, armies: 2 },
-        { kind: 'move', from: 159, to: 158, armies: 2 },
-      ],
-    });
-    expect(p.plan.captures.map((t) => t.id).sort()).toEqual(targets);
-    // Both lists fit here, so nothing is left out and no count is given.
-    expect(p.atRisk.capturesMore).toBeUndefined();
+  it('counts what a capped at-risk list leaves out (#154, #161)', async () => {
+    // Twelve separate fronts on the fixture map, each a territory of mine (4 armies), a neutral
+    // beside it (2) and a stack of Bob's beside that (30): I take every neutral with 3, and each
+    // can be taken straight back. Twelve captures at risk, two more than a list names.
+    const map = lobbyFixture().map as { territories: Array<{ id: string; connectedTo: Array<string | number> }> };
+    const links = new Map<number, Set<number>>();
+    for (const t of map.territories) links.set(Number(t.id), new Set());
+    for (const t of map.territories) {
+      for (const n of t.connectedTo.map(Number)) {
+        if (!links.has(n) || n === Number(t.id)) continue;
+        links.get(Number(t.id))!.add(n);
+        links.get(n)!.add(Number(t.id));
+      }
+    }
+    const used = new Set<number>();
+    const fronts: Array<{ mine: number; neutral: number; bob: number }> = [];
+    for (const [neutral, around] of [...links].sort((x, y) => x[0] - y[0])) {
+      if (fronts.length === 12) break;
+      // Keep the fronts apart: nothing in or next to one may touch another.
+      const free = [...around].filter((id) => !used.has(id)).sort((x, y) => x - y);
+      if (used.has(neutral) || free.length < 2) continue;
+      const [mine, bob] = free as [number, number];
+      const zone = [neutral, mine, bob, ...links.get(mine)!, ...links.get(bob)!, ...around];
+      if (zone.some((id) => used.has(id))) continue;
+      fronts.push({ mine, neutral, bob });
+      for (const id of zone) used.add(id);
+    }
+    expect(fronts).toHaveLength(12);
+    h = await live(
+      fronts.flatMap((f): SyntheticTerritory[] => [
+        { id: f.mine, fogLevel: 1, owner: ANN.inGame, armies: 4 },
+        { id: f.neutral, fogLevel: 2, owner: 0, armies: 2 },
+        { id: f.bob, fogLevel: 1, owner: BOB.inGame, armies: 30 },
+      ]),
+    );
+    const p = await check({ orders: fronts.map((f) => ({ kind: 'move', from: f.mine, to: f.neutral, armies: 3 })) });
+    expect(p.plan.captures).toHaveLength(12);
+    expect(p.atRisk.captures).toHaveLength(10);
+    expect(p.atRisk.capturesMore).toBe(2);
+    // No bonus is held here, so that list is empty and gives no count.
+    expect(p.atRisk.bonuses).toEqual([]);
     expect(p.atRisk.bonusesMore).toBeUndefined();
-    expect(p.atRisk.captures.length).toBeGreaterThan(0);
   });
 
   it('refuses outside a turn phase', async () => {

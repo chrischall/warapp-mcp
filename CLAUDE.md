@@ -68,10 +68,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the assumption that I add nothing next turn; this never changes `safe`. Both modules are pure and
   deterministic like the planner, and neither is called by it.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
-  `warapp://strategy` resources: each in our own words with a source link from the researched war.app pages, marked
-  `source` or `derived`; never paste guide text. `docs/STRATEGY.md` names every note id (a test checks it). With a
-  game the profile comes from GameFeed alone (`feedProfile`, standing `unknown`); a `map_id` alone works only for a
-  map this process has cached, since GameFeed serves maps only with a game.
+  `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
+  researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or
+  `derived`; never paste guide text. Eight topics (`NOTE_TOPICS`: format, settings, cards, reading, opening, timing,
+  fighting, map). A note says which games it is for as data (`NoteCondition`: format, phase, standing, fog level,
+  move order, distribution, kill rates, the guard, cards in play, and so on), tested against the profile and
+  `noteContext(settings)`; a condition on something the game did not state does not hold, and a card condition
+  falls back to "any card" when the list is unknown. `docs/STRATEGY.md` names every note id (a test checks it, and
+  another that some game reaches every note). With a game the profile comes from GameFeed alone (`feedProfile`,
+  standing `unknown`) and the answer carries the game's `cardClock` (`src/strategy/card-clock.ts`: per card, the
+  capturing turns to the first one, fastest and guaranteed, from the pieces, starting pieces, minimums and pieces
+  per turn in the settings; whether a commerce game is on is read from a non-empty `Commerce` object, unverified).
+  With no game and no topic the compact answer is the topic index, not every note. A `map_id` alone works only for
+  a map this process has cached, since GameFeed serves maps only with a game.
 - **The pick advisor `warapp_plan_picks` is read-only** and refuses outside `DistributingTerritories` or when the
   live board has nothing pickable. Its scorer (`src/analysis/picks.ts`) is pure and deterministic like the turn
   planner; neutral sizes come from the live board when shown (wastelands at their real size), else the settings.

@@ -64,7 +64,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'orders that send fewer armies than ordered or none), `blindBorders`: your territories next to the ' +
           'fog, where nothing could be tested, and `exposedNextTurn`: territories no enemy stack touches today ' +
           'that one could take next turn by first taking the territory in between (yours or neutral), each with ' +
-          'the armies it would need to hold, if you add nothing next turn. Exact with no luck and ' +
+          'the armies it would need to hold, if you add nothing next turn. Decide on the fields (`safe`, ' +
+          '`worst`, `exposedNextTurn`), not on the wording of `summary`, which may change. Exact with no luck and ' +
           'straight rounding; otherwise battles are resolved at their expectation and `exact` is false. It does not ' +
           `try: ${CHECK_PLAN_NOT_COVERED.join('; ')}. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on ` +
           'war.app; it never submits orders.',
