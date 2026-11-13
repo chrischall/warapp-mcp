@@ -478,7 +478,9 @@
 //     afford both it just holds (a held border otherwise makes no attacks). While expansion candidates
 //     remain, a hold protecting less than the best expansion's value may not dip
 //     into the first MIN_EXPANSION_SHARE of income not yet spent on expansion; it
-//     is deferred and funded afterwards if the budget allows, else conceded.
+//     is deferred and funded afterwards if the budget allows, else conceded — but (#128) a
+//     capture that completes nothing never starves it: when one would leave too little for a
+//     deferred hold, it is undone, the hold funded first, and it runs on what is left.
 //  4b. Defensibility (R3). A capture that completes a bonus is checked against the
 //     frontier it leaves: each member a visible enemy could take next turn (threat as
 //     in rule 1, armies staying after this turn's moves; a fresh capture holds its
@@ -5737,6 +5739,28 @@ export function planTurn(input: PlanInput): TurnPlan {
         }
         runPostponed();
         garrisonCompleted();
+      }
+      // #128: a hold deferred for the expansion share is not then starved by a capture that
+      // completes nothing: when this one leaves too little for a hold still waiting, it is undone,
+      // the waiting holds are funded first, and it runs again on what is left (if it still fits).
+      const owed = deferred.filter((t) => !heldBorders.has(t.id) && !conceded.has(t.id));
+      if ((c.kind === 'advance' || c.kind === 'break' || c.kind === 'counter') && !c.focus && owed.length) {
+        const restore = snapshot();
+        const spent = expansionSpent;
+        const left = expansionLeft;
+        run(c);
+        if (owed.every((t) => t.holdCost <= roomAt(t.id))) return garrisonCompleted();
+        restore();
+        expansionSpent = spent;
+        expansionLeft = left;
+        for (const t of owed)
+          if (t.holdCost <= roomAt(t.id)) {
+            rationale.push(
+              `Hold ${label(t.id)} now after all: the capture that would have gone first completes no bonus and would leave too little to hold it later.`,
+            );
+            hold(t);
+            heldBorders.add(t.id);
+          }
       }
       run(c);
       garrisonCompleted();
