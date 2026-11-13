@@ -88,6 +88,7 @@ interface PlanPayload {
   conceded: Named[];
   cardAdvice: 'order-priority' | null;
   multiSourceCaptures: Named[];
+  frontier: string | { borders: number; enemyBorders: number; holdCost: number; income: number };
   untrusted_content?: boolean;
 }
 
@@ -271,6 +272,23 @@ describe('warapp_plan_turn', () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const q = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(q.multiSourceCaptures).toEqual([]);
+  });
+
+  it('reports the frontier budget (#71): one line on compact, the numbers on full', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const compact = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(compact.frontier).toMatch(
+      /^\d+ borders \(\d+ facing an enemy\): holding them next turn needs \d+, next income \d+$/,
+    );
+    const full = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+    const f = full.frontier as { borders: number; enemyBorders: number; holdCost: number; income: number };
+    expect(Object.keys(f).sort()).toEqual(['borders', 'enemyBorders', 'holdCost', 'income']);
+    expect(compact.frontier).toBe(
+      `${f.borders} borders (${f.enemyBorders} facing an enemy): holding them next turn needs ${f.holdCost}, next income ${f.income}`,
+    );
+    expect(f.income).toBe(full.expected.nextIncome);
+    // Bob's stack sits next to my territories on this board.
+    expect(f.enemyBorders).toBeGreaterThan(0);
   });
 
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {

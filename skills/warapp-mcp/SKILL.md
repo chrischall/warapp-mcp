@@ -125,6 +125,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   `"order-priority"`, tell the user a withdrawal only runs if the border is still theirs when
   it executes; when they hold Order Priority the `orders` already play it (without one,
   nothing makes the withdrawal go first).
+- **`frontier`** (#71) is the plan's border budget: borders left, those facing an enemy, what
+  they need next turn to hold, and the next income. "Frontier grows faster than income" means
+  the plan stopped expanding into new enemy fronts; tell the user the empire is getting too
+  thin rather than pushing more expansion.
 - **Pick `defend` when** the user wants to hold everything worth holding before any expansion
   — e.g. they are ahead on income and only need to survive, or a bonus they hold is under
   attack from several sides. It still concedes hopeless borders. Pick `expand` to never attack

@@ -228,6 +228,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       with exact arithmetic — only at 0% luck under straight rounding (else skipped with a
       warning), and only for a target the passes already chose. `warapp_plan_turn` lists them
       in `multiSourceCaptures`.
+    - **Frontier cost (#71, rule 4d).** Every capture's score pays for the frontier it adds:
+      `NEUTRAL_BORDER_COST` per border it opens (minus per border it closes), plus, under
+      `balanced`/`defend`, what a new enemy-facing border needs next turn to hold (R3's
+      arithmetic; a completion's own members are left to R3's defence cost, never counted
+      twice). The plan reports `frontier` (borders, enemy-facing, hold cost, next income —
+      conceded borders are not in the hold cost); under `balanced`/`defend` an expansion that
+      adds an enemy border without completing a bonus is undone when the hold cost would then
+      exceed the next income and the start-of-turn hold cost ("Frontier grows faster than income").
   - **Game rules** (`docs/PLAN-PLANNER-4.md`, `tests/analysis/lessons-game-rules.test.ts`; the
     full-rung `settings` echo shows each):
     - **Kill rates (#28).** Every combat computation uses the game's offensive/defensive kill
