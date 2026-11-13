@@ -57,8 +57,8 @@ export interface WaitOptions {
   timeoutMs: number;
   /**
    * `onConnect` (else `onReconnect`), when present: pushes before a connect's Subscribe are lost —
-   * a reconnect gap, or the first connect of the process after the initial check — so every game
-   * is re-read.
+   * a reconnect gap, the first connect of the process after the initial check, or a Subscribe that
+   * failed and later went through on a retry — so every game is re-read.
    */
   push: Pick<PushListener, 'watch' | 'onUpdate'> &
     Partial<Pick<PushListener, 'onReconnect' | 'onConnect' | 'release' | 'forget'>>;

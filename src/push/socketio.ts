@@ -93,8 +93,8 @@ export interface SocketIoClientOptions {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   /**
-   * Reconnect backoff: initial delay, doubled per failure up to `maxBackoffMs`. The same pace
-   * spaces out polls that come back at once with nothing to say.
+   * Reconnect backoff: initial delay, doubled per failure up to `maxBackoffMs`. The same pace,
+   * capped at `maxPollPaceMs`, spaces out polls that come back at once with nothing to say.
    */
   initialBackoffMs?: number;
   maxBackoffMs?: number;
@@ -102,12 +102,15 @@ export interface SocketIoClientOptions {
   stableMs?: number;
   /** A poll answered faster than this with nothing to say is paced (default 1 s). */
   minPollMs?: number;
+  /** The longest pause between such polls (default 5 s): a push waits at most this long. */
+  maxPollPaceMs?: number;
 }
 
 export const DEFAULT_INITIAL_BACKOFF_MS = 1_000;
 export const DEFAULT_MAX_BACKOFF_MS = 60_000;
 export const DEFAULT_STABLE_MS = 30_000;
 export const DEFAULT_MIN_POLL_MS = 1_000;
+export const DEFAULT_MAX_POLL_PACE_MS = 5_000;
 
 const realSleep = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -359,11 +362,12 @@ export class SocketIoClient {
       }
       // A long poll ends with a noop after a quiet spell; one answered at once with nothing to say
       // (an empty body, a noop, a packet this client ignores) would otherwise re-poll in a tight
-      // loop. Pace those like the reconnect backoff (#131).
+      // loop. Pace those like the reconnect backoff, but capped low: a push that arrives during the
+      // pause waits for the next poll (#131).
       if (useful || this.now() - started >= (this.opts.minPollMs ?? DEFAULT_MIN_POLL_MS)) {
         idle = 0;
       } else if (this.live(gen) && this.sid === sid) {
-        await this.sleep(this.backoffMs(idle++));
+        await this.sleep(Math.min(this.opts.maxPollPaceMs ?? DEFAULT_MAX_POLL_PACE_MS, this.backoffMs(idle++)));
       }
     }
   }

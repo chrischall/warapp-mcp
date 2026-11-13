@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { decodeRequest, encodeReply, fromHex, toHex } from '../../src/protocol/codec.js';
 import { Method } from '../../src/protocol/methods.js';
 import { MAX_SUBSCRIBE_RETRIES, PushListener } from '../../src/push/listener.js';
+import { waitForTurn } from '../../src/tools/push.js';
 import {
   parseHandshake,
   parsePacket,
@@ -233,6 +234,17 @@ describe('SocketIoClient', () => {
     expect(c.connectCount).toBe(1);
   });
 
+  it('caps the pace of empty polls well below the reconnect backoff, so a push is never a minute late (#131)', async () => {
+    const r = rig();
+    const { c } = client(r, { maxBackoffMs: 60_000 });
+    c.start();
+    await c.whenConnected();
+    for (let i = 0; i < 6; i++) r.socket.push('8::');
+    await until(() => r.sleeps.length === 6, 'paced polls');
+    expect(r.sleeps).toEqual([1000, 2000, 4000, 5000, 5000, 5000]);
+    expect(c.connectCount).toBe(1);
+  });
+
   it('a long poll that ends idle after a while is not paced', async () => {
     const r = rig();
     let t = 1_700_000_000_000;
@@ -421,6 +433,64 @@ describe('PushListener', () => {
     expect(l.status().lastError).toMatch(/77/);
   });
 
+  it('a Subscribe that succeeds on retry tells connect listeners, so a wait re-reads its games (#131)', async () => {
+    const r = rig();
+    let failPosts = 0;
+    const inner = r.transport;
+    r.transport = async () => {
+      const t = await inner();
+      return {
+        fetch: (init) =>
+          failPosts > 0 && init.method === 'POST' ? (failPosts--, Promise.resolve({ status: 502, body: '', url: init.path })) : t.fetch(init),
+      };
+    };
+    let wake: () => void = () => {};
+    const l = new PushListener({ transport: r.transport, sleep: () => new Promise<void>((res) => (wake = res)) });
+    stoppers.push(() => {
+      l.stop();
+      r.socket.close();
+    });
+    await l.watch([1]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    const seen: Array<{ reconnect: boolean; resubscribed?: boolean }> = [];
+    l.onConnect((e) => seen.push(e));
+    // A wait on game 2 while the socket is connected: its Subscribe fails, the initial check runs.
+    failPosts = 1;
+    const checks: number[] = [];
+    const ac = new AbortController();
+    const wait = waitForTurn({
+      gameIds: [2],
+      timeoutMs: 60_000,
+      push: l,
+      signal: ac.signal,
+      check: async (id) => {
+        checks.push(id);
+        return { id, name: null, state: 'Playing', turn: 3, waitingOnYou: checks.length > 1 };
+      },
+    });
+    await until(() => checks.length === 1 && l.status().pending?.[0] === 2, 'initial check, subscribe pending');
+    // The retry lands: a turn that resolved before it sent no push, so the wait re-reads game 2.
+    wake();
+    const out = await wait;
+    expect(out.status).toBe('your_turn');
+    expect(checks).toEqual([2, 2]);
+    expect(seen).toEqual([{ reconnect: false, resubscribed: true }]);
+    expect(out.reconnects).toBe(0);
+  });
+
+  it('a Subscribe refused by war.app then retried tells connect listeners once the retry is sent (#131)', async () => {
+    const r = rig();
+    const l = listener(r);
+    const seen: Array<{ reconnect: boolean; resubscribed?: boolean }> = [];
+    l.onConnect((e) => seen.push(e));
+    await l.watch([3]);
+    await until(() => seen.length === 1, 'first connect');
+    r.socket.push(`3:::${toHex(encodeReply({ method: Method.Subscribe, msgNum: 1, error: { code: 77, message: 'nope' } }))}`);
+    await until(() => seen.length === 2, 'resubscribed');
+    expect(seen).toEqual([{ reconnect: false }, { reconnect: false, resubscribed: true }]);
+    expect(subscribedTopics(r)).toHaveLength(2);
+  });
+
   it('forgets a game: it is no longer watched or re-subscribed (#131)', async () => {
     const r = rig();
     const l = listener(r);
@@ -529,6 +599,20 @@ describe('PushListener', () => {
     expect(reconnects).toBe(1);
   });
 
+
+  it('an idle stop forgets refused topics and the last Subscribe error (#131)', async () => {
+    const r = rig();
+    const { l, fireIdle } = idleListener(r);
+    await l.watch([1]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    r.socket.push(`3:::${subscribeReplyHex(1, { 'Game.1': 12 })}`);
+    await until(() => Object.keys(l.status().refused).length === 1, 'refused');
+    r.socket.push(`3:::${toHex(encodeReply({ method: Method.Subscribe, msgNum: 99, error: { code: 77, message: 'nope' } }))}`);
+    await until(() => /77/.test(l.status().lastError ?? ''), 'subscribe error');
+    l.release([1]);
+    fireIdle();
+    expect(l.status()).toEqual({ started: false, connected: false, watching: [], refused: {}, transport: 'xhr-polling' });
+  });
 
   it('a failed subscribe on a live session does not throw from watch; once its retries run out the reconnect re-subscribes', async () => {
     const r = rig();

@@ -10,7 +10,9 @@
 // cannot be brought up — xhr-polling over the bridge. After any reconnect,
 // pushes sent during the gap are lost: `onConnect` (every connect, the first
 // included — a turn that resolved before the first Subscribe sent no push
-// either) and `onReconnect` tell consumers to re-read GameFeed.
+// either) and `onReconnect` tell consumers to re-read GameFeed. A Subscribe that
+// failed (not sent, or refused) and later goes through on the same session is
+// such a gap too: `onConnect` fires again with `resubscribed: true`.
 import type { ExtrasUp } from '../protocol/codec.js';
 import { gameTopic } from '../protocol/methods.js';
 import {
@@ -35,6 +37,14 @@ export interface GameUpdate {
   gameId: number;
   /** ISO time the push was received. */
   at: string;
+}
+
+/** A connect, or a Subscribe that went through after one failed: pushes before it were lost. */
+export interface ConnectEvent {
+  /** A connect after the first of this run. */
+  reconnect: boolean;
+  /** Not a connect: a Subscribe that had failed on this session went through on a retry. */
+  resubscribed?: true;
 }
 
 export interface PushStatus {
@@ -99,7 +109,7 @@ export class PushListener {
   private readonly events: GameUpdate[] = [];
   private readonly listeners = new Set<(u: GameUpdate) => void>();
   private readonly reconnectListeners = new Set<() => void>();
-  private readonly connectListeners = new Set<(e: { reconnect: boolean }) => void>();
+  private readonly connectListeners = new Set<(e: ConnectEvent) => void>();
   private connects = 0;
   private nextMsgNum = 1;
   /** Open watches per game (a wait holds its games until it releases them). */
@@ -109,6 +119,8 @@ export class PushListener {
   private retrying = false;
   private subscribeFailures = 0;
   private subscribeError: string | undefined;
+  /** A Subscribe failed on this session: the next one that goes through tells the connect listeners. */
+  private resubscribeOwed = false;
   private cancelIdle: (() => void) | undefined;
   private readonly opts: PushListenerOptions;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -138,8 +150,9 @@ export class PushListener {
         this.subscribed = new Set();
         this.sentBy.clear();
         this.subscribeFailures = 0;
+        this.resubscribeOwed = false;
         await this.subscribePending();
-        const e = { reconnect: ++this.connects > 1 };
+        const e: ConnectEvent = { reconnect: ++this.connects > 1 };
         for (const fn of this.connectListeners) fn(e);
       },
       ...(opts.sleep ? { sleep: opts.sleep } : {}),
@@ -163,7 +176,7 @@ export class PushListener {
     this.socket.start();
     if (this.socket.connected) {
       try {
-        await this.subscribePending();
+        if (await this.subscribePending()) this.resubscribed();
       } catch (e) {
         // Retried on this session (with backoff); a reconnect re-subscribes everything anyway.
         this.subscribeFailed(e);
@@ -192,6 +205,10 @@ export class PushListener {
       this.games.clear();
       this.subscribed = new Set();
       this.sentBy.clear();
+      this.refused.clear();
+      this.subscribeError = undefined;
+      this.subscribeFailures = 0;
+      this.resubscribeOwed = false;
     });
   }
 
@@ -225,9 +242,11 @@ export class PushListener {
   /**
    * Listen for every connect, the first included, once subscribed: a game's turn that resolved
    * before its Subscribe sent no push here, so re-read GameFeed (#131). `reconnect` is false for
-   * the first connect of the process. Returns the unsubscribe.
+   * the first connect of the process. Also fired, with `resubscribed: true`, when a Subscribe that
+   * failed on this session goes through on a retry: a turn that resolved in between sent no push
+   * either. Returns the unsubscribe.
    */
-  onConnect(fn: (e: { reconnect: boolean }) => void): () => void {
+  onConnect(fn: (e: ConnectEvent) => void): () => void {
     this.connectListeners.add(fn);
     return () => {
       this.connectListeners.delete(fn);
@@ -264,9 +283,10 @@ export class PushListener {
     this.connects = 0;
   }
 
-  private async subscribePending(): Promise<void> {
+  /** Send a Subscribe for every game not yet subscribed; true when one was sent. */
+  private async subscribePending(): Promise<boolean> {
     const pending = [...this.games].filter((g) => !this.subscribed.has(g));
-    if (!pending.length) return;
+    if (!pending.length) return false;
     for (const g of pending) this.subscribed.add(g);
     const msgNum = this.nextMsgNum++;
     this.sentBy.set(msgNum, pending);
@@ -277,12 +297,22 @@ export class PushListener {
       for (const g of pending) this.subscribed.delete(g);
       throw e;
     }
+    return true;
+  }
+
+  /** A Subscribe went through on the live session: if an earlier one failed, the games it carried may have missed a push. */
+  private resubscribed(): void {
+    if (!this.resubscribeOwed) return;
+    this.resubscribeOwed = false;
+    const e: ConnectEvent = { reconnect: false, resubscribed: true };
+    for (const fn of this.connectListeners) fn(e);
   }
 
   /** A Subscribe failed (not sent, or refused by the server): note it and retry with backoff. */
   private subscribeFailed(e: unknown): void {
     this.subscribeError = e instanceof Error ? e.message : String(e);
     this.subscribeFailures++;
+    this.resubscribeOwed = true;
     if (this.retrying || this.subscribeFailures > MAX_SUBSCRIBE_RETRIES) return;
     this.retrying = true;
     void (async () => {
@@ -295,7 +325,7 @@ export class PushListener {
           if (!this.socket.connected) return;
           if (![...this.games].some((g) => !this.subscribed.has(g))) return;
           try {
-            await this.subscribePending();
+            if (await this.subscribePending()) this.resubscribed();
             return;
           } catch (err) {
             this.subscribeError = err instanceof Error ? err.message : String(err);

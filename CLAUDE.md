@@ -130,7 +130,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the game id, so `warapp_wait_for_turn` re-reads GameFeed on each one. **A reconnect loses the
   pushes sent during the gap** (war.app has closed a healthy socket after ~60 s): close, error
   or a missed heartbeat reconnects (new handshake, new sid, re-subscribe) and `onReconnect`
-  fires, on which `warapp_wait_for_turn` re-reads every watched game. The push transport shows
+  fires, on which `warapp_wait_for_turn` re-reads every watched game — as it does when a failed
+  `Subscribe` goes through on a retry (`onConnect` with `resubscribed: true`). The push transport shows
   in `warapp_session_status` (`pushTransport`) and the push tools. One listener per process
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
   Tests drive a scripted fake bridge and a fake WebSocket, never a real socket.
