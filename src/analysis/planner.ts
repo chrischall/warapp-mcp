@@ -301,7 +301,8 @@
 //  1g. Garrison a completion (under `balanced` and `defend`; #122). Once a capture completes a
 //     bonus, its members I held at the start that face an enemy and would fall are held whole
 //     right away, before any later capture — a held bonus's unit tests (cost ≤ PAYBACK_TURNS ×
-//     value and ≤ CONCEDE_FACTOR × worth), and it must fit what may still be deployed there;
+//     value and ≤ CONCEDE_FACTOR × worth), and its members' deploys must fit together what may
+//     still be deployed (under Local Deployment, the pools checked for all of them at once);
 //     otherwise they get the leftover as in rule 1c. A rationale line "Garrison … completed this
 //     turn" names each; the leftover then tops them up to a comfortable margin as it does a
 //     border rule 1c keeps. Captured members are not garrisoned (next turn's deploys land first).
@@ -2439,8 +2440,9 @@ export function planTurn(input: PlanInput): TurnPlan {
   /**
    * #122: would `u` survive on `left` armies short of its whole hold — kept as a near miss (short
    * by at most {@link nearMissMargin}) or floored (every border faces a player with two or more
-   * targets, and its floor fits)? An estimate for rule 1h.3's starve check (pools and the
-   * expected-attack test of the near miss are left out).
+   * targets, and its floor fits)? An estimate for rule 1h.3's starve check: `left` is pool-aware
+   * under Local Deployment (the caller passes what may be deployed on its borders), but the
+   * expected-attack test of the near miss and `fundable`'s greedy order are left out.
    */
   const keptShort = (u: Unit, left: number): 'near' | 'floor' | null => {
     const todo = u.members.filter((m) => !heldBorders.has(m.id));
@@ -2945,6 +2947,14 @@ export function planTurn(input: PlanInput): TurnPlan {
   const garrisonJudged = new Set<number>();
   /** Members garrisoned so: like a border rule 1c keeps, the leftover tops them up to a comfortable margin first. */
   const garrisoned = new Set<number>();
+  /** Do these deploys fit together what may still be deployed (the budget, and the pools under Local Deployment)? */
+  const fitsTogether = (adds: readonly { id: number; d: number }[]): boolean => {
+    if (adds.reduce((n, x) => n + x.d, 0) > budget) return false;
+    if (!local) return true;
+    const next = new Map(deployed);
+    for (const x of adds) next.set(x.id, (next.get(x.id) ?? 0) + x.d);
+    return chargeDeploys(pools, next).anywhereUsed <= pools.anywhere;
+  };
   const garrisonCompleted = () => {
     if (!guarded || !captured.size) return;
     const after = new Set([...mine, ...captured]);
@@ -2972,7 +2982,9 @@ export function planTurn(input: PlanInput): TurnPlan {
       const cost = todo.reduce((n, x) => n + x.d, 0);
       const worth = b.value + have / PAYBACK_TURNS;
       if (cost > PAYBACK_TURNS * b.value || cost > CONCEDE_FACTOR * worth || cost > budget - reserve) continue;
-      if (todo.some((x) => x.d > roomAt(x.id))) continue;
+      // The pools are checked for the members together: each may fit the free pool on its own
+      // while together they overdraw it.
+      if (!fitsTogether(todo)) continue;
       for (const x of todo) {
         deploy(x.id, x.d);
         garrisoned.add(x.id);
@@ -5010,7 +5022,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       // costs the completion one turn of its value; conceding a held bonus loses its value every
       // turn until it is retaken — counted over PAYBACK_TURNS, the horizon every payback test
       // uses. So the completion goes first only when its one turn earns more than that.
-      const kept = starved.map((u) => keptShort(u, budget));
+      // Under Local Deployment only what may be deployed on its borders counts (pools respected).
+      const kept = starved.map((u) => keptShort(u, local ? Math.min(budget, leftFor(u)) : budget));
       const conceding = starved.filter((_, i) => !kept[i]).reduce((n, u) => n + u.value, 0);
       // Units only left short (a near miss, a floor) still stand: the completion goes first when it
       // earns more than they are worth, or — when each stays a near miss — pays for itself within a

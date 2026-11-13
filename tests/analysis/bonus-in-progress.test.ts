@@ -11,6 +11,7 @@ import type { TerritoryState } from '../../src/board.js';
 import { armiesToTake } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import { chargeDeploys, deployPools } from '../../src/analysis/local-deploy.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, mine, neutral } from './helpers.js';
 
@@ -266,5 +267,55 @@ describe('#122 (d): a completion that pays back in a turn is not deferred to top
     expect(deployedTo(plan, 81) + deployedTo(plan, 82)).toBe(5);
     expect(plan.warnings.join('\n')).toMatch(/Bonus Slate \(#781\) \(\+3\) is held though short/);
     expect(plan.rationale.join('\n')).not.toMatch(/Complete bonus Ash \(#782\).*only after holding/);
+  });
+});
+
+// ---- (e, Local Deployment) two garrisoned members drawing on the free pool together ----
+//   A 4x4 grid (ids 1..16, row by row). Mine: Ochre (+5) 11 12 and Teal (+2) 15 16 are held, so
+//   7 of the 14 income are pooled and 7 are free. Clay (+5) 3 4 7 8: 3 7 8 mine, 4 a 1-army
+//   neutral; capturing 4 completes Clay, whose start members 3 and 7 face enemies. Each garrison
+//   fits the free pool on its own; together they overdraw it.
+const GRID_IDS = Array.from({ length: 16 }, (_, i) => i + 1);
+const GRID_EDGES: [number, number][] = GRID_IDS.flatMap((id) => {
+  const x = (id - 1) % 4;
+  const out: [number, number][] = [];
+  if (x < 3) out.push([id, id + 1]);
+  if (id + 4 <= 16) out.push([id, id + 4]);
+  return out;
+});
+const MAP_G = makeMap(GRID_IDS, GRID_EDGES, [
+  [801, 'Moor', 4, [1, 2, 5, 6]],
+  [802, 'Clay', 5, [3, 4, 7, 8]],
+  [803, 'Dune', 3, [9, 10]],
+  [804, 'Ochre', 5, [11, 12]],
+  [805, 'Heath', 1, [13, 14]],
+  [806, 'Teal', 2, [15, 16]],
+]);
+const BOARD_G = board(
+  [
+    neutral(1, 3), enemy(2, 7), mine(3, 3), neutral(4, 1), mine(5, 7), enemy(6, 3), mine(7, 1), mine(8, 8),
+    enemy(9, 8), mine(10, 8), mine(11, 7), mine(12, 6), enemy(13, 8), mine(14, 6), mine(15, 1), mine(16, 4),
+  ],
+  true,
+);
+
+describe('#122 (e) under Local Deployment: garrisons are checked against the pools together', () => {
+  const g = buildGraph(MAP_G);
+  const plan = planTurn({
+    graph: g,
+    board: BOARD_G,
+    me: ME,
+    income: 14,
+    settings: { ...RATES, localDeployments: true },
+    game: { players, turn: 8 },
+    options: { adapt: true },
+  });
+
+  it('deploys exactly the income, within the pools', () => {
+    expect(plan.deploys.reduce((s, d) => s + d.armies, 0)).toBe(14);
+    const held = new Set([3, 5, 7, 8, 10, 11, 12, 14, 15, 16]);
+    const pools = deployPools(g, held, 14);
+    const charged = chargeDeploys(pools, new Map(plan.deploys.map((d) => [d.territoryId, d.armies])));
+    expect(charged.anywhereUsed).toBeLessThanOrEqual(pools.anywhere);
   });
 });
