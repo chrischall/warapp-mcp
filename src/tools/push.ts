@@ -74,8 +74,8 @@ export interface WaitOptions {
    * failed and later went through on a retry — so every game is re-read.
    */
   /** `watch` resolving true: it sent a Subscribe on a live session, so every game is re-read (the check-to-Subscribe gap). */
-  push: { watch: (gameIds: readonly number[]) => Promise<boolean | void> } & Pick<PushListener, 'onUpdate'> &
-    Partial<Pick<PushListener, 'onReconnect' | 'onConnect' | 'release' | 'forget'>>;
+  push: { watch: (gameIds: readonly number[], opts?: { since?: number }) => Promise<boolean | void> } & Pick<PushListener, 'onUpdate'> &
+    Partial<Pick<PushListener, 'onReconnect' | 'onConnect' | 'release' | 'forget' | 'mark'>>;
   /**
    * Read one game's current state from GameFeed. Throws for a game the account does not play in:
    * every game is checked before any is watched (#131).
@@ -140,6 +140,10 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
   };
   // Every connect, the first included: watch() returns before the socket connects, so a turn
   // that resolves between the initial check and the first Subscribe is only seen by a re-read.
+  // Cost, accepted (#148): a wait that starts the socket reads each game twice up front (its check,
+  // then the re-read on that first connect), 2N GameFeed reads for N games where N would do when the
+  // two are milliseconds apart. Skipping the re-read would trade a few reads for a missed turn
+  // whenever they are not; a re-read asked for while one is in flight is coalesced (`coalesced`).
   const offReconnect = opts.push.onConnect
     ? opts.push.onConnect((e) => requeue(e.reconnect))
     : opts.push.onReconnect?.(() => requeue(true));
@@ -158,6 +162,9 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
     // and the Subscribe sends no push) is closed by a re-read: on the connect when the socket is not
     // up yet, or right after `watch` when it subscribed on a live session.
     const latest = new Map<number, GameCheck>();
+    // Taken before the first checks: a Subscribe for these games that another wait gets through after
+    // it (or has in flight when this one watches) makes `watch` say so, and the games are re-read (#148).
+    const mark = opts.push.mark?.();
     const first = await Promise.all([...ids].map(async (id) => [id, await opts.check(id)] as const));
     for (const [id, c] of first) {
       latest.set(id, c);
@@ -179,7 +186,7 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
     // Watch only a game that can still need me: not a finished one (#131), nor one where my seat is out (#130).
     const live = [...ids].filter((id) => !TERMINAL_STATES.has(latest.get(id)!.state) && latest.get(id)!.ended === undefined);
     if (live.length) {
-      const subscribedNow = await opts.push.watch(live);
+      const subscribedNow = await opts.push.watch(live, mark === undefined ? {} : { since: mark });
       watched = live;
       if (subscribedNow === true) for (const id of live) if (!queue.includes(id)) queue.push(id);
     }

@@ -1,7 +1,8 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import { describe, expect, it } from 'vitest';
 import { MapCache, WarappClient } from '../src/client.js';
-import { BUNDLE_FETCH_TIMEOUT_MS, BUNDLE_MAX_BYTES } from '../src/protocol/bundle.js';
+import { BUNDLE_FETCH_TIMEOUT_MS, BUNDLE_MAX_BYTES, BundleError, WarappBundle } from '../src/protocol/bundle.js';
+import { MINI_BUNDLE } from './protocol/mini-bundle.js';
 import { bundleFetcher, createLiveContext, parseInviteToken, parseInviteTokenText } from '../src/tools/live-context.js';
 import { withToolConfig } from '../src/tools/hints.js';
 import { mockWarappBridge } from './bridge-mock.js';
@@ -198,6 +199,25 @@ describe('createLiveContext', () => {
     await expect(a.bundle()).rejects.toBe(own);
     const b = createLiveContext({ client, bridge, bundle: () => Promise.reject('boom') });
     await expect(b.bundle()).rejects.toThrow(/client bundle: boom/);
+  });
+
+  it('a later refused load clears the decoder report: an earlier bundle is not shown as decoding (#148)', async () => {
+    const { bridge } = mockWarappBridge(() => ({ status: 200, body: '', url: '' }));
+    const loaded = new WarappBundle(MINI_BUNDLE, 'old');
+    let refuse = false;
+    const ctx = createLiveContext({
+      client,
+      bridge,
+      bundle: async () => {
+        if (refuse) throw new BundleError('dialect-unverified', 'refused');
+        return loaded;
+      },
+    });
+    await ctx.bundle();
+    expect(ctx.decoderReport()?.bundleVersion).toBe('old');
+    refuse = true;
+    await expect(ctx.bundle()).rejects.toThrow(/refused/);
+    expect(ctx.decoderReport()).toBeUndefined();
   });
 });
 

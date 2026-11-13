@@ -96,7 +96,7 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
           }),
           inputSchema: z.object({ game_id: gameIdArg }),
           async plan({ game_id }) {
-            const game = await ctx.client.getGame(parseGameId(game_id));
+            const game = await ctx.client.getGame(parseGameId(game_id), { map: false });
             requireTurnPhase(game);
             const token = await ctx.myInviteToken({ fresh: true });
             if (token === undefined) {
@@ -160,7 +160,7 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
 
             let after: Game;
             try {
-              after = await ctx.client.getGame(gameId);
+              after = await ctx.client.getGame(gameId, { map: false });
             } catch (e) {
               return {
                 status: 'unconfirmed' as const,

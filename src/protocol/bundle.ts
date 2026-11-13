@@ -25,7 +25,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import { chmod, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Reader } from './codec.js';
-import { BundleInterpreter, parseBundle, type DialectCheck, type InterpOptions, type ReadBudget } from './interp.js';
+import {
+  BundleInterpreter,
+  parseBundle,
+  READER_HELPERS,
+  REQUIRED_HELPERS,
+  type DialectCheck,
+  type InterpOptions,
+  type ReadBudget,
+} from './interp.js';
 
 /** A page that loads the game client (the homepage does not). */
 export const DEFAULT_PAGE_URL = 'https://war.app/MultiPlayer';
@@ -38,7 +46,7 @@ export const BUNDLE_FETCH_TIMEOUT_MS = 120_000;
 /** The most bytes the bundle download may carry (the bundle is about 17 MB). */
 export const BUNDLE_MAX_BYTES = 64 * 1024 * 1024;
 
-export type BundleErrorKind = 'no-script' | 'bad-url' | 'bad-version' | 'bad-bundle' | 'dialect-mismatch';
+export type BundleErrorKind = 'no-script' | 'bad-url' | 'bad-version' | 'bad-bundle' | 'dialect-mismatch' | 'dialect-unverified';
 
 export class BundleError extends Error {
   constructor(
@@ -89,6 +97,16 @@ export function discoverBundleUrl(html: string, pageUrl: string): BundleSource {
   return { url: `https://${BUNDLE_HOST}${BUNDLE_PATH}?v=${version}`, version };
 }
 
+/** What decoded a board: the bundle version, whether a stand-in did, and its reader-helper check. */
+export interface DecoderReport {
+  /** The client bundle version the board was decoded with. */
+  bundleVersion: string;
+  /** A cached copy stood in because the current version could not be looked up (#131). */
+  fallback: boolean;
+  /** The reader helpers checked at load (#148): verified, and the ones that are not, with why. */
+  helpers: { verified: string[]; unverified: string[]; reasons?: Record<string, string> };
+}
+
 /** A loaded bundle: reads wire classes by stable type name. */
 export class WarappBundle {
   private readonly interp: BundleInterpreter;
@@ -112,10 +130,33 @@ export class WarappBundle {
           "server's built-in readers; the client changed and this server needs an update to read it.",
       );
     }
+    // The count, flag and byte helpers decode every army count, fog flag and unit count: one this
+    // check cannot verify could be a swapped same-width read, which no later check catches (#148).
+    const unverifiedRequired = REQUIRED_HELPERS.map((n) => `${READER_HELPERS}.${n}`).filter((k) =>
+      this.dialectCheck.unverified.includes(k),
+    );
+    if (unverifiedRequired.length) {
+      throw new BundleError(
+        'dialect-unverified',
+        `war.app's client bundle ${version} defines ${unverifiedRequired.join(', ')} in a way this server cannot check ` +
+          `(${unverifiedRequired.map((k) => this.dialectCheck.reasons?.[k] ?? 'unverified').join('; ')}); those read every ` +
+          'army count, so the board is not decoded rather than risk a wrong one. The client changed and this server needs an update.',
+      );
+    }
   }
 
   /** The built-in reader helpers checked against this bundle's own definitions at load. */
   readonly dialectCheck: DialectCheck;
+
+  /** What this bundle's decoding rests on, for the tools to show (#148). */
+  report(): DecoderReport {
+    const { verified, unverified, reasons } = this.dialectCheck;
+    return {
+      bundleVersion: this.version,
+      fallback: this.fallback,
+      helpers: { verified: [...verified], unverified: [...unverified], ...(reasons ? { reasons: { ...reasons } } : {}) },
+    };
+  }
 
   /** Whether a type name is registered in this bundle. */
   has(typeName: string): boolean {
@@ -382,8 +423,9 @@ export class BundleProvider {
           if (this.pending !== p) return;
           // A bundle this server cannot read stays unreadable: remember the refusal for a while
           // instead of re-reading and re-checking ~16 MB on every live call (#131).
-          if (e instanceof BundleError && e.kind === 'dialect-mismatch') this.fallbackUntil = now() + FALLBACK_RETRY_MS;
-          else this.pending = null;
+          if (e instanceof BundleError && (e.kind === 'dialect-mismatch' || e.kind === 'dialect-unverified')) {
+            this.fallbackUntil = now() + FALLBACK_RETRY_MS;
+          } else this.pending = null;
         },
       );
     }

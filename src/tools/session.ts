@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { linkSession, type LinkResult, type LinkSessionOptions } from '../direct/link.js';
 import { readSession, SESSION_HOST, type Session } from '../direct/session.js';
 import { isHosted } from '../hosted.js';
+import type { DecoderReport } from '../protocol/bundle.js';
 import type { PushTransportName } from '../push/socketio.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
@@ -48,6 +49,8 @@ export interface SessionToolsDeps {
   link?: (opts?: LinkSessionOptions) => Promise<LinkResult>;
   /** The push socket's transport (websocket / xhr-polling); undefined before it has run. */
   pushTransport?: () => PushTransportName | undefined;
+  /** What the loaded client bundle's decoding rests on (#148); undefined before one has loaded. */
+  decoder?: () => DecoderReport | undefined;
   /** Clock for age. Defaults to `Date.now`. */
   now?: () => number;
   /** A hosted child: no link tool, status reports the bridge. Defaults to {@link isHosted} of `env`. */
@@ -86,6 +89,19 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
   const link = deps.link ?? ((opts?: LinkSessionOptions) => linkSession({ ...(deps.env ? { env: deps.env } : {}), ...opts }));
   const now = deps.now ?? Date.now;
   const hosted = deps.hosted ?? isHosted(deps.env ?? process.env);
+  /** The board decoder, once a live tool has loaded the client bundle (#148). */
+  const decoderView = (): { decoder?: DecoderReport & { note?: string } } => {
+    const d = deps.decoder?.();
+    if (!d) return {};
+    return {
+      decoder: {
+        ...d,
+        ...(d.fallback
+          ? { note: "A cached copy of war.app's client is decoding boards: the current version could not be looked up." }
+          : {}),
+      },
+    };
+  };
 
   server.registerTool(
     'warapp_session_status',
@@ -95,10 +111,13 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
         hosted
           ? 'Report which transport serves war.app calls on this hosted server (always the browser bridge: the ' +
               'direct, no-browser transport is local-only) and which transport the turn-notification push socket ' +
-              'rides (websocket or xhr-polling) once it has run. Read-only.'
+              'rides (websocket or xhr-polling) once it has run, and, once a live board has been read, which client ' +
+              'bundle decodes boards (a cached stand-in or not) and which of its reader helpers were verified. Read-only.'
           : 'Report whether a signed-in war.app session is linked for the direct (no-browser) transport, when it was ' +
               'captured and how old it is, which transport is currently active (direct, or the browser bridge), and ' +
-              'which transport the turn-notification push socket rides (websocket or xhr-polling) once it has run. ' +
+              'which transport the turn-notification push socket rides (websocket or xhr-polling) once it has run, ' +
+              'and, once a live board has been read, which client bundle decodes boards (a cached stand-in or not) and ' +
+              'which of its reader helpers were verified. ' +
               'Never shows the session cookie. Read-only; use warapp_link_session to link or relink.',
       ),
       _meta: lookupMeta(['war.app session', 'is war.app linked', 'direct transport status']),
@@ -113,13 +132,14 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
           linked: false,
           activeTransport: 'fetchproxy' as const,
           ...(pt ? { pushTransport: pt } : {}),
+          ...decoderView(),
           hostedNote: NOTE_HOSTED,
         }));
       }
       const session = await read();
       const activeTransport = deps.transport.activeLeg();
       const pt = deps.pushTransport?.();
-      const push = pt ? { pushTransport: pt } : {};
+      const push = { ...(pt ? { pushTransport: pt } : {}), ...decoderView() };
       return respond(undefined, ['compact'], () => {
         if (!session) return { linked: false, activeTransport, ...push, hint: HINT_NOT_LINKED };
         const ageSeconds = Math.max(0, Math.round((now() - Date.parse(session.capturedAt)) / 1000));

@@ -162,7 +162,7 @@ function joinColor(
  */
 async function lobbyScreen(ctx: LiveContext, gameId: number): Promise<{ screen: JoinScreen | null; gaps: string[]; note?: string }> {
   try {
-    const game = await ctx.client.getGame(gameId, { settings: true });
+    const game = await ctx.client.getGame(gameId, { settings: true, map: false });
     const { screen, gaps } = feedScreen(game.settings ?? { cards: [], raw: {} });
     return screen
       ? { screen, gaps }
@@ -181,7 +181,7 @@ async function confirmSeated(ctx: LiveContext, gameId: number): Promise<boolean>
   const token = await ctx.myInviteToken();
   if (token !== undefined) {
     try {
-      const game = await ctx.client.getGame(gameId);
+      const game = await ctx.client.getGame(gameId, { map: false });
       if (game.players.some((p) => p.id === token && !NOT_SEATED.has(p.state ?? ''))) return true;
     } catch {
       // No GameFeed credentials or a failed read: try the web client's list.

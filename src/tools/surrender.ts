@@ -133,7 +133,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                 signedInHint(ctx.hosted),
               );
             }
-            const game = await ctx.client.getGame(gameId);
+            const game = await ctx.client.getGame(gameId, { map: false });
             const seat = surrenderable(game, me, takeBack);
             const name = gameLabel(game);
             const players = activePlayers(game).length;
@@ -189,7 +189,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
 
             let after: Game;
             try {
-              after = await ctx.client.getGame(gameId);
+              after = await ctx.client.getGame(gameId, { map: false });
             } catch (e) {
               return {
                 status: 'unconfirmed' as const,

@@ -707,7 +707,7 @@ const TREND_TURNS = 2;
 
 /** My earlier boards of a game and the previous turn's board, as {@link boardHistory} reads them. */
 export interface BoardHistory {
-  /** My views of turns before the one being played, oldest first (GameFeed history, else the cache). */
+  /** My views of turns before the one being played, oldest first (the cache, else GameFeed history). */
   boards: TurnBoard[];
   /** Turn − 1's board and where it came from, for the planner's threat trend. */
   previous?: { source: TrendSource; board: BoardState };
@@ -715,9 +715,10 @@ export interface BoardHistory {
 
 /**
  * My earlier boards of a game, best effort: for each of the last {@link CACHED_TURNS} turns
- * before `turn`, GameFeed's `GetHistory` standing when the feed sends one (unverified for
- * games in progress), else the board this server cached when it planned or tracked that turn.
- * Empty otherwise; never throws.
+ * before `turn`, the board this server cached when it planned or tracked that turn (a verified
+ * live board), else GameFeed's `GetHistory` standing when the feed sends one (unverified for
+ * games in progress). History is read only for turns the cache lacks, and not at all when the
+ * last {@link TREND_TURNS} turns are cached. Empty otherwise; never throws.
  */
 export async function boardHistory(ctx: LiveContext, game: Game, me: Player, turn: number | null): Promise<BoardHistory> {
   if (turn === null || turn < 2) return { boards: [] };
@@ -1254,7 +1255,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             }
             let after: Game;
             try {
-              after = await ctx.client.getGame(st.gameId);
+              after = await ctx.client.getGame(st.gameId, { map: false });
             } catch (e) {
               return {
                 status: 'unknown' as const,

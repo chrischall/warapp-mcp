@@ -8,8 +8,9 @@
 // (pinned by tests/packaging.test.ts).
 //
 // Source: war.app's game-ID feed for a ladder (`WarappClient.getGameIds`), then
-// GameFeed with `GetHistory=true` per game (`WarappClient.getGame`) — every
-// request through WarappClient. At most `maxNewGames` new games per call, at
+// GameFeed with `GetHistory=true` per game (`WarappClient.getGame`, without the map: a map
+// already cached is attached by its id, and only a finished game on an uncached map costs one more
+// request, for the map) — every request through WarappClient. At most `maxNewGames` new games per call, at
 // least {@link MIN_GAP_MS} between requests, and a finished game is cached
 // forever at `<dataDir>/stats/<mapId>/<gameId>.json` (its compact
 // {@link GameRecord}: ids, wins and turn numbers, no names), so a cache hit
@@ -244,14 +245,22 @@ export class StatsCollector {
       res.fetched++;
       try {
         await this.#throttle();
-        const game = await this.#client.getGame(id, { history: true, settings: true });
+        // No map download (#148): WarappClient attaches a map it has cached for the game's map id
+        // (the settings name it), and an unfinished game needs none. Only a finished game on a map
+        // not cached yet costs a second request, for the map.
+        const game = await this.#client.getGame(id, { history: true, settings: true, map: false });
         if (game.state !== 'Finished') {
           this.#unfinished.set(id, this.#now());
           res.notFinished++;
           continue;
         }
-        if (!game.map) throw new Error('no map');
-        const record = recordFromGame(game, game.map);
+        let map = game.map;
+        if (!map) {
+          await this.#throttle();
+          map = (await this.#client.getGame(id, { settings: true })).map;
+        }
+        if (!map) throw new Error('no map');
+        const record = recordFromGame(game, map);
         if (!readableRecord(record)) {
           this.#unreadable.add(id);
           this.#failed.delete(id);

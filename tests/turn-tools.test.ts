@@ -723,6 +723,43 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(existsSync(cacheFile(h.dataDir))).toBe(true);
   });
 
+  it('(h) counts its upstream reads: cold 4, warm 3, with the two earlier turns cached 2 — the board and history in parallel (#148)', async () => {
+    const SIGNED_IN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+    let live: Harness | undefined;
+    const boardRead = () => live!.exchanges.some((e) => e.request.method === Method.GetLatestGameInfo);
+    live = await liveHarness({
+      // GameFeed, by call: turn 3's game, its history read; turn 4's game, its history read; turn 5's game.
+      feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' }), game('Playing', { numberOfTurns: '3' }), game('Playing', { numberOfTurns: '4' })],
+      pages: SIGNED_IN,
+      // Pinned to the bridge: in auto mode the first call's fall-back to the bridge moves the transport
+      // state, so the signed-in account read in it is not cached (by design) and a second call re-reads it.
+      env: { WARAPP_TRANSPORT: 'fetchproxy' },
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+      // A history read is held until the board has been read, with no deadline: were the history read
+      // first and the board after it, the call would never finish and the test fails on its timeout.
+      // No wall-clock budget decides the outcome, so a loaded machine cannot report a parallel read serial.
+      beforeFeed: async (url) => {
+        if (!url.includes('GetHistory=true')) return;
+        while (!boardRead()) await new Promise((r) => setImmediate(r));
+      },
+    });
+    h = live;
+    const upstream = () => live!.calls.length + live!.bridge.requests.length;
+    const counts: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const before = upstream();
+      live.exchanges.length = 0;
+      const res = await live.call('warapp_plan_turn', { game_id: GAME });
+      expect(res.isError, textOf(res)).toBeFalsy();
+      counts.push(upstream() - before);
+    }
+    // Cold: the signed-in account, the game (with its map), the board, the history. Warm: the account and
+    // the map are cached. Then turns 3 and 4 are cached on disk, so no history read at all.
+    expect(counts).toEqual([4, 3, 2]);
+    expect(live.calls.map((c) => c.url.includes('GetMap=false'))).toEqual([false, true, true, true, true]);
+    expect(live.calls.filter((c) => c.url.includes('GetHistory=true'))).toHaveLength(2);
+  });
+
   it('(h) an unusable history standing is ignored', async () => {
     h = await liveHarness({
       feed: [game('Playing', { history: { turn1: 'garbage' } })],
@@ -730,6 +767,35 @@ describe('warapp_plan_turn — threat trend', () => {
     });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.trendSource).toBeNull();
+  });
+});
+
+describe('a refused board is never cached (#148)', () => {
+  // A reply the decoder refuses (bytes left over after the LatestGameInfo): no board, so no boards/ file.
+  const refused = () =>
+    ({
+      body: (w) => {
+        writeLatestGameInfo(w, BOARD, [ANN.inGame]);
+        w.int32(7);
+      },
+    }) satisfies Partial<ReplyFrame>;
+
+  it.each([
+    ['warapp_plan_turn', { game_id: GAME, player: 'Ann' }],
+    ['warapp_track_opponents', { game_id: GAME, player: 'Ann' }],
+    ['warapp_get_live_board', { game_id: GAME }],
+  ])('%s fails and writes no boards/ file', async (tool, args) => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: refused }) });
+    const res = await h.call(tool, args);
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/unexpected shape/);
+    expect(existsSync(join(h.dataDir, 'boards', `${GAME}.json`))).toBe(false);
+  });
+
+  it('the same tools with a good board do cache it (the check above can fail)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    expect((await h.call('warapp_track_opponents', { game_id: GAME, player: 'Ann' })).isError).toBeFalsy();
+    expect(existsSync(join(h.dataDir, 'boards', `${GAME}.json`))).toBe(true);
   });
 });
 

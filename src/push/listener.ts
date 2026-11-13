@@ -113,6 +113,12 @@ export class PushListener {
   private readonly games = new Set<number>();
   /** Game ids sent in a Subscribe on the current session. */
   private subscribed = new Set<number>();
+  /** A Subscribe being sent on the current session, by each game it carries (#148). */
+  private readonly sending = new Map<number, Promise<void>>();
+  /** The {@link mark} at which a Subscribe carrying each game went through on the current session. */
+  private readonly subscribedAt = new Map<number, number>();
+  /** Counts Subscribes that went through: what {@link mark} reads. */
+  private subscribes = 0;
   private readonly refused = new Map<string, number>();
   private readonly events: GameUpdate[] = [];
   private readonly listeners = new Set<(u: GameUpdate) => void>();
@@ -156,6 +162,8 @@ export class PushListener {
       ...(opts.setTimer ? { setTimer: opts.setTimer } : {}),
       onConnect: async () => {
         this.subscribed = new Set();
+        this.sending.clear();
+        this.subscribedAt.clear();
         this.sentBy.clear();
         this.subscribeFailures = 0;
         this.resubscribeOwed = false;
@@ -176,12 +184,15 @@ export class PushListener {
    * changing anything, when it would watch more than `maxGames` games at once.
    * Each watch is ended by one `release` (the unwatch).
    *
-   * Resolves true when it sent a Subscribe on the live session: a push for those games before it
-   * was lost, so a caller that read them first re-reads them. False otherwise — already subscribed
-   * here, or not connected (the connect subscribes and tells the connect listeners), or the
-   * Subscribe failed (its retry tells the connect listeners once it goes through).
+   * Resolves true when a Subscribe for one of these games went through on the live session after
+   * the caller may have read them: one it sent, one another watch had in flight (it waits for that
+   * one), or, with `since` (the {@link mark} the caller took before it read the games), one that
+   * went through after that mark (#148). A push for those games before it was lost, so the caller
+   * re-reads them. False otherwise — subscribed here before the mark, or not connected (the connect
+   * subscribes and tells the connect listeners), or the Subscribe failed (its retry tells the
+   * connect listeners once it goes through).
    */
-  async watch(gameIds: readonly number[]): Promise<boolean> {
+  async watch(gameIds: readonly number[], opts: { since?: number } = {}): Promise<boolean> {
     const max = this.opts.maxGames ?? MAX_WATCHED_GAMES;
     const total = new Set([...this.games, ...gameIds]).size;
     if (total > max) {
@@ -198,21 +209,29 @@ export class PushListener {
     }
     this.socket.start();
     if (!this.socket.connected) return false;
+    // Another wait's Subscribe for one of these games may be on its way: the server has not seen it
+    // yet, so a push before it lands is lost to this caller too. Wait for it, then say so (#148).
+    const inFlight = [...new Set(gameIds.map((g) => this.sending.get(g)).filter((p): p is Promise<void> => p !== undefined))];
+    let sent = false;
     try {
-      if (!(await this.subscribePending())) return false;
-      this.resubscribed();
-      return true;
+      if (await this.subscribePending()) {
+        this.resubscribed();
+        sent = true;
+      }
     } catch (e) {
       // Retried on this session (with backoff); a reconnect re-subscribes everything anyway.
       this.subscribeFailed(e);
-      return false;
     }
+    if (inFlight.length && (await Promise.allSettled(inFlight)).some((r) => r.status === 'fulfilled')) sent = true;
+    const since = opts.since;
+    if (!sent && since !== undefined) sent = gameIds.some((g) => (this.subscribedAt.get(g) ?? -Infinity) > since);
+    return sent;
   }
 
   /**
    * End a watch (each `watch` is released once) — the unwatch. A game no watch holds any more is
    * no longer watched: it is not re-subscribed on a reconnect and leaves room under the cap (#131).
-   * (No Unsubscribe is sent: a push for it on the current session is still recorded.) When no
+   * (No Unsubscribe is sent: a push for it on the current session is ignored, not recorded, #148.) When no
    * watch is left, the socket stops after the idle delay unless a new watch comes first.
    */
   release(gameIds: readonly number[]): void {
@@ -248,6 +267,14 @@ export class PushListener {
       this.games.delete(id);
       this.subscribed.delete(id);
     }
+  }
+
+  /**
+   * A mark to pass to {@link watch} as `since`: take it before reading the games, and `watch` says
+   * whether a Subscribe for one of them went through after it (another wait's, #148).
+   */
+  mark(): number {
+    return this.subscribes;
   }
 
   /** Listen for GameUpdated pushes; returns the unsubscribe. */
@@ -320,14 +347,30 @@ export class PushListener {
     for (const g of pending) this.subscribed.add(g);
     const msgNum = this.nextMsgNum++;
     this.sentBy.set(msgNum, pending);
+    const send = this.socket.sendMessage(subscribeFrameHex(pending.map(gameTopic), msgNum, this.extras()));
+    for (const g of pending) this.sending.set(g, send);
     try {
-      await this.socket.sendMessage(subscribeFrameHex(pending.map(gameTopic), msgNum, this.extras()));
+      await send;
     } catch (e) {
       this.sentBy.delete(msgNum);
       for (const g of pending) this.subscribed.delete(g);
       throw e;
+    } finally {
+      for (const g of pending) if (this.sending.get(g) === send) this.sending.delete(g);
     }
+    const at = ++this.subscribes;
+    for (const g of pending) this.subscribedAt.set(g, at);
     return true;
+  }
+
+  /**
+   * The retries on this session ran out with games still unsubscribed on a socket that looks
+   * healthy: start a new session rather than leave them unwatched until some later reconnect (#148).
+   * Its connect re-subscribes every game and tells the connect listeners, so waits re-read.
+   */
+  private recycle(): void {
+    if (!this.socket.connected || ![...this.games].some((g) => !this.subscribed.has(g))) return;
+    this.socket.recycle();
   }
 
   /** A Subscribe went through on the live session: if an earlier one failed, the games it carried may have missed a push. */
@@ -343,7 +386,11 @@ export class PushListener {
     this.subscribeError = e instanceof Error ? e.message : String(e);
     this.subscribeFailures++;
     this.resubscribeOwed = true;
-    if (this.retrying || this.subscribeFailures > MAX_SUBSCRIBE_RETRIES) return;
+    if (this.retrying) return;
+    if (this.subscribeFailures > MAX_SUBSCRIBE_RETRIES) {
+      this.recycle();
+      return;
+    }
     this.retrying = true;
     void (async () => {
       try {
@@ -362,6 +409,8 @@ export class PushListener {
             this.subscribeFailures++;
           }
         }
+        this.retrying = false;
+        this.recycle();
       } finally {
         this.retrying = false;
       }
@@ -386,6 +435,9 @@ export class PushListener {
       return;
     }
     if (msg.kind !== 'game-updated') return;
+    // Only a game some wait watches: a push for one whose waits have ended (no Unsubscribe is sent,
+    // so the session still carries it) is not recorded (#148).
+    if (!this.games.has(msg.gameId)) return;
     const update: GameUpdate = { gameId: msg.gameId, at: new Date(this.now()).toISOString() };
     this.events.push(update);
     if (this.events.length > this.maxEvents) this.events.splice(0, this.events.length - this.maxEvents);

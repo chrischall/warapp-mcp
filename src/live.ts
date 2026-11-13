@@ -14,6 +14,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { BoardSpecialUnit, BoardState, TerritoryOwner, TerritoryState } from './board.js';
 import type { Player } from './normalize.js';
+import type { DecoderReport } from './protocol/bundle.js';
 import type { Reader } from './protocol/codec.js';
 import type { ReadBudget } from './protocol/interp.js';
 
@@ -57,9 +58,11 @@ export const OWNER_PICKABLE = -2;
  * fog level 4, owner -1 and `Armies(0, fogged)`.
  */
 export const FOG_LEVEL_NAMES: Readonly<Record<number, string>> = { 1: 'You', 2: 'Visible', 3: 'OwnerOnly', 4: 'Fogged' };
+export const FOG_LEVEL_YOU = 1;
+export const FOG_LEVEL_VISIBLE = 2;
 export const FOG_LEVEL_OWNER_ONLY = 3;
 export const FOG_LEVEL_FOGGED = 4;
-const KNOWN_FOG_LEVELS: ReadonlySet<number> = new Set([1, 2, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_FOGGED]);
+const KNOWN_FOG_LEVELS: ReadonlySet<number> = new Set([FOG_LEVEL_YOU, FOG_LEVEL_VISIBLE, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_FOGGED]);
 
 /** One territory as the viewer's standing has it. */
 export interface LiveTerritory {
@@ -81,6 +84,8 @@ export interface ClassReader {
   readClass(typeName: string, reader: Reader, budget?: ReadBudget): unknown;
   /** The fields a class's reader fills from another class, in read order (a loaded bundle has it). */
   fieldsReadAs?(ownerType: string, fieldType: string): string[];
+  /** What the decoding rests on: version, stand-in flag, reader-helper check (a loaded bundle has it). */
+  report?(): DecoderReport;
 }
 
 /** On a decoded LatestGameInfo: the name of its CURRENT standing's field, from the bundle's reader. */
@@ -140,7 +145,14 @@ function territoryOf(key: unknown, ts: Obj): LiveTerritory {
   }
   const armyFields = fields(armies);
   const armyFogged = armyFields.find((v) => typeof v === 'boolean') === true;
-  const count = armyFields.find((v) => typeof v === 'number');
+  // The count is the record's one number (verified 2026-11-13: fogged flag, count, units). A second
+  // number means the client added a field, and nothing here can tell which is the count: refuse,
+  // rather than read the wrong one as every territory's armies (#148).
+  const numbers = armyFields.filter((v) => typeof v === 'number');
+  if (numbers.length > 1) {
+    throw new LiveBoardFormatError(`territory ${territoryId}'s Armies record carries ${numbers.length} numbers, so its army count cannot be told`);
+  }
+  const count = numbers[0];
   // The fog level alone says whether the owner shows: Light Fog's owner-only standings (3) carry a
   // real owner under an Armies record marked fogged (#131). A level this server does not know
   // falls back to the Armies' flag.
@@ -182,8 +194,17 @@ export function readLatestGameInfo(bundle: ClassReader, body: Reader): unknown {
   // The result is the whole body: bytes left over mean the readers and the reply disagree
   // on the layout, so what was read cannot be trusted (#131).
   if (body.remaining !== 0) throw new LiveBoardFormatError(`${body.remaining} bytes left unread after the LatestGameInfo`);
-  const current = bundle.fieldsReadAs?.(LATEST_GAME_INFO, GAME_STANDING)[0];
-  if (current !== undefined) Object.defineProperty(info, CURRENT_STANDING_FIELD, { value: current });
+  if (bundle.fieldsReadAs) {
+    const current = bundle.fieldsReadAs(LATEST_GAME_INFO, GAME_STANDING)[0];
+    // The info carries the current standing and the previous turn's. When the reader's source does
+    // not show which field is the current one (read in another class, through a closure or an
+    // own-class helper this check does not follow), the first one present could be last turn's:
+    // refuse rather than guess (#148).
+    if (current === undefined) {
+      throw new LiveBoardFormatError("the client's reader does not show which field holds the current standing, so last turn's could be read in its place");
+    }
+    Object.defineProperty(info, CURRENT_STANDING_FIELD, { value: current });
+  }
   return info;
 }
 
@@ -211,11 +232,29 @@ export function standingFromInfo(info: unknown): LiveTerritory[] | null {
   for (const v of fields(standing)) {
     const list = entries(v);
     if (!list?.length || !list.some((e) => isType(e.value, TERRITORY_STANDING))) continue;
-    return list
+    const territories = list
       .filter((e) => isType(e.value, TERRITORY_STANDING))
       .map((e) => territoryOf(e.key, e.value as Obj));
+    checkArmies(territories);
+    return territories;
   }
   return null;
+}
+
+/**
+ * A board-wide sanity check on the army counts, one that a misread count cannot pass by accident
+ * (#148): when every territory of mine (fog level You) reads 0 armies, the count was read from the
+ * wrong field. A single empty territory of mine is possible (a commander standing alone, or a game
+ * without "one army stands guard"), so it proves nothing: a territory carrying a special unit is left
+ * out, and the check needs at least two of mine. Two or more all empty is not a board war.app sends.
+ */
+function checkArmies(territories: readonly LiveTerritory[]): void {
+  const mine = territories.filter((t) => t.fogLevel === FOG_LEVEL_YOU && t.armies !== null && !t.specialUnits?.length);
+  if (mine.length >= 2 && mine.every((t) => t.armies === 0)) {
+    throw new LiveBoardFormatError(
+      `every territory of yours reads 0 armies (${mine.length} of them), so the army count was not read from the right field (if the board in war.app really shows 0 on all of them, e.g. with one-army-stands-guard off, report it: this check assumes that cannot happen)`,
+    );
+  }
 }
 
 /**

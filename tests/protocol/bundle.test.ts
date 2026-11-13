@@ -260,6 +260,8 @@ describe('BundleProvider', () => {
 
 describe('the built-in reader helpers are checked against the bundle at load (#131)', () => {
   // A reader that reads a one-byte field then a four-byte field through two P helpers.
+  /** Matching definitions of the two count helpers READER reads through, for the tests about other helpers. */
+  const COUNTS = 'P.Ya=function(a){return a.Og()};P.uq=function(a){return a.bc()};';
   const READER = 'function Dx(){}W["t.Dx"]=Dx;Dx.Ha=function(a,b,d){var e=new Dx;e.small=P.uq(a);e.big=P.Ya(a);return e};';
 
   it('loads a bundle whose helpers do what the built-ins do, and reports them verified', () => {
@@ -295,18 +297,27 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
     expect(calls).toEqual([PAGE, CDN, PAGE]); // looked up again; the refused version was cached on disk
   });
 
+  it('the provider remembers an unverifiable bundle the same way (#148)', async () => {
+    const opaque = 'var W={};var P={};P.Ya=function(a){return O.N3c(a)};' + READER;
+    const { calls, fetchText } = fakeFetch({ [PAGE]: html(CDN), [CDN]: opaque });
+    const p = new BundleProvider({ dataDir: tempDir(), fetchText, pageUrl: PAGE, now: () => 1 });
+    await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-unverified' });
+    await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-unverified' });
+    expect(calls).toEqual([PAGE, CDN]);
+  });
+
   it('leaves a helper it cannot evaluate unverified, not refused', () => {
-    const b = new WarappBundle('var W={};var P={};P.Td=function(a){return O.N3c(a)};' + READER, 'opaque');
+    const b = new WarappBundle('var W={};var P={};P.Td=function(a){return O.N3c(a)};' + COUNTS + READER, 'opaque');
     expect(b.dialectCheck.unverified).toContain('P.Td');
     expect(b.dialectCheck.mismatched).toEqual([]);
   });
 
   it("runs the bundle's helpers under the interpreter's step budget: a runaway helper is unverified, not a hang", () => {
-    const loop = 'var W={};var P={};P.Ya=function(a){for(;;){}};P.uq=function(a){return a.bc()};' + READER;
+    const loop = 'var W={};var P={};P.Ao=function(a){for(;;){}};' + COUNTS + READER;
     const t0 = Date.now();
     const b = new WarappBundle(loop, 'loop', { maxSteps: 50_000, maxIterations: 1e9 });
     expect(Date.now() - t0).toBeLessThan(2000);
-    expect(b.dialectCheck.unverified).toContain('P.Ya');
+    expect(b.dialectCheck.unverified).toContain('P.Ao');
     expect(b.dialectCheck.mismatched).toEqual([]);
     // The check's budget is its own: a read afterwards starts from a fresh count.
     expect(b.readClass('t.Dx', new Reader(new Writer().u8(7).int32(9).bytes()))).toEqual({ $type: 't.Dx', small: 7, big: 9 });
@@ -314,14 +325,116 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
 
   it("keeps the bundle's helpers contained during the check", () => {
     // A helper that reaches for a host member is refused inside the interpreter (unverified), never run.
-    const b = new WarappBundle('var W={};var P={};P.Ya=function(a){return a.constructor};' + READER, 'escape');
-    expect(b.dialectCheck.unverified).toContain('P.Ya');
+    const b = new WarappBundle('var W={};var P={};P.Ao=function(a){return a.constructor};' + COUNTS + READER, 'escape');
+    expect(b.dialectCheck.unverified).toContain('P.Ao');
     expect(b.dialectCheck.mismatched).toEqual([]);
   });
 
-  it('a bundle that defines no helpers (the test bundles) has nothing to check', () => {
+  it('refuses a bundle whose int32, bool or byte helper it cannot verify: those read every army count (#148)', () => {
+    // Before #148 these loaded with the helper unverified, and a swapped same-width read decoded a wrong board.
+    for (const def of ['P.Ya=function(a){for(;;){}};', 'P.Ya=function(a){return a.constructor};', 'P.Yc=function(a){return O.N3c(a)};']) {
+      expect(() => new WarappBundle(`var W={};var P={};${def}` + READER, 'opaque', { maxSteps: 50_000, maxIterations: 1e9 })).toThrow(
+        expect.objectContaining({ kind: 'dialect-unverified' }),
+      );
+    }
+  });
+
+  it('checks a helper defined in an object literal: a swap is refused, a match verified (#148)', () => {
+    const swapped = 'var W={};var P={Ya:function(a){return a.MGb()},uq:function(a){return a.Og()}};' + READER;
+    expect(() => new WarappBundle(swapped, 'literal')).toThrow(/P\.Ya.*P\.uq|P\.uq.*P\.Ya/);
+    const same = new WarappBundle('var W={};var P={Ya:function(a){return a.Og()},"uq":function(a){return a.bc()}};' + READER, 'literal');
+    expect(same.dialectCheck.verified).toEqual(['P.Ya', 'P.uq']);
+  });
+
+  it('checks a helper defined as an alias of another static: a swap is refused, a match verified (#148)', () => {
+    const aliased = (ya: string, uq: string) =>
+      `var W={};var P={};var Q={};Q.a=function(a){return a.${ya}()};Q.b=function(a){return a.${uq}()};P.Ya=Q.a;P.uq=Q.b;` + READER;
+    expect(() => new WarappBundle(aliased('MGb', 'Og'), 'alias')).toThrow(/P\.Ya.*P\.uq|P\.uq.*P\.Ya/);
+    expect(new WarappBundle(aliased('Og', 'bc'), 'alias').dialectCheck.verified).toEqual(['P.Ya', 'P.uq']);
+    // An object-literal property aliasing a static is followed too.
+    expect(() => new WarappBundle('var W={};var Q={};Q.a=function(a){return a.MGb()};var P={Ya:Q.a};' + READER, 'alias')).toThrow(/P\.Ya/);
+  });
+
+  it('refuses a bundle that reads through a count helper whose definition the check never finds (#148)', () => {
+    // Forms the scan does not recognise: before, the helper never reached the check and the bundle loaded
+    // with an empty dialectCheck, its swapped int32 read decoded through the built-in.
+    for (const def of [
+      'var P={};P["Ya"]=function(a){return a.MGb()};',
+      "var P={};P['Ya']=function(a){return a.MGb()};",
+      'var P={};Object.assign(P,{Ya:function(a){return a.MGb()}});',
+      'var P={};', // called, never defined at all
+    ]) {
+      const load = () => new WarappBundle('var W={};' + def + 'P.uq=function(a){return a.bc()};' + READER, 'unseen');
+      expect(load, def).toThrow(expect.objectContaining({ kind: 'dialect-unverified' }));
+      expect(load, def).toThrow(/P\.Ya/);
+    }
+    // A reader that calls it by bracket counts as reading through it too.
+    expect(
+      () => new WarappBundle('var W={};var P={};Object.assign(P,{Yc:function(a){return a.bc()}});function Fl(){}W["t.Fl"]=Fl;Fl.Ha=function(a){return P["Yc"](a)};', 'bracket'),
+    ).toThrow(/P\.Yc/);
+    // A count helper the readers never reference is not needed, so its absence refuses nothing.
+    const none = new WarappBundle('var W={};var P={};P.Ao=function(a){return a.Om()};function Fl(){}W["t.Fl"]=Fl;Fl.Ha=function(a){return P.Ao(a)};', 'none');
+    expect(none.dialectCheck).toEqual({ verified: ['P.Ao'], unverified: [], mismatched: [] });
+  });
+
+  it('flags a definition it cannot follow, and refuses one of the count helpers defined that way (#148)', () => {
+    const b = new WarappBundle('var W={};var P={};var f=function(a){return a.Om()};P.Ao=f;' + COUNTS + READER, 'unseen');
+    expect(b.dialectCheck.unverified).toEqual(['P.Ao']);
+    expect(b.dialectCheck.reasons?.['P.Ao']).toMatch(/cannot follow/);
+    expect(() => new WarappBundle('var W={};var P={};var f=function(a){return a.bc()};P.uq=f;' + READER, 'unseen')).toThrow(
+      expect.objectContaining({ kind: 'dialect-unverified' }),
+    );
+    // Every definition counts: a later reassignment it cannot follow leaves even a matching one unverified.
+    expect(() => new WarappBundle('var W={};var P={};P.Ya=function(a){return a.Og()};P.Ya=g;' + READER, 'two')).toThrow(
+      expect.objectContaining({ kind: 'dialect-unverified' }),
+    );
+  });
+
+  it('a dictionary helper building a client object is compared by its key and value reads, not just the -1 probe (#148)', () => {
+    const ef = (body: string) =>
+      new WarappBundle(
+        `var W={};var P={};P.ef=function(a,b,d){a=a.Og();if(-1==a)return null;for(var e=new Je,f=0;f<a;){${body}++f}return e};` + COUNTS + READER,
+        'dict',
+      );
+    expect(ef('var g=b();e[g]=d();').dialectCheck.verified).toEqual(['P.Ya', 'P.ef', 'P.uq']);
+    // Value before key, or each value read twice: the reads differ on the first probe with items.
+    expect(() => ef('var g=d();e[b()]=g;')).toThrow(/P\.ef/);
+    expect(() => ef('var g=b();d();e[g]=d();')).toThrow(/P\.ef/);
+  });
+
+  it('a builder whose item reads cannot be followed is unverified, not verified on the -1 probe alone (#148)', () => {
+    // As the client builds its dictionaries: a method call on the collection this interpreter does not run.
+    const b = new WarappBundle(
+      'var W={};var P={};P.ef=function(a,b,d){a=a.Og();if(-1==a)return null;for(var e=new Sa(a),f=0;f<a;){var g=b();e.U(g,d());++f}return e};' + COUNTS + READER,
+      'builder',
+    );
+    expect(b.dialectCheck.verified).toEqual(['P.Ya', 'P.uq']);
+    expect(b.dialectCheck.unverified).toEqual(['P.ef']);
+    expect(b.dialectCheck.reasons?.['P.ef']).toMatch(/never seen reading an item/);
+    // The same builder reading the value first is caught on its first read, before it stops.
+    expect(() =>
+      new WarappBundle(
+        'var W={};var P={};P.ef=function(a,b,d){a=a.Og();if(-1==a)return null;for(var e=new Sa(a),f=0;f<a;){var g=d();e.U(b(),g);++f}return e};' + COUNTS + READER,
+        'builder',
+      ),
+    ).toThrow(/P\.ef/);
+  });
+
+  it('a large object literal assigned to P cannot spend the budget the count helpers are checked with', () => {
+    // Before, its parse was charged to the probes' budget, which then ran out: P.Ya unverified, the bundle refused.
+    const maxSteps = 50_000;
+    const big = `P={x:[${'1,'.repeat(24_980)}1]};`;
+    const b = new WarappBundle(
+      'var W={};var P={};P.Ya=function(a){return a.Og()};P.uq=function(a){return a.bc()};' + big + READER,
+      'big-literal',
+      { maxSteps },
+    );
+    expect(b.dialectCheck.verified).toEqual(['P.Ya', 'P.uq']);
+  });
+
+  it('the test bundles define the count helpers they read through, as the built-ins read them', () => {
     const b = new WarappBundle(MINI_BUNDLE, 'mini');
-    expect(b.dialectCheck).toEqual({ verified: [], unverified: [], mismatched: [] });
+    expect(b.dialectCheck).toEqual({ verified: ['P.Ya', 'P.Yc', 'P.uq'], unverified: [], mismatched: [] });
   });
 });
 

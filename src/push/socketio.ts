@@ -200,6 +200,21 @@ export class SocketIoClient {
     this.disconnect();
   }
 
+  /**
+   * End the current session and start a new one at once: a new handshake, a new sid, and `onConnect`
+   * (then `onReconnect`) as after any reconnect. An xhr poll in flight is abandoned, as on `stop()`;
+   * its loop wakes to a newer generation and exits. No-op when stopped.
+   */
+  recycle(): void {
+    if (!this.running) return;
+    const gen = ++this.generation;
+    const close = this.closeSession;
+    this.closeSession = undefined;
+    close?.();
+    this.disconnect();
+    void this.run(gen);
+  }
+
   /** Resolves once connected (the connect packet seen on the current session). */
   whenConnected(): Promise<void> {
     if (this.isConnected) return Promise.resolve();
@@ -341,7 +356,9 @@ export class SocketIoClient {
       first = false;
       let useful = wasFirst;
       for (const p of packets) {
-        if (p.type === 'connect' || p.type === 'heartbeat' || p.type === 'message') useful = true;
+        // A heartbeat is answered, but it is not news: a server answering every poll with one at
+        // once would otherwise spin the loop (#148). One that ends a long poll is not paced anyway.
+        if (p.type === 'connect' || p.type === 'message') useful = true;
         switch (p.type) {
           case 'connect':
             if (!this.isConnected) await this.markConnected(gen, (packet) => this.post(packet));
@@ -361,7 +378,7 @@ export class SocketIoClient {
         }
       }
       // A long poll ends with a noop after a quiet spell; one answered at once with nothing to say
-      // (an empty body, a noop, a packet this client ignores) would otherwise re-poll in a tight
+      // (an empty body, a noop, a heartbeat, a packet this client ignores) would otherwise re-poll in a tight
       // loop. Pace those like the reconnect backoff, but capped low: a push that arrives during the
       // pause waits for the next poll (#131).
       if (useful || this.now() - started >= (this.opts.minPollMs ?? DEFAULT_MIN_POLL_MS)) {
