@@ -71,6 +71,7 @@ function gameMapNotes(game: Game, map: GameMap): MapNotes {
   return mapNotes({
     graph: graphOf(map),
     settings: pickSettings(game.settings),
+    ...(game.settings?.overriddenBonusesUnparsed ? { overridesUnparsed: true } : {}),
     ...(picking
       ? { opening: { players: Math.max(2, playing || game.players.length), territoryLimit: limit && limit > 0 ? limit : DEFAULT_TERRITORY_LIMIT } }
       : {}),

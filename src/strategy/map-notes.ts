@@ -12,6 +12,7 @@ import {
   planPicks,
   type PickSettings,
 } from '../analysis/picks.js';
+import { OVERRIDES_UNPARSED } from '../analysis/overrides.js';
 import { captureCost } from '../analysis/planner.js';
 import { DEFAULT_BASE_INCOME } from '../analysis/player.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from '../analysis/combat.js';
@@ -28,6 +29,8 @@ export interface MapNotesInput {
   opening?: { players: number; territoryLimit: number };
   /** Bonus and chokepoint rows (default {@link MAP_NOTES_LIMIT}). */
   limit?: number;
+  /** The game overrides bonus values that could not all be read (`settings.overriddenBonusesUnparsed`). */
+  overridesUnparsed?: boolean;
 }
 
 interface Named {
@@ -80,6 +83,7 @@ export function mapNotes(input: MapNotesInput): MapNotes {
   const s = input.settings ?? {};
   const limit = input.limit ?? MAP_NOTES_LIMIT;
   const assumptions: string[] = [];
+  if (input.overridesUnparsed) assumptions.push(OVERRIDES_UNPARSED);
   const name = (id: number): Named => ({ id, name: g.territoryById.get(id)?.name ?? String(id) });
   const bonusName = (id: number | null) => (id === null ? null : (g.bonusById.get(id)?.name ?? String(id)));
 

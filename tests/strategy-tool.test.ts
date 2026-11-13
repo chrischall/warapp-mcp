@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { OVERRIDES_UNPARSED } from '../src/analysis/overrides.js';
 import { STRATEGY_NOTES } from '../src/strategy/notes.js';
 import { harnessFor, payload, textOf, type Harness } from './helpers.js';
 
@@ -143,6 +144,12 @@ describe('warapp_strategy', () => {
     h = await harnessFor(game());
     const dflt = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME })).notes.map((n) => n.id);
     expect(dflt).toContain('settings-defend-with-three');
+  });
+
+  it('map notes say so when the game\'s bonus overrides could not be read', async () => {
+    h = await harnessFor(game({ settings: { OverriddenBonuses: { House: 3 } } }));
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(p.map!.assumptions).toContain(OVERRIDES_UNPARSED);
   });
 
   it('an FFA with cards and luck selects those notes', async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildGraph } from '../../src/analysis/graph.js';
 import type { GameMap } from '../../src/normalize.js';
 import { mapNotes, mapNotesMarkdown } from '../../src/strategy/map-notes.js';
+import { OVERRIDES_UNPARSED } from '../../src/analysis/overrides.js';
 
 /**
  * A line 1 ─ 2 ─ … ─ 8 with three bonuses:
@@ -47,6 +48,11 @@ describe('mapNotes: bonuses by efficiency', () => {
 
   it('honours limit', () => {
     expect(mapNotes({ graph, limit: 2 }).bonuses).toHaveLength(2);
+  });
+
+  it('says when the game overrides bonus values that could not be read', () => {
+    expect(mapNotes({ graph }).assumptions).not.toContain(OVERRIDES_UNPARSED);
+    expect(mapNotes({ graph, overridesUnparsed: true }).assumptions).toContain(OVERRIDES_UNPARSED);
   });
 });
 
