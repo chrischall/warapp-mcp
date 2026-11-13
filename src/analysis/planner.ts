@@ -120,7 +120,8 @@
 //     enemy territory next to me that was visible then (owner and armies, #69) under the same owner and
 //     has grown is "building" at growth = armies now − armies then per turn, less what a visible
 //     neighbour of the same owner sent (its shrink, claimed once: a transfer is a one-off, not a
-//     trend) and at most its owner's observed deploy with every ambiguous army read as deploy
+//     trend; a neighbour that shrank beside another player's shrinking stack fought and sent
+//     nothing) and at most its owner's observed deploy with every ambiguous army read as deploy
 //     (#123, `high`: a stack that walked in beside the fog is massing all the same) (a
 //     warning naming my most exposed neighbour and the armies it needs to hold
 //     next turn and the turn after). A border's threat becomes movable +
@@ -1386,7 +1387,9 @@ export function observeSigned(
   // Without an expected deploy (a board-only reading), growth is all deploy, as before #123.
   if (bound === null)
     for (const x of ambiguous) if (x.kind === 'growth') total += x.armies;
-  let room = Math.max(0, (bound ?? Math.max(0, context.most ?? 0)) - total);
+  // A board-only reading (neither `expected` nor `most`) has no room at all: a negative total (a
+  // stack of its own that shrank into the fog) must not make room for a capture's surplus.
+  let room = bound === null && context.most === undefined ? 0 : Math.max(0, (bound ?? Math.max(0, context.most!)) - total);
   for (const x of [...ambiguous].sort((a, b) => a.id - b.id)) {
     if (bound === null && x.kind === 'growth') {
       lowExtra -= x.armies;
@@ -2070,9 +2073,25 @@ export function planTurn(input: PlanInput): TurnPlan {
     };
     // #123: what each enemy territory visibly sent away (its shrink), claimed once (ascending ids)
     // by a growing neighbour of the same owner: that growth was a transfer, a one-off, not a trend.
+    // The board cannot tell a fight from a transfer: a shrink beside another player's shrinking
+    // stack is read as a fight and explains nothing.
     const shrinkLeft = new Map<number, number>();
+    // A neighbour that shrank beside a shrinking stack of another player (me included) may have
+    // lost a fight rather than sent armies (as `combatLosses` in the tracker reads it): it explains
+    // no growth, so a deploy on the border beside it is still projected.
+    const shrankBy = (id: number): { player: number; shrink: number } | null => {
+      const a = visibleState(state.get(id));
+      const b = visibleState(before.get(id));
+      if (a?.owner.kind !== 'player' || b?.owner.kind !== 'player' || a.owner.playerId !== b.owner.playerId) return null;
+      return { player: a.owner.playerId, shrink: b.armies! - a.armies! };
+    };
+    const fought = (id: number, player: number) =>
+      neighborsOf(g, id).some((n) => {
+        const o = shrankBy(n);
+        return o !== null && o.player !== player && o.shrink > 0;
+      });
     for (const [id, st] of state)
-      if (st.owner.kind === 'player' && st.owner.playerId !== me && heldBoth(id, st.owner.playerId))
+      if (st.owner.kind === 'player' && st.owner.playerId !== me && heldBoth(id, st.owner.playerId) && !fought(id, st.owner.playerId))
         shrinkLeft.set(id, Math.max(0, visibleState(before.get(id))!.armies! - st.armies!));
     for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
       if (st.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;

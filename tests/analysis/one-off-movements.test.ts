@@ -104,6 +104,31 @@ describe('1. deploy-then-capture (#123)', () => {
     // A board-only reading (no context) keeps #86's: the surplus is a move.
     expect(observeDeploy(g, after, before, ENEMY, STD)).toMatchObject({ deploy: 2, reinforced: [], fromFog: [3] });
   });
+
+  it('a board-only reading keeps the surplus a move even when another stack of its shrank (#123 review)', () => {
+    // Section 1's board with the fogged neighbour of T3 as T6, and its own visible T5 behind T4
+    // (not beside T3): T5 shrank 10, out of sight of this board pair, so the turn's total is
+    // negative. That must not make room for the capture's surplus as deploy.
+    const g2 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 6],
+        [
+          [1, 2],
+          [2, 3],
+          [3, 4],
+          [3, 6],
+          [4, 5],
+        ],
+        [],
+      ),
+    );
+    const b = board([mine(1, 5), mine(2, 5), neutral(3, 3), enemy(4, 6), enemy(5, 20), fogged(6)]);
+    const a = board([mine(1, 5), mine(2, 5), enemy(3, 11), enemy(4, 1), enemy(5, 10), fogged(6)]);
+    // The same turn without T5's shrink reads the surplus as a move.
+    const still = board([mine(1, 5), mine(2, 5), enemy(3, 11), enemy(4, 1), enemy(5, 20), fogged(6)]);
+    expect(observeDeploy(g2, still, b, ENEMY, STD)).toMatchObject({ reinforced: [], fromFog: [3], fogArmies: 6 });
+    expect(observeDeploy(g2, a, b, ENEMY, STD)).toMatchObject({ reinforced: [], fromFog: [3], fogArmies: 6 });
+  });
 });
 
 describe('2. a stack walking out of the fog onto a held territory (#123)', () => {
@@ -142,6 +167,18 @@ describe('2. a stack walking out of the fog onto a held territory (#123)', () =>
     expect(t!.income).toBe(10);
   });
 
+  it('walk-ins over several turns do not pin a phantom income once later turns read lower (#123 review)', () => {
+    // Real deploy 5 a turn; +40 walks in from the fog on three turns running, then it sits idle.
+    // Each walk-in reads up to twice the carried income (10, 20, 40), but none of those readings
+    // was ever confirmed by a turn read in full: the idle turns that read 5 end the carry, and the
+    // window ages the walk-ins out.
+    const t4 = [5, 50, 95, 140, 145, 150, 155];
+    const [t] = trackOpponents(g, history(...t4.map((n, i) => [8 + i, at(n)] as [number, BoardState])), ME, STD);
+    expect(t!.turns.map((x) => x.observed)).toEqual([10, 20, 40, 5, 5, 5]);
+    expect(t!.income).toBe(5);
+    expect(t!.incomeMethod).not.toBe('carried');
+  });
+
   it('growth a visible neighbour of its own sent is no fog arrival', () => {
     // T4 (beside the fogged T6 too) grew 40 and its visible T5 shrank 40: a transfer, observed 0.
     const g2 = buildGraph(makeMap(range(1, 6), [...line(6), [4, 6]], [[101, 5, [1, 2, 3]]]));
@@ -176,6 +213,25 @@ describe('3. a visible transfer is not a trend (#123)', () => {
     const p = planTurn({ graph: g, board: grown, previousBoard: before, me: ME, income: 7, settings: STD, options: { enemyDeploy: 5 } });
     expect(p.warnings.join('\n')).toMatch(/T4 \(#4\) is building: \+7\/turn/);
     expect(p.rationale.join('\n')).toMatch(/uses the trend: player 20's stack next to it grows \+7\/turn/);
+  });
+});
+
+describe('3b. a fight is not a transfer (#123 review)', () => {
+  // No fog. Line T1..T6 and T6 – T7. My +2 bonus {1, 2, 3}, T3 (28), and my T6 (20). Its T4 (5)
+  // beside my T3, its T5 (50) between them, its T7 (3) beside my T6, holding its +7 {T7}. It
+  // deployed 7 on T4 and 5 on T7, and T5 attacked my T6 with 5 and failed: T5 lost 4, T6 lost 3.
+  const g = buildGraph(
+    makeMap(range(1, 7), [...line(6), [6, 7]], [
+      [101, 2, [1, 2, 3]],
+      [102, 7, [7]],
+    ]),
+  );
+  const before = board([mine(1, 1), mine(2, 1), mine(3, 28), enemy(4, 5), enemy(5, 50), mine(6, 20), enemy(7, 3)]);
+  const after = board([mine(1, 1), mine(2, 1), mine(3, 28), enemy(4, 12), enemy(5, 46), mine(6, 17), enemy(7, 8)]);
+
+  it("a neighbour that shrank fighting sent nothing: the border's growth is still projected", () => {
+    const p = planTurn({ graph: g, board: after, previousBoard: before, me: ME, income: 7, settings: STD, options: { enemyDeploy: 5 } });
+    expect(p.warnings.join('\n')).toMatch(/T4 \(#4\) is building: \+7\/turn/);
   });
 });
 

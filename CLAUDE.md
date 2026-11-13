@@ -247,9 +247,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
   deploys and moves it sent beside the boards, and `boardHistory` attaches them as
   `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing),
-  unaccounted armies (earned since first seen − visible army change − visible losses) and
-  inferred bonuses (combinations of up to three bonuses it could hold that best fit the income
-  gap, all of them listed — candidates, never asserted). With 2+ observed turns the planner uses
+  unexplained armies (earned since first seen − visible army change − visible losses − likely
+  combat deaths) and inferred bonuses (combinations of up to three bonuses it could hold that
+  best fit the income gap, within reach and affordable, none listed when too many fit — see the
+  #123 rules below; candidates, never asserted). With 2+ observed turns the planner uses
   the tracked income in place of the single-turn observed figure (`PlanInput.tracks`) and says so
   in its rationale; fewer, and the plan is exactly what it was without tracking.
 - **The turn planner (`src/analysis/planner.ts`) is pure and deterministic** (ties on
@@ -334,14 +335,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     next to it" rule picked the hopeless border).
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
     the threat (see the threat model above), and warns "is building" — less what a visible
-    neighbour of the same owner sent, and at most its observed deploy with every ambiguous army
+    neighbour of the same owner sent (unless it shrank beside another player's shrinking stack:
+    a fight, not a transfer), and at most its observed deploy with every ambiguous army
     read as deploy (`high`; #123: a transfer is a one-off, a stack walking in beside the fog is
     still massing — lesson 5).
   - **One-off movements are not income (#123, `observeDeploy`).** Growth on its territory next
     to the fog and the surplus of a capture whose visible attacker shrank are ambiguous: both read
     as deploy up to one bound, `HIDDEN_INCOME_FACTOR` (2) × what it was expected to deploy
-    (visible income, the fog prior, or tracked/carried income — so a steady hidden bonus is still
-    seen) and at most what it could earn; beyond it, a stack out of the fog. A capture from me is
+    (visible income, the fog prior in the planner, or tracked/carried income — so a steady hidden
+    bonus is still seen; a carry only bound-cut readings reached ends at a later turn read in full
+    that observed less) and at most what it could earn; beyond it, a stack out of the fog. A capture from me is
     priced at the guard unless my cached orders say what stood there. Each observed turn has a low–high range for the ambiguity. The
     tracker's `unexplained` armies leave out likely combat deaths (its stack and a neighbour of
     another player both shrank), and inferred bonuses must lie within `INFER_REACH` hops and be

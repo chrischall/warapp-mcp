@@ -33,9 +33,12 @@
 // One-off movements (#123): each observed turn carries a low and a high reading of its deploy
 // (`observeDeploy`): growth next to the fog and the surplus of a capture whose visible attacking
 // stack shrank are read as deploy up to twice what it was expected to deploy (its visible income,
-// the fog prior, or the income carried so far — so a steady hidden income is learnt over a few
-// turns) and at most what it could earn, the rest as a move out of the fog; a capture from me is
-// priced at the guard unless my orders say what stood there.
+// or the income carried so far — so a steady hidden income is learnt over a few turns; the
+// tracker does not apply the planner's fog prior, so in a 1v1 a turn the planner reads with the
+// prior can read lower here) and at most what it could earn, the rest as a move out of the fog; a
+// carry that only bound-cut readings reached ends at a later turn read in full that observed less
+// ({@link carryIncome}); a capture from me is priced at the guard unless my orders say what stood
+// there.
 //
 // Given the game's players (#94), every opponent still playing is listed — teammates and
 // players out of the game are not — even with no territory in view: `visible` counts its
@@ -691,14 +694,34 @@ function inferBonuses(all: readonly PossibleBonus[], gap: number, budget: number
   };
 }
 
-/** The income carried over the observed turns (#119): see the walk in {@link trackOpponents}. */
-type Carry = { income: number; set: number; window: ObservedTurn[]; est: TrackedIncome };
+/**
+ * The income carried over the observed turns (#119): see the walk in {@link trackOpponents}.
+ * `confirmed` when a turn of its window read in full (no army read as a move out of the fog) at
+ * least that figure ({@link confirmedBy}).
+ */
+type Carry = { income: number; set: number; window: ObservedTurn[]; est: TrackedIncome; confirmed: boolean };
+
+/**
+ * #123 review: a turn read in full — no ambiguous army was read as a move out of the fog (the
+ * bound cut nothing) — whose observed deploy reaches `income` confirms it. A figure only bound-cut
+ * readings reached (each up to twice the income carried so far) is a guess, however often it
+ * compounded.
+ */
+const confirmedBy = (window: readonly ObservedTurn[], income: number) =>
+  window.some((x) => x.fogArmies === 0 && x.observed >= income);
 
 /**
  * #119: no decay. Walk the observed turns: each window's figure (as `trackedIncome` reads it)
  * replaces the carried one only when larger; otherwise the carried figure stays, less the
  * bonuses it visibly held that were visibly broken that turn, and never above that turn's
  * could-earn cap. Null with no observed turn.
+ *
+ * #123 review: a carry no turn read in full ever confirmed does not outlive a later turn read in
+ * full that observed less: the window's figure takes over (so walk-ins over several turns, each
+ * read up to twice the carry before it, age out of the window as a one-off does, rather than
+ * staying pinned). The trade-off: a hidden income beyond twice the visible one, learnt only from
+ * bound-cut readings (section 7's +20 read 10, 20, …), is dropped the first time it deploys into
+ * the fog and shows less in full — unless a turn read in full had already confirmed it.
  */
 function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
   let carry = null as Carry | null;
@@ -706,9 +729,15 @@ function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
     const x = observed[i]!;
     const window = observed.slice(Math.max(0, i - INCOME_TURNS + 1), i + 1);
     const est = trackedIncome(window, 0);
+    const fresh: Carry = { income: est.income, set: est.income, window, est, confirmed: confirmedBy(window, est.income) };
     const prev: Carry | null = carry;
-    const kept: number = prev ? Math.min(x.cap, prev.income - x.brokenValue) : -Infinity;
-    carry = !prev || est.income >= kept ? { income: est.income, set: est.income, window, est } : { ...prev, income: kept };
+    if (!prev) {
+      carry = fresh;
+      continue;
+    }
+    const disproved = !prev.confirmed && x.fogArmies === 0 && x.observed < prev.income;
+    const kept: number = Math.min(x.cap, prev.income - x.brokenValue);
+    carry = disproved || est.income >= kept ? fresh : { ...prev, income: kept };
   }
   return carry;
 }
@@ -806,7 +835,8 @@ export function trackOpponents(
         continue;
       }
       // #123: what it was expected to deploy includes the income carried so far, so a hidden
-      // income beyond twice the visible one (`ambiguousBound`) is learnt over a few turns.
+      // income beyond twice the visible one (`ambiguousBound`) is learnt over a few turns. No fog
+      // prior here (enemyDeployEstimates is called without one): visible or carried income only.
       const carriedSoFar = carryIncome(observed)?.income ?? 0;
       const v = visibleAt(from).get(playerId);
       const visibleIncome = v ? v.base + v.bonusIncome : 0;
