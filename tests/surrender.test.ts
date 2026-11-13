@@ -119,6 +119,17 @@ describe('warapp_surrender', () => {
     expect(s.sent).toEqual([]);
   });
 
+  it('refuses a lobby: a game that has not started has nothing to surrender (#130)', async () => {
+    const s = surrenderServer();
+    h = await harness([feedGame(DUEL, 'WaitingForPlayers')], s.warapp);
+    for (const undo of [false, true]) {
+      const res = await h.call('warapp_surrender', { game_id: GAME_ID, undo });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toMatch(/has not started/);
+    }
+    expect(s.sent).toEqual([]);
+  });
+
   it('refuses a game the signed-in account is not playing in', async () => {
     const s = surrenderServer();
     h = await harness([feedGame([opp(1), opp(2)])], s.warapp);
@@ -167,7 +178,9 @@ describe('warapp_surrender', () => {
       expect(s.sent).toEqual([]);
       const p = payload(await h.call('warapp_surrender', { game_id: GAME_ID, undo: true, confirmToken: preview.confirmToken }));
       expect(s.sent).toEqual([{ gameId: GAME_ID, surrender: false, trailing: false, left: 0 }]);
-      expect(p.status).toBe('taken_back');
+      // #130: GameFeed shows no pending surrender, so "still playing" cannot prove one was taken back.
+      expect(p.status).toBe('still_playing');
+      expect(String(p.message)).toMatch(/no pending-surrender state/);
     });
 
     it('reports surrendered when the others accepted before the take-back landed', async () => {

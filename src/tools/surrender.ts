@@ -19,11 +19,12 @@ import { Method, writeSurrenderParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import type { LiveContext } from './live-context.js';
+import { failureText, type LiveContext } from './live-context.js';
 
 const PLAYING = 'Playing';
 const SURRENDERED = 'SurrenderAccepted';
 const FINISHED = 'Finished';
+const DISTRIBUTING = 'DistributingTerritories';
 
 /** The Surrender refusals war.app answers with (verified live, issue #30). */
 const SURRENDER_ERRORS: Readonly<Record<number, string>> = {
@@ -52,6 +53,12 @@ const activePlayers = (game: Game): Player[] => game.players.filter((p) => p.sta
 function surrenderable(game: Game, me: number, undo: boolean): Player {
   if (game.state === FINISHED) {
     refuse(`Game ${game.id} is already over, so there is nothing to surrender.`, 'Check warapp_get_game.');
+  }
+  if (game.state !== PLAYING && game.state !== DISTRIBUTING) {
+    refuse(
+      `Game ${game.id} has not started (game state: ${game.state}), so there is nothing to surrender.`,
+      'A lobby is left or declined in the game itself, not surrendered.',
+    );
   }
   const seat = game.players.find((p) => p.id === me);
   if (!seat) {
@@ -170,7 +177,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                 game,
                 warning:
                   `war.app did not confirm the ${undo ? 'take-back' : 'surrender'} ` +
-                  `(${e instanceof Error ? e.message : String(e)}), so it may already have gone through. ` +
+                  `(${failureText(e)}), so it may already have gone through. ` +
                   'Check warapp_get_game to see your state in the game.',
               };
             }
@@ -191,7 +198,17 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
             const state = { yourState: seat?.state ?? null, gameState: after.state };
             if (seat?.state === SURRENDERED) return { status: 'surrendered' as const, game, ...state };
             if (undo) {
-              if (seat?.state === PLAYING) return { status: 'taken_back' as const, game, ...state };
+              // GameFeed shows no pending surrender, so "still playing" is all that can be read (#130).
+              if (seat?.state === PLAYING) {
+                return {
+                  status: 'still_playing' as const,
+                  game,
+                  ...state,
+                  message:
+                    'You are still playing. GameFeed has no pending-surrender state, so whether a surrender was ' +
+                    'pending (and is now taken back) cannot be read; if none was, nothing changed.',
+                };
+              }
             } else if (seat?.state === PLAYING && activePlayers(after).length > 2) {
               return {
                 status: 'pending' as const,

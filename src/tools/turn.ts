@@ -17,6 +17,7 @@ import {
   chooseCardPlays,
   normalizeGuid,
   cardsToShed,
+  handReadable,
   readHand,
   reinforcementArmies,
   type Card,
@@ -24,7 +25,11 @@ import {
 } from '../cards.js';
 import {
   chargeDeploys,
+  DEFAULT_OFFENSIVE_KILL_RATE,
   deployPools,
+  expectedKills,
+  specialUnitStrength,
+  winChance,
   incomeFor,
   deployCheckUncertainties,
   overrideUncertainties,
@@ -43,9 +48,9 @@ import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
 import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
 import { Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
+import { currentTurn, gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
-import { loadLiveGame, type LiveContext } from './live-context.js';
+import { failureText, loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
@@ -122,9 +127,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   return out;
 }
 
-/** The turn being played: GameFeed's completed turns + 1; `null` when the feed does not say. */
-export const currentTurn = (game: Game): number | null =>
-  game.numberOfTurns !== undefined && game.numberOfTurns >= 0 ? game.numberOfTurns + 1 : null;
+export { currentTurn, turnsCompleted } from './common.js';
 
 /** Throw unless the game is in a turn phase. */
 export function requireTurnPhase(game: Game): void {
@@ -136,6 +139,19 @@ export function requireTurnPhase(game: Game): void {
         : 'Turns are planned only while the game is being played.',
   });
 }
+
+/** Throw unless my seat is still `Playing` (#130): an eliminated, booted or surrendered seat has no turn. */
+export function requirePlayingSeat(game: Game, me: Player): void {
+  if (me.state === undefined || me.state === 'Playing') return;
+  throw new McpToolError(`${me.name} is no longer playing in game ${game.id} (state: ${me.state}), so there is no turn to play.`, {
+    hint: 'warapp_get_game shows each player\'s state.',
+  });
+}
+
+/** What to say when cards are in play but my hand could not be read (#130). */
+const UNREADABLE_HAND =
+  'Your hand could not be read from the live board (no player entry for you), so the cards shown as none may be ' +
+  'wrong: check the hand in the game — war.app refuses a commit while you hold more cards than the limit (error 51).';
 
 const namer = (map: GameMap) => {
   const names = new Map(map.territories.map((t) => [t.id, t.name]));
@@ -199,8 +215,10 @@ interface TurnState {
   turnNumber: number;
   orders: TurnOrder[];
   named: NamedOrder[];
-  /** The modelled income the deploys were checked against. */
+  /** The income the deploys were checked against: modelled, or the caller's own `income`. */
   income: number;
+  /** True when that income is the caller's `income` override, not the model. */
+  incomeGiven?: boolean;
 }
 
 /**
@@ -208,13 +226,15 @@ interface TurnState {
  * number. The live board carries no income figure — war.app's client computes it
  * from the standing — so its own number is the "armies per turn" the game shows.
  */
-function incomeRefused(e: WarappServerError, income: number): McpToolError {
+function incomeRefused(e: WarappServerError, income: number, given = false): McpToolError {
   return new McpToolError(e.message, {
     kind: 'unknown',
     cause: e,
     hint:
-      `The modelled income was ${income}, and war.app counts differently this turn. Deploy exactly the "armies per ` +
-      'turn" the game shows (the deploy panel); nothing was committed, so resend with that total.',
+      `The ${given ? 'income given was' : 'modelled income was'} ${income}, and war.app counts differently this turn. ` +
+      'Nothing was committed: read the ' +
+      '"armies per turn" the game shows (the deploy panel), deploy exactly that, and resend with it as `income` — ' +
+      'the deploy-total check then uses that number instead of the model.',
   });
 }
 
@@ -268,6 +288,16 @@ export function validateTurn(args: {
   localDeployments?: boolean;
   /** No-Split: each territory issues at most one attack or transfer. */
   noSplit?: boolean;
+  /**
+   * Multi-Attack: armies that move into a territory (a capture or a transfer) may move on from it
+   * later in the same list (#130). A source not mine at the start of the turn is accepted when
+   * an earlier move targets it. Each move out is checked, in list order, against the source's
+   * armies, its deploys and every army moved in earlier in the list (so an attack, a transfer in
+   * and another attack from one territory is fine) — an upper bound, since an attack's survivors
+   * are fewer than the armies sent. Deploys still need a territory held at
+   * the start of the turn: they land before any attack.
+   */
+  multiAttack?: boolean;
   /** Why the modelled income may be wrong; non-empty makes the deploy-total check a warning. */
   incomeUncertain?: readonly string[];
   /** Why the Local Deployment pools may be wrong (overridden bonuses); non-empty makes that check a warning. */
@@ -287,7 +317,22 @@ export function validateTurn(args: {
     const t = standing.get(id);
     return t !== undefined && !t.fogged && t.owner === myInGameId;
   };
-  const notMine = [...deploys.map((d) => d.territory), ...moves.map((m) => m.from)].filter((t) => !mine(t.id));
+  // Under Multi-Attack a territory not mine at the start may move on once a move earlier in the list went in.
+  const chained = new Set<number>();
+  if (args.multiAttack) {
+    const reached = new Set<number>();
+    const movedOut = new Set<number>();
+    for (const m of moves) {
+      if (!mine(m.from.id) && !movedOut.has(m.from.id) && reached.has(m.from.id)) chained.add(m.from.id);
+      movedOut.add(m.from.id);
+      reached.add(m.to.id);
+    }
+  }
+  // Deploys land before any attack, so only a move's source may be a territory captured earlier in the list.
+  const notMine = [
+    ...deploys.map((d) => d.territory).filter((t) => !mine(t.id)),
+    ...moves.map((m) => m.from).filter((t) => !mine(t.id) && !chained.has(t.id)),
+  ];
   if (notMine.length) {
     const unique = [...new Map(notMine.map((t) => [t.id, t])).values()];
     throw new McpToolError(`These territories are not yours at the start of this turn: ${unique.map(label).join(', ')}.`, {
@@ -372,26 +417,36 @@ export function validateTurn(args: {
       }
     }
   }
-  const out = new Map<number, { from: { id: number; name: string }; armies: number }>();
+  // Walk the moves in order: each source's total sent so far against its armies, its deploys and,
+  // under Multi-Attack, every army moved in earlier in the list (an attack, a transfer in, then
+  // another attack is fine). Without Multi-Attack, armies moved in do not move on this turn.
+  const sent = new Map<number, number>();
+  const inflow = new Map<number, number>();
+  let over: { from: { id: number; name: string }; armies: number; max: number } | undefined;
   for (const m of moves) {
-    const o = out.get(m.from.id) ?? { from: m.from, armies: 0 };
-    o.armies += m.armies;
-    out.set(m.from.id, o);
+    const armies = (sent.get(m.from.id) ?? 0) + m.armies;
+    sent.set(m.from.id, armies);
+    const start = chained.has(m.from.id) ? 0 : (standing.get(m.from.id)?.armies ?? 0) + (deployedOn.get(m.from.id) ?? 0);
+    const max = start + (inflow.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
+    if (armies > max && !over) over = { from: m.from, armies, max };
+    if (args.multiAttack) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + m.armies);
   }
-  for (const { from, armies } of out.values()) {
-    const max = (standing.get(from.id)?.armies ?? 0) + (deployedOn.get(from.id) ?? 0) - (args.guard ? 1 : 0);
-    if (armies > max) {
-      throw new McpToolError(
-        `These orders send ${armies} armies from ${label(from)}, which can send at most ${max} this turn` +
-          `${args.guard ? ' (one army stands guard)' : ''}.`,
-        { hint: 'A territory sends at most its armies plus what is deployed there this turn.' },
-      );
-    }
+  if (over) {
+    const { from, armies, max } = over;
+    throw new McpToolError(
+      `These orders send ${armies} armies from ${label(from)}, which can send at most ${max} this turn` +
+        `${args.guard ? ' (one army stands guard)' : ''}` +
+        `${inflow.has(from.id) ? '; that counts every army moved in earlier in the list, an upper bound: an attack\'s survivors are fewer' : ''}.`,
+      { hint: 'A territory sends at most its armies plus what is deployed there this turn.' },
+    );
   }
   // No-Split moves the whole stack (#124: the wiki, and a live turn that left every source at 0):
-  // an order for fewer armies still sends them all, so say what will actually move.
+  // an order for fewer armies still sends them all, so say what will actually move. A source captured
+  // earlier in the list (Multi-Attack) is left out: the armies standing there at the start were the
+  // defenders', and what moves on is the capture's survivors, which this cannot size.
   if (args.noSplit) {
     for (const m of moves) {
+      if (chained.has(m.from.id)) continue;
       const max = (standing.get(m.from.id)?.armies ?? 0) + (deployedOn.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
       if (m.armies < max)
         warnings.push(
@@ -402,6 +457,79 @@ export function validateTurn(args: {
     }
   }
   return { warnings };
+}
+
+/** One attack in the submit preview, sized against the defenders standing there now (#130). */
+export interface AttackSize {
+  from: { id: number; name: string };
+  to: { id: number; name: string };
+  armies: number;
+  /** Visible armies on the target at the start of the turn, a commander counted as {@link COMMANDER_STRENGTH}. */
+  defenders: number;
+  /**
+   * The luck-free kills at the game's offensive kill rate: of this attack's armies, or of all the
+   * attacks on this target together when {@link combined} is set.
+   */
+  expectedKills: number;
+  /**
+   * The exact chance of capturing them (kill rates, luck, rounding); deploys there this turn are not
+   * counted. With {@link combined}, the chance of the attacks' armies taken as one stack — an
+   * optimistic estimate, since separate attacks each face the defenders' kills.
+   */
+  winChance: number;
+  /** Set when several moves attack this target this turn: how many, and their armies together. */
+  combined?: { attacks: number; armies: number };
+  cannotCapture?: true;
+}
+
+/**
+ * Each move into a territory that is not mine and is visible, sized against what stands there
+ * now: a transfer (to my own or a teammate's territory) and a fogged target are left out. Several moves into one target (a
+ * multi-source capture) are sized together, so a leg too small on its own is not flagged when
+ * the legs capture together.
+ */
+export function attackSizes(
+  board: readonly LiveTerritory[],
+  myInGameId: number,
+  moves: ReadonlyArray<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }>,
+  settings: PlannerSettings,
+  teammates: ReadonlySet<number> = new Set(),
+): AttackSize[] {
+  const standing = new Map(board.map((t) => [t.territoryId, t]));
+  const off = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const attacks = moves.filter((m) => {
+    const t = standing.get(m.to.id);
+    return t !== undefined && !t.fogged && t.owner !== myInGameId && !teammates.has(t.owner);
+  });
+  const together = new Map<number, { attacks: number; armies: number }>();
+  for (const m of attacks) {
+    const g = together.get(m.to.id) ?? { attacks: 0, armies: 0 };
+    g.attacks += 1;
+    g.armies += m.armies;
+    together.set(m.to.id, g);
+  }
+  return attacks.map((m) => {
+    const t = standing.get(m.to.id)!;
+    const group = together.get(m.to.id)!;
+    const armies = group.attacks > 1 ? group.armies : m.armies;
+    const defenders = (t.armies ?? 0) + specialUnitStrength(t.specialUnits);
+    const chance = winChance(armies, defenders, {
+      ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
+      ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
+      ...(settings.luckModifier !== undefined ? { luck: settings.luckModifier } : {}),
+      ...(settings.roundingMode !== undefined ? { rounding: settings.roundingMode } : {}),
+    });
+    return {
+      from: m.from,
+      to: m.to,
+      armies: m.armies,
+      defenders,
+      expectedKills: Math.round(expectedKills(armies, off) * 10) / 10,
+      winChance: Math.round(chance * 1000) / 1000,
+      ...(group.attacks > 1 ? { combined: { ...group } } : {}),
+      ...(chance === 0 ? { cannotCapture: true as const } : {}),
+    };
+  });
 }
 
 /** The card types warapp_submit_turn can play, by the encoder's name. */
@@ -596,58 +724,24 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       title: 'Plan my turn in a war.app game',
       description: untrustedDescription(
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
-          "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
-          'captures, completed bonuses and next income (when the plan concedes borders of a bonus it holds, also ' +
-          '`nextIncomeIfConcededFall` — the next income if those borders fall — and `bonusesAtRisk`), warnings (threats, fog, luck) and the reasoning. Threat ' +
-          'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you, or what it was observed to deploy since the previous turn when larger: territories visible both turns only, never more than it could earn). It reports ' +
-          'your cards and whether you must play or discard (more whole cards than the hold limit), and plays ' +
-          'Reinforcement cards (their armies are planned) and, when cards must go, Order Priority, else discards the ' +
-          'lowest-value cards — never playing Blockade or Order Delay. Its ' +
-          '`orders` array is exactly what warapp_submit_turn takes — review it with the user first. Every plan reads ' +
-          'the game profile (`profile`: format 1v1/ffa/teams, phase opening/expansion/contact/late, standing ' +
-          'ahead/even/behind/unknown by your income against the strongest opponent\'s estimate — under heavy fog, its tracked ' +
-          'income when every opponent has one (`standingSource` "tracked"); `full` adds the ' +
-          'settings and notes). With no `goal`, the profile picks it (`goalSource` "profile"): defend when behind on income in an FFA or team game, ' +
-          'else balanced (behind on income in a 1v1 means strike: break their bonuses before expansion that completes nothing), tuned — in a 1v1 in contact breaking an enemy bonus counts like completing one and ' +
-          'expansion that completes nothing ranks below holds and breaks; in an FFA with two or more opponents left ' +
-          'no second front (a player threatening none of your bonuses is not attacked while a neutral of similar ' +
-          'value exists; finishing one off still is); behind, attacks are sized at the minimum; behind on armies in a 1v1, no capture of ' +
-          "a player's territory that loses more armies than it kills; in a 1v1, spare deploys build one strike stack on the border " +
-          'facing the opponent, which attacks every adjacent enemy territory it can take (bonus breaks and retakes first) while ' +
-          `keeping what holds it; ahead in a 1v1, fog ` +
-          `pressure is allowed up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. An explicit \`goal\` overrides the ` +
-          'profile (the rationale says so). Goals: "balanced" (default) — the profile\'s base — ' +
-          'spends income where it earns most per army — holding borders that protect income, completing ' +
-          'cheap bonuses, breaking enemy bonuses (also ones the opponent tracker infers behind the fog, "probable"; a break is sized to land, ' +
-          'not to survive the counter-attack, and is worth their lost income plus what retaking costs them), counter-attacking a stack that ' +
-          'shrank fighting you — with at least 30% on expansion (`full` lists the offensive options in `offence`); "expand" takes neutrals and never ' +
-          'attacks players; "complete-bonus" also attacks players to finish bonuses; "defend" reinforces threatened ' +
-          'borders worth holding before anything else. Under balanced/defend, an opponent whose every territory is ' +
-          'visible and borders yours is attacked at once when, whatever way it splits its one estimated deploy to ' +
-          'save territories, that still eliminates it or cuts it to one territory (or takes at least half); a ' +
-          'pressure plan may leave some of its territories unattacked. One next to the fog is never called ' +
-          'eliminated, but all its visible territories are attacked as pressure (each sized for its full deploy plus a margin) ' +
-          `when each costs at most ${PRESSURE_FACTOR}× a typical neutral capture; one visible territory too costly blocks the pressure on all of them. ` +
-          'This runs before any border facing it is ' +
-          'conceded (holds worth paying for against other players are funded first). Hopeless borders are listed in `conceded` and get no ' +
-          'deploys (unless every territory you hold is conceded); under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
-          'Priority so the withdrawal runs before the border falls (or, in a Commanders game, so a strike on an enemy commander resolves before attacks on yours); when you hold one, `orders` already plays it. ' +
-          'A held bonus\'s border short of a sure hold by a near ' +
-          'miss (at most 2 armies or 15%), or still holding against the expected attack, is funded with everything left ' +
-          'instead (a warning says it may fall) and never withdrawn. A bonus whose new frontier would fall next turn is ' +
-          'not completed under balanced/defend (a warning says so). A neutral no single stack can afford may be taken by ' +
-          'several attacks in a fixed order (`multiSourceCaptures`; 0% luck only). Every capture pays for the borders it adds (those ' +
-          'facing an enemy at what they need to hold), so closing a gap beats opening a front; `frontier` reports the borders left, those facing an enemy, ' +
-          'what they need next turn to hold and the next income, and under balanced/defend expansion that adds enemy borders without completing a bonus ' +
-          'stops when that need outgrows the income. Enemy stacks next to you that grew since the previous turn raise the threat by their ' +
-          'growth; the previous board comes from the game history when war.app sends it, else from the board this ' +
-          'server last planned on (`trendSource` says which, or null). Obeys the game\'s rules: every attack and ' +
-          "threat is sized at the game's kill rates; every attack carries `winChance`, its exact probability of " +
-          'capturing (kill rates, luck and rounding; 1 when certain), and `min_win_chance` below 1 sizes captures ' +
-          'for that chance instead of a guarantee. An attack is topped up to its next efficient size (one more kill ' +
-          'for sure) from armies that would sit idle when its target is a player\'s or it is not certain, and the ' +
-          "reasoning names attacks whose extra armies add no kill. Under Local Deployment a held bonus's armies are deployed only " +
-          'inside that bonus; under No-Split each territory issues at most one attack or transfer, with its whole stack. ' +
+          "game's settings: your income, deploys and attacks/transfers by territory name and id (each attack with " +
+          '`winChance`, its exact capture probability), the expected captures, completed bonuses and next income ' +
+          '(with `nextIncomeIfConcededFall` and `bonusesAtRisk` when the plan concedes borders of a bonus you hold), ' +
+          'the borders given up (`conceded`), the `frontier` budget, your cards (plays and discards when you must), ' +
+          'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
+          'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
+          'ahead/even/behind/unknown on income). With no `goal` the profile picks and tunes it (`goalSource` ' +
+          '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
+          'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
+          `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
+          'across holds, bonuses and breaking enemy bonuses, at least 30% on expansion; "expand" — neutrals only; ' +
+          '"complete-bonus" — also attacks players to finish bonuses; "defend" — threatened borders worth holding ' +
+          'first. An opponent next to the fog may be pressured: each of its visible territories attacked, sized for ' +
+          `its full deploy plus a margin, at most ${PRESSURE_FACTOR}× a typical neutral capture each — one visible ` +
+          'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent from its visible bonuses, or ' +
+          'its observed deploy since the previous turn when larger). Obeys the kill rates, luck, rounding, Local ' +
+          'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement and (when cards must go) Order Priority, never ' +
+          "Blockade or Order Delay. The full rule list is in the planner's header and the warapp-mcp skill. " +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -683,10 +777,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .optional()
           .describe(
             'Armies every enemy is assumed to deploy next turn when judging threats. Default, per opponent: base ' +
-              'income plus the bonuses it visibly holds in full, at most 75% of its largest stack next to you but ' +
-              'never below the game\'s base income (at least 5); just that base income on an untouched opening ' +
-              'board; when the previous turn\'s board is known, at least what that opponent was observed to deploy ' +
-              '(the net change of its armies on territories visible both turns plus what its captures cost it; a fog reveal is not income, and it never exceeds its base plus every bonus it could hold) — income in the fog is unseen, so raise it if you know they earn more.',
+              'income plus the bonuses it visibly holds (at most 75% of its largest stack next to you, never below ' +
+              'the base income), or what it was observed to deploy since the previous turn when larger. Income in ' +
+              'the fog is unseen, so raise it if you know they earn more.',
           ),
         min_win_chance: z.coerce
           .number()
@@ -712,22 +805,24 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const map = mapOf(game);
       const focusBonusIds = (focus ?? []).map((b) => resolveBonus(map, b).id);
       const turn = currentTurn(game);
-      // The signed-in account, the live board and the board history are independent reads: in
-      // parallel, not in series (#131). Accepted trade-offs of not serializing them: when the board
-      // read fails, a history read already under way still reaches GameFeed after the tool has
-      // returned (one wasted, harmless read; boardHistory never throws); and when the account and
-      // board reads both fail, whichever fails first is the error reported (each is a true error).
-      const meRead = resolveMe(ctx, game.players, player);
-      const [me, { territories, info }, history] = await Promise.all([
-        meRead,
+      // My seat is checked before the board is read (#130): an eliminated or booted seat has no turn,
+      // so nothing is read for it. Then the live board and the board history are independent reads:
+      // in parallel, not in series (#131). History needed my seat anyway, so the board waiting for it
+      // adds no step to the slowest chain (account, then history). Accepted trade-off of not
+      // serializing them: when the board read fails, a history read already under way still reaches
+      // GameFeed after the tool has returned (one wasted, harmless read; boardHistory never throws).
+      const me = await resolveMe(ctx, game.players, player);
+      requirePlayingSeat(game, me);
+      const [{ territories, info }, history] = await Promise.all([
         loadLiveGame(ctx, game),
-        meRead.then((m) => boardHistory(ctx, game, m, turn)),
+        boardHistory(ctx, game, me, turn),
       ]);
       const graph = graphOf(map);
       const board = boardStateFromLive(territories, me, game.players);
       const settings = plannerSettings(game.settings);
       const rules = cardRules(game.settings);
       const hand = readHand(info, inGameId(me));
+      const handUnknown = rules.inPlay.length > 0 && !handReadable(info, inGameId(me));
       const cards = chooseCardPlays(hand, rules);
       const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
       const trend = history.previous;
@@ -781,6 +876,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 'with warapp_uncommit_turn (or modify orders in the game).',
             ]
           : []),
+        ...(handUnknown ? [UNREADABLE_HAND] : []),
         ...cards.warnings,
         ...(cards.extraArmies > 0 ? [cardIncomeNote(income, cards.extraArmies)] : []),
         ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
@@ -832,6 +928,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
         cards: {
           hand: hand.map(cardView),
+          ...(handUnknown ? { handReadable: false } : {}),
           maxCardsHold: rules.maxCardsHold ?? null,
           playRequired: cards.required,
           plays: plays.map(cardView),
@@ -886,6 +983,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
   const submitSchema = z.object({
     game_id: gameIdArg,
     player: playerArg,
+    income: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_ENEMY_DEPLOY)
+      .optional()
+      .describe(
+        'Only after war.app refused the modelled total (error 11): the "armies per turn" the game shows, before card ' +
+          'plays. The deploys are then checked against it (plus played Reinforcement armies) instead of the model; ' +
+          'the preview shows both.',
+      ),
     orders: turnOrdersArg.describe(
       'The turn\'s orders (card plays and discards, deploys and attacks/transfers), territories by id or name, cards by id or type ' +
         'name — e.g. the `orders` array warapp_plan_turn returns. Deploys must total exactly your income plus the ' +
@@ -914,10 +1022,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
             'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
             'Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
-            'income uncertain); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
+            'income uncertain; after war.app\'s error 11, resend with the game\'s own number as `income`); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
             'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
-            'stack, which war.app moves anyway; warapp_plan_turn obeys these and the kill rates). ' +
-            'Always sent as ' +
+            'stack, which war.app moves anyway); under Multi-Attack, a move (not a deploy) may go on from a ' +
+            'territory an earlier move in the list captures (warapp_plan_turn obeys these and the kill rates). ' +
+            'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
+            'several attacks on one target together) ' +
+            'and warns about one that cannot capture. Always sent as ' +
             'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
             `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
@@ -928,10 +1039,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             openWorld: true,
           }),
           inputSchema: submitSchema,
-          async plan({ game_id, player, orders }) {
+          async plan({ game_id, player, orders, income: givenIncome }) {
             const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
             requireTurnPhase(game);
             const me = await requireSignedInMe(ctx, game, player);
+            requirePlayingSeat(game, me);
             if (me.hasCommittedOrders) {
               throw new McpToolError(`You have already committed orders for this turn of game ${game.id}.`, {
                 hint:
@@ -969,6 +1081,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const playerId = inGameId(me);
             const rules = cardRules(game.settings);
             const hand = readHand(info, playerId);
+            const handUnknown = rules.inPlay.length > 0 && !handReadable(info, playerId);
             const plays = resolveCardPlays(map, hand, rules, cardInputs);
             const discards = resolveDiscards(hand, plays, discardInputs);
             // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
@@ -983,8 +1096,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 });
               }
             }
-            const income =
-              incomeFor(graphOf(map), board, me.id, game.settings) + plays.reduce((sum, p) => sum + p.armies, 0);
+            const modelled = incomeFor(graphOf(map), board, me.id, game.settings);
+            const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
+            // #130: war.app's own number, given after an error 11, replaces the model for the check.
+            const income = (givenIncome ?? modelled) + cardArmies;
+            const overridden =
+              givenIncome !== undefined && givenIncome !== modelled
+                ? `income ${givenIncome} given (the game's armies per turn), modelled ${modelled}`
+                : undefined;
             const { warnings } = validateTurn({
               map,
               board: territories,
@@ -995,14 +1114,34 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               moves,
               localDeployments: game.settings?.localDeployments ?? false,
               noSplit: game.settings?.noSplit ?? false,
+              multiAttack: game.settings?.multiAttack ?? false,
               unplayedReinforcements: hand.flatMap((c) => {
                 if (c.type !== CARD_REINFORCEMENT || plays.some((p) => p.card.id === c.id)) return [];
                 const armies = reinforcementArmies(c, rules);
                 return armies === undefined ? [] : [{ id: c.id, armies }];
               }),
-              incomeUncertain: deployCheckUncertainties(game.settings),
-              poolsUncertain: overrideUncertainties(game.settings),
+              incomeUncertain: givenIncome !== undefined ? [] : deployCheckUncertainties(game.settings),
+              poolsUncertain: [
+                ...overrideUncertainties(game.settings),
+                ...(overridden ? [`The ${overridden}, so the bonus pools may differ too.`] : []),
+              ],
             });
+            if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
+            if (handUnknown) warnings.push(UNREADABLE_HAND);
+            // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
+            const teammates = new Set(
+              me.team !== undefined && me.team >= 0
+                ? game.players.filter((p) => p !== me && p.team === me.team).map((p) => inGameId(p))
+                : [],
+            );
+            const attacks = attackSizes(territories, playerId, moves, plannerSettings(game.settings), teammates);
+            const hopeless = attacks.filter((a) => a.cannotCapture);
+            if (hopeless.length) {
+              warnings.push(
+                `${hopeless.map((a) => `${label(a.from)} → ${label(a.to)}`).join(', ')}: ${hopeless.length === 1 ? 'this attack' : 'these attacks'} ` +
+                  'cannot capture against the armies there now at this game\'s kill rates (see `attacks`).',
+              );
+            }
             // Deploys first (as the client sends them), merged per territory.
             const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
             for (const d of deploys) {
@@ -1037,6 +1176,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 willSend: { game: game.id, player: me.name, turn: turnNumber, income, orders: named },
                 preview: {
                   note: 'These orders reach the game; once the turn resolves, other players see the results.',
+                  ...(attacks.length ? { attacks } : {}),
                   ...(warnings.length ? { warnings } : {}),
                 },
               },
@@ -1049,14 +1189,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 orders: send,
                 named,
                 income,
+                ...(givenIncome !== undefined ? { incomeGiven: true } : {}),
               } satisfies TurnState,
             };
           },
           async execute(st: TurnState) {
             const base = { game: st.gameId, turn: st.turnNumber, orders: st.named };
             const check =
-              'Check warapp_get_game (turn count, your committed flag) or warapp_get_live_board. Do not resend these ' +
-              'orders blindly — a second commit for the same turn is not known to be safe.';
+              `Check warapp_get_game: a \`turn\` above ${st.turnNumber} means this turn resolved; still ${st.turnNumber} with ` +
+              'your `committed` true means the orders are in. Do not resend these orders blindly — a second commit for ' +
+              'the same turn is not known to be safe, and once the turn has resolved they would commit to the next one.';
             try {
               // The reply's bool is war.app's "vacation ended" flag — never a success signal.
               await ctx.rpc.call('SendOrders', Method.SendOrders, (w) =>
@@ -1064,13 +1206,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               );
             } catch (e) {
               // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.
-              if (e instanceof WarappServerError && e.code === 11) throw incomeRefused(e, st.income);
+              if (e instanceof WarappServerError && e.code === 11) throw incomeRefused(e, st.income, st.incomeGiven);
               if (e instanceof WarappServerError) throw e;
               return {
                 status: 'unknown' as const,
                 ...base,
                 warning:
-                  `war.app did not confirm these orders (${e instanceof Error ? e.message : String(e)}), so they may ` +
+                  `war.app did not confirm these orders (${failureText(e)}), so they may ` +
                   `already have been committed. ${check}`,
               };
             }

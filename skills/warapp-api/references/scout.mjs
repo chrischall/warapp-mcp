@@ -55,7 +55,8 @@ function parseProfile(html) {
   }
 
   return {
-    name,
+    // A page with neither a level nor games played is not a profile (signed out, no such player).
+    name: level || played ? name : null,
     level: level ? num(level[1]) : null,
     multiplayerGames: played ? num(played[1]) : null,
     realTimePct: played ? Number(played[2]) : null,
@@ -65,6 +66,13 @@ function parseProfile(html) {
     ranked: ranked ? { completed: num(ranked[1]), wins: num(ranked[2]), games: num(ranked[3]) } : null,
     formats,
   };
+}
+
+/** A side of more than one player ("2v2", "3v3v3", "Teams"): they may have been my teammate. */
+function isTeamGame(teams) {
+  if (/\bteams?\b/i.test(teams)) return true;
+  const sides = /^\s*\d+(?:\s*v\s*\d+)+\s*$/i.test(teams) ? teams.split(/v/i).map((x) => Number(x.trim())) : [];
+  return sides.some((n) => n > 1);
 }
 
 function outcomeOf(state) {
@@ -82,16 +90,21 @@ function parseCommonGames(html) {
   for (let m = row.exec(html); m; m = row.exec(html)) {
     games.push({ id: Number(m[1]), name: textOf(m[2]), started: textOf(m[3]), teams: textOf(m[4]), myState: textOf(m[5]) });
   }
+  // Wins and losses count games without teams only; team games are `teamGames`.
   const tally = { win: 0, loss: 0, inProgress: 0 };
+  let teamGames = 0;
   for (const g of games) {
     const o = outcomeOf(g.myState);
-    if (o) tally[o]++;
+    const team = isTeamGame(g.teams);
+    if (team) teamGames++;
+    if (o === 'inProgress' || (o && !team)) tally[o]++;
   }
   return {
     count: header ? num(header[1]) : games.length ? games.length : null,
     wins: tally.win,
     losses: tally.loss,
     inProgress: tally.inProgress,
+    teamGames,
     games,
   };
 }

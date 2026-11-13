@@ -4,6 +4,7 @@
 import {
   CONFIRM_INJECTION_RULE,
   defineWrite,
+  McpToolError,
   registerWrite,
   toolAnnotations,
 } from '@chrischall/mcp-utils';
@@ -17,7 +18,7 @@ import { WarappServerError } from '../protocol/rpc.js';
 import { asInt } from '../scalars.js';
 import { gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
-import type { LiveContext } from './live-context.js';
+import { failureText, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
 
 const DEFAULT_LIMIT = 50;
@@ -129,7 +130,8 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
           description:
             'Post a chat message in a war.app (Warzone) game — to the whole game, or privately to one named player. ' +
             'The message reaches other players and cannot be unsent. Sent through your signed-in war.app tab ' +
-            `(ContextMint Bridge). ${CONFIRM_INJECTION_RULE}`,
+            '(ContextMint Bridge); the game is read from GameFeed first, so the GameFeed credentials are needed too. ' +
+            `${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
             title: 'Send a war.app chat message',
             readOnly: false,
@@ -147,10 +149,16 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
           }),
           async plan({ game_id, message, to }) {
             const gameId = parseGameId(game_id);
+            // Read the game for every message (#130): one GameFeed does not know is refused here.
+            const game = await ctx.client.getGame(gameId);
             let recipient: ChatState['recipient'];
             if (to !== undefined && String(to).trim() !== '') {
-              const game = await ctx.client.getGame(gameId);
               const p = resolvePlayer(game.players, to);
+              if (p.id === (await ctx.myInviteToken())) {
+                throw new McpToolError(`${p.name} is you: a private message to yourself was not sent.`, {
+                  hint: 'Name another player in `to`, or omit it to post to the whole game.',
+                });
+              }
               recipient = { id: inGameId(p), name: p.name };
             }
             return {
@@ -169,7 +177,10 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
                   recipient: recipient?.id ?? null,
                 },
                 willSend: { game: gameId, to: recipient?.name ?? 'everyone in the game', message },
-                preview: { note: 'Other players will see this message; it cannot be unsent.' },
+                preview: {
+                  note: 'Other players will see this message; it cannot be unsent.',
+                  game: { id: game.id, name: game.name ?? null, state: game.state },
+                },
               },
               state: { gameId, text: message, ...(recipient ? { recipient } : {}) } satisfies ChatState,
             };
@@ -188,7 +199,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
                 game: gameId,
                 to,
                 warning:
-                  `war.app did not confirm this message (${e instanceof Error ? e.message : String(e)}), so it may ` +
+                  `war.app did not confirm this message (${failureText(e)}), so it may ` +
                   'already have been posted. Check warapp_get_chat before sending it again.',
               };
             }

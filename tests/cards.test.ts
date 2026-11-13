@@ -8,6 +8,7 @@ import {
   holdsOrderPriority,
   advisedOrderPriority,
   playRequired,
+  handReadable,
   readHand,
   type Card,
 } from '../src/cards.js';
@@ -77,6 +78,13 @@ describe('readHand', () => {
       { id: G1, type: 1, name: 'Reinforcement', armies: 5 },
       { id: G2, type: 5, name: 'Order Delay' },
     ]);
+  });
+
+  it('tells an unreadable hand from an empty one: my player entry must be there (#130)', () => {
+    expect(handReadable(info({}), ME)).toBe(true);
+    expect(handReadable(info({ [ME]: [{ id: G1, type: 5 }] }), ME)).toBe(true);
+    expect(handReadable(info({}, [OTHER]), ME)).toBe(false);
+    expect(handReadable(null, ME)).toBe(false);
   });
 
   it('is empty when I hold no cards or the board carries none', () => {

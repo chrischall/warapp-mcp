@@ -4,7 +4,7 @@
 import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
-import { readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
+import { inGameId, readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
 import type { Game } from '../normalize.js';
 import { BundleProvider } from '../protocol/bundle.js';
 import {
@@ -27,18 +27,31 @@ export interface LiveContext {
    * war.app's InviteToken page through the bridge; `undefined` when it cannot be read.
    */
   myInviteToken: () => Promise<number | undefined>;
+  /**
+   * The signed-in account's in-game id, sliced from the token TEXT: a token whose first check
+   * digit is 0 loses it as a number, and the slice would then be wrong (#130).
+   */
+  myInGameId: () => Promise<number | undefined>;
   /** GET a war.app page as text through the signed-in tab. */
   fetchPage: (url: string) => Promise<string>;
   /** Where state that survives a restart lives (bundle cache, last planned boards); none: nothing is cached. */
   dataDir?: string;
 }
 
-/** The token from war.app's `/InviteToken` page ("Your invite token is N"). */
-export function parseInviteToken(html: string): number | undefined {
+/**
+ * The token from war.app's `/InviteToken` page ("Your invite token is N"), as text — the
+ * check digits are part of it, a leading 0 included (#130).
+ */
+export function parseInviteTokenText(html: string): string | undefined {
   const m = /Your invite token is\s*(\d{5,20})/.exec(html);
   if (!m) return undefined;
-  const n = Number(m[1]);
-  return Number.isSafeInteger(n) ? n : undefined;
+  return Number.isSafeInteger(Number(m[1])) ? m[1] : undefined;
+}
+
+/** The token as a number (= the GameFeed player id GameFeed reports). */
+export function parseInviteToken(html: string): number | undefined {
+  const t = parseInviteTokenText(html);
+  return t === undefined ? undefined : Number(t);
 }
 
 export const INVITE_TOKEN_URL = 'https://war.app/InviteToken';
@@ -73,9 +86,42 @@ export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch 
   };
 }
 
+/** What to do about a frozen tab, said on every bridged `/Services` timeout (#130). */
+export const FROZEN_TAB_HINT =
+  'Chrome freezes background tabs, and war.app calls are relayed through a page tab: a frozen tab stalls them ' +
+  'while page reads still work. Reload or focus a war.app tab, then check the game before retrying.';
+
+/** A bridge timeout (fetchproxy's `FetchproxyTimeoutError`, matched by name across package copies). */
+const isBridgeTimeout = (e: unknown): e is Error => e instanceof Error && e.name === 'FetchproxyTimeoutError';
+
+/**
+ * The bridge with its `/Services` POST timeouts carrying {@link FROZEN_TAB_HINT}: the message is
+ * kept whole (it says whether the call may already have run), only the hint is added.
+ */
+function withFrozenTabHint(bridge: ReadyBridge): ReadyBridge {
+  return {
+    fetch: async (init) => {
+      try {
+        return await bridge.fetch(init);
+      } catch (e) {
+        if (!isBridgeTimeout(e)) throw e;
+        throw new McpToolError(e.message, { kind: 'unknown', hint: FROZEN_TAB_HINT, cause: e });
+      }
+    },
+  };
+}
+
+type ReadyBridge = Awaited<ReturnType<ReadyFetchBridge['ready']>>;
+
+/** A failed send's message for a result warning, with the frozen-tab hint when it was a bridge timeout. */
+export function failureText(e: unknown): string {
+  const message = e instanceof Error ? e.message : String(e);
+  return e instanceof McpToolError && e.hint === FROZEN_TAB_HINT ? `${message} ${FROZEN_TAB_HINT}` : message;
+}
+
 export function createLiveContext(opts: LiveContextOptions): LiveContext {
   const rpc = new WarappRpc({
-    bridge: () => opts.bridge.ready(),
+    bridge: async () => withFrozenTabHint(await opts.bridge.ready()),
     ...(opts.env ? { env: opts.env as NodeJS.ProcessEnv } : {}),
   });
   const dir = dataDir(opts.env);
@@ -85,11 +131,11 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
   });
   const load = opts.bundle ?? (() => provider.get());
   const fetchText = bundleFetcher(opts.bridge, opts.fetchImpl);
-  let token: Promise<number | undefined> | undefined;
-  const myInviteToken = (): Promise<number | undefined> => {
+  let token: Promise<string | undefined> | undefined;
+  const tokenText = (): Promise<string | undefined> => {
     // Cache a success; let a failure (bridge down, signed out) be retried next call.
     token ??= fetchText(INVITE_TOKEN_URL)
-      .then(parseInviteToken)
+      .then(parseInviteTokenText)
       .catch(() => undefined)
       .then((t) => {
         if (t === undefined) token = undefined;
@@ -97,8 +143,17 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
       });
     return token;
   };
+  const myInviteToken = async (): Promise<number | undefined> => {
+    const t = await tokenText();
+    return t === undefined ? undefined : Number(t);
+  };
+  const myInGameId = async (): Promise<number | undefined> => {
+    const t = await tokenText();
+    return t === undefined ? undefined : inGameId({ id: Number(t), feedId: t });
+  };
   return {
     myInviteToken,
+    myInGameId,
     fetchPage: fetchText,
     dataDir: dir,
     client: opts.client,

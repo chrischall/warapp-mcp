@@ -42,7 +42,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   `unconfirmed`.
 - **"Who am I up against?" / "scout this player"** → `warapp_scout_player` with `game_id` +
   `player` (a name), or just the player's id: level, games played, last seen, boot rate,
-  ranked records per format and the user's head-to-head with them. It never returns the
+  ranked records per format and the user's head-to-head with them (wins and losses from games
+  without teams; team games are `teamGames`, since they may have been a teammate). A page that is
+  not a profile (signed out, unknown id) is an error. It never returns the
   player's location or other personal details.
 - **"What's going on in game N?" / "whose turn is it?"** → `warapp_get_game`. It returns the
   state, the turn, every player with whether they have committed orders (the ones who have
@@ -176,11 +178,19 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   name, card plays `{ "kind": "card", "card": <id or type name>, "target"? }`; confirm-gated,
   always as the signed-in account — it refuses another `player`). It validates the orders on
   the live board (cards in the hand, the user's territories, adjacent moves, armies available,
-  deploys = income + played Reinforcement armies), refuses when the hand is over the hold
+  deploys = income + played Reinforcement armies; when war.app refuses the modelled total with
+  error 11, read the "armies per turn" the game shows and resend with it as `income`), refuses when the hand is over the hold
   limit and too few cards are played or discarded, and refuses outside a turn phase or when the user has already
-  committed this turn (withdraw them first with `warapp_uncommit_turn`, or modify orders in the game). Report its `status`: `resolved` (the
+  committed this turn (withdraw them first with `warapp_uncommit_turn`, or modify orders in the game)
+  or the user's seat is no longer `Playing` (as `warapp_plan_turn` does). A plan with
+  `cards.handReadable: false` could not read the hand: say so and check it in the game. Show the
+  preview's `attacks` (each attack's expected kills and win chance against the armies there now;
+  several attacks on one target are sized together, marked `combined`); an attack marked `cannotCapture` should be resized or dropped before confirming. Report its `status`: `resolved` (the
   turn advanced), `committed` (orders in, waiting on others) or `unknown` — then check
-  `warapp_get_game`; never resend blindly. Other players see the results.
+  `warapp_get_game` (its `turn` is the turn being played, as every tool reports it: a `turn` above
+  the submitted one means it resolved; `turnsCompleted` counts the finished turns); never resend
+  blindly — after the turn resolves, the same orders would commit to the next turn. Other players
+  see the results.
 - **"I committed the wrong orders" / "uncommit my turn"** → `warapp_uncommit_turn` with `game_id`
   (confirm-gated): withdraws the committed orders for the current turn so corrected ones can go in
   with `warapp_submit_turn`. It refuses outside a turn phase or when nothing is committed. Report its
@@ -191,7 +201,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   its owner (player name, `neutral`, or `pickable` during picks), armies and fog, read through
   the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game. In a
   Commanders game a territory's `commander` names whose commander stands there (`full` lists
-  every special unit); losing your commander eliminates you.
+  every special unit); losing your commander eliminates you. On a large map ask for less:
+  `owner` ("me", "neutral", "pickable" or a player), `territories` (ids or names) and
+  `limit`/`offset` paging (`page.nextOffset`); the counts stay whole-board.
 - **"What should I pick?"** → `warapp_plan_picks`, then `warapp_submit_picks` once the user agrees.
   Picking stage only, read-only: a ranked pick list by name and id — a compact primary group of the
   territory limit and a disjoint fallback, as long as war.app's client allows (players × territories
@@ -207,10 +219,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   granted is warned about in the preview, not refused). It is confirm-gated and reports `verified` only when war.app reads back exactly the
   submitted list.
 - **Chat** → `warapp_get_chat` reads it (GameFeed); `warapp_send_chat` posts publicly or
-  privately to one player. Confirm-gated — a message reaches other players and cannot be unsent.
+  privately to one player (through the bridge, after reading the game from GameFeed — both are needed). Confirm-gated — a message reaches other players and cannot be unsent.
 - **"Tell me when it's my turn"** → `warapp_wait_for_turn` with the game ids to watch (1–20; omit
   them to watch every game of the user's being played or picked; `timeout_seconds` default 300, max 1800): it returns as soon as one is waiting on the user
-  (or at the timeout), woken by war.app's push notifications through the signed-in war.app tab.
+  (or at the timeout; at once with `game_over` when every game finished or the user's seat is out —
+  each game's `ended` says why, so stop watching it), woken by war.app's push notifications through the signed-in war.app tab.
   `warapp_recent_events` lists the pushes this server has seen and whether the socket is
   connected. When it returns a game, go on to `warapp_plan_turn` (or picks).
 - **"How far is X from Y?"** → `warapp_plan_route` with `from` / `to` as a territory id,

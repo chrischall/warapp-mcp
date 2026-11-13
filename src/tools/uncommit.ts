@@ -19,7 +19,7 @@ import { Method, writeUnCommitParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import type { LiveContext } from './live-context.js';
+import { failureText, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
 import { currentTurn, requireTurnPhase } from './turn.js';
 
@@ -148,7 +148,7 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
                 status: 'unknown' as const,
                 ...base,
                 warning:
-                  `war.app did not confirm the withdrawal (${e instanceof Error ? e.message : String(e)}), so it may ` +
+                  `war.app did not confirm the withdrawal (${failureText(e)}), so it may ` +
                   `already have gone through. ${check}`,
               };
             }

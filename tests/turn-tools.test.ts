@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
-import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
+import { attackSizes, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { normalizeMap } from '../src/normalize.js';
 import { AHEAD_PRESSURE_FACTOR, PRESSURE_FACTOR } from '../src/analysis/planner.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
@@ -518,6 +519,49 @@ describe('warapp_plan_turn', () => {
   });
 });
 
+describe('the seat and the hand (#130)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+
+  it('plan and submit refuse a seat that is no longer Playing', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: modelledSettings() }, { state: 'Booted' })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    for (const [tool, args] of [
+      ['warapp_plan_turn', { game_id: GAME }],
+      ['warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] }],
+    ] as const) {
+      const res = await h.call(tool, args);
+      expect(res.isError, tool).toBe(true);
+      expect(textOf(res), tool).toMatch(/no longer playing.*Booted/);
+    }
+    // The tool returns on the refusal; a board read started alongside would land just after it.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(h.exchanges).toEqual([]);
+  });
+
+  it('an unreadable hand is said, not shown as no cards', async () => {
+    // The standing has no player entry for me: the hand cannot be read.
+    const noEntry = () => ({ body: (w: Writer) => writeLatestGameInfo(w, BOARD, [BOB.inGame]) }) satisfies Partial<ReplyFrame>;
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: noEntry }) });
+    const p = payload<PlanPayload & { cards: { hand: unknown[]; handReadable?: boolean } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME }),
+    );
+    expect(p.cards.handReadable).toBe(false);
+    expect(p.warnings.join('\n')).toMatch(/hand could not be read/);
+    const preview = payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] }));
+    expect(JSON.stringify(preview)).toMatch(/hand could not be read/);
+  });
+
+  it('a readable empty hand says nothing about it', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload & { cards: { handReadable?: boolean } }>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(p.cards).not.toHaveProperty('handReadable');
+    expect(p.warnings.join('\n')).not.toMatch(/hand could not be read/);
+  });
+});
+
 describe('warapp_plan_turn — threat trend', () => {
   // The previous turn's standing (turn 3 is being played, so 2 turns are done
   // and the previous board is the one after 1). Bob's Bolton Moors grew 3 → 7.
@@ -598,7 +642,7 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(p.warnings.join('\n')).toMatch(building(7, 12));
   });
 
-  it('(h) a failed account read fails the plan while the board read runs; history is never fetched (#131)', async () => {
+  it('(h) a failed account read fails the plan; neither the board nor history is read (#130, #131)', async () => {
     h = await liveHarness({
       feed: [game('Playing', { history: [{ turn: 0, standing: [] }, { turn: 1, standing: previous }] })],
       warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
@@ -606,7 +650,9 @@ describe('warapp_plan_turn — threat trend', () => {
     const res = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Nobody' });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/Nobody/);
+    await new Promise((r) => setTimeout(r, 200));
     expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
+    expect(h.exchanges).toEqual([]);
   });
 
   it('(h) a failed board read fails the plan while the history read runs (#131)', async () => {
@@ -851,6 +897,8 @@ describe('warapp_submit_turn', () => {
     const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
     expect(p.status).toBe('unknown');
     expect(p.warning).toMatch(/warapp_get_game|warapp_get_live_board/);
+    // #130: the recovery read names the turn the way warapp_get_game reports it.
+    expect(p.warning).toMatch(/`turn` above 3 means this turn resolved/);
   });
 
   it('reports unknown when the state re-read fails after sending', async () => {
@@ -878,6 +926,24 @@ describe('warapp_submit_turn', () => {
     expect(p.warning).toMatch(/Do not resend/i);
   });
 
+  it('a send that times out through a frozen tab is unknown and says to reload or focus the tab (#130)', async () => {
+    h = await liveHarness({
+      feed: [game('Playing')],
+      pages: ME_PAGE,
+      warapp: routes({
+        [Method.GetLatestGameInfo]: board(BOARD),
+        [Method.SendOrders]: () => {
+          throw new FetchproxyTimeoutError({ url: 'https://war.app/Services?m=SendOrders&js=1', timeoutMs: 30000, retrySafe: false });
+        },
+      }),
+    });
+    const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
+    expect(p.status).toBe('unknown');
+    expect(p.warning).toMatch(/may already have run/);
+    expect(p.warning).toMatch(/Reload or focus a war\.app tab/);
+    expect(p.warning).toMatch(/Do not resend/i);
+  });
+
   it('a server refusal is an error (error 11: deployments differ from income)', async () => {
     const s = ordersServer({ error: { code: 11, message: 'x' } });
     h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
@@ -895,6 +961,54 @@ describe('warapp_submit_turn', () => {
     expect(all).toMatch(/war\.app error 11/);
     expect(all).toMatch(/modelled income was 5/);
     expect(all).toMatch(/armies per turn/);
+  });
+
+  it('after error 11 the hint says to resend with the game\'s own number as `income` (#130)', async () => {
+    const s = ordersServer({ error: { code: 11, message: 'x' } });
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });
+    const res = await confirmed({ game_id: GAME, orders: GOOD });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res)).toMatch(/`income`/);
+  });
+
+  it('`income` overrides the modelled income: the deploy total war.app shows is accepted and previewed (#130)', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });
+    const SEVEN = [
+      { kind: 'deploy', territory: 159, armies: 7 },
+      { kind: 'move', from: 159, to: 158, armies: 8 },
+    ];
+    // Without the override the modelled 5 refuses it.
+    const refused = await h.call('warapp_submit_turn', { game_id: GAME, orders: SEVEN });
+    expect(refused.isError).toBe(true);
+    expect(textOf(refused)).toMatch(/deploy 7 armies.*income is 5/);
+    const preview = payload<{ confirmToken: string }>(
+      await h.call('warapp_submit_turn', { game_id: GAME, orders: SEVEN, income: 7 }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    expect(JSON.stringify(preview)).toMatch(/"income":7\b/);
+    expect(JSON.stringify(preview)).toMatch(/income 7 given.*modelled 5/);
+    // The override is still a check: another total is refused against it.
+    const off = await h.call('warapp_submit_turn', { game_id: GAME, orders: SEVEN, income: 6 });
+    expect(off.isError).toBe(true);
+    expect(textOf(off)).toMatch(/deploy 7 armies.*income is 6/);
+    const p = payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: SEVEN, income: 7, confirmToken: preview.confirmToken }));
+    expect(s.sent).toHaveLength(1);
+    expect(p.status).toBeDefined();
+  });
+
+  it('error 11 after an `income` override names the income given, not a modelled one', async () => {
+    const s = ordersServer({ error: { code: 11, message: 'x' } });
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });
+    const SEVEN = [
+      { kind: 'deploy', territory: 159, armies: 7 },
+      { kind: 'move', from: 159, to: 158, armies: 8 },
+    ];
+    const res = await confirmed({ game_id: GAME, orders: SEVEN, income: 7 });
+    expect(res.isError).toBe(true);
+    const all = JSON.stringify(res);
+    expect(all).toMatch(/income given was 7/);
+    expect(all).not.toMatch(/modelled income was/);
   });
 
   it('when the income model is uncertain (army cap), a deploy total that differs warns instead of refusing (#38)', async () => {
@@ -1635,6 +1749,241 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
     expect(res.isError).toBeFalsy();
     expect(textOf(res)).toMatch(/deploy 21 armies.*modelled income is 13/);
     expect(textOf(res)).toMatch(/could not all be read/);
+  });
+});
+
+describe('the submit preview sizes each attack (#130)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  const FOUR = BOARD.map((t) => (t.id === 157 ? { ...t, armies: 4 } : t));
+
+  it('lists each attack\'s expected kills and win chance, and marks one that cannot capture', async () => {
+    const settings = { ...modelledSettings(), OffensiveKillRate: 30 };
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(FOUR) }) });
+    const preview = payload<{ confirmToken: string; preview: { attacks?: Array<Record<string, unknown>>; warnings?: string[] } }>(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 161, to: 157, armies: 7 },
+        ],
+      }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    expect(preview.preview.attacks).toEqual([
+      { from: { id: 161, name: mapName(161) }, to: { id: 157, name: mapName(157) }, armies: 7, defenders: 4, expectedKills: 2.1, winChance: 0, cannotCapture: true },
+    ]);
+    expect(preview.preview.warnings?.join('\n')).toMatch(/cannot capture/);
+  });
+
+  it('in a team game a transfer to a teammate is not listed as an attack, nor warned as one that cannot capture', async () => {
+    const players = (game('Playing').players as Array<Record<string, string>>).map((p, i) => (i < 2 ? { ...p, team: '0' } : p));
+    h = await liveHarness({
+      feed: [game('Playing', { settings: modelledSettings(), players })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const preview = payload<{ preview: { attacks?: unknown[] } }>(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 159, armies: 5 },
+          { kind: 'move', from: 159, to: 158, armies: 1 },
+        ],
+      }),
+    );
+    expect(preview.preview.attacks ?? []).toEqual([]);
+    expect(JSON.stringify(preview)).not.toMatch(/cannot capture/);
+  });
+
+  it('a sure capture carries no warning; a transfer and a fogged target are not listed', async () => {
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const preview = payload<{ preview: { attacks?: Array<Record<string, unknown>> } }>(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 161, to: 157, armies: 5 },
+          { kind: 'move', from: 161, to: 159, armies: 1 },
+          { kind: 'move', from: 159, to: 135, armies: 2 },
+        ],
+      }),
+    );
+    expect(preview.preview.attacks).toEqual([
+      { from: { id: 161, name: mapName(161) }, to: { id: 157, name: mapName(157) }, armies: 5, defenders: 2, expectedKills: 3, winChance: 1 },
+    ]);
+    expect(JSON.stringify(preview)).not.toMatch(/cannot capture/);
+  });
+});
+
+describe('attackSizes: several attacks on one target are sized together (#130)', () => {
+  const T = (id: number) => ({ id, name: mapName(id) });
+  const live = BOARD.map((t) => ({
+    territoryId: t.id,
+    fogLevel: t.fogLevel,
+    fogged: t.fogged ?? false,
+    owner: t.owner,
+    armies: t.id === 157 ? 4 : t.armies,
+  }));
+
+  it('a leg too small alone is not flagged when the legs together capture', () => {
+    const attacks = attackSizes(
+      live,
+      ANN.inGame,
+      [
+        { from: T(161), to: T(157), armies: 3 },
+        { from: T(159), to: T(157), armies: 4 },
+      ],
+      {},
+    );
+    expect(attacks.map((a) => [a.from.id, a.armies])).toEqual([
+      [161, 3],
+      [159, 4],
+    ]);
+    for (const a of attacks) {
+      expect(a.combined).toEqual({ attacks: 2, armies: 7 });
+      expect(a.cannotCapture).toBeUndefined();
+      expect(a.winChance).toBeGreaterThan(0);
+      expect(a.expectedKills).toBe(4.2);
+    }
+  });
+
+  it('legs that cannot capture even together are all flagged', () => {
+    const attacks = attackSizes(
+      live,
+      ANN.inGame,
+      [
+        { from: T(161), to: T(157), armies: 1 },
+        { from: T(159), to: T(157), armies: 1 },
+      ],
+      {},
+    );
+    expect(attacks.every((a) => a.cannotCapture === true)).toBe(true);
+  });
+
+  it('a move into a teammate\'s territory is a transfer, not an attack sized against their armies', () => {
+    const moves = [{ from: T(159), to: T(158), armies: 1 }];
+    expect(attackSizes(live, ANN.inGame, moves, {})).toHaveLength(1);
+    expect(attackSizes(live, ANN.inGame, moves, {}, new Set([BOB.inGame]))).toEqual([]);
+  });
+
+  it('a single attack carries no combined field', () => {
+    const [a] = attackSizes(live, ANN.inGame, [{ from: T(161), to: T(157), armies: 7 }], {});
+    expect(a).not.toHaveProperty('combined');
+  });
+});
+
+describe('Multi-Attack in the turn tools (#130)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  const map = normalizeMap(lobbyFixture().map);
+  const live = BOARD.map((t) => ({ territoryId: t.id, fogLevel: t.fogLevel, fogged: t.fogged ?? false, owner: t.owner, armies: t.armies }));
+  const T = (id: number) => ({ id, name: mapName(id) });
+  const run = (moves: Array<[number, number, number]>, multiAttack?: boolean) =>
+    validateTurn({
+      map,
+      board: live,
+      myInGameId: ANN.inGame,
+      income: 5,
+      guard: true,
+      deploys: [{ territory: T(161), armies: 5 }],
+      moves: moves.map(([from, to, armies]) => ({ from: T(from), to: T(to), armies })),
+      ...(multiAttack !== undefined ? { multiAttack } : {}),
+    });
+
+  it('accepts a move out of a territory captured earlier in the same list', () => {
+    expect(run([[161, 157, 7], [157, 158, 4]], true).warnings).toEqual([]);
+  });
+
+  it('without Multi-Attack the same chain is refused (not mine at the start of the turn)', () => {
+    expect(() => run([[161, 157, 7], [157, 158, 4]])).toThrow(/not yours at the start of this turn.*\(157\)/);
+  });
+
+  it('refuses a chained move listed before the capture, or sending more than moved in', () => {
+    expect(() => run([[157, 158, 4], [161, 157, 7]], true)).toThrow(/not yours.*\(157\)/);
+    expect(() => run([[161, 157, 7], [157, 158, 7]], true)).toThrow(/send 7 armies from .*\(157\).* at most 6/);
+  });
+
+  it('refuses a deploy on a territory captured only later in the list: deploys land before any attack', () => {
+    const call = () =>
+      validateTurn({
+        map,
+        board: live,
+        myInGameId: ANN.inGame,
+        income: 5,
+        guard: true,
+        deploys: [
+          { territory: T(161), armies: 3 },
+          { territory: T(157), armies: 2 },
+        ],
+        moves: [
+          { from: T(161), to: T(157), armies: 5 },
+          { from: T(157), to: T(158), armies: 4 },
+        ],
+        multiAttack: true,
+      });
+    expect(call).toThrow(/not yours at the start of this turn.*\(157\)/);
+  });
+
+  it('counts armies moved in between two moves out of the same territory (attack, transfer in, attack again)', () => {
+    // 161 holds 3 + 5 deployed: 7 attack 157, then 5 arrive from 159 and 5 attack 158.
+    expect(run([[161, 157, 7], [159, 161, 5], [161, 158, 5]], true).warnings).toEqual([]);
+    // Without Multi-Attack the armies moved in do not move on this turn.
+    expect(() => run([[161, 157, 7], [159, 161, 5], [161, 158, 5]])).toThrow(/send 12 armies from .*\(161\).* at most 7/);
+    // Still bounded: only what arrived before the later move counts.
+    expect(() => run([[161, 157, 7], [161, 158, 5], [159, 161, 5]], true)).toThrow(/send 12 armies from .*\(161\).* at most 7/);
+  });
+
+  it('says the most a captured territory can send on is an upper bound', () => {
+    expect(() => run([[161, 157, 7], [157, 158, 7]], true)).toThrow(/at most 6.*upper bound/s);
+  });
+
+  it('under No-Split too, a captured territory is not warned about by the armies that stood there before', () => {
+    // 157's armies at the start are the defenders', not mine: what moves on from it is the survivors
+    // of the capture, which the whole-stack warning cannot size. (Its 9 defenders would read as a
+    // stack of 8 that a 4-army order under-sends.)
+    const out = validateTurn({
+      map,
+      board: live.map((t) => (t.territoryId === 157 ? { ...t, armies: 9 } : t)),
+      myInGameId: ANN.inGame,
+      income: 5,
+      guard: true,
+      deploys: [{ territory: T(161), armies: 5 }],
+      moves: [
+        { from: T(161), to: T(157), armies: 7 },
+        { from: T(157), to: T(158), armies: 4 },
+      ],
+      multiAttack: true,
+      noSplit: true,
+    });
+    expect(out.warnings.join('\n')).not.toMatch(/\(157\) →/);
+    // A source held at the start still gets the warning.
+    const short = validateTurn({
+      map,
+      board: live,
+      myInGameId: ANN.inGame,
+      income: 5,
+      guard: true,
+      deploys: [{ territory: T(161), armies: 5 }],
+      moves: [{ from: T(161), to: T(157), armies: 3 }],
+      multiAttack: true,
+      noSplit: true,
+    });
+    expect(short.warnings.join('\n')).toMatch(/No-Split: .*\(161\) → .*sends 3.*all 7/);
+  });
+
+  it('warapp_submit_turn passes the game\'s Multi-Attack setting through', async () => {
+    const settings = { ...modelledSettings(), MultiAttack: 'True' };
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const preview = payload(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 161, to: 157, armies: 7 },
+          { kind: 'move', from: 157, to: 158, armies: 4 },
+        ],
+      }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
   });
 });
 

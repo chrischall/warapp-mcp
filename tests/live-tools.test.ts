@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
+import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Method } from '../src/protocol/methods.js';
 import { EMAIL, liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
@@ -90,7 +91,7 @@ describe('warapp_get_live_board', () => {
     const res = await h.call('warapp_get_live_board', { game_id: GAME });
     const p = payload(res);
     expect(p.untrusted_content).toBe(true);
-    expect(p.game).toEqual({ id: GAME, name: 'Synthetic lobby game', state: 'DistributingTerritories', turn: null });
+    expect(p.game).toEqual({ id: GAME, name: 'Synthetic lobby game', state: 'DistributingTerritories', turn: null, turnsCompleted: null });
     const territories = p.territories as Array<Record<string, unknown>>;
     expect(territories).toHaveLength(5);
     expect(territories[0]).toEqual({ id: 159, name: mapName(159), owner: 'pickable', armies: 2 });
@@ -107,7 +108,8 @@ describe('warapp_get_live_board', () => {
   it('mid-game: owners by player name, fogged territories counted not listed', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(MID_BOARD) }) });
     const p = payload(await h.call('warapp_get_live_board', { game_id: GAME }));
-    expect((p.game as Record<string, unknown>).turn).toBe(2);
+    // #130: the turn being played, as warapp_plan_turn and warapp_submit_turn report it.
+    expect(p.game).toMatchObject({ turn: 3, turnsCompleted: 2 });
     const territories = p.territories as Array<Record<string, unknown>>;
     expect(territories.map((t) => [t.id, t.owner, t.armies])).toEqual([
       [159, 'Ann', 6],
@@ -120,6 +122,23 @@ describe('warapp_get_live_board', () => {
     expect(players[0]).toEqual({ id: Number(ANN.feed), name: 'Ann', visibleTerritories: 2, visibleArmies: 9 });
     expect(players[1]).toEqual({ id: Number(BOB.feed), name: 'Bob', visibleTerritories: 1, visibleArmies: 7 });
     expect(players[2]).toMatchObject({ visibleTerritories: 0 });
+  });
+
+  it('filters by owner and by territory, and pages, keeping the whole-board counts (#130)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp: routes({ [Method.GetLatestGameInfo]: board(MID_BOARD) }) });
+    const ids = async (args: Record<string, unknown>) => {
+      const p = payload(await h!.call('warapp_get_live_board', { game_id: GAME, ...args }));
+      expect(p.counts).toEqual({ territories: 5, visible: 4, fogged: 1, pickable: 0 });
+      return { ids: (p.territories as Array<{ id: number }>).map((t) => t.id), page: p.page };
+    };
+    expect((await ids({ owner: 'me' })).ids).toEqual([159, 161]);
+    expect((await ids({ owner: 'Bob' })).ids).toEqual([158]);
+    expect((await ids({ owner: 'neutral' })).ids).toEqual([157]);
+    expect((await ids({ territories: [158, mapName(159)] })).ids).toEqual([159, 158]);
+    expect(await ids({ limit: 3 })).toEqual({ ids: [159, 161, 157], page: { offset: 0, limit: 3, matched: 4, nextOffset: 3 } });
+    expect(await ids({ limit: 3, offset: 3 })).toEqual({ ids: [158], page: { offset: 3, limit: 3, matched: 4, nextOffset: null } });
+    // Unfiltered and unpaged, nothing changes.
+    expect(await ids({})).toEqual({ ids: [159, 161, 157, 158], page: undefined });
   });
 
   it('full: every territory with raw owner ids, fog flags and levels, and in-game player ids', async () => {
@@ -337,6 +356,22 @@ describe('warapp_get_my_picks', () => {
   });
 });
 
+describe('a frozen war.app tab (#130)', () => {
+  const frozen = (m: string) => () => {
+    throw new FetchproxyTimeoutError({ url: `https://war.app/Services?m=${m}&js=1`, timeoutMs: 30000, retrySafe: false });
+  };
+
+  it('a /Services read that times out says to reload or focus the war.app tab', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: frozen('GetLatestGameInfo') }) });
+    const res = await h.call('warapp_get_live_board', { game_id: GAME });
+    expect(res.isError).toBe(true);
+    const all = JSON.stringify(res);
+    expect(all).toMatch(/did not respond within 30000ms/);
+    expect(all).toMatch(/frozen/);
+    expect(all).toMatch(/reload or focus/i);
+  });
+});
+
 describe('warapp_submit_picks', () => {
   // Issue #7: SendTerritoryPicks always runs as the bridge's signed-in account, so the gate
   // must never preview picks "for" anyone else.
@@ -415,6 +450,21 @@ describe('warapp_submit_picks', () => {
     expect(p.verified).toBe(false);
     expect(p.readBack).toEqual([159, 161]);
     expect(p.warning).toMatch(/did not read back exactly/);
+  });
+
+  it('a read-back that fails after the send still reports sent: true (#130)', async () => {
+    const s = picksServer();
+    // An HTTP 500 instead of a frame (fakeWarapp passes a raw response through).
+    const http500 = { status: 500, body: '', url: 'https://war.app/Services' } as unknown as Partial<ReplyFrame>;
+    const warapp = (req: DecodedRequest, n: number) => (req.method === Method.GetTerritoryPicks ? http500 : s.warapp(req, n));
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp });
+    const res = await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159] });
+    expect(res.isError).toBeFalsy();
+    const p = payload(res);
+    expect(s.sent).toHaveLength(1);
+    expect(p).toMatchObject({ sent: true, verified: false, readBack: null });
+    expect(p.readBackError).toMatch(/HTTP 500/);
+    expect(p.warning).toMatch(/warapp_get_my_picks/);
   });
 
   it('a shorter read-back is not verified', async () => {
@@ -591,7 +641,26 @@ describe('warapp_send_chat', () => {
     const preview = payload(await h.call('warapp_send_chat', { game_id: GAME, message: 'gl hf' }));
     expect(JSON.stringify(preview)).toContain('everyone in the game');
     expect(s.sent).toEqual([]);
-    expect(h.calls).toEqual([]);
+    // #130: the game is read even for a public message, so a game that does not exist is refused.
+    expect(h.calls).toHaveLength(1);
+    expect(JSON.stringify(preview)).toContain('Synthetic lobby game');
+  });
+
+  it('refuses a game GameFeed does not know, before anything is sent (#130)', async () => {
+    const s = chatServer();
+    h = await liveHarness({ feed: [{ termsOfUse: 'x', error: 'ServerGameKeyNotFound' }], warapp: s.warapp });
+    const res = await h.call('warapp_send_chat', { game_id: 999, message: 'gl hf' });
+    expect(res.isError).toBe(true);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('refuses a private message to the signed-in account itself (#130)', async () => {
+    const s = chatServer();
+    h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp: s.warapp });
+    const res = await h.call('warapp_send_chat', { game_id: GAME, message: 'note to self', to: 'Ann' });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/yourself/);
+    expect(s.sent).toEqual([]);
   });
 
   it('posts publicly on channel -1 with no recipient', async () => {

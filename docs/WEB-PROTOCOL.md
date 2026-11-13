@@ -228,6 +228,12 @@ appear in all of them. Only the current standing's cards are playable: an instan
 only in the previous standing or the turn's receive/play orders was already played, and playing
 it is refused with error 50 `CardInstanceUnavailable`.
 
+**An unreadable hand (#130) — unverified.** The hand sits under a per-player entry keyed by the
+in-game id. When cards are in play and the current standing has no entry for my id,
+`handReadable` is false: `warapp_plan_turn` reports `cards.handReadable: false` with a warning, and
+`warapp_submit_turn` warns in its preview, instead of treating the hand as empty. That every
+player's entry is sent even with no cards is assumed from the synthetic shape, not checked live.
+
 ## Verified end to end through the browser bridge
 
 Frames built outside the browser (by this project's encoder) and sent through the
@@ -301,6 +307,10 @@ bridged POSTs time out while GETs still work; reloading the tab clears it.
   (`ServerError … MyGamesFilters.Filter()`); the client's default is `{4, 10, 2}` — then
   bool, int32 0, bool, bool. Reply `warlight.shared.MyGamesReturn`: one entry per game with
   id, name, map id and state codes (mapping the codes is still to do).
+  **Unverified (#130):** whether `count` (10, the client default, always sent) caps the reply —
+  an account in more than ten games may see only ten in `warapp_my_games` and
+  `warapp_wait_for_turn` with no truncation marker. Needs a live check with an account in at
+  least ten games before the count is raised or a marker added.
 - `GetFullProfile` (180): auth, int32 in-game player id. Reply
   `warlight.shared.FullProfileData`: name, level, member-since, per-format records
   (`{Wins, Games, NumTeams, TeamSize}`) and many counters. It also carries the player's
@@ -425,7 +435,7 @@ Parameters after the auth block, in the client writer's order:
 
 There is **no result payload** on success, so the reply proves nothing about the account's state:
 `warapp_surrender` re-reads GameFeed afterwards and reports what the feed shows (surrendered,
-pending, taken back, or unchanged). A transport failure after the send is reported as unknown — the
+pending, still playing after an undo — GameFeed has no pending-surrender state, so a take-back is never confirmed — or unchanged). A transport failure after the send is reported as unknown — the
 surrender may already have gone through — and is never retried. Error codes, with the client's
 meaning: **4** the game is over; **7** and **230** you are no longer in the game.
 
@@ -456,7 +466,9 @@ latest standing). The client ignores server error **4** and refreshes as on succ
 error is thrown. `warapp_begin_turn` (confirm-gated) refuses games past turn 1, games whose move
 order is known and not `NoLuckCycle`, seats not `Playing`, and games whose board is already
 visible; after the send it reads the board back with `GetLatestGameInfo` and reports `begun` only
-when a standing arrives (`unconfirmed` otherwise; a transport failure is `unknown` and never
+when a standing arrives (`unconfirmed` otherwise; after an error 4 with the board read back and
+still hidden, `not_begun` — what error 4 means is unverified, so the board alone decides; a read-back
+that fails stays `unconfirmed`, since nothing was read; a transport failure is `unknown` and never
 retried). The encoder is pinned by a golden test built from synthetic ids; the owner verifies it
 live.
 

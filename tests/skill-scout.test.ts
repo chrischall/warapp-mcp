@@ -66,7 +66,7 @@ describe('scout.mjs common', () => {
   });
 
   it('tallies my results', () => {
-    expect(JSON.parse(scout(['common'], COMMON).stdout)).toMatchObject({ count: 4, wins: 1, losses: 2, inProgress: 1 });
+    expect(JSON.parse(scout(['common'], COMMON).stdout)).toMatchObject({ count: 4, wins: 1, losses: 1, inProgress: 1, teamGames: 1 });
   });
 });
 

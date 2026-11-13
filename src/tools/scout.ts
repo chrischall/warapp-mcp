@@ -5,7 +5,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { commonGamesUrl, parseCommonGames, parseProfile, profileUrl } from '../scout.js';
+import { commonGamesUrl, isProfile, parseCommonGames, parseProfile, profileUrl } from '../scout.js';
 import { gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
@@ -46,7 +46,8 @@ export function registerScoutTool(server: McpServer, ctx: LiveContext): void {
         'Scout a war.app (Warzone) player: name, level, multi-player games played and real-time share, when last ' +
           'seen, boot count and boot rate, ranked totals and per-format records ({format, wins, games, pct}), and your ' +
           'head-to-head — the games you share with them (id, name, started, teams, your state) with your wins, ' +
-          'losses and games in progress. Name the player with game_id + player (name or id), or pass just their ' +
+          'losses (games without teams only: in a team game they may have been your teammate, so those are counted ' +
+          'as `teamGames`) and games in progress. Name the player with game_id + player (name or id), or pass just their ' +
           'player id. Reads war.app pages through your signed-in tab (ContextMint Bridge). Fields a new player ' +
           'lacks are null. Read-only.',
       ),
@@ -66,6 +67,14 @@ export function registerScoutTool(server: McpServer, ctx: LiveContext): void {
         page(ctx, commonGamesUrl(token), 'common games'),
       ]);
       const profile = parseProfile(profileHtml);
+      if (!isProfile(profile)) {
+        throw new McpToolError(`war.app's page for player ${token} is not a player profile.`, {
+          kind: 'unknown',
+          hint:
+            'Either the war.app tab is signed out (sign in, or reload or focus the tab if it is frozen) or no ' +
+            'player has this id — check it with warapp_get_game.',
+        });
+      }
       const headToHead = parseCommonGames(commonHtml);
       const { name, ...stats } = profile;
       return respond(undefined, ['compact'], () => ({

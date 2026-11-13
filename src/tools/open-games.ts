@@ -4,7 +4,6 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { inGameId } from '../live.js';
 import { filterOpenGames, markJoined, OPEN_GAMES_URL, parseOpenGamesPage } from '../open-games.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta } from './hints.js';
@@ -53,9 +52,9 @@ export function registerOpenGamesTool(server: McpServer, ctx: LiveContext): void
       }),
     },
     async ({ pace, max_players, free_only, exclude_teams, limit }) => {
-      const [html, token] = await Promise.all([openGamesPage(ctx), ctx.myInviteToken()]);
+      const [html, myId] = await Promise.all([openGamesPage(ctx), ctx.myInGameId()]);
       const parsed = parseOpenGamesPage(html, await ctx.bundle());
-      const marked = token === undefined ? parsed.games : markJoined(parsed.games, parsed.lobbies, inGameId({ id: token }));
+      const marked = myId === undefined ? parsed.games : markJoined(parsed.games, parsed.lobbies, myId);
       const games = filterOpenGames(marked, {
         ...(pace ? { pace } : {}),
         ...(max_players !== undefined ? { max_players } : {}),

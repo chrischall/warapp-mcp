@@ -15,7 +15,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
 import { chooseJoinColor, readAccountColors, STANDARD_COLORS, type JoinColor } from '../join-color.js';
-import { inGameId, type ClassReader } from '../live.js';
+import type { ClassReader } from '../live.js';
 import { feedScreen, parseOpenGamesPage, type JoinScreen, type OpenGame, type OpenLobby } from '../open-games.js';
 import {
   GAME_COLOR_COUNT,
@@ -26,7 +26,7 @@ import {
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import type { LiveContext } from './live-context.js';
+import { failureText, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
 import { openGamesPage } from './open-games.js';
 import { NO_TEAM } from '../teams.js';
@@ -241,11 +241,11 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
           }),
           async plan({ game_id, allow_team, accept_entry_fee, color: requested }) {
             const gameId = parseGameId(game_id);
-            const [html, token] = await Promise.all([openGamesPage(ctx), ctx.myInviteToken()]);
+            const [html, myId] = await Promise.all([openGamesPage(ctx), ctx.myInGameId()]);
             const bundle = await ctx.bundle();
             const parsed = parseOpenGamesPage(html, bundle);
             const lobby = parsed.lobbies.get(gameId);
-            refuseJoined(lobby, gameId, token === undefined ? undefined : inGameId({ id: token }));
+            refuseJoined(lobby, gameId, myId);
             const game = joinable(parsed.games, gameId, allow_team ?? false, accept_entry_fee ?? false);
             const { color, source } = joinColor(requested, html, bundle, lobby, gameId);
             // A no-team game's open seats all carry the no-team value (any other
@@ -307,7 +307,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                   status: 'unknown' as const,
                   game,
                   warning:
-                    `war.app did not confirm the join (${e instanceof Error ? e.message : String(e)}), so you may ` +
+                    `war.app did not confirm the join (${failureText(e)}), so you may ` +
                     'already have joined. Check warapp_my_games before trying again.',
                 };
               }

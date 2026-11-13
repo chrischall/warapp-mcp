@@ -67,7 +67,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'
-  acceptance — / `taken_back` / `unchanged`), never from the reply, which has no result.
+  acceptance — / `still_playing` after an undo — GameFeed has no pending state — / `unchanged`; lobbies refused), never from the reply, which has no result.
 - **A speed first turn hides the board until Begin.** With MoveOrder `NoLuckCycle` war.app sends
   no standing on turn 1 (or while picking) until the player presses Begin, which starts their
   turn timer; the live tools say so instead of the lobby error. `warapp_begin_turn` sends
@@ -81,11 +81,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Open games come from the `/MultiPlayer/OpenGames` page payload (`AllOpenGamesData`), not a `/Services` call; joining is `AcceptOpenSeat` (61) via `warapp_join_game`, confirm-gated** and reported `joined` only once GameFeed or `GetMyGames` shows the account seated (`docs/WEB-PROTOCOL.md` "Open games").
 - **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (card plays, then deploys, then moves;
   encoders in `src/protocol/methods.ts` are golden-pinned to a live commit), turn number =
-  GameFeed `numberOfTurns` + 1. It always acts as the signed-in account (refuses any other
+  GameFeed `numberOfTurns` + 1 — every tool reports this as `turn` (`currentTurn()`); the
+  completed count is `turnsCompleted` (#130). It always acts as the signed-in account (refuses any other
   `player`, and refuses when that account cannot be determined), validates on the live board
-  (own sources, adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
+  (own deploys and sources — under Multi-Attack a move, never a deploy, may also go from a territory an
+  earlier move in the list enters; each move out counts the armies moved in earlier in the list, an upper
+  bound — adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
   the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a
-  setting the income model does not compute, e.g. an army cap), and refuses outside a turn phase or when my
+  setting the income model does not compute, e.g. an army cap; after an error 11 the caller passes
+  the game's own number as `income`, which replaces the model for the check), and refuses outside a turn phase or when my
   `hasCommittedOrders` is already true (a second `SendOrders` replacing the first is
   unverified; the client uses "Modify orders" = `UnCommit`, which `warapp_uncommit_turn` sends). **Success is read from game state, never
   from the reply:** its bool is the "vacation ended" flag. After sending, GameFeed is re-read:
@@ -348,7 +352,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **A frozen war.app tab stalls bridged POSTs.** Chrome freezes background tabs; the bridge
   relays `/Services` POSTs through a page tab, so they time out ("did not respond within
   30000ms") while GETs (run by the extension) still work. Reloading or focusing a war.app tab
-  clears it. Live verification found this repeatedly — say so in any timeout hint.
+  clears it. Live verification found this repeatedly — say so in any timeout hint. Every bridged
+  `/Services` timeout carries `FROZEN_TAB_HINT` (`src/tools/live-context.ts`), and the write tools'
+  `unknown` warnings repeat it (`failureText`).
 - **"Me" is the signed-in account.** The live tools default `player` to the account whose
   invite token (`https://war.app/InviteToken`, read through the bridge) matches a GameFeed
   player id; the bundle is discovered from `https://war.app/MultiPlayer` (the homepage does

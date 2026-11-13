@@ -22,7 +22,7 @@ import { Method, writeBeginFirstTurnParams, writeGetLatestGameInfoParams } from 
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import { SPEED_FIRST_TURN_MOVE_ORDER, type LiveContext } from './live-context.js';
+import { failureText, SPEED_FIRST_TURN_MOVE_ORDER, type LiveContext } from './live-context.js';
 
 const PLAYING = 'Playing';
 const DISTRIBUTING = 'DistributingTerritories';
@@ -160,18 +160,21 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
           },
           async execute({ gameId, name, picking }: BeginState) {
             const game = { id: gameId, name };
+            let ignored = false;
             try {
               await ctx.rpc.call('BeginFirstTurn', Method.BeginFirstTurn, (w) => writeBeginFirstTurnParams(w, gameId));
             } catch (e) {
               if (e instanceof WarappServerError) {
                 if (e.code !== IGNORED_ERROR) throw e;
-                // The web client ignores this error and refreshes as on success: read the board back.
+                // The web client ignores this error and refreshes as on success: read the board back,
+                // and judge from it alone (#130).
+                ignored = true;
               } else {
                 return {
                   status: 'unknown' as const,
                   game,
                   warning:
-                    `war.app did not confirm Begin (${e instanceof Error ? e.message : String(e)}), so it may ` +
+                    `war.app did not confirm Begin (${failureText(e)}), so it may ` +
                     'already have gone through and your timer may be running. Check warapp_get_live_board; do not ' +
                     'press Begin again blindly.',
                 };
@@ -179,18 +182,34 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
             }
 
             let territories: LiveTerritory[] | undefined;
+            let readFailure: string | undefined;
             try {
               territories = await liveBoard(ctx, gameId);
-            } catch {
-              territories = undefined;
+            } catch (e) {
+              // Nothing was read: never conclude the board is hidden from a failed read (#130).
+              readFailure = failureText(e);
+            }
+            if (!territories && ignored && readFailure === undefined) {
+              return {
+                status: 'not_begun' as const,
+                game,
+                warning:
+                  `war.app answered Begin with error ${IGNORED_ERROR} (the web client ignores it; its meaning is not ` +
+                  'verified) and the board is still hidden, so Begin did not take effect as far as can be read. ' +
+                  'Check warapp_get_live_board before pressing Begin again.',
+              };
             }
             if (!territories) {
               return {
                 status: 'unconfirmed' as const,
                 game,
                 warning:
-                  'war.app accepted Begin, but the board could not be read back yet. Check warapp_get_live_board ' +
-                  'shortly — your timer is probably running.',
+                  (ignored
+                    ? `war.app answered Begin with error ${IGNORED_ERROR} (the web client ignores it)`
+                    : 'war.app accepted Begin') +
+                  `, but the board could not be read back${readFailure ? ` (${readFailure})` : ' yet'}. ` +
+                  'Check warapp_get_live_board shortly — your timer is probably running; do not press Begin ' +
+                  'again blindly.',
               };
             }
             return {
