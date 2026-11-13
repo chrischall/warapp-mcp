@@ -4,6 +4,7 @@
 import { CONFIRM_INJECTION_RULE, defineWrite, McpToolError, registerWrite, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { clientPickLimits } from '../analysis/picks.js';
 import { parseGameId } from '../client.js';
 import {
   FOG_LEVEL_NAMES,
@@ -22,8 +23,6 @@ import { mapOf } from './map.js';
 import { resolvePlayer, resolveTerritory } from './resolve.js';
 
 const VIEWS = ['compact', 'full'] as const;
-/** Manual distribution lets a player list up to twice their territory limit. */
-export const PICKS_PER_TERRITORY = 2;
 const MAX_PICK_ARGS = 200;
 
 export const BRIDGE_NOTE =
@@ -90,10 +89,12 @@ const nameIn = (map: GameMap) => {
 
 const turnOf = (game: Game) => (game.numberOfTurns !== undefined && game.numberOfTurns >= 0 ? game.numberOfTurns : null);
 
-/** The most territory picks the game's settings allow, when they say. */
-export function maxPicks(game: Game): number | null {
-  const limit = game.settings?.territoryLimit;
-  return limit !== undefined && limit > 0 ? limit * PICKS_PER_TERRITORY : null;
+/**
+ * The most territory picks war.app's client lets a player list (players × territories per
+ * player, #129), when the settings say; `pickable` (the live board's count) can lower it.
+ */
+export function maxPicks(game: Game, pickable?: number): number | null {
+  return clientPickLimits({ territoryLimit: game.settings?.territoryLimit, players: game.players.length, pickable })?.max ?? null;
 }
 
 function liveBoardView(game: Game, territories: LiveTerritory[], rung: string) {
@@ -207,7 +208,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
       title: 'Get my territory picks in a war.app game',
       description: untrustedDescription(
         'The territory picks you have submitted for a war.app (Warzone) game in manual distribution, in priority ' +
-          'order and by name, with how many the game allows (twice its territory limit). ' +
+          "order and by name, with the most war.app's client lets a player list (players × the territory limit). " +
           `${BRIDGE_NOTE} Read-only; use warapp_submit_picks to change them.`,
       ),
       _meta: lookupMeta(['my picks', 'territory picks', 'what did i pick']),
@@ -258,8 +259,9 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
           name: 'warapp_submit_picks',
           description:
             'Submit your territory picks for a war.app (Warzone) game in manual distribution, in priority order — ' +
-            'they replace any picks you submitted before. Every territory must be pickable on the live board and ' +
-            'the list may hold at most twice the game\'s territory limit. After sending, the picks are read back and ' +
+            'they replace any picks you submitted before. Every territory must be pickable on the live board; a list ' +
+            "longer than war.app's client allows (players × territories per player) or shorter than the territories " +
+            'each player is granted is warned about in the preview. After sending, the picks are read back and ' +
             `reported verified only if they match exactly. ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
             title: 'Submit war.app picks',
@@ -280,10 +282,6 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
               if (seen.has(t.id)) throw new McpToolError(`${t.name} (${t.id}) is listed twice.`, { hint: 'List each territory once.' });
               seen.add(t.id);
             }
-            const max = maxPicks(game);
-            if (max !== null && picks.length > max) {
-              throw new McpToolError(`This game allows at most ${max} picks (twice its territory limit); got ${picks.length}.`);
-            }
             const board = await loadLiveTerritories(ctx, game);
             const owner = new Map(board.map((t) => [t.territoryId, t]));
             const unpickable = picks.filter((t) => {
@@ -301,6 +299,24 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
                 },
               );
             }
+            // The list's length is checked against the client's own bounds (#129) as a warning:
+            // its picking UI stops at the maximum, and its validation rejects a list shorter
+            // than the minimum, but neither is verified against the server.
+            const pickableCount = board.filter((t) => !t.fogged && t.owner === OWNER_PICKABLE).length;
+            const bounds = clientPickLimits({
+              territoryLimit: game.settings?.territoryLimit,
+              players: game.players.length,
+              pickable: pickableCount,
+            });
+            const lengthWarnings: string[] = [];
+            if (bounds && picks.length > bounds.max)
+              lengthWarnings.push(
+                `war.app's client lets a player list at most ${bounds.max} picks here (${game.players.length} players × ${bounds.perPlayer} territories each); got ${picks.length}. The extra picks may be ignored.`,
+              );
+            if (bounds && picks.length < bounds.min)
+              lengthWarnings.push(
+                `war.app expects at least ${bounds.min} picks here (the territories each player is granted); got ${picks.length}, which it may reject.`,
+              );
             const playerId = inGameId(me);
             const territoryIds = picks.map((t) => t.id);
             const named = picks.map((t) => ({ id: t.id, name: t.name }));
@@ -312,7 +328,10 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
                 target: game.id,
                 payload: { method: 'SendTerritoryPicks', gameId: game.id, playerId, territoryIds },
                 willSend: { game: game.id, player: me.name, picksInPriorityOrder: named },
-                preview: { note: 'Replaces any picks already submitted for this game.' },
+                preview: {
+                  note: 'Replaces any picks already submitted for this game.',
+                  ...(lengthWarnings.length ? { warnings: lengthWarnings } : {}),
+                },
               },
               state: { gameId: game.id, playerId, picks: named } satisfies PicksState,
             };

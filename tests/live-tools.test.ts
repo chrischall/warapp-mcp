@@ -272,7 +272,8 @@ describe('warapp_get_my_picks', () => {
       { priority: 2, id: 159, name: mapName(159) },
     ]);
     expect(p.count).toBe(2);
-    expect(p.maxPicks).toBe(6);
+    // The client's own bound: players (9) × the territory limit (3), #129.
+    expect(p.maxPicks).toBe(27);
   });
 
   it('a different player gives a different in-game id', async () => {
@@ -444,17 +445,41 @@ describe('warapp_submit_picks', () => {
     expect(textOf(res)).toMatch(/only open while the game distributes territories \(game state: Playing\)/);
   });
 
-  it('refuses more than twice the territory limit before reading the board', async () => {
-    h = await liveHarness({
-      pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')] });
-    const res = await h.call('warapp_submit_picks', {
-      game_id: GAME,
-      player: 'Ann',
-      territories: [159, 161, 157, 158, 135, 1, 2],
-    });
-    expect(res.isError).toBe(true);
-    expect(textOf(res)).toMatch(/at most 6 picks .* got 7/);
-    expect(h.exchanges).toEqual([]);
+  // #129: the client's own limit is players × territories per player (twice the limit only in a
+  // 1v1), enforced by its picking UI, not by the game's pick validation: a warning, not a refusal.
+  const duel = (settings: Record<string, unknown>) => {
+    const g = game('DistributingTerritories');
+    return {
+      ...g,
+      players: (g.players as unknown[]).slice(0, 2),
+      settings: { ...settingsOf(), ...settings },
+    };
+  };
+
+  it('warns, without refusing, past the client\'s own maximum (players × territories per player)', async () => {
+    const s = picksServer();
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [duel({ TerritoryLimit: 1 })], warapp: s.warapp });
+    const args = { game_id: GAME, player: 'Ann', territories: [161, 159, 135] };
+    const preview = payload(await h.call('warapp_submit_picks', args));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    expect(JSON.stringify(preview)).toMatch(/client lets a player list at most 2 picks .*got 3/);
+    const p = payload(await h.call('warapp_submit_picks', { ...args, confirmToken: preview.confirmToken }));
+    expect(s.sent.map((x) => x.ids)).toEqual([[161, 159, 135]]);
+    expect(p.verified).toBe(true);
+  });
+
+  it('warns when the list is shorter than the game accepts', async () => {
+    const s = picksServer();
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [duel({ TerritoryLimit: 2 })], warapp: s.warapp });
+    const preview = payload(await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161] }));
+    expect(JSON.stringify(preview)).toMatch(/at least 2 picks/);
+  });
+
+  it('says nothing about the length when it is within the client\'s bounds', async () => {
+    const s = picksServer();
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [duel({ TerritoryLimit: 1 })], warapp: s.warapp });
+    const preview = payload(await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159] }));
+    expect(JSON.stringify(preview)).not.toMatch(/at most|at least/);
   });
 
   it('refuses a territory listed twice', async () => {

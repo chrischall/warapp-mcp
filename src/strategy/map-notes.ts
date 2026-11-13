@@ -161,7 +161,7 @@ export function mapNotes(input: MapNotesInput): MapNotes {
       );
     } else {
       // Only the primary group sets the pace, so only it is searched (maxPicks = the limit): the
-      // fallback search behind it took ~10 s in a 1v1 on a 761-territory map, on the server's thread.
+      // fallback search behind it took ~10 s in a 1v1 on a 761-territory map, on the server's thread (#129, #132).
       const plan = planPicks({
         graph: g,
         pickable,

@@ -4,13 +4,13 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { planPicks, type PickGroup, type PickSettings } from '../analysis/picks.js';
+import { clientPickLimits, planPicks, type PickGroup, type PickSettings } from '../analysis/picks.js';
 import { OWNER_NEUTRAL, OWNER_PICKABLE } from '../live.js';
 import type { Game, GameMap, GameSettings } from '../normalize.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveTerritories, type LiveContext } from './live-context.js';
-import { BRIDGE_NOTE, PICKS_PER_TERRITORY } from './live.js';
+import { BRIDGE_NOTE } from './live.js';
 import { mapOf } from './map.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -34,6 +34,7 @@ export function pickSettings(s: GameSettings | undefined): PickSettings {
     'initialPlayerArmiesPerTerritory',
     'initialNonDistributionArmies',
     'initialNeutralsInDistribution',
+    'commanders',
   ] as const satisfies ReadonlyArray<keyof PickSettings>;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (s[k] !== undefined) out[k] = s[k];
@@ -69,6 +70,8 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           'with maxHops between its two farthest picks) and a disjoint fallback group ' +
           '(granted in order when another player picked first; in a 1v1 in another area, against a counter-pick), each pick with its score and reasons (bonus, ' +
           'value, turns to complete, first-turn bonus, entry points, contested), the bonuses each group completes, ' +
+          'the award (how many sets the round-by-round award order can grant from the list, and the worst of them with the ' +
+          'other players\' starts it implies), ' +
           'warnings (assumed settings) and the reasoning. Its `submitPicks` is exactly what warapp_submit_picks ' +
           'takes — review it with the user first. Refuses outside the picking stage or when nothing is pickable. ' +
           `${BRIDGE_NOTE} Read-only on war.app; it never submits picks.`,
@@ -111,7 +114,12 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         territoryLimit = DEFAULT_TERRITORY_LIMIT;
         warnings.push(`Territory limit missing from settings; assumed ${DEFAULT_TERRITORY_LIMIT}.`);
       }
-      const maxPicks = territoryLimit * PICKS_PER_TERRITORY;
+      // The list is as long as war.app's client allows (players × territories per player, #129),
+      // never shorter than the primary.
+      const maxPicks = Math.max(
+        territoryLimit,
+        clientPickLimits({ territoryLimit, players: game.players.length, pickable: pickable.length })?.max ?? 0,
+      );
       const active = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length;
       const players = Math.max(2, active || game.players.length);
       const settings = pickSettings(game.settings);
@@ -146,6 +154,17 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           reasons: p.reasons,
         })),
         groups: { primary: groupView(plan.groups.primary), fallback: groupView(plan.groups.fallback) },
+        award: plan.award
+          ? {
+              outcomes: plan.award.outcomes,
+              worst: {
+                territories: plan.award.worst.territoryIds.map(name),
+                score: plan.award.worst.score,
+                opponentStarts: plan.award.worst.opponentStarts.map(name),
+              },
+              reordered: plan.award.reordered,
+            }
+          : null,
         warnings: [...warnings, ...plan.warnings],
         rationale: plan.rationale,
         submitPicks: { game_id: game.id, territories: plan.picks.map((p) => p.territoryId) },

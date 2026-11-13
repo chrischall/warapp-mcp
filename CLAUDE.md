@@ -54,7 +54,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   primary meant a frontier on every bonus from turn 1 (#73). In a 1v1 the fallback (the counter-pick insurance)
   goes to another area when one scores as much, and entry points weigh twice as much. The old bounded 1v1 spread
   survives only behind `spread: true`. The rationale reports real hop
-  distances and never calls a group compact unless it is one such cluster.
+  distances and never calls a group compact unless it is one such cluster. The primary is the best-scoring
+  group any of the best seeds grows, and the fallback is scored with the primary taken (it is granted only
+  then); a list past twice the limit (the client allows players × territories per player,
+  `clientPickLimits`, docs/WARAPP-API.md) runs in tiers of the primary's size. The list is judged by the award
+  order (rounds in a reversing move order, each player getting their best free pick: `pickOutcomes`), reporting
+  the worst set it can yield and the other players' starts that implies; the primary is reordered only when that
+  raises the worst outcome. With commanders on, the primary's safest pick (fewest other pickables within 2 hops)
+  is listed first, since the first pick awarded carries the commander (#129).
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes. `docs/STRATEGY.md` states the community
   heuristics in our own words with source links (cite, never copy) and marks which are encoded.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
