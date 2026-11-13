@@ -158,3 +158,33 @@ describe('#125 plain expansion (pass 3) has an economy test', () => {
     expect(attacks(p)).toContain('1->4');
   });
 });
+
+describe('#125 per-territory income counts', () => {
+  // Extra armies for territories: 1 a territory over a base of 3, at 20/80. I hold 1–5 (income 5).
+  // 6 is a 1-army neutral (3 to take, 1 lost) in Moor (+2), whose 20-army members make it a
+  // wasteland; 9, a 1-army neutral, is Nook (+1) of its own. Taking 6 adds +1 a turn.
+  const PER = { offensiveKillRate: 20, defensiveKillRate: 80, oneArmyStandsGuard: true, bonusArmyPer: 1, baseIncome: 3 };
+  const sc: Scenario = {
+    edges: '1-2 2-3 3-4 4-5 5-6 6-7 7-8 4-9 1-30 30-31',
+    bonuses: [
+      [100, 2, [6, 7, 8]],
+      [101, 1, [9]],
+    ],
+    cells: { 1: 'M3', 2: 'M3', 3: 'M3', 4: 'M3', 5: 'M3', 6: 'n1', 7: 'n20', 8: 'n20', 9: 'n1', 30: 'n5', 31: 'E5' },
+    settings: PER,
+    turn: 4,
+  };
+  it('takes a 1-army neutral worth +1 a turn though its bonus is a wasteland', () => {
+    const { income } = scenario(sc);
+    expect(income).toBe(5);
+    const p = plan(sc);
+    expect(attacks(p)).toEqual(expect.arrayContaining(['4->9', '5->6']));
+    expect(p.expected.nextIncome).toBe(8);
+  });
+  it("a bonus's worth adds the per-territory income its members bring", () => {
+    // With 12-army members Moor loses 2 + 11 + 11 = 24 (each with the army left on it): over
+    // 10 × +2, but within 10 × (+2 + the +3 its three territories add).
+    const p = plan({ ...sc, cells: { ...sc.cells, 7: 'n12', 8: 'n12' } });
+    expect(p.rationale.join('\n')).not.toMatch(/Skip bonus B100/);
+  });
+});

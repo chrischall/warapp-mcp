@@ -407,7 +407,11 @@
 //     remaining territory losing over WASTELAND_FACTOR × value, is uneconomic and its
 //     territories are not planned (unless focused or also in an economic bonus); the "Skip
 //     bonus" line names both the armies to finish and the armies lost. Rule 1a's "being built"
-//     share uses the same test.
+//     share uses the same test. With Extra Armies for Territories (`bonusArmyPer`), a bonus's net
+//     worth adds the per-territory income its missing members bring (1/per a territory once past
+//     the base income, #125), and plain expansion counts that share as each capture's income, so
+//     a member of an uneconomic bonus is still a territory worth taking (never a negative
+//     bonus's member).
 //     A negative-value bonus is always uneconomic unless focused, so the plan
 //     never captures into it (completing one would cut income). A positive bonus is
 //     scored by its net worth (rule 4c), not its value, in every test above.
@@ -1967,8 +1971,20 @@ export function planTurn(input: PlanInput): TurnPlan {
     const now = heldNow();
     return incomeGain(new Set([...now, ...ts])) - incomeGain(now);
   };
-  /** Income a turn that capturing `t` adds on its own (#125; `gain`: {@link gainWith} of it). */
-  const plainWorth = (_t: number, gain: number): number => gain;
+  /**
+   * The per-territory income (#125; Extra Armies for Territories) that `k` more territories add to
+   * what I hold now: floor(territories / per) over the base, at 1/per a territory once past it (a
+   * fraction, so a capture that does not cross a multiple of `per` still counts its share). 0 off.
+   */
+  const territoryShare = (k: number): number => {
+    const per = s.bonusArmyPer ?? 0;
+    if (per <= 0 || k <= 0) return 0;
+    const now = mine.length;
+    const exact = (n: number) => Math.max(baseIncome, n / per);
+    return Math.round((exact(now + k) - exact(now)) * 100) / 100;
+  };
+  /** Income a turn that capturing `_t` adds on its own (#125): its bonuses' and its per-territory share. */
+  const plainWorth = (_t: number, gain: number): number => Math.max(gain, territoryShare(1));
   /** `t` is in a bonus the caller focused: the negative-bonus rules never refuse it. */
   const inFocus = (t: number) => [...focus].some((id) => bonusTs.get(id)?.includes(t));
   /** Every capture planned, in the order it was made (a rolled-back one may repeat; filter by `captured`). */
@@ -3614,6 +3630,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   const finishCost = new Map<number, { cost: number; value: number; net: number; fogged: number; fogEach: number }>();
   const economicMember = new Set<number>();
   const uneconomicMember = new Set<number>();
+  /** Missing members of a negative bonus (not focused): plain expansion never steps into one. */
+  const negativeMember = new Set<number>();
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     const isFocus = focus.has(b.id);
     const ts = bonusTerritories(g, b.id);
@@ -3621,7 +3639,10 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (b.value < 0 && !isFocus) {
       // Completing it would cut income: never plan into it (an economic
       // membership elsewhere still wins — see the pass-3 filter).
-      for (const t of remaining) uneconomicMember.add(t);
+      for (const t of remaining) {
+        uneconomicMember.add(t);
+        negativeMember.add(t);
+      }
       continue;
     }
     if (b.value <= 0 && !isFocus) continue;
@@ -3631,7 +3652,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     const whole = new Set([...mine, ...remaining]);
     const penalties = completedBy(whole).filter((id) => id !== b.id && g.bonusById.get(id)!.value < 0);
     const penalty = penalties.reduce((n, id) => n + g.bonusById.get(id)!.value, 0);
-    const net = b.value + penalty;
+    // #125: its missing members' per-territory income (Extra Armies for Territories) is income too.
+    const perGain = territoryShare(remaining.length);
+    const net = b.value + penalty + perGain;
     if (penalty < 0 && remaining.some(bonusTarget))
       rationale.push(
         `Bonus ${b.name} (#${b.id}) (+${b.value}) is worth +${net} net once complete: its missing members also complete ${penalties.length} negative bonus${penalties.length === 1 ? '' : 'es'} (${penalty}), and each step short of completion only adds penalties.`,
@@ -5478,7 +5501,10 @@ export function planTurn(input: PlanInput): TurnPlan {
         (t) =>
           !captured.has(t.id) &&
           !(balanced && t.enemy) &&
-          (economicMember.has(t.id) || !uneconomicMember.has(t.id)),
+          // #125: a member of an uneconomic bonus is still a territory worth its per-territory income.
+          (economicMember.has(t.id) ||
+            !uneconomicMember.has(t.id) ||
+            (territoryShare(1) > 0 && !negativeMember.has(t.id))),
       )
       .sort((a, b) => targetScoreCost(a.id) - targetScoreCost(b.id) || a.cost - b.cost || a.id - b.id);
     // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
