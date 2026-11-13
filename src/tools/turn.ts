@@ -851,8 +851,13 @@ const cardView = (c: Card) => ({ id: c.id, name: c.name, ...(c.armies !== undefi
 export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
   return {
     deploys: orders.flatMap((o) => (o.kind === 'deploy' ? [{ territoryId: o.territoryId, armies: o.armies }] : [])),
-    // A percentage order's count is a percentage, not armies: left out (#165).
-    moves: orders.flatMap((o) => (o.kind === 'move' && !o.byPercent ? [{ from: o.from, to: o.to, armies: o.armies }] : [])),
+    // Left out (#165): a percentage order's count is a percentage, not armies, and a Transfer Only
+    // or Attack Only order may not happen at all (it runs only if the target's owner suits it).
+    moves: orders.flatMap((o) =>
+      o.kind === 'move' && !o.byPercent && (o.mode === undefined || o.mode === AttackTransferMode.AttackTransfer)
+        ? [{ from: o.from, to: o.to, armies: o.armies }]
+        : [],
+    ),
   };
 }
 

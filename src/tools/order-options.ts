@@ -159,8 +159,14 @@ export function checkMoveOptions(args: {
       }
       commanders.set(i, { id: myCommander.id, owner: me });
       commanderMoves += 1;
-      commanderAt = m.to.id;
-      if (target !== undefined && target !== me && teammates.has(target) && !m.attackTeammates) {
+      const ontoTeammate = target !== undefined && target !== me && teammates.has(target) && !m.attackTeammates;
+      // It reaches m.to only when the order surely carries it there: not onto a teammate's land
+      // (it stays home), not an Attack Only onto my own territory or a Transfer Only onto one not
+      // mine (either may not fire). Otherwise it is held where it stood, so a Multi-Attack chain
+      // from m.to is refused rather than assumed.
+      const mayNotFire = (m.mode === 'attack-only' && target === me) || (m.mode === 'transfer-only' && target !== undefined && !friendly);
+      if (!ontoTeammate && !mayNotFire) commanderAt = m.to.id;
+      if (ontoTeammate) {
         warnings.push(`${move(m)} goes to a teammate's territory: a commander does not move onto a teammate's land, so your commander stays on ${label(m.from)}.`);
       } else if (!friendly) {
         warnings.push(

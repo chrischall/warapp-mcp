@@ -3,7 +3,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkMoveOptions, type OptionMove } from '../src/tools/order-options.js';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
-import { Method, writeSendOrdersParams } from '../src/protocol/methods.js';
+import { AttackTransferMode, Method, writeSendOrdersParams } from '../src/protocol/methods.js';
+import { myOrdersOf } from '../src/tools/turn.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
 import type { LiveTerritory } from '../src/live.js';
@@ -112,6 +113,32 @@ describe('checkMoveOptions (#165)', () => {
       multi,
     );
     expect([...r.commanders.keys()]).toEqual([0, 1]);
+  });
+
+  it("under Multi-Attack, a commander move onto a teammate's land leaves it home, so it cannot go on from there", () => {
+    const multi = normalizeSettings({ Commanders: true, MultiAttack: true });
+    expect(() =>
+      check(
+        [
+          { from: T(1), to: T(4), armies: 2, commander: true },
+          { from: T(4), to: T(3), armies: 1, commander: true },
+        ],
+        multi,
+      ),
+    ).toThrow(/commander/);
+  });
+
+  it('under Multi-Attack, an Attack Only commander move onto my own territory may not fire, so it cannot go on from there', () => {
+    const multi = normalizeSettings({ Commanders: true, MultiAttack: true, AllowAttackOnly: true });
+    expect(() =>
+      check(
+        [
+          { from: T(1), to: T(2), armies: 2, commander: true, mode: 'attack-only' },
+          { from: T(2), to: T(3), armies: 1, commander: true },
+        ],
+        multi,
+      ),
+    ).toThrow(/commander/);
   });
 
   it("warns that a commander does not move onto a teammate's territory", () => {
@@ -312,5 +339,79 @@ describe('mods and guard off in plans (#165)', () => {
     );
     // Hornwood keeps Ann's commander, so only Sheepshead Hills is empty.
     expect((preview.preview.warnings ?? []).join('\n')).toMatch(/Guard is off: these orders leave [^,]*Sheepshead Hills.* \(161\) at 0 armies/);
+  });
+});
+
+describe('check_plan and plan_turn: order options and the guard (#165)', () => {
+  it('check_plan refuses attack_teammates outside a team game, as submit does', async () => {
+    const s = server();
+    h = await liveHarness({ feed: [feedGame(ON)], pages: ME_PAGE, warapp: s.warapp });
+    const res = await h.call('warapp_check_plan', {
+      game_id: GAME,
+      player: 'Ann',
+      orders: [
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 159, to: 158, armies: 2, attack_teammates: true },
+      ],
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/no teammates/);
+  });
+
+  it('check_plan warns, with the guard off, of a territory its orders leave empty beside the enemy', async () => {
+    const s = server();
+    h = await liveHarness({ feed: [feedGame({ OneArmyStandsGuard: false })], pages: ME_PAGE, warapp: s.warapp });
+    const r = payload<{ warnings: string[] }>(
+      await h.call('warapp_check_plan', {
+        game_id: GAME,
+        player: 'Ann',
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 161, to: 159, armies: 8 },
+        ],
+      }),
+    );
+    expect(r.warnings.join('\n')).toMatch(/Guard is off: these orders leave [^,]*Sheepshead Hills.* \(161\) at 0 armies/);
+  });
+
+  it('check_plan says nothing of the guard when it is on', async () => {
+    const s = server();
+    h = await liveHarness({ feed: [feedGame({})], pages: ME_PAGE, warapp: s.warapp });
+    const r = payload<{ warnings: string[] }>(
+      await h.call('warapp_check_plan', {
+        game_id: GAME,
+        player: 'Ann',
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 161, to: 159, armies: 5 },
+        ],
+      }),
+    );
+    expect(r.warnings.join('\n')).not.toMatch(/Guard is off/);
+  });
+
+  it('plan_turn warns when its plan leaves a territory empty with the guard off', async () => {
+    const s = server();
+    h = await liveHarness({ feed: [feedGame({ OneArmyStandsGuard: false })], pages: ME_PAGE, warapp: s.warapp });
+    const plan = payload<{ warnings: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(plan.warnings.join('\n')).toMatch(/One Army Must Stand Guard is off/);
+  });
+});
+
+describe('myOrdersOf: what opponent tracking reads of my sent turn (#165)', () => {
+  it('leaves out percentage, Transfer Only and Attack Only moves: they may send other armies or none', () => {
+    const r = myOrdersOf([
+      { kind: 'deploy', territoryId: 1, armies: 3 },
+      { kind: 'move', from: 1, to: 3, armies: 4 },
+      { kind: 'move', from: 1, to: 3, armies: 4, mode: AttackTransferMode.AttackTransfer },
+      { kind: 'move', from: 1, to: 2, armies: 2, mode: AttackTransferMode.Transfer },
+      { kind: 'move', from: 2, to: 1, armies: 2, mode: AttackTransferMode.Attack },
+      { kind: 'move', from: 1, to: 5, armies: 50, byPercent: true },
+    ]);
+    expect(r.deploys).toEqual([{ territoryId: 1, armies: 3 }]);
+    expect(r.moves).toEqual([
+      { from: 1, to: 3, armies: 4 },
+      { from: 1, to: 3, armies: 4 },
+    ]);
   });
 });

@@ -21,7 +21,17 @@ import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveTerritory } from './resolve.js';
-import { boardHistory, currentTurn, modsWarning, plannerSettings, requirePlayingSeat, requireTurnPhase, turnOrdersArg } from './turn.js';
+import {
+  boardHistory,
+  currentTurn,
+  friendsOf,
+  guardOffWarnings,
+  modsWarning,
+  plannerSettings,
+  requirePlayingSeat,
+  requireTurnPhase,
+  turnOrdersArg,
+} from './turn.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -138,6 +148,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const hand = readHand(info, handOwners(game, me));
       let orderPriority = false;
       const ignored: string[] = [];
+      const friends = friendsOf(game.players, me);
       const mine = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me.id ? [t.territoryId] : [])));
       for (const o of orders) {
         if (o.kind === 'deploy') {
@@ -149,6 +160,14 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           }
           deploys.push({ territoryId: t.id, armies: o.armies });
         } else if (o.kind === 'move') {
+          // As warapp_submit_turn does (#165): attacking teammates needs a teammate.
+          if (o.attack_teammates && !friends.size) {
+            const [from, to] = [resolveTerritory(map, o.from), resolveTerritory(map, o.to)];
+            throw new McpToolError(
+              `${untrustedText(from.name)} (${from.id}) → ${untrustedText(to.name)} (${to.id}) sets attack_teammates, but you have no teammates in this game.`,
+              { hint: 'Leave attack_teammates out: outside a team game every territory not yours is attacked anyway.' },
+            );
+          }
           moves.push({
             from: resolveTerritory(map, o.from).id,
             to: resolveTerritory(map, o.to).id,
@@ -336,6 +355,21 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const warnings = [
         ...(award ? assumedWarning(award) : []),
         ...modsWarning(game.settings),
+        // As plan/submit do (#165); a percentage order counts what it sent unanswered.
+        ...guardOffWarnings(
+          graph,
+          map,
+          board,
+          me.id,
+          friends,
+          game.settings,
+          deploys,
+          moves.map((m, i) => ({
+            from: m.from,
+            to: m.to,
+            armies: m.byPercent ? (report.baseline.log.find((e) => e.index === i)?.sent ?? 0) : m.armies,
+          })),
+        ),
         ...(refused.size
           ? [`These orders use ${[...refused].join(', ')}: war.app would refuse them in this game, and warapp_submit_turn does; the test ran them anyway.`]
           : []),
