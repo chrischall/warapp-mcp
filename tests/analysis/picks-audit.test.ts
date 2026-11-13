@@ -319,3 +319,20 @@ describe('planPicks — a nonsense player count does not throw', () => {
     expect(pickOutcomes({ listLength: 4, perPlayer: 2, players: Number.NaN })).not.toBeNull();
   });
 });
+
+describe('planPicks — every seed is tried before the hop limit is relaxed (#143)', () => {
+  // Thirteen isolated +5 singles (no neighbour: none grows a group of two) outscore a plain
+  // adjacent pair 50-51. Only the pair forms a compact group, and it ranks past the 12 best seeds.
+  const singles = Array.from({ length: 13 }, (_, i) => 101 + i);
+  const graph = () =>
+    mkGraph(
+      [[50, 51]],
+      singles.map((t, i) => ({ id: 300 + i, name: `Isle${i}`, value: 5, territoryIds: [t] })),
+      singles,
+    );
+  it('finds the compact pair beyond the 12 best seeds instead of relaxing', () => {
+    const p = plan({ graph: graph(), pickable: [...singles, 50, 51], players: 2, territoryLimit: 2, maxPicks: 4 });
+    expect(sorted(p.groups.primary.territoryIds)).toEqual([50, 51]);
+    expect(p.warnings.join('\n')).not.toMatch(/No compact primary group/);
+  });
+});

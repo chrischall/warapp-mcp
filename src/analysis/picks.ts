@@ -754,6 +754,13 @@ export function planPicks(input: PlanPicksInput): PickPlan {
         bestGap = gap;
       }
     }
+    // None of the best seeds grows a group at this hop limit: try the rest, first that grows,
+    // before the caller relaxes the limit (as the single-seed search did; #143).
+    if (!best)
+      for (const seed of seeds.slice(MAX_SEEDS)) {
+        const group = tryGroup(view, pool, size, seed, hop);
+        if (group) return group;
+      }
     return best;
   };
   const buildGroup = (view: View, pool: number[], size: number, label: string, away: number[] = []): number[] => {
