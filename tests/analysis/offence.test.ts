@@ -64,6 +64,8 @@ function track(playerId: number, income: number, candidates: number[][] = [], vi
     visibleIncome,
     income,
     incomeTurns: [1, 2],
+    observedRange: { min: income, max: income },
+    incomeMethod: 'max-observed',
     unaccounted: 0,
     visible: 1,
     turnsUnseen: 0,

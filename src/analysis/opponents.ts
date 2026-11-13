@@ -7,8 +7,11 @@
 // what it cost (the defenders' kills at the defensive kill rate), never the stack standing
 // there: that stack moved, it is not income. From the per-turn observations:
 //  - income (visible income is the one income rule, `boardIncome`, via enemyDeployEstimates):
-//    the median of the last {@link MEDIAN_TURNS} observed deploys, floored at what it
-//    visibly earns on the newest board (base income + the bonuses it visibly holds in full);
+//    over the last {@link INCOME_TURNS} observed turns, the larger of the most it was observed
+//    to deploy and its stock and flow (visible army change plus visible losses, per turn),
+//    capped at the most it could earn in that window and floored at what it visibly earns on
+//    the newest board (base income + the bonuses it visibly holds in full) — see
+//    {@link trackedIncome} (#99);
 //  - unaccounted armies: the income it earned since first seen (each turn: what it visibly
 //    earned, or what it was seen to deploy when more) minus the change of its visible armies
 //    and what it visibly lost — armies that must be somewhere in the fog;
@@ -45,8 +48,8 @@ export interface TurnBoard {
   board: BoardState;
 }
 
-/** Observed deploys feeding the income median. */
-export const MEDIAN_TURNS = 3;
+/** Observed turns (the latest) feeding the income estimate (#99: {@link trackedIncome}). */
+export const INCOME_TURNS = 3;
 /** Most bonuses in one inferred combination. */
 export const MAX_COMBINATION = 3;
 /** Inferred combinations listed before "and N more". */
@@ -156,10 +159,17 @@ export interface OpponentTrack {
   bonusIncome: number;
   /** base + bonusIncome: what it visibly earns. */
   visibleIncome: number;
-  /** Median of the last {@link MEDIAN_TURNS} observed deploys, at least `visibleIncome`; `null` before any observed turn. */
+  /**
+   * Its income estimate over the last {@link INCOME_TURNS} observed turns ({@link trackedIncome},
+   * #99), at least `visibleIncome`; `null` before any observed turn.
+   */
   income: number | null;
-  /** The `from` turns the median used. */
+  /** The `from` turns the estimate used (its window), oldest first. */
   incomeTurns: number[];
+  /** The least and the most it was observed to deploy over that window; `null` before any observed turn. */
+  observedRange: { min: number; max: number } | null;
+  /** Which term set `income` ({@link IncomeMethod}); `null` before any observed turn. */
+  incomeMethod: IncomeMethod | null;
   /** Armies that must be in the fog (≥ 0); `null` before any observed turn. */
   unaccounted: number | null;
   /** Bonuses that could explain `income − visibleIncome`; `null` when there is no gap. */
@@ -231,11 +241,69 @@ const playing = (p: TrackPlayer) => (p.state ?? 'Playing') === 'Playing';
 
 const byNum = (a: number, b: number) => a - b;
 
-function median(xs: number[]): number {
-  const s = [...xs].sort(byNum);
-  const m = Math.floor(s.length / 2);
-  // An even count takes the mean of the middle two, rounded up (threats err high).
-  return s.length % 2 ? s[m]! : Math.ceil((s[m - 1]! + s[m]!) / 2);
+/**
+ * Which term set a tracked income: `max-observed` the most it was observed to deploy,
+ * `stock-flow` its visible army change plus visible losses per turn, `visible` what it visibly
+ * earns on the newest board (base + bonuses it visibly holds in full).
+ */
+export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible';
+
+/** A tracked income and how it was reached ({@link trackedIncome}). */
+export interface TrackedIncome {
+  income: number;
+  method: IncomeMethod;
+  observedRange: { min: number; max: number };
+  /** Its stock and flow over the window, before the cap. */
+  stockFlow: number;
+  /** The highest could-earn cap in the window. */
+  cap: number;
+}
+
+/**
+ * Income over a window of observed turns (#99). Each observed deploy is a LOWER BOUND on that
+ * turn's income: deploys onto fogged territories are unseen, and so are armies moved into the
+ * fog or lost in failed attacks. The median of lower bounds is no bound at all — one quiet turn
+ * (an opponent deploying into the fog) drags it to the floor — so the estimate is the largest:
+ * the tightest lower bound the window gives. Its stock and flow (the change of its visible
+ * armies over territories visible on both boards of each pair, plus what it visibly lost,
+ * summed over the window and divided by its length, rounded up, at least 0) catches an opponent
+ * whose armies grow faster than any one observation — stacks arriving out of the fog. The
+ * larger of the two is capped at the highest per-turn could-earn cap in the window (each
+ * observation already is), then floored at what it visibly earns, `visibleIncome`. Ties name
+ * the floor first, then the observation.
+ */
+export function trackedIncome(window: readonly ObservedTurn[], visibleIncome: number): TrackedIncome {
+  const observed = window.map((x) => x.observed);
+  const maxObserved = Math.max(...observed);
+  const stockFlow = Math.max(0, Math.ceil(window.reduce((s, x) => s + x.net + x.losses, 0) / window.length));
+  const cap = Math.max(...window.map((x) => x.cap));
+  const flow = Math.min(cap, stockFlow);
+  const fromWindow = Math.max(maxObserved, flow);
+  const method: IncomeMethod = visibleIncome >= fromWindow ? 'visible' : maxObserved >= flow ? 'max-observed' : 'stock-flow';
+  return {
+    income: Math.max(visibleIncome, fromWindow),
+    method,
+    observedRange: { min: Math.min(...observed), max: maxObserved },
+    stockFlow,
+    cap,
+  };
+}
+
+/** `turn 4` or `turns 4–6`. */
+const turnSpan = (turns: readonly number[]) =>
+  turns.length === 1 ? `turn ${turns[0]}` : `turns ${turns[0]}–${turns.at(-1)}`;
+
+/**
+ * How a track's income was reached, for a rationale line or a note, e.g. "max observed over
+ * turns 9–11, observed 3–31"; `null` before any observed turn.
+ */
+export function incomeBasis(t: Pick<OpponentTrack, 'incomeMethod' | 'incomeTurns' | 'observedRange'>): string | null {
+  if (!t.incomeMethod || !t.observedRange || !t.incomeTurns.length) return null;
+  const span = turnSpan(t.incomeTurns);
+  const range = `observed ${t.observedRange.min}–${t.observedRange.max}`;
+  if (t.incomeMethod === 'max-observed') return `max observed over ${span}, ${range}`;
+  if (t.incomeMethod === 'stock-flow') return `visible army growth plus losses over ${span}, ${range}`;
+  return `its visible base + bonuses, ${range} over ${span}`;
 }
 
 /** Its army change over territories visible on both boards, and what it visibly lost. */
@@ -462,8 +530,9 @@ export function trackOpponents(
     while (back >= 1 && byTurn.has(back) && !seesPlayer(byTurn.get(back)!, g, playerId)) back--;
     const turnsUnseen = visible ? 0 : lastTurn - back;
     const turnsUnseenAtLeast = turnsUnseen > 0 && back >= 1 && !byTurn.has(back);
-    const recent = observed.slice(-MEDIAN_TURNS);
-    const income = recent.length ? Math.max(visibleIncome, median(recent.map((x) => x.observed))) : null;
+    const recent = observed.slice(-INCOME_TURNS);
+    const estimate = recent.length ? trackedIncome(recent, visibleIncome) : null;
+    const income = estimate?.income ?? null;
     const unaccounted = observed.length
       ? Math.max(0, observed.reduce((s, x) => s + x.earned - x.net - x.losses, 0))
       : null;
@@ -512,10 +581,12 @@ export function trackOpponents(
       notes.push(
         `Only ${observed.length} observed turn${observed.length === 1 ? '' : 's'} (fewer than 2 observed turns): the planner keeps its single-turn estimate.`,
       );
-    else
+    else {
+      const basis = incomeBasis({ incomeMethod: estimate!.method, incomeTurns: recent.map((x) => x.from), observedRange: estimate!.observedRange });
       notes.push(
-        `Income is the median of ${recent.length} observed turn${recent.length === 1 ? '' : 's'} (turn${recent.length === 1 ? '' : 's'} ${recent.map((x) => x.from).join(', ')}), at least its visible income ${visibleIncome}.`,
+        `Income ~${income} (${basis}): the larger of the most it was observed to deploy (each observation is a lower bound under fog, so the largest is the tightest) and its visible army growth plus losses per turn (${estimate!.stockFlow}), capped at the most it could earn (${estimate!.cap}), at least its visible income ${visibleIncome}.`,
       );
+    }
     if (missing.length)
       notes.push(`No board for turn ${missing.join(', ')}: only consecutive turns are compared, so those turns are not observed.`);
     if (unseen.length) {
@@ -561,6 +632,8 @@ export function trackOpponents(
       visibleIncome,
       income,
       incomeTurns: recent.map((x) => x.from),
+      observedRange: estimate?.observedRange ?? null,
+      incomeMethod: estimate?.method ?? null,
       unaccounted,
       inferred,
       visible,

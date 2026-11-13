@@ -113,7 +113,7 @@ export function historyBoards(
 export const boardCachePath = (dir: string, gameId: number) => join(dir, 'boards', `${gameId}.json`);
 
 /**
- * Turns kept per game: enough history for opponent tracking (a median over the
+ * Turns kept per game: enough history for opponent tracking (an estimate over the
  * last three observed turns needs four boards; more shows where the armies went
  * since an opponent was first seen), and a turn planned again (another goal, or
  * after a hand override) still finds the board of the turn before it.
