@@ -86,11 +86,16 @@ battle is then resolved at its luck-free, straight-rounded expectation and the r
 **What the stress test tries**, per opponent, with its whole estimated deploy in one place: an
 attack from each stack (its commander with it) on each territory of mine it touches (now, or
 after my own orders); sitting on a territory I attack; and every stack attacking at once, both
-spread over different targets and concentrated on the most valuable. Each is run with me moving
-first and with the opponent moving first unless the first mover is given. The opponents are
+spread over different targets and concentrated on the most valuable; a stack I attack moving out
+first into a territory it can take (a dodge, #180), run only with it moving first; two opponents
+on one territory of mine, in both relative orders (teammates always, any two in a free-for-all
+only when I lead); and under Multi-Attack each stack's most damaging chain of captures. Under
+Local Deployment each deploy is bounded by the pools that reach where it lands. Each is run with
+me moving first and with the opponent moving first unless the first mover is given. The opponents are
 whoever holds a stack on the board, whatever GameFeed says of the player. **Not tried:** stacks
 hidden by fog (armies included), a deploy above the estimate, a split deploy, opponents acting
-together, a chain of attacks under Multi-Attack, and cards other than my own Order Priority —
+together other than on one territory of mine, more than one chain per stack under Multi-Attack,
+and cards other than my own Order Priority —
 so "safe" only ever means safe against these, and when no reply could be tried the answer is
 "nothing tested" (`safe: null`), never "safe".
 

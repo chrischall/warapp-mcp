@@ -57,12 +57,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   weighted rounding battles are resolved at their expectation (`exact: false`). A territory whose
   armies are hidden is unknown to it whoever holds it. `src/analysis/stress.ts` runs a list of
   orders against each opponent's single-deploy replies (attack from one stack with its commander,
-  sit on a territory I attack, every stack at once, spread and concentrated), under both move
+  sit on a territory I attack, every stack at once, spread and concentrated; #180: a struck stack
+  dodging first, two opponents on one territory — teammates, or any two when I lead a free-for-all
+  — and under Multi-Attack each stack's best chain; Local Deployment bounds each deploy), under both move
   orders unless `first_mover` is given, with the same per-opponent deploy estimates as the
   planner; the opponents are whoever holds a stack on the board, not only players GameFeed calls
   `Playing`. "Safe" means safe against those replies only: fog-hidden stacks (`blindBorders`,
-  `unseenOpponents`), a deploy above the estimate, split deploys, Multi-Attack chains and cards
-  are not tried, and `safe` is `null` when nothing could be tried. It also looks one turn ahead
+  `unseenOpponents`), a deploy above the estimate, split deploys, other joint attacks, more than
+  one chain per stack and cards are not tried, and `safe` is `null` when nothing could be tried. It also looks one turn ahead
   (`exposedNextTurn`, #156): a territory of mine that a stack two steps away could take next turn by
   first taking the territory in between (mine or neutral), with the armies it would need to hold, on
   the assumption that I add nothing next turn; this never changes `safe`. Both modules are pure and

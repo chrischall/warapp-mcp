@@ -7,7 +7,7 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { incomeFor, planEnemyEstimates, symmetricStart, trackGame, trackOpponents } from '../analysis/index.js';
-import { stressPlan, type StressExposure, type StressReply } from '../analysis/stress.js';
+import { stressPlan, type StressDodge, type StressExposure, type StressJoint, type StressReply } from '../analysis/stress.js';
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners } from './card-advice.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
@@ -45,8 +45,9 @@ const ORDER_PRIORITY = cardTypeByName('Order Priority');
 export const CHECK_PLAN_NOT_COVERED = [
   'stacks hidden by fog, armies included (see blindBorders), and opponents with nothing in view (see unseenOpponents)',
   'an opponent that deploys more than the estimate (raise enemy_deploy to test it)',
-  'a deploy split over several stacks, or two opponents acting together',
-  'a chain of attacks through several territories under Multi-Attack',
+  'a deploy split over several stacks',
+  'two opponents together other than on one of your territories, and two free-for-all opponents together at all unless you lead (see leader)',
+  'under Multi-Attack, any chain of attacks but the one most damaging per stack',
   'cards, apart from your own Order Priority',
 ] as const;
 
@@ -67,8 +68,14 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'order; each order an attack or a transfer by who holds its target when it runs; kill rates, the guard ' +
           'army, each army moving once, commanders), against the replies each opponent could make with ONE deploy: ' +
           'its whole estimated deploy on one stack and an attack on a territory you hold or are about to take, its ' +
-          'whole deploy on a territory you attack, or every stack attacking at once. Each reply is tried with you ' +
-          'moving first and with the opponent moving first unless `first_mover` says which. Returns `safe` (true, ' +
+          'whole deploy on a territory you attack, or every stack attacking at once; a stack you attack moving out ' +
+          'first (a dodge: into its own territory, or a neutral or one of yours it can take — `dodges` lists each ' +
+          'with the armies that got away and what your strike then hit); two opponents striking one of your ' +
+          'territories together (teammates always; any two in a free-for-all when you lead — `jointFalls` gives the ' +
+          'armies each such territory needs to hold); and, under Multi-Attack, each stack\'s most damaging chain ' +
+          'of captures. Under Local Deployment each deploy is bounded by where its bonus armies may land. Each ' +
+          'reply is tried with you moving first and with the opponent moving first unless `first_mover` says ' +
+          'which. A reply that keeps alive a player your orders finish off is `eliminationsFailed`. Returns `safe` (true, ' +
           'false, or null when no reply could be tried), a one-line `summary`, the `worst` reply and ' +
           '`otherReplies` that cost you something (territories `lost`, captures that fail or are `retaken`, ' +
           'bonuses and income lost, your commander), everything `atRisk` to some single reply (only one of them ' +
@@ -230,9 +237,19 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const opponents = [...new Set([...onBoard, ...stillIn])]
         .filter((id) => !friend(id))
         .sort((a, b) => a - b)
-        .map((id) => ({ id, deploy: enemy_deploy ?? estimates.find((e) => e.playerId === id)?.estimate ?? base }));
+        .map((id) => {
+          const e = estimates.find((x) => x.playerId === id);
+          return { id, deploy: enemy_deploy ?? e?.estimate ?? base, base: e?.base ?? base };
+        });
       const teams = new Map<number, number>();
       for (const p of game.players) if (carriesTeam(p.team)) teams.set(p.id, p.team);
+      const inView = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.armies !== null ? [t.owner.playerId] : [])));
+      // #180: in a free-for-all I lead when my income beats every estimate of an opponent in view
+      // (two at least; enemy_deploy is a what-if, not the game's standing): then any two of them
+      // may strike one territory of mine together.
+      const rivals = opponents.filter((o) => inView.has(o.id));
+      const estimateOf = (id: number) => estimates.find((x) => x.playerId === id)?.estimate ?? base;
+      const leader = teams.size === 0 && rivals.length >= 2 && rivals.every((o) => income > estimateOf(o.id));
 
       const report = stressPlan({
         graph,
@@ -245,11 +262,13 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(teams.size ? { teams } : {}),
         ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         orderPriority,
+        ...(settings.localDeployments ? { localDeployments: true } : {}),
+        leader,
       });
 
       const name = namer(map);
       const playerName = new Map(game.players.map((p) => [p.id, p.name]));
-      const inView = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.armies !== null ? [t.owner.playerId] : [])));
+      const who = (id: number) => ({ id, name: playerName.get(id) ?? String(id) });
       const bonusOf = (id: number) => {
         const b = map.bonuses.find((x) => x.id === id);
         return { id, name: b?.name ?? String(id), value: b?.value ?? 0 };
@@ -267,8 +286,16 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             ? `deploys ${r.deploy} on territory ${r.deployTo} and holds`
             : r.kind === 'attack'
               ? `deploys ${r.deploy} on territory ${r.deployTo} and attacks territory ${r.to} with ${r.armies}`
-              : `attacks with every stack at once (${r.attacks!.length} attacks), its ${r.deploy} on territory ${r.deployTo}`;
-        const when = needs(r) === 'you' ? ', and you move first' : needs(r) === 'opponent' ? ', and it moves first' : '';
+              : r.kind === 'dodge'
+                ? `deploys ${r.deploy} on territory ${r.deployTo} and moves it out first, ${r.armies} into territory ${r.to}`
+                : r.kind === 'chain'
+                  ? `deploys ${r.deploy} on territory ${r.deployTo} and attacks on through territories ${r.path!.slice(1).join(' → ')}`
+                  : r.kind === 'joint'
+                    ? `and player ${r.partner} strike territory ${r.to} together from territories ${r.from} and ${r.partnerDeployTo} (deploying ${r.deploy} and ${r.partnerDeploy})`
+                    : `attacks with every stack at once (${r.attacks!.length} attacks), its ${r.deploy} on territory ${r.deployTo}`;
+        const when =
+          (needs(r) === 'you' ? ', and you move first' : needs(r) === 'opponent' ? `, and ${r.kind === 'joint' ? 'they move' : 'it moves'} first` : '') +
+          (r.firstOpponent !== undefined ? `, player ${r.firstOpponent} before the other` : '');
         // With my commander gone everything is: the rest is not listed.
         const cost = r.commanderLost
           ? ['you lose your commander and the game']
@@ -279,18 +306,29 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
                 : []),
               ...(r.capturesFailed.length ? [`your capture of ${some(r.capturesFailed)} fails`] : []),
               ...(r.retaken.length ? [`${some(r.retaken)} is taken straight back`] : []),
+              ...(r.eliminationsFailed.length ? [`player ${r.eliminationsFailed.join(', player ')} stays in the game`] : []),
             ];
         return `If player ${r.opponent} ${act}${when}: ${cost.join('; ')}.`;
       };
       const replyView = (r: StressReply) => ({
         text: sentence(r),
-        opponent: { id: r.opponent, name: playerName.get(r.opponent) ?? String(r.opponent) },
+        opponent: who(r.opponent),
         kind: r.kind,
         deploy: r.deploy,
         deployTo: name(r.deployTo),
-        ...(r.kind === 'attack' ? { attack: { from: name(r.from!), to: name(r.to!), armies: r.armies } } : {}),
+        ...(r.kind === 'attack' || r.kind === 'dodge' || r.kind === 'chain' ? { attack: { from: name(r.from!), to: name(r.to!), armies: r.armies } } : {}),
+        // #180: a chain's every territory, and a joint strike's second opponent.
+        ...(r.path ? { path: r.path.map(name) } : {}),
+        ...(r.partner !== undefined
+          ? {
+              partner: who(r.partner),
+              partnerDeploy: r.partnerDeploy,
+              partnerDeployTo: name(r.partnerDeployTo!),
+              ...(r.firstOpponent !== undefined ? { firstOpponent: who(r.firstOpponent) } : {}),
+            }
+          : {}),
         // Every stack attacked: only the attacks on what was lost are listed, with the count of all.
-        ...(r.attacks
+        ...(r.attacks && r.kind === 'all-attack'
           ? {
               attacks: r.attacks
                 .filter((a) => r.lost.includes(a.to) || r.retaken.includes(a.to) || r.capturesFailed.includes(a.to))
@@ -307,7 +345,46 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         bonusesLost: r.bonusesLost.slice(0, LIST_MAX).map((b) => bonusOf(b.id)),
         incomeLost: r.incomeLost,
         commanderLost: r.commanderLost,
+        eliminationsFailed: r.eliminationsFailed.map(who),
         armies: { you: r.myArmies, opponent: r.theirArmies },
+      });
+      /** #180: a dodge in a sentence, by id. */
+      const dodgeText = (d: StressDodge): string => {
+        const hit = d.strikes.length ? ` Your ${plural(d.strikes.length, 'strike', 'strikes')} on territory ${d.stack} then ${d.strikes.map((x) => x.result).join(', ')}.` : '';
+        return d.took
+          ? `Player ${d.opponent} can move its stack on territory ${d.stack} (with its ${d.deploy}) out first into territory ${d.exit} (${d.exitOwner}), ${d.escaped} getting away${d.commander ? ' with its commander' : ''}.${hit}`
+          : `Player ${d.opponent} moving its stack on territory ${d.stack} out first into territory ${d.exit} (${d.exitOwner}) fails.${hit}`;
+      };
+      const dodgeView = (d: StressDodge) => ({
+        text: dodgeText(d),
+        opponent: who(d.opponent),
+        stack: name(d.stack),
+        exit: name(d.exit),
+        exitOwner: d.exitOwner,
+        deploy: d.deploy,
+        sent: d.sent,
+        took: d.took,
+        escaped: d.escaped,
+        commander: d.commander,
+        strikes: d.strikes.map((x) => ({ from: name(x.from), result: x.result, sent: x.sent })),
+        harmful: d.harmful,
+      });
+      /** #180: a territory two opponents take together, in a sentence. */
+      const jointText = (j: StressJoint): string =>
+        `Players ${j.opponents[0]} and ${j.opponents[1]} together take territory ${j.territory} (${j.armies} there) with ${j.attackers[0]} from ` +
+        `territory ${j.from[0]} and ${j.attackers[1]} from territory ${j.from[1]}: it needs ${j.needs} to hold${
+          j.bonusesLost.length ? `, or bonus${j.bonusesLost.length === 1 ? '' : 'es'} ${j.bonusesLost.map((b) => `${b.id} (${signed(b.value)})`).join(', ')} goes with it` : ''
+        }.`;
+      const jointView = (j: StressJoint) => ({
+        text: jointText(j),
+        territory: name(j.territory),
+        armies: j.armies,
+        needs: j.needs,
+        opponents: j.opponents.map(who),
+        from: j.from.map(name),
+        attackers: j.attackers,
+        bonusesLost: j.bonusesLost.map((b) => bonusOf(b.id)),
+        incomeLost: j.incomeLost,
       });
       /** One exposure in a sentence, by id. */
       const exposure = (e: StressExposure): string =>
@@ -323,7 +400,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         attackers: e.attackers,
         from: name(e.from),
         via: name(e.via),
-        opponent: { id: e.opponent, name: playerName.get(e.opponent) ?? String(e.opponent) },
+        opponent: who(e.opponent),
         bonusesLost: e.bonusesLost.map((b) => bonusOf(b.id)),
         incomeLost: e.incomeLost,
       });
@@ -348,12 +425,18 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const ahead = report.exposedNextTurn.length
         ? ` Next turn: ${report.exposedNextTurn.length} ${plural(report.exposedNextTurn.length, 'territory is', 'territories are')} within reach of a stack two steps away if you add nothing (see exposedNextTurn). First: ${exposure(report.exposedNextTurn[0]!)}`
         : '';
+      // #180: stacks you attack that can step out of the way first.
+      const escapes = report.dodges.filter((d) => d.took && d.escaped > 0);
+      const escapingStacks = new Set(escapes.map((d) => d.stack)).size;
+      const dodged = escapingStacks
+        ? ` ${escapingStacks} of the stacks you attack can move out first and get away (see dodges).`
+        : '';
       const summary =
         report.safe === null
           ? `Nothing could be tested this turn: no opposing stack in view touches you.${blind}${ahead}`
           : report.safe
-            ? `None of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried costs you a territory, a capture or a bonus.${blind}${inexact}${ahead}`
-            : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${inexact}${ahead}`;
+            ? `None of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried costs you a territory, a capture or a bonus.${blind}${inexact}${dodged}${ahead}`
+            : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${inexact}${dodged}${ahead}`;
       const deployed = deploys.reduce((n, d) => n + d.armies, 0);
       const warnings = [
         ...(award ? assumedWarning(award) : []),
@@ -405,6 +488,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             deploy: o.deploy,
             source: enemy_deploy !== undefined ? 'enemy_deploy' : 'estimate',
           })),
+        // #180: in a free-for-all, whether you lead (any two opponents are then tried together).
+        leader,
         unseenOpponents: opponents.filter((o) => !inView.has(o.id)).map((o) => ({ id: o.id, name: playerName.get(o.id) ?? String(o.id) })),
         plan: {
           captures: report.baseline.captured.map(name),
@@ -427,6 +512,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           bonuses: atRiskList(report.atRisk.bonuses).map((b) => ({ ...bonusOf(b.id), replies: b.replies })),
           ...(report.atRisk.bonuses.length > LIST_MAX ? { bonusesMore: report.atRisk.bonuses.length - LIST_MAX } : {}),
         },
+        // #180: each stack you attack moving out first (compact: those that get away), and
+        // territories two opponents take together.
+        dodges: (rung === 'full' ? report.dodges : escapes).slice(0, LIST_MAX).map(dodgeView),
+        jointFalls: report.jointFalls.slice(0, LIST_MAX).map(jointView),
+        ...(report.jointFalls.length > LIST_MAX ? { jointFallsMore: report.jointFalls.length - LIST_MAX } : {}),
         blindBorders: report.blindBorders.map(name),
         // One turn ahead (#156): what the orders leave within reach of a stack two steps away.
         exposedNextTurn: report.exposedNextTurn.slice(0, LIST_MAX).map(exposureView),

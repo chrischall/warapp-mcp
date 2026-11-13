@@ -120,6 +120,20 @@ interface CheckPayload {
   }>;
   exposedMore?: number;
   blindBorders: Named[];
+  leader: boolean;
+  dodges: Array<{
+    text: string;
+    opponent: Named;
+    stack: Named;
+    exit: Named;
+    exitOwner: string;
+    took: boolean;
+    escaped: number;
+    commander: boolean;
+    strikes: Array<{ from: Named; result: string; sent: number }>;
+    harmful: boolean;
+  }>;
+  jointFalls: unknown[];
   notCovered: string[];
   assumptions?: string[];
   untrusted_content?: boolean;
@@ -294,6 +308,62 @@ describe('warapp_check_plan', () => {
     const over = await check({ orders: [{ kind: 'deploy', territory: 159, armies: 400 }] });
     expect(over.deployed).toBe(400);
     expect(over.warnings.join(' ')).toMatch(/deploy 400.*income is 5/);
+  });
+
+  it('shows a stack I strike stepping out first, and what my strike then hits (#180)', async () => {
+    // I hit Bob's 3 on 158 with 19. Moving first, his 3 and 5 send 7 into the neutral 157 (2): 6 get away.
+    h = await live(at(20, 20, 3));
+    const orders = [{ kind: 'move', from: 159, to: 158, armies: 19 }];
+    const p = await check({ orders });
+    expect(p.leader).toBe(false);
+    expect(p.jointFalls).toEqual([]);
+    expect(p.dodges).toEqual([
+      expect.objectContaining({
+        opponent: { id: Number(BOB.feed), name: 'Bob' },
+        stack: expect.objectContaining({ id: 158 }),
+        exit: expect.objectContaining({ id: 157 }),
+        exitOwner: 'neutral',
+        took: true,
+        escaped: 6,
+        strikes: [{ from: expect.objectContaining({ id: 159 }), result: 'captured', sent: 19 }],
+      }),
+    ]);
+    expect(p.dodges[0]!.text).toMatch(/out first into territory 157 \(neutral\), 6 getting away\. Your strike on territory 158 then captured\./);
+    expect(p.summary).toMatch(/1 of the stacks you attack can move out first and get away/);
+    // Known to move first, I strike it where it stands: no dodge is tried.
+    expect((await check({ orders, first_mover: 'me' })).dodges).toEqual([]);
+  });
+
+  it('tries two free-for-all opponents on one territory when I lead, and says what would hold it (#180)', async () => {
+    // A third player, Cy, on 135 (it touches Hornwood 159 and Bob's 158). I hold bonus 118 (+2): my 7 beat their 5s.
+    const CY = { feed: '5523456781', inGame: 234567 };
+    const g = game();
+    (g.players as Array<Record<string, string>>)[2] = { ...(g.players as Array<Record<string, string>>)[2]!, id: CY.feed, name: 'Cy' };
+    const territories: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 20 },
+      { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 20 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 4 },
+      { id: 135, fogLevel: 1, owner: CY.inGame, armies: 4 },
+    ];
+    h = await liveHarness({
+      feed: [g],
+      warapp: (req: DecodedRequest): Partial<ReplyFrame> => {
+        if (req.method !== Method.GetLatestGameInfo) throw new Error(`unexpected method ${req.method}`);
+        return { body: (w) => writeLatestGameInfo(w, territories, [ANN.inGame]) };
+      },
+    });
+    const p = await check({ orders: [{ kind: 'deploy', territory: 159, armies: 7 }] });
+    expect(p.income).toBe(7);
+    expect(p.leader).toBe(true);
+    // Each side brings 8 and kills 5: together 10 of my 13 on Hornwood, so nothing falls.
+    expect(p.jointFalls).toEqual([]);
+    const thin = await check({ orders: [{ kind: 'deploy', territory: 161, armies: 7 }] });
+    // My 6 on Hornwood: 8 from each side kill 5 and 5 — it needs 11.
+    expect(thin.jointFalls).toEqual([
+      expect.objectContaining({ territory: expect.objectContaining({ id: 159 }), armies: 6, needs: 11, attackers: [8, 8] }),
+    ]);
+    expect(thin.safe).toBe(false);
   });
 
   it('says so when battles are not exact, and names what it did not try', async () => {

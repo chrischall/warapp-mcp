@@ -6,7 +6,7 @@ import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { stressPlan, type StressInput } from '../../src/analysis/stress.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, mine, neutral } from './helpers.js';
+import { board, fogged, mine, neutral } from './helpers.js';
 
 const ME = 10;
 const FOE = 20;
@@ -71,6 +71,13 @@ describe('stressPlan: dodge (#180)', () => {
     const dodge = r.replies.find((x) => x.kind === 'dodge')!;
     expect(dodge).toMatchObject({ opponent: FOE, from: 3, to: 4, firstMover: 'opponent', eliminationsFailed: [FOE] });
     expect(r.safe).toBe(false);
+  });
+
+  it('does not call a player finished when the fog may hide more of its territories', () => {
+    const map = makeMap(5, [[1, 2], [2, 3], [3, 4], [1, 5]]);
+    const r = stress(map, [mine(1, 2), mine(2, 20), foe(3, 5), neutral(4, 1), fogged(5)], { moves: strike });
+    expect(r.dodges).toEqual([expect.objectContaining({ exit: 4, escaped: 8, harmful: false })]);
+    expect(r.replies.every((x) => x.eliminationsFailed.length === 0)).toBe(true);
   });
 
   it('is not tried when I am known to move first: the stack is struck where it stands', () => {

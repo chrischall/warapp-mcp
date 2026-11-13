@@ -22,8 +22,9 @@
 //               mine from a territory it took first does nothing (turn-sim.ts). A dodge into my
 //               territory is the `attack` reply moving first and is not run twice. `dodges`
 //               lists every one tried: what it took, the armies that got away, and what my
-//               strike then hit. A player my orders finish off unanswered that a reply keeps in
-//               the game is `eliminationsFailed`: the reply the end of a game turns on.
+//               strike then hit. A player my orders finish off unanswered (its commander killed,
+//               or, on a board with no fog, nothing left) that a reply keeps in the game is
+//               `eliminationsFailed`: the reply the end of a game turns on.
 //   joint       (#180) two opponents strike one territory of mine (now, or after my orders)
 //               together, each from its largest stack beside it with its deploy: teammates
 //               always, any two opponents in a free-for-all only when I lead (`leader`, the
@@ -516,9 +517,13 @@ export function stressPlan(input: StressInput): StressReport {
   const assumptions = new Set(baseline.assumptions);
   const baseCaptured = new Set(baseline.log.filter((e) => e.player === me && e.result === 'captured').map((e) => e.to));
   const baseMyArmies = armiesOf(baseline, (o) => o === me);
-  /** Players my plan leaves with nothing, or whose commander it kills. */
+  /**
+   * Players my plan kills the commander of, or leaves with nothing — only on a board with no fog:
+   * with fog, a player may hold territories nobody sees.
+   */
+  const noFog = [...start.values()].every((t) => t.owner !== 'unknown');
   const finished = [...new Set([...start.values()].flatMap((t) => (typeof t.owner === 'number' && t.owner !== me ? [t.owner] : [])))]
-    .filter((p) => baseline.eliminated.includes(p) || !holdsAny(baseline, p))
+    .filter((p) => baseline.eliminated.includes(p) || (noFog && !holdsAny(baseline, p)))
     .sort(byNum);
   let runs = 0;
   let harmfulCandidates = 0;
