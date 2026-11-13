@@ -178,11 +178,25 @@ describe('second-pass notes: each is offered only where it applies', () => {
   });
 
   it('a note that tells of something this server cannot send says so', () => {
-    // warapp_submit_turn sends plain attack/transfer orders with fixed army counts and never the commander.
-    for (const id of ['timing-attack-only-retake', 'timing-transfer-only-reinforce', 'timing-percentage-remainder', 'teams-reinforce-capture', 'teams-one-owner-per-bonus', 'cards-order-delay']) {
-      expect(note(id).text, id).toMatch(/game client/);
+    // An Order Delay above other orders is still sent only from the game client.
+    for (const id of ['cards-order-delay']) expect(note(id).text, id).toMatch(/game client/);
+  });
+
+  it('a note on an order option names the warapp_submit_turn field that sends it (#165)', () => {
+    const fields: Record<string, RegExp> = {
+      'timing-attack-only-retake': /mode "attack-only"/,
+      'timing-transfer-only-reinforce': /mode "transfer-only"/,
+      'teams-reinforce-capture': /mode "transfer-only"/,
+      'timing-percentage-remainder': /`percent`/,
+      'teams-one-owner-per-bonus': /`attack_teammates`/,
+      'cards-gift-enemy-teammate': /`attack_teammates`/,
+      'settings-commander-free-captures': /`commander`/,
+    };
+    for (const [id, field] of Object.entries(fields)) {
+      expect(note(id).text, id).toMatch(field);
+      expect(note(id).text, id).not.toMatch(/game client|this server cannot|never include/);
     }
-    for (const id of ['settings-commander-free-captures', 'settings-commander-protect']) expect(note(id).text, id).toMatch(/never (include|carry) the Commander/);
+    expect(note('settings-commander-protect').text).toMatch(/moves only when an order sets `commander`/);
   });
 
   it('a stack that dies on defence kills fewer than it loses only below a 100% defensive kill rate', () => {

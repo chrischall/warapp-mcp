@@ -8,7 +8,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { incomeFor, planEnemyEstimates, symmetricStart, trackGame, trackOpponents } from '../analysis/index.js';
 import { stressPlan, type StressExposure, type StressReply } from '../analysis/stress.js';
-import type { SimEvent } from '../analysis/turn-sim.js';
+import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners } from './card-advice.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
 import { boardStateFromLive } from '../live.js';
@@ -21,7 +21,7 @@ import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveTerritory } from './resolve.js';
-import { boardHistory, currentTurn, plannerSettings, requirePlayingSeat, requireTurnPhase, turnOrdersArg } from './turn.js';
+import { boardHistory, currentTurn, modsWarning, plannerSettings, requirePlayingSeat, requireTurnPhase, turnOrdersArg } from './turn.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -84,7 +84,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         orders: turnOrdersArg.describe(
           'The orders to test, in the order you would submit them: deploys and moves by territory id or name (the ' +
             '`orders` array warapp_plan_turn returns). An Order Priority card play makes your first order run before ' +
-            "everyone's; other card plays and discards are ignored.",
+            "everyone's; other card plays and discards are ignored. A move's options (mode, percent, commander, " +
+            'attack_teammates) are carried out as war.app would.',
         ),
         enemy_deploy: z.coerce
           .number()
@@ -129,7 +130,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const settings = plannerSettings(game.settings);
 
       const deploys: { territoryId: number; armies: number }[] = [];
-      const moves: { from: number; to: number; armies: number }[] = [];
+      const moves: SimOrder[] = [];
+      /** Options the game would refuse (#165): the orders are still tried, and the warning says so. */
+      const refused = new Set<string>();
+      const s = game.settings;
       // A team shares one hand (#163): mine and my teammates' cards.
       const hand = readHand(info, handOwners(game, me));
       let orderPriority = false;
@@ -145,7 +149,19 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           }
           deploys.push({ territoryId: t.id, armies: o.armies });
         } else if (o.kind === 'move') {
-          moves.push({ from: resolveTerritory(map, o.from).id, to: resolveTerritory(map, o.to).id, armies: o.armies });
+          moves.push({
+            from: resolveTerritory(map, o.from).id,
+            to: resolveTerritory(map, o.to).id,
+            armies: o.armies,
+            ...(o.mode === 'attack-only' || o.mode === 'transfer-only' ? { mode: o.mode } : {}),
+            ...(o.percent ? { byPercent: true } : {}),
+            ...(o.commander ? { withCommander: true } : {}),
+            ...(o.attack_teammates ? { attackTeammates: true } : {}),
+          });
+          if (o.mode === 'transfer-only' && s?.allowTransferOnly !== true) refused.add('Transfer Only (AllowTransferOnly is off)');
+          if (o.mode === 'attack-only' && s?.allowAttackOnly !== true) refused.add('Attack Only (AllowAttackOnly is off)');
+          if (o.percent && s?.allowPercentageAttacks !== true) refused.add('a percentage order (AllowPercentageAttacks is off)');
+          if (o.commander && s?.commanders !== true) refused.add('a commander move (this game has no commanders)');
         } else if (o.kind === 'card') {
           // By GUID it is looked up in my hand; by type name the name is enough (this is a what-if).
           const guid = normalizeGuid(o.card.trim());
@@ -298,7 +314,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         result: e.result,
         ...(e.reason ? { reason: e.reason } : {}),
       });
-      const short = report.baseline.log.filter((e) => e.result === 'skipped' || e.sent < e.ordered);
+      // A percentage order's count is a percentage: short only when it sent nothing (#165).
+      const short = report.baseline.log.filter(
+        (e) => e.result === 'skipped' || (moves[e.index]?.byPercent ? e.sent === 0 : e.sent < e.ordered),
+      );
       const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
       const blind = report.blindBorders.length
         ? ` ${report.blindBorders.length} of your territories border the fog and were not tested.`
@@ -316,6 +335,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const deployed = deploys.reduce((n, d) => n + d.armies, 0);
       const warnings = [
         ...(award ? assumedWarning(award) : []),
+        ...modsWarning(game.settings),
+        ...(refused.size
+          ? [`These orders use ${[...refused].join(', ')}: war.app would refuse them in this game, and warapp_submit_turn does; the test ran them anyway.`]
+          : []),
         ...(deployed !== income
           ? [
               `The orders deploy ${deployed} and your income is ${income}: the test used the orders as given (a Reinforcement card adds to the income; otherwise war.app refuses a wrong total).`,

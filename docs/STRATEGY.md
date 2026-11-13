@@ -253,10 +253,10 @@ basis: *source* — the linked page states the idea; *derived* — our reasoning
 advice the linked page gives. A note is offered only in games where it applies: its condition
 (`NoteCondition` in `src/strategy/notes.ts`) tests the format, the phase, the standing, the fog
 level, the move order, the distribution, the kill rates, the guard, and which cards are in play.
-Where a note describes something `warapp_submit_turn` cannot send — an attack-only or
-transfer-only order, an order by percentage, an order that carries the commander or treats a
-teammate as an enemy, an Order Delay above other orders — its text says so and points to the game
-client. After they were drafted, the notes were checked a second time against the research by the
+Where a note describes something `warapp_submit_turn` cannot send — an Order Delay above other
+orders — its text says so and points to the game client. A note on an attack-only or transfer-only
+order, an order by percentage, an order that carries the commander or treats a teammate as an
+enemy names the move option that sends it (#165). After they were drafted, the notes were checked a second time against the research by the
 agents that did it, and 46 were reworded or given a narrower condition.
 The pages were read on 2026-11-13; nothing is quoted. A second pass the same day checked the
 rules of move order, pick awarding, turn phases, the Order Priority, Order Delay and Blockade
@@ -392,8 +392,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `settings-commander-protect` — Losing your Commander eliminates you and turns everything you
   hold neutral. Each turn, first check that no stack beside it could kill every army with it and
   deal 7 more in one attack; if one could, deploy on its territory. Orders sent here never carry
-  the Commander, so do not move its armies away. Never Blockade its territory. **Encoded:** the
-  planner holds its commander's territory before anything else and never carries the commander.
+  the Commander unless a move sets `commander` (#165), so do not strip its guard. Never Blockade its
+  territory. **Encoded:** the planner holds its commander's territory before anything else and
+  never carries the commander.
   Source: <https://war.app/wiki/Commanders>
 - `settings-commander-strike` — An enemy Commander dies only to a single attack that kills every
   army with it and then deals 7 more; damage short of that leaves it unharmed. Killing it

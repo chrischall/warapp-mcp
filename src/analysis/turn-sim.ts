@@ -29,7 +29,8 @@
 // it: an order sends what its territory can still move when that is fewer than ordered; an order
 // from a territory captured earlier in the turn does nothing; losses on a defending territory
 // fall first on the armies that could still move; and with the guard off, two sides wiped out
-// in one battle still leave one defender. Not modelled: the Limited Attacks mod.
+// in one battle still leave one defender; a percentage order (#165) takes its share of what can
+// still move, guard excluded. Not modelled: the Limited Attacks mod.
 //
 // With luck or weighted-random rounding a battle is not determined: each one is resolved at its
 // luck-free, straight-rounded expectation and `exact` is false.
@@ -80,6 +81,13 @@ export interface SimOrder {
   mode?: 'attack-only' | 'transfer-only';
   /** Take the commander on `from` along (default: it stays). */
   withCommander?: boolean;
+  /**
+   * `armies` is a percentage (1–100) of what `from` can still move when the order runs (#165;
+   * the client rounds it to nearest, a half down, and never sends more than can move).
+   */
+  byPercent?: boolean;
+  /** A teammate's territory is attacked, not transferred into (#165). */
+  attackTeammates?: boolean;
 }
 
 export interface SimInput {
@@ -140,6 +148,16 @@ const ASSUME_LOSSES =
 const ASSUME_SOURCE_LOST = 'An order from a territory that was captured first did nothing (the wiki does not say).';
 const ASSUME_WIPE =
   'With the guard off, an attack that wiped out both sides failed and left one defender (the wiki states this rule under the guard setting).';
+
+const ASSUME_PERCENT =
+  'A percentage order took its share of the armies its territory could still move, the guard left out (the client rounds the share; what it counts is not stated).';
+
+/** `pct`% of `n`, rounded to nearest with a half rounded down, as the client works out a percentage order. */
+export function percentOf(pct: number, n: number): number {
+  const x = (pct / 100) * n;
+  const whole = Math.floor(x);
+  return x - whole > 0.5 ? whole + 1 : whole;
+}
 
 interface Cell extends SimTerritory {
   /** Armies here that have used their move this turn. */
@@ -225,7 +243,7 @@ export function simulateTurn(input: SimInput): SimResult {
       return skip('source-lost');
     }
     if (!dst || !neighborsOf(input.graph, o.from).includes(o.to)) return skip('not-adjacent');
-    const isTransfer = friendly(dst.owner, player);
+    const isTransfer = o.attackTeammates ? dst.owner === player : friendly(dst.owner, player);
     if (isTransfer && o.mode === 'attack-only') return skip('attack-only');
     if (!isTransfer && o.mode === 'transfer-only') return skip('transfer-only');
     // A commander goes along only when asked, has not moved, and is not headed for a teammate's land.
@@ -234,7 +252,9 @@ export function simulateTurn(input: SimInput): SimResult {
     // The armies that have not moved, less the guard — which an army that arrived can be.
     const unmoved = Math.max(0, src.armies - src.moved);
     const movable = Math.max(0, Math.min(unmoved, src.armies - guard));
-    const want = Number.isFinite(o.armies) ? Math.max(0, Math.floor(o.armies)) : 0;
+    const asked = Number.isFinite(o.armies) ? Math.max(0, Math.floor(o.armies)) : 0;
+    const want = o.byPercent ? percentOf(Math.min(asked, 100), movable) : asked;
+    if (o.byPercent) assumptions.add(ASSUME_PERCENT);
     const sent = Math.min(want, movable);
     if (sent < want && sent > 0) assumptions.add(ASSUME_FEWER);
     if (sent <= 0 && !takesCommander) return skip('no-armies');

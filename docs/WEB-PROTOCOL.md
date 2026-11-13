@@ -205,6 +205,16 @@ PlayCard*       byte <card tag> (5 Reinforcement, 10 Order Priority, 11 Order De
 Discard         byte 09, GUID cardInstanceId, base
 ```
 
+**Order options — from the client bundle, UNVERIFIED live (#165).** The bundle's
+`GameOrderAttackTransfer` writer is the layout above; `warapp_submit_turn` sets its options when a
+move asks: `mode` 2 (Transfer Only) or 1 (Attack Only), `byPercent` (the count is then the
+percentage, 1–100), `attackTeammates`, and the commander as one special unit in `Armies`
+(`byte 1` count, then `byte 1` Commander tag, `GUID unitId`, `int32 ownerId` — the GUID and owner as
+the live board reads them; a commander alone sends count 0). The server's validator (bundle,
+`GameValidateOrders`) refuses byPercent unless `AllowPercentageAttacks` (error 360
+`CannotDoPercentageAttackWhenDisabled`), mode 2 unless `AllowTransferOnly` (361), mode 1 unless
+`AllowAttackOnly` (362). Golden tests pin the bytes; no commit with an option set has been sent.
+
 **Verified 2026-11-12** against a real turn-1 commit (1 deploy + 4 attacks): the captured
 frame parses with 0 bytes left over, and the encoder's parameter bytes for the same orders
 are byte-identical (132/132). Observed values: `mode` 3 (AttackTransfer) is what the client
@@ -339,8 +349,8 @@ in a whole 7 — less than 7 left over after the armies with it are dead does no
 in-game guide: "Commanders are worth 7 armies … cannot be partially damaged"; losing one
 turns its owner's territories neutral and eliminates them). So `d` armies plus a commander
 defend exactly as `d + 7` armies, which is what the planner uses
-(`COMMANDER_STRENGTH`, `src/analysis/combat.ts`). Order encoding sends no special units, so
-a planned move never carries the commander.
+(`COMMANDER_STRENGTH`, `src/analysis/combat.ts`). The planner never carries the commander; a
+move sent with `commander: true` (#165) writes it into the order's `Armies` (see Orders).
 
 **Player ids.** GameFeed and the invite token give a player's id wrapped in two leading
 and two trailing check digits; the in-game id is the middle: `id[2:-2]` (e.g. a token

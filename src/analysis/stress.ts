@@ -48,8 +48,8 @@ export interface StressInput {
   board: BoardState;
   me: number;
   deploys: readonly { territoryId: number; armies: number }[];
-  /** My attacks and transfers, in the order they will be submitted. */
-  moves: readonly { from: number; to: number; armies: number }[];
+  /** My attacks and transfers, in the order they will be submitted, with their options (#165). */
+  moves: readonly SimOrder[];
   opponents: readonly StressOpponent[];
   settings?: SimSettings;
   teams?: ReadonlyMap<number, number>;
@@ -171,7 +171,7 @@ export function stressPlan(input: StressInput): StressReport {
     owner === me || (typeof owner === 'number' && teams !== undefined && teams.get(owner) !== undefined && teams.get(owner) === teams.get(me));
 
   const myDeploys: SimDeploy[] = input.deploys.map((d) => ({ player: me, territoryId: d.territoryId, armies: d.armies }));
-  const myOrders: SimOrder[] = input.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies }));
+  const myOrders: SimOrder[] = input.moves.map((m) => ({ ...m }));
   const simulate = (deploys: SimDeploy[], theirs: { player: number; orders: SimOrder[] } | undefined, moveOrder: number[]): SimResult =>
     simulateTurn({
       graph,

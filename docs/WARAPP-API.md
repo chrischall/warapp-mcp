@@ -224,6 +224,27 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   client bundle; the 2026-11-12 live game in issue #44 matched it (no standing until Begin), but
   `warapp_begin_turn`'s encoding has not been sent live.
 
+## Order options and mods — keys verified, the options UNVERIFIED live (#165)
+
+- `settings.AllowTransferOnly`, `AllowAttackOnly` and `AllowPercentageAttacks` are booleans
+  (verified keys: the lobby fixture sends `false` for each), read into `GameSettings`
+  `allowTransferOnly`, `allowAttackOnly` and `allowPercentageAttacks`. The client bundle's order
+  validator refuses a Transfer Only order (error 361), an Attack Only order (362) or a percentage
+  order (360) when its setting is off; `warapp_submit_turn` refuses them first, and treats a setting
+  the feed did not send as off.
+- A percentage order's armies are worked out when it runs: the client rounds `percent/100 ×
+  available` to nearest (a half rounds down) and never sends more than is available (from the
+  bundle). What "available" counts — the guard left out, armies that moved in excluded — is assumed
+  from the rules, not read; `warapp_check_plan` resolves it that way and says so.
+- Attack teammates has no game setting; `warapp_submit_turn` refuses it outside a team game.
+- A commander moves only with an order that carries it (`docs/WEB-PROTOCOL.md`, Orders). No
+  setting other than `Commanders` gates it.
+- `settings.Mods` is a list (verified key: the lobby fixture sends `[]`); its entries' shape is
+  unverified, so only the count is kept (`GameSettings.mods`, -1 when the value is not a list). A
+  game with mods gets a warning in every plan that the rules assumed may not hold.
+- **Unverified:** none of these options has been sent in a live commit. The owner confirms each
+  on a live turn (the order shows in the game as sent).
+
 ## Pick-list length — from the client bundle, UNVERIFIED against the server (#129)
 
 - war.app's client gives each player `perPlayer` = floor(pickable territories / players), capped
