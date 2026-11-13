@@ -177,7 +177,8 @@ What that check covers:
   reply.
 
 The result is shown (#148): `warapp_session_status` reports the loaded bundle (`decoder`: version,
-whether a cached stand-in is decoding, the helpers verified and the unverified ones with why),
+whether a cached stand-in is decoding, the helpers verified and the unverified ones with why;
+absent after a load that failed or was refused, so an earlier bundle is never shown as decoding),
 and `warapp_get_live_board` carries the same `decoder` on its full view (on compact only when a
 cached stand-in decoded the board).
 

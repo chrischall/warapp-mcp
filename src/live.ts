@@ -245,11 +245,12 @@ export function standingFromInfo(info: unknown): LiveTerritory[] | null {
  * A board-wide sanity check on the army counts, one that a misread count cannot pass by accident
  * (#148): when every territory of mine (fog level You) reads 0 armies, the count was read from the
  * wrong field. A single empty territory of mine is possible (a commander standing alone, or a game
- * without "one army stands guard"); all of them at once is not a board war.app would send.
+ * without "one army stands guard"), so it proves nothing: a territory carrying a special unit is left
+ * out, and the check needs at least two of mine. Two or more all empty is not a board war.app sends.
  */
 function checkArmies(territories: readonly LiveTerritory[]): void {
-  const mine = territories.filter((t) => t.fogLevel === FOG_LEVEL_YOU && t.armies !== null);
-  if (mine.length && mine.every((t) => t.armies === 0)) {
+  const mine = territories.filter((t) => t.fogLevel === FOG_LEVEL_YOU && t.armies !== null && !t.specialUnits?.length);
+  if (mine.length >= 2 && mine.every((t) => t.armies === 0)) {
     throw new LiveBoardFormatError(
       `every territory of yours reads 0 armies (${mine.length} of them), so the army count was not read from the right field`,
     );

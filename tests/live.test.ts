@@ -264,6 +264,17 @@ describe('the army count cannot come out wrong and still read as verified (#148)
     );
     expect(readLiveStanding(bundle, r)?.map((t) => t.armies)).toEqual([0, 4]);
   });
+
+  it('a player down to one territory, at 0 armies, is a board: one empty territory proves nothing', () => {
+    const r = body(
+      [
+        { id: 1, fogLevel: 1, owner: 123456, armies: 0 },
+        { id: 2, fogLevel: 2, owner: 765432, armies: 30 },
+      ],
+      [123456],
+    );
+    expect(readLiveStanding(bundle, r)?.map((t) => t.armies)).toEqual([0, 30]);
+  });
 });
 
 describe('the current standing is the current field, not the first one present (#131)', () => {

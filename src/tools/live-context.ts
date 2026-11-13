@@ -301,6 +301,9 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
         lastBundle = b;
         return b;
       } catch (e) {
+        // A refused or failed load means boards are not being decoded: the earlier bundle is no longer
+        // what stands behind them, so it is not reported as the decoder (#148).
+        lastBundle = undefined;
         if (e instanceof McpToolError) throw e;
         throw new McpToolError(`Could not load war.app's client bundle: ${e instanceof Error ? e.message : String(e)}`, {
           kind: 'unknown',
