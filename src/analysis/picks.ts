@@ -30,7 +30,9 @@
 //  3. Score of a pick set: Σ completed value × (PICK_HORIZON + 1 − turn) — the bonus
 //     armies earned through turn PICK_HORIZON + 1 — plus PROGRESS_WEIGHT × value ×
 //     share held for bonuses still incomplete, each bonus scaled by its
-//     defensibility 1 / (1 + ENTRY_WEIGHT × entry points × hardness), where
+//     defensibility 1 / (1 + weight × entry points × hardness), where weight is
+//     ENTRY_WEIGHT, or ENTRY_WEIGHT_1V1 (twice as much) in a 1v1 — one opponent finds
+//     every entry point, so a narrow bonus wins ties against a wide one (#73) — and
 //     hardness is how much dearer an attack is than at the standard 60/70 (at 30/75
 //     a bonus with few entry points is worth more).
 //  4. Contestedness. A pick's centrality is its mean hop distance to the other
@@ -40,16 +42,21 @@
 //  5. Groups. The primary group (min(TerritoryLimit, maxPicks) picks) grows from a seed
 //     by adding, greedily, the pick with the biggest marginal gain in the joint
 //     simulation's score (× its contest factor), among picks within COMPACT_DISTANCE hops
-//     (on the map graph warapp_plan_route uses) of a pick already in the group — or, in
-//     a 1v1, anchoring a bonus no group pick anchors and within SPREAD_DISTANCE hops
-//     (spreading against one counter-pick, bounded). Ties: individual score, then id.
-//     Seeds are tried best score first; when none grows a full group, the hop limit
-//     relaxes by one, with a warning, until one does. In a 1v1 the bound also gives way,
-//     with a warning, at the smallest hop limit where a group scores SPREAD_RELAX_GAIN
-//     times the bounded one — the bound must not quietly hand the best picks to the
-//     fallback. The fallback group is built the same way from the remaining pickables,
-//     up to maxPicks in total; a fallback that still outscores the primary is warned
-//     about. Each group is listed by score; its maxHops and the rationale state its real
+//     (on the map graph warapp_plan_route uses) of a pick already in the group. Ties:
+//     individual score, then id. Seeds are tried best score first; when none grows a full
+//     group, the hop limit relaxes by one, with a warning, until one does. This holds in
+//     a 1v1 too (#73): a primary spread over bonuses against a counter-pick meant a
+//     frontier on every one of them from turn 1, and the counter-pick is already covered
+//     by the fallback. The fallback group is built the same way from the remaining
+//     pickables, up to maxPicks in total; in a 1v1, among the equally scored compact
+//     fallbacks found at its hop limit, the one farthest from the primary (fewest hops
+//     between the two groups, maximised) wins, so one counter-pick cannot reach both. A
+//     fallback that still outscores the primary is warned about.
+//     Only with `spread: true` in a 1v1 does the old rule apply: a pick may also join
+//     when it anchors a bonus no group pick anchors and lies within SPREAD_DISTANCE hops,
+//     and the bound gives way, with a warning, at the smallest hop limit where a group
+//     scores SPREAD_RELAX_GAIN times the bounded one. Usually worse on large maps.
+//     Each group is listed by score; its maxHops and the rationale state its real
 //     spread (farthest pair, and the longest step linking its picks into one cluster) and
 //     call it compact only when that step is at most COMPACT_DISTANCE: one cluster, not
 //     merely each pick with a group-mate nearby.
@@ -69,17 +76,19 @@ import { DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
 export const PICK_HORIZON = 3;
 /** Share of a still-incomplete bonus's value credited per share of it held at the horizon. */
 export const PROGRESS_WEIGHT = 0.5;
-/** Defensibility penalty per entry point (scaled by attack hardness). */
+/** Defensibility penalty per entry point (scaled by attack hardness)… */
 export const ENTRY_WEIGHT = 0.05;
+/** …and in a 1v1 (twice ENTRY_WEIGHT: the one opponent finds every entry point, #73). */
+export const ENTRY_WEIGHT_1V1 = 0.1;
 /** Contest penalty per player beyond two… */
 export const CONTEST_PER_PLAYER = 0.06;
 /** …capped here. */
 export const CONTEST_MAX = 0.5;
 /** A group pick lies within this many hops of another pick in its group… */
 export const COMPACT_DISTANCE = 2;
-/** …or, in a 1v1, within this many when it anchors a bonus no other group pick anchors. */
+/** With `spread: true` in a 1v1: or within this many when it anchors a bonus no other group pick anchors. */
 export const SPREAD_DISTANCE = 4;
-/** A 1v1 group spreads past SPREAD_DISTANCE only when that scores at least this many times as much. */
+/** With `spread: true`: a 1v1 group spreads past SPREAD_DISTANCE only when that scores at least this many times as much. */
 export const SPREAD_RELAX_GAIN = 1.5;
 /** Defaults when the settings are missing (war.app's usual values). */
 export const DEFAULT_PICK_ARMIES = 5;
@@ -118,6 +127,11 @@ export interface PlanPicksInput {
   maxPicks: number;
   /** Neutral armies as the live board shows them (wastelands included), by territory id. */
   neutralArmies?: ReadonlyMap<number, number>;
+  /**
+   * In a 1v1, spread the primary across bonuses against a counter-pick (the pre-#73 rule);
+   * usually worse on large maps. Ignored with three or more players.
+   */
+  spread?: boolean;
 }
 
 export type PickGroupName = 'primary' | 'fallback';
@@ -354,6 +368,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     warnings.push('Local deployments are on: bonus income must be deployed inside its bonus; the model pools it.');
 
   const guard = s.oneArmyStandsGuard === false ? 0 : 1;
+  const players = Math.max(1, Math.floor(input.players));
+  const duel = players <= 2;
+  const entryWeight = duel ? ENTRY_WEIGHT_1V1 : ENTRY_WEIGHT;
   const rates = { offensiveKillRate: off, defensiveKillRate: def, luckModifier: s.luckModifier };
 
   // Per-territory capture cost.
@@ -387,7 +404,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       value: b.value,
       members,
       entryPoints,
-      defense: 1 / (1 + ENTRY_WEIGHT * entryPoints * hardness),
+      defense: 1 / (1 + entryWeight * entryPoints * hardness),
     });
     for (const t of members) bonusesOf.set(t, [...(bonusesOf.get(t) ?? []), b.id]);
   }
@@ -406,7 +423,6 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   };
 
   // Contestedness from centrality among the pickables.
-  const players = Math.max(1, Math.floor(input.players));
   const contestWeight = Math.min(CONTEST_MAX, Math.max(0, (players - 2) * CONTEST_PER_PLAYER));
   const meanDist = new Map<number, number>();
   for (const t of pickable) {
@@ -502,10 +518,11 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   };
 
   // Groups. A pick joins a group when it lies within `hop` hops of a pick already in it
-  // (hop starts at COMPACT_DISTANCE) — or, in a 1v1, when it anchors a bonus no group pick
-  // anchors and lies within max(SPREAD_DISTANCE, hop) hops. Seeds are tried best score
-  // first; when no seed grows a full group, hop relaxes by one and the search repeats.
-  const spread = players <= 2;
+  // (hop starts at COMPACT_DISTANCE) — or, with `spread: true` in a 1v1, when it anchors a
+  // bonus no group pick anchors and lies within max(SPREAD_DISTANCE, hop) hops. Seeds are
+  // tried best score first; when no seed grows a full group, hop relaxes by one and the
+  // search repeats.
+  const spread = duel && input.spread === true;
   const tryGroup = (pool: number[], size: number, seed: number, hop: number): number[] | null => {
     const group = [seed];
     const left = new Set(pool.filter((t) => t !== seed));
@@ -540,24 +557,51 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   const groupScore = (ids: number[]) => simulate(ctx, ids).score;
   /** The hop limit each group was relaxed to (absent: not relaxed; Infinity: until every pick could join). */
   const relaxedTo = new Map<string, number>();
-  const firstGroup = (pool: number[], size: number, seeds: number[], hop: number) => {
+  /** Fewest hops between a pick of `ids` and one of `away` (the gap between two groups). */
+  const gapTo = (ids: number[], away: number[]) => Math.min(...ids.flatMap((a) => away.map((b) => hops(a, b))));
+  // The first seed (best score first) that grows a full group. With `away` (a 1v1
+  // fallback), every seed's group is grown at this hop limit, and among those scoring as
+  // much as the first, the one farthest from `away` wins (ties: the first).
+  const firstGroup = (pool: number[], size: number, seeds: number[], hop: number, away: number[] = []) => {
+    let first: number[] | null = null;
+    let firstScore = 0;
+    let best: number[] | null = null;
+    let bestGap = -Infinity;
     for (const seed of seeds) {
       const group = tryGroup(pool, size, seed, hop);
-      if (group) return group;
+      if (!group) continue;
+      if (!away.length) return group;
+      const sc = round2(groupScore(group));
+      if (first === null) {
+        first = group;
+        firstScore = sc;
+      } else if (sc !== firstScore) continue;
+      const gap = gapTo(group, away);
+      if (gap > bestGap) {
+        best = group;
+        bestGap = gap;
+      }
     }
-    return null;
+    return best;
   };
-  const buildGroup = (pool: number[], size: number, label: string): number[] => {
+  const buildGroup = (pool: number[], size: number, label: string, away: number[] = []): number[] => {
     if (size <= 0 || !pool.length) return [];
     const seeds = [...pool].sort(byScore);
-    if (size === 1) return [seeds[0]!];
+    if (size === 1) {
+      if (!away.length) return [seeds[0]!];
+      // In a 1v1, the farthest from the primary among the equally scored best.
+      const top = seeds.filter((t) => scores.get(t) === scores.get(seeds[0]!));
+      let pick = top[0]!;
+      for (const t of top) if (gapTo([t], away) > gapTo([pick], away)) pick = t;
+      return [pick];
+    }
     let widest = 0;
     for (const a of pool) for (const b of pool) if (a < b && hops(a, b) < Infinity) widest = Math.max(widest, hops(a, b));
     for (let hop = COMPACT_DISTANCE; ; hop++) {
       // Past every connected distance (and never at the compact limit itself): the
       // last try allows any distance, so it is a recorded relaxation, not "compact".
       const last = hop > Math.max(widest, COMPACT_DISTANCE);
-      const group = firstGroup(pool, size, seeds, last ? Infinity : hop);
+      const group = firstGroup(pool, size, seeds, last ? Infinity : hop, away);
       if (!group) {
         if (last) return seeds.slice(0, size).sort(byScore);
         continue;
@@ -569,9 +613,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
             (last ? 'relaxed until every pick could join (some are not connected).' : `relaxed to within ${hop} hops.`),
         );
       }
-      // In a 1v1 the hop bound must not quietly hand a far better group to the fallback:
-      // spread past it when that scores SPREAD_RELAX_GAIN times as much, at the smallest
-      // hop limit that does.
+      // With `spread: true` in a 1v1 the hop bound must not quietly hand a far better group
+      // to the fallback: spread past it when that scores SPREAD_RELAX_GAIN times as much, at
+      // the smallest hop limit that does.
       const bound = Math.max(hop, SPREAD_DISTANCE);
       if (spread && !last && bound < widest) {
         const bounded = groupScore(group);
@@ -608,7 +652,13 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     );
   const primary = buildGroup(pickable, primarySize, 'primary');
   const rest = pickable.filter((t) => !primary.includes(t));
-  const fallback = buildGroup(rest, Math.min(maxPicks - primary.length, rest.length), 'fallback');
+  // In a 1v1 (unless spreading) the fallback is counter-pick insurance: in another area.
+  const fallback = buildGroup(
+    rest,
+    Math.min(maxPicks - primary.length, rest.length),
+    'fallback',
+    duel && !spread ? primary : [],
+  );
 
   /** Farthest pair (hops) and the longest step that links the picks into one cluster. */
   const spreadOf = (ids: number[]) => {
@@ -688,8 +738,14 @@ export function planPicks(input: PlanPicksInput): PickPlan {
           (relaxed
             ? `each group is kept as compact as the map allows (no group of the needed size forms one cluster with each pick within ${COMPACT_DISTANCE} hops of another, so the hop limit was relaxed; see the warnings).`
             : `each group is compact (one cluster, each pick within ${COMPACT_DISTANCE} hops of another).`)
-      : `In a 1v1 centrality is not penalised; a pick may join a group within ${SPREAD_DISTANCE} hops when it anchors a different bonus, so one counter-pick cannot wipe them` +
-          (relaxed ? `; a group spreads farther only when no bounded group exists or spreading scores ${SPREAD_RELAX_GAIN}× as much (see the warnings).` : '.'),
+      : spread
+        ? `In a 1v1 centrality is not penalised and entry points weigh twice as much; with spread on, a pick may join a group within ${SPREAD_DISTANCE} hops when it anchors a different bonus, so one counter-pick cannot wipe them` +
+          (relaxed ? `; a group spreads farther only when no bounded group exists or spreading scores ${SPREAD_RELAX_GAIN}× as much (see the warnings).` : '.')
+        : `In a 1v1 centrality is not penalised and entry points weigh twice as much; ` +
+          (relaxed
+            ? `each group is kept as compact as the map allows (the hop limit was relaxed; see the warnings), `
+            : `each group is compact (one cluster, each pick within ${COMPACT_DISTANCE} hops of another), `) +
+          'so the start has one front, not several; the fallback, in another area when one scores as much, is the insurance against a counter-pick.',
     `The first ${primary.length} picks are the primary group, ${describe(primary)}; ` +
       `the rest are a disjoint fallback${fallback.length ? ` (${describe(fallback)})` : ''}, granted in order when another player picks first.`,
   );
@@ -700,7 +756,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       `The fallback group scores more than the primary (${groups.fallback.score} vs ${groups.primary.score}): the primary keeps to ` +
         (players > 2
           ? `one compact cluster, since with ${players} players spread picks are likely contested.`
-          : `within ${SPREAD_DISTANCE} hops unless spreading scores ${SPREAD_RELAX_GAIN}× as much.`) +
+          : spread
+            ? `within ${SPREAD_DISTANCE} hops unless spreading scores ${SPREAD_RELAX_GAIN}× as much.`
+            : 'one compact cluster, so the start has one front; the fallback covers a counter-pick.') +
         ' Weigh the trade before submitting.',
     );
   return { picks, groups, warnings, rationale };

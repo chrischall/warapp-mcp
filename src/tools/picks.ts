@@ -65,9 +65,9 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         'Rank the pickable territories of a war.app (Warzone) game in manual distribution, from the map, the ' +
           "game's settings (starting armies, neutral sizes, kill rates, base income) and the live board's " +
           'pickable territories: a list in priority order by name and id, split into a primary group ' +
-          '(the territory limit: what you are granted if nobody takes them first; compact with 3+ players, ' +
-          'allowed a bounded spread over bonuses in a 1v1, with maxHops between its two farthest picks) and a disjoint fallback group ' +
-          '(granted in order when another player picked first), each pick with its score and reasons (bonus, ' +
+          '(the territory limit: what you are granted if nobody takes them first; one compact cluster, a 1v1 included, ' +
+          'with maxHops between its two farthest picks) and a disjoint fallback group ' +
+          '(granted in order when another player picked first; in a 1v1 in another area, against a counter-pick), each pick with its score and reasons (bonus, ' +
           'value, turns to complete, first-turn bonus, entry points, contested), the bonuses each group completes, ' +
           'warnings (assumed settings) and the reasoning. Its `submitPicks` is exactly what warapp_submit_picks ' +
           'takes — review it with the user first. Refuses outside the picking stage or when nothing is pickable. ' +
@@ -81,9 +81,16 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           VIEWS,
           'compact (default) gives the ranked picks with reasons, the groups and submitPicks; "full" adds the settings the plan assumed.',
         ),
+        spread: z
+          .boolean()
+          .optional()
+          .describe(
+            'In a 1v1, spread the primary across bonuses against a counter-pick instead of one compact cluster ' +
+              '(default false); usually worse on large maps. Ignored with three or more players.',
+          ),
       }),
     },
-    async ({ game_id, view }) => {
+    async ({ game_id, view, spread }) => {
       const game = await ctx.client.getGame(game_id, { settings: true });
       requirePickPhase(game);
       const map = mapOf(game);
@@ -116,6 +123,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         territoryLimit,
         maxPicks,
         neutralArmies,
+        spread: spread === true,
       });
       const name = namer(map);
       const groupView = (g: PickGroup) => ({
