@@ -66,6 +66,20 @@ describe('#179 Local Deployment: finishing off sizes each territory for the depl
     // The pooled bonus's territories still face all of it.
     expect(attackOn(on, 6)!.armies).toBe(captureCost(2 + 9, STD));
     expect(attackOn(on, 7)!.armies).toBe(captureCost(2 + 9, STD));
+    // The finish-off line says what each attack was sized for, as the Local Deployment line does.
+    expect(off.rationale.join('\n')).toMatch(/Finish off player 20: .*each sized for its full ~9 deploy landing there/);
+    expect(on.rationale.join('\n')).toMatch(
+      /Finish off player 20: .*each sized for the part of its ~9 deploy that can reach it \(Local Deployment\) landing there/,
+    );
+    expect(on.rationale.join('\n')).not.toMatch(/Finish off player 20: .*its full ~9 deploy/);
+  });
+
+  it('the move-order caveat sizes each border for the deploy that can reach it, as the cover does', () => {
+    // My 1 faces only the victim's 5, outside its pooled bonus: 5's 1 movable plus ~5 can reach it.
+    const p = planTurn({ graph: buildGraph(LD_MAP), board: LD_BOARD, me: ME, income: 45, settings: { ...STD, localDeployments: true } });
+    const caveat = p.warnings.find((w) => /assumes my attacks land before its own orders/.test(w))!;
+    expect(caveat).toMatch(/or take T2 \(#2\)/);
+    expect(caveat).not.toMatch(/T1 \(#1\)/);
   });
 
   it('rule 1s: a commander outside its pooled bonus is struck sized for its free deploy only', () => {
@@ -234,5 +248,109 @@ describe('#179 FFA: price the elimination before finishing a player off', () => 
     const p = planTurn({ graph: g2, board: b, me: ME, income: 12, settings: STD, game });
     expect(attackOn(p, 3)).toBeDefined();
     expect(p.rationale.join('\n')).toMatch(/Commander kill \(#179\): player 20's land turns neutral where it stands; player 30 borders T6 \(#6\)/);
+  });
+});
+
+describe('#179 cover: the hold survives the later passes', () => {
+  // My 1 (4) faces the victim's 2 (13) and a cheap neutral 4 (2); my 7 (28) strikes 2. The
+  // victim's stack on 2 plus its ~9 deploy can hit 1 before my strike lands: 1 is covered, and
+  // no later pass (the expansion into 4 here) may spend what it keeps.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7], [[1, 2], [1, 4], [1, 5], [2, 3], [2, 6], [2, 7], [5, 7]]));
+  const b = board([mine(1, 4), enemy(2, 13), neutral(3, 3), neutral(4, 2), neutral(5, 8), neutral(6, 6), mine(7, 28)]);
+  const ends = (p: TurnPlan, id: number, start: number) =>
+    start +
+    (p.deploys.find((d) => d.territoryId === id)?.armies ?? 0) +
+    p.moves.filter((m) => m.to === id && m.kind === 'transfer').reduce((n, m) => n + m.armies, 0) -
+    p.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0);
+
+  it('a covered border with a cheap expansion beside it keeps what holds against the victim', () => {
+    const p = planTurn({ graph: g, board: b, me: ME, income: 34, settings: STD, options: { adapt: false, enemyDeploy: 9 } });
+    expect(p.rationale.join('\n')).toMatch(/Cover player 20's exits \(#179\): .*T1 \(#1\)/);
+    // Its stack (12 movable) plus its ~9 deploy: 21 must not take what stays on 1.
+    expect(captureCost(ends(p, 1, 4), STD)).toBeGreaterThan(21);
+    expect(p.warnings.join('\n')).not.toMatch(/or take T1 \(#1\)/);
+  });
+
+  it('a covered border the triage concedes is not withdrawn from below its cover', () => {
+    // 1 (4) faces the victim's 2 (1) and player 30's 3 (40): conceded against 30, covered against 20.
+    const g2 = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [1, 3], [1, 4], [4, 5], [2, 5]]));
+    const b2 = board([mine(1, 4), enemy(2, 1), enemy(3, 40, OTHER), mine(4, 2), mine(5, 30)]);
+    const p = planTurn({ graph: g2, board: b2, me: ME, income: 10, settings: STD, options: { adapt: false, enemyDeploy: 4 } });
+    expect(p.rationale.join('\n')).toMatch(/Cover player 20's exits \(#179\): .*T1 \(#1\)/);
+    expect(p.conceded).toContain(1);
+    // The victim's stack (0 movable) plus its ~4 deploy.
+    expect(captureCost(ends(p, 1, 4), STD)).toBeGreaterThan(4);
+  });
+});
+
+describe('#179 FFA: a buffer left standing is not taken by any pass', () => {
+  // Player 40's 1 (0 armies) is a buffer between my 7 and 9 and player 30's 2 (19). My army lead
+  // is over 3×, so the #167 lead strike would take it from 9: the buffer gate holds there too.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+      [[1, 2], [1, 7], [1, 9], [2, 3], [2, 4], [2, 10], [3, 5], [3, 8], [3, 6], [5, 6], [6, 11], [6, 13], [9, 12], [10, 13]],
+    ),
+  );
+  const b = board(
+    [
+      enemy(1, 0, 40),
+      enemy(2, 19, OTHER),
+      neutral(3, 1),
+      neutral(4, 2),
+      enemy(5, 21, OTHER),
+      enemy(6, 4, OTHER),
+      mine(7, 64),
+      enemy(8, 14),
+      mine(9, 72),
+      neutral(10, 6),
+      neutral(11, 2),
+      mine(12, 64),
+      enemy(13, 7),
+    ],
+    true,
+  );
+  const game = { players: [{ id: ME }, { id: VICTIM }, { id: OTHER }, { id: 40 }], turn: 22, commanders: true };
+  const settings: PlannerSettings = { offensiveKillRate: 70, defensiveKillRate: 70, oneArmyStandsGuard: true };
+
+  it('the army-lead strike skips it', () => {
+    const p = planTurn({ graph: g, board: b, me: ME, income: 9, settings, game, options: { adapt: true, enemyDeploy: 2 } });
+    expect(p.rationale.join('\n')).toMatch(/Not finishing off player 40 \(#179\): it is a buffer/);
+    // The frontier delta is shown in whole armies.
+    expect(p.rationale.join('\n')).toMatch(/the frontier's hold cost changes by \+\d+ armies/);
+    expect(p.rationale.join('\n')).toMatch(/FFA army lead/);
+    expect(attackOn(p, 1)).toBeUndefined();
+    // Nor is it offered as the capture the plan stands still without.
+    expect(p.warnings.join('\n')).not.toMatch(/cheapest capture \(T1 \(#1\)/);
+  });
+});
+
+describe('#179 Order Priority for the kill: no minimum armies, and never for a wear-down attack', () => {
+  it('a small killing strike still gets the card', () => {
+    // My 1 (20) kills the victim's last territory 2 (1) with 3, under ORDER_PRIORITY_MIN_ARMIES.
+    const g = buildGraph(makeMap([1, 2, 3], [[1, 2], [1, 3]]));
+    const b = board([mine(1, 20), enemy(2, 1), neutral(3, 2)]);
+    const p = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, options: { enemyDeploy: 1, holdsOrderPriority: true } });
+    expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
+    expect(p.moves[0]).toMatchObject({ kind: 'attack', from: 1, to: 2 });
+    expect(p.moves[0]!.armies).toBeLessThan(5);
+    expect(p.cardAdvice).toBe('order-priority');
+    expect(p.rationale.join('\n')).toMatch(/Play Order Priority: T1 \(#1\) → T2 \(#2\) is the strike that eliminates player 20/);
+  });
+
+  it('a kill by a combined capture: the card cannot secure it, and says so', () => {
+    // The victim's last territory 3 is taken by 1 wearing it down and 2 finishing it: the card
+    // protects only my first order, the wear-down, which takes nothing.
+    const g = buildGraph(makeMap([1, 2, 3, 4], [[1, 3], [2, 3], [1, 2], [1, 4]]));
+    for (const mine1 of [4, 6]) {
+      const b = board([mine(1, mine1), mine(2, 14), enemy(3, 6), neutral(4, 2)]);
+      const p = planTurn({ graph: g, board: b, me: ME, income: 0, settings: STD, options: { enemyDeploy: 3, holdsOrderPriority: true } });
+      expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
+      expect(p.multiSourceCaptures).toEqual([3]);
+      expect(p.cardAdvice).toBeNull();
+      expect(p.warnings.join('\n')).toMatch(
+        /The strike that eliminates player 20 is a combined capture of T3 \(#3\) \(2 attacks that must run in order\): Order Priority moves only my first order ahead, so it cannot secure the kill/,
+      );
+    }
   });
 });
