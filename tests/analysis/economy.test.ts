@@ -247,3 +247,18 @@ describe('#125 staging: unthreatened stacks move toward a capture not yet afford
     expect(p.rationale.join('\n')).toMatch(/Move 10 from T3 \(#3\) to T2 \(#2\): stages toward T5 \(#5\)/);
   });
 });
+
+describe('#125 saving is only for a step this turn cannot afford', () => {
+  // Ridge (+3) [1,2]: 2 is a 2-neutral my 1 can take, but the completed bonus would face an enemy
+  // 30-stack (R3: indefensible), so it is refused. That is no reason to save the leftover toward it.
+  it('a refused, affordable step gets no saving', () => {
+    const p = plan({
+      edges: '1-2 2-3 1-4 4-6',
+      bonuses: [[100, 3, [1, 2]]],
+      cells: { 1: 'M5', 2: 'n2', 3: 'E30', 4: 'M3', 6: 'n2' },
+      turn: 3,
+    });
+    expect(p.warnings.join('\n')).toMatch(/indefensible/);
+    expect(p.rationale.join('\n')).not.toMatch(/save toward T2/);
+  });
+});

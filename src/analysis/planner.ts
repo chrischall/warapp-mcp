@@ -590,8 +590,10 @@
 //     the rest to the first — else (#125) it saves toward a capture this turn cannot afford:
 //     rule 4e's top-ranked step when it stood still for want of armies, else (rule 4f committing)
 //     the closest bonus's cheapest missing member in reach when this turn made no capture into
-//     that bonus; it goes to my territory beside that member with the most armies free (open, not
-//     a softener, no order under No-Split; "save toward …, the next step of bonus …") — else the
+//     that bonus, and only when its armies free plus what may still be deployed there fall short
+//     of it (a step refused for another reason — R3, rule 4c or 4d — is no reason to save); it
+//     goes to my territory beside that member with the most armies free (open, not a softener, no
+//     order under No-Split; "save toward …, the next step of bonus …") — else the
 //     source of the top expansion (a capture's finisher; it then makes no transfer), else the
 //     border with the most fogged neighbours, else my biggest stack.
 //  6. Idle armies on interior territories transfer one step toward the front,
@@ -6493,7 +6495,10 @@ export function planTurn(input: PlanInput): TurnPlan {
     const from = neighborsOf(g, step.t)
       .filter((x) => mineSet.has(x) && open(x) && notSoftening(x) && !orderOf(x))
       .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b)[0];
-    return from === undefined ? undefined : { ...step, from };
+    // Only a step this turn cannot afford: one the plan could take but did not (R3, rule 4c or 4d
+    // refused it) is no reason to save.
+    if (from === undefined || avail.get(from)! + roomAt(from) >= step.cost) return undefined;
+    return { ...step, from };
   };
   /** Set by the leftover deploy (rule 5): the step it saved toward, which idle stacks stage toward (rule 6). */
   let staging: { t: number; bonusId: number; cost: number; from: number } | undefined;
