@@ -1,10 +1,18 @@
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { BoardState } from '../src/board.js';
 import type { Player } from '../src/normalize.js';
-import { boardCachePath, boardFromHistory, CACHED_TURNS, readBoardCache, readBoardHistory, writeBoardCache } from '../src/trend.js';
+import {
+  BOARD_CACHE_MAX_AGE_MS,
+  boardCachePath,
+  boardFromHistory,
+  CACHED_TURNS,
+  readBoardCache,
+  readBoardHistory,
+  writeBoardCache,
+} from '../src/trend.js';
 
 // Synthetic GameFeed ids: the in-game id wrapped in two check digits each end.
 const ANN = { id: 3312345644, name: 'Ann' } as Player;
@@ -62,6 +70,23 @@ describe('board cache', () => {
       { territoryId: 3, owner: { kind: 'unknown' }, armies: null, fogLevel: 'Fogged' },
     ],
   };
+  it('prunes the cached boards of games not planned for a long while (#131)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    mkdirSync(join(dir, 'boards'), { recursive: true });
+    const old = boardCachePath(dir, 7);
+    const recent = boardCachePath(dir, 8);
+    writeFileSync(old, '{}');
+    writeFileSync(recent, '{}');
+    writeFileSync(join(dir, 'boards', 'notes.txt'), 'keep');
+    const longAgo = (Date.now() - BOARD_CACHE_MAX_AGE_MS - 86_400_000) / 1000;
+    utimesSync(old, longAgo, longAgo);
+    expect(await writeBoardCache(dir, 42, ANN.id, 3, board)).toBe(true);
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(recent)).toBe(true);
+    expect(existsSync(boardCachePath(dir, 42))).toBe(true);
+    expect(existsSync(join(dir, 'boards', 'notes.txt'))).toBe(true);
+  });
+
 
   it('round-trips the board for the same game, player and turn only', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));

@@ -6,8 +6,9 @@
 // reads the whole history).
 //
 // The cache holds only the player's own fogged view (what the live board
-// showed them), at `<dataDir>/boards/<gameId>.json`.
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+// showed them), at `<dataDir>/boards/<gameId>.json`; a game's file not written for
+// 60 days is deleted on the first write of a process.
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { boardFromStanding, type BoardState, type TerritoryState } from './board.js';
 import { playersByInGameId } from './live.js';
@@ -120,6 +121,33 @@ export const boardCachePath = (dir: string, gameId: number) => join(dir, 'boards
  */
 export const CACHED_TURNS = 10;
 
+/** A game's cached boards not written for this long are deleted (finished or abandoned games). */
+export const BOARD_CACHE_MAX_AGE_MS = 60 * 86_400_000;
+const BOARD_FILE = /^\d+\.json$/;
+/** Board directories pruned by this process: once is enough. */
+const pruned = new Set<string>();
+
+/** Delete the board caches of games not written for {@link BOARD_CACHE_MAX_AGE_MS}. Best effort. */
+async function pruneBoardCaches(dir: string): Promise<void> {
+  const boards = join(dir, 'boards');
+  if (pruned.has(boards)) return;
+  pruned.add(boards);
+  const cutoff = Date.now() - BOARD_CACHE_MAX_AGE_MS;
+  try {
+    for (const name of await readdir(boards)) {
+      if (!BOARD_FILE.test(name)) continue;
+      const file = join(boards, name);
+      try {
+        if ((await stat(file)).mtimeMs < cutoff) await unlink(file);
+      } catch {
+        // Gone already, or unreadable: leave it.
+      }
+    }
+  } catch {
+    // No board directory yet.
+  }
+}
+
 interface CachedBoards {
   gameId: number;
   playerId: number;
@@ -216,6 +244,7 @@ export async function writeBoardCache(
     const body: CachedBoards = { gameId, playerId, turns };
     await writeFile(tmp, JSON.stringify(body), { mode: 0o600 });
     await rename(tmp, path);
+    await pruneBoardCaches(dir);
     return true;
   } catch {
     return false;

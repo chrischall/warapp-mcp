@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -172,5 +172,64 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
   it('a bundle that defines no helpers (the test bundles) has nothing to check', () => {
     const b = new WarappBundle(MINI_BUNDLE, 'mini');
     expect(b.dialectCheck).toEqual({ verified: [], unverified: [], mismatched: [] });
+  });
+});
+
+describe('the bundle cache is pruned and survives a failed version lookup (#131)', () => {
+  const seed = (dataDir: string, files: Record<string, string>, mtimeSec?: Record<string, number>) => {
+    mkdirSync(join(dataDir, 'bundle'), { recursive: true });
+    for (const [name, body] of Object.entries(files)) {
+      const f = join(dataDir, 'bundle', name);
+      writeFileSync(f, body);
+      const t = mtimeSec?.[name];
+      if (t !== undefined) utimesSync(f, t, t);
+    }
+  };
+
+  it('keeps only the version in use once it loads', async () => {
+    const dataDir = tempDir();
+    seed(dataDir, { '111.js': MINI_BUNDLE, '222.js': MINI_BUNDLE, '987.js.tmp-1': 'x', 'notes.txt': 'keep' });
+    await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }).fetchText, pageUrl: PAGE });
+    expect(readdirSync(join(dataDir, 'bundle')).sort()).toEqual(['987.js', 'notes.txt']);
+  });
+
+  it('falls back to the newest cached copy when the page naming the version cannot be read', async () => {
+    const dataDir = tempDir();
+    seed(dataDir, { '111.js': MINI_BUNDLE, '222.js': MINI_BUNDLE }, { '111.js': 1_700_000_000, '222.js': 1_700_000_500 });
+    const fetchText = async () => {
+      throw new Error('did not respond within 30000ms');
+    };
+    const b = await loadBundle({ dataDir, fetchText, pageUrl: PAGE });
+    expect(b.version).toBe('222');
+    expect(b.fallback).toBe(true);
+    // Nothing is pruned on a fallback: the lookup did not say which version is current.
+    expect(readdirSync(join(dataDir, 'bundle')).sort()).toEqual(['111.js', '222.js']);
+  });
+
+  it('still fails when there is no cached copy to fall back to', async () => {
+    const fetchText = async () => {
+      throw new Error('offline');
+    };
+    await expect(loadBundle({ dataDir: tempDir(), fetchText, pageUrl: PAGE })).rejects.toThrow('offline');
+  });
+
+  it('the provider keeps a fallback copy only for a while, then looks the version up again', async () => {
+    const dataDir = tempDir();
+    seed(dataDir, { '111.js': MINI_BUNDLE });
+    let now = 1_000_000;
+    let up = false;
+    const calls: string[] = [];
+    const fetchText = async (url: string) => {
+      calls.push(url);
+      if (!up) throw new Error('offline');
+      return url === PAGE ? html(CDN) : MINI_BUNDLE;
+    };
+    const p = new BundleProvider({ dataDir, fetchText, pageUrl: PAGE, now: () => now });
+    expect((await p.get()).version).toBe('111');
+    up = true;
+    expect((await p.get()).version).toBe('111');
+    now += 5 * 60_000;
+    expect((await p.get()).version).toBe('987');
+    expect(calls).toEqual([PAGE, PAGE, CDN]);
   });
 });

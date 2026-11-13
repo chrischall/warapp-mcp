@@ -10,7 +10,7 @@
 // Fetching is injected so the transport (and tests) decide how pages are retrieved.
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Reader } from './codec.js';
 import { BundleInterpreter, parseBundle, type DialectCheck, type InterpOptions } from './interp.js';
@@ -62,6 +62,9 @@ export function discoverBundleUrl(html: string, pageUrl: string): BundleSource {
 /** A loaded bundle: reads wire classes by stable type name. */
 export class WarappBundle {
   private readonly interp: BundleInterpreter;
+
+  /** Loaded from the cache because the current version could not be looked up. */
+  fallback = false;
 
   constructor(
     src: string,
@@ -116,13 +119,64 @@ export interface BundleLoaderOptions {
   /** The war.app page whose script tag names the bundle (default {@link DEFAULT_PAGE_URL}). */
   pageUrl?: string;
   interp?: InterpOptions;
+  /** Clock for {@link BundleProvider}'s fallback expiry (tests). */
+  now?: () => number;
+}
+
+/** A cached bundle file: `<version>.js`. */
+const BUNDLE_FILE = /^([A-Za-z0-9._-]{1,64})\.js$/;
+/** A download that never finished: `<version>.js.tmp-<pid>`. */
+const PARTIAL_FILE = /^[A-Za-z0-9._-]{1,64}\.js\.tmp-\d+$/;
+
+/**
+ * Delete every cached bundle but `keep` (each is ~16 MB, one per client release) and any
+ * unfinished download. Best effort: never throws.
+ */
+async function pruneBundles(dir: string, keep: string): Promise<void> {
+  try {
+    for (const name of await readdir(dir)) {
+      if (name === keep || !(BUNDLE_FILE.test(name) || PARTIAL_FILE.test(name))) continue;
+      await unlink(join(dir, name)).catch(() => undefined);
+    }
+  } catch {
+    // Nothing to prune.
+  }
+}
+
+/** The newest cached bundle (by modification time), or undefined. */
+async function newestCached(dir: string): Promise<{ version: string; file: string } | undefined> {
+  let best: { version: string; file: string; mtime: number } | undefined;
+  try {
+    for (const name of await readdir(dir)) {
+      const m = BUNDLE_FILE.exec(name);
+      if (!m) continue;
+      const file = join(dir, name);
+      const { mtimeMs } = await stat(file);
+      if (!best || mtimeMs > best.mtime) best = { version: m[1]!, file, mtime: mtimeMs };
+    }
+  } catch {
+    return undefined;
+  }
+  return best && { version: best.version, file: best.file };
 }
 
 /** Discover, fetch (or reuse the cached copy of) and load the current client bundle. */
 export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundle> {
   const pageUrl = opts.pageUrl ?? DEFAULT_PAGE_URL;
-  const { url, version } = discoverBundleUrl(await opts.fetchText(pageUrl), pageUrl);
   const dir = join(opts.dataDir, 'bundle');
+  let source: BundleSource;
+  try {
+    source = discoverBundleUrl(await opts.fetchText(pageUrl), pageUrl);
+  } catch (e) {
+    // The page naming the current version could not be read (a frozen tab, a signed-out page):
+    // a copy already on disk still decodes, rather than failing every live read (#131).
+    const cached = await newestCached(dir);
+    if (!cached) throw e;
+    const b = new WarappBundle(await readFile(cached.file, 'utf8'), cached.version, opts.interp);
+    b.fallback = true;
+    return b;
+  }
+  const { url, version } = source;
   const file = join(dir, `${version}.js`);
   let src: string;
   try {
@@ -137,8 +191,13 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
     await writeFile(tmp, src, 'utf8');
     await rename(tmp, file);
   }
-  return new WarappBundle(src, version, opts.interp);
+  const bundle = new WarappBundle(src, version, opts.interp);
+  await pruneBundles(dir, `${version}.js`);
+  return bundle;
 }
+
+/** How long a fallback bundle is used before the current version is looked up again. */
+export const FALLBACK_RETRY_MS = 5 * 60_000;
 
 /** Loads the bundle once per process; a failed load is retried on the next call. */
 export class BundleProvider {
@@ -146,12 +205,24 @@ export class BundleProvider {
 
   constructor(private readonly opts: BundleLoaderOptions) {}
 
+  private fallbackUntil: number | undefined;
+
   get(): Promise<WarappBundle> {
+    const now = this.opts.now ?? Date.now;
+    if (this.pending && this.fallbackUntil !== undefined && now() >= this.fallbackUntil) this.pending = null;
     if (!this.pending) {
-      this.pending = loadBundle(this.opts);
-      this.pending.catch(() => {
-        this.pending = null;
-      });
+      this.fallbackUntil = undefined;
+      const p = loadBundle(this.opts);
+      this.pending = p;
+      p.then(
+        (b) => {
+          // A cached copy stands in only until the version can be looked up again.
+          if (b.fallback && this.pending === p) this.fallbackUntil = now() + FALLBACK_RETRY_MS;
+        },
+        () => {
+          if (this.pending === p) this.pending = null;
+        },
+      );
     }
     return this.pending;
   }
