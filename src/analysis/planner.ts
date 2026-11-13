@@ -396,6 +396,23 @@
 //     (its cost against the movable armies and deploys that can reach it). Army cap (`armyCap`, × income): when my
 //     armies after deploy exceed cap × income, armies above it are wasted, so the same fallback
 //     fires in any phase, and the rationale says so. The cap's cut to income is not modelled.
+//     Contact and late phases (#107): a plan with no capture at all falls back too — unless the
+//     caller chose `defend`, or the 1v1 strike stack (rule 0p.3c) spends itself this turn. Its
+//     candidates are the neutral steps above and (unless the caller chose `expand`) every visible
+//     enemy territory next to mine without an enemy commander (rule 1s's) whose capture does not
+//     lower income, sized like any capture at the plan's win chance. A capture of a player's
+//     territory must trade at least even (defenders killed ≥ attackers lost; a single capture
+//     always does, a combined one whose softeners lose more is refused with a warning, "… a trade
+//     below even"), and no source may be left unable to hold a border it held at the start (a
+//     conceded one excepted; a warning names an enemy capture refused so). Order: affordable
+//     first, then one that breaks a bonus (its owner holds it in full) or advances one of mine,
+//     then cheapest, then (neutral steps) the order above, then id. In an FFA with two or more
+//     opponents (rule 0p.2), a capture against a player that cannot currently attack me (it could
+//     take no territory of mine next turn) opens a second front and is tried only after every
+//     other; the rationale says which ("can already attack me …: opens no new front" / "cannot
+//     attack me now: … opens a second front (rule 2), taken only because no neutral capture
+//     fits"), and the trade ("kills K for L lost"). Rule 4d still judges every candidate. An
+//     enemy capture carries the usual warning that it assumes the owner does not reinforce first.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, and
 //     in the opening and expansion phases, completions and advances keep the slots their scores
 //     give them (rules 4, 4a) but fill them closest to completion first: fewest turns to finish at
@@ -2846,7 +2863,18 @@ export function planTurn(input: PlanInput): TurnPlan {
   // ---- capture helper ----
   let anchor: number | undefined;
   /** Why the last {@link tryCapture} refused (R3, or No-Split on a source that could take it); else size. */
-  let refusal: { kind: 'r3' } | { kind: 'split'; from: number } | undefined;
+  let refusal:
+    | { kind: 'r3' }
+    | { kind: 'split'; from: number }
+    | { kind: 'trade'; lost: number; killed: number }
+    | undefined;
+  /**
+   * Rule 4e in contact (#107): a capture of a player's territory must trade at least even. Set while
+   * the fallback tries an enemy capture; a combined capture that loses more than it kills is then
+   * refused (as when behind on armies, rule 0p.3), and {@link belowEven} says by how much.
+   */
+  let evenTradesOnly = false;
+  let belowEven: { lost: number; killed: number } | undefined;
   /** Armies on my `x` free to attack `t`: my commander's territory keeps what holds it (rule 1k). */
   const movableFor = (x: number, t: number) => avail.get(x)! - (myCommanders.has(x) ? keepFor(x, (n) => n === t) : 0);
   /**
@@ -2895,12 +2923,13 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (src === undefined || need > spareAt(src)) {
       if (force) return false;
       if (tryCombined(t, reason)) return true;
+      const trade = belowEven;
       // No-Split: name a source that could have taken it alone but already issues an order.
       const split = tg.sources.find((x) => usable(x) && orderOf(x) && needAt(x) <= spareAt(x));
       if (split !== undefined) {
         warnSplit(split, `the attack on ${label(t)} is not planned`);
         refusal = { kind: 'split', from: split };
-      }
+      } else if (trade) refusal = { kind: 'trade', ...trade };
       return false;
     }
     deploy(src, need);
@@ -2995,6 +3024,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     return null;
   };
   const tryCombined = (t: number, reason: string): boolean => {
+    belowEven = undefined;
     const plan = combinedPlan(t);
     if (!plan) return false;
     const tg = targets.get(t)!;
@@ -3008,13 +3038,17 @@ export function planTurn(input: PlanInput): TurnPlan {
     // Rule 0p.3 (#72): behind on armies, no trade below even. The softeners lose more than
     // they kill by design (each attacks a stack larger than it can take), so a combined capture
     // of a player's territory can lose more than the whole stack it destroys.
-    if (armiesBehind && tg.enemy) {
+    // Rule 4e in contact (#107) asks the same of its enemy captures.
+    if ((armiesBehind || evenTradesOnly) && tg.enemy) {
       const lost =
         plan.softeners.reduce((n, x) => n + x.armies - x.survivors, 0) + plan.armies - plan.survivors;
       const killed = plan.softeners.reduce((n, x) => n + x.kills, 0) + plan.left;
       if (lost > killed) {
-        if (!badTrades.has(t)) badTrades.set(t, { lost, killed });
-        skipOffence(t, `a trade below even while behind on armies (loses ${lost} for ${killed})`);
+        if (armiesBehind) {
+          if (!badTrades.has(t)) badTrades.set(t, { lost, killed });
+          skipOffence(t, `a trade below even while behind on armies (loses ${lost} for ${killed})`);
+        }
+        belowEven = { lost, killed };
         return false;
       }
     }
@@ -4269,13 +4303,20 @@ export function planTurn(input: PlanInput): TurnPlan {
   // capture toward the positive bonus with the fewest armies to finish, uneconomic or not. It runs
   // after every hold, so it only spends what they leave. Its steps are ranked by what this turn can
   // afford (#107): the armies that can reach each (its best source's movable armies plus what may
-  // still be deployed there) against its cost, then by the bonus's armies to finish.
+  // still be deployed there) against its cost, then by the bonus's armies to finish. In the contact
+  // and late phases (#107) enemy territories it can take at a trade of at least even join them.
   if (goal !== 'complete-bonus' && captured.size === 0) {
     const early = profile.phase === 'opening' || profile.phase === 'expansion';
+    // In a 1v1 the strike stack (rule 0p.3c, #102) is contact's own answer: it attacks every turn.
+    const strikeStackRuns = auto && profile.format === '1v1' && goal !== 'defend' && facing.size > 0;
+    // A caller who chose `defend` gets no contact fallback; one who chose `expand` only its neutral steps.
+    const contact =
+      (profile.phase === 'contact' || profile.phase === 'late') && !strikeStackRuns && opts.goal !== 'defend';
+    const enemyFallback = contact && opts.goal !== 'expand';
     const cap = s.armyCap ?? null;
     const total = mine.reduce((n, id) => n + armiesOf(id), 0) + income;
     const capped = cap !== null && cap > 0 && income > 0 && total > cap * income;
-    if (early || capped) {
+    if (early || capped || contact) {
       /** Ascending, safe for Infinity (a bonus that cannot be costed): Infinity − Infinity is NaN. */
       const asc = (a: number, b: number) => (a === b ? 0 : a < b ? -1 : 1);
       const toward = [...finishCost]
@@ -4368,6 +4409,28 @@ export function planTurn(input: PlanInput): TurnPlan {
           cardAdvice = had.card;
         };
       };
+      // #107, in contact: every visible enemy territory next to mine (no enemy commander on it)
+      // whose capture does not lower income is a candidate. One not already a target is added for this rule (and dropped again
+      // unless taken), sized like any capture at the plan's win chance.
+      const added: number[] = [];
+      const enemyTs: number[] = [];
+      if (enemyFallback)
+        for (const t of [...g.territoryById.keys()].sort(byNum)) {
+          if (mineSet.has(t) || captured.has(t)) continue;
+          const st = state.get(t);
+          if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+          // An enemy commander is rule 1s's, sized for its owner's full deploy: never a fallback.
+          if (unitsAt(t) > 0) continue;
+          const sources = neighborsOf(g, t).filter((n) => mineSet.has(n));
+          if (!sources.length || gainWith([t]) < 0) continue;
+          if (!targets.has(t)) {
+            const cost = costOf(defenceAt(t));
+            if (cost === null) continue;
+            targets.set(t, { id: t, cost, enemy: true, sources });
+            added.push(t);
+          }
+          enemyTs.push(t);
+        }
       const seen = new Set<number>();
       const steps = toward
         .flatMap(([id, f]) =>
@@ -4395,7 +4458,13 @@ export function planTurn(input: PlanInput): TurnPlan {
                 ? `${profile.phase} phase: no economic capture fits this turn; standing still is worse than the cheapest expansion`
                 : `${profile.phase} phase: nothing passed the economy test; standing still is worse than the cheapest expansion`,
             ]
-          : []),
+          : contact
+            ? [
+                `${profile.phase} phase: no capture is planned (${
+                  economicLeft ? 'no economic capture fits this turn' : 'nothing passed the economy test'
+                }); standing still is worse than the cheapest capture`,
+              ]
+            : []),
         ...(capped
           ? [
               `my ${total} armies after deploy exceed the army cap of ${cap * income} (${cap}× income ${income}): armies above it are wasted, so spending them is free`,
@@ -4406,27 +4475,155 @@ export function planTurn(input: PlanInput): TurnPlan {
         `cheapest expansion toward bonus ${bonusName(id)} (+${f.value}, ${toFinish(f.cost, f.fogged, f.fogEach)}, ${
           f.cost === fewest ? 'the fewest of any bonus in reach' : 'the fewest of any bonus with a capture affordable this turn'
         })`;
+
+      // ---- #107, in contact: enemy captures ----
+      /** Rule 0p.2's setting: an FFA with two or more opponents left. */
+      const ffaFronts = profile.format === 'ffa' && profile.opponents >= 2;
+      /**
+       * The first territory of mine (by id) player `p` could take next turn — its stacks next to it
+       * plus max(its deploy estimate, its fastest growth there) against what taking it needs — or
+       * `undefined`: `p` cannot currently attack me.
+       */
+      const attackableBy = (p: number): number | undefined =>
+        mine.find((x) => {
+          let movable = 0;
+          let growth = 0;
+          let next = false;
+          for (const n of neighborsOf(g, x)) {
+            const st = state.get(n);
+            if (st?.owner.kind !== 'player' || st.owner.playerId !== p || st.armies === null) continue;
+            next = true;
+            movable += Math.max(0, st.armies - guard) + unitsAt(n);
+            growth = Math.max(growth, growthOf.get(n)?.growth ?? 0);
+          }
+          const take = armiesToTake(defenceAt(x), rates);
+          return next && take !== null && take <= movable + Math.max(deployOf(p), growth);
+        });
+      /** What capturing enemy `t` does to a bonus: breaks one its owner holds in full, or advances one of mine. */
+      const enemyBonus = (t: number, p: number): { id: number; breaks: boolean } | undefined => {
+        const breaks = g.map.bonuses
+          .filter((b) => b.value > 0 && bonusTs.get(b.id)!.includes(t))
+          .sort((a, b) => b.value - a.value || a.id - b.id)
+          .find((b) =>
+            bonusTs.get(b.id)!.every((m) => {
+              const o = state.get(m)?.owner;
+              return o?.kind === 'player' && o.playerId === p;
+            }),
+          );
+        if (breaks) return { id: breaks.id, breaks: true };
+        const adv = toward.find(([id]) => bonusTs.get(id)!.includes(t));
+        return adv ? { id: adv[0], breaks: false } : undefined;
+      };
+      const enemySteps = enemyTs.map((t) => {
+        const p = (state.get(t)!.owner as { playerId: number }).playerId;
+        const from = attackableBy(p);
+        return {
+          t,
+          cost: targets.get(t)!.cost,
+          player: p,
+          bonus: enemyBonus(t, p),
+          /** Its owner can attack me now: the territory of mine it could take. */
+          front: from,
+          secondFront: ffaFronts && from === undefined,
+          ...reachOf(t),
+        };
+      });
+      const enemyReason = (e: (typeof enemySteps)[number]) => {
+        if (!e.bonus) return `cheapest capture: takes a territory of player ${e.player}`;
+        const v = g.bonusById.get(e.bonus.id)!.value;
+        if (e.bonus.breaks) return `cheapest capture: breaks bonus ${bonusName(e.bonus.id)} (+${v}) of player ${e.player}`;
+        const f = finishCost.get(e.bonus.id)!;
+        return `cheapest capture: advances bonus ${bonusName(e.bonus.id)} (+${v}, ${toFinish(f.cost, f.fogged, f.fogEach)}) from player ${e.player}`;
+      };
+      /**
+       * Every candidate, in the order tried. Outside contact: rule 4e's neutral steps as ranked
+       * above. In contact (#107): the neutral steps and the enemy captures together — affordable
+       * first, then one that breaks or advances a bonus, then cheapest, then (neutral steps) rule
+       * 4e's order, then id; under rule 0p.2 a capture that opens a second front (its owner cannot
+       * attack me now) only after every other.
+       */
+      type Pick =
+        | { kind: 'neutral'; st: (typeof steps)[number] }
+        | { kind: 'enemy'; st: (typeof enemySteps)[number] };
+      const shortOf = (x: { cost: number; reach: number }) => Math.max(0, x.cost - x.reach);
+      const rank4e = new Map(steps.map((x, i) => [x.t, i]));
+      const keyOf = (p: Pick) => [
+        p.kind === 'enemy' && p.st.secondFront ? 1 : 0,
+        shortOf(p.st),
+        p.kind === 'enemy' && !p.st.bonus ? 1 : 0,
+        p.st.cost,
+        p.kind === 'neutral' ? rank4e.get(p.st.t)! : Infinity,
+        p.st.t,
+      ];
+      const picks: Pick[] = [
+        ...steps.map((st): Pick => ({ kind: 'neutral', st })),
+        ...enemySteps.map((st): Pick => ({ kind: 'enemy', st })),
+      ];
+      if (contact)
+        picks.sort((a, b) => {
+          const x = keyOf(a);
+          const y = keyOf(b);
+          for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
+          return 0;
+        });
+      const reasonFor = (p: Pick) => (p.kind === 'neutral' ? reasonOf(p.st) : enemyReason(p.st));
+      /** A candidate: what reaches it, as {@link reachOf} judges it. */
+      type Cand = Reach & { t: number; cost: number };
       /**
        * Why a step was not taken: rule 4d's frontier stop (with the frontier it would leave), R3
        * (it completes a bonus that falls next turn), No-Split (a source that could take it already
-       * issues an order), or its size.
+       * issues an order), a trade below even, a hold it would leave short (contact), or its size.
        */
       type Fail =
         | { kind: '4d'; holdCost: number; income: number }
         | { kind: 'r3' }
         | { kind: 'split'; from: number }
+        | { kind: 'trade'; lost: number; killed: number }
+        | { kind: 'hold'; from: number; stays: number; threat: number }
         | { kind: 'size' };
       const failed = new Map<number, Fail>();
+      /**
+       * In contact (#107): a source of the attack on `t` that held at the start of the turn but no
+       * longer would, with what stays and the threat it faces once `t` is taken; else `undefined`.
+       * A conceded border is skipped: its armies are given up anyway.
+       */
+      const holdLeftShort = (t: number): { from: number; stays: number; threat: number } | undefined => {
+        for (const m of moves) {
+          if (m.kind !== 'attack' || m.to !== t || conceded.has(m.from)) continue;
+          const th = threatAt(m.from, (n) => captured.has(n));
+          if (!th) continue;
+          const stays = stayAt(m.from);
+          if ((armiesToTake(stays + unitsAt(m.from), rates) ?? Infinity) <= th.threat)
+            return { from: m.from, stays, threat: th.threat };
+        }
+        return undefined;
+      };
+      /** The trade of the planned capture of `t`: defenders killed against attackers lost (every attack on it). */
+      const tradeOf = (t: number): { lost: number; killed: number } => {
+        const sent = moves.filter((m) => m.kind === 'attack' && m.to === t);
+        const killed = defendersAt(t);
+        if (sent.length === 1) return { lost: straightKills(killed, rates.defensiveKillRate), killed };
+        // A combined capture: every attack's losses — the softeners' (their survivors return home)
+        // and the finisher's.
+        let left = killed;
+        let lost = 0;
+        for (const m of sent) {
+          const kills = Math.min(left, straightKills(m.armies, rates.offensiveKillRate));
+          lost += Math.min(m.armies, straightKills(left, rates.defensiveKillRate));
+          left -= kills;
+        }
+        return { lost, killed };
+      };
       /**
        * Try one step. From a conceded border (#107) rule 1b's withdrawal is undone first and the
        * border attacks out with deploys, a rationale line saying so. The result undoes it all.
        */
-      const attempt = (st: (typeof steps)[number]): (() => void) | null => {
+      const attempt = (st: Cand, reason: string): (() => void) | null => {
         const out = st.from !== undefined && conceded.has(st.from) ? st.from : undefined;
         const unreclaim = out === undefined ? () => {} : reclaim(out);
         const before = out === undefined ? 0 : movableFor(out, st.t);
         const restore = snapshot();
-        if (!tryCapture(st.t, reasonOf(st), undefined, out)) {
+        if (!tryCapture(st.t, reason, undefined, out)) {
           unreclaim();
           return null;
         }
@@ -4462,17 +4659,25 @@ export function planTurn(input: PlanInput): TurnPlan {
           unwind();
         };
       };
-      let taken: (typeof steps)[number] | undefined;
-      for (const st of steps) {
-        const undo = attempt(st);
+      let taken: Pick | undefined;
+      evenTradesOnly = contact;
+      for (const pick of picks) {
+        const st = pick.st;
+        const undo = attempt(st, reasonFor(pick));
         if (!undo) {
           const r = refusal as typeof refusal;
           failed.set(st.t, r ?? { kind: 'size' });
           continue;
         }
+        const short = contact ? holdLeftShort(st.t) : undefined;
+        if (short) {
+          undo();
+          failed.set(st.t, { kind: 'hold', ...short });
+          continue;
+        }
         const stop = outgrows(st.t);
         if (stop === null) {
-          taken = st;
+          taken = pick;
           break;
         }
         undo();
@@ -4480,16 +4685,19 @@ export function planTurn(input: PlanInput): TurnPlan {
         const f = stopped.find((x) => x.t === st.t)!;
         failed.set(st.t, { kind: '4d', holdCost: f.holdCost, income: f.income });
       }
+      evenTradesOnly = false;
       // #107: in the opening, rule 4d's frontier stop must not make the plan stand still: one
       // capture that grows the frontier is better than none (4d still judges every other capture).
       let waived: { holdCost: number; income: number } | undefined;
       if (!taken && profile.phase === 'opening') {
         const st = steps.find((x) => failed.get(x.t)?.kind === '4d');
-        if (st && attempt(st)) {
-          taken = st;
+        if (st && attempt(st, reasonOf(st))) {
+          taken = { kind: 'neutral', st };
           waived = failed.get(st.t) as { holdCost: number; income: number };
         }
       }
+      // Enemy targets added for this rule and not taken are dropped again.
+      for (const t of added) if (!captured.has(t)) targets.delete(t);
       /** The bonuses `t` would complete that R3 refused, as "name (#id)". */
       const refusedBonuses = (t: number) =>
         [...notCompleted.keys()]
@@ -4497,7 +4705,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           .sort(byNum)
           .map(bonusName);
       /** Why no neighbour of mine can attack `st`: each holds its border, is conceded, or already issues an order. */
-      const blockedText = (st: (typeof steps)[number]) =>
+      const blockedText = (st: Cand) =>
         `no neighbour of mine can attack it (${st.blocked
           .map(({ x, why }) =>
             why === 'hold'
@@ -4508,14 +4716,14 @@ export function planTurn(input: PlanInput): TurnPlan {
           )
           .join('; ')})`;
       /** "needs C, and at most R can reach it this turn (M movable on S[, a conceded border] + D to deploy[; the holds took H])". */
-      const reachText = (st: (typeof steps)[number], held: number) =>
+      const reachText = (st: Cand, held: number) =>
         st.from === undefined
           ? blockedText(st)
           : `it needs ${st.cost}, and at most ${st.reach} can reach it this turn (${st.movable} movable on ${label(st.from)}${
               conceded.has(st.from) ? ', a conceded border,' : ''
             } + ${st.deploy} to deploy${held > 0 ? `; the holds took ${held}` : ''})`;
       /** Why `st` was not taken, as a clause after its name. */
-      const failText = (st: (typeof steps)[number], fail: Fail | undefined) => {
+      const failText = (st: Cand, fail: Fail | undefined) => {
         if (fail?.kind === '4d')
           return `is refused by rule 4d's frontier stop: the frontier would then need ${fail.holdCost} next turn to hold, more than the next income of ${fail.income}`;
         if (fail?.kind === 'r3') {
@@ -4526,6 +4734,10 @@ export function planTurn(input: PlanInput): TurnPlan {
         }
         if (fail?.kind === 'split')
           return `is not planned under No-Split: ${label(fail.from)} could take it but already issues an order (one attack or transfer per territory)`;
+        if (fail?.kind === 'trade')
+          return `is not taken: no single source can afford it, and the combined capture loses ${fail.lost} armies for the ${fail.killed} it kills, a trade below even`;
+        if (fail?.kind === 'hold')
+          return `is not taken: attacking it would leave ${label(fail.from)} unable to hold its border (${fail.stays} would stay against a threat of ${fail.threat})`;
         if (st.from === undefined) return `cannot be reached: ${blockedText(st)}`;
         // What the holds took before this rule ran (no capture spent anything yet).
         const held = income - budget;
@@ -4534,30 +4746,63 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (held > 0 && st.reach + held >= st.cost) return `does not fit what the holds leave: ${reachText(st, held)}`;
         return `does not fit this turn: ${reachText(st, 0)}`;
       };
+      // A capture of a player's territory refused as a trade below even, or for a hold it would
+      // leave short: said whatever was taken.
+      for (const e of enemySteps) {
+        const f = failed.get(e.t);
+        if (captured.has(e.t)) continue;
+        if (f?.kind === 'trade')
+          warnings.push(
+            `Not attacking ${label(e.t)}: the combined capture loses ${f.lost} armies for the ${f.killed} it kills, a trade below even.`,
+          );
+        if (f?.kind === 'hold')
+          warnings.push(
+            `Not attacking ${label(e.t)}: it would leave ${label(f.from)} unable to hold its border (${f.stays} would stay against a threat of ${f.threat}).`,
+          );
+      }
       if (taken) {
-        rationale.push(`Take ${label(taken.t)} though no planned capture is economic: ${why}.`);
+        const t = taken.st.t;
+        rationale.push(`Take ${label(t)} though no planned capture is economic: ${why}.`);
         if (waived)
           rationale.push(
-            `Take ${label(taken.t)} though the frontier would then need ${waived.holdCost} next turn to hold, more than the next income of ${waived.income}: rule 4d's frontier stop is waived for this one capture: in the opening, one capture that grows the frontier is better than none (rule 4d still applies to every other capture).`,
+            `Take ${label(t)} though the frontier would then need ${waived.holdCost} next turn to hold, more than the next income of ${waived.income}: rule 4d's frontier stop is waived for this one capture: in the opening, one capture that grows the frontier is better than none (rule 4d still applies to every other capture).`,
           );
-        // The bonus with the fewest armies to finish was passed over: say why.
-        const closer = taken.f.cost > fewest ? steps.find((x) => x.f.cost === fewest) : undefined;
-        if (closer) {
-          const fail = failed.get(closer.t);
-          rationale.push(
-            `${bonusName(closer.id)} has fewer armies to finish (${closer.f.cost}), but ${
-              fail?.kind === '4d'
-                ? `rule 4d's frontier stop refuses ${label(closer.t)}`
-                : fail?.kind === 'r3' || fail?.kind === 'split' || closer.from === undefined
-                  ? `${label(closer.t)} ${failText(closer, fail)}`
-                  : `${label(closer.t)} needs ${closer.cost} and at most ${closer.reach} can reach it this turn`
-            }.`,
-          );
+        if (taken.kind === 'enemy') {
+          const e = taken.st;
+          const { lost, killed } = tradeOf(t);
+          rationale.push(`Attack on ${label(t)} kills ${killed} for ${lost} lost: a trade of at least even.`);
+          if (ffaFronts)
+            rationale.push(
+              e.front !== undefined
+                ? `Player ${e.player} can already attack me (${label(e.front)}): taking ${label(t)} opens no new front.`
+                : `Player ${e.player} cannot attack me now: taking ${label(t)} opens a second front (rule 2), taken only because no neutral capture fits this turn.`,
+            );
+        } else {
+          // The bonus with the fewest armies to finish was passed over: say why.
+          const st = taken.st;
+          const closer = st.f.cost > fewest ? steps.find((x) => x.f.cost === fewest) : undefined;
+          if (closer) {
+            const fail = failed.get(closer.t);
+            rationale.push(
+              `${bonusName(closer.id)} has fewer armies to finish (${closer.f.cost}), but ${
+                fail?.kind === '4d'
+                  ? `rule 4d's frontier stop refuses ${label(closer.t)}`
+                  : fail?.kind === 'size' || fail === undefined
+                    ? closer.from === undefined
+                      ? `${label(closer.t)} ${failText(closer, fail)}`
+                      : `${label(closer.t)} needs ${closer.cost} and at most ${closer.reach} can reach it this turn`
+                    : `${label(closer.t)} ${failText(closer, fail)}`
+              }.`,
+            );
+          }
         }
-      } else if (steps[0]) {
-        const top = steps[0];
-        const head = `Standing still: no capture is planned, and the cheapest expansion (${label(top.t)}, ${top.cost} armies, toward bonus ${bonusName(top.id)})`;
-        const tail = `${failText(top, failed.get(top.t))}.`;
+      } else if (picks[0]) {
+        const top = picks[0];
+        const head =
+          top.kind === 'neutral'
+            ? `Standing still: no capture is planned, and the cheapest expansion (${label(top.st.t)}, ${top.st.cost} armies, toward bonus ${bonusName(top.st.id)})`
+            : `Standing still: no capture is planned, and the cheapest capture (${label(top.st.t)}, ${top.st.cost} armies, a territory of player ${top.st.player})`;
+        const tail = `${failText(top.st, failed.get(top.st.t))}.`;
         warnings.push(`${head} ${tail}`);
       }
     }

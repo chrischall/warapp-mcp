@@ -49,6 +49,13 @@ const enemy = (territoryId: number, armies: number, playerId = ENEMY): Territory
 });
 
 const attacks = (p: TurnPlan) => p.moves.filter((m) => m.kind === 'attack');
+/**
+ * Attacks other than #107's contact fallback (reason "cheapest capture …" / "cheapest expansion …",
+ * or a combined capture's softener for one): in the contact and late phases a plan that would
+ * otherwise capture nothing now takes one, so a test of another rule checks only the rest.
+ */
+const ruleAttacks = (p: TurnPlan) =>
+  attacks(p).filter((m) => !/^(wears .* down for a combined capture \()?cheapest (capture|expansion)/.test(m.reason));
 const deploySum = (p: TurnPlan) => p.deploys.reduce((s, d) => s + d.armies, 0);
 const deployedTo = (p: TurnPlan, id: number) => p.deploys.find((d) => d.territoryId === id)?.armies ?? 0;
 
@@ -635,6 +642,14 @@ describe('planTurn — value-aware defence', () => {
     for (const goal of ['expand', 'defend', 'complete-bonus', 'balanced'] as const) {
       const p = planTurn({ graph: g, board: s, me: ME, income: 6, settings: STD, options: { goal, enemyDeploy: 5 } });
       expect(p.conceded, goal).toEqual([1]);
+      expect(p.deploys.some((d) => d.territoryId === 1), goal).toBe(false);
+      if (goal === 'balanced') {
+        // #107: in contact, with no other capture, T2 takes T9 (3: 5 to take, deploying 1), which
+        // removes its only threat; the leftover 5 then goes to T2 too.
+        expect(attacks(p), goal).toEqual([expect.objectContaining({ from: 2, to: 9, kind: 'attack' })]);
+        expect(p.deploys, goal).toEqual([{ territoryId: 2, armies: 6 }]);
+        continue;
+      }
       expect(p.deploys, goal).toEqual([{ territoryId: 2, armies: 6 }]);
       expect(p.rationale.join('\n'), goal).toMatch(/leftover 6 to T2 \(#2\).*protects \+3/);
     }
@@ -834,7 +849,8 @@ describe('planTurn — balanced', () => {
       board([mine(1, 5), enemy(5, 2), enemy(6, 2), enemy(7, 2, 30)]),
     ]) {
       const p = planTurn({ graph: eMap, board: s, me: ME, income: 5, settings: STD });
-      expect(attacks(p)).toEqual([]);
+      expect(ruleAttacks(p)).toEqual([]);
+      expect(p.offence).toEqual([]);
     }
   });
 
@@ -896,7 +912,8 @@ describe('planTurn — balanced', () => {
       income: 5,
       settings: STD,
     });
-    expect(attacks(p)).toEqual([]);
+    expect(ruleAttacks(p)).toEqual([]);
+    expect(p.offence).toEqual([]);
   });
 
   it('holds a border that protects more than the expansion is worth, before expanding', () => {
@@ -1670,7 +1687,9 @@ describe('planTurn — multi-source attacks (R4)', () => {
     );
     const s = board([mine(1, 15), mine(2, 15), neutral(3, 15)]);
     const p = planTurn({ graph: g2, board: s, me: ME, income: 5, settings: STD });
-    expect(attacks(p)).toEqual([]);
+    // Holding 2 of the 3 territories is the late phase: #107's fallback may take it, combined.
+    expect(p.profile.phase).toBe('late');
+    expect(ruleAttacks(p)).toEqual([]);
   });
 
   it('completes a bonus with a combined capture', () => {

@@ -38,6 +38,13 @@ const enemy = (territoryId: number, armies: number, playerId = ENEMY): Territory
   armies,
 });
 const attacks = (p: TurnPlan) => p.moves.filter((m) => m.kind === 'attack');
+/**
+ * Attacks other than #107's contact fallback (reason "cheapest capture …" / "cheapest expansion …",
+ * or a combined capture's softener for one): in the contact and late phases a plan that would
+ * otherwise capture nothing now takes one, so a test of another rule checks only the rest.
+ */
+const ruleAttacks = (p: TurnPlan) =>
+  attacks(p).filter((m) => !/^(wears .* down for a combined capture \()?cheapest (capture|expansion)/.test(m.reason));
 const why = (p: TurnPlan) => p.rationale.join('\n');
 
 /** A track observed over two turns with `income`. */
@@ -173,13 +180,14 @@ describe('the strike stack attacks what it can take (#102)', () => {
     const ffa = input({ game: { players: [{ id: ME }, { id: ENEMY }, { id: THIRD }] } });
     const p = planTurn(ffa);
     expect(p.profile.format).toBe('ffa');
-    expect(attacks(p).filter((m) => m.from === 1 && (m.to === 2 || m.to === 3))).toEqual([]);
+    expect(ruleAttacks(p).filter((m) => m.from === 1 && (m.to === 2 || m.to === 3))).toEqual([]);
     expect(why(p)).not.toMatch(/strike stack/);
+    expect(p.offence.filter((o) => o.kind.startsWith('strike'))).toEqual([]);
   });
 
   it('without adapting: no strike stack, so nothing changes', () => {
     const p = planTurn(input({ options: {} }));
-    expect(attacks(p)).toEqual([]);
+    expect(ruleAttacks(p)).toEqual([]);
     expect(p.offence.filter((o) => o.kind.startsWith('strike'))).toEqual([]);
   });
 });
