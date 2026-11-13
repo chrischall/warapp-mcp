@@ -91,7 +91,13 @@
 
 import type { GameSettings } from '../normalize.js';
 import { analyzeBonus, bonusTerritories, entryTouches } from './bonuses.js';
-import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
+import {
+  armiesToTake,
+  DEFAULT_DEFENSIVE_KILL_RATE,
+  DEFAULT_OFFENSIVE_KILL_RATE,
+  luckFraction,
+  straightKills,
+} from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { captureCost } from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
@@ -100,6 +106,13 @@ import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 export const PICK_HORIZON = 3;
 /** Share of a still-incomplete bonus's value credited per share of it held at the horizon. */
 export const PROGRESS_WEIGHT = 0.5;
+/** Share of a completed bonus's credit lost when an opponent certainly starts where it can be reached in time (#166). */
+export const THREAT_LOSS = 0.5;
+/**
+ * In a two-player game a fallback pick is worth its own opening less this share of the
+ * opponent's, from the starts the award then reveals (#166).
+ */
+export const OPPONENT_WEIGHT = 0.5;
 /** Defensibility penalty per entry point (scaled by attack hardness)… */
 export const ENTRY_WEIGHT = 0.05;
 /** …and in a 1v1 (twice ENTRY_WEIGHT: the one opponent finds every entry point, #73). */
@@ -142,6 +155,7 @@ export type PickSettings = Partial<
     | 'initialNonDistributionArmies'
     | 'initialNeutralsInDistribution'
     | 'commanders'
+    | 'noSplit'
   >
 >;
 
@@ -181,6 +195,30 @@ export interface GroupBonus {
   value: number;
   /** Turn the group completes it in the opening simulation (0: held by the picks themselves). */
   turn: number;
+  /**
+   * The pickable territories outside the group from which a lone stack holds or stands next to
+   * one of its territories by that turn, so could attack it the turn after (#166); ascending.
+   */
+  threats: number[];
+}
+
+/** One order of the opening simulation: `armies` attacking out of `from`. */
+export interface PickOrder {
+  from: number;
+  armies: number;
+}
+
+/**
+ * A neutral the opening simulation takes in two orders because no single one can be paid for
+ * (#166): the first only wears it down, and its armies are spent for the turn; the second takes
+ * it. Exact arithmetic, so only at 0% luck under straight rounding, and never with No-Split.
+ */
+export interface TwoOrderCapture {
+  /** Turn of the opening simulation. */
+  turn: number;
+  /** The neutral taken. */
+  territoryId: number;
+  orders: [PickOrder, PickOrder];
 }
 
 export interface PickGroup {
@@ -190,6 +228,8 @@ export interface PickGroup {
   score: number;
   /** Bonuses the group completes within PICK_HORIZON turns. */
   bonuses: GroupBonus[];
+  /** The captures of its joint opening that take two orders, in the order they are made (#166). */
+  twoOrderCaptures: TwoOrderCapture[];
   /** Hops between the group's two farthest picks on the map graph (`null`: not connected). */
   maxHops: number | null;
 }
@@ -215,6 +255,11 @@ export interface PickPlan {
 const byNum = (a: number, b: number) => a - b;
 const NO_TAKEN: ReadonlySet<number> = new Set();
 const round2 = (x: number) => Math.round(x * 100) / 100;
+/** `a` sorts before `b`, compared element by element. */
+const lexLess = (a: readonly number[], b: readonly number[]) => {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i]! < b[i]!;
+  return a.length < b.length;
+};
 
 interface BonusInfo {
   id: number;
@@ -245,6 +290,20 @@ interface Ctx {
   bonusArmyPer: number;
   /** Bonus income may be deployed only inside its bonus (#129). */
   localDeployments: boolean;
+  /** Kill rates (percent), for a capture in two orders. */
+  off: number;
+  def: number;
+  /** One neutral may be taken in two orders: 0% luck, straight rounding, No-Split off (#166). */
+  twoOrders: boolean;
+  /** Pickable territories on the map. */
+  pickCount: number;
+  /** Starts the other players are granted in all: (players − 1) × the territory limit. */
+  opponentStarts: number;
+  /**
+   * Bonus id → by completion turn 0..PICK_HORIZON, the pickable territories that reach it by
+   * then (hold a member, or a territory next to one), ascending (#166).
+   */
+  threats: Map<number, number[][]>;
 }
 
 /** A turn's deploys: `cells` null deploys anywhere, else only there (a bonus, under local deployments). */
@@ -259,27 +318,79 @@ interface SimResult {
   penalties: Map<number, number>;
   /** Share held at the horizon, for bonuses touched but not completed. */
   progress: Map<number, number>;
+  /** Per completed bonus, the pickables not in `start` that reach it by its completion turn, ascending. */
+  threats: Map<number, number[]>;
+  /** Per completed bonus, the chance an opponent starts on one of them ({@link threatChance}). */
+  risk: Map<number, number>;
+  /** Captures made in two orders, in the order they are made. */
+  twoOrders: TwoOrderCapture[];
+  /** The territories held at the horizon. */
+  held: ReadonlySet<number>;
   score: number;
+}
+
+const NO_THREATS: readonly number[] = [];
+
+/**
+ * The chance that an opponent starts on one of `threats` (pickables that are not mine). 1 when
+ * a known opponent start (`taken`) is among them. Otherwise the opponent starts still unknown
+ * — (players − 1) × the territory limit, less the known ones — are taken to be drawn uniformly
+ * from the pickables that are neither mine nor known: 1 − C(N − k, L) / C(N, L).
+ */
+function threatChance(ctx: Ctx, threats: readonly number[], mine: number, taken: ReadonlySet<number>, known: number): number {
+  if (!threats.length) return 0;
+  for (const q of threats) if (taken.has(q)) return 1;
+  const n = Math.max(0, ctx.pickCount - mine - known);
+  const unknown = Math.min(Math.max(0, ctx.opponentStarts - known), n);
+  const k = threats.length;
+  if (unknown <= 0) return 0;
+  if (n - k < unknown) return 1;
+  let none = 1;
+  for (let i = 0; i < unknown; i++) none *= (n - k - i) / (n - i);
+  return 1 - none;
+}
+
+/** The bonuses with a territory in or next to `from`, ascending: the ones an opening from there can touch. */
+function relevantBonuses(ctx: Ctx, from: Iterable<number>): number[] {
+  const ids = new Set<number>();
+  for (const t of from) {
+    for (const b of ctx.bonusesOf.get(t) ?? []) ids.add(b);
+    for (const n of neighborsOf(ctx.g, t)) for (const b of ctx.bonusesOf.get(n) ?? []) ids.add(b);
+  }
+  return [...ids].sort(byNum);
+}
+
+/**
+ * Every territory whose owner an opening looked at: the members of each bonus it could touch,
+ * and the pickables that reach a bonus it completed. Giving any other territory to someone
+ * else changes nothing in that opening but the count of known starts.
+ */
+function territoriesRead(ctx: Ctx, sim: SimResult): Set<number> {
+  const read = new Set<number>();
+  for (const id of relevantBonuses(ctx, sim.held)) for (const m of ctx.bonuses.get(id)!.members) read.add(m);
+  for (const reach of sim.threats.values()) for (const q of reach) read.add(q);
+  return read;
 }
 
 /**
  * The opening from `start`. `taken` territories belong to someone else (the primary picks when
  * the fallback is granted, #129): never captured, so a bonus holding one never completes.
+ * `known` is how many of the other players' starts are known (all of `taken`, unless the caller
+ * knows of one more that this opening never comes near).
  */
-function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number> = NO_TAKEN): SimResult {
+function simulate(
+  ctx: Ctx,
+  start: readonly number[],
+  taken: ReadonlySet<number> = NO_TAKEN,
+  known: number = taken.size,
+): SimResult {
   const held = new Set(start);
   // Armies on each held territory: armies attack only from where they stand.
   const armiesOn = new Map<number, number>(start.map((t) => [t, ctx.pickArmies]));
   const completions = new Map<number, number>();
-  const relevant = (from: Iterable<number>) => {
-    const ids = new Set<number>();
-    for (const t of from) {
-      for (const b of ctx.bonusesOf.get(t) ?? []) ids.add(b);
-      for (const n of neighborsOf(ctx.g, t)) for (const b of ctx.bonusesOf.get(n) ?? []) ids.add(b);
-    }
-    return [...ids].sort(byNum);
-  };
+  const relevant = (from: Iterable<number>) => relevantBonuses(ctx, from);
   const penalties = new Map<number, number>();
+  const twoOrders: TwoOrderCapture[] = [];
   const checkComplete = (turn: number) => {
     for (const id of relevant(held)) {
       if (completions.has(id)) continue;
@@ -293,6 +404,7 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
   // complete (#129): one worth no more than that is not steered for.
   const netValue = (b: BonusInfo) => {
     let v = b.value;
+    if (!ctx.penalties.size) return v;
     const ids = new Set(b.members.flatMap((m) => ctx.penaltiesOf.get(m) ?? []));
     for (const id of ids) {
       if (penalties.has(id)) continue;
@@ -337,39 +449,99 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
         n -= k;
       }
     };
+    // A capture in two orders (#166), for a target no single source can pay for: a first attack
+    // of k armies that does not capture (it kills round(k × offence) of the d defenders, leaving
+    // at least one, and loses min(k, round(d × defence))), then one sized for the defenders left.
+    // Both from one bordering start-of-turn territory (its movable armies and the deploys it may
+    // receive), or the first from one using only its own movable armies and the second from
+    // another. The fewest armies committed wins, then one source over two, then the lower ids,
+    // then the smaller first attack.
+    const twoOrderPlan = (target: number) => {
+      const d = ctx.armies.get(target)!;
+      const sources = neighborsOf(ctx.g, target).filter((n) => startSet.has(n) && n !== saveAt);
+      if (!ctx.twoOrders || ctx.off <= 0 || d < 2 || !sources.length) return null;
+      const reach = new Map(sources.map((n) => [n, avail.get(n)! + deployAt(n)]));
+      const most = Math.max(...reach.values());
+      let best: { key: number[]; first: number; second: number; k: number; rest: number; then: number } | null = null;
+      for (let k = 1; k <= most; k++) {
+        const kills = straightKills(k, ctx.off);
+        if (kills >= d) break;
+        if (kills < 1) continue;
+        const rest = d - kills;
+        const then = armiesToTake(rest, { offensiveKillRate: ctx.off, defensiveKillRate: ctx.def })!;
+        for (const first of sources)
+          for (const second of sources) {
+            const can =
+              first === second ? reach.get(first)! >= k + then : avail.get(first)! >= k && reach.get(second)! >= then;
+            if (!can) continue;
+            const key = [k + then, first === second ? 1 : 2, first, second, k];
+            if (!best || lexLess(key, best.key)) best = { key, first, second, k, rest, then };
+          }
+      }
+      return best;
+    };
     // Bonuses whose next capture cannot be paid for this turn.
     const skipped = new Set<number>();
     // This turn's attacks, in order: the armies left over follow them (#129).
     const attacks: { source: number; target: number }[] = [];
+    // The bonuses this turn can work on, set up once (the simulation runs very many times): what
+    // is left to capture, and the members next to a territory held at the start of the turn,
+    // cheapest first (then id). Within the turn only the captures change: `rem` falls, and a
+    // captured target is passed over.
+    const reachable = new Set<number>();
+    for (const t of startHeld) for (const n of neighborsOf(ctx.g, t)) reachable.add(n);
+    interface Open {
+      id: number;
+      net: number;
+      rem: number;
+      targets: number[];
+      next: number;
+    }
+    const open: Open[] = [];
+    const openById = new Map<number, Open>();
+    for (const id of relevant(startHeld)) {
+      if (completions.has(id)) continue;
+      const b = ctx.bonuses.get(id)!;
+      let rem = 0;
+      let blocked = false;
+      const targets: number[] = [];
+      for (const m of b.members) {
+        if (held.has(m)) continue;
+        const c = taken.has(m) ? null : ctx.cost.get(m);
+        if (c === null || c === undefined) {
+          blocked = true;
+          break;
+        }
+        rem += c;
+        if (reachable.has(m)) targets.push(m);
+      }
+      if (blocked || !targets.length || rem === 0) continue;
+      const net = netValue(b);
+      if (net <= 0) continue;
+      targets.sort((x, y) => ctx.cost.get(x)! - ctx.cost.get(y)! || x - y);
+      const o = { id, net, rem, targets, next: 0 };
+      open.push(o);
+      openById.set(id, o);
+    }
+    const capture = (target: number) => {
+      captured.add(target);
+      for (const id of ctx.bonusesOf.get(target) ?? []) {
+        const o = openById.get(id);
+        if (o) o.rem -= ctx.cost.get(target)!;
+      }
+    };
     for (;;) {
       let best: { id: number; ratio: number; rem: number; target: number; cost: number } | null = null;
-      for (const id of relevant(startHeld)) {
-        if (completions.has(id) || skipped.has(id)) continue;
-        const b = ctx.bonuses.get(id)!;
-        let rem = 0;
-        let target: number | null = null;
-        let targetCost = Infinity;
-        let blocked = false;
-        for (const m of b.members) {
-          if (held.has(m) || captured.has(m)) continue;
-          const c = taken.has(m) ? null : ctx.cost.get(m);
-          if (c === null || c === undefined) {
-            blocked = true;
-            break;
-          }
-          rem += c;
-          const reachable = neighborsOf(ctx.g, m).some((n) => startSet.has(n));
-          if (reachable && (c < targetCost || (c === targetCost && m < target!))) {
-            target = m;
-            targetCost = c;
-          }
+      for (const o of open) {
+        if (skipped.has(o.id)) continue;
+        while (o.next < o.targets.length && captured.has(o.targets[o.next]!)) o.next++;
+        if (o.next >= o.targets.length || o.rem === 0) continue;
+        const { id, rem } = o;
+        const ratio = o.net / rem;
+        if (!best || ratio > best.ratio || (ratio === best.ratio && (rem < best.rem || (rem === best.rem && id < best.id)))) {
+          const target = o.targets[o.next]!;
+          best = { id, ratio, rem, target, cost: ctx.cost.get(target)! };
         }
-        if (blocked || target === null || rem === 0) continue;
-        const net = netValue(b);
-        if (net <= 0) continue;
-        const ratio = net / rem;
-        if (!best || ratio > best.ratio || (ratio === best.ratio && (rem < best.rem || (rem === best.rem && id < best.id))))
-          best = { id, ratio, rem, target, cost: targetCost };
       }
       if (!best) break;
       // The attack comes from one bordering territory held at the start of the turn —
@@ -382,6 +554,33 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
       }
       const own = source < 0 ? 0 : avail.get(source)!;
       const deploy = source < 0 ? 0 : deployAt(source);
+      const two = source < 0 || own + deploy < best.cost ? twoOrderPlan(best.target) : null;
+      if (two) {
+        const { first, second, k, rest, then } = two;
+        // The first attack: its armies are spent for the turn, and its survivors stay put.
+        const dead = Math.min(k, straightKills(ctx.armies.get(best.target)!, ctx.def));
+        const pay = (t: number, n: number) => {
+          const fromOwn = Math.min(avail.get(t)!, n);
+          avail.set(t, avail.get(t)! - fromOwn);
+          armiesOn.set(t, armiesOn.get(t)! - fromOwn);
+          spend(t, n - fromOwn);
+        };
+        pay(first, k);
+        armiesOn.set(first, armiesOn.get(first)! + k - dead);
+        pay(second, then);
+        capture(best.target);
+        attacks.push({ source: second, target: best.target });
+        armiesOn.set(best.target, then - straightKills(rest, ctx.def));
+        twoOrders.push({
+          turn,
+          territoryId: best.target,
+          orders: [
+            { from: first, armies: k },
+            { from: second, armies: then },
+          ],
+        });
+        continue;
+      }
       if (source < 0 || own + deploy < best.cost) {
         // Save the deploys for the best bonus; try the next one with what else stands idle.
         if (saveAt === null && source >= 0) {
@@ -395,7 +594,7 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
       avail.set(source, own - fromOwn);
       armiesOn.set(source, armiesOn.get(source)! - fromOwn);
       spend(source, best.cost - fromOwn);
-      captured.add(best.target);
+      capture(best.target);
       attacks.push({ source, target: best.target });
       armiesOn.set(best.target, Math.max(0, best.cost - ctx.lost.get(best.target)!));
     }
@@ -433,12 +632,20 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
     checkComplete(turn);
   }
   const progress = new Map<number, number>();
+  const threats = new Map<number, number[]>();
+  const risk = new Map<number, number>();
+  const mine = new Set(start);
   let score = 0;
   for (const id of relevant(held)) {
     const b = ctx.bonuses.get(id)!;
     const turn = completions.get(id);
     if (turn !== undefined) {
-      score += b.value * (PICK_HORIZON + 1 - turn) * b.defense;
+      // Credited by who can reach it (#166): my own picks are no threat to it.
+      const reach = (ctx.threats.get(id)?.[turn] ?? NO_THREATS).filter((q) => !mine.has(q));
+      const p = threatChance(ctx, reach, start.length, taken, known);
+      threats.set(id, reach);
+      risk.set(id, p);
+      score += b.value * (PICK_HORIZON + 1 - turn) * b.defense * (1 - THREAT_LOSS * p);
       continue;
     }
     const share = b.members.filter((m) => held.has(m)).length / b.members.length;
@@ -449,7 +656,7 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
     }
   }
   for (const [id, turn] of penalties) score += ctx.penalties.get(id)!.value * (PICK_HORIZON + 1 - turn);
-  return { completions, penalties, progress, score };
+  return { completions, penalties, progress, threats, risk, twoOrders, held, score };
 }
 
 function luckPercent(v: number | undefined): number {
@@ -510,6 +717,8 @@ export function planPicks(input: PlanPicksInput): PickPlan {
 
   const guard = s.oneArmyStandsGuard === false ? 0 : 1;
   const players = Number.isFinite(input.players) ? Math.max(1, Math.floor(input.players)) : 2;
+  const maxPicks = Math.max(0, Math.floor(input.maxPicks));
+  const limit = Math.max(0, Math.floor(input.territoryLimit));
   const duel = players <= 2;
   const entryWeight = duel ? ENTRY_WEIGHT_1V1 : ENTRY_WEIGHT;
   const rates = { offensiveKillRate: off, defensiveKillRate: def, luckModifier: s.luckModifier };
@@ -582,7 +791,66 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     baseIncome,
     bonusArmyPer: s.bonusArmyPer ?? 0,
     localDeployments: s.localDeployments === true,
+    off,
+    def,
+    twoOrders: luckFraction(s.luckModifier) === 0 && (s.roundingMode === undefined || s.roundingMode === 'StraightRound') && s.noSplit !== true,
+    pickCount: pickable.length,
+    opponentStarts: (players - 1) * limit,
+    threats: new Map(),
   };
+
+  // Who can reach a bonus (#166). From each pickable territory q, a lone stack: the starting
+  // armies on q, then each turn the base income is deployed on it and it may send everything
+  // but the guard into one neighbour whose capture cost that covers, arriving with what it
+  // sent less the armies lost. Every other territory is a neutral at its size. `most` is the
+  // most armies the stack can have on a territory at the end of the turn — more is never worse
+  // — so the first turn a territory appears is the earliest it can be held.
+  const arrivalFrom = (q: number): Map<number, number> => {
+    const arrival = new Map<number, number>([[q, 0]]);
+    let most = new Map<number, number>([[q, pickArmies]]);
+    for (let turn = 1; turn <= PICK_HORIZON; turn++) {
+      const next = new Map<number, number>();
+      const put = (t: number, n: number) => {
+        if ((next.get(t) ?? -1) < n) next.set(t, n);
+      };
+      for (const [from, n] of most) {
+        put(from, n + baseIncome);
+        const sent = n - guard + baseIncome;
+        for (const to of neighborsOf(g, from)) {
+          const c = cost.get(to);
+          if (to === q || c === null || c === undefined || sent < c) continue;
+          put(to, sent - lost.get(to)!);
+          if (!arrival.has(to)) arrival.set(to, turn);
+        }
+      }
+      most = next;
+    }
+    return arrival;
+  };
+  // A bonus is reached through its zone: its territories (holding one denies it) and the
+  // territories next to them (standing there means an attack the turn after).
+  const zoneOf = new Map<number, number[]>();
+  for (const b of bonuses.values()) {
+    const zone = new Set(b.members);
+    for (const m of b.members) for (const n of neighborsOf(g, m)) zone.add(n);
+    for (const t of zone) zoneOf.set(t, [...(zoneOf.get(t) ?? []), b.id]);
+  }
+  /** Bonus id → pickable territory → the earliest turn-end its stack is in the bonus's zone. */
+  const reach = new Map<number, Map<number, number>>();
+  for (const q of pickable)
+    for (const [t, turn] of arrivalFrom(q))
+      for (const id of zoneOf.get(t) ?? []) {
+        let by = reach.get(id);
+        if (!by) reach.set(id, (by = new Map()));
+        const known = by.get(q);
+        if (known === undefined || turn < known) by.set(q, turn);
+      }
+  // Per bonus and completion turn, once: `simulate` only filters these (it runs very many times).
+  for (const [id, by] of reach)
+    ctx.threats.set(
+      id,
+      Array.from({ length: PICK_HORIZON + 1 }, (_, turn) => [...by].filter(([, at]) => at <= turn).map(([q]) => q)),
+    );
 
   // Contestedness from centrality among the pickables.
   const contestWeight = Math.min(CONTEST_MAX, Math.max(0, (players - 2) * CONTEST_PER_PLAYER));
@@ -615,6 +883,8 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     score: number;
     reasons: string[];
     anchor: number | null;
+    /** The bonuses the pick completes alone, by turn. */
+    completions: Map<number, number>;
   }
   const terrName = (id: number) => g.territoryById.get(id)?.name ?? String(id);
   /** "3 entry points, 1 a double border (T7 touches 2 of its territories)"; three named at most. */
@@ -628,10 +898,30 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     const more = doubles.length > MAX_NAMED ? ` and ${doubles.length - MAX_NAMED} more` : '';
     return `${entries}, ${doubles.length === 1 ? '1 a double border' : `${doubles.length} double borders`} (${shown.join(', ')}${more})`;
   };
+  /** "A", "A and B", "A, B and C", then "A, B, C and n more". */
+  const namesOf = (ids: readonly number[]) => {
+    const names = ids.slice(0, MAX_NAMED).map(terrName);
+    if (ids.length > MAX_NAMED) return `${names.join(', ')} and ${ids.length - MAX_NAMED} more`;
+    return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? '');
+  };
+  /** Who can reach a bonus completed on `turn`, and what that costs its credit (#166). */
+  const threatText = (threats: readonly number[], p: number, turn: number, taken: ReadonlySet<number>) => {
+    const by = `by turn ${turn + 1}`;
+    if (!threats.length) return `no other pickable territory can reach it ${by}`;
+    const pct = Math.round(THREAT_LOSS * p * 100);
+    const cost = pct >= 1 ? `score −${pct}%` : 'score down by less than 1%';
+    const known = threats.filter((q) => taken.has(q));
+    if (known.length) return `${namesOf(known)} (another player's when this pick is granted) can reach it ${by} (${cost})`;
+    if (p <= 0) return `no other player's start can reach it ${by}`;
+    return (
+      `${namesOf(threats)} can reach it ${by} (${cost})` +
+      (threats.length <= 2 ? `, safe only if you also hold ${namesOf(threats)}` : '')
+    );
+  };
   const assess = (t: number, taken: ReadonlySet<number>): Assessment => {
     const sim = simulate(ctx, [t], taken);
     const factor = contestFactor(t);
-    const lines: { id: number; worth: number; point: string; negatives: string[] }[] = [];
+    const lines: { id: number; worth: number; head: string; point: string; negatives: string[] }[] = [];
     const touched = [...new Set([...sim.completions.keys(), ...sim.progress.keys()])].sort(byNum);
     for (const id of touched) {
       const b = bonuses.get(id)!;
@@ -641,13 +931,17 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       const negatives: string[] = [];
       let point: string;
       let worth: number;
-      if (turn === 0) {
-        point = `${head}: held at once (single-territory bonus), +${b.value} income from turn 1; ${entries}`;
-        worth = b.value * (PICK_HORIZON + 1);
-      } else if (turn !== undefined) {
-        const when = turn === 1 ? 'first-turn bonus (complete on turn 1)' : `complete on turn ${turn}`;
-        point = `${head}: ${when}, +${b.value} income from turn ${turn + 1}; ${entries}`;
-        worth = b.value * (PICK_HORIZON + 1 - turn);
+      if (turn !== undefined) {
+        const when =
+          turn === 0
+            ? 'held at once (single-territory bonus)'
+            : turn === 1
+              ? 'first-turn bonus (complete on turn 1)'
+              : `complete on turn ${turn}`;
+        const p = sim.risk.get(id) ?? 0;
+        const reached = threatText(sim.threats.get(id) ?? NO_THREATS, p, turn, taken);
+        point = `${head}: ${when}, +${b.value} income from turn ${turn + 1}; ${entries}; ${reached}`;
+        worth = b.value * (PICK_HORIZON + 1 - turn) * (1 - THREAT_LOSS * p);
       } else {
         const share = sim.progress.get(id)!;
         const have = Math.round(share * b.members.length);
@@ -669,9 +963,20 @@ export function planPicks(input: PlanPicksInput): PickPlan {
         negatives.push(
           `${head} holds a wasteland: ${waste.map((m) => `${terrName(m)} (${armies.get(m)} armies)`).join(', ')}`,
         );
-      lines.push({ id, worth, point, negatives });
+      lines.push({ id, worth, head, point, negatives });
     }
     lines.sort((a, b) => b.worth - a.worth || a.id - b.id);
+    // Captures that take two orders (#166), each under the first bonus listed that holds it.
+    const twice = sim.twoOrders.map((c) => {
+      const [first, second] = c.orders;
+      const of = lines.find((l) => bonuses.get(l.id)!.members.includes(c.territoryId));
+      const armies = `${first.armies} arm${first.armies === 1 ? 'y' : 'ies'}`;
+      const how =
+        first.from === second.from
+          ? `${armies} first, then ${second.armies}`
+          : `${armies} from ${terrName(first.from)} first, then ${second.armies} from ${terrName(second.from)}`;
+      return `${of ? `${of.head} needs` : 'Needs'} two orders on ${terrName(c.territoryId)}: ${how}`;
+    });
     // Negative bonuses held in full: a cost, listed with the negatives (#129).
     const charged = [...sim.penalties.entries()]
       .sort((a, b) => a[1] - b[1] || a[0] - b[0])
@@ -688,12 +993,13 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       const verb = sim.completions.has(anchor.id) ? 'Anchors' : 'Advances';
       why.push(`${verb} ${anchor.point}`);
       for (const l of lines.slice(1)) why.push(`Also ${sim.completions.has(l.id) ? 'completes' : 'advances'} ${l.point}`);
+      why.push(...twice);
       for (const l of lines) why.push(...l.negatives);
     } else why.push(`No bonus within reach in ${PICK_HORIZON} turns`);
     why.push(...charged);
     if (contestWeight > 0 && 1 - factor >= 0.05)
       why.push(`Central: likely contested with ${players} players (score −${Math.round((1 - factor) * 100)}%)`);
-    return { score: round2(sim.score * factor), reasons: why, anchor: anchor?.id ?? null };
+    return { score: round2(sim.score * factor), reasons: why, anchor: anchor?.id ?? null, completions: sim.completions };
   };
   /** Assessments of a pool with `taken` held by someone else (the fallback's view, #129). */
   interface View {
@@ -750,7 +1056,11 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     }
     return group;
   };
-  /** The hop limit each group was relaxed to (absent: not relaxed; Infinity: until every pick could join). */
+  /** What building a group has to say: its warnings, and the hop limit it was relaxed to (absent: not relaxed; Infinity: until every pick could join), by group label. */
+  interface GroupNotes {
+    warnings: string[];
+    relaxedTo: Map<string, number>;
+  }
   const relaxedTo = new Map<string, number>();
   /** Fewest hops between a pick of `ids` and one of `away` (the gap between two groups). */
   const gapTo = (ids: number[], away: number[]) => Math.min(...ids.flatMap((a) => away.map((b) => hops(a, b))));
@@ -782,7 +1092,14 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       }
     return best;
   };
-  const buildGroup = (view: View, pool: number[], size: number, label: string, away: number[] = []): number[] => {
+  const buildGroup = (
+    view: View,
+    pool: number[],
+    size: number,
+    label: string,
+    away: number[] = [],
+    notes: GroupNotes = { warnings, relaxedTo },
+  ): number[] => {
     if (size <= 0 || !pool.length) return [];
     const score = (t: number) => view.of.get(t)!.score;
     const byScore = (a: number, b: number) => score(b) - score(a) || a - b;
@@ -808,8 +1125,8 @@ export function planPicks(input: PlanPicksInput): PickPlan {
         continue;
       }
       if (hop > COMPACT_DISTANCE) {
-        relaxedTo.set(label, last ? Infinity : hop);
-        warnings.push(
+        notes.relaxedTo.set(label, last ? Infinity : hop);
+        notes.warnings.push(
           `No compact ${label} group of ${size} picks (each within ${COMPACT_DISTANCE} hops of another) exists among the pickable territories; ` +
             (last ? 'relaxed until every pick could join (some are not connected).' : `relaxed to within ${hop} hops.`),
         );
@@ -830,9 +1147,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
             const wide = bestGroup(view, pool, size, seeds, limit);
             const sc = better(wide);
             if (sc === null) continue;
-            relaxedTo.set(label, limit);
+            notes.relaxedTo.set(label, limit);
             const within = Number.isFinite(limit) ? `within ${limit} hops` : 'any distance';
-            warnings.push(
+            notes.warnings.push(
               `In a 1v1 the best ${label} group within ${bound} hops scores ${round2(bounded)}, but one spread to ${within} scores ${round2(sc)} ` +
                 `(at least ${SPREAD_RELAX_GAIN}× as much): the ${label} group spreads to ${within}, so its picks can support each other less.`,
             );
@@ -844,8 +1161,6 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     }
   };
 
-  const maxPicks = Math.max(0, Math.floor(input.maxPicks));
-  const limit = Math.max(0, Math.floor(input.territoryLimit));
   const primarySize = Math.min(limit, maxPicks, pickable.length);
   if (pickable.length < limit)
     warnings.push(
@@ -853,36 +1168,133 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     );
   const primary = buildGroup(firstView, pickable, primarySize, 'primary');
   const rest = pickable.filter((t) => !primary.includes(t));
+  // Commanders (#129): the first pick awarded carries the commander, so the primary's safest
+  // pick goes first — the fewest other pickable territories (where other players may start)
+  // within COMPACT_DISTANCE hops, then the fewest neighbours outside the primary, then score.
+  let commanderPick: number | null = null;
+  let commanderExposure = 0;
+  if (s.commanders && primary.length) {
+    const inPrimary = new Set(primary);
+    const exposure = (t: number) => pickable.filter((o) => !inPrimary.has(o) && hops(t, o) <= COMPACT_DISTANCE).length;
+    const open = (t: number) => neighborsOf(g, t).filter((n) => !inPrimary.has(n)).length;
+    const score = (t: number) => firstView.of.get(t)!.score;
+    commanderPick = [...primary].sort(
+      (a, b) => exposure(a) - exposure(b) || open(a) - open(b) || score(b) - score(a) || a - b,
+    )[0]!;
+    commanderExposure = exposure(commanderPick);
+    primary.splice(0, primary.length, commanderPick, ...primary.filter((t) => t !== commanderPick));
+  }
+
+  /** The joint opening's score from `start` with `taken` held by someone else, remembered. */
+  const simScores = new Map<string, number>();
+  const simScore = (start: readonly number[], taken: readonly number[]) => {
+    const key = `${[...start].sort(byNum).join(',')}|${[...taken].sort(byNum).join(',')}`;
+    let sc = simScores.get(key);
+    if (sc === undefined) simScores.set(key, (sc = simulate(ctx, start, new Set(taken)).score));
+    return sc;
+  };
+
   // The fallback is granted only when someone else holds primary picks: it is scored, and
   // its reasons written, with the primary taken (#129). A list longer than twice the limit
   // (war.app's client allows players × territories per player) is a series of tiers, each a
   // group of the primary's size scored with the primary and the earlier tiers taken.
   const fallbackSize = Math.max(0, Math.min(maxPicks - primary.length, rest.length));
   const tierSize = Math.max(1, primary.length);
-  const tiers: number[][] = [];
-  const views = new Map<number, View>(primary.map((t) => [t, firstView]));
-  let firstFallbackView: View = viewOf([], new Set(primary));
-  for (let pool = rest, done = 0; done < fallbackSize && pool.length; ) {
-    const taken = new Set([...primary, ...tiers.flat()]);
-    const view = viewOf(pool, taken);
-    if (!tiers.length) firstFallbackView = view;
-    // In a 1v1 (unless spreading) the fallback is counter-pick insurance: in another area.
-    const tier = buildGroup(
-      view,
-      pool,
-      Math.min(tierSize, fallbackSize - done),
-      tiers.length ? `fallback tier ${tiers.length + 1}` : 'fallback',
-      !tiers.length && duel && !spread ? primary : [],
-    );
-    if (!tier.length) break;
-    for (const t of tier) views.set(t, view);
-    tiers.push(tier);
-    done += tier.length;
-    pool = pool.filter((t) => !tier.includes(t));
+  // In a two-player game with 2 to 4 picks each (#166) the first tier is not a second group:
+  // each of its picks answers the loss that grants it. `answerSets` are the sets of list
+  // positions the award can grant from a list of twice the primary; null: the tier rule stands.
+  const answerSets =
+    players === 2 && !spread && primary.length >= 2 && primary.length <= 4 && fallbackSize >= primary.length
+      ? pickOutcomes({ listLength: 2 * primary.length, perPlayer: primary.length, players })
+      : null;
+  // Positions primary + 1 … 2 × primary, one at a time. A pick at position p is granted exactly
+  // in the outcomes whose last granted position is p, and each of those is settled by the list
+  // so far plus the candidate: I hold the granted set G, the opponent the picks above p that I
+  // was not granted, K. The candidate is worth my opening from G with K the opponent's, less
+  // OPPONENT_WEIGHT × the opponent's from K with G mine — so standing where a lost pick's bonus
+  // can be reached counts (a known threat halves its credit), and so does its own bonus. The
+  // best mean over those outcomes wins; ties: its own score with the primary taken, then id.
+  const answerTier = (order: readonly number[], view: View): number[] => {
+    const n = order.length;
+    const list = [...order];
+    for (let p = n; p < 2 * n; p++) {
+      const sets = answerSets!
+        .filter((o) => o[o.length - 1] === p)
+        .map((o) => {
+          const kept = o.slice(0, -1).map((i) => list[i]!);
+          const lost = list.filter((_, i) => !o.includes(i));
+          // Most candidates stand nowhere the opponent's opening looks: for those it is the
+          // same opening, simulated once with one more start of mine known.
+          const apart = simulate(ctx, lost, new Set(kept), kept.length + 1);
+          return { kept, lost, apart: apart.score, read: territoriesRead(ctx, apart) };
+        });
+      let best: { t: number; value: number; own: number } | null = null;
+      for (const c of rest) {
+        if (list.includes(c)) continue;
+        const own = view.of.get(c)!.score;
+        // No outcome ends at p: the candidate's own score with the primary taken decides.
+        let value = own;
+        if (sets.length) {
+          let sum = 0;
+          for (const o of sets) {
+            const granted = [...o.kept, c];
+            const theirs = o.read.has(c) ? simScore(o.lost, granted) : o.apart;
+            sum += simScore(granted, o.lost) - OPPONENT_WEIGHT * theirs;
+          }
+          value = round2(sum / sets.length);
+        }
+        if (!best || value > best.value || (value === best.value && own > best.own)) best = { t: c, value, own };
+      }
+      if (!best) break;
+      list.push(best.t);
+    }
+    return list.slice(n);
+  };
+  interface Fallback extends GroupNotes {
+    tiers: number[][];
+    /** The view each listed pick is scored in. */
+    views: Map<number, View>;
+    /** The first tier's view: the primary taken. */
+    firstView: View;
   }
-  const fallback = tiers.flat();
-  const firstTier = tiers[0] ?? [];
-  const viewFor = (t: number) => views.get(t)!;
+  const buildFallback = (order: readonly number[]): Fallback => {
+    const out: Fallback = {
+      tiers: [],
+      views: new Map<number, View>(order.map((t) => [t, firstView])),
+      firstView: viewOf([], new Set(order)),
+      warnings: [],
+      relaxedTo: new Map(),
+    };
+    let pool = rest;
+    let done = 0;
+    const add = (tier: number[], view: View) => {
+      for (const t of tier) out.views.set(t, view);
+      out.tiers.push(tier);
+      done += tier.length;
+      pool = pool.filter((t) => !tier.includes(t));
+    };
+    if (answerSets) {
+      out.firstView = viewOf(pool, new Set(order));
+      add(answerTier(order, out.firstView), out.firstView);
+    }
+    while (done < fallbackSize && pool.length) {
+      const view = viewOf(pool, new Set([...order, ...out.tiers.flat()]));
+      if (!out.tiers.length) out.firstView = view;
+      // In a 1v1 (unless spreading) a first tier built as a group is counter-pick insurance: in another area.
+      const tier = buildGroup(
+        view,
+        pool,
+        Math.min(tierSize, fallbackSize - done),
+        out.tiers.length ? `fallback tier ${out.tiers.length + 1}` : 'fallback',
+        !out.tiers.length && duel && !spread ? [...order] : [],
+        out,
+      );
+      if (!tier.length) break;
+      add(tier, view);
+    }
+    return out;
+  };
+  let listed = buildFallback(primary);
 
   /** Farthest pair (hops) and the longest step that links the picks into one cluster. */
   const spreadOf = (ids: number[]) => {
@@ -922,25 +1334,31 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   };
 
   const groupOf = (ids: number[], taken: ReadonlySet<number>): PickGroup => {
-    if (!ids.length) return { territoryIds: [], score: 0, bonuses: [], maxHops: 0 };
+    if (!ids.length) return { territoryIds: [], score: 0, bonuses: [], twoOrderCaptures: [], maxHops: 0 };
     const sim = simulate(ctx, ids, taken);
     const done = [...sim.completions.entries()]
-      .map(([id, turn]) => ({ bonusId: id, name: bonuses.get(id)!.name, value: bonuses.get(id)!.value, turn }))
+      .map(([id, turn]) => ({
+        bonusId: id,
+        name: bonuses.get(id)!.name,
+        value: bonuses.get(id)!.value,
+        turn,
+        threats: [...(sim.threats.get(id) ?? [])],
+      }))
       .sort((a, b) => a.turn - b.turn || a.bonusId - b.bonusId);
     const far = spreadOf(ids).far;
-    return { territoryIds: ids, score: round2(sim.score), bonuses: done, maxHops: Number.isFinite(far) ? far : null };
+    return {
+      territoryIds: ids,
+      score: round2(sim.score),
+      bonuses: done,
+      twoOrderCaptures: sim.twoOrders,
+      maxHops: Number.isFinite(far) ? far : null,
+    };
   };
 
   // The award order (#129): a list is judged by the sets it can actually yield. The worst
   // outcome is scored with the other players holding the picks it implies they took; the
   // primary's order is changed only when another order raises that worst outcome.
-  const outcomeCache = new Map<string, number>();
-  const outcomeScore = (list: number[], ids: number[]) => {
-    const taken = impliedOpponentStarts(list, ids);
-    const key = `${[...ids].sort(byNum).join(',')}|${[...taken].sort(byNum).join(',')}`;
-    if (!outcomeCache.has(key)) outcomeCache.set(key, round2(simulate(ctx, ids, new Set(taken)).score));
-    return outcomeCache.get(key)!;
-  };
+  const outcomeScore = (list: number[], ids: number[]) => round2(simScore(ids, impliedOpponentStarts(list, ids)));
   const worstOf = (list: number[], sets: number[][]) => {
     let worst: { territoryIds: number[]; score: number } | null = null;
     for (const set of sets) {
@@ -951,47 +1369,83 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     return worst!;
   };
   const outcomeSets =
-    primary.length > 0 ? pickOutcomes({ listLength: primary.length + fallback.length, perPlayer: primary.length, players }) : null;
-  // Commanders (#129): the first pick awarded carries the commander, so the primary's safest
-  // pick goes first — the fewest other pickable territories (where other players may start)
-  // within COMPACT_DISTANCE hops, then the fewest neighbours outside the primary, then score.
-  let commanderPick: number | null = null;
-  let commanderExposure = 0;
-  if (s.commanders && primary.length) {
-    const inPrimary = new Set(primary);
-    const exposure = (t: number) => pickable.filter((o) => !inPrimary.has(o) && hops(t, o) <= COMPACT_DISTANCE).length;
-    const open = (t: number) => neighborsOf(g, t).filter((n) => !inPrimary.has(n)).length;
-    const score = (t: number) => firstView.of.get(t)!.score;
-    commanderPick = [...primary].sort(
-      (a, b) => exposure(a) - exposure(b) || open(a) - open(b) || score(b) - score(a) || a - b,
-    )[0]!;
-    commanderExposure = exposure(commanderPick);
-    primary.splice(0, primary.length, commanderPick, ...primary.filter((t) => t !== commanderPick));
-  }
+    primary.length > 0
+      ? pickOutcomes({ listLength: primary.length + listed.tiers.flat().length, perPlayer: primary.length, players })
+      : null;
   let award: AwardReport | undefined;
   if (outcomeSets?.length) {
     const base = [...primary];
+    const baseWorst = worstOf([...base, ...listed.tiers.flat()], outcomeSets);
     let bestOrder = base;
-    let bestWorst = worstOf([...base, ...fallback], outcomeSets);
+    let bestWorst = baseWorst;
     if (primary.length <= MAX_REORDER) {
       const orders =
         commanderPick === null ? permutations(base) : permutations(base.slice(1)).map((rest) => [commanderPick!, ...rest]);
       for (const order of orders) {
-        const w = worstOf([...order, ...fallback], outcomeSets);
+        const w = worstOf([...order, ...listed.tiers.flat()], outcomeSets);
         if (w.score > bestWorst.score) {
           bestOrder = order;
           bestWorst = w;
         }
       }
     }
+    if (bestOrder !== base && answerSets) {
+      // An answering fallback (#166) depends on the primary's order: it is built again for the
+      // new one, and the new order stands only if the list as it then reads still has a better
+      // worst outcome than the list it replaces.
+      const again = buildFallback(bestOrder);
+      const w = worstOf([...bestOrder, ...again.tiers.flat()], outcomeSets);
+      if (w.score > baseWorst.score) {
+        listed = again;
+        bestWorst = w;
+      } else {
+        bestOrder = base;
+        bestWorst = baseWorst;
+      }
+    }
     const reordered = bestOrder !== base;
     primary.splice(0, primary.length, ...bestOrder);
-    const list = [...primary, ...fallback];
     award = {
       outcomes: outcomeSets.length,
-      worst: { ...bestWorst, opponentStarts: impliedOpponentStarts(list, bestWorst.territoryIds) },
+      worst: { ...bestWorst, opponentStarts: impliedOpponentStarts([...primary, ...listed.tiers.flat()], bestWorst.territoryIds) },
       reordered,
     };
+  }
+  const { tiers } = listed;
+  const fallback = tiers.flat();
+  const firstTier = tiers[0] ?? [];
+  const firstFallbackView = listed.firstView;
+  const viewFor = (t: number) => listed.views.get(t)!;
+  warnings.push(...listed.warnings);
+  for (const [label, hop] of listed.relaxedTo) relaxedTo.set(label, hop);
+
+  // What each pick of an answering fallback answers (#166): the picks lost in the outcomes that
+  // grant it whose own bonus (one the lost pick completes alone, by that turn) it reaches in
+  // time. One bonus is named per lost pick — the one worth most to it — and the rest counted.
+  const answers = new Map<number, string>();
+  if (answerSets) {
+    const list = [...primary, ...firstTier];
+    for (let p = primary.length; p < list.length; p++) {
+      const lost = new Set<number>();
+      for (const o of answerSets)
+        if (o[o.length - 1] === p) for (let i = 0; i < p; i++) if (!o.includes(i)) lost.add(i);
+      const parts: string[] = [];
+      for (const i of [...lost].sort(byNum)) {
+        const credit = (id: number, turn: number) => bonuses.get(id)!.value * (PICK_HORIZON + 1 - turn);
+        const reached = [...firstView.of.get(list[i]!)!.completions]
+          .map(([id, turn]) => ({ id, turn, at: reach.get(id)?.get(list[p]!) }))
+          .filter((b): b is { id: number; turn: number; at: number } => b.at !== undefined && b.at <= b.turn)
+          .sort((a, b) => credit(b.id, b.turn) - credit(a.id, a.turn) || a.id - b.id);
+        const top = reached[0];
+        if (!top) continue;
+        const more = reached.length - 1;
+        parts.push(
+          `${terrName(list[i]!)}: reaches ${bonuses.get(top.id)!.name} by turn ${top.at + 1}` +
+            (more ? ` (and ${more} more of its bonuses)` : ''),
+        );
+      }
+      if (parts.length) answers.set(list[p]!, `Answers the loss of ${parts.join('; of ')}`);
+    }
   }
 
   const pickOf = (t: number) => {
@@ -1003,7 +1457,8 @@ export function planPicks(input: PlanPicksInput): PickPlan {
               `(${commanderExposure} other pickable territor${commanderExposure === 1 ? 'y' : 'ies'} within ${COMPACT_DISTANCE} hops)`,
           ]
         : [];
-    return { score: a.score, reasons: [...a.reasons, ...commander] };
+    const answer = answers.get(t);
+    return { score: a.score, reasons: [...a.reasons, ...(answer ? [answer] : []), ...commander] };
   };
   const picks: PickChoice[] = [
     ...primary.map((t) => ({ territoryId: t, group: 'primary' as const, ...pickOf(t) })),
@@ -1029,9 +1484,12 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     `Each pick is scored by the bonus armies it earns through turn ${PICK_HORIZON + 1} in a ${PICK_HORIZON}-turn opening simulation: ` +
       `${pickArmies} starting armies, ${baseIncome} base income${ctx.bonusArmyPer > 0 ? ` (or 1 per ${ctx.bonusArmyPer} territories when more)` : ''}, ` +
       `capture costs at ${off}/${def} kill rates against the neutrals' real sizes; ` +
-      `armies attack only from a territory held at the start of the turn that borders the target, topped up by that turn's deploys.`,
+      `armies attack only from a territory held at the start of the turn that borders the target, topped up by that turn's deploys` +
+      (ctx.twoOrders ? '; a neutral no single order can pay for may be taken in two, the first only wearing it down.' : '.'),
     `A pick's reasons are its opening alone (a fallback pick's with the primary taken); a group's bonuses are its picks' joint opening, so one bonus can complete on different turns in the two.`,
-    `Bonuses are weighted by defensibility (fewer entry points is better${hardness > 1 ? '; attacks here are dearer than at 60/70, so this weighs more' : ''}).`,
+    `Bonuses are weighted by defensibility (fewer entry points is better, and one next to two of a bonus's territories counts twice${hardness > 1 ? '; attacks here are dearer than at 60/70, so this weighs more' : ''}), ` +
+      `and a completed bonus by who can reach it: it loses up to ${Math.round(THREAT_LOSS * 100)}% of its credit with the chance that another player starts on a pickable territory ` +
+      `whose armies can stand in or next to it by the turn it completes (their starts taken as equally likely on every pickable territory left).`,
     contestWeight > 0
       ? `With ${players} players central picks are likely contested: scores drop by up to ${Math.round(contestWeight * 100)}% with centrality, and ` +
           (relaxed
@@ -1041,10 +1499,16 @@ export function planPicks(input: PlanPicksInput): PickPlan {
         ? `In a 1v1 centrality is not penalised and entry points weigh twice as much; with spread on, a pick may join a group within ${SPREAD_DISTANCE} hops when it anchors a different bonus, so one counter-pick cannot wipe them` +
           (relaxed ? `; a group spreads farther only when no bounded group exists or spreading scores ${SPREAD_RELAX_GAIN}× as much (see the warnings).` : '.')
         : `In a 1v1 centrality is not penalised and entry points weigh twice as much; ` +
-          (relaxed
-            ? `each group is kept as compact as the map allows (the hop limit was relaxed; see the warnings), `
-            : `each group is compact (one cluster, each pick within ${COMPACT_DISTANCE} hops of another), `) +
-          'so the start has one front, not several; the fallback, in another area when one scores as much, is the insurance against a counter-pick.',
+          (answerSets
+            ? (relaxed
+                ? `the primary group is kept as compact as the map allows (the hop limit was relaxed; see the warnings), `
+                : `the primary group is compact (one cluster, each pick within ${COMPACT_DISTANCE} hops of another), `) +
+              `so the start has one front, not several; each fallback pick is chosen for the outcomes that grant it, in which the picks lost above it ` +
+              `are the opponent's starts: its opening there, less ${OPPONENT_WEIGHT} × the opponent's from those starts.`
+            : (relaxed
+                ? `each group is kept as compact as the map allows (the hop limit was relaxed; see the warnings), `
+                : `each group is compact (one cluster, each pick within ${COMPACT_DISTANCE} hops of another), `) +
+              'so the start has one front, not several; the fallback, in another area when one scores as much, is the insurance against a counter-pick.'),
     `The first ${primary.length} picks are the primary group, ${describe(primary)}; ` +
       `the rest are a disjoint fallback${firstTier.length ? ` (${describe(firstTier)})` : ''}, granted in order when another player picks first` +
       (tiers.length > 1
@@ -1065,7 +1529,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
           ? `one compact cluster, since with ${players} players spread picks are likely contested.`
           : spread
             ? `within ${SPREAD_DISTANCE} hops unless spreading scores ${SPREAD_RELAX_GAIN}× as much.`
-            : 'one compact cluster, so the start has one front; the fallback covers a counter-pick.') +
+            : answerSets
+              ? 'one compact cluster, so the start has one front; each fallback pick is listed for the outcomes in which a pick above it is lost.'
+              : 'one compact cluster, so the start has one front; the fallback covers a counter-pick.') +
         ' Weigh the trade before submitting.',
     );
   if (commanderPick !== null)

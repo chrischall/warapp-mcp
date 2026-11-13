@@ -128,7 +128,7 @@ describe('planPicks — the opening simulation does not park armies (#129)', () 
     // movable + 5 deployed take 3, 4 and 5 (3 armies each).
     const g = mkGraph([[1, 2], [2, 3], [2, 4], [2, 5], [5, 9]], [{ id: 100, name: 'Hub', value: 5, territoryIds: [1, 2, 3, 4, 5] }]);
     const p = plan({ graph: g, pickable: [1], territoryLimit: 1, maxPicks: 1 });
-    expect(p.groups.primary.bonuses).toEqual([{ bonusId: 100, name: 'Hub', value: 5, turn: 2 }]);
+    expect(p.groups.primary.bonuses).toEqual([{ bonusId: 100, name: 'Hub', value: 5, turn: 2, threats: [] }]);
   });
 
   it('the deploys go where the attack is, not to the lowest id', () => {
@@ -264,14 +264,15 @@ describe('planPicks — a list is judged by the sets the award order can give (#
   });
 
   it('orders the primary to raise the worst outcome when score order would lose the better start', () => {
-    // 4 is a single-territory bonus twice over (+4 and +3) hanging off 1; Pair (+6) = {2,6}.
-    // Pick 1 scores more alone (it captures 4), but losing 4 to the opponent costs more than
-    // losing 1, so 4 goes first.
+    // 4 is a single-territory bonus twice over (+4 and +3) hanging off 1; Pair (+8) = {2,6}.
+    // Pick 1 scores more alone (it captures 4 and then Pair), but losing 4 to the opponent costs
+    // more than losing 1, so 4 goes first. (Pair was +6 before #166: a bonus is now credited by
+    // who can reach it, and at +6 pick 4, holding its bonuses at once, already scored more.)
     const g = mkGraph(
       [[1, 2], [2, 3], [1, 4], [2, 5], [2, 6], [6, 7], [2, 8], [3, 9]],
       [
         { id: 100, name: 'SoloA', value: 4, territoryIds: [4] },
-        { id: 101, name: 'Pair', value: 6, territoryIds: [6, 2] },
+        { id: 101, name: 'Pair', value: 8, territoryIds: [6, 2] },
         { id: 102, name: 'SoloB', value: 3, territoryIds: [4] },
       ],
     );
@@ -284,11 +285,13 @@ describe('planPicks — a list is judged by the sets the award order can give (#
 });
 
 describe('planPicks — commanders (#129)', () => {
-  // Big (+5) = {1} borders three worthless pickables (10, 11, 12): where others may start.
+  // Big (+8) = {1} borders three worthless pickables (10, 11, 12): where others may start.
   // Calm (+3) = {2}, two hops from 1 through 3, with no other pickable near it.
+  // (Big was +5 before #166: with three players an opponent certainly starts next to it, which
+  // now halves its credit, and at +5 Calm already scored more.)
   const g = () =>
     mkGraph([[1, 3], [3, 2], [1, 10], [1, 11], [1, 12], [2, 20]], [
-      { id: 100, name: 'Big', value: 5, territoryIds: [1] },
+      { id: 100, name: 'Big', value: 8, territoryIds: [1] },
       { id: 101, name: 'Calm', value: 3, territoryIds: [2] },
     ]);
   const input = { pickable: [1, 2, 10, 11, 12], territoryLimit: 2, maxPicks: 2, players: 3 };

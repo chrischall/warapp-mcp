@@ -35,6 +35,7 @@ export function pickSettings(s: GameSettings | undefined): PickSettings {
     'initialNonDistributionArmies',
     'initialNeutralsInDistribution',
     'commanders',
+    'noSplit',
   ] as const satisfies ReadonlyArray<keyof PickSettings>;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (s[k] !== undefined) out[k] = s[k];
@@ -68,8 +69,12 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           'pickable territories: a list in priority order by name and id, split into a primary group ' +
           '(the territory limit: what you are granted if nobody takes them first; one compact cluster, a 1v1 included, ' +
           'with maxHops between its two farthest picks) and a disjoint fallback group ' +
-          '(granted in order when another player picked first; in a 1v1 in another area, against a counter-pick), each pick with its score and reasons (bonus, ' +
-          'value, turns to complete, first-turn bonus, entry points, contested), the bonuses each group completes, ' +
+          '(granted in order when another player picked first; in a two-player game with 2 to 4 picks each, every fallback pick ' +
+          'answers the loss that grants it: its own opening, less half the opponent\'s from the picks then lost), each pick with its ' +
+          'score and reasons (bonus, value, turns to complete, first-turn bonus, entry points and which are a double border, ' +
+          'which other pickable territories can reach the bonus in time, contested), the bonuses each group completes with their ' +
+          '`threats` (the pickable territories outside the group that can reach each by the turn after it completes), ' +
+          '`twoOrderCaptures` (neutrals its opening takes with two attacks because one cannot be paid for), ' +
           'the award (how many sets the round-by-round award order can grant from the list, and the worst of them with the ' +
           'other players\' starts it implies), ' +
           'warnings (assumed settings) and the reasoning. Its `submitPicks` is exactly what warapp_submit_picks ' +
@@ -138,7 +143,18 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         territories: g.territoryIds.map(name),
         score: g.score,
         maxHops: g.maxHops,
-        bonuses: g.bonuses.map((b) => ({ id: b.bonusId, name: b.name, value: b.value, turn: b.turn })),
+        bonuses: g.bonuses.map((b) => ({
+          id: b.bonusId,
+          name: b.name,
+          value: b.value,
+          turn: b.turn,
+          threats: b.threats.map(name),
+        })),
+        twoOrderCaptures: g.twoOrderCaptures.map((c) => ({
+          turn: c.turn,
+          territory: name(c.territoryId),
+          orders: c.orders.map((o) => ({ from: name(o.from), armies: o.armies })),
+        })),
       });
 
       return respond(view, VIEWS, (rung) => ({

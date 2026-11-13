@@ -68,7 +68,16 @@ interface PlanPicksPayload {
   territoryLimit: number;
   maxPicks: number;
   picks: Array<{ priority: number; territory: Named; group: 'primary' | 'fallback'; score: number; reasons: string[] }>;
-  groups: Record<'primary' | 'fallback', { territories: Named[]; score: number; maxHops: number | null; bonuses: Array<Named & { value: number; turn: number }> }>;
+  groups: Record<
+    'primary' | 'fallback',
+    {
+      territories: Named[];
+      score: number;
+      maxHops: number | null;
+      bonuses: Array<Named & { value: number; turn: number; threats: Named[] }>;
+      twoOrderCaptures: Array<{ turn: number; territory: Named; orders: Array<{ from: Named; armies: number }> }>;
+    }
+  >;
   warnings: string[];
   rationale: string[];
   submitPicks: { game_id: number; territories: number[] };
@@ -107,9 +116,23 @@ describe('warapp_plan_picks', () => {
     // Each group states how far apart its two farthest picks are, in hops.
     for (const grp of [p.groups.primary, p.groups.fallback]) expect(grp.maxHops === null || grp.maxHops >= 0).toBe(true);
     expect(typeof p.groups.primary.maxHops).toBe('number');
+    // Each completed bonus names the other pickable territories that can reach it in time (#166).
     for (const b of [...p.groups.primary.bonuses, ...p.groups.fallback.bonuses]) {
-      expect(b).toEqual({ id: expect.any(Number), name: expect.any(String), value: expect.any(Number), turn: expect.any(Number) });
+      expect(b).toEqual({
+        id: expect.any(Number),
+        name: expect.any(String),
+        value: expect.any(Number),
+        turn: expect.any(Number),
+        threats: expect.any(Array),
+      });
+      for (const t of b.threats) {
+        expect(PICKABLE).toContain(t.id);
+        expect(primary.has(t.id)).toBe(false);
+        expect(t.name).toBe(mapName(t.id));
+      }
     }
+    expect(p.groups.primary.bonuses.some((b) => b.threats.length > 0)).toBe(true);
+    for (const grp of [p.groups.primary, p.groups.fallback]) expect(Array.isArray(grp.twoOrderCaptures)).toBe(true);
 
     // Exactly what warapp_submit_picks takes: ids in pick order.
     expect(p.submitPicks).toEqual({ game_id: GAME, territories: p.picks.map((x) => x.territory.id) });
@@ -162,6 +185,43 @@ describe('warapp_plan_picks', () => {
     // The list judged by the award order: a 3-pick 1v1 list of 6 can yield 11 sets.
     expect(p.award).toMatchObject({ outcomes: 11, reordered: expect.any(Boolean) });
     for (const t of [...p.award!.worst.territories, ...p.award!.worst.opponentStarts]) expect(t.name).toBe(mapName(t.id));
+    // In a two-player game the fallback picks answer the loss that grants them (#166), and say so.
+    expect(p.picks.slice(0, 3).some((x) => x.reasons.some((r) => r.startsWith('Answers the loss of ')))).toBe(false);
+    expect(p.picks.slice(3).some((x) => x.reasons.some((r) => r.startsWith('Answers the loss of ')))).toBe(true);
+    expect(p.rationale.join(' ')).toMatch(/each fallback pick is chosen for the outcomes that grant it/);
+  });
+
+  it('lists the captures of a group’s opening that take two orders, by name (#166)', async () => {
+    // 5 armies a pick and 6 income: the primary takes a 3-army neutral with 1 army and then 3.
+    const g = game('DistributingTerritories', { InitialPlayerArmiesPerTerritory: '5', MinimumArmyBonus: '6' });
+    h = await liveHarness({
+      feed: [{ ...g, players: (g.players as unknown[]).slice(0, 2) }],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }),
+    });
+    const p = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    const captures = p.groups.primary.twoOrderCaptures;
+    expect(captures.length).toBeGreaterThan(0);
+    for (const c of captures) {
+      expect(c.turn).toBeGreaterThanOrEqual(1);
+      expect(c.territory.name).toBe(mapName(c.territory.id));
+      expect(c.orders).toHaveLength(2);
+      for (const o of c.orders) {
+        expect(o.from.name).toBe(mapName(o.from.id));
+        expect(o.armies).toBeGreaterThan(0);
+      }
+    }
+    expect(captures[0]!.orders.map((o) => o.armies)).toEqual([1, 3]);
+    // No-Split forbids a second order from the same territory: none is planned.
+    await h.harness.close();
+    const noSplit = game('DistributingTerritories', { InitialPlayerArmiesPerTerritory: '5', MinimumArmyBonus: '6', NoSplit: true });
+    h = await liveHarness({
+      feed: [{ ...noSplit, players: (noSplit.players as unknown[]).slice(0, 2) }],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }),
+    });
+    const q = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(q.groups.primary.twoOrderCaptures).toEqual([]);
+    expect(q.groups.fallback.twoOrderCaptures).toEqual([]);
+    expect(q.picks.flatMap((x) => x.reasons).join(' ')).not.toMatch(/two orders/);
   });
 
   it('in a 1v1 keeps the primary compact by default, and spreads it only with spread: true (#73)', async () => {
@@ -186,6 +246,16 @@ describe('warapp_plan_picks', () => {
     expect(prop.description).toMatch(/counter-pick/);
     expect(prop.description).toMatch(/usually worse on large maps/);
     expect(tool.description).not.toMatch(/bounded spread/);
+  });
+
+  it('describes what the scores now take into account, and the two-player fallback (#166)', async () => {
+    h = await liveHarness({ feed: [game('DistributingTerritories')] });
+    const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_plan_picks')!;
+    expect(tool.description).toMatch(/`threats`/);
+    expect(tool.description).toMatch(/`twoOrderCaptures`/);
+    expect(tool.description).toMatch(/double border/);
+    expect(tool.description).toMatch(/two-player game.*answers? the loss/);
+    expect(tool.description).not.toMatch(/another area/);
   });
 
   it('refuses outside the picking stage, without touching the bridge', async () => {

@@ -133,11 +133,14 @@ describe('mapNotes: income targets come only from territories that can be picked
   });
 
   it('a start nobody can pick does not set the pace: only the pickables are simulated', () => {
-    // Charlie (+5, 6-8) is the best start when everything is pickable; here only Alpha's side is.
+    // Charlie (+5, 6-8) is the best start when 7 and 8 can be picked; here only Alpha's side can.
+    // (Before #166 the comparison had all eight pickable. A bonus is now credited by who can
+    // reach it, and with every territory pickable an opponent may start inside Charlie, so the
+    // advisor starts on Alpha there too.)
     const all = mapNotes({
       graph,
       settings: { minimumArmyBonus: 5 },
-      opening: { players: 2, territoryLimit: 2, pickable: [1, 2, 3, 4, 5, 6, 7, 8] },
+      opening: { players: 2, territoryLimit: 2, pickable: [1, 2, 7, 8] },
     });
     expect(all.incomeTargets![1]!.bonuses).toContain('Charlie');
     const live = mapNotes({

@@ -370,7 +370,8 @@ describe('planPicks — compactness (#47)', () => {
     expect([...primaryOf(p)].sort((a, b) => a - b)).toEqual([31, 33, 35]);
     expect(compact(g, primaryOf(p))).toBe(true);
     expect(p.warnings.join(' ')).not.toMatch(/primary group spreads/);
-    expect(p.warnings.join(' ')).toMatch(/fallback group scores more than the primary.*counter-pick/i);
+    // (#166: in a 1v1 with 2 to 4 picks each, the fallback picks are no longer "counter-pick insurance" in another area.)
+    expect(p.warnings.join(' ')).toMatch(/fallback group scores more than the primary.*one front.*pick above it is lost/i);
   });
 
   it('with ≥ 3 players a fallback that outscores the compact primary is flagged', () => {
@@ -424,18 +425,17 @@ describe('planPicks — opening simulation (#47)', () => {
   });
 
   it('per-territory income is max(base, territories / BonusArmyPer), not their sum (#38)', () => {
-    // Ice needs 3 + 5 + 2 = 10: pick 1's 4 movable + max(5, 1) = 9 falls short (the sum would give 10).
+    // Ice needs 6 + 2 + 2 = 10: pick 1's 4 movable + max(5, 1) = 9 falls short (the sum would give 10).
+    // (The neutrals were 2, 3 and 1 before #166: a 3-army neutral now falls to 1 army and then 3,
+    // so that Ice cost 9. A 4-army one costs 6 however it is attacked.)
     const g = map();
-    const neutralArmies = new Map([[2, 2], [3, 3], [4, 1]]);
-    const p = plan({
-      graph: g,
-      pickable: [1],
-      territoryLimit: 1,
-      maxPicks: 1,
-      neutralArmies,
-      settings: { ...STD, bonusArmyPer: 1 },
-    });
+    const neutralArmies = new Map([[2, 4], [3, 1], [4, 1]]);
+    const input = { graph: g, pickable: [1], territoryLimit: 1, maxPicks: 1, neutralArmies };
+    const p = plan({ ...input, settings: { ...STD, bonusArmyPer: 1 } });
     expect(p.groups.primary.bonuses.find((b) => b.name === 'Ice')?.turn).not.toBe(1);
+    // One more army of income is all it lacks.
+    const six = plan({ ...input, settings: { ...STD, minimumArmyBonus: 6, bonusArmyPer: 1 } });
+    expect(six.groups.primary.bonuses.find((b) => b.name === 'Ice')?.turn).toBe(1);
   });
 });
 
@@ -526,7 +526,25 @@ describe('planPicks — compact 1v1 (#73)', () => {
   });
 
   it('spread: true restores the bounded 1v1 spread across bonuses', () => {
-    const g = twoRegions();
+    // Since #166 a bonus is credited by who can reach it, and in `twoRegions` the picks left over
+    // next to each +5 pair halve it: spread or not, the compact group scores more there. Here the
+    // +5 bonuses are single territories (1 and 11, four hops apart) and the +2 pairs hang two hops
+    // off them, so nothing left over reaches a +5 in time and spreading over both still pays.
+    const g = mkGraph(
+      [
+        [1, 40], [40, 2], [2, 52], [1, 41], [41, 3], [3, 53],
+        [1, 20], [20, 21], [21, 22], [22, 11],
+        [11, 60], [60, 12], [12, 62], [11, 61], [61, 13], [13, 63],
+      ],
+      [
+        { id: 1001, name: 'WestBig', value: 5, territoryIds: [1] },
+        { id: 1002, name: 'WestA', value: 2, territoryIds: [2, 52] },
+        { id: 1003, name: 'WestB', value: 2, territoryIds: [3, 53] },
+        { id: 1011, name: 'EastBig', value: 5, territoryIds: [11] },
+        { id: 1012, name: 'EastA', value: 2, territoryIds: [12, 62] },
+        { id: 1013, name: 'EastB', value: 2, territoryIds: [13, 63] },
+      ],
+    );
     const p = plan({ graph: g, pickable: regionPicks, players: 2, territoryLimit: 3, maxPicks: 6, spread: true });
     const primary = primaryOf(p);
     expect(primary).toContain(1);
@@ -541,9 +559,13 @@ describe('planPicks — compact 1v1 (#73)', () => {
     expect(plan({ ...base, spread: true })).toEqual(plan(base));
   });
 
-  it('in a 1v1 the fallback goes to another area when one scores equally, compact and disjoint', () => {
+  it('in a 1v1 with 2 to 4 picks each, a fallback pick is chosen for the outcomes that grant it, not for its distance from the primary (#166)', () => {
     // Home: picks 1, 2 (+5 pairs). Near (11, 12) and Far (21, 22) are mirror +2 regions; Near is
-    // 3 hops from Home, Far 3 hops beyond Near. Ties would give Near (lower ids); Far is preferred.
+    // 3 hops from Home, Far 3 hops beyond Near. Before #166 the fallback was a second compact
+    // group, the one farthest from the primary: 21 and 22. Now the third pick is the best one for
+    // the outcomes in which 1 or 2 went to the opponent: Far's 21, whose bonuses, at the end of
+    // the line, can be reached from fewer of the places the opponent may still start. The fourth
+    // is granted only when the opponent holds 21 as well, so it is not 22, next to 21, but a Near pick.
     const g = mkGraph(
       [
         [1, 2], [1, 51], [2, 52],
@@ -564,14 +586,17 @@ describe('planPicks — compact 1v1 (#73)', () => {
     const pickable = [1, 2, 11, 12, 21, 22];
     const p = plan({ graph: g, pickable, players: 2, territoryLimit: 2, maxPicks: 4 });
     expect(sorted(primaryOf(p))).toEqual([1, 2]);
-    // The two candidate fallbacks really do score the same.
-    const all = plan({ graph: g, pickable, territoryLimit: 2, maxPicks: 6 });
+    // Alone, with nothing taken, the four candidates really do score the same.
+    const all = plan({ graph: g, pickable, territoryLimit: 6, maxPicks: 6 });
     expect(scoreOf(all, 11)).toBe(scoreOf(all, 21));
     expect(scoreOf(all, 12)).toBe(scoreOf(all, 22));
     const fallback = fallbackOf(p);
-    expect(sorted(fallback)).toEqual([21, 22]);
-    expect(compact(g, fallback)).toBe(true);
+    expect(fallback).toHaveLength(2);
+    expect(fallback[0]).toBe(21);
+    expect([11, 12]).toContain(fallback[1]);
+    expect(compact(g, fallback)).toBe(false);
     expect(fallback.filter((t) => primaryOf(p).includes(t))).toEqual([]);
+    expect(p.rationale.join(' ')).not.toMatch(/another area/);
   });
 
   it('in a 1v1 a single fallback pick is the farthest of the equally scored best', () => {
