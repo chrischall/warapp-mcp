@@ -34,9 +34,12 @@
 //          comfortable margin, and any other open border that would fall to just hold. Only in a
 //          1v1: in an FFA or team game (several fronts) the comfort margins keep the leftover.
 //          Spend it (#102): every turn the stack attacks each adjacent enemy territory it can take
-//          at the plan's win chance (ordinary capture sizing; never one that lowers income),
+//          at the plan's win chance (ordinary capture sizing; never one that lowers income, re-checked
+//          against the strike's own captures, which can complete a negative bonus only together),
 //          breaking or retaking a bonus first (one the opponent holds in full, or one I held in full
-//          on `previousBoard`), then by that bonus's value, then cheapest, then id — while what
+//          on `previousBoard`; only the first member of a bonus to fall this turn breaks it, and a
+//          retake that cannot finish this turn is "toward retaking"), then by that bonus's value,
+//          then cheapest, then id — while what
 //          stays on it holds against the threat left after those attacks (rule 1's arithmetic,
 //          the captured territories gone), never below the opponent's deploy alone (orders
 //          interleave: it may land on a target first). No S2 top-up draws on that hold. Each attack
@@ -44,7 +47,8 @@
 //          breaks or retakes); a target not attacked is a strike entry with `taken: false` and why.
 //          It only grows (deploy, no attack) when nothing in reach is worth taking: a rationale line
 //          ("Grow the strike stack …") names each target and why. The stack's own entry is
-//          `taken` only when it attacks this turn.
+//          `taken` only when it attacks this turn — also when it got no deploys (Local Deployment,
+//          no room): a strike stack, once built, is spent.
 //       4. An explicit `goal` always wins: none of the above, and the rationale says the
 //          profile was overridden.
 //  1. Defence. A visible enemy next to my territory T threatens it when
@@ -4450,8 +4454,9 @@ export function planTurn(input: PlanInput): TurnPlan {
 
   // ---- spend the strike stack (#102) ----
   // Once rule 0p.3c builds a strike stack, it attacks every adjacent enemy territory it can take
-  // at the plan's win chance (the ordinary capture sizing), breaking or retaking a bonus first,
-  // then by bonus value, then cheapest, then id — while what stays on it holds against the threat
+  // at the plan's win chance (the ordinary capture sizing; rule 4c re-checked as its captures
+  // accumulate), breaking or retaking a bonus first (re-ranked after each capture: a bonus breaks
+  // once), then by bonus value, then cheapest, then id — while what stays on it holds against the threat
   // left after those attacks (rule 1's arithmetic: the captured territories no longer threaten
   // it). It grows (deploy, no attack) only when nothing in reach is worth taking.
   if (strikeStack) {
@@ -4474,31 +4479,56 @@ export function planTurn(input: PlanInput): TurnPlan {
       id: number;
       cost: number;
       chance: number;
-      value: number;
-      effect: string | null;
+      breaks: Breakable[];
+      retakes: number[];
     }
     const candidates: StrikeTarget[] = [];
     for (const n of neighborsOf(g, S)) {
       const st = state.get(n);
       if (captured.has(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
       const cost = costOf(defenceAt(n));
-      // Never a capture that lowers income (rule 4c): it completes a negative bonus.
+      // Never a capture that lowers income (rule 4c): it completes a negative bonus. Re-checked
+      // below against the strike's own captures, which can complete one only together.
       if (cost === null || gainWith([n]) < 0) continue;
       const owner = st.owner.playerId;
-      const breaks = breakable.filter((b) => b.player === owner && bonusTs.get(b.bonusId)!.includes(n));
-      const retakes = [...lost].filter((id) => bonusTs.get(id)!.includes(n)).sort(byNum);
+      candidates.push({
+        id: n,
+        cost,
+        chance: chanceOf(cost, defenceAt(n)),
+        breaks: breakable.filter((b) => b.player === owner && bonusTs.get(b.bonusId)!.includes(n)),
+        retakes: [...lost].filter((id) => bonusTs.get(id)!.includes(n)).sort(byNum),
+      });
+    }
+    /** Captures planned from the stack so far, in order. */
+    const plannedHere = new Set<number>();
+    /** The opponent bonuses `c` breaks: only the first member of each to fall this turn breaks it. */
+    const breaksOf = (c: StrikeTarget) =>
+      c.breaks.filter((b) => !bonusTs.get(b.bonusId)!.some((t) => t !== c.id && captured.has(t)));
+    const strikeValue = (c: StrikeTarget) =>
+      Math.max(0, ...breaksOf(c).map((b) => b.value), ...c.retakes.map((id) => g.bonusById.get(id)!.value));
+    /** What taking `c` does, against the captures planned so far (a retake completes only with every member held). */
+    const effectOf = (c: StrikeTarget): string | null => {
+      const held = heldNow();
+      held.add(c.id);
       const effects = [
-        ...breaks.map(
+        ...breaksOf(c).map(
           (b) => `breaks ${b.probable ? 'probable ' : ''}enemy bonus ${bonusName(b.bonusId)} (+${b.value} from player ${b.player})`,
         ),
-        ...retakes.map((id) => `retakes bonus ${bonusName(id)} (+${g.bonusById.get(id)!.value}), which I held last turn`),
+        ...c.retakes.map(
+          (id) =>
+            `${bonusTs.get(id)!.every((t) => held.has(t)) ? 'retakes' : 'toward retaking'} bonus ${bonusName(id)} (+${g.bonusById.get(id)!.value}), which I held last turn`,
+        ),
       ];
-      const value = Math.max(0, ...breaks.map((b) => b.value), ...retakes.map((id) => g.bonusById.get(id)!.value));
-      candidates.push({ id: n, cost, chance: chanceOf(cost, defenceAt(n)), value, effect: effects.length ? effects.join('; ') : null });
-    }
-    candidates.sort(
-      (a, b) => Number(b.effect !== null) - Number(a.effect !== null) || b.value - a.value || a.cost - b.cost || a.id - b.id,
-    );
+      return effects.length ? effects.join('; ') : null;
+    };
+    const rank = () =>
+      [...candidates].sort(
+        (a, b) =>
+          Number(breaksOf(b).length + b.retakes.length > 0) - Number(breaksOf(a).length + a.retakes.length > 0) ||
+          strikeValue(b) - strikeValue(a) ||
+          a.cost - b.cost ||
+          a.id - b.id,
+      );
     /** What may never leave the stack this turn: a Local Deployment pool's deploys (#103). */
     const pinned = poolDeployed.get(S) ?? 0;
     /**
@@ -4511,14 +4541,22 @@ export function planTurn(input: PlanInput): TurnPlan {
       const threat = Math.max(th?.threat ?? 0, deployOf(strikeStack!.player));
       return { threat, need: Math.max(0, holdArmies(threat) - unitsAt(S)) };
     };
-    const taken: StrikeTarget[] = [];
+    const taken: { c: StrikeTarget; effect: string | null; value: number }[] = [];
     const refused = new Map<number, string>();
-    const plannedHere = new Set<number>();
     let sent = 0;
     for (let again = true; again; ) {
       again = false;
-      for (const c of candidates) {
+      for (const c of rank()) {
         if (plannedHere.has(c.id)) continue;
+        if (gainWith([c.id]) < 0) {
+          const held = heldNow();
+          held.add(c.id);
+          const negs = completedBy(held)
+            .filter((id) => g.bonusById.get(id)!.value < 0 && bonusTs.get(id)!.includes(c.id))
+            .map((id) => `negative bonus ${bonusName(id)} (${g.bonusById.get(id)!.value})`);
+          refused.set(c.id, `with this turn's other captures it lowers next income: it completes ${negs.join(', ')} (rule 4c)`);
+          continue;
+        }
         if (noSplit && (orderOf(S) || taken.length)) {
           refused.set(c.id, `No-Split: ${label(S)} issues one order this turn`);
           continue;
@@ -4538,9 +4576,11 @@ export function planTurn(input: PlanInput): TurnPlan {
           );
           continue;
         }
+        const effect = effectOf(c);
+        const value = strikeValue(c);
         plannedHere.add(c.id);
         refused.delete(c.id);
-        taken.push(c);
+        taken.push({ c, effect, value });
         avail.set(S, avail.get(S)! - c.cost);
         sent += c.cost;
         captured.add(c.id);
@@ -4554,33 +4594,34 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (taken.length) holdLocked.add(S);
     const { threat: finalThreat, need: finalNeed } = holdAfter(new Set());
     const stays = avail.get(S)! + guard + (incoming.get(S) ?? 0);
-    for (const c of taken) {
-      const reason = `the strike stack ${c.effect ? c.effect : 'takes an adjacent enemy territory'}`;
+    for (const { c, effect, value } of taken) {
+      const reason = `the strike stack ${effect ?? 'takes an adjacent enemy territory'}`;
       moves.push({ from: S, to: c.id, armies: c.cost, kind: 'attack', reason, winChance: c.chance });
       warnings.push(`Attack on enemy ${label(c.id)} assumes its owner does not reinforce it first.`);
       rationale.push(
         `Attack ${label(c.id)} from the strike stack ${label(S)} with ${c.cost} (win chance ${pct(c.chance)}): ${
-          c.effect ?? 'it can take this adjacent enemy territory'
+          effect ?? 'it can take this adjacent enemy territory'
         }; the stack keeps ${stays}, enough to hold against the ~${finalThreat} threat after the attacks (needs ${finalNeed}).`,
       );
       offence.set(`strike:${c.id}`, {
         target: c.id,
         kind: 'strike',
         cost: c.cost,
-        value: c.value,
+        value,
         taken: true,
-        why: `from the strike stack ${label(S)} with ${c.cost} (win chance ${pct(c.chance)}): ${c.effect ?? 'takes an adjacent enemy territory'}`,
+        why: `from the strike stack ${label(S)} with ${c.cost} (win chance ${pct(c.chance)}): ${effect ?? 'takes an adjacent enemy territory'}`,
       });
     }
-    for (const c of candidates) {
+    for (const c of rank()) {
       if (plannedHere.has(c.id)) continue;
+      const effect = effectOf(c);
       offence.set(`strike:${c.id}`, {
         target: c.id,
         kind: 'strike',
         cost: c.cost,
-        value: c.value,
+        value: strikeValue(c),
         taken: false,
-        why: `not made from the strike stack ${label(S)} — ${refused.get(c.id) ?? 'not worth it'}${c.effect ? `: ${c.effect}` : ''}`,
+        why: `not made from the strike stack ${label(S)} — ${refused.get(c.id) ?? 'not worth it'}${effect ? `: ${effect}` : ''}`,
       });
     }
     const builds = `the spare deploys build one strike stack facing player ${strikeStack.player}, the strongest opponent (~${strikeStack.income} income, ${strikeStack.source})`;
@@ -4598,7 +4639,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         value: strikeStack.income,
         taken: taken.length > 0,
         why: taken.length
-          ? `${builds}; it attacks ${taken.map((c) => label(c.id)).join(', ')} this turn (${sent} armies sent)`
+          ? `${builds}; it attacks ${taken.map(({ c }) => label(c.id)).join(', ')} this turn (${sent} armies sent)`
           : `${builds}; it grows: nothing next to it is worth taking this turn`,
       });
   }

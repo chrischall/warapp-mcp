@@ -142,7 +142,7 @@ describe('the strike stack attacks what it can take (#102)', () => {
       [1, 2, 15],
     ]);
     expect(p.expected.captures).toEqual([2, 3]);
-    expect(why(p)).toMatch(/Attack T2 \(#2\) from the strike stack T1 \(#1\) with 15 \(win chance 100%\): retakes bonus B500 \(#500\) \(\+5\), which I held last turn/);
+    expect(why(p)).toMatch(/Attack T2 \(#2\) from the strike stack T1 \(#1\) with 15 \(win chance 100%\): toward retaking bonus B500 \(#500\) \(\+5\), which I held last turn/);
     expect(why(p)).toMatch(/the stack keeps 79, enough to hold against the ~95 threat after the attacks \(needs 58\)/);
     expect(p.offence).toContainEqual(expect.objectContaining({ target: 2, kind: 'strike', cost: 15, value: 5, taken: true }));
     expect(p.offence).toContainEqual(expect.objectContaining({ target: 3, kind: 'strike', cost: 8, value: 5, taken: true }));
@@ -245,5 +245,100 @@ describe('the strike stack keeps its hold', () => {
     const p = planTurn(calm);
     expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 2, 8]]);
     valid(calm, p);
+  });
+});
+
+// Rule 4c across the strike: two targets that complete a negative bonus only together. My stack
+// T1 (80) faces the opponent's T2 (2) and T3 (2) (its 30-stack T5 sits behind T2); B900 (-3) is
+// T2, T3 and my T7. Each capture alone keeps income; both lower it by 3. The stack takes T2 (the
+// lower id at equal cost) and refuses T3 with a reason.
+describe('the strike stack never lowers income, even jointly', () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 5, 7, 8],
+      [
+        [1, 2],
+        [1, 3],
+        [2, 5],
+        [2, 7],
+        [3, 7],
+        [7, 8],
+      ],
+      [[900, -3, [2, 3, 7]]],
+    ),
+  );
+  const input: PlanInput = {
+    graph: g,
+    board: board([mine(1, 80), enemy(2, 2), enemy(3, 2), enemy(5, 30), mine(7, 1), neutral(8, 2)]),
+    me: ME,
+    income: 10,
+    settings: STD,
+    tracks: [track(ENEMY, 40)],
+    game: { players: [{ id: ME }, { id: ENEMY }] },
+    options: { adapt: true },
+  };
+
+  it('takes one member and refuses the one that would complete the negative bonus', () => {
+    const p = planTurn(input);
+    expect(p.expected.bonusesCompleted).not.toContain(900);
+    expect(p.expected.nextIncome).toBe(10);
+    expect(attacks(p).filter((m) => m.from === 1).map((m) => m.to)).toEqual([2]);
+    const t3 = p.offence.find((o) => o.kind === 'strike' && o.target === 3)!;
+    expect(t3.taken).toBe(false);
+    expect(t3.why).toMatch(/lowers next income: it completes negative bonus B900 \(#900\) \(-3\) \(rule 4c\)/);
+    valid(input, p);
+  });
+});
+
+// A stack that got no deploys still attacks. Under Local Deployment all 3 income is B700's pool
+// (+3, my interior T8), which can go nowhere else; the stack T1 (60) gets none and still takes the
+// adjacent T2 (5) with 8. Its own offence entry reports the attack at cost 0.
+describe('a strike stack with no deploys this turn is still spent', () => {
+  const g = buildGraph(makeMap([1, 2, 8, 9], [[1, 2], [1, 8], [2, 9]], [[700, 3, [8]]]));
+  const input: PlanInput = {
+    graph: g,
+    board: board([mine(1, 60), enemy(2, 5), mine(8, 3), enemy(9, 4)]),
+    me: ME,
+    income: 3,
+    settings: { ...STD, localDeployments: true },
+    tracks: [track(ENEMY, 6)],
+    game: { players: [{ id: ME }, { id: ENEMY }] },
+    options: { adapt: true },
+  };
+
+  it('attacks from the stack and reports its entry with cost 0', () => {
+    const p = planTurn(input);
+    expect(p.deploys).toEqual([{ territoryId: 8, armies: 3 }]);
+    expect(attacks(p).filter((m) => m.from === 1).map((m) => [m.to, m.armies])).toEqual([[2, 8]]);
+    expect(p.offence.find((o) => o.kind === 'strike' && o.target === 1)).toMatchObject({ taken: true, cost: 0 });
+    valid(input, p);
+  });
+});
+
+// Labels: only the first member of an opponent's bonus to fall this turn breaks it. B600 (+4) is
+// the opponent's T2 (2) and T3 (3), both next to my stack T1 (80): the break step takes T2, and the
+// stack's T3 is a plain capture, not a second "breaks". A retake that cannot finish this turn is
+// "toward retaking" (the #102 shape above).
+describe('strike effect labels do not overstate', () => {
+  const g = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [1, 3], [2, 4], [3, 4]], [[600, 4, [2, 3]]]));
+  const input: PlanInput = {
+    graph: g,
+    board: board([mine(1, 80), enemy(2, 2), enemy(3, 3), fogged(4)]),
+    me: ME,
+    income: 10,
+    settings: STD,
+    tracks: [track(ENEMY, 40)],
+    game: { players: [{ id: ME }, { id: ENEMY }] },
+    options: { adapt: true },
+  };
+
+  it('only the first member taken breaks the bonus', () => {
+    const p = planTurn(input);
+    expect(p.expected.captures).toEqual([2, 3]);
+    expect(p.moves.filter((m) => /breaks .*B600/.test(m.reason))).toHaveLength(1);
+    const t3 = p.offence.find((o) => o.kind === 'strike' && o.target === 3)!;
+    expect(t3).toMatchObject({ taken: true, value: 0 });
+    expect(t3.why).toMatch(/takes an adjacent enemy territory/);
+    valid(input, p);
   });
 });
