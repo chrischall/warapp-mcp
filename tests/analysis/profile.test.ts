@@ -147,6 +147,58 @@ describe('gameProfile: phase', () => {
   });
 });
 
+describe('gameProfile: contact in a free-for-all (#132)', () => {
+  /** A star: my 1 in the middle, its arms 2-6; 2-6 each lead on to 7-11. */
+  const star: GameMap = {
+    id: 2,
+    name: 'Star',
+    territories: [
+      { id: 1, name: 'T1', connectedTo: [2, 3, 4, 5, 6] },
+      ...[2, 3, 4, 5, 6].map((id) => ({ id, name: `T${id}`, connectedTo: [1, id + 5] })),
+      ...[7, 8, 9, 10, 11].map((id) => ({ id, name: `T${id}`, connectedTo: [id - 5] })),
+    ],
+    bonuses: [],
+    distributionModes: [],
+  };
+  const gs = buildGraph(star);
+  const ffa = [{ id: ME }, { id: 20 }, { id: 30 }];
+  /** Me on 1-5 (4 armies each at the arms), neutral 6, and beyond: */
+  const at = (beyond: TerritoryState[]) =>
+    board([mine(1, 5), mine(2, 4), mine(3, 4), mine(4, 4), mine(5, 4), neutral(6, 2), ...beyond]);
+  const ffaBase = (b: ReturnType<typeof board>): ProfileInput => ({ ...base(), graph: gs, board: b, players: ffa, estimates: [] });
+
+  it('one small enemy stack beside one of my borders is not contact: expansion', () => {
+    // Player 20's 2 at 7 touches my 2 (4 armies); the other borders face neutrals.
+    const b = at([enemy(7, 2, 20), neutral(8, 2), neutral(9, 2), neutral(10, 2), neutral(11, 2)]);
+    expect(gameProfile(ffaBase(b)).phase).toBe('expansion');
+  });
+
+  it('an enemy stack that can take a territory of mine is contact', () => {
+    // 9 armies at 7 move 8: enough to take a 4 (6 needed at 60/70).
+    const b = at([enemy(7, 9, 20), neutral(8, 2), neutral(9, 2), neutral(10, 2), neutral(11, 2)]);
+    expect(gameProfile(ffaBase(b)).phase).toBe('contact');
+  });
+
+  it('most of my borders facing enemies is contact, whatever their size', () => {
+    const b = at([enemy(7, 2, 20), enemy(8, 2, 30), enemy(9, 2, 20), neutral(10, 2), neutral(11, 2)]);
+    expect(gameProfile(ffaBase(b)).phase).toBe('contact');
+  });
+
+  it('the kill rates decide whether a stack can take a territory', () => {
+    // At 100/0, 4 movable armies take a 4; at the defaults they do not.
+    const b = at([enemy(7, 5, 20), neutral(8, 2), neutral(9, 2), neutral(10, 2), neutral(11, 2)]);
+    expect(gameProfile(ffaBase(b)).phase).toBe('expansion');
+    expect(
+      gameProfile({ ...ffaBase(b), settings: { offensiveKillRate: 100, defensiveKillRate: 0 } }).phase,
+    ).toBe('contact');
+  });
+
+  it('a 1v1 keeps the old test: any enemy beside me is contact', () => {
+    const b = at([enemy(7, 2, 20), neutral(8, 2), neutral(9, 2), neutral(10, 2), neutral(11, 2)]);
+    expect(gameProfile({ ...ffaBase(b), players: [{ id: ME }, { id: 20 }] }).phase).toBe('contact');
+  });
+});
+
 describe('gameProfile: standing', () => {
   it(`ahead at ≥ ${AHEAD_RATIO}× the strongest opponent's estimate`, () => {
     const p = gameProfile(base({ income: 10, estimates: [{ playerId: 20, estimate: 8 }] }));

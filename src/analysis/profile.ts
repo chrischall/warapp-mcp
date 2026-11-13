@@ -1,10 +1,13 @@
 // Game profile: what kind of game this is, from one player's view — the format, the
-// settings that shape strategy, the phase and whether I am ahead. Pure and deterministic;
+// settings that shape strategy, the phase and whether I am ahead. In a free-for-all the
+// contact phase needs a real front (#132): an enemy stack that can take a territory of mine
+// as the board stands, or most of my borders facing enemies — not one enemy territory beside me. Pure and deterministic;
 // no I/O. The planner (rule 0p in planner.ts) reads it to pick a default goal and to tune
 // its scoring; the plan echoes it.
 
 import type { BoardState } from '../board.js';
 import { carriesTeam } from '../teams.js';
+import { armiesToTake } from './combat.js';
 import { neighborsOf, type MapGraph } from './graph.js';
 
 /** Ahead when my income is at least this many times the strongest opponent's estimated income. */
@@ -37,6 +40,11 @@ export interface ProfileSettings {
   commanders?: boolean;
   /** GameFeed's `Fog` setting, e.g. `Foggy`, `NoFog`. */
   fog?: string;
+  /** Kill rates in percent (default 60 / 70): whether an enemy stack can take a territory of mine (FFA contact). */
+  offensiveKillRate?: number;
+  defensiveKillRate?: number;
+  /** Default true: one army stays behind on every attack. */
+  oneArmyStandsGuard?: boolean;
 }
 
 export interface ProfileInput {
@@ -129,7 +137,39 @@ export function gameProfile(input: ProfileInput): GameProfile {
     const p = owners.get(t);
     return p !== undefined && !ally(p);
   };
-  const contact = mine.some((t) => neighborsOf(g, t).some(enemyAt));
+  const touches = mine.some((t) => neighborsOf(g, t).some(enemyAt));
+  // #132: in a free-for-all one enemy territory beside me is not contact — it switched the opening
+  // rules off from turn 3 in most saved FFA plans. Contact there is an enemy stack that can take a
+  // territory of mine as the board stands (its movable armies beside it, one player at a time,
+  // against what taking it needs at the game's kill rates), or most of my borders facing enemies.
+  // Short of that the phase stays expansion, so rule 4f keeps committing while neutrals are in reach.
+  let contact = touches;
+  if (touches && format === 'ffa') {
+    const guard = s.oneArmyStandsGuard === false ? 0 : 1;
+    const rates = {
+      ...(s.offensiveKillRate !== undefined ? { offensiveKillRate: s.offensiveKillRate } : {}),
+      ...(s.defensiveKillRate !== undefined ? { defensiveKillRate: s.defensiveKillRate } : {}),
+    };
+    const armies = new Map(
+      board.territories.filter((t) => g.territoryById.has(t.territoryId)).map((t) => [t.territoryId, t.armies]),
+    );
+    const mineSet = new Set(mine);
+    const threatened = mine.some((t) => {
+      const take = armiesToTake(armies.get(t) ?? 0, rates);
+      if (take === null) return false;
+      const movable = new Map<number, number>();
+      for (const n of neighborsOf(g, t)) {
+        const p = owners.get(n);
+        const a = armies.get(n);
+        if (p === undefined || ally(p) || a === null || a === undefined) continue;
+        movable.set(p, (movable.get(p) ?? 0) + Math.max(0, a - guard));
+      }
+      return [...movable.values()].some((m) => m >= take);
+    });
+    const borders = mine.filter((t) => neighborsOf(g, t).some((n) => !mineSet.has(n)));
+    const facing = borders.filter((t) => neighborsOf(g, t).some(enemyAt)).length;
+    contact = threatened || facing * 2 > borders.length;
+  }
   const side = (p: number) => (teams ? (players.find((x) => x.id === p)?.team ?? p) : p);
   const bySide = new Map<string, number>();
   for (const p of owners.values()) {

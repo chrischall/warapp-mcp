@@ -211,28 +211,29 @@ describe('never stand still in the opening (#104)', () => {
     for (const m of attacks(p)) expect(m.reason).not.toMatch(/cheapest expansion/);
   });
 
-  it('(c) in contact (no army cap) the fallback fires too (#107): the neutral step, not a second front', () => {
-    // Turn 9, in contact with player 30 on 22 (a 1-army stack: no threat to a 6-army border). Before
-    // #107 the plan stood still here; now the neutral step toward Vale beats taking 22, which opens a
-    // second front against a player that cannot attack me.
+  it('(c) a lone enemy stack beside me in an FFA is not contact (#132): the expansion fallback takes the neutral step', () => {
+    // Turn 9, player 30 on 22 (a 1-army stack: no threat to a 6-army border). Before #132 that one
+    // territory made the phase contact (and #107's contact fallback took the same step); now the phase
+    // stays expansion and the neutral step toward Vale is taken, not 22 — a second front.
     const b = board(
       opening(11, [player(22, 1, P2)]).territories.map((t) => (t.territoryId === 2 ? mine(2, 6) : t)),
     );
     const p = plan(b, 5, { game: { ...FFA, turn: 9 } });
-    expect(p.profile.phase).toBe('contact');
+    expect(p.profile.phase).toBe('expansion');
     expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 4, armies: 6 })]);
-    expect(p.rationale.join('\n')).toMatch(/contact phase: no capture is planned \(nothing passed the economy test\); standing still is worse than the cheapest capture/);
+    expect(p.rationale.join('\n')).toMatch(/expansion phase: nothing passed the economy test; standing still is worse than the cheapest expansion/);
     expect(p.rationale.join('\n')).not.toMatch(/army cap/);
     expect(valid(p, b, 5)).toEqual([]);
   });
 
-  it('(d) army cap exceeded in a later phase: the fallback fires, and says why', () => {
+  it('(d) army cap exceeded past the opening: the fallback fires, and says why', () => {
     const b = board(
       opening(11, [player(22, 1, P2)]).territories.map((t) => (t.territoryId === 2 ? mine(2, 6) : t)),
     );
     // 17 armies + 5 deployed = 22 > 4 × 5 = 20.
     const p = plan(b, 5, { game: { ...FFA, turn: 9 }, settings: { ...STD, armyCap: 4 } });
-    expect(p.profile.phase).toBe('contact');
+    // #132: a lone 1-army enemy beside me is not contact in an FFA.
+    expect(p.profile.phase).toBe('expansion');
     expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 4, armies: 6 })]);
     expect(p.rationale.join('\n')).toMatch(/22 armies after deploy exceed the army cap of 20 \(4× income 5\)/);
     expect(valid(p, b, 5)).toEqual([]);
@@ -712,9 +713,12 @@ describe('#107: in contact, never stand still either', () => {
       contactBoard()
         .territories.filter((t) => t.territoryId !== 23 && t.territoryId !== 25)
         .map((t) => (t.territoryId === 22 ? player(22, 9, P2) : t.territoryId === 24 ? player(24, 8, P2) : t))
-        .concat([neutral(23, 15), neutral(25, 15)]),
+        // #132: player 40's 15 on 23 keeps both borders facing an enemy, so this FFA is in contact
+        // (one border facing player 30 alone would be expansion); it can take nothing from 2.
+        .concat([player(23, 15, P3), neutral(25, 15)]),
     );
     const p = run(b, { map: tight });
+    expect(p.profile.phase).toBe('contact');
     expect(p.conceded).toEqual([]);
     expect(attacks(p)).toEqual([]);
     const w = p.warnings.join('\n');
