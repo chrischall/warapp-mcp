@@ -5,13 +5,16 @@
 // player can field over the next few turns. Mine is exact. An opponent's is a range under fog:
 //   - low: its visible armies + k × the income it visibly earns (both lower bounds);
 //   - high: what it could have, at most — every army it can have received (its start plus, each
-//     turn paid, the most it could earn: base income and every bonus it could still hold) and k ×
-//     that income cap. Unbounded (`null`) when the start is unknown, cards can add armies, or it has
+//     turn paid, the most it could earn that turn: the could-earn cap of an observed turn, else
+//     base income plus every bonus, since a bonus held by someone else now may have paid it
+//     before) and k × its could-earn cap now. Unbounded (`null`) when the start is unknown, cards can add armies, or it has
 //     nothing in view. With every territory in view, high = low.
 // The ratio is mine ÷ the strongest opponent's, as a range: `low` against the highest `high`,
-// `high` against the highest `low` (`null`: no upper limit).
+// `high` against the highest `low` (`null`: no upper limit). It is per player: in a team game my
+// strength alone against the single strongest opponent, teams are not summed.
 //
-// Each turn gets a state: `winning` when even the low ratio is at least OUTLOOK_RATIO, `losing`
+// Each turn gets a state: `winning` when even the low ratio is at least OUTLOOK_RATIO (or every
+// opponent is bounded at no strength at all while I have some), `losing`
 // when even the high ratio is at most 1 / OUTLOOK_RATIO, `stalemate` when neither and no territory
 // in view on both boards changed owner since the turn before while I face an enemy, else `even`.
 // The outlook reports a state only once it has held for OUTLOOK_TURNS consecutive turns; until
@@ -42,7 +45,7 @@ export interface OutlookTurn {
   mine: number;
   /** The strongest opponent (by `high`, unbounded first, then `low`, then id); `null` when there is none. */
   strongest: { playerId: number; low: number; high: number | null } | null;
-  /** Mine ÷ the opponents' strength: `low` against the highest high (0 when unbounded), `high` against the highest low (`null`: no limit). */
+  /** Mine ÷ the opponents' strength: `low` against the highest high (0 when unbounded or that high is 0), `high` against the highest low (`null`: no limit). */
   ratio: { low: number; high: number | null };
   /** Territories in view on this board and the one before that changed owner (`null` without the board before). */
   changed: number | null;
@@ -139,8 +142,13 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         const low = a + k * income;
         if (open) return { playerId, low, high: low as number | null };
         if (!held.has(playerId) || start === null || input.cards) return { playerId, low, high: null };
-        const cap = Math.max(income, trackOf.get(playerId)?.turns.at(-1)?.cap ?? rules.base + allBonuses);
-        const received = start + turn * cap;
+        // The could-earn cap per observed turn (paid at the start of `to`); any other turn is
+        // bounded by base income plus every bonus.
+        const observedCap = new Map<number, number>();
+        for (const x of trackOf.get(playerId)?.turns ?? []) observedCap.set(x.to, Math.max(observedCap.get(x.to) ?? 0, x.cap));
+        let received = start;
+        for (let t = 1; t <= turn; t++) received += observedCap.get(t) ?? rules.base + allBonuses;
+        const cap = Math.max(income, observedCap.get(turn) ?? rules.base + allBonuses);
         return { playerId, low, high: Math.max(a, received) + k * cap };
       });
     const maxLow = rows.reduce((m, r) => Math.max(m, r.low), 0);
@@ -152,10 +160,11 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
           (a.high === null ? 0 : 1) - (b.high === null ? 0 : 1) || (b.high ?? 0) - (a.high ?? 0) || b.low - a.low || a.playerId - b.playerId,
       )[0] ?? null;
     const ratio = {
-      low: unbounded ? 0 : maxHigh > 0 ? round2(mine / maxHigh) : mine > 0 ? Number.MAX_SAFE_INTEGER : 0,
+      low: !unbounded && maxHigh > 0 ? round2(mine / maxHigh) : 0,
       high: maxLow > 0 ? round2(mine / maxLow) : null,
     };
-    if (ratio.low === Number.MAX_SAFE_INTEGER) ratio.low = 0; // No opponent at all: nothing to compare.
+    // Every opponent bounded at no strength at all while I have some: dominated.
+    const dominated = rows.length > 0 && !unbounded && maxHigh === 0 && mine > 0;
     const prev = byTurn.get(turn - 1)?.board;
     let changed: number | null = null;
     if (prev) {
@@ -170,7 +179,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       }),
     );
     const state: OutlookState =
-      rows.length && ratio.low >= OUTLOOK_RATIO
+      dominated || (rows.length && ratio.low >= OUTLOOK_RATIO)
         ? 'winning'
         : ratio.high !== null && ratio.high <= 1 / OUTLOOK_RATIO
           ? 'losing'
@@ -184,7 +193,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   let heldTurns = 0;
   for (let i = turns.length - 1; i >= 0 && turns[i]!.state === last?.state; i--) heldTurns++;
   const state = last && heldTurns >= OUTLOOK_TURNS ? last.state : null;
-  const measure = `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn).`;
+  const measure = `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). Per player: my strength alone against the single strongest opponent, teams not summed.`;
   const thresholds = `Winning at ${OUTLOOK_RATIO}× the strongest opponent or more even at its high, losing at 1/${OUTLOOK_RATIO} (${round2(1 / OUTLOOK_RATIO)}×) or less even at its low, stalemate when nothing in view changed hands for ${OUTLOOK_TURNS} turns along a front. The ${OUTLOOK_RATIO}× is borrowed from a bot and was never measured for war.app: a basis for a decision, not a verdict.`;
   let reading: string;
   if (!last) reading = 'No board to judge.';

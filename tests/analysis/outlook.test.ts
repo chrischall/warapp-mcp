@@ -105,6 +105,32 @@ describe('gameOutlook (#178)', () => {
     expect(gameOutlook({ graph: g, me: ME, boards: turns(2, [fog(40), fog(40), fog(40)]), game: { ...game, start }, cards: true }).state).not.toBe('winning');
   });
 
+  it('bounds the turns it was not observed by base income plus every bonus, not by the newest cap (a bonus now mine could have paid it before)', () => {
+    // Bonus X {6, 7, 8} worth 10: I hold 6 now, so its newest could-earn cap is 5, but it could have
+    // held X on every turn before the boards I have.
+    const gx = buildGraph({ ...line(8), bonuses: [{ id: 100, name: 'X', value: 10, territoryIds: [6, 7, 8], bonusIds: [] }] });
+    const b = (a: number) => board([mine(1, a), mine(2, a), mine(3, a), neutral(4, 2), neutral(5, 2), mine(6, 3), foe(7, 2), fogged(8)]);
+    const start = { territories: 2, armiesPerTerritory: 5 };
+    const o = gameOutlook({ graph: gx, me: ME, boards: turns(8, [b(60), b(60), b(60)]), game: { ...game, start } });
+    // Turns 1–8 at most 5 + 10 = 15 each, turns 9–10 (observed: X is broken) at most 5:
+    // 10 + 8 × 15 + 2 × 5 = 140, plus 3 × 5 = 155.
+    expect(o.turns.at(-1)!.strongest).toMatchObject({ playerId: FOE, low: 2 + 3 * 5, high: 155 });
+    expect(o.turns.map((t) => t.state)).not.toContain('winning');
+    expect(o.state).not.toBe('winning');
+  });
+
+  it('a bounded opponent with no strength at all is dominated: winning', () => {
+    const empty = board([mine(1, 5), mine(2, 5), mine(3, 5), neutral(4, 2), neutral(5, 2), neutral(6, 2), neutral(7, 2), neutral(8, 2)]);
+    const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [empty, empty, empty]), game, settings: { baseIncome: 0 } });
+    expect(o.turns.at(-1)!.strongest).toMatchObject({ playerId: FOE, low: 0, high: 0 });
+    expect(o.state).toBe('winning');
+  });
+
+  it('says the comparison is per player, not by team', () => {
+    const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [apart(20, 5), apart(20, 5), apart(20, 5)]), game });
+    expect(o.basis).toMatch(/per player/i);
+  });
+
   it('counts an opponent still playing with nothing in view as unbounded', () => {
     const hidden = board([mine(1, 30), mine(2, 30), mine(3, 30), neutral(4, 2), fogged(5), fogged(6), fogged(7), fogged(8)]);
     const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [hidden, hidden, hidden]), game });
