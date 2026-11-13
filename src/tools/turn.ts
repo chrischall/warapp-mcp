@@ -216,6 +216,33 @@ function incomeRefused(e: WarappServerError, income: number): McpToolError {
 
 const label = (t: { id: number; name: string }) => `${t.name} (${t.id})`;
 
+/** plan_turn's note when its income counts Reinforcement plays: the deploys need the card orders (#85). */
+function cardIncomeNote(income: number, cardArmies: number): string {
+  return (
+    `Income ${income} includes ${cardArmies} armies from the Reinforcement card play in \`orders\` (${income - cardArmies} ` +
+    `from the board): submit the card order with the deploys, or deploy ${income - cardArmies} without it — ` +
+    'warapp_submit_turn refuses any other total.'
+  );
+}
+
+/**
+ * When the surplus deployed is what unplayed Reinforcement cards would add, say so: the total
+ * counts a card the orders do not play — warapp_plan_turn's income includes the armies of the
+ * Reinforcement plays in its `orders`, so dropping those orders leaves the deploys too high (#85).
+ */
+function unplayedHint(surplus: number, unplayed: ReadonlyArray<{ id: string; armies: number }>): string {
+  if (surplus <= 0 || !unplayed.length) return '';
+  const all = unplayed.reduce((s, c) => s + c.armies, 0);
+  const one = unplayed.find((c) => c.armies === surplus);
+  const cards = one ? [one] : all === surplus ? unplayed : [];
+  if (!cards.length) return '';
+  const what = cards.map((c) => `Reinforcement card ${c.id} (${c.armies} armies)`).join(', ');
+  return (
+    ` The extra ${surplus} match the ${what}, which these orders have not played: add ` +
+    `${cards.length === 1 ? 'its card order' : 'their card orders'} (as warapp_plan_turn's \`orders\` do) or deploy ${surplus} fewer.`
+  );
+}
+
 /**
  * Validate resolved orders against the live board and income; throws a clear
  * refusal on the first problem. A deploy total that differs from the income is
@@ -241,6 +268,12 @@ export function validateTurn(args: {
   incomeUncertain?: readonly string[];
   /** Why the Local Deployment pools may be wrong (overridden bonuses); non-empty makes that check a warning. */
   poolsUncertain?: readonly string[];
+  /**
+   * Reinforcement cards in my hand these orders do not play, with their armies: a deploy total
+   * that counts them (as warapp_plan_turn's income does when it plays them) is refused with a
+   * hint naming the missing card play (#85).
+   */
+  unplayedReinforcements?: ReadonlyArray<{ id: string; armies: number }>;
 }): { warnings: string[] } {
   const warnings: string[] = [];
   const { map, board, myInGameId, income, deploys, moves } = args;
@@ -301,7 +334,10 @@ export function validateTurn(args: {
     );
   } else if (deployed !== income) {
     throw new McpToolError(`These orders deploy ${deployed} armies, but your income is ${income} this turn.`, {
-      hint: `Deploy exactly ${income} armies — war.app refuses any other total (error 11).`,
+      hint: `Deploy exactly ${income} armies — war.app refuses any other total (error 11).${unplayedHint(
+        deployed - income,
+        args.unplayedReinforcements ?? [],
+      )}`,
     });
   }
   const deployedOn = new Map<number, number>();
@@ -646,6 +682,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         board,
         me: me.id,
         income,
+        cardArmies: cards.extraArmies,
         settings,
         ...(trend ? { previousBoard: trend.board } : {}),
         ...(turn !== null ? { turn } : {}),
@@ -682,6 +719,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             ]
           : []),
         ...cards.warnings,
+        ...(cards.extraArmies > 0 ? [cardIncomeNote(income, cards.extraArmies)] : []),
         ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
         ...plan.warnings,
       ];
@@ -863,6 +901,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               moves,
               localDeployments: game.settings?.localDeployments ?? false,
               noSplit: game.settings?.noSplit ?? false,
+              unplayedReinforcements: hand.flatMap((c) => {
+                if (c.type !== CARD_REINFORCEMENT || plays.some((p) => p.card.id === c.id)) return [];
+                const armies = reinforcementArmies(c, rules);
+                return armies === undefined ? [] : [{ id: c.id, armies }];
+              }),
               incomeUncertain: deployCheckUncertainties(game.settings),
               poolsUncertain: overrideUncertainties(game.settings),
             });

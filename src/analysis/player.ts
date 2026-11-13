@@ -36,6 +36,42 @@ export function territoryIncome(territories: number, base: number, per: number):
   return per > 0 ? Math.max(base, Math.floor(territories / per)) : base;
 }
 
+/** The income settings {@link boardIncome} needs: base (MinimumArmyBonus) and BonusArmyPer (0 = off). */
+export interface IncomeRules {
+  base: number;
+  per: number;
+}
+
+/**
+ * THE income rule (#85): every income figure — warapp_plan_turn's income, warapp_submit_turn's
+ * deploy check, warapp_analyze_board, the planner's next income and per-opponent estimate, the
+ * picks budget — comes from here, so they cannot disagree. War.app's client income code
+ * (docs/WARAPP-API.md, verified from the bundle): max(base, floor(territories / per)), plus the
+ * value of EVERY bonus all of whose territories are held — each counted once, whatever it
+ * overlaps; a superbonus is one more bonus over all its member territories (flattened, a member
+ * id read as a territory first); 0-value bonuses add nothing; negative ones subtract — and never
+ * below 0 (the client zeroes the income when the negatives reach it). Card armies come on top
+ * (not modelled here: a play is a choice, see `incomeFor` callers). Bonus values are the map's
+ * as given: the tools' `mapOf` has already applied the game's `OverriddenBonuses`.
+ */
+export function boardIncome(g: MapGraph, held: ReadonlySet<number>, rules: IncomeRules): Income {
+  let territories = 0;
+  for (const t of held) if (g.territoryById.has(t)) territories++;
+  const perTerritory = rules.per > 0 ? Math.floor(territories / rules.per) : 0;
+  const bonuses: Income['bonuses'] = [];
+  for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
+    const ts = bonusTerritories(g, b.id);
+    if (ts.length && ts.every((t) => held.has(t))) bonuses.push({ bonusId: b.id, name: b.name, value: b.value });
+  }
+  const total = Math.max(0, territoryIncome(territories, rules.base, rules.per) + bonuses.reduce((s, b) => s + b.value, 0));
+  return { base: rules.base, perTerritory, bonuses, total };
+}
+
+/** {@link IncomeRules} from a game's settings (the defaults when it does not say). */
+export function incomeRules(settings: Pick<GameSettings, 'minimumArmyBonus' | 'bonusArmyPer'> | undefined): IncomeRules {
+  return { base: settings?.minimumArmyBonus ?? DEFAULT_BASE_INCOME, per: settings?.bonusArmyPer ?? 0 };
+}
+
 /**
  * Settings that make the income model uncertain, each as a reason: war.app's
  * income has a term the model does not compute. Empty when every income rule
@@ -155,19 +191,13 @@ export function analyzePlayer(
   };
 
   // ---- income ----
-  const base = settings?.minimumArmyBonus ?? DEFAULT_BASE_INCOME;
-  const per = settings?.bonusArmyPer ?? 0;
-  const perTerritory = per > 0 ? Math.floor(mineIds.length / per) : 0;
-  const held: Income['bonuses'] = [];
+  const income = boardIncome(g, mineSet, incomeRules(settings));
   const progress: BonusProgress[] = [];
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     const ts = bonusTerritories(g, b.id);
     if (!ts.length) continue;
     const owned = ts.filter((t) => mineSet.has(t)).length;
-    if (owned === ts.length) {
-      held.push({ bonusId: b.id, name: b.name, value: b.value });
-      continue;
-    }
+    if (owned === ts.length) continue;
     if (b.value <= 0) continue;
     const missingIds = ts.filter((t) => !mineSet.has(t));
     const reachable = owned > 0 || missingIds.some((t) => neighborsOf(g, t).some((n) => mineSet.has(n)));
@@ -242,14 +272,13 @@ export function analyzePlayer(
   if ((settings?.luckModifier ?? 0) > 0)
     assumptions.push('Armies needed assume 0% luck; this game has luck, so outcomes can vary.');
 
-  const heldTotal = held.reduce((s, b) => s + b.value, 0);
   return {
     playerId,
     boardVerified: board.verified,
     territoryCount: mineIds.length,
     armies,
-    heldBonusIds: held.map((b) => b.bonusId),
-    income: { base, perTerritory, bonuses: held, total: territoryIncome(mineIds.length, base, per) + heldTotal },
+    heldBonusIds: income.bonuses.map((b) => b.bonusId),
+    income,
     closestBonuses: progress.slice(0, limit),
     threats,
     assumptions,

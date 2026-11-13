@@ -78,3 +78,38 @@ export const fogged = (territoryId: number): TerritoryState => ({
   armies: null,
   fogLevel: 'Fogged',
 });
+
+/**
+ * The raw (GameFeed-shaped) synthetic map. Territories 1–8 in a line (1–2–3–4–5–6–7–8).
+ *   bonus 1  "Hidden 1"  −2: territory 1          (bonus id 1 is also territory id 1)
+ *   bonus 2  "Hidden 2"  −1: territory 2
+ *   bonus 3  "Hidden 3"  +1: territory 3
+ *   bonus 10 "North"     +4: 1, 2, 3
+ *   bonus 11 "East"      +3: 3, 4, 5              (overlaps North on 3)
+ *   bonus 12 "Ring"      +2: 5, 6
+ *   bonus 13 "Waste"      0: 7
+ *   bonus 20 "Realm"     +5: North + East, and member id 3 — a territory first, not bonus 3
+ */
+export function overlapRawMap(): Record<string, unknown> {
+  const ids = [1, 2, 3, 4, 5, 6, 7, 8];
+  return {
+    id: '424242',
+    name: 'Synthetic Overlap',
+    territories: ids.map((id) => ({
+      id: String(id),
+      name: `Plot ${id}`,
+      connectedTo: [id - 1, id + 1].filter((n) => n >= 1 && n <= 8),
+    })),
+    bonuses: [
+      { id: '1', name: 'Hidden 1', value: '-2', territoryIDs: [1] },
+      { id: '2', name: 'Hidden 2', value: '-1', territoryIDs: [2] },
+      { id: '3', name: 'Hidden 3', value: '1', territoryIDs: [3] },
+      { id: '10', name: 'North', value: '4', territoryIDs: [1, 2, 3] },
+      { id: '11', name: 'East', value: '3', territoryIDs: [3, 4, 5] },
+      { id: '12', name: 'Ring', value: '2', territoryIDs: [5, 6] },
+      { id: '13', name: 'Waste', value: '0', territoryIDs: [7] },
+      { id: '20', name: 'Realm', value: '5', territoryIDs: [10, 11, 3] },
+    ],
+    distributionModes: [],
+  };
+}
