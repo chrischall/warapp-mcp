@@ -184,3 +184,58 @@ describe('containment of class values', () => {
     expect(e.kind).toBe('budget');
   });
 });
+
+describe('static data reads stay bounded and exact', () => {
+  /** How many entries an interpreter's caches hold (internal, read for the bound only). */
+  const cacheSizes = (it: BundleInterpreter) => {
+    const c = it as unknown as { staticCache: Map<string, unknown>; fnCache: Map<string, unknown> };
+    return { statics: c.staticCache.size, fns: c.fnCache.size };
+  };
+  const interp = (body: string, bundle = TYPES_BUNDLE) =>
+    new BundleInterpreter(parseBundle(`${bundle}\nfunction Hx(){}W["h.X"]=Hx;Hx.Ha=function(a,b,d){${body}};`), SMALL);
+
+  it('answers a long digit run quickly, without a match that grows with the square of its length', () => {
+    for (const tail of [`${'1'.repeat(100_000)}z`, `${'1'.repeat(400)}${' '.repeat(200_000)}z`, `0x${'f'.repeat(100_000)}z`, `1e${'1'.repeat(100_000)}z`]) {
+      const started = performance.now();
+      const e = interpError(() => run('return Bo.Big', undefined, `${TYPES_BUNDLE}\nBo.Big=${tail};`));
+      expect(e.kind).toBe('unsupported');
+      // A backstop only: the bound is the pattern's, not the clock's.
+      expect(performance.now() - started).toBeLessThan(5_000);
+    }
+  });
+
+  it('refuses a leading-zero integer, which JS reads as octal', () => {
+    expect(interpError(() => run('return Bo.Oct', undefined, `${TYPES_BUNDLE}\nBo.Oct=010;`)).kind).toBe('unsupported');
+    expect(run('return [Bo.Z,Bo.Zf,Bo.Ze]', undefined, `${TYPES_BUNDLE}\nBo.Z=0;Bo.Zf=0.5;Bo.Ze=-0.25e1;`)).toEqual([0, 0.5, -2.5]);
+  });
+
+  it('treats a logical assignment as a change in place', () => {
+    for (const op of ['||=', '&&=', '??=']) {
+      const e = interpError(() => run('return Bo.Lg', undefined, `${TYPES_BUNDLE}\nBo.Lg=1;Bo.Lg${op}5;`));
+      expect(e.kind, op).toBe('unsupported');
+    }
+  });
+
+  it('keeps no cache entry for a static key the source never names', () => {
+    const it = interp('for(var i=0;i<2000;i++)Bo["k"+i];return Bo.Ver');
+    expect(it.readClass('h.X', new Reader(new Uint8Array(8)))).toBe(3);
+    expect(cacheSizes(it).statics).toBeLessThan(10);
+  });
+
+  it('keeps no cache entry for a static function the bundle does not define', () => {
+    // A constructor's failing call is swallowed (the decoded object keeps the fields it had), so a
+    // loop of constructions can look up as many invented names as the budget allows.
+    const it = interp('for(var i=0;i<2000;i++)new Cc(i);return 1', `${TYPES_BUNDLE}\nfunction Cc(a){this.v=Bo["f"+a]()}`);
+    expect(it.readClass('h.X', new Reader(new Uint8Array(8)))).toBe(1);
+    expect(cacheSizes(it).fns).toBeLessThan(10);
+    // A missing function is still an error each time it is called.
+    expect(interpError(() => interp('return Bo.nope()').readClass('h.X', new Reader(new Uint8Array(8)))).kind).toBe('no-definition');
+  });
+});
+
+describe('instanceof with one type name registered twice', () => {
+  it('is true for an instance of either class registered under the name', () => {
+    const twice = 'var W={};function Xa(){}function Ya(){}W["t.A"]=Xa;W["t.A"]=Ya;';
+    expect(run('return [new Ya instanceof Ya,new Xa instanceof Xa]', undefined, twice)).toEqual([true, true]);
+  });
+});

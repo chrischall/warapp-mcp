@@ -578,7 +578,7 @@ interface Definitions {
 interface TypeIndex {
   /** `Cls.key` → offsets of the value of each other `Cls.key = …` (a static's data), in source order. */
   assigns: Map<string, number[]>;
-  /** `Cls.key`s the bundle also changes in place (`Cls.key++`, `Cls.key += …`): never a constant. */
+  /** `Cls.key`s the bundle also changes in place (`Cls.key++`, `Cls.key += …`, `Cls.key ??= …`): never a constant. */
   updated: Set<string>;
   /** Names the bundle defines as classes: a constructor, a registration or a prototype. */
   classes: Set<string>;
@@ -1025,7 +1025,7 @@ export class BundleInterpreter {
       else assigns.set(key, [at]);
     }
     const updated = new Set<string>();
-    for (const m of src.matchAll(/(?<![\w$.])([\w$]+)\.([\w$]+)\s*(?:\+\+|--|(?:\*\*|<<|>>>?|[-+*/%&|^])=)/g)) updated.add(`${m[1]}.${m[2]}`);
+    for (const m of src.matchAll(/(?<![\w$.])([\w$]+)\.([\w$]+)\s*(?:\+\+|--|(?:\*\*|<<|>>>?|\|\||&&|\?\?|[-+*/%&|^])=)/g)) updated.add(`${m[1]}.${m[2]}`);
     for (const m of src.matchAll(/(?:\+\+|--)\s*([\w$]+)\.([\w$]+)/g)) updated.add(`${m[1]}.${m[2]}`);
     // Prototypes: who has one, and who builds theirs from another class's. The builder (the compiler's
     // `extend`, minified) is whichever function most prototypes are built with, so a stray call cannot
@@ -1080,7 +1080,9 @@ export class BundleInterpreter {
     let data = this.staticCache.get(id);
     if (!data) {
       data = this.classifyStatic(cls, key, id, where, n);
-      this.staticCache.set(id, data);
+      // Only a key the source names is kept: a computed key (`Cls["k" + i]`) can invent a new one per
+      // step, and keeping each would grow the cache without bound. Its answer is cheap to recompute.
+      if (this.namedStatic(id)) this.staticCache.set(id, data);
     }
     if ('unsupported' in data) throw this.unsupported(`static read ${id}`, n, where);
     if ('absent' in data) return undefined;
@@ -1091,13 +1093,20 @@ export class BundleInterpreter {
     return data.value;
   }
 
+  /** Whether the source names `Cls.key` (an assignment, a static function or an update): a bounded set. */
+  private namedStatic(id: string): boolean {
+    const defs = this.types();
+    return defs.assigns.has(id) || defs.updated.has(id) || this.definitions().statics.has(id);
+  }
+
   private classifyStatic(cls: string, key: string, id: string, where: string, n: AcornNode): StaticData {
     const defs = this.types();
     const sites = defs.assigns.get(id);
     if (this.definitions().statics.has(id) || defs.updated.has(id)) return { unsupported: true };
     if (!sites) {
       // A host global (Math, Array, …) has members of its own the bundle never assigns: not the
-      // bundle's to answer, so only a key the host object lacks too reads undefined.
+      // bundle's to answer, so only a key the host object lacks too reads undefined. Accepted: `key in
+      // host` lets a bundle learn whether a host global has a member of that name (names only, no values).
       const host = hostGlobal(cls);
       if (host === undefined) return defs.classes.has(cls) ? { absent: true } : { unsupported: true };
       return host !== null && !(key in host) ? { absent: true } : { unsupported: true };
@@ -1157,7 +1166,12 @@ export class BundleInterpreter {
   private instanceOf(o: unknown, cls: unknown, n: AcornNode, where: string): boolean {
     if (!(cls instanceof ClassRef)) throw this.unsupported('instanceof of a non-class', n, where);
     if (Array.isArray(o)) return cls.name === 'Array';
+    // A decoded object is a plain object, so `o instanceof Object` is false for it (unlike JS).
     if (!isDecoded(o)) return false;
+    // The exact registered type first: two class vars registered under one type name both match an
+    // object built as either (`classOf` gives back only the first var). The cached client bundle
+    // registered each of its 2310 type names once when checked (2026-11): a guard, not a known case.
+    if (o.$type === (this.bundle.typeNameOf.get(cls.name) ?? cls.name)) return true;
     const { superOf } = this.types();
     const seen = new Set<string>();
     for (let v: string | undefined = this.classOf(o); v !== undefined && !seen.has(v); v = superOf.get(v)) {
@@ -1188,7 +1202,9 @@ export class BundleInterpreter {
   private resolveStatic(cls: string, fn: string): ResolvedFn {
     const where = `${cls}.${fn}`;
     const cached = this.fnCache.get(where);
-    // A failure is cached too, so a missing or unparsable function costs one lookup per interpreter.
+    // An unparsable function's failure is cached, so it is parsed once per interpreter. A missing one is
+    // not: its name can be computed (`Cls["f" + i]()`), so caching each would grow without bound, and the
+    // lookup is one map read.
     if (cached instanceof InterpError) throw cached;
     if (cached) return cached;
     try {
@@ -1201,7 +1217,7 @@ export class BundleInterpreter {
       this.fnCache.set(where, resolved);
       return resolved;
     } catch (e) {
-      if (e instanceof InterpError && (e.kind === 'no-definition' || e.kind === 'parse')) this.fnCache.set(where, e);
+      if (e instanceof InterpError && e.kind === 'parse') this.fnCache.set(where, e);
       throw e;
     }
   }
@@ -1872,14 +1888,24 @@ function isDecoded(v: unknown): v is DecodedObject {
   return proto === Object.prototype || proto === null;
 }
 
+/** The longest string literal, class list or whitespace run a simple static's source may have. */
+const MAX_STATIC_SOURCE = 4000;
+
 /**
  * A static's value when it is simple: `!0`/`!1`, true/false/null, a number, a string literal, a name
  * or an array of names, and nothing after it but the end of the expression: `;`, `,`, `}` or `)`, the
  * end of the source, or a line break before a name (where a new statement starts). Sticky: matched at
- * the value's offset in the whole source; a string or class list longer than MAX_STATIC_SOURCE does not match.
+ * the value's offset in the whole source. Every repeat is bounded and the number has one way to match
+ * (no leading-zero integer, which JS reads as octal), so one match is linear in a bounded length: a
+ * longer string, class list, number or whitespace run does not match, and the static is unsupported.
  */
-const SIMPLE_STATIC =
-  /(!0|!1|-?(?:0x[\da-fA-F]+|(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)|"(?:[^"\\\r\n]|\\.){0,4000}"|'(?:[^'\\\r\n]|\\.){0,4000}'|[A-Za-z_$][\w$]{0,255}(?![\w$])|\[[\s\w$,]{0,4000}\])(?=\s*(?:[;,})]|$)|[ \t]*\r?\n\s*(?!in(?:stanceof)?\b)[A-Za-z_$])/y;
+const SIMPLE_STATIC = new RegExp(
+  String.raw`(!0|!1|-?(?:0x[\da-fA-F]{1,16}|(?:(?:0|[1-9]\d{0,399})(?:\.\d{0,400})?|\.\d{1,400})(?:[eE][-+]?\d{1,4})?)` +
+    String.raw`|"(?:[^"\\\r\n]|\\.){0,${MAX_STATIC_SOURCE}}"|'(?:[^'\\\r\n]|\\.){0,${MAX_STATIC_SOURCE}}'` +
+    String.raw`|[A-Za-z_$][\w$]{0,255}(?![\w$])|\[[\s\w$,]{0,${MAX_STATIC_SOURCE}}\])` +
+    String.raw`(?=\s{0,${MAX_STATIC_SOURCE}}(?:[;,})]|$)|[ \t]{0,${MAX_STATIC_SOURCE}}\r?\n\s{0,${MAX_STATIC_SOURCE}}(?!in(?:stanceof)?\b)[A-Za-z_$])`,
+  'y',
+);
 
 /** `typeof` over interpreter values: a class, a closure or a callback is a function. */
 function typeOf(v: unknown): string {
