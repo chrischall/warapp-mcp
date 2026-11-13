@@ -27,6 +27,16 @@ warning or a rule-4d frontier line appeared is being asked of the play session �
   (`targets`, `gainWith`), `tryExpand` refusals (rule 4d `outgrows`, R3, sizing that ignores the deploy still
   to come), the budget/reserve that 4e may spend vs. what comfort margins or leftover rules take later, or
   rationale/warning lines removed afterwards. Fix each real cause, test first, with a test per cause.
+- **Live evidence from the play session (rebuilt at the #105 merge; 4e did run):** the last warning was
+  "Standing still: no capture is planned, and the cheapest expansion (<territory 2 hops away> (#15), 12 armies,
+  toward bonus <a large bonus> (#7)) does not fit what the holds leave (5 to deploy)". No rule-4d line; frontier
+  `{borders 3, enemyBorders 1, holdCost 0, income 5}`. So: (1) every step failed `tryExpand`, including the
+  4-army neutral adjacent to the 6-army stack (7 to take; 6 standing + 5 deploy = 11 available, holds 0) —
+  find out why (budget counting only the deploy and not standing movable armies? the 12-army figure for a
+  4-army neutral 2 hops away — a staging cost? a `targets` cost computed differently?) and fix it; (2) the
+  candidate order: rank 4e steps by what is affordable this turn (deploy + movable armies adjacent to the
+  target), then by the bonus's armies to finish, so a directly attackable cheap neutral toward a small bonus
+  beats a far step toward the bonus with the lowest finish count. Reproduce exactly this (synthetic names).
 - When 4e cannot capture, the warning must name the **actual** reason (holds leave too little / rule 4d's
   frontier stop / sizing), not always "does not fit what the holds leave".
 - If 4e was in fact refused by rule 4d in an opening: in the opening phase with no capture, the frontier stop
