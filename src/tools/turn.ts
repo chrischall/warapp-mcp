@@ -1149,7 +1149,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             id: p.id,
             ...(p.team !== undefined ? { team: p.team } : {}),
             ...(p.state !== undefined ? { state: p.state } : {}),
+            ...(p.isAI ? { isAI: true } : {}),
+            ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
           })),
+          ...(game.endRules?.aisSurrenderWhenOneHumanRemains !== undefined
+            ? { endRules: { aisSurrenderWhenOneHumanRemains: game.endRules.aisSurrenderWhenOneHumanRemains } }
+            : {}),
           turn,
           ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
           ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),

@@ -1072,6 +1072,8 @@ export interface PlanGameContext {
    * (`openingIncome`); with the fog prior on, that opponent's prior is the larger of it and my income.
    */
   opening?: ReadonlyMap<number, number>;
+  /** #178: the end-of-game settings the profile reads (`Game.endRules`): who the game ends with. */
+  endRules?: { aisSurrenderWhenOneHumanRemains?: boolean };
 }
 
 export interface PlanInput {
@@ -2272,6 +2274,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     },
     ...(ctx.turn !== undefined ? { turn: ctx.turn } : {}),
     ...(ctx.picking !== undefined ? { picking: ctx.picking } : {}),
+    ...(ctx.endRules ? { endRules: ctx.endRules } : {}),
     income,
     estimates: estimateList,
     // #94: opponents the tracker found with nothing in view, for the 'unknown' standing note.

@@ -437,3 +437,33 @@ describe('gameProfile: FFA ranking (#167)', () => {
     expect(gameProfile(base()).ranking).toBeUndefined();
   });
 });
+
+describe('gameProfile: humans, AIs and how the game ends (#178)', () => {
+  it('counts the humans still playing (an AI or a human turned into one is not), and names no end without the rule', () => {
+    const p = gameProfile(
+      base({
+        players: [{ id: ME }, { id: 20, isAI: true }, { id: 30, humanTurnedIntoAI: true }, { id: 40 }, { id: 50, state: 'Eliminated' }],
+      }),
+    );
+    expect(p.humansAlive).toBe(2);
+    expect(p.aiOpponents).toEqual([20, 30]);
+    expect(p.endsWith).toBeNull();
+  });
+
+  it('with AIs surrendering once one human remains, names the last other human as the one to beat', () => {
+    const p = gameProfile(
+      base({
+        players: [{ id: ME }, { id: 20, isAI: true }, { id: 40 }],
+        endRules: { aisSurrenderWhenOneHumanRemains: true },
+      }),
+    );
+    expect(p.endsWith).toBe(40);
+    expect(p.notes.join(' ')).toMatch(/AIs surrender once one human remains: the game ends with player 40 or me/);
+  });
+
+  it('names no one when two or more other humans remain, or none does', () => {
+    const rule = { aisSurrenderWhenOneHumanRemains: true };
+    expect(gameProfile(base({ players: [{ id: ME }, { id: 20 }, { id: 30 }, { id: 40, isAI: true }], endRules: rule })).endsWith).toBeNull();
+    expect(gameProfile(base({ players: [{ id: ME }, { id: 20, isAI: true }], endRules: rule })).endsWith).toBeNull();
+  });
+});

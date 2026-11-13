@@ -31,6 +31,10 @@ export interface ProfilePlayer {
   team?: number;
   /** GameFeed state, e.g. `Playing`, `Eliminated`; absent counts as `Playing`. */
   state?: string;
+  /** #178: an AI seat (`isAI`). */
+  isAI?: boolean;
+  /** #178: a human whose seat an AI now plays (`humanTurnedIntoAI`). */
+  humanTurnedIntoAI?: boolean;
 }
 
 /** The settings the profile echoes; every one optional (off / unknown when absent). */
@@ -78,6 +82,8 @@ export interface ProfileInput {
    * standing note names them.
    */
   unseen?: ReadonlyArray<{ playerId: number; turnsUnseen: number; turnsUnseenAtLeast?: boolean; earnedAtLeast: number }>;
+  /** #178: the end-of-game settings the profile reads (`Game.endRules`). */
+  endRules?: { aisSurrenderWhenOneHumanRemains?: boolean };
 }
 
 export interface GameProfile {
@@ -108,6 +114,16 @@ export interface GameProfile {
    * leader when it is not me — the player the others combine against.
    */
   ranking?: FfaRanking;
+  /** #178: humans still playing, me included (an AI seat, or a human an AI now plays, is not one). */
+  humansAlive: number;
+  /** #178: opponents still playing that an AI plays, by id. */
+  aiOpponents: number[];
+  /**
+   * #178: with `AIsSurrenderWhenOneHumanRemains` on, the one other human still playing (not a
+   * teammate): the AIs give up once one human is left, so the game ends with that player or me.
+   * `null` otherwise.
+   */
+  endsWith: number | null;
   notes: string[];
 }
 
@@ -151,6 +167,17 @@ export function gameProfile(input: ProfileInput): GameProfile {
   const opponents = players.filter((p) => !ally(p.id) && playing(p)).length;
   const started = players.filter((p) => !NEVER_SEATED.has(p.state ?? 'Playing')).length;
   const format: GameFormat = teams ? 'teams' : opponents <= 1 ? '1v1' : 'ffa';
+  // #178: who is human, and who the game ends with when the AIs surrender to the last human.
+  const machine = (p: ProfilePlayer) => p.isAI === true || p.humanTurnedIntoAI === true;
+  const humans = players.filter((p) => playing(p) && !machine(p));
+  const humansAlive = humans.length;
+  const aiOpponents = players.filter((p) => playing(p) && machine(p) && !ally(p.id)).map((p) => p.id).sort((a, b) => a - b);
+  const otherHumans = humans.filter((p) => p.id !== me);
+  let endsWith: number | null = null;
+  if (input.endRules?.aisSurrenderWhenOneHumanRemains === true && aiOpponents.length && otherHumans.length === 1 && !ally(otherHumans[0]!.id)) {
+    endsWith = otherHumans[0]!.id;
+    notes.push(`AIs surrender once one human remains: the game ends with player ${endsWith} or me, whatever the AIs hold.`);
+  }
 
   // ---- phase ----
   const mine = [...owners].filter(([, p]) => p === me).map(([t]) => t);
@@ -333,6 +360,9 @@ export function gameProfile(input: ProfileInput): GameProfile {
     standing,
     standingSource,
     ...(ranking ? { ranking } : {}),
+    humansAlive,
+    aiOpponents,
+    endsWith,
     notes,
   };
 }
