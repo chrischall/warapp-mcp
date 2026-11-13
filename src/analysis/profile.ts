@@ -54,6 +54,12 @@ export interface ProfileInput {
   income: number;
   /** Each visible opponent's estimated income (the planner's per-opponent deploy estimate). */
   estimates: ReadonlyArray<{ playerId: number; estimate: number }>;
+  /**
+   * Opponents with no territory in view (#94, `trackOpponents`): for how many turns, and the
+   * armies they must have received since the game started (a lower bound). The 'unknown'
+   * standing note names them.
+   */
+  unseen?: ReadonlyArray<{ playerId: number; turnsUnseen: number; earnedAtLeast: number }>;
 }
 
 export interface GameProfile {
@@ -144,13 +150,22 @@ export function gameProfile(input: ProfileInput): GameProfile {
     return !st || st.owner.kind === 'unknown' || st.armies === null;
   }).length;
   const strongest = enemies[0];
+  // #94: an opponent out of sight is the most dangerous case; the 'unknown' note says what it has received.
+  const unseen = (input.unseen ?? [])
+    .filter((u) => !ally(u.playerId))
+    .sort((a, b) => a.playerId - b.playerId)
+    .map(
+      (u) =>
+        ` Player ${u.playerId} has been out of sight for ${u.turnsUnseen} turn${u.turnsUnseen === 1 ? '' : 's'} and has received at least ${u.earnedAtLeast} armies: it could be banking a stack that large.`,
+    )
+    .join('');
   if (!strongest) {
     standing = 'unknown';
-    notes.push('Standing unknown: no opponent is in sight, so its income cannot be estimated.');
+    notes.push(`Standing unknown: no opponent is in sight, so its income cannot be estimated.${unseen}`);
   } else if (notMine.length && foggedCount > notMine.length / 2) {
     standing = 'unknown';
     notes.push(
-      `Standing unknown: ${foggedCount} of the ${notMine.length} territories I do not hold are in the fog, so the opponents' income is mostly unseen.`,
+      `Standing unknown: ${foggedCount} of the ${notMine.length} territories I do not hold are in the fog, so the opponents' income is mostly unseen.${unseen}`,
     );
   } else {
     const ratio = strongest.estimate > 0 ? input.income / strongest.estimate : Infinity;

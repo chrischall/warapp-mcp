@@ -4,7 +4,7 @@
 // the board it read, like warapp_plan_turn, so the history grows on either tool.
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { TRACKED_MIN_TURNS, trackOpponents, type ObservedTurn } from '../analysis/index.js';
+import { TRACKED_MIN_TURNS, trackGame, trackOpponents, type ObservedTurn } from '../analysis/index.js';
 import { boardStateFromLive } from '../live.js';
 import type { GameMap } from '../normalize.js';
 import { CACHED_TURNS, writeBoardCache } from '../trend.js';
@@ -37,7 +37,10 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           'seen minus its visible army change and losses: armies that must be in the fog) and inferred bonuses (the ' +
           'combinations of bonuses it could hold whose values best explain the gap between that income and what it ' +
           `visibly earns — every combination that fits is listed, as candidates). Once an opponent has ${TRACKED_MIN_TURNS}+ ` +
-          "observed turns, warapp_plan_turn uses this income in place of the single-turn observed figure. Notes say how " +
+          "observed turns, warapp_plan_turn uses this income in place of the single-turn observed figure. Every opponent " +
+          'still playing is listed, even with no territory in view (visible, turnsUnseen); one with nothing in view gets ' +
+          'earnedAtLeast (its starting armies plus the base income every turn so far: a lower bound on armies received, ' +
+          'not held) and a warning when that beats your largest stack or your total visible armies. Notes say how ' +
           'confident each figure is (turns used, missing turns, caps, fog reveals). Only consecutive turns are ' +
           `compared. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read.`,
       ),
@@ -64,7 +67,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
       const turn = currentTurn(game);
       const history = await boardHistory(ctx, game, me, turn);
       const boards = turn !== null ? [...history.boards, { turn, board }] : [{ turn: 0, board }];
-      const tracks = trackOpponents(graph, boards, me.id, settings);
+      const tracks = trackOpponents(graph, boards, me.id, settings, trackGame(game.players, game.settings, map));
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
       const name = namer(map);
       const players = new Map(game.players.map((p) => [p.id, p.name]));
@@ -95,9 +98,15 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           game: { id: game.id, name: game.name ?? null, turn },
           player: { id: me.id, name: me.name },
           turns: boards.map((b) => b.turn).sort((a, b) => a - b),
+          // #94: every opponent out of sight whose received armies beat my largest stack or my total.
+          warnings: tracks.flatMap((t) => t.warnings),
           opponents: tracks.map((t) => ({
             player: { id: t.playerId, name: players.get(t.playerId) ?? String(t.playerId) },
             firstSeen: t.firstSeen,
+            visible: t.visible,
+            turnsUnseen: t.turnsUnseen,
+            earnedAtLeast: t.earnedAtLeast,
+            warnings: t.warnings,
             observed: t.turns.map(turnView),
             income: {
               estimate: t.income,

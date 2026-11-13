@@ -32,6 +32,7 @@ import {
   planTurn,
   AHEAD_PRESSURE_FACTOR,
   PRESSURE_FACTOR,
+  trackGame,
   trackOpponents,
   type TurnBoard,
   type PlanGoal,
@@ -694,10 +695,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const turn = currentTurn(game);
       const history = await boardHistory(ctx, game, me, turn);
       const trend = history.previous;
-      // The opponents over my board history: one observed over 2+ turns gets its tracked income.
+      // The opponents over my board history: one observed over 2+ turns gets its tracked income;
+      // one still playing with nothing in view gets a received lower bound and a warning (#94).
       const tracks =
-        turn !== null && history.boards.length
-          ? trackOpponents(graph, [...history.boards, { turn, board }], me.id, settings)
+        turn !== null
+          ? trackOpponents(graph, [...history.boards, { turn, board }], me.id, settings, trackGame(game.players, game.settings, map))
           : undefined;
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
       const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
@@ -746,6 +748,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...cards.warnings,
         ...(cards.extraArmies > 0 ? [cardIncomeNote(income, cards.extraArmies)] : []),
         ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
+        ...(tracks ?? []).flatMap((t) => t.warnings),
         ...plan.warnings,
       ];
       // The plan advises Order Priority (a withdrawal, a commander strike): play the one I

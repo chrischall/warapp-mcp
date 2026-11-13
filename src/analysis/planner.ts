@@ -1153,6 +1153,10 @@ export function planTurn(input: PlanInput): TurnPlan {
     ...(ctx.picking !== undefined ? { picking: ctx.picking } : {}),
     income,
     estimates: estimateList,
+    // #94: opponents the tracker found with nothing in view, for the 'unknown' standing note.
+    unseen: (input.tracks ?? []).flatMap((t) =>
+      t.earnedAtLeast ? [{ playerId: t.playerId, turnsUnseen: t.turnsUnseen, earnedAtLeast: t.earnedAtLeast.total }] : [],
+    ),
   });
   /** The profile picks the goal and tunes the scoring (rule 0p): adapting, with no explicit goal. */
   const auto = opts.adapt === true && opts.goal === undefined;
