@@ -42,7 +42,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   `unconfirmed`.
 - **"Who am I up against?" / "scout this player"** → `warapp_scout_player` with `game_id` +
   `player` (a name), or just the player's id: level, games played, last seen, boot rate,
-  ranked records per format and the user's head-to-head with them. It never returns the
+  ranked records per format and the user's head-to-head with them (wins and losses from games
+  without teams; team games are `teamGames`, since they may have been a teammate). A page that is
+  not a profile (signed out, unknown id) is an error. It never returns the
   player's location or other personal details.
 - **"What's going on in game N?" / "whose turn is it?"** → `warapp_get_game`. It returns the
   state, the turn, every player with whether they have committed orders (the ones who have

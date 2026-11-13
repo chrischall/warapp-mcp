@@ -39,9 +39,15 @@ export interface CommonGame {
 
 export interface HeadToHead {
   count: number | null;
+  /** My wins and losses in games without teams; a team game is in {@link teamGames} instead. */
   wins: number;
   losses: number;
   inProgress: number;
+  /**
+   * Common games with teams (e.g. "2v2"): the page does not say which side the player was on, so
+   * they may have been my teammate — never counted as a win or a loss against them (#130).
+   */
+  teamGames: number;
   games: CommonGame[];
 }
 
@@ -94,7 +100,7 @@ export function parseProfile(html: string): ProfileStats {
   }
 
   return {
-    name,
+    name: level || played ? name : null,
     level: level ? num(level[1]!) : null,
     multiplayerGames: played ? num(played[1]!) : null,
     realTimePct: played ? Number(played[2]) : null,
@@ -104,6 +110,22 @@ export function parseProfile(html: string): ProfileStats {
     ranked: ranked ? { completed: num(ranked[1]!), wins: num(ranked[2]!), games: num(ranked[3]!) } : null,
     formats,
   };
+}
+
+/**
+ * Whether a page parsed as a profile is one: every player's profile shows a level and the
+ * multi-player games played (a new player's say 0), while a sign-in page or an unknown player's
+ * page has neither (#130).
+ */
+export function isProfile(p: ProfileStats): boolean {
+  return p.level !== null || p.multiplayerGames !== null;
+}
+
+/** Whether a common game's teams column has teams: a side of more than one player ("2v2", "3v3v3", "Teams"). */
+export function isTeamGame(teams: string): boolean {
+  if (/\bteams?\b/i.test(teams)) return true;
+  const sides = /^\s*\d+(?:\s*v\s*\d+)+\s*$/i.test(teams) ? teams.split(/v/i).map((x) => Number(x.trim())) : [];
+  return sides.some((n) => n > 1);
 }
 
 type Outcome = 'win' | 'loss' | 'inProgress' | undefined;
@@ -125,15 +147,19 @@ export function parseCommonGames(html: string): HeadToHead {
     games.push({ id: Number(m[1]), name: textOf(m[2]!), started: textOf(m[3]!), teams: textOf(m[4]!), myState: textOf(m[5]!) });
   }
   const tally = { win: 0, loss: 0, inProgress: 0 };
+  let teamGames = 0;
   for (const g of games) {
     const o = outcomeOf(g.myState);
-    if (o) tally[o]++;
+    const team = isTeamGame(g.teams);
+    if (team) teamGames++;
+    if (o === 'inProgress' || (o && !team)) tally[o]++;
   }
   return {
     count: header ? num(header[1]!) : games.length ? games.length : null,
     wins: tally.win,
     losses: tally.loss,
     inProgress: tally.inProgress,
+    teamGames,
     games,
   };
 }

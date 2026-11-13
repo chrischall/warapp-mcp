@@ -90,11 +90,13 @@ describe('parseProfile', () => {
 
 describe('parseCommonGames', () => {
   it('reads the common games and counts my wins, losses and games in progress', () => {
+    // #130: the 2v2 is not a loss to them — the page does not say which side they were on.
     expect(parseCommonGames(COMMON_HTML)).toEqual({
       count: 4,
       wins: 1,
-      losses: 2,
+      losses: 1,
       inProgress: 1,
+      teamGames: 1,
       games: [
         { id: 2001, name: 'Grudge <match>', started: '1/5/2026', teams: '1v1', myState: 'Won' },
         { id: 2002, name: 'Second', started: '2/5/2026', teams: 'FFA', myState: 'Eliminated' },
@@ -110,9 +112,17 @@ describe('parseCommonGames', () => {
       wins: 0,
       losses: 0,
       inProgress: 0,
+      teamGames: 0,
       games: [],
     });
-    expect(parseCommonGames('')).toEqual({ count: null, wins: 0, losses: 0, inProgress: 0, games: [] });
+    expect(parseCommonGames('')).toEqual({ count: null, wins: 0, losses: 0, inProgress: 0, teamGames: 0, games: [] });
+  });
+
+  it('a team game counts toward neither wins nor losses: they may have been my teammate (#130)', () => {
+    const row = (id: number, teams: string, state: string) =>
+      `<tr><td><a href="MultiPlayer?GameID=${id}">G</a></td><td>d</td><td>${teams}</td><td>${state}</td></tr>`;
+    const html = row(1, '2v2', 'Won') + row(2, '3v3v3', 'Eliminated') + row(3, '1v1', 'Won') + row(4, 'FFA', 'Booted');
+    expect(parseCommonGames(html)).toMatchObject({ count: 4, wins: 1, losses: 1, teamGames: 2 });
   });
 
   it('a state it cannot classify counts as none of the three', () => {
@@ -150,7 +160,7 @@ describe('warapp_scout_player', () => {
     expect(p.untrusted_content).toBe(true);
     expect(p.player).toEqual({ id: BOB.token, name: 'Bob & Co' });
     expect(p.profile).toMatchObject({ level: 55, boots: 200, bootRatePct: 14 });
-    expect(p.headToHead).toMatchObject({ count: 4, wins: 1, losses: 2, inProgress: 1 });
+    expect(p.headToHead).toMatchObject({ count: 4, wins: 1, losses: 1, inProgress: 1, teamGames: 1 });
     expect(textOf(res)).not.toMatch(/Springfield|Nowhereland|Location|example\.com/i);
     expect(h.calls[0]!.url).toContain(`GameID=${GAME}`);
     // The two pages are fetched concurrently, so their order is not fixed.
@@ -206,6 +216,20 @@ describe('warapp_scout_player', () => {
     const p = payload(await h.call('warapp_scout_player', { player: BOB.token }));
     expect(p.profile).toMatchObject({ ranked: null, formats: [], boots: null });
     expect(p.headToHead).toMatchObject({ count: 0, games: [] });
+  });
+
+  it('a page that is not a profile (signed out, no such player) is an error, not a new player named "Sign in" (#130)', async () => {
+    const SIGN_IN = '<html><head><title>Sign in - War.app</title></head><body><form><input type="email"></form></body></html>';
+    h = await liveHarness({
+      pages: {
+        [`https://war.app/Profile?p=${BOB.token}`]: SIGN_IN,
+        [`https://war.app/CommonGames?p=${BOB.token}`]: SIGN_IN,
+      },
+    });
+    const res = await h.call('warapp_scout_player', { player: BOB.token });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/not a player profile/);
+    expect(textOf(res)).not.toMatch(/"name":"Sign in"/);
   });
 
   it('errors with a bridge hint when a page cannot be read', async () => {

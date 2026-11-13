@@ -190,7 +190,10 @@ fpx get "https://war.app/Profile?p=$PLAYER" -p warapp | node "$SCOUT" profile \
 ```
 
 Your head-to-head — the games you share (id, name, started, teams, your state) with your
-wins, losses and games in progress:
+wins, losses and games in progress. Wins and losses count games without teams only: the page does
+not say which side a player was on in a team game, so those are `teamGames`. A page with no level
+and no games played (`name`, `level` and `multiplayerGames` all null) is not a profile — the tab is
+signed out or no player has that id:
 
 <!-- recipe: scout-common -->
 ```sh
@@ -202,7 +205,7 @@ Just the tally:
 <!-- recipe: scout-head-to-head -->
 ```sh
 fpx get "https://war.app/CommonGames?p=$PLAYER" -p warapp | node "$SCOUT" common \
-  | jq '{count, wins, losses, inProgress}'
+  | jq '{count, wins, losses, inProgress, teamGames}'
 ```
 
 Scout an opponent in a game by (part of their) name — the id comes from GameFeed, the stats
