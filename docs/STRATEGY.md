@@ -256,7 +256,8 @@ level, the move order, the distribution, the kill rates, the guard, and which ca
 Where a note describes something `warapp_submit_turn` cannot send — an Order Delay above other
 orders — its text says so and points to the game client. A note on an attack-only or transfer-only
 order, an order by percentage, an order that carries the commander or treats a teammate as an
-enemy names the move option that sends it (#165). After they were drafted, the notes were checked a second time against the research by the
+enemy names the move option that sends it (#165; those options follow the client's encoding but
+are UNVERIFIED against a live commit). After they were drafted, the notes were checked a second time against the research by the
 agents that did it, and 46 were reworded or given a narrower condition.
 The pages were read on 2026-11-13; nothing is quoted. A second pass the same day checked the
 rules of move order, pick awarding, turn phases, the Order Priority, Order Delay and Blockade
@@ -323,8 +324,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   <https://warlight.nghood.com/>
 - `teams-one-owner-per-bonus` — A bonus pays only when one player holds every territory in it.
   Settle who owns each bonus; the other teammate moves out all but one army, then the owner
-  takes the territory with an order set to treat teammates as enemies (no card piece). Enter it
-  in the game client: a plain order there is a transfer. **Advice only.** Source:
+  takes the territory with an order set to treat teammates as enemies (no card piece): set
+  `attack_teammates` on the move in `warapp_submit_turn` (#165; the option is UNVERIFIED live); a plain order there is a
+  transfer. **Advice only.** Source:
   <https://war.app/wiki/Team_Games>
 - `teams-transfer-not-deploy` — You may transfer armies onto a teammate's territory but never
   deploy there. Pass idle armies across a shared border to the teammate nearer the fight: they
@@ -337,8 +339,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
   <https://war.app/wiki/Team_Games>
 - `teams-reinforce-capture` — To strengthen a teammate's capture in the same turn, it captures
   with its first order and you transfer in at least one order later, marked Transfer Only so a
-  failed capture leaves your armies home. Enter it in the game client: warapp_submit_turn sends
-  plain orders, which would attack and take the territory. **Advice only.** Source:
+  failed capture leaves your armies home. In `warapp_submit_turn`, set the move's mode
+  "transfer-only" (#165; the option is UNVERIFIED live); a plain order would attack and take the territory. **Advice only.** Source:
   <https://war.app/Forum/139981-team-strategy-question>
 - `teams-ai-teammate` — A teammate replaced by an AI plays no cards while a human is on the
   team, and may attack teammates to finish a bonus the team holds between them or one it is
@@ -403,9 +405,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   enemy commander first, sized for its armies, its 7 and its owner's deploy. Derived. Source:
   <https://war.app/wiki/Commanders>
 - `settings-commander-free-captures` — A Commander attacking alone fights as 7 armies and is
-  unharmed by less than 7 damage, so it can take small neutrals at no cost. Orders sent through
-  this server never include the Commander: an order from its territory sends only armies and
-  thins its guard. Do this only when playing in the war.app client. **Advice only.** Source:
+  unharmed by less than 7 damage, so it can take small neutrals at no cost. To send it, set
+  `commander` on the move in `warapp_submit_turn` (with `armies` 0 it goes alone) (#165; the option is UNVERIFIED live);
+  without it, an order from its territory sends only armies and thins its guard. **Advice only.** Source:
   <https://war.app/Forum/223845-commander-template-challenge>
 - `settings-guard-off-taps` — With no army required to stay behind, a territory can be left
   empty, and any single army then captures it; against one defender a single attacker only
@@ -544,7 +546,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `cards-gift-enemy-teammate` — In a team game a territory about to fall can be gifted to the
   attacker's teammate: by default the attack becomes a transfer and the bonus is not completed
   that turn. If the other team may hold a Gift card, a bonus-completing capture needs the option
-  to treat teammates as enemies (set in the game client; this server cannot). **Advice only.**
+  to treat teammates as enemies: set `attack_teammates` on the move in `warapp_submit_turn`
+  (#165; the option is UNVERIFIED live). **Advice only.**
   Source: <https://warlight.nghood.com/>
 - `cards-spy-turn-ahead` — A Spy, Reconnaissance or Surveillance card shows its view next turn,
   so play it the turn before the decision it should inform: Surveillance to learn whether a
@@ -716,18 +719,18 @@ delays the orders listed after it; under No-Split the whole stack moves).
   count how much. **Advice only.** Source: <https://warlight.nghood.com/>
 - `timing-transfer-only-reinforce` — When you move armies into a territory of yours that the
   enemy could take first this turn, make the order Transfer Only: if it has fallen, the armies
-  stay put instead of attacking the stack that took it. Set this in the game client:
-  warapp_submit_turn sends plain attack/transfer orders, which would attack. **Advice only.**
+  stay put instead of attacking the stack that took it. In `warapp_submit_turn`, set the move's
+  mode "transfer-only" (#165; the option is UNVERIFIED live); a plain order would attack. **Advice only.**
   Source: <https://war.app/wiki/Attack_Only_and_Transfer_Only>
 - `timing-attack-only-retake` — To answer an attack you only suspect, give a late Attack Only
   order onto your own threatened territory from a neighbouring stack big enough to beat what
-  would survive taking it: it strikes only if the territory fell. Enter it in the game client:
-  sent by warapp_submit_turn it is a plain transfer. **Advice only.** Source:
+  would survive taking it: it strikes only if the territory fell. In `warapp_submit_turn`, set
+  the move's mode "attack-only" (#165; the option is UNVERIFIED live); a plain order would be a transfer. **Advice only.** Source:
   <https://war.app/Forum/4440-usefulness-attacktransfer-orders>
 - `timing-percentage-remainder` — A percentage order is worked out when it runs, from the armies
   still able to move, so an enemy attack that lands first shrinks what it sends, not the share
-  that stays. Use one when the armies left behind matter more. Enter it in the game client:
-  warapp_submit_turn sends fixed army counts. **Advice only.** Source:
+  that stays. Use one when the armies left behind matter more. In `warapp_submit_turn`, set
+  `percent` on the move and give the percentage as `armies` (#165; the option is UNVERIFIED live). **Advice only.** Source:
   <https://war.app/wiki/Percentage_attacks>
 
 ## Fighting: stacks in contact, ahead and behind

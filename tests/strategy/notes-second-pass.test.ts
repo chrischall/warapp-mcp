@@ -195,6 +195,8 @@ describe('second-pass notes: each is offered only where it applies', () => {
     for (const [id, field] of Object.entries(fields)) {
       expect(note(id).text, id).toMatch(field);
       expect(note(id).text, id).not.toMatch(/game client|this server cannot|never include/);
+      // The options follow the client's encoding but no commit has carried one yet.
+      expect(note(id).text, id).toMatch(/not yet verified live/);
     }
     expect(note('settings-commander-protect').text).toMatch(/moves only when an order sets `commander`/);
   });
