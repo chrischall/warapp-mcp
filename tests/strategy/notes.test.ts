@@ -213,3 +213,79 @@ describe('notesMarkdown', () => {
     expect(md).toContain('`settings-efficient-sizes`');
   });
 });
+
+// Research pass (the official wiki's Move order, Manual distribution, Turn phases, card and
+// settings pages): rules the notes had wrong or lacked, and gating for notes whose arithmetic
+// only holds under some settings.
+describe('strategy notes: rules checked against the wiki, and gating', () => {
+  const note = (id: string) => STRATEGY_NOTES.find((n) => n.id === id)!;
+
+  it('no-luck-exact is not offered under weighted-random rounding (3 against 2 wins 80% there)', () => {
+    expect(ids(profile())).toContain('settings-no-luck-exact');
+    expect(ids(profile({}, { rounding: 'WeightedRandom' }))).not.toContain('settings-no-luck-exact');
+  });
+
+  it('the one-army poke needs a kill rate at which one attacker kills one, and exact results', () => {
+    expect(ids(profile())).toContain('settings-poke');
+    expect(ids(profile(), 'settings', { offensiveKillRate: 30, defensiveKillRate: 75 })).not.toContain('settings-poke');
+    expect(ids(profile({}, { luck: 16 }))).not.toContain('settings-poke');
+    expect(ids(profile({}, { rounding: 'WeightedRandom' }))).not.toContain('settings-poke');
+  });
+
+  it('defend-with-three needs exact results as well as the 60/70 breakpoints', () => {
+    expect(ids(profile())).toContain('settings-defend-with-three');
+    expect(ids(profile({}, { luck: 75 }))).not.toContain('settings-defend-with-three');
+    expect(ids(profile({}, { rounding: 'WeightedRandom' }))).not.toContain('settings-defend-with-three');
+  });
+
+  it('move order: the zigzag always, attacking second only where defence out-kills attack', () => {
+    const got = ids(profile());
+    expect(got).toEqual(expect.arrayContaining(['settings-move-order-zigzag', 'settings-attack-second', 'reading-who-moves-first']));
+    expect(note('settings-move-order-zigzag').source).toBe(STRATEGY_SOURCES.moveOrder);
+    expect(ids(profile(), 'settings', { offensiveKillRate: 70, defensiveKillRate: 60 })).not.toContain('settings-attack-second');
+    expect(ids(profile(), 'settings', { offensiveKillRate: 70, defensiveKillRate: 60 })).toContain('settings-move-order-zigzag');
+  });
+
+  it('a contested 2-army neutral: last with three, or first with four — at the 60/70 breakpoints only', () => {
+    expect(ids(profile())).toContain('settings-contested-neutral');
+    expect(ids(profile(), 'settings', { offensiveKillRate: 20, defensiveKillRate: 80 })).not.toContain('settings-contested-neutral');
+  });
+
+  it('the army cap and Multi-Attack notes follow the game settings', () => {
+    expect(ids(profile())).not.toContain('settings-army-cap');
+    expect(ids(profile(), 'settings', { armyCap: 8 })).toContain('settings-army-cap');
+    expect(ids(profile(), 'settings', { armyCap: null })).not.toContain('settings-army-cap');
+    expect(ids(profile())).not.toContain('settings-multi-attack');
+    expect(ids(profile(), 'settings', { multiAttack: true })).toContain('settings-multi-attack');
+  });
+
+  it('the pick notes are offered in the opening only', () => {
+    expect(ids(profile({ phase: 'opening' }))).toContain('reading-pick-zigzag');
+    expect(ids(profile({ phase: 'contact' }))).not.toContain('reading-pick-zigzag');
+    expect(note('reading-pick-zigzag').source).toBe(STRATEGY_SOURCES.manualDistribution);
+  });
+
+  it('an opponent out of sight is assumed to grow like me, under fog', () => {
+    expect(ids(profile())).toContain('reading-unseen-opponent');
+    expect(ids(profile({}, { fog: 'NoFog' }))).not.toContain('reading-unseen-opponent');
+  });
+
+  it('the card notes say what each card really moves, from its own page', () => {
+    const c = { cards: true };
+    expect(ids(profile({}, c), 'cards')).toEqual(expect.arrayContaining(['cards-turn-order']));
+    // Order Priority moves the first order only; Order Delay only the orders listed after it.
+    expect(note('cards-order-priority').text).toMatch(/only your first order/);
+    expect(note('cards-order-priority').source).toBe(STRATEGY_SOURCES.orderPriority);
+    expect(note('cards-order-delay').text).toMatch(/listed after it/);
+    expect(note('cards-order-delay').text).toMatch(/does nothing/);
+    expect(note('cards-order-delay').source).toBe(STRATEGY_SOURCES.orderDelay);
+    // A Blockade resolves after the attacks and is lost with the territory.
+    expect(note('cards-blockade-own-bonus').text).toMatch(/after the attacks/);
+    expect(note('cards-blockade-own-bonus').source).toBe(STRATEGY_SOURCES.blockade);
+  });
+
+  it('No-Split says the whole stack moves', () => {
+    expect(note('settings-no-split').text).toMatch(/everything/);
+    expect(note('settings-no-split').source).toBe(STRATEGY_SOURCES.noSplit);
+  });
+});

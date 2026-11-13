@@ -16,13 +16,26 @@ the person reviewing the list).
 - Combat basics (kill rates, how many armies a capture needs) — <https://war.app/wiki/Combat_Basics>
 - Luck modifier — <https://war.app/wiki/Luck_Modifier>
 - Cards (how card pieces are earned) — <https://war.app/wiki/Cards>
+- Move order (the zigzag within a turn; random, cyclic and no-luck cyclic) — <https://war.app/wiki/Move_order>
+- Manual distribution (how picks are awarded) — <https://war.app/wiki/Manual_distribution>
+- Turn phases (the fixed order of cards, deployments and attacks) — <https://war.app/wiki/Turn_phases>
+- Order Priority card — <https://war.app/wiki/Order_priority_card>
+- Order Delay card — <https://war.app/wiki/Order_delay_card>
+- Blockade and Emergency Blockade cards — <https://war.app/wiki/Blockade_and_Emergency_Blockade_Cards>
+- Army cap — <https://war.app/wiki/Army_cap>
+- No-Split mode — <https://war.app/wiki/No-split_mode>
+- Multi-Attack — <https://war.app/wiki/Multi-attack>
 
 # Territory picks
 
 ## How picks are granted
 
 A game allows twice its territory limit in picks, but grants only the territory limit, in list
-order, skipping territories another player was granted first. So the list is two plans: the
+order, skipping territories another player was granted first. The grant goes round by round in
+move order, the order reversing each round (a zigzag): each player in turn receives their
+highest-ranked territory still free, and a list that runs out is filled at random (Manual
+distribution, in Sources). The wiki states no maximum list length; the "twice the limit" cap
+is this server's reading and fits a two-player game. So the list is two plans: the
 first `TerritoryLimit` picks are the plan you want, the rest a fallback that still makes sense
 when some of the first ones are lost. **Encoded:** the primary group is exactly the territory
 limit and the fallback is disjoint from it, each group built by the same rule on its own: compact,
@@ -97,7 +110,11 @@ Each note is marked **encoded** (where the server acts on it) or **advice only**
 basis: *source* — the linked page states the idea; *derived* — our reasoning from the rule or
 advice the linked page gives (the listed pages do not cover Local Deployment, No-Split, team
 play or the effect of each card, so those notes are reasoned from the game rules and say so).
-The pages were read on 2026-11-13; nothing is quoted.
+The pages were read on 2026-11-13; nothing is quoted. A second pass the same day checked the
+rules of move order, pick awarding, turn phases, the Order Priority, Order Delay and Blockade
+cards, the army cap, No-Split and Multi-Attack against their own wiki pages, and corrected
+three notes that had them wrong (Order Priority moves only the first order; Order Delay only
+delays the orders listed after it; under No-Split the whole stack moves).
 
 ## Map notes (computed, no extra traffic)
 
@@ -129,32 +146,54 @@ The pages were read on 2026-11-13; nothing is quoted.
 
 - `settings-efficient-sizes` — attack at the breakpoint; armies between breakpoints are wasted.
   **Encoded:** the planner sizes attacks at their breakpoints (`src/analysis/combat.ts`). Source: Combat basics.
-- `settings-defend-with-three` — three defenders cost an attacker five, two only three (offered only at kill rates where those breakpoints hold, e.g. the default 60/70).
+- `settings-defend-with-three` — three defenders cost an attacker five, two only three (offered only at kill rates where those breakpoints hold, e.g. the default 60/70, and only with no luck and straight rounding).
   **Advice only.** Source: General strategy guidelines.
-- `settings-poke` — a one-army attack can break an exact-size attack. **Advice only.** Source:
-  General strategy guidelines.
+- `settings-poke` — a one-army attack can break an exact-size attack (offered only where one
+  attacker kills one defender for sure: a kill rate of 50% or more, no luck, straight rounding).
+  **Advice only.** Source: General strategy guidelines.
 - `settings-move-order` — learn the move order and sort orders by when they should land.
   **Advice only.** Source: General strategy guidelines.
-- `settings-no-luck-exact` — with no luck, results are exact. **Encoded:** `armiesToTake`. Source: Luck modifier.
+- `settings-move-order-zigzag` — orders zigzag between the players (first mover's 1st, second
+  mover's 1st and 2nd, first mover's 2nd and 3rd, …); cyclic order swaps the first mover each
+  turn. **Advice only**: the planner lists moves in decision order and does not yet schedule
+  them. Source: Move order.
+- `settings-attack-second` — against a comparable stack, attack second (a defender kills more
+  per army), so list that attack late; offered only where the defensive kill rate is the higher.
+  **Advice only**, derived. Source: Combat basics.
+- `settings-contested-neutral` — a 2-army neutral the opponent can also reach: capture it last
+  with three, or early with four (offered at the 60/70 breakpoints with exact results).
+  **Advice only**, derived. Source: Combat basics.
+- `settings-army-cap` — at most income × cap armies; at the cap nothing arrives, a Reinforcement
+  card still pays; spend rather than bank. **Advice only** (the income model does not compute the
+  cap; `warapp_submit_turn` only warns), derived. Source: Army cap.
+- `settings-multi-attack` — armies chain captures, so a threat is any stack that can reach, not
+  only an adjacent one. **Advice only** (the planner's threats are adjacent stacks), derived.
+  Source: Multi-Attack.
+- `settings-no-luck-exact` — with no luck and straight rounding, results are exact. **Encoded:** `armiesToTake`. Source: Luck modifier.
 - `settings-luck-guaranteed` — with luck, count only the kills the roll cannot remove and add a
   margin. **Encoded:** `winChance`, `guaranteedKills`, `min_win_chance`. Derived. Source: Luck modifier.
 - `settings-weighted-rounding` — weighted rounding makes breakpoints uncertain. **Encoded:**
   `winChance` models it. Derived. Source: Luck modifier.
 - `settings-local-deployments` — each bonus pays only inside itself. **Encoded:** deploy pools
   (`src/analysis/local-deploy.ts`). Derived. Source: General strategy guidelines.
-- `settings-no-split` — one move per territory a turn; stage armies ahead. **Encoded:** one move
-  per source in the planner. Derived. Source: General strategy guidelines.
+- `settings-no-split` — a territory that moves sends everything, once a turn; stage armies
+  ahead and do not move a territory that must hold. **Encoded in part:** one move per source in
+  the planner, which still plans an amount per move (read it as the whole stack). Source: No-Split mode.
 
 ## Cards
 
 - `cards-piece-each-turn` — one capture a turn earns the piece; more earn nothing. **Advice
   only.** Source: Cards.
-- `cards-order-delay` — orders go last: for an attack that should land after the defender
-  moves. **Advice only**, derived. Source: Cards.
-- `cards-order-priority` — orders go first: withdraw from a doomed territory or strike a stack.
-  **Encoded:** the planner's `cardAdvice` (`warapp_plan_turn`). Derived. Source: Cards.
-- `cards-blockade-own-bonus` — when weaker, blockade your own border to wall a bonus. **Advice
-  only**, derived; shown when behind or the standing is unknown. Source: Cards.
+- `cards-order-delay` — delays only the orders listed after it; at the end of the list it does
+  nothing. **Advice only.** Source: Order Delay card.
+- `cards-order-priority` — only your first order runs before the opponent's first: withdraw
+  from a doomed territory or strike a stack with that one order. **Encoded:** the planner's
+  `cardAdvice` (`warapp_plan_turn`). Source: Order Priority card.
+- `cards-blockade-own-bonus` — when weaker, blockade a territory in front of a bonus (not a
+  member) to wall it; it resolves after the attacks and is lost with the territory. **Advice
+  only**, derived; shown when behind or the standing is unknown. Source: Blockade and Emergency Blockade cards.
+- `cards-turn-order` — the fixed order of card plays around deployments and attacks.
+  **Encoded:** `writeSendOrdersParams` sends card plays in turn-phase order. Source: Turn phases.
 
 ## Reading the game
 
@@ -163,6 +202,15 @@ The pages were read on 2026-11-13; nothing is quoted.
   army growth plus losses per turn, stacks out of the fog left out, #99) and the profile's standing. Source: Good 1v1 strategies.
 - `reading-infer-bonuses` — deploys minus base income are the bonuses held. **Advice only**,
   derived. Source: Good 1v1 strategies.
+- `reading-unseen-opponent` — under fog, assume an opponent out of sight earns about what you
+  earn, and read its first big stack as saved income. **Advice only** (the planner's estimate is
+  base + visible bonuses, or what it observed), derived; from the lost games of 2026-11-12/13,
+  where the estimate ran 2–3× low. Source: Good 1v1 strategies.
+- `reading-who-moves-first` — whose deployment or order runs first shows the first mover; under
+  cyclic order it alternates. **Advice only.** Source: Move order.
+- `reading-pick-zigzag` — picks are awarded in a zigzag in move order, so a territory ranked
+  above your last granted pick that you did not get is an opponent's start (opening only).
+  **Advice only**, derived. Source: Manual distribution.
 - `reading-border-neutrals` — hold off on neutrals next to an enemy. **Advice only.** Source:
   General strategy guidelines.
 - `reading-idle-armies` — walk backline armies to the front. **Advice only.** Source: FFA strategy.

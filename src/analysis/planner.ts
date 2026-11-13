@@ -1366,9 +1366,14 @@ export function planTurn(input: PlanInput): TurnPlan {
   const warnings: string[] = [];
   const rationale: string[] = [];
   const profileText = `${profile.format}, ${profile.phase}, ${profile.standing}`;
-  if (opts.adapt && opts.goal !== undefined)
+  if (opts.adapt && opts.goal !== undefined) {
     rationale.push(`Goal ${goal} was given explicitly, so it overrides the game profile (${profileText}): none of the profile's rules apply.`);
-  else if (auto) {
+    // Also a warning: live, a script that always passed `goal: balanced` switched the 1v1 rules
+    // (strike stack, breaks before expansion) off for two whole games, and nobody noticed.
+    warnings.push(
+      `Goal ${goal} was given explicitly, so none of the game-profile rules for ${profile.format === 'ffa' ? 'an FFA' : profile.format === 'teams' ? 'a team game' : 'a 1v1'} apply this turn (standing ${profile.standing}): leave the goal out to let the profile choose it and apply them.`,
+    );
+  } else if (auto) {
     const strongest = estimateList.reduce((m, e) => Math.max(m, e.estimate), 0);
     rationale.push(
       strike
@@ -1698,7 +1703,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     need: number;
   }
   /** Members of a bonus I would hold that a visible enemy could take next turn, given the armies staying on each. */
-  const exposure = (members: number[], gone: (n: number) => boolean, stays: (m: number) => number): Exposure[] => {
+  const exposure = (members: readonly number[], gone: (n: number) => boolean, stays: (m: number) => number): Exposure[] => {
     const out: Exposure[] = [];
     for (const m of members) {
       const th = threatAt(m, gone);

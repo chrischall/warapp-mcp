@@ -19,6 +19,15 @@ export const STRATEGY_SOURCES = {
   combat: 'https://war.app/wiki/Combat_Basics',
   luck: 'https://war.app/wiki/Luck_Modifier',
   cards: 'https://war.app/wiki/Cards',
+  moveOrder: 'https://war.app/wiki/Move_order',
+  manualDistribution: 'https://war.app/wiki/Manual_distribution',
+  turnPhases: 'https://war.app/wiki/Turn_phases',
+  orderPriority: 'https://war.app/wiki/Order_priority_card',
+  orderDelay: 'https://war.app/wiki/Order_delay_card',
+  blockade: 'https://war.app/wiki/Blockade_and_Emergency_Blockade_Cards',
+  armyCap: 'https://war.app/wiki/Army_cap',
+  noSplit: 'https://war.app/wiki/No-split_mode',
+  multiAttack: 'https://war.app/wiki/Multi-attack',
 } as const;
 
 /** Game facts a note may need that the profile does not carry. */
@@ -27,6 +36,10 @@ export interface NoteContext {
   offensiveKillRate?: number;
   /** Percent; absent means the default (70). */
   defensiveKillRate?: number;
+  /** The game's army cap (armies ≤ income × this); `null` / absent when there is none. */
+  armyCap?: number | null;
+  /** Armies may attack again after a capture in the same turn. */
+  multiAttack?: boolean;
 }
 
 export interface StrategyNote {
@@ -50,6 +63,10 @@ export interface StrategyNote {
 const S = STRATEGY_SOURCES;
 const always = () => true;
 const cards = (p: GameProfile) => p.settings.cards;
+/** Every battle ends exactly as the kill rates say: no luck, and fractions round straight. */
+const exact = (p: GameProfile) => p.settings.luck === 0 && p.settings.rounding !== 'WeightedRandom';
+/** The 60/70 breakpoints: two defenders fall to three attackers and three need five. */
+const defaultBreakpoints = (rates: NoteContext) => armiesToTake(2, rates) === 3 && armiesToTake(3, rates) === 5;
 
 export const STRATEGY_NOTES: readonly StrategyNote[] = [
   // ---- format ----
@@ -140,8 +157,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     id: 'settings-defend-with-three',
     topic: 'settings',
     // Its numbers are the 60/70 breakpoints: offered only where two defenders fall to
-    // three attackers and three need five.
-    when: (_p, rates) => armiesToTake(2, rates) === 3 && armiesToTake(3, rates) === 5,
+    // three attackers and three need five, and only where results are exact (at 75% luck
+    // three against two wins about two times in three).
+    when: (p, rates) => exact(p) && defaultBreakpoints(rates),
     text:
       'Leave three, not two, on a border you want to keep cheap to hold: at the default kill rates two defenders fall ' +
       'to three attackers but three need five, so the extra army costs the attacker two.',
@@ -151,7 +169,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
   {
     id: 'settings-poke',
     topic: 'settings',
-    when: always,
+    // One attacker must kill one defender for sure: a kill rate of at least 50% and exact results.
+    when: (p, rates) => exact(p) && (rates.offensiveKillRate ?? 60) >= 50,
     text:
       'A one-army attack can spoil an opponent\'s breakpoint: it kills one of the armies they counted on, so their ' +
       'attack of exactly the right size falls short. Expect the same against you and keep a margin when it matters.',
@@ -169,9 +188,67 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     basis: 'source',
   },
   {
+    id: 'settings-move-order-zigzag',
+    topic: 'settings',
+    when: always,
+    text:
+      "Orders do not simply alternate. The first mover's first order runs, then the second mover's first and " +
+      "second, then the first mover's second and third, and so on, zigzagging. With cyclic move order the first " +
+      'mover swaps every turn; with random it is drawn again each turn.',
+    source: S.moveOrder,
+    basis: 'source',
+  },
+  {
+    id: 'settings-attack-second',
+    topic: 'settings',
+    // Only where a defender kills more per army than an attacker.
+    when: (_p, rates) => (rates.defensiveKillRate ?? 70) > (rates.offensiveKillRate ?? 60),
+    text:
+      'Against a stack about the size of yours, do not be the one who attacks first: a defender kills more per ' +
+      'army than an attacker, so whoever attacks second fights the survivors. List such an attack late, behind ' +
+      'your expansion moves, and attack early only when you would take the territory even if it is reinforced.',
+    source: S.combat,
+    basis: 'derived',
+  },
+  {
+    id: 'settings-contested-neutral',
+    topic: 'settings',
+    // Its numbers are the 60/70 breakpoints with exact results.
+    when: (p, rates) => exact(p) && defaultBreakpoints(rates),
+    text:
+      'A two-army neutral the opponent can also reach: three attackers leave two survivors, which three armies ' +
+      'take straight back. Make that capture your last order, so yours is the one that stands, or send four ' +
+      'early: the three survivors then need five.',
+    source: S.combat,
+    basis: 'derived',
+  },
+  {
+    id: 'settings-army-cap',
+    topic: 'settings',
+    when: (_p, context) => (context.armyCap ?? 0) > 0,
+    text:
+      'With an army cap you may hold at most your income times the cap, and at the cap no new armies arrive ' +
+      '(a Reinforcement card still pays). Near it, spend armies instead of banking them: what dies in a useful ' +
+      'attack makes room for the next income.',
+    source: S.armyCap,
+    basis: 'derived',
+  },
+  {
+    id: 'settings-multi-attack',
+    topic: 'settings',
+    when: (_p, context) => context.multiAttack === true,
+    text:
+      'With Multi-Attack an army that captures can attack again in the same turn (a transfer ends its turn), so ' +
+      'the threat to a territory is every stack that can chain its way there, not only the one next door. A held ' +
+      'line breaks easily: keep small garrisons inside your bonuses and plan to break back.',
+    source: S.multiAttack,
+    basis: 'derived',
+  },
+  {
     id: 'settings-no-luck-exact',
     topic: 'settings',
-    when: (p) => p.settings.luck === 0,
+    // Weighted-random rounding makes a breakpoint attack a chance even with no luck.
+    when: exact,
     text: 'With no luck every battle ends exactly as the kill rates say, so an attack at its breakpoint never fails: plan to the army.',
     source: S.luck,
     basis: 'source',
@@ -215,11 +292,13 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'settings',
     when: (p) => p.settings.noSplit,
     text:
-      'With No-Split a territory makes one attack or transfer a turn, so a stack cannot fan out: stage armies on ' +
+      'With No-Split a territory that moves sends everything it has, in one attack or transfer a turn: a stack ' +
+      'cannot fan out or leave a garrison behind, so a territory that must hold should not move. Stage armies on ' +
       'several territories ahead of the turn you need several attacks.',
-    source: S.general,
-    basis: 'derived',
-    encoded: 'one move per source (src/analysis/planner.ts, warapp_plan_turn)',
+    source: S.noSplit,
+    basis: 'source',
+    encoded:
+      'one move per source (src/analysis/planner.ts, warapp_plan_turn); the planner still plans an amount per move — read it as the whole stack',
   },
   // ---- cards ----
   {
@@ -237,20 +316,21 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'cards',
     when: cards,
     text:
-      'Order Delay moves your orders to the end of the turn: hold it for a big attack that should land after the ' +
-      'defender has spent their own moves, or play it when going late helps more than going early.',
-    source: S.cards,
-    basis: 'derived',
+      'Order Delay holds back only the orders listed after it; at the end of your list it does nothing. Put it ' +
+      'above a big attack that should land after the defender has spent their own moves.',
+    source: S.orderDelay,
+    basis: 'source',
   },
   {
     id: 'cards-order-priority',
     topic: 'cards',
     when: cards,
     text:
-      'Order Priority puts your orders first: use it to pull armies out of a territory about to be hit, or to strike ' +
-      'a stack (a commander) before it moves.',
-    source: S.cards,
-    basis: 'derived',
+      "Order Priority makes only your first order run before the opponent's first: put the one order that must " +
+      'beat them at the top — pulling armies out of a territory about to be hit, or striking a stack (a ' +
+      'commander) before it moves. If both of you play one, the normal move order decides.',
+    source: S.orderPriority,
+    basis: 'source',
     encoded: 'the planner advises it for a withdrawal or a commander strike (cardAdvice, warapp_plan_turn)',
   },
   {
@@ -258,10 +338,24 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'cards',
     when: (p) => p.settings.cards && (p.standing === 'behind' || p.standing === 'unknown'),
     text:
-      'When you are the weaker side, a Blockade on your own border territory turns it into a big neutral wall: you ' +
-      'lose the territory but the bonus behind it gets a turn or more of safety.',
-    source: S.cards,
+      'When you are the weaker side, a Blockade on a territory in front of your bonus (not one of its members: ' +
+      'you give the territory up) turns it into a big neutral wall and buys the bonus a turn or more. It takes ' +
+      'effect at the end of the turn, after the attacks, and is wasted if the territory fell first; an Emergency ' +
+      'Blockade runs before the attacks.',
+    source: S.blockade,
     basis: 'derived',
+  },
+  {
+    id: 'cards-turn-order',
+    topic: 'cards',
+    when: cards,
+    text:
+      'Cards run in a fixed order around the turn: Order Priority and Reinforcement before the deployments; ' +
+      'Bomb, Emergency Blockade, Airlift and Gift after the deployments but before any attack; Order Delay among ' +
+      'the attacks; Blockade and Sanctions after them.',
+    source: S.turnPhases,
+    basis: 'source',
+    encoded: 'card plays are sent in turn-phase order (src/protocol/methods.ts writeSendOrdersParams)',
   },
   // ---- reading the game ----
   {
@@ -283,6 +377,38 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       "An opponent's deploys minus the base income are their bonuses: match that number against the bonuses they " +
       'could hold to find which ones are complete, then aim to break those.',
     source: S.oneVsOne,
+    basis: 'derived',
+  },
+  {
+    id: 'reading-unseen-opponent',
+    topic: 'reading',
+    when: (p) => p.settings.fog !== 'NoFog',
+    text:
+      'An opponent you cannot see is growing too. Until its deploys show otherwise, assume it earns about what ' +
+      'you earn, and read the first big stack it shows as income saved over the turns you did not see it — not ' +
+      'as a one-off.',
+    source: S.oneVsOne,
+    basis: 'derived',
+  },
+  {
+    id: 'reading-who-moves-first',
+    topic: 'reading',
+    when: always,
+    text:
+      'Watch whose deployment or order runs first each turn: that is the first mover. Under cyclic move order it ' +
+      'alternates, so you also know who moves first next turn and can order your attacks for it.',
+    source: S.moveOrder,
+    basis: 'source',
+  },
+  {
+    id: 'reading-pick-zigzag',
+    topic: 'reading',
+    when: (p) => p.phase === 'opening',
+    text:
+      'Picks are handed out in a zigzag in move order: each player in turn gets their highest-ranked territory ' +
+      'still free, and a list that runs out is filled at random, so rank more than you expect to get. Any ' +
+      "territory you ranked above your last granted pick and did not receive is an opponent's start.",
+    source: S.manualDistribution,
     basis: 'derived',
   },
   {

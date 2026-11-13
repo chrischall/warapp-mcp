@@ -156,6 +156,8 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
       const notes = notesFor(profile, topic, {
         ...(s?.offensiveKillRate !== undefined ? { offensiveKillRate: s.offensiveKillRate } : {}),
         ...(s?.defensiveKillRate !== undefined ? { defensiveKillRate: s.defensiveKillRate } : {}),
+        ...(s?.armyCap !== undefined ? { armyCap: s.armyCap } : {}),
+        ...(s?.multiAttack !== undefined ? { multiAttack: s.multiAttack } : {}),
       });
       const mapped = withMap ? gameMapNotes(game, map) : undefined;
       return respond(view, VIEWS, (rung) => ({

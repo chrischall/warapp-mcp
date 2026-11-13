@@ -196,11 +196,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     `orders` when `cardAdvice` asks for it.
   - **The game profile (`src/analysis/profile.ts`, S1)** is on every plan (`profile`): format
     (players' teams — the shared `carriesTeam` test in `src/teams.ts` — and who is still
-    playing), phase, standing (my income vs the strongest opponent's estimate) and the
-    strategy settings. `warapp_plan_turn` passes `adapt: true`: with no `goal` the profile picks
+    playing), phase, standing (my income vs the strongest opponent's estimate; the armies on
+    the board overrule it — never `ahead` while my visible armies are below 0.8 × an opponent's
+    in view, and `behind` when below half, fog or not, since what it shows is the least it has)
+    and the strategy settings. `warapp_plan_turn` passes `adapt: true`: with no `goal` the profile picks
     it (behind → `defend`, else `balanced`) and its rules fire (1v1 in contact: advances rank
     below holds and breaks; FFA with 2+ opponents: no second front; behind: no pressure margin;
-    ahead in a 1v1: pressure at `AHEAD_PRESSURE_FACTOR`). An explicit `goal` overrides it.
+    ahead in a 1v1: pressure at `AHEAD_PRESSURE_FACTOR`). An explicit `goal` overrides it, and the plan warns that the format rules are off (a script that always passed `goal: balanced` played two 1v1s without them).
     GameFeed's player `team` is read when sent but unverified.
   - **`balanced` is the default goal**: holds, completing/advancing bonuses and breaking a
     fully visible single-enemy bonus (`BREAK_WEIGHT` / opponents × value / cost) compete by

@@ -28,8 +28,18 @@ export interface BonusAnalysis {
 
 const byNum = (a: number, b: number) => a - b;
 
-/** All territories of a bonus, flattening member bonuses (cycle-safe). Unknown bonus → `[]`. */
-export function bonusTerritories(g: MapGraph, bonusId: number): number[] {
+const flattened = new WeakMap<MapGraph, Map<number, readonly number[]>>();
+
+/**
+ * All territories of a bonus, flattening member bonuses (cycle-safe). Unknown bonus → `[]`.
+ * Remembered per graph and frozen: the planner asks for the same bonus thousands of times in
+ * one plan (it was most of a plan's time on a large map), and a graph's bonuses never change.
+ */
+export function bonusTerritories(g: MapGraph, bonusId: number): readonly number[] {
+  let cache = flattened.get(g);
+  if (!cache) flattened.set(g, (cache = new Map()));
+  const hit = cache.get(bonusId);
+  if (hit) return hit;
   const out = new Set<number>();
   const seen = new Set<number>();
   const visit = (id: number) => {
@@ -40,13 +50,15 @@ export function bonusTerritories(g: MapGraph, bonusId: number): number[] {
     for (const sub of b.bonusIds) visit(sub);
   };
   visit(bonusId);
-  return [...out].sort(byNum);
+  const ts = Object.freeze([...out].sort(byNum));
+  cache.set(bonusId, ts);
+  return ts;
 }
 
 export function analyzeBonus(g: MapGraph, bonusId: number): BonusAnalysis | undefined {
   const b = g.bonusById.get(bonusId);
   if (!b) return undefined;
-  const territoryIds = bonusTerritories(g, bonusId);
+  const territoryIds = [...bonusTerritories(g, bonusId)];
   const inside = new Set(territoryIds);
   const borders: number[] = [];
   const entries = new Set<number>();
