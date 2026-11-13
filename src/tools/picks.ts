@@ -4,13 +4,13 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { planPicks, type PickGroup, type PickSettings } from '../analysis/picks.js';
+import { clientPickLimits, planPicks, type PickGroup, type PickSettings } from '../analysis/picks.js';
 import { OWNER_NEUTRAL, OWNER_PICKABLE } from '../live.js';
 import type { Game, GameMap, GameSettings } from '../normalize.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveTerritories, type LiveContext } from './live-context.js';
-import { BRIDGE_NOTE, PICKS_PER_TERRITORY } from './live.js';
+import { BRIDGE_NOTE } from './live.js';
 import { mapOf } from './map.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -111,7 +111,12 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         territoryLimit = DEFAULT_TERRITORY_LIMIT;
         warnings.push(`Territory limit missing from settings; assumed ${DEFAULT_TERRITORY_LIMIT}.`);
       }
-      const maxPicks = territoryLimit * PICKS_PER_TERRITORY;
+      // The list is as long as war.app's client allows (players × territories per player, #129),
+      // never shorter than the primary.
+      const maxPicks = Math.max(
+        territoryLimit,
+        clientPickLimits({ territoryLimit, players: game.players.length, pickable: pickable.length })?.max ?? 0,
+      );
       const active = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length;
       const players = Math.max(2, active || game.players.length);
       const settings = pickSettings(game.settings);

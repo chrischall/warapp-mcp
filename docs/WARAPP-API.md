@@ -199,6 +199,19 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   client bundle; the 2026-11-12 live game in issue #44 matched it (no standing until Begin), but
   `warapp_begin_turn`'s encoding has not been sent live.
 
+## Pick-list length — from the client bundle, UNVERIFIED against the server (#129)
+
+- war.app's client gives each player `perPlayer` = floor(pickable territories / players), capped
+  by `TerritoryLimit` (0: no cap). Its picking UI stops adding picks at players × `perPlayer`
+  (twice the limit only in a 1v1, when enough territories are pickable), and its guide shows
+  "Minimum picks" / "Maximum picks" from the same formula. The game's pick validation (shared
+  code) rejects a duplicate, a territory that is not pickable, and a list shorter than
+  min(10, `perPlayer`); it has no maximum. Whether the server enforces either bound has not been
+  sent live, so `warapp_submit_picks` warns in its preview instead of refusing, and
+  `warapp_plan_picks` lists as many picks as the client allows.
+- Picks are awarded round by round in move order, the order reversing each round, each player
+  getting their highest-ranked territory still free (the community wiki; not read from the bundle).
+
 ## Starting armies and DistributionMode — UNVERIFIED (#94)
 
 - `warapp_track_opponents` gives an opponent with nothing in view a lower bound on the armies

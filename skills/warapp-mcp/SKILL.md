@@ -194,12 +194,14 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   every special unit); losing your commander eliminates you.
 - **"What should I pick?"** → `warapp_plan_picks`, then `warapp_submit_picks` once the user agrees.
   Picking stage only, read-only: a ranked pick list by name and id — a compact primary group of the
-  territory limit and a disjoint fallback — with each pick's reasons and `submitPicks` (pass its
+  territory limit and a disjoint fallback, as long as war.app's client allows (players × territories
+  per player; past twice the limit in tiers) — with each pick's reasons and `submitPicks` (pass its
   `territories` to `warapp_submit_picks` after review). Pass its warnings on (assumed settings); the
   heuristics and their sources are in docs/STRATEGY.md.
 - **Territory picks** → `warapp_get_my_picks` reads the user's picks; `warapp_submit_picks`
-  replaces them (priority order, pickable territories only, at most twice the territory
-  limit). It is confirm-gated and reports `verified` only when war.app reads back exactly the
+  replaces them (priority order, pickable territories only; a list longer than war.app's client
+  allows — players × territories per player — or shorter than the territories each player is
+  granted is warned about in the preview, not refused). It is confirm-gated and reports `verified` only when war.app reads back exactly the
   submitted list.
 - **Chat** → `warapp_get_chat` reads it (GameFeed); `warapp_send_chat` posts publicly or
   privately to one player. Confirm-gated — a message reaches other players and cannot be unsent.

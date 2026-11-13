@@ -84,11 +84,13 @@ describe('warapp_plan_picks', () => {
     expect(p.game).toEqual({ id: GAME, name: 'Synthetic lobby game', state: 'DistributingTerritories' });
     expect(p.players).toBe(9);
     expect(p.territoryLimit).toBe(3);
-    expect(p.maxPicks).toBe(6);
+    // war.app's client allows players × territories per player (#129); 6 pickables cannot give 9
+    // players one each, so the list is the primary alone.
+    expect(p.maxPicks).toBe(3);
 
-    // Every pickable listed once, in priority order, by name and id; never anything else.
-    expect(p.picks.map((x) => x.priority)).toEqual([1, 2, 3, 4, 5, 6]);
-    expect(p.picks.map((x) => x.territory.id).sort((a, b) => a - b)).toEqual(PICKABLE);
+    // Pickables listed once, in priority order, by name and id; never anything else.
+    expect(p.picks.map((x) => x.priority)).toEqual([1, 2, 3]);
+    expect(p.picks.every((x) => PICKABLE.includes(x.territory.id))).toBe(true);
     for (const x of p.picks) {
       expect(x.territory.name).toBe(mapName(x.territory.id));
       expect(x.reasons.length).toBeGreaterThan(0);
@@ -135,14 +137,27 @@ describe('warapp_plan_picks', () => {
   });
 
   it('never lists more than the game allows when fewer picks are allowed than pickables', async () => {
+    const g = game('DistributingTerritories', { TerritoryLimit: 1 });
     h = await liveHarness({
-      feed: [game('DistributingTerritories', { TerritoryLimit: 1 })],
+      feed: [{ ...g, players: (g.players as unknown[]).slice(0, 2) }],
       warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }),
     });
     const p = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
     expect(p.maxPicks).toBe(2);
     expect(p.picks.map((x) => x.group)).toEqual(['primary', 'fallback']);
     expect(p.submitPicks.territories).toHaveLength(2);
+  });
+
+  it('lists as many picks as the client allows: players × territories per player (#129)', async () => {
+    const g = game('DistributingTerritories');
+    h = await liveHarness({
+      feed: [{ ...g, players: (g.players as unknown[]).slice(0, 2) }],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }),
+    });
+    const p = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.maxPicks).toBe(6);
+    expect(p.picks.map((x) => x.territory.id).sort((a, b) => a - b)).toEqual(PICKABLE);
+    expect(p.groups.fallback.territories).toHaveLength(3);
   });
 
   it('in a 1v1 keeps the primary compact by default, and spreads it only with spread: true (#73)', async () => {

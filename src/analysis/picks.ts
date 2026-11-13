@@ -61,7 +61,11 @@
 //     shared with the primary never completes for it (#129). In a 1v1, among the equally
 //     scored compact fallbacks found at its hop limit, the one farthest from the primary
 //     (fewest hops between the two groups, maximised) wins, so one counter-pick cannot reach
-//     both. A fallback that still outscores the primary is warned about.
+//     both. A fallback that still outscores the primary is warned about. A list longer than
+//     twice the limit (war.app's client allows players × territories per player,
+//     `clientPickLimits`) runs in fallback tiers of the primary's size, each built the same
+//     way with the primary and the earlier tiers taken; the fallback group's score, bonuses
+//     and spread are its first tier's.
 //     Only with `spread: true` in a 1v1 does the old rule apply: a pick may also join
 //     when it anchors a bonus no group pick anchors and lies within SPREAD_DISTANCE hops,
 //     and the bound gives way, with a warning, at the smallest hop limit where a group
@@ -136,7 +140,7 @@ export interface PlanPicksInput {
   players: number;
   /** Territories each player is granted (TerritoryLimit). */
   territoryLimit: number;
-  /** Most picks the game accepts (TerritoryLimit × 2). */
+  /** Picks to list: war.app's client allows players × territories per player (`clientPickLimits`). */
   maxPicks: number;
   /** Neutral armies as the live board shows them (wastelands included), by territory id. */
   neutralArmies?: ReadonlyMap<number, number>;
@@ -168,7 +172,7 @@ export interface GroupBonus {
 export interface PickGroup {
   /** In pick order (score desc, then id). */
   territoryIds: number[];
-  /** The group's joint simulation score. */
+  /** The group's joint simulation score (the fallback's: its first tier's, with the primary taken). */
   score: number;
   /** Bonuses the group completes within PICK_HORIZON turns. */
   bonuses: GroupBonus[];
@@ -801,17 +805,35 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   const primary = buildGroup(firstView, pickable, primarySize, 'primary');
   const rest = pickable.filter((t) => !primary.includes(t));
   // The fallback is granted only when someone else holds primary picks: it is scored, and
-  // its reasons written, with the primary taken (#129).
-  const fallbackView = viewOf(rest, new Set(primary));
-  // In a 1v1 (unless spreading) the fallback is counter-pick insurance: in another area.
-  const fallback = buildGroup(
-    fallbackView,
-    rest,
-    Math.min(maxPicks - primary.length, rest.length),
-    'fallback',
-    duel && !spread ? primary : [],
-  );
-  const viewFor = (t: number) => (primary.includes(t) ? firstView : fallbackView);
+  // its reasons written, with the primary taken (#129). A list longer than twice the limit
+  // (war.app's client allows players × territories per player) is a series of tiers, each a
+  // group of the primary's size scored with the primary and the earlier tiers taken.
+  const fallbackSize = Math.max(0, Math.min(maxPicks - primary.length, rest.length));
+  const tierSize = Math.max(1, primary.length);
+  const tiers: number[][] = [];
+  const views = new Map<number, View>(primary.map((t) => [t, firstView]));
+  let firstFallbackView: View = viewOf([], new Set(primary));
+  for (let pool = rest, done = 0; done < fallbackSize && pool.length; ) {
+    const taken = new Set([...primary, ...tiers.flat()]);
+    const view = viewOf(pool, taken);
+    if (!tiers.length) firstFallbackView = view;
+    // In a 1v1 (unless spreading) the fallback is counter-pick insurance: in another area.
+    const tier = buildGroup(
+      view,
+      pool,
+      Math.min(tierSize, fallbackSize - done),
+      tiers.length ? `fallback tier ${tiers.length + 1}` : 'fallback',
+      !tiers.length && duel && !spread ? primary : [],
+    );
+    if (!tier.length) break;
+    for (const t of tier) views.set(t, view);
+    tiers.push(tier);
+    done += tier.length;
+    pool = pool.filter((t) => !tier.includes(t));
+  }
+  const fallback = tiers.flat();
+  const firstTier = tiers[0] ?? [];
+  const viewFor = (t: number) => views.get(t)!;
 
   /** Farthest pair (hops) and the longest step that links the picks into one cluster. */
   const spreadOf = (ids: number[]) => {
@@ -904,10 +926,18 @@ export function planPicks(input: PlanPicksInput): PickPlan {
             : `each group is compact (one cluster, each pick within ${COMPACT_DISTANCE} hops of another), `) +
           'so the start has one front, not several; the fallback, in another area when one scores as much, is the insurance against a counter-pick.',
     `The first ${primary.length} picks are the primary group, ${describe(primary)}; ` +
-      `the rest are a disjoint fallback${fallback.length ? ` (${describe(fallback)})` : ''}, granted in order when another player picks first.`,
+      `the rest are a disjoint fallback${firstTier.length ? ` (${describe(firstTier)})` : ''}, granted in order when another player picks first` +
+      (tiers.length > 1
+        ? `; it runs in ${tiers.length} tiers of up to ${tierSize}, each scored as if the picks before it were taken.`
+        : '.'),
   );
 
-  const groups = { primary: groupOf(primary, NO_TAKEN), fallback: groupOf(fallback, fallbackView.taken) };
+  // The fallback group's score, bonuses and spread are its first tier's: the picks granted
+  // when the primary is taken.
+  const groups = {
+    primary: groupOf(primary, NO_TAKEN),
+    fallback: { ...groupOf(firstTier, firstFallbackView.taken), territoryIds: fallback },
+  };
   if (groups.fallback.score > groups.primary.score)
     warnings.push(
       `The fallback group scores more than the primary (${groups.fallback.score} vs ${groups.primary.score}): the primary keeps to ` +
@@ -919,4 +949,35 @@ export function planPicks(input: PlanPicksInput): PickPlan {
         ' Weigh the trade before submitting.',
     );
   return { picks, groups, warnings, rationale };
+}
+
+export interface PickLimits {
+  /** Territories each player can be granted: the territory limit, or fewer when the pickables cannot give everyone that many. */
+  perPlayer: number;
+  /** The shortest list the game accepts (perPlayer, at most 10). */
+  min: number;
+  /** The longest list the client lets a player build (players × perPlayer). */
+  max: number;
+}
+
+/**
+ * The pick-list bounds of war.app's own client (read from its bundle, #129): per player,
+ * floor(pickables / players) capped by the territory limit (0: no limit); the client stops
+ * adding picks at players × that, and the game's pick validation rejects a list shorter than
+ * min(10, that). No maximum is enforced in that validation, only in the client's picking UI
+ * (docs/WARAPP-API.md: unverified against the server). Without the pickable count the
+ * territory limit stands in for the per-player share; `null` when neither is known.
+ */
+export function clientPickLimits(input: { territoryLimit: number | undefined; players: number; pickable?: number }): PickLimits | null {
+  const players = Math.max(1, Math.floor(input.players));
+  const limit = input.territoryLimit !== undefined && input.territoryLimit > 0 ? Math.floor(input.territoryLimit) : 0;
+  let perPlayer: number;
+  if (input.pickable === undefined) {
+    if (!limit) return null;
+    perPlayer = limit;
+  } else {
+    perPlayer = Math.floor(Math.max(0, input.pickable) / players);
+    if (limit) perPlayer = Math.min(perPlayer, limit);
+  }
+  return { perPlayer, min: Math.min(10, perPlayer), max: players * perPlayer };
 }

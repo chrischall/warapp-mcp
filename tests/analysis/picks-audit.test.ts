@@ -1,7 +1,7 @@
 // Pick advisor audit (#129). Every map, id and name here is made up.
 import { describe, expect, it } from 'vitest';
 import { buildGraph, type MapGraph } from '../../src/analysis/graph.js';
-import { planPicks, type PickPlan, type PickSettings, type PlanPicksInput } from '../../src/analysis/picks.js';
+import { clientPickLimits, planPicks, type PickPlan, type PickSettings, type PlanPicksInput } from '../../src/analysis/picks.js';
 import type { GameMap } from '../../src/normalize.js';
 
 type Edge = [number, number];
@@ -183,5 +183,39 @@ describe('planPicks — Local Deployment income stays in its bonus (#129)', () =
     expect(p.groups.primary.bonuses.find((b) => b.name === 'Fan')).toBeUndefined();
     expect(p.warnings.join(' ')).not.toMatch(/pools it/);
     expect(p.warnings.join(' ')).toMatch(/[Ll]ocal deployments/);
+  });
+});
+
+describe('clientPickLimits — the client’s own pick-list bounds (#129)', () => {
+  it('max is players × territories per player; min is territories per player, at most 10', () => {
+    // Per player: the territory limit, or fewer when the pickables cannot give everyone that many.
+    expect(clientPickLimits({ territoryLimit: 3, players: 2, pickable: 40 })).toEqual({ perPlayer: 3, min: 3, max: 6 });
+    expect(clientPickLimits({ territoryLimit: 3, players: 6, pickable: 40 })).toEqual({ perPlayer: 3, min: 3, max: 18 });
+    expect(clientPickLimits({ territoryLimit: 5, players: 4, pickable: 12 })).toEqual({ perPlayer: 3, min: 3, max: 12 });
+    // A limit of 0 is no limit; the minimum is capped at 10.
+    expect(clientPickLimits({ territoryLimit: 0, players: 2, pickable: 40 })).toEqual({ perPlayer: 20, min: 10, max: 40 });
+    // Without the pickable count, the limit alone.
+    expect(clientPickLimits({ territoryLimit: 4, players: 3 })).toEqual({ perPlayer: 4, min: 4, max: 12 });
+    expect(clientPickLimits({ territoryLimit: undefined, players: 3 })).toBeNull();
+  });
+});
+
+describe('planPicks — a list longer than twice the limit runs in tiers (#129)', () => {
+  it('each fallback tier is scored with the picks before it taken', () => {
+    // PairA (+4) = {1,2}, PairB (+3) = {5,6}, PairC (+2) = {8,9}; limit 1, three players, a list of 3.
+    const g = mkGraph(
+      [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
+      [
+        { id: 100, name: 'PairA', value: 4, territoryIds: [1, 2] },
+        { id: 101, name: 'PairB', value: 3, territoryIds: [5, 6] },
+        { id: 102, name: 'PairC', value: 2, territoryIds: [8, 9] },
+      ],
+    );
+    const p = plan({ graph: g, pickable: [1, 2, 5, 8], players: 3, territoryLimit: 1, maxPicks: 3 });
+    expect(p.groups.primary.territoryIds).toEqual([1]);
+    // Tier 1: with 1 taken, 2 is worth nothing; PairB is next. Tier 2: with 1 and 5 taken, PairC.
+    expect(p.groups.fallback.territoryIds).toEqual([5, 8]);
+    expect(p.groups.fallback.bonuses.map((b) => b.name)).toEqual(['PairB']);
+    expect(p.rationale.join(' ')).toMatch(/2 tiers of up to 1/);
   });
 });
