@@ -15,6 +15,7 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { BoardSpecialUnit, BoardState, TerritoryOwner, TerritoryState } from './board.js';
 import type { Player } from './normalize.js';
 import type { Reader } from './protocol/codec.js';
+import type { ReadBudget } from './protocol/interp.js';
 
 export const LATEST_GAME_INFO = 'warlight.shared.LatestGameInfo';
 export const GAME_STANDING = 'warlight.shared.GameStanding';
@@ -76,7 +77,8 @@ export interface LiveTerritory {
 
 /** Reads a registered class from the reply (a loaded `WarappBundle`). */
 export interface ClassReader {
-  readClass(typeName: string, reader: Reader): unknown;
+  /** `budget`, when given, is one step budget shared by every read of the same reply. */
+  readClass(typeName: string, reader: Reader, budget?: ReadBudget): unknown;
   /** The fields a class's reader fills from another class, in read order (a loaded bundle has it). */
   fieldsReadAs?(ownerType: string, fieldType: string): string[];
 }

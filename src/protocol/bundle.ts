@@ -4,21 +4,28 @@
 // The bundle's generated readers are the authority on every wire class layout, and those
 // layouts (and the minified names) change between client releases, so this module:
 //   1. fetches a war.app page and discovers the current bundle URL and version,
-//   2. reuses `<dataDir>/bundle/<version>.js` if present, else downloads and caches it,
+//   2. reuses `<dataDir>/bundle/<version>.js` if present and it still matches the SHA-256
+//      recorded beside it at download (`<version>.js.sha256`), else downloads and caches it,
 //   3. exposes `readClass(typeName | var, reader)` keyed by the stable registered type
 //      name (e.g. `warlight.shared.LatestGameInfo`), evaluated by `BundleInterpreter`.
 // Fetching is injected so the transport (and tests) decide how pages are retrieved.
 
-import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { chmod, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Reader } from './codec.js';
-import { BundleInterpreter, parseBundle, type DialectCheck, type InterpOptions } from './interp.js';
+import { BundleInterpreter, parseBundle, type DialectCheck, type InterpOptions, type ReadBudget } from './interp.js';
 
 /** A page that loads the game client (the homepage does not). */
 export const DEFAULT_PAGE_URL = 'https://war.app/MultiPlayer';
-/** Hosts a bundle may be served from (the host itself or any subdomain). */
-export const BUNDLE_HOSTS = ['war.app', 'warappcdn.com'];
+/** The only host the bundle is downloaded from (exactly this host: no subdomain, no port). */
+export const BUNDLE_HOST = 'warappcdn.com';
+/** The only path the bundle is downloaded from; its `v` query parameter is the only variable. */
+export const BUNDLE_PATH = '/js/Release/ujs.js';
+/** How long the bundle download may take, headers and body together. */
+export const BUNDLE_FETCH_TIMEOUT_MS = 120_000;
+/** The most bytes the bundle download may carry (the bundle is about 17 MB). */
+export const BUNDLE_MAX_BYTES = 64 * 1024 * 1024;
 
 export type BundleErrorKind = 'no-script' | 'bad-url' | 'bad-version' | 'bad-bundle' | 'dialect-mismatch';
 
@@ -34,29 +41,41 @@ export class BundleError extends Error {
 
 export interface BundleSource {
   url: string;
-  /** Cache key: the URL's `v` parameter, else a hash of the URL. */
+  /** Cache key: the URL's `v` parameter. */
   version: string;
 }
 
 const SCRIPT_RE = /<script\b[^>]*?\bsrc\s*=\s*["']([^"']*\/ujs\.js(?:\?[^"']*)?)["']/i;
 const SAFE_VERSION = /^[A-Za-z0-9._-]{1,64}$/;
 
-const hostAllowed = (host: string) => BUNDLE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
-
-/** Find the client bundle's URL and version in a war.app page. */
+/**
+ * Find the client bundle's URL and version in a war.app page. The location is pinned:
+ * `https://` + exactly {@link BUNDLE_HOST} + exactly {@link BUNDLE_PATH} + `?v=<version>`,
+ * nothing else — the page only gets to choose the version.
+ */
 export function discoverBundleUrl(html: string, pageUrl: string): BundleSource {
   const m = SCRIPT_RE.exec(html);
   if (!m) throw new BundleError('no-script', `no ujs.js script tag on ${pageUrl}`);
   const src = m[1].replace(/&amp;/g, '&');
   const url = new URL(src, pageUrl);
   if (url.protocol !== 'https:') throw new BundleError('bad-url', `bundle URL is not https: ${url.href}`);
-  if (!hostAllowed(url.hostname)) throw new BundleError('bad-url', `bundle host not allowed: ${url.hostname}`);
-  const v = url.searchParams.get('v');
-  const version = v ?? `u-${createHash('sha256').update(url.href).digest('hex').slice(0, 16)}`;
+  if (url.host !== BUNDLE_HOST || url.username || url.password) {
+    throw new BundleError('bad-url', `bundle host not allowed: ${url.host} (only ${BUNDLE_HOST})`);
+  }
+  if (url.pathname !== BUNDLE_PATH) {
+    throw new BundleError('bad-url', `bundle path not allowed: ${url.pathname} (only ${BUNDLE_PATH})`);
+  }
+  if (url.hash) throw new BundleError('bad-url', 'bundle URL must not carry a fragment');
+  const keys = [...url.searchParams.keys()];
+  if (keys.some((k) => k !== 'v') || keys.length > 1) {
+    throw new BundleError('bad-url', `bundle URL query must be only ?v=<version>: ${url.search}`);
+  }
+  const version = url.searchParams.get('v');
+  if (version === null) throw new BundleError('bad-version', 'bundle URL carries no version (?v=)');
   if (!SAFE_VERSION.test(version) || version === '.' || version === '..') {
     throw new BundleError('bad-version', `bundle version is not a safe file name: ${JSON.stringify(version)}`);
   }
-  return { url: url.href, version };
+  return { url: `https://${BUNDLE_HOST}${BUNDLE_PATH}?v=${version}`, version };
 }
 
 /** A loaded bundle: reads wire classes by stable type name. */
@@ -105,9 +124,9 @@ export class WarappBundle {
     return [...out];
   }
 
-  /** Read one instance of a class, by registered type name (or minified var). */
-  readClass(typeNameOrVar: string, reader: Reader): unknown {
-    return this.interp.readClass(typeNameOrVar, reader);
+  /** Read one instance of a class, by registered type name (or minified var); `budget` spans several reads. */
+  readClass(typeNameOrVar: string, reader: Reader, budget?: ReadBudget): unknown {
+    return this.interp.readClass(typeNameOrVar, reader, budget);
   }
 }
 
@@ -125,8 +144,13 @@ export interface BundleLoaderOptions {
 
 /** A cached bundle file: `<version>.js`. */
 const BUNDLE_FILE = /^([A-Za-z0-9._-]{1,64})\.js$/;
-/** A download that never finished: `<version>.js.tmp-<pid>`. */
-const PARTIAL_FILE = /^[A-Za-z0-9._-]{1,64}\.js\.tmp-(\d+)$/;
+/** A cached bundle's recorded digest: `<version>.js.sha256`, part of that bundle. */
+const DIGEST_FILE = /^([A-Za-z0-9._-]{1,64})\.js\.sha256$/;
+/**
+ * A write that never finished, of a bundle or of its digest: `<version>.js[.sha256].tmp-<pid>`,
+ * optionally followed by `-<random>` (what {@link writePrivateAtomic} writes).
+ */
+const PARTIAL_FILE = /^[A-Za-z0-9._-]{1,64}\.js(?:\.sha256)?\.tmp-(\d+)(?:-[0-9a-f]+)?$/;
 /** A partial download older than this is abandoned, whoever wrote it (a pid can be reused). */
 const STALE_PARTIAL_MS = 10 * 60_000;
 
@@ -154,15 +178,15 @@ async function abandoned(file: string, pid: number): Promise<boolean> {
 }
 
 /**
- * Delete every cached bundle but `keep` (each is ~16 MB, one per client release) and any
- * unfinished download. Best effort: never throws.
+ * Delete every cached bundle but `keep` (each is ~16 MB, one per client release), its recorded
+ * digest with it, and any unfinished download. `keep`'s digest is kept. Best effort: never throws.
  */
 async function pruneBundles(dir: string, keep: string): Promise<void> {
   try {
     for (const name of await readdir(dir)) {
-      if (name === keep) continue;
+      if (name === keep || name === `${keep}.sha256`) continue;
       const partial = PARTIAL_FILE.exec(name);
-      if (!partial && !BUNDLE_FILE.test(name)) continue;
+      if (!partial && !BUNDLE_FILE.test(name) && !DIGEST_FILE.test(name)) continue;
       if (partial && !(await abandoned(join(dir, name), Number(partial[1])))) continue;
       await unlink(join(dir, name)).catch(() => undefined);
     }
@@ -171,24 +195,96 @@ async function pruneBundles(dir: string, keep: string): Promise<void> {
   }
 }
 
-/** The newest cached bundle (by modification time), or undefined. */
-async function newestCached(dir: string): Promise<{ version: string; file: string } | undefined> {
-  let best: { version: string; file: string; mtime: number } | undefined;
+/** Cached bundles, newest (by modification time) first. */
+async function cachedNewestFirst(dir: string): Promise<{ version: string; file: string }[]> {
+  const found: { version: string; file: string; mtime: number }[] = [];
   try {
     for (const name of await readdir(dir)) {
       const m = BUNDLE_FILE.exec(name);
       if (!m) continue;
       const file = join(dir, name);
-      const { mtimeMs } = await stat(file);
-      if (!best || mtimeMs > best.mtime) best = { version: m[1]!, file, mtime: mtimeMs };
+      try {
+        found.push({ version: m[1]!, file, mtime: (await stat(file)).mtimeMs });
+      } catch {
+        // Gone since the listing (pruned by another process).
+      }
     }
   } catch {
-    return undefined;
+    return [];
   }
-  return best && { version: best.version, file: best.file };
+  return found.sort((a, b) => b.mtime - a.mtime).map(({ version, file }) => ({ version, file }));
 }
 
-/** Discover, fetch (or reuse the cached copy of) and load the current client bundle. */
+/**
+ * The newest cached bundle that passes {@link readVerified} (its recorded digest and the content
+ * check), or undefined. A copy that fails is deleted by that check, never loaded.
+ */
+async function newestVerified(dir: string): Promise<{ version: string; src: string } | undefined> {
+  for (const { version, file } of await cachedNewestFirst(dir)) {
+    const src = await readVerified(file, `${file}.sha256`);
+    if (src !== null) return { version, src };
+  }
+  return undefined;
+}
+
+/** The content check: a client bundle registers its classes as `W["<type name>"]=<var>;`. */
+const looksLikeBundle = (src: string) => /W\["[\w.$]+"\]=[\w$]+;/.test(src);
+const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+/**
+ * Create `dir` (and missing parents) `0700`; when it already exists with group/other bits
+ * and this process owns it, tighten it to `0700` (a `mkdir` mode never changes an existing
+ * directory). No-op on Windows, which has no POSIX modes.
+ */
+async function ensurePrivateDir(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32' || typeof process.getuid !== 'function') return;
+  const st = await stat(dir);
+  if ((st.mode & 0o077) !== 0 && st.uid === process.getuid()) await chmod(dir, 0o700);
+}
+
+/** Write `data` to `file` `0600` through a fresh temporary file and a rename. */
+async function writePrivateAtomic(file: string, data: Buffer | string): Promise<void> {
+  const tmp = `${file}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
+  try {
+    await writeFile(tmp, data, { mode: 0o600, flag: 'wx' });
+    await rename(tmp, file);
+  } catch (e) {
+    await rm(tmp, { force: true });
+    throw e;
+  }
+}
+
+/**
+ * The cached bundle's text when it still matches the digest recorded at download and still
+ * passes the content check; `null` (nothing cached, or the copy was rejected and deleted).
+ *
+ * This guards against later corruption of, or tampering with, the cache — a truncated write,
+ * a disk error, or anything that rewrites the file after it was downloaded — so one bad copy
+ * cannot persist across restarts. It is trust on first download: it does not protect against
+ * a malicious first download (the digest is computed from what was received), which only the
+ * pinned location and the interpreter's own hardening limit. A copy with no digest (cached
+ * before digests were recorded) is treated as unverified and downloaded again.
+ */
+async function readVerified(file: string, digestFile: string): Promise<string | null> {
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(file);
+  } catch {
+    return null;
+  }
+  const digest = await readFile(digestFile, 'utf8').then(
+    (d) => d.trim(),
+    () => null,
+  );
+  const src = bytes.toString('utf8');
+  if (digest !== null && digest === sha256(bytes) && looksLikeBundle(src)) return src;
+  await rm(file, { force: true });
+  await rm(digestFile, { force: true });
+  return null;
+}
+
+/** Discover, fetch (or reuse the verified cached copy of) and load the current client bundle. */
 export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundle> {
   const pageUrl = opts.pageUrl ?? DEFAULT_PAGE_URL;
   const dir = join(opts.dataDir, 'bundle');
@@ -198,26 +294,29 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
   } catch (e) {
     // The page naming the current version could not be read (a frozen tab, a signed-out page):
     // a copy already on disk still decodes, rather than failing every live read (#131).
-    const cached = await newestCached(dir);
+    // Only a copy that still matches its recorded digest stands in.
+    const cached = await newestVerified(dir);
     if (!cached) throw e;
-    const b = new WarappBundle(await readFile(cached.file, 'utf8'), cached.version, opts.interp);
+    const b = new WarappBundle(cached.src, cached.version, opts.interp);
     b.fallback = true;
     return b;
   }
   const { url, version } = source;
   const file = join(dir, `${version}.js`);
-  let src: string;
-  try {
-    src = await readFile(file, 'utf8');
-  } catch {
+  const digestFile = `${file}.sha256`;
+  let src = await readVerified(file, digestFile);
+  if (src === null) {
     src = await opts.fetchText(url);
-    if (!/W\["[\w.$]+"\]=[\w$]+;/.test(src)) {
+    if (!looksLikeBundle(src)) {
       throw new BundleError('bad-bundle', `${url} does not look like the war.app client bundle`);
     }
-    await mkdir(dir, { recursive: true });
-    const tmp = `${file}.tmp-${process.pid}`;
-    await writeFile(tmp, src, 'utf8');
-    await rename(tmp, file);
+    await ensurePrivateDir(opts.dataDir);
+    await ensurePrivateDir(dir);
+    const bytes = Buffer.from(src, 'utf8');
+    // The bundle first, then its digest: a crash between the two leaves a copy with no
+    // digest, which the next load downloads again.
+    await writePrivateAtomic(file, bytes);
+    await writePrivateAtomic(digestFile, `${sha256(bytes)}\n`);
   }
   const bundle = new WarappBundle(src, version, opts.interp);
   await pruneBundles(dir, `${version}.js`);

@@ -9,7 +9,9 @@
 //             the "no date" (min) and "max date" sentinels, and anything at or
 //             beyond ±2.524556148e14 reads as one of them
 //   guid      16 bytes in .NET order (first three groups byte-swapped)
-//   list/dict int32 count (-1 = null), then the items / key-value pairs
+//   list/dict int32 count (-1 = null), then the items / key-value pairs; the reader
+//             refuses a count above MAX_WIRE_COUNT, and one above MAX_EMPTY_ITEMS
+//             whose items take no bytes
 //
 // A frame starts with a 14-byte header: uint16 flags (protocol version, high bit
 // set on replies), int32 preamble 1514664249, int32 message number, int32 method.
@@ -57,6 +59,21 @@ export class ProtocolError extends Error {
     this.name = 'ProtocolError';
   }
 }
+
+/**
+ * The largest list or dict count a reply may announce. Counts come from the wire as int32, and the
+ * biggest real collections (a board's territories, a map's bonuses, a game's orders) run to a few
+ * thousand; a million is far past any honest reply and keeps a forged count from driving a
+ * multi-billion-iteration loop.
+ */
+export const MAX_WIRE_COUNT = 1_000_000;
+
+/**
+ * The longest list or dict whose items may take no bytes at all. Every real item carries at least a
+ * flag or a number; a count above this whose first item read nothing cannot be honest — it would
+ * otherwise loop and allocate `count` times from a handful of bytes.
+ */
+export const MAX_EMPTY_ITEMS = 1024;
 
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 const utf8Encoder = new TextEncoder();
@@ -251,7 +268,15 @@ export class Reader {
     return this.buf[this.pos++];
   }
 
+  /**
+   * `n` bytes. `n` often comes from the wire (a string or byte-array length), so anything but a
+   * non-negative integer is refused before the position moves: a negative length would rewind the
+   * reader and a NaN or fractional one would leave every later read misaligned.
+   */
   raw(n: number): Uint8Array {
+    if (!Number.isInteger(n) || n < 0) {
+      throw new ProtocolError('bad-length', `bad byte count ${n} at offset ${this.pos}`);
+    }
     this.need(n);
     const out = this.buf.slice(this.pos, this.pos + n);
     this.pos += n;
@@ -349,25 +374,46 @@ export class Reader {
     const at = this.pos;
     const n = this.int32();
     if (n === -1) return null;
-    if (n < 0) throw new ProtocolError('bad-length', `negative count ${n} at offset ${at}`);
+    if (!Number.isInteger(n) || n < 0) throw new ProtocolError('bad-length', `bad count ${n} at offset ${at}`);
+    if (n > MAX_WIRE_COUNT) {
+      throw new ProtocolError('bad-length', `count ${n} at offset ${at} exceeds ${MAX_WIRE_COUNT}`);
+    }
     return n;
   }
 
+  /** Refuses a long collection once an item is seen to take no bytes (see MAX_EMPTY_ITEMS). */
+  private checkItemSize(n: number, before: number, at: number): void {
+    if (n > MAX_EMPTY_ITEMS && this.pos === before) {
+      throw new ProtocolError(
+        'bad-length',
+        `count ${n} at offset ${at} of items that take no bytes (at most ${MAX_EMPTY_ITEMS})`,
+      );
+    }
+  }
+
   list<T>(readItem: (r: Reader) => T): T[] | null {
+    const at = this.pos;
     const n = this.count();
     if (n === null) return null;
     const out: T[] = [];
-    for (let i = 0; i < n; i++) out.push(readItem(this));
+    for (let i = 0; i < n; i++) {
+      const before = this.pos;
+      out.push(readItem(this));
+      this.checkItemSize(n, before, at);
+    }
     return out;
   }
 
   dict<K, V>(readKey: (r: Reader) => K, readValue: (r: Reader) => V): Map<K, V> | null {
+    const at = this.pos;
     const n = this.count();
     if (n === null) return null;
     const out = new Map<K, V>();
     for (let i = 0; i < n; i++) {
+      const before = this.pos;
       const k = readKey(this);
       out.set(k, readValue(this));
+      this.checkItemSize(n, before, at);
     }
     return out;
   }

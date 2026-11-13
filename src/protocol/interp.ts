@@ -15,6 +15,41 @@
 //
 // Classes are registered in the bundle as `W["warlight.shared.Foo"]=Xy;` — the type name
 // is stable, the var is minified. Decoded objects carry the type name as `$type`.
+//
+// Containment. The bundle is downloaded at run time, so it is treated as hostile: interpreted
+// code must not reach anything of the host process (which holds the user's credentials), even
+// though a browser would have sandboxed it. The design keeps the objects the interpreter makes
+// ordinary (decoded objects stay plain `{ $type, … }` for every consumer) and enforces the rules
+// at the only places interpreted code touches host values:
+// - a member read returns an own property, or `length` / an index of an array, a string or the
+//   raw-bytes reader's Uint8Array (the only inherited members the readers use); any other inherited member reads as `undefined`, and the
+//   keys `constructor`, `__proto__` and `prototype` raise. Interpreter internals (closures, the
+//   reader, class refs) are not readable at all.
+// - a write goes only to an array or a plain object the interpreter made, never with one of those
+//   three keys, so it can only create or replace an own data property. An array takes only an index
+//   at most its length (never `length`), so it stays dense; an object never takes one of
+//   Object.prototype's member names (or `toJSON`), which would shadow the host method with a non-callable value.
+// - no operator converts an object operand (that would run host code such as an array's join):
+//   arithmetic, relational, bitwise and `++`/`--` refuse one (and a BigInt), and loose equality (`==`, `!=` and a
+//   `switch` case) compares an object by identity, so `x == null` still works.
+// - only string, number, boolean and null literals evaluate: a BigInt would make one step cost the
+//   host work proportional to its size, and a RegExp is a host object.
+// - a string built by `+` is capped at MAX_STRING characters and its length is charged to the step
+//   budget, as is comparing two strings, so string work cannot outrun the budget or the heap.
+// - statics and reader methods are looked up as own entries of the dialect tables only.
+// - natives call back only into interpreter closures (`toNative` brands the functions it makes and
+//   `callback` checks the brand), and no call or read hands a host function back to the bundle.
+// - every `readClass` has one budget: a step count and a call depth (options with defaults), so
+//   nested loops and recursion end in an InterpError; native element work (an array handed to a
+//   native, a range's count) is charged to the same step count, and an allocating helper caps its count.
+//   A reply decoded by several `readClass` calls (the open-games list, one call per record) passes one
+//   `ReadBudget` to all of them, so the step count bounds the whole reply rather than each record.
+// - converting a string operand to a number (arithmetic, relational, bitwise, unary minus, `++`/`--`,
+//   and `==` against a number or boolean) costs the string's length: the host scans it to convert it.
+// - host work that grows with something the bundle controls is charged too, or done once: a computed
+//   member key costs its length, parsing a function costs the characters parsed, a constructor failure
+//   kept as `$ctorError` costs CTOR_FAILURE_STEPS, and definitions are indexed in one pass over the
+//   source, with failed lookups cached, so no lookup rescans the bundle.
 
 import {
   parseExpressionAt,
@@ -34,7 +69,11 @@ export type InterpErrorKind =
   | 'reader-threw'
   | 'loop-guard'
   | 'bad-value'
-  | 'parse';
+  | 'parse'
+  /** The bundle tried to reach something outside the interpreter (an inherited member, a host function). */
+  | 'forbidden'
+  /** The step budget or the call-depth limit of one `readClass` was exceeded. */
+  | 'budget';
 
 /** A reader the interpreter cannot evaluate, or one that failed on the bytes. */
 export class InterpError extends Error {
@@ -105,10 +144,46 @@ function strBody(r: Reader): string {
 }
 
 const asReader = (x: unknown) => x as Reader;
-const asFn = (x: unknown) => x as () => unknown;
+
+/** Functions `toNative` made from interpreter closures: the only callables a native may call. */
+const CALLBACKS = new WeakSet<object>();
+
+/** A native's callback argument, refused unless it is an interpreter closure made callable by `toNative`. */
+function callback(f: unknown): Native {
+  if (typeof f !== 'function' || !CALLBACKS.has(f)) {
+    throw new InterpError('forbidden', 'a native was handed a callback that is not an interpreter function');
+  }
+  return f as Native;
+}
+
+/** The largest count `E.Range` will allocate, and the longest array a native takes (special-unit counts are a byte). */
+export const MAX_RANGE = 1_000_000;
+
+function asArray(xs: unknown): unknown[] {
+  if (!Array.isArray(xs)) throw new InterpError('bad-value', `expected an array, got ${describe(xs)}`);
+  // A backstop: interpreted writes keep arrays dense, so only a host-made array could be this long.
+  if (xs.length > MAX_RANGE) throw new InterpError('bad-value', `array of ${xs.length} elements (at most ${MAX_RANGE})`);
+  return xs;
+}
+
+/**
+ * Charges native element work to the step budget of the `readClass` that called the native (set by
+ * `callStatic` for the duration of the call; a no-op when a native is called from host code).
+ */
+let chargeNative: (n: number) => void = () => {};
+
+function range(start: unknown, count: unknown): number[] {
+  if (typeof start !== 'number' || !Number.isFinite(start)) throw new InterpError('bad-value', `bad range start ${String(start)}`);
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 0 || count > MAX_RANGE) {
+    throw new InterpError('bad-value', `bad range count ${String(count)} (an integer 0..${MAX_RANGE})`);
+  }
+  chargeNative(count);
+  return Array.from({ length: count }, (_, i) => start + i);
+}
 
 function list(r: unknown, item: unknown): unknown[] | null {
-  return asReader(r).list(() => asFn(item)());
+  const f = callback(item);
+  return asReader(r).list(() => f());
 }
 
 /** The names used by client v6.07 (protocol 242). */
@@ -125,7 +200,10 @@ export const DEFAULT_DIALECT: Dialect = {
     NGb: (r) => r.uint16(),
     S3c: (r) => r.int16(),
     MGb: (r) => r.u8(),
-    JS: (r, n) => r.raw(n as number),
+    JS: (r, n) => {
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) throw new InterpError('bad-value', `bad byte count ${String(n)}`);
+      return r.raw(n);
+    },
     I3c: (r) => r.varint(),
   },
   statics: {
@@ -144,15 +222,22 @@ export const DEFAULT_DIALECT: Dialect = {
       Sd: list,
       ms: list,
       uL: list,
-      ef: (r, k, v) => asReader(r).list(() => [asFn(k)(), asFn(v)()]),
+      ef: (r, k, v) => {
+        const fk = callback(k);
+        const fv = callback(v);
+        return asReader(r).list(() => [fk(), fv()]);
+      },
     },
     O: { fA: (x) => x, Fy: (x) => x, rc: (x) => x },
     za: { rc: (x) => x },
     // Enumerable helpers (special-unit lists): Range → Select → ToArray.
     E: {
-      Range: (start, count) => Array.from({ length: count as number }, (_, i) => (start as number) + i),
-      Za: (xs, f) => (xs as unknown[]).map((x) => (f as Native)(x)),
-      Sa: (xs) => [...(xs as unknown[])],
+      Range: range,
+      Za: (xs, f) => {
+        const fn = callback(f);
+        return asArray(xs).map((x) => fn(x));
+      },
+      Sa: (xs) => [...asArray(xs)],
     },
   },
   wrappers: ['Z', 'Yb', 'uc', 'dc', 'oc', 'ec', 'fc'],
@@ -189,7 +274,13 @@ type ProbeOutcome =
 function runProbe(probe: Uint8Array, arity: number, call: (args: unknown[]) => unknown): ProbeOutcome {
   const r = new Reader(probe);
   const args: unknown[] = [r];
-  for (let i = 1; i < arity; i++) args.push(() => r.u8());
+  for (let i = 1; i < arity; i++) {
+    // An item reader the host made: registered as a callback, so a native list helper (and the
+    // bundle's own definition, through \`call\`) may call it like an interpreter closure.
+    const item = () => r.u8();
+    CALLBACKS.add(item);
+    args.push(item);
+  }
   try {
     const value = call(args);
     return { kind: 'value', value, position: r.position };
@@ -224,7 +315,60 @@ export interface InterpOptions {
   dialect?: Partial<Dialect>;
   /** Iteration cap for a single `for` loop (default 1e6). */
   maxIterations?: number;
+  /** Evaluation steps (statements, expressions and calls) allowed per `readClass` (default {@link DEFAULT_MAX_STEPS}). */
+  maxSteps?: number;
+  /** Nesting of interpreted calls allowed per `readClass` (default {@link DEFAULT_MAX_DEPTH}). */
+  maxDepth?: number;
 }
+
+/**
+ * Steps per `readClass`. Native element work counts too: an array handed to a native costs its
+ * length, and `E.Range` its count. A synthetic 3,000-territory board with 40 players' hands and
+ * special units (the test mini-bundle) takes about 0.43M steps; this is about 70 times that.
+ * Measured, it ends a runaway read in well under a second: a nested-loop bomb in about 0.4 s, and
+ * one that repeats `E.Sa(E.Range(0,1e6))` in about 0.3 s.
+ */
+export const DEFAULT_MAX_STEPS = 30_000_000;
+/**
+ * One step budget shared by several `readClass` calls that decode one reply: pass the same object to
+ * each, starting at `{ spent: 0 }`; each read continues the count where the last one stopped.
+ */
+export interface ReadBudget {
+  spent: number;
+}
+
+/** Interpreted call depth per `readClass`; real readers nest a few dozen deep at most. */
+export const DEFAULT_MAX_DEPTH = 256;
+
+/** Steps charged when a constructor's failure is kept on the object (`$ctorError`) rather than thrown. */
+const CTOR_FAILURE_STEPS = 20;
+
+/** Keys that lead from any value to its prototype or constructor: never read or written. */
+const FORBIDDEN_KEYS = new Set(['constructor', '__proto__', 'prototype']);
+
+/**
+ * Object.prototype's member names (the legacy `__defineGetter__` family included) plus `toJSON`.
+ * Written onto a decoded object they would shadow the host member with a value that is not
+ * callable, so `String(obj)`, `obj.hasOwnProperty(…)`, `JSON.stringify` or loose equality in a
+ * consumer (or the interpreter) would throw. Never written.
+ */
+const SHADOWING_KEYS = new Set(
+  ['toJSON', ...Object.getOwnPropertyNames(Object.prototype)].filter((k) => !FORBIDDEN_KEYS.has(k)),
+);
+
+/** Operators that compare without converting an object operand (`==` / `!=` go through `looseEquals`). */
+const EQUALITY_OPS = new Set(['===', '!==', '==', '!=']);
+/** Operators that compare two string operands as strings (`==` / `!=` are charged in `looseEquals`). */
+const STRING_COMPARE_OPS = new Set(['===', '!==', '<', '<=', '>', '>=']);
+
+/**
+ * The longest string `+` may build. Real readers build only short strings (names, messages); without
+ * a cap, repeated doubling reaches the host's string limit (a RangeError) or exhausts the heap.
+ */
+export const MAX_STRING = 1_000_000;
+
+/** A canonical array index (`"0"`, `"12"`, not `"01"` or `"1.0"`). */
+const isIndex = (k: string) => /^(?:0|[1-9]\d*)$/.test(k);
 
 // ---------------------------------------------------------------------------
 // Runtime values
@@ -277,6 +421,16 @@ interface ResolvedFn {
   where: string;
 }
 
+/** Definition sites in the bundle source (see `BundleInterpreter.definitions`). */
+interface Definitions {
+  /** `Cls.fn` → offsets of each `function` assigned to it, in source order. */
+  statics: Map<string, number[]>;
+  /** `Cls` → offset of its first `function Cls(`. */
+  ctors: Map<string, number>;
+  /** `Cls` → offset of its first registration. */
+  registrations: Map<string, number>;
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 
 /** Descend from a parsed expression to the function expression that starts it. */
@@ -310,15 +464,19 @@ function leadingFunction(node: AnyNode): FunctionExpression | null {
   return null;
 }
 
-const escapeRe = (s: string) => s.replace(/[$]/g, '\\$');
-
 /** Evaluates a bundle's reader functions against codec readers. */
 export class BundleInterpreter {
   readonly version: number;
   private readonly dialect: Dialect;
   private readonly wrappers: Set<string>;
-  private readonly fnCache = new Map<string, ResolvedFn | null>();
+  /** Resolved functions by `Cls.fn` / `new Cls`: a hit, `null` (no constructor) or the cached failure. */
+  private readonly fnCache = new Map<string, ResolvedFn | InterpError | null>();
+  private defs: Definitions | null = null;
   private readonly maxIterations: number;
+  private readonly maxSteps: number;
+  private readonly maxDepth: number;
+  private steps = 0;
+  private depth = 0;
 
   constructor(
     readonly bundle: ParsedBundle,
@@ -326,6 +484,8 @@ export class BundleInterpreter {
   ) {
     this.version = opts.version ?? PROTOCOL_VERSION;
     this.maxIterations = opts.maxIterations ?? 1e6;
+    this.maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
+    this.maxDepth = opts.maxDepth ?? DEFAULT_MAX_DEPTH;
     const d = opts.dialect ?? {};
     this.dialect = {
       readerMethods: { ...DEFAULT_DIALECT.readerMethods, ...d.readerMethods },
@@ -343,9 +503,34 @@ export class BundleInterpreter {
     throw new InterpError('unknown-class', `no class registered as ${typeNameOrVar}`);
   }
 
-  /** Read one instance of a class (`<Var>.Ha(reader, null, version)`). */
-  readClass(typeNameOrVar: string, reader: Reader): unknown {
-    return this.callStatic(this.resolveVar(typeNameOrVar), 'Ha', [reader, null, this.version]);
+  /**
+   * Read one instance of a class (`<Var>.Ha(reader, null, version)`). With `budget`, the read draws on
+   * that shared step count (and records what it spent there) instead of a fresh one.
+   */
+  readClass(typeNameOrVar: string, reader: Reader, budget?: ReadBudget): unknown {
+    const cls = this.resolveVar(typeNameOrVar);
+    return this.budgeted(budget, () => this.callStatic(cls, 'Ha', [reader, null, this.version]));
+  }
+
+  /**
+   * Run interpreted code under one step and depth budget: a fresh one, or `budget`'s count continued
+   * (and what was spent recorded there). Every entry into interpreted code goes through here.
+   */
+  private budgeted<T>(budget: ReadBudget | undefined, run: () => T): T {
+    this.steps = budget && Number.isFinite(budget.spent) && budget.spent > 0 ? budget.spent : 0;
+    this.depth = 0;
+    try {
+      return run();
+    } catch (e) {
+      // The depth limit should always fire first; this keeps a native stack overflow an InterpError too.
+      // Any other host RangeError (an invalid string or array length) is a runaway read too.
+      if (e instanceof RangeError) {
+        throw new InterpError('budget', /call stack/i.test(e.message) ? 'reader recursed past the host stack' : `read ran past a host limit: ${e.message}`);
+      }
+      throw e;
+    } finally {
+      if (budget) budget.spent = this.steps;
+    }
   }
 
   /**
@@ -358,8 +543,12 @@ export class BundleInterpreter {
    */
   verifyDialect(): DialectCheck {
     const out: DialectCheck = { verified: [], unverified: [], mismatched: [] };
-    const natives = this.dialect.statics[READER_HELPERS] ?? {};
-    const defined = this.indexDefinitions(READER_HELPERS, Object.keys(natives));
+    const natives = Object.hasOwn(this.dialect.statics, READER_HELPERS) ? this.dialect.statics[READER_HELPERS]! : {};
+    // The bundle's definitions run like any interpreted code: contained, and under one step budget
+    // shared by the whole check, so a hostile bundle cannot spend more than one read's worth here.
+    // Past the budget, a probe is unevaluable (the helper unverified), never a mismatch.
+    const budget: ReadBudget = { spent: 0 };
+    const defined = this.indexDefinitions(READER_HELPERS, Object.keys(natives), budget);
     for (const name of [...defined].sort()) {
       const native = natives[name]!;
       const key = `${READER_HELPERS}.${name}`;
@@ -367,10 +556,12 @@ export class BundleInterpreter {
       let mismatch = false;
       for (const probe of DIALECT_PROBES) {
         const mine = runProbe(probe, native.length, (args) => native(...args));
-        const theirs = runProbe(probe, native.length, (args) => {
-          const { node, where } = this.resolveStatic(READER_HELPERS, name);
-          return this.invoke(node, args, new Scope(), where);
-        });
+        const theirs = runProbe(probe, native.length, (args) =>
+          this.budgeted(budget, () => {
+            const { node, where } = this.resolveStatic(READER_HELPERS, name);
+            return this.invoke(node, args, new Scope(), where);
+          }),
+        );
         // A client collection (`new Je`, a dictionary) is not comparable with the built-in's
         // JS array: only plain values say whether the two read alike.
         if (theirs.kind === 'unevaluable' || (theirs.kind === 'value' && isClientObject(theirs.value))) continue;
@@ -384,20 +575,19 @@ export class BundleInterpreter {
     return out;
   }
 
-  /** Which of `names` the bundle defines as `<cls>.<name>=function`, found in one pass and cached. */
-  private indexDefinitions(cls: string, names: readonly string[]): Set<string> {
-    const wanted = new Set(names);
+  /**
+   * Which of `names` the bundle defines as `<cls>.<name>=function` in a form that parses: looked up
+   * in the one-pass definition index (never a rescan), parsed and cached, the parsing charged to `budget`.
+   */
+  private indexDefinitions(cls: string, names: readonly string[], budget: ReadBudget): Set<string> {
     const found = new Set<string>();
-    const re = new RegExp(`(?<![\\w$.])${escapeRe(cls)}\\.([\\w$]+)\\s*=\\s*function\\b`, 'g');
-    for (const m of this.bundle.src.matchAll(re)) {
-      const name = m[1]!;
-      if (!wanted.has(name) || found.has(name)) continue;
-      found.add(name);
-      const where = `${cls}.${name}`;
+    for (const name of names) {
+      if (!this.definitions().statics.has(`${cls}.${name}`)) continue;
       try {
-        this.fnCache.set(where, { node: this.parseFunctionAt(m.index! + m[0].length - 'function'.length, where), where });
+        this.budgeted(budget, () => this.resolveStatic(cls, name));
+        found.add(name);
       } catch {
-        found.delete(name);
+        // Unparsable (or past the budget): not checked.
       }
     }
     return found;
@@ -433,58 +623,97 @@ export class BundleInterpreter {
       for (const f of found) if (!out.includes(f)) out.push(f);
       if (!found.length) for (const next of ownStaticCalls(node, ownerVar)) visit(next, depth + 1);
     };
-    visit('Ha', 0);
+    // Parsing a reader is charged to a step budget like any other entry into the bundle.
+    this.budgeted(undefined, () => visit('Ha', 0));
     return out;
   }
 
   // -------------------------------------------------------------------------
   // Resolution
 
+  /**
+   * Parse the function expression at `pos`. The characters acorn consumed are charged to the step
+   * budget: each definition is parsed once per interpreter (see {@link fnCache}), but a hostile
+   * bundle could otherwise make one step parse megabytes.
+   */
   private parseFunctionAt(pos: number, where: string): FunctionExpression {
     let node: AnyNode;
     try {
       node = parseExpressionAt(this.bundle.src, pos, { ecmaVersion: 'latest' }) as AnyNode;
     } catch (e) {
+      const at = (e as { raisedAt?: unknown }).raisedAt;
+      this.spend(typeof at === 'number' && at > pos ? at - pos : 1, where, pos);
       throw new InterpError('parse', `cannot parse function: ${(e as Error).message}`, where, pos);
     }
+    this.spend(Math.max(1, node.end - pos), where, pos);
     const fn = leadingFunction(node);
     if (!fn || fn.start !== pos) throw new InterpError('parse', 'no function expression', where, pos);
     return fn;
   }
 
+  /**
+   * The bundle's definition sites, found in one pass the first time any function is resolved, so a
+   * lookup never rescans the source: a scan is host work in the bundle's length that the step budget
+   * cannot see, and before this a loop of failing lookups (a constructor swallows the error) rescanned
+   * the whole bundle on every iteration. Names are the minifier's ASCII identifiers (`[\w$]+`).
+   */
+  private definitions(): Definitions {
+    if (this.defs) return this.defs;
+    const { src, typeNameOf } = this.bundle;
+    const statics = new Map<string, number[]>();
+    // `Cls.fn = function`: the lookahead leaves `function` unconsumed, so no definition hides another.
+    for (const m of src.matchAll(/(?<![\w$.])([\w$]+)\.([\w$]+)\s*=\s*(?=function\b)/g)) {
+      const key = `${m[1]}.${m[2]}`;
+      const at = m.index + m[0].length;
+      const list = statics.get(key);
+      if (list) list.push(at);
+      else statics.set(key, [at]);
+    }
+    const ctors = new Map<string, number>();
+    for (const m of src.matchAll(/function ([\w$]+)\(/g)) if (!ctors.has(m[1])) ctors.set(m[1], m.index);
+    // Where each class's first registration (`W["<type name>"]=<var>;`) sits.
+    const registrations = new Map<string, number>();
+    for (const m of src.matchAll(/W\["([\w.$]+)"\]=([\w$]+);/g)) {
+      if (!registrations.has(m[2]) && typeNameOf.get(m[2]) === m[1]) registrations.set(m[2], m.index);
+    }
+    this.defs = { statics, ctors, registrations };
+    return this.defs;
+  }
+
   private resolveStatic(cls: string, fn: string): ResolvedFn {
     const where = `${cls}.${fn}`;
-    if (this.fnCache.has(where)) {
-      const cached = this.fnCache.get(where);
-      if (cached) return cached;
-      throw new InterpError('no-definition', `no definition for ${where}`);
+    const cached = this.fnCache.get(where);
+    // A failure is cached too, so a missing or unparsable function costs one lookup per interpreter.
+    if (cached instanceof InterpError) throw cached;
+    if (cached) return cached;
+    try {
+      const sites = this.definitions().statics.get(where);
+      if (!sites) throw new InterpError('no-definition', `no definition for ${where}`);
+      // Prefer the definition that follows the class's registration.
+      const from = this.definitions().registrations.get(cls) ?? 0;
+      const at = sites.find((p) => p >= from) ?? sites[0];
+      const resolved = { node: this.parseFunctionAt(at, where), where };
+      this.fnCache.set(where, resolved);
+      return resolved;
+    } catch (e) {
+      if (e instanceof InterpError && (e.kind === 'no-definition' || e.kind === 'parse')) this.fnCache.set(where, e);
+      throw e;
     }
-    const { src } = this.bundle;
-    // Prefer the definition that follows the class's registration.
-    const typeName = this.bundle.typeNameOf.get(cls);
-    const from = typeName ? Math.max(0, src.indexOf(`W["${typeName}"]=${cls};`)) : 0;
-    const re = new RegExp(`(?<![\\w$.])${escapeRe(cls)}\\.${escapeRe(fn)}\\s*=\\s*function\\b`, 'g');
-    re.lastIndex = from;
-    let m = re.exec(src);
-    if (!m && from > 0) {
-      re.lastIndex = 0;
-      m = re.exec(src);
-    }
-    if (!m) {
-      // Cached too: a miss scans the whole bundle, and a reader can ask again for every item.
-      this.fnCache.set(where, null);
-      throw new InterpError('no-definition', `no definition for ${where}`);
-    }
-    const resolved = { node: this.parseFunctionAt(m.index + m[0].length - 'function'.length, where), where };
-    this.fnCache.set(where, resolved);
-    return resolved;
   }
 
   private resolveCtor(cls: string): ResolvedFn | null {
     const key = `new ${cls}`;
-    if (this.fnCache.has(key)) return this.fnCache.get(key) ?? null;
-    const m = new RegExp(`function ${escapeRe(cls)}\\(`).exec(this.bundle.src);
-    const resolved = m ? { node: this.parseFunctionAt(m.index, key), where: key } : null;
+    const cached = this.fnCache.get(key);
+    if (cached instanceof InterpError) throw cached;
+    if (cached !== undefined) return cached;
+    const at = this.definitions().ctors.get(cls);
+    let resolved: ResolvedFn | null = null;
+    try {
+      if (at !== undefined) resolved = { node: this.parseFunctionAt(at, key), where: key };
+    } catch (e) {
+      if (e instanceof InterpError && e.kind === 'parse') this.fnCache.set(key, e);
+      throw e;
+    }
     this.fnCache.set(key, resolved);
     return resolved;
   }
@@ -493,19 +722,63 @@ export class BundleInterpreter {
   // Calls
 
   private callStatic(cls: string, fn: string, args: unknown[]): unknown {
-    const native = this.dialect.statics[cls]?.[fn];
-    if (native) return native(...args.map((a) => this.toNative(a)));
+    // Own entries only: an inherited `constructor` would hand over Object and, through it, Function.
+    const table = Object.hasOwn(this.dialect.statics, cls) ? this.dialect.statics[cls] : undefined;
+    const native = table && Object.hasOwn(table, fn) ? table[fn] : undefined;
+    if (native) {
+      const where = `${cls}.${fn}`;
+      const nargs = args.map((a) => this.toNative(a));
+      // Element work a native does over an array argument is charged before it runs.
+      for (const a of nargs) if (Array.isArray(a)) this.spend(a.length, where);
+      const outer = chargeNative;
+      chargeNative = (n) => this.spend(n, where);
+      try {
+        return fromNative(native(...nargs));
+      } finally {
+        chargeNative = outer;
+      }
+    }
     const { node, where } = this.resolveStatic(cls, fn);
     this.opts.trace?.(where);
     return this.invoke(node, args, new Scope(), where);
   }
 
   private toNative(v: unknown): unknown {
-    if (v instanceof Closure) return (...args: unknown[]) => this.invoke(v.node, args, v.scope, v.where);
-    return v;
+    if (v instanceof Closure) {
+      const f = (...args: unknown[]) => this.invoke(v.node, args, v.scope, v.where);
+      CALLBACKS.add(f);
+      return f;
+    }
+    return fromNative(v);
+  }
+
+  /** Count one evaluation step against this read's budget. */
+  private tick(where: string, node: AcornNode): void {
+    this.spend(1, where, node.start);
+  }
+
+  /** Count `n` steps (native element work, or one evaluation) against this read's budget. */
+  private spend(n: number, where: string, offset?: number): void {
+    this.steps += n;
+    if (this.steps > this.maxSteps) {
+      throw new InterpError('budget', `read ran past ${this.maxSteps} steps`, where, offset);
+    }
   }
 
   private invoke(node: FunctionExpression, args: unknown[], outer: Scope, where: string, self?: unknown): unknown {
+    this.tick(where, node);
+    if (this.depth >= this.maxDepth) {
+      throw new InterpError('budget', `call depth ran past ${this.maxDepth}`, where, node.start);
+    }
+    this.depth++;
+    try {
+      return this.invokeBody(node, args, outer, where, self);
+    } finally {
+      this.depth--;
+    }
+  }
+
+  private invokeBody(node: FunctionExpression, args: unknown[], outer: Scope, where: string, self?: unknown): unknown {
     const scope = new Scope(outer);
     if (self !== undefined) scope.declare('this', self);
     node.params.forEach((p, i) => scope.declare(this.paramName(p, where), args[i]));
@@ -537,6 +810,7 @@ export class BundleInterpreter {
   }
 
   private exec(st: Statement, scope: Scope, where: string): Completion {
+    this.tick(where, st);
     switch (st.type) {
       case 'VariableDeclaration':
         for (const d of st.declarations) {
@@ -572,7 +846,7 @@ export class BundleInterpreter {
       }
       case 'SwitchStatement': {
         const v = this.eval(st.discriminant, scope, where);
-        let i = st.cases.findIndex((c) => c.test && this.eval(c.test, scope, where) == v);
+        let i = st.cases.findIndex((c) => c.test && this.looseEquals(this.eval(c.test, scope, where), v, where, c));
         if (i < 0) i = st.cases.findIndex((c) => !c.test);
         if (i < 0) return undefined;
         for (; i < st.cases.length; i++) {
@@ -600,8 +874,13 @@ export class BundleInterpreter {
   // Expressions
 
   private eval(n: Expression, scope: Scope, where: string): unknown {
+    this.tick(where, n);
     switch (n.type) {
       case 'Literal':
+        // Only string, number, boolean and null literals. A BigInt costs the host O(size) per
+        // operator while the budget charges one step, and a RegExp is a host object; no reader uses either.
+        if (n.value !== null && typeof n.value === 'object') throw new InterpError('bad-value', 'regexp literal', where, n.start);
+        if (typeof n.value === 'bigint') throw new InterpError('bad-value', 'bigint literal', where, n.start);
         return n.value;
       case 'Identifier':
         if (scope.has(n.name)) return scope.get(n.name);
@@ -625,7 +904,7 @@ export class BundleInterpreter {
       case 'UnaryExpression': {
         const v = this.eval(n.argument, scope, where);
         if (n.operator === '!') return !v;
-        if (n.operator === '-') return -(v as number);
+        if (n.operator === '-') return -(this.numeric(v, n, where) as number);
         if (n.operator === 'void') return undefined;
         throw this.unsupported(`operator ${n.operator}`, n, where);
       }
@@ -643,6 +922,18 @@ export class BundleInterpreter {
           const o = this.eval(t.object as Expression, scope, where);
           const k = this.memberKey(t, scope, where);
           if (!isObject(o) || o instanceof ClassRef) throw new InterpError('bad-value', `cannot set ${k} on ${describe(o)}`, where, t.start);
+          // Only arrays and plain objects (the ones the interpreter makes) take writes, and only as
+          // own data properties: never onto the reader, a closure or a host object, never a prototype.
+          const proto = Object.getPrototypeOf(o);
+          if (Array.isArray(o)) {
+            // An array stays dense: an index at most its length (overwrite or append), never `length`
+            // itself or a far index, which would make a huge sparse array for free.
+            if (!isIndex(k) || Number(k) > o.length) throw new InterpError('forbidden', `cannot set ${k} on an array of ${o.length}`, where, t.start);
+          } else if (proto !== Object.prototype && proto !== null) {
+            throw new InterpError('forbidden', `cannot set ${k} on ${describe(o)}`, where, t.start);
+          } else if (SHADOWING_KEYS.has(k)) {
+            throw new InterpError('forbidden', `cannot set ${k}: it would shadow a built-in method`, where, t.start);
+          }
           o[k] = v;
           return v;
         }
@@ -651,7 +942,8 @@ export class BundleInterpreter {
       case 'UpdateExpression': {
         if (n.argument.type !== 'Identifier') throw this.unsupported(`update of ${n.argument.type}`, n, where);
         const name = n.argument.name;
-        const old = scope.get(name) as number;
+        // ToNumeric, as the language does (`"3"++` is 4), with a string's conversion charged.
+        const old = Number(this.numeric(scope.get(name), n, where));
         const next = n.operator === '++' ? old + 1 : old - 1;
         scope.assign(name, next);
         return n.prefix ? next : old;
@@ -671,7 +963,8 @@ export class BundleInterpreter {
         if (o instanceof ClassRef) throw this.unsupported(`static read ${o.name}.${k}`, n, where);
         if (o instanceof Reader) throw this.unsupported(`reader member ${k}`, n, where);
         if (o === null || o === undefined) throw new InterpError('bad-value', `read of ${k} of ${String(o)}`, where, n.start);
-        return (o as Record<string, unknown>)[k];
+        if (o instanceof Closure || o instanceof Scope) throw new InterpError('forbidden', `read of ${k} of an interpreter value`, where, n.start);
+        return readMember(o, k);
       }
       case 'CallExpression':
         return this.call(n.callee as Expression, n.arguments as Expression[], scope, where, n);
@@ -680,20 +973,47 @@ export class BundleInterpreter {
     }
   }
 
-  private memberKey(n: { computed: boolean; property: Expression | { type: 'PrivateIdentifier' } }, scope: Scope, where: string): string {
+  private memberKey(n: AcornNode & { computed: boolean; property: Expression | { type: 'PrivateIdentifier' } }, scope: Scope, where: string): string {
     const p = n.property;
-    if (n.computed) return String(this.eval(p as Expression, scope, where));
-    return (p as { name: string }).name;
+    let k: string;
+    if (n.computed) {
+      const v = this.eval(p as Expression, scope, where);
+      // A string or number key only: converting an object would run its (host) toString.
+      if (typeof v !== 'string' && typeof v !== 'number') throw new InterpError('bad-value', `member key ${describe(v)}`, where, n.start);
+      k = String(v);
+      // Using a key is host work in its length (the index test, hashing, a static's lookup), so a long
+      // computed key is charged: built once, it could otherwise be used over and over at one step a time.
+      this.spend(k.length, where, n.start);
+    } else {
+      k = (p as { name: string }).name;
+    }
+    if (FORBIDDEN_KEYS.has(k)) throw new InterpError('forbidden', `access to ${k}`, where, n.start);
+    return k;
   }
 
   private binary(op: string, left: Expression, right: Expression, scope: Scope, where: string, n: AcornNode): unknown {
     const l = this.eval(left, scope, where) as never;
     const r = this.eval(right, scope, where) as never;
+    // Arithmetic, relational and bitwise operators convert an object through the host's
+    // ToPrimitive: refused, so an odd operand is an InterpError rather than a host TypeError.
+    if (op !== 'instanceof' && !EQUALITY_OPS.has(op)) {
+      this.primitive(l, n, where);
+      this.primitive(r, n, where);
+    }
+    if (typeof l === 'string' && typeof r === 'string' && STRING_COMPARE_OPS.has(op)) {
+      // Comparing two strings is host work in their length: charged so long strings cannot outrun the budget
+      // (`looseEquals` charges `==` / `!=`).
+      this.spend(Math.min((l as string).length, (r as string).length), where, n.start);
+    } else if (op !== '+' && op !== 'instanceof' && !EQUALITY_OPS.has(op)) {
+      // Every other string operand of a numeric operator is converted to a number, host work in its length.
+      this.chargeConversion(l, where, n);
+      this.chargeConversion(r, where, n);
+    }
     switch (op) {
       case '==':
-        return l == r;
+        return this.looseEquals(l, r, where, n);
       case '!=':
-        return l != r;
+        return !this.looseEquals(l, r, where, n);
       case '===':
         return l === r;
       case '!==':
@@ -706,8 +1026,16 @@ export class BundleInterpreter {
         return l > r;
       case '>=':
         return l >= r;
-      case '+':
-        return (l as number) + (r as number);
+      case '+': {
+        const v = (l as number) + (r as number);
+        if (typeof v === 'string') {
+          if ((v as string).length > MAX_STRING) {
+            throw new InterpError('budget', `string of ${(v as string).length} characters (at most ${MAX_STRING})`, where, n.start);
+          }
+          this.spend((v as string).length, where, n.start);
+        }
+        return v;
+      }
       case '-':
         return l - r;
       case '*':
@@ -727,6 +1055,42 @@ export class BundleInterpreter {
     }
   }
 
+  /**
+   * `l == r` without converting an object: an object (or function) loosely equals only itself, so
+   * `x == null` keeps working and an object never equals a primitive (the host would convert it
+   * through ToPrimitive, an array's join for instance, outside the step budget).
+   */
+  private looseEquals(l: unknown, r: unknown, where: string, n: AcornNode): boolean {
+    const ref = (v: unknown) => isObject(v) || typeof v === 'function';
+    if (ref(l) || ref(r)) return l === r;
+    if (typeof l === 'string' && typeof r === 'string') this.spend(Math.min(l.length, r.length), where, n.start);
+    // A string against a number or boolean is converted to a number: host work in its length.
+    else if (typeof l === 'string' && (typeof r === 'number' || typeof r === 'boolean')) this.chargeConversion(l, where, n);
+    else if (typeof r === 'string' && (typeof l === 'number' || typeof l === 'boolean')) this.chargeConversion(r, where, n);
+    return l == r;
+  }
+
+  /** `v` for a numeric operator: refused when it is an object, its conversion charged when it is a string. */
+  private numeric(v: unknown, n: AcornNode, where: string): unknown {
+    this.primitive(v, n, where);
+    this.chargeConversion(v, where, n);
+    return v;
+  }
+
+  /**
+   * Charges the conversion of a string operand to a number. ToNumber scans the whole string, so one
+   * step per conversion would let a long string in a loop do far more host work than the budget allows.
+   */
+  private chargeConversion(v: unknown, where: string, n: AcornNode): void {
+    if (typeof v === 'string') this.spend(v.length, where, n.start);
+  }
+
+  /** `v`, refused when it is an object (whose conversion to a primitive would run host code). */
+  private primitive(v: unknown, n: AcornNode, where: string): unknown {
+    if (isObject(v) || typeof v === 'function' || typeof v === 'bigint') throw new InterpError('bad-value', `operand ${describe(v)}`, where, n.start);
+    return v;
+  }
+
   private construct(callee: Expression, argNodes: Expression[], scope: Scope, where: string, n: AcornNode): unknown {
     if (callee.type !== 'Identifier') throw this.unsupported(`new of ${callee.type}`, n, where);
     const args = argNodes.map((a) => this.eval(a, scope, where));
@@ -742,6 +1106,13 @@ export class BundleInterpreter {
         try {
           this.invoke(ctor.node, args, new Scope(), ctor.where, obj);
         } catch (e) {
+          // A budget or containment failure is never swallowed into the object.
+          if (e instanceof InterpError && (e.kind === 'budget' || e.kind === 'forbidden')) throw e;
+          // A host RangeError (stack, string or array length) is a runaway read: readClass turns it into a budget error.
+          if (e instanceof RangeError) throw e;
+          // A host throw and catch costs far more than a step: charged, so a loop of failing
+          // constructors ends at the budget about as fast as any other loop.
+          this.spend(CTOR_FAILURE_STEPS, where, n.start);
           obj.$ctorError = (e as Error).message;
         }
       }
@@ -755,9 +1126,9 @@ export class BundleInterpreter {
       const k = this.memberKey(callee, scope, where);
       const args = argNodes.map((a) => this.eval(a, scope, where));
       if (o instanceof Reader) {
-        const f = this.dialect.readerMethods[k];
+        const f = Object.hasOwn(this.dialect.readerMethods, k) ? this.dialect.readerMethods[k] : undefined;
         if (!f) throw this.unsupported(`reader method ${k}`, n, where);
-        return f(o, ...args);
+        return fromNative(f(o, ...args));
       }
       if (o instanceof ClassRef) return this.callStatic(o.name, k, args);
       if (Array.isArray(o) && k === 'push') return o.push(...args);
@@ -766,8 +1137,9 @@ export class BundleInterpreter {
     const f = this.eval(callee, scope, where);
     const args = argNodes.map((a) => this.eval(a, scope, where));
     if (f instanceof Closure) return this.invoke(f.node, args, f.scope, f.where);
-    // A host function handed in as an argument (the dialect check's item readers).
-    if (typeof f === 'function') return (f as Native)(...args);
+    // A host function handed in as an argument (the dialect check's item readers): only one
+    // registered as a callback, and its result is checked like any native's.
+    if (typeof f === 'function' && CALLBACKS.has(f)) return fromNative((f as Native)(...args));
     throw this.unsupported('call of a non-function', n, where);
   }
 }
@@ -873,6 +1245,26 @@ function ownStaticCalls(fn: FunctionExpression, cls: string): string[] {
   };
   walk(fn as unknown as AstNode);
   return out;
+}
+
+/** A native's result, refused if it would hand a host function to the bundle. */
+function fromNative(v: unknown): unknown {
+  if (typeof v === 'function') throw new InterpError('forbidden', 'a host function cannot enter interpreted code');
+  return v;
+}
+
+/**
+ * Interpreted `o[k]`: an own property, or `length` / an index of an array, a string or a typed array
+ * (the raw-bytes reader returns a Uint8Array, whose `length` is an inherited accessor). Every other
+ * inherited member (methods, accessors, the prototype chain) reads as `undefined`.
+ */
+function readMember(o: unknown, k: string): unknown {
+  let v: unknown;
+  if (typeof o === 'string') v = k === 'length' || isIndex(k) ? o[k as never] : undefined;
+  else if (o instanceof Uint8Array && k === 'length') v = o.length;
+  else if (isObject(o) && Object.hasOwn(o, k)) v = o[k];
+  else v = undefined;
+  return fromNative(v);
 }
 
 function describe(v: unknown): string {

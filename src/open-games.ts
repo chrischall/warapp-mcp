@@ -19,12 +19,20 @@ import { colorIndexOf } from './join-color.js';
 import type { ClassReader } from './live.js';
 import type { GameSettings } from './normalize.js';
 import { Reader } from './protocol/codec.js';
+import type { ReadBudget } from './protocol/interp.js';
 import { carriesTeam } from './teams.js';
 
 export const OPEN_GAMES_URL = 'https://war.app/MultiPlayer/OpenGames';
 export const GAME_INFO = 'warlight.shared.GameInfo';
 export const GAME_INFO_SETTINGS = 'warlight.shared.GameInfoSettings';
 const GAME_INFO_PLAYER = 'warlight.shared.GameInfoPlayer';
+
+/**
+ * The most records an OpenGames payload may claim. The count is read from the payload, and each
+ * record is a run of the downloaded bundle's reader, so it is bounded: the page lists a few hundred
+ * open games at most, and this is far above that.
+ */
+export const MAX_OPEN_GAMES = 5_000;
 
 /** GameInfo field positions in read order. */
 const GI = {
@@ -406,14 +414,20 @@ export function parseOpenGamesPage(html: string, bundle: ClassReader): OpenGames
     out.note = UNREADABLE;
     return out;
   }
-  if (count < 0) {
+  if (count < 0 || count > MAX_OPEN_GAMES) {
     out.note = UNREADABLE;
     return out;
   }
   let read = 0;
+  // One step budget for the whole payload, so the reader's CPU is bounded per page, not per record.
+  const budget: ReadBudget = { spent: 0 };
   try {
     for (; read < count; read++) {
-      const read = readOpenGame(bundle.readClass(GAME_INFO, reader));
+      const before = reader.position;
+      const record = bundle.readClass(GAME_INFO, reader, budget);
+      // A GameInfo always takes bytes; one that takes none means the rest would repeat it endlessly.
+      if (reader.position === before) throw new Error('a GameInfo record took no bytes');
+      const read = readOpenGame(record);
       if (read) {
         out.games.push(read.game);
         out.lobbies.set(read.game.id, read.lobby);

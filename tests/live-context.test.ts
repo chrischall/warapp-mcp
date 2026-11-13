@@ -1,6 +1,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import { describe, expect, it } from 'vitest';
 import { MapCache, WarappClient } from '../src/client.js';
+import { BUNDLE_FETCH_TIMEOUT_MS, BUNDLE_MAX_BYTES } from '../src/protocol/bundle.js';
 import { bundleFetcher, createLiveContext, parseInviteToken, parseInviteTokenText } from '../src/tools/live-context.js';
 import { withToolConfig } from '../src/tools/hints.js';
 import { mockWarappBridge } from './bridge-mock.js';
@@ -33,6 +34,89 @@ describe('bundleFetcher', () => {
     const get = bundleFetcher(bridge, fetchStub(404, '').fetchImpl);
     await expect(get('https://www.war.app/')).rejects.toThrow(/HTTP 503/);
     await expect(get('https://warappcdn.com/x.js')).rejects.toThrow(/warappcdn\.com answered HTTP 404/);
+  });
+});
+
+describe('bundleFetcher limits', () => {
+  const { bridge } = mockWarappBridge(() => ({ status: 200, body: '', url: 'https://war.app/' }));
+  const URL_ = 'https://warappcdn.com/js/Release/ujs.js?v=7';
+
+  it('names a timeout and a byte cap comfortably above the ~17 MB bundle', () => {
+    expect(BUNDLE_MAX_BYTES).toBeGreaterThanOrEqual(2 * 17_000_000);
+    expect(BUNDLE_FETCH_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+
+  it('passes an abort signal and keeps redirect: error', async () => {
+    let init: RequestInit | undefined;
+    const get = bundleFetcher(bridge, (async (_u: string | URL, i?: RequestInit) => {
+      init = i;
+      return new Response('ok');
+    }) as typeof fetch);
+    expect(await get(URL_)).toBe('ok');
+    expect(init?.redirect).toBe('error');
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('cuts off a body larger than the cap while it streams, without buffering it all', async () => {
+    let produced = 0;
+    let cancelled = false;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(c) {
+        produced += 100;
+        c.enqueue(new Uint8Array(100).fill(65));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const get = bundleFetcher(bridge, (async () => new Response(endless)) as typeof fetch, { maxBytes: 1000 });
+    await expect(get(URL_)).rejects.toThrow(/larger than 1000 bytes/);
+    expect(produced).toBeLessThanOrEqual(1000 + 100 * 3);
+    expect(cancelled).toBe(true);
+  });
+
+  it('refuses up front a declared Content-Length over the cap', async () => {
+    let pulled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        pulled = true;
+        c.enqueue(new Uint8Array(10));
+        c.close();
+      },
+    }, { highWaterMark: 0 }); // pull only when read
+    const res = new Response(body, { headers: { 'content-length': '5000' } });
+    const get = bundleFetcher(bridge, (async () => res) as typeof fetch, { maxBytes: 1000 });
+    await expect(get(URL_)).rejects.toThrow(/larger than 1000 bytes/);
+    expect(pulled).toBe(false);
+  });
+
+  it('accepts a body exactly at the cap', async () => {
+    const get = bundleFetcher(bridge, (async () => new Response('x'.repeat(1000))) as typeof fetch, { maxBytes: 1000 });
+    expect(await get(URL_)).toHaveLength(1000);
+  });
+
+  it('fails with a timeout when the fetch never completes', async () => {
+    let signal: AbortSignal | undefined;
+    const get = bundleFetcher(
+      bridge,
+      ((_u: string | URL, i?: RequestInit) => {
+        signal = i?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      }) as typeof fetch,
+      { timeoutMs: 20 },
+    );
+    await expect(get(URL_)).rejects.toThrow(/timed out after 20 ms/);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('fails with a timeout when the body stalls', async () => {
+    const stalled = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new Uint8Array(10));
+      },
+    });
+    const get = bundleFetcher(bridge, (async () => new Response(stalled)) as typeof fetch, { timeoutMs: 20 });
+    await expect(get(URL_)).rejects.toThrow(/timed out after 20 ms/);
   });
 });
 

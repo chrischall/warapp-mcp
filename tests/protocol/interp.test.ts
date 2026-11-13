@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DATE_EPOCH_MS, NO_DATE_SENTINEL, Reader, Writer } from '../../src/protocol/codec.js';
-import { BundleInterpreter, InterpError, parseBundle } from '../../src/protocol/interp.js';
+import { BundleInterpreter, DEFAULT_DIALECT, InterpError, parseBundle, type ReadBudget } from '../../src/protocol/interp.js';
 import { MINI_BUNDLE } from './mini-bundle.js';
 
 const GUID = '00112233445566778899aabbccddeeff';
@@ -224,5 +224,352 @@ describe('BundleInterpreter', () => {
     const b = parseBundle('W["d.Q"]=Qq;Qq.Ha=function(a){return Q2.zz(a)};');
     const i = new BundleInterpreter(b, { dialect: { statics: { Q2: { zz: () => 'custom' } } } });
     expect(i.readClass('d.Q', new Reader(new Uint8Array()))).toBe('custom');
+  });
+});
+
+// The bundle is downloaded at run time, so the interpreter treats it as hostile: interpreted code
+// must not reach anything of the host process. Every bundle here is hand-written.
+describe('BundleInterpreter containment', () => {
+  /** Evaluate `body` as the reader `Hx.Ha=function(a,b,d){…}` of a one-class bundle. */
+  const run = (body: string, bytes: Uint8Array = new Uint8Array(8), opts?: ConstructorParameters<typeof BundleInterpreter>[1]) =>
+    new BundleInterpreter(parseBundle(`function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a,b,d){${body}};`), opts).readClass(
+      'h.X',
+      new Reader(bytes),
+    );
+  const g = globalThis as Record<string, unknown>;
+  const clean = () => {
+    delete g.__interpPwned;
+    for (const p of [Object.prototype, Array.prototype] as Record<string, unknown>[]) delete p.polluted;
+  };
+
+  it('blocks the array-prototype route to the host Function constructor, with no side effect', () => {
+    clean();
+    for (const body of [
+      'var F=[].constructor.constructor;return E.Za(["globalThis.__interpPwned=1"],F)',
+      'var F=[]["constructor"]["constructor"];return E.Za(["globalThis.__interpPwned=1"],F)',
+      'var e=new Hx;return e.__proto__',
+      'return P.wc(a).constructor',
+      'var x=[];return x.prototype',
+    ]) {
+      const e = interpError(() => run(body, new Writer().string('s').bytes()));
+      expect(e.kind, body).toBe('forbidden');
+    }
+    expect(g.__interpPwned).toBeUndefined();
+  });
+
+  it('never resolves a static or reader method through an inherited member', () => {
+    clean();
+    // `constructor` as a class name would otherwise find Object (and its Function) on the dialect table.
+    expect(() => run('return constructor.constructor("globalThis.__interpPwned=1")')).toThrow(InterpError);
+    expect(() => run('return E.Za([0],constructor.constructor("globalThis.__interpPwned=1"))')).toThrow(InterpError);
+    expect(() => run('return a.constructor(1)')).toThrow(InterpError);
+    expect(() => run('return a.hasOwnProperty("x")')).toThrow(InterpError);
+    expect(g.__interpPwned).toBeUndefined();
+  });
+
+  it('reads own members and the allowlisted array and string members only', () => {
+    const v = run(
+      'var e=new Hx,s=P.wc(a),x=[4,5];e.k=1;' +
+        'return [e.k,e.toString,e.hasOwnProperty,x.length,x[1],x.map,x.push,s.length,s[1],s.charAt,e.missing]',
+      new Writer().string('hey').bytes(),
+    );
+    expect(v).toEqual([1, undefined, undefined, 2, 5, undefined, undefined, 3, 'e', undefined, undefined]);
+  });
+
+  it('refuses writes through __proto__, constructor and prototype, leaving fresh objects unpolluted', () => {
+    clean();
+    for (const body of [
+      'var e=new Hx;e.__proto__.polluted=1;return e',
+      'var e=new Hx;e["__proto__"]=new Hx;return e',
+      'var e=new Hx;e.__proto__=[];return e',
+      'var q=[];q.constructor.prototype.polluted=1;return q',
+      'var e=new Hx;e.constructor=1;return e',
+      'var e=new Hx;e.prototype=1;return e',
+    ]) {
+      const e = interpError(() => run(body));
+      expect(e.kind, body).toBe('forbidden');
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(([] as unknown as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('refuses writes onto the reader', () => {
+    expect(interpError(() => run('a.pos=0;return 1')).kind).toBe('forbidden');
+  });
+
+  it('makes natives refuse a callback that is not an interpreter closure', () => {
+    for (const body of [
+      'return P.Sd(a,5)',
+      'return P.ms(a,"x")',
+      'return P.ef(a,function(){return 1},new Hx)',
+      'return E.Za([1],Hx)',
+    ]) {
+      const e = interpError(() => run(body, new Writer().int32(1).bytes()));
+      expect(e.kind, body).toBe('forbidden');
+    }
+    // Called directly with a host function, a native refuses it too.
+    const { P, E } = DEFAULT_DIALECT.statics;
+    const host = () => 'host';
+    expect(() => P.Sd(new Reader(new Writer().int32(1).bytes()), host)).toThrow(InterpError);
+    expect(() => P.ef(new Reader(new Writer().int32(1).bytes()), host, host)).toThrow(InterpError);
+    expect(() => E.Za([1], host)).toThrow(InterpError);
+  });
+
+  it('never returns a host function into interpreted scope', () => {
+    expect(interpError(() => run('return O.fA(function(){return 1})')).kind).toBe('forbidden');
+  });
+
+  it('stops a nested-loop bomb within the step budget, quickly', () => {
+    const t = Date.now();
+    const e = interpError(() => run('for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){}}return 1'));
+    expect(e.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
+  it('stops unbounded recursion at the call-depth limit, never a RangeError', () => {
+    const t = Date.now();
+    const e = interpError(() => run('return Hx.Ha(a,b,d)'));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toContain('depth');
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
+  it('stops exponential fan-out at the step budget', () => {
+    const t = Date.now();
+    const b = parseBundle('W["h.F"]=Hf;Hf.Ha=function(a){return Hf.f(60)};Hf.f=function(n){if(n<1)return 1;return Hf.f(n-1)+Hf.f(n-1)};');
+    const e = interpError(() => new BundleInterpreter(b).readClass('h.F', new Reader(new Uint8Array())));
+    expect(e.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
+  it('takes the step budget and depth limit as options, and resets them per read', () => {
+    expect(interpError(() => run('var i=0;for(;i<100;i++){}return i', undefined, { maxSteps: 50 })).kind).toBe('budget');
+    expect(run('var i=0;for(;i<100;i++){}return i', undefined, { maxSteps: 5000 })).toBe(100);
+    const b = parseBundle('W["h.D"]=Hd;Hd.Ha=function(a){return Hd.f(10)};Hd.f=function(n){if(n<1)return 0;return Hd.f(n-1)+1};');
+    const i = new BundleInterpreter(b, { maxDepth: 5 });
+    expect(interpError(() => i.readClass('h.D', new Reader(new Uint8Array()))).kind).toBe('budget');
+    const ok = new BundleInterpreter(b, { maxDepth: 20, maxSteps: 1000 });
+    for (let k = 0; k < 5; k++) expect(ok.readClass('h.D', new Reader(new Uint8Array()))).toBe(10);
+  });
+
+  it('does not let a constructor swallow a budget or containment error', () => {
+    const b = parseBundle('function Hc(a){this.x=a.__proto__}W["h.C"]=Hc;Hc.Ha=function(a){return new Hc([])};');
+    expect(interpError(() => new BundleInterpreter(b).readClass('h.C', new Reader(new Uint8Array()))).kind).toBe('forbidden');
+  });
+
+  it('refuses a huge, negative or fractional count to the allocating helper without allocating', () => {
+    const t = Date.now();
+    const e = interpError(() =>
+      run('return E.Sa(E.Za(E.Range(0,P.Ya(a)),function(i){return 1}))', new Writer().int32(0x7fffffff).bytes()),
+    );
+    expect(e.kind).toBe('bad-value');
+    expect(Date.now() - t).toBeLessThan(500);
+    const { E } = DEFAULT_DIALECT.statics;
+    for (const n of [-1, 1.5, Number.NaN, Infinity, 2 ** 31, '3']) expect(() => E.Range(0, n), String(n)).toThrow(InterpError);
+    expect(E.Range(2, 3)).toEqual([2, 3, 4]);
+  });
+
+  it('keeps arrays dense: no write to length, no index past the end', () => {
+    for (const body of [
+      'var x=[];x.length=4294967295;return x',
+      'var x=[];x["length"]=5;return x',
+      'var x=[];x[4294967294]=1;return x',
+      'var x=[1];x[2]=1;return x',
+      'var x=[];x["01"]=1;return x',
+      'var x=[];x[-1]=1;return x',
+      'var x=[];x.foo=1;return x',
+    ]) {
+      expect(interpError(() => run(body)).kind, body).toBe('forbidden');
+    }
+    // Appending and overwriting still work.
+    expect(run('var x=[];x[0]=1;x[1]=2;x[0]=3;x.push(4);return x')).toEqual([3, 2, 4]);
+  });
+
+  it('refuses an array longer than the cap to a native, as an InterpError (never a process abort)', () => {
+    const { E } = DEFAULT_DIALECT.statics;
+    const long: unknown[] = [];
+    long.length = 2 ** 32 - 1;
+    expect(() => E.Sa(long)).toThrow(InterpError);
+    expect(() => E.Za(long, () => 1)).toThrow(InterpError);
+    // Through the interpreter the long array cannot be made in the first place.
+    expect(interpError(() => run('var x=[];x.length=4294967295;return E.Sa(x)')).kind).toBe('forbidden');
+  });
+
+  it('charges native element work to the step budget', () => {
+    const t = Date.now();
+    const e = interpError(() => run('for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){E.Sa(E.Range(0,1000000))}}return 1'));
+    expect(e.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(2000);
+    // One Range of a million costs at least a million steps, charged before it allocates.
+    expect(interpError(() => run('return E.Range(0,1000000)', undefined, { maxSteps: 999_999 })).kind).toBe('budget');
+    expect(run('return E.Sa(E.Range(0,3))', undefined, { maxSteps: 1000 })).toEqual([0, 1, 2]);
+  });
+
+  it('refuses objects as operands of arithmetic and comparison, as an InterpError', () => {
+    for (const body of [
+      'var e=new Hx;e.k=function(){};return e+""',
+      'var e=new Hx;return e<1',
+      'var e=new Hx;return 1>=e',
+      'var e=new Hx;return e-1',
+      'return [1]+1',
+    ]) {
+      expect(interpError(() => run(body)).kind, body).toBe('bad-value');
+    }
+    // Equality, and null checks in particular, still work on objects.
+    expect(run('var e=new Hx,f=new Hx;return [e===e,e!==f,e==null,e!=null,e==e]')).toEqual([true, true, false, true, true]);
+  });
+
+  it('never converts an object in loose equality or a switch case', () => {
+    // An array compared with a primitive would otherwise be joined by the host on every comparison,
+    // host work the step budget never sees.
+    const t = Date.now();
+    expect(run('var x=E.Sa(E.Range(0,1000000)),n=0;for(var i=0;i<200;i++){if(x=="x")n++}return n')).toBe(0);
+    expect(run('var x=E.Sa(E.Range(0,1000000)),n=0;for(var i=0;i<200;i++){if(x!="x")n++}return n')).toBe(200);
+    expect(
+      run('var x=E.Sa(E.Range(0,1000000)),n=0;for(var i=0;i<200;i++){switch("x"){case x:n++;break;default:}}return n'),
+    ).toBe(0);
+    expect(Date.now() - t).toBeLessThan(1000);
+    // Without conversion an object never loosely equals a primitive, even one its join would match.
+    expect(run('var x=[1];return [x==1,x=="1",x!=1,1==x,x==x,x==null,x!=undefined]')).toEqual([
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+    ]);
+    expect(run('var x=[1];switch(1){case x:return "obj";case 1:return "num"}')).toBe('num');
+    // Primitives still compare loosely, as before.
+    expect(run('return [1=="1",null==undefined,0==""]')).toEqual([true, true, true]);
+    expect(run('switch("2"){case 2:return "two";default:return "none"}')).toBe('two');
+  });
+
+  it('refuses an object operand of ++ / --, as an InterpError', () => {
+    expect(interpError(() => run('var x=[1];x++;return x')).kind).toBe('bad-value');
+    expect(run('var x=1;x++;++x;x--;return x')).toBe(2);
+  });
+
+  it('caps a string built by + and charges its length, as an InterpError (never a RangeError or OOM)', () => {
+    const t = Date.now();
+    const e = interpError(() => run('var s="x";for(var i=0;i<40;i++){s=s+s}return s'));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toContain('string');
+    // Concatenating a long string over and over is charged per character, so it ends at the budget.
+    const f = interpError(() =>
+      run('var s="x";for(var i=0;i<19;i++){s=s+s}var k=[];for(var j=0;j<999999;j++){var t=s+"y";k.push(t[0])}return k'),
+    );
+    expect(f.kind).toBe('budget');
+    // Comparing two long distinct strings is charged too.
+    const c = interpError(() =>
+      run('var s="x";for(var i=0;i<19;i++){s=s+s}var u=s+"y",v=s+"y",n=0;for(var j=0;j<999999;j++){if(u===v)n++}return n'),
+    );
+    expect(c.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(2000);
+    // Short strings still concatenate.
+    expect(run('var s="a";s=s+1+"b";return s')).toBe('a1b');
+  });
+
+  it('does not let a constructor swallow a runaway string into $ctorError', () => {
+    const b = parseBundle(
+      'function Hs(a){var s="x";for(var i=0;i<40;i++){s=s+s}this.s=s}W["h.S"]=Hs;Hs.Ha=function(a){return new Hs(1)};',
+    );
+    const e = interpError(() => new BundleInterpreter(b).readClass('h.S', new Reader(new Uint8Array())));
+    expect(e.kind).toBe('budget');
+  });
+
+  it('refuses BigInt and RegExp literals, so no operator does unbounded host work per step', () => {
+    expect(interpError(() => run('var x=18446744073709551617n;x=x*x;return 1')).kind).toBe('bad-value');
+    expect(interpError(() => run('var x=-1n;return 1')).kind).toBe('bad-value');
+    expect(interpError(() => run('var x=/a/;return 1')).kind).toBe('bad-value');
+    const t = Date.now();
+    const e = interpError(() =>
+      run('var x=18446744073709551617n;for(var i=0;i<22;i++){x=x*x}for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){var y=x*3n}}return 1'),
+    );
+    expect(e.kind).toBe('bad-value');
+    expect(Date.now() - t).toBeLessThan(2000);
+    // Ordinary literals still evaluate.
+    expect(run('return [1,"s",true,null]')).toEqual([1, 's', true, null]);
+  });
+
+  it('reads the length of a typed array from the raw-bytes reader', () => {
+    expect(run('var b=a.JS(3);return [b.length,b[1]]', new Uint8Array([7, 8, 9]))).toEqual([3, 8]);
+  });
+
+  it('refuses writes of the inherited Object.prototype method names onto objects', () => {
+    const inherited = Object.getOwnPropertyNames(Object.prototype).filter((k) => k !== 'constructor' && k !== '__proto__');
+    expect(inherited).toContain('__defineGetter__');
+    for (const k of ['toJSON', ...inherited]) {
+      expect(interpError(() => run(`var e=new Hx;e.${k}=function(){};return e+""`)).kind, k).toBe('forbidden');
+    }
+  });
+
+  it('resolves a missing static without rescanning the bundle, even when a constructor swallows the error', () => {
+    // A large bundle: every lookup that scanned it would be host work the step budget never sees.
+    const padding = '/*' + 'X.nop'.repeat(400_000) + '*/';
+    const b = parseBundle(
+      'W["h.M"]=Hm;W["h.A"]=Am;function Am(x){this.q=X.nope();this.r=X["n"+x]()}' +
+        'Hm.Ha=function(a){var i;for(i=0;i<3000;i++){new Am(i)}return new Am(0)};' +
+        padding,
+    );
+    const t = Date.now();
+    const v = new BundleInterpreter(b).readClass('h.M', new Reader(new Uint8Array())) as { $ctorError?: string };
+    expect(Date.now() - t).toBeLessThan(1000);
+    // The failure still surfaces as before.
+    expect(v.$ctorError).toContain('no definition for X.nope');
+  });
+
+  it('charges the length of a computed member key to the step budget', () => {
+    const t = Date.now();
+    const e = interpError(() => run('var s="1",i,x;for(i=0;i<19;i++){s=s+s}for(i=0;i<999999;i++){x="ab"[s]}return 1'));
+    expect(e.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(2000);
+    // The same holds for a write and for a static looked up by a computed name.
+    expect(interpError(() => run('var s="1",i,e=new Hx;for(i=0;i<19;i++){s=s+s}for(i=0;i<999999;i++){e[s]=1}return 1')).kind).toBe(
+      'budget',
+    );
+    // Short keys still read and write.
+    expect(run('var e=new Hx,x=[7,8];e["k"]=x[1];return [e.k,x[0],"ab"[1]]')).toEqual([8, 7, 'b']);
+  });
+
+  it('charges the length of a string converted to a number by an operator', () => {
+    // Converting a string to a number is host work in its length; one step per conversion let a
+    // long string in a loop run for far longer than the step budget allows.
+    const long = 'var s="1",i,n=0;for(i=0;i<19;i++){s=s+s}';
+    const t = Date.now();
+    for (const op of [
+      'if(s==1)n++',
+      'if(1!=s)n++',
+      'if(s==true)n++',
+      'if(s<1)n++',
+      'if(s>=1)n++',
+      'n=s-0',
+      'n=s*1',
+      'n=s|0',
+      'n=1&s',
+      'n=-s',
+      'var c=s;c++',
+      'switch(1){case s:n++}',
+    ]) {
+      const e = interpError(() => run(`${long}for(i=0;i<999999;i++){${op}}return n`));
+      expect(e.kind, op).toBe('budget');
+    }
+    expect(Date.now() - t).toBeLessThan(2000);
+    // Short strings still convert as before.
+    expect(run('var s="12";return [s==12,s<13,s-2,s*2,s|1,-s,1&s,s==true]')).toEqual([true, true, 10, 24, 13, -12, 0, false]);
+    expect(run('var s="3";s++;return s')).toBe(4);
+  });
+
+  it('shares one step budget across several reads when given a ReadBudget', () => {
+    const b = parseBundle('function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a){var i;for(i=0;i<100;i++){}return i};');
+    const interp = new BundleInterpreter(b, { maxSteps: 1000 });
+    // Each read alone fits; with one shared budget the reads run out together.
+    for (let k = 0; k < 20; k++) expect(interp.readClass('h.X', new Reader(new Uint8Array()))).toBe(100);
+    const budget: ReadBudget = { spent: 0 };
+    const e = interpError(() => {
+      for (let k = 0; k < 20; k++) interp.readClass('h.X', new Reader(new Uint8Array()), budget);
+    });
+    expect(e.kind).toBe('budget');
+    expect(budget.spent).toBeGreaterThan(1000);
   });
 });
