@@ -20,6 +20,7 @@ import { registerPushTools } from './push.js';
 import { registerRouteTool } from './route.js';
 import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
+import { registerStrategyTool } from './strategy.js';
 import { registerSurrenderTool } from './surrender.js';
 import { registerTurnTools } from './turn.js';
 import { registerUncommitTool } from './uncommit.js';
@@ -84,6 +85,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   });
   registerBoardTool(server, client, live);
   registerRouteTool(server, client);
+  registerStrategyTool(server, client);
   registerLiveTools(server, live);
   registerPickTools(server, live);
   registerMyGamesTool(server, live);

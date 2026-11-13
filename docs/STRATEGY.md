@@ -1,7 +1,8 @@
-# Strategy notes — territory picks
+# Strategy notes
 
-What the pick advisor (`warapp_plan_picks`, scorer in `src/analysis/picks.ts`) believes about
-picking in manual-distribution games, written in our own words. The community guides below
+What this server believes about playing war.app, written in our own words: first territory picks
+(the pick advisor, `warapp_plan_picks`, scorer in `src/analysis/picks.ts`), then the rest of the
+game (the strategy notes served by `warapp_strategy`, data in `src/strategy/notes.ts`). The community guides below
 were the research for `docs/PLAN-PICKS.md`; they are linked, never quoted or copied. Each
 heuristic says whether it is **encoded** (the scorer acts on it) or **not encoded** (advice for
 the person reviewing the list).
@@ -14,6 +15,9 @@ the person reviewing the list).
 - FFA strategy — <https://war.app/Forum/621189-ffa-strategy>
 - Combat basics (kill rates, how many armies a capture needs) — <https://war.app/wiki/Combat_Basics>
 - Luck modifier — <https://war.app/wiki/Luck_Modifier>
+- Cards (how card pieces are earned) — <https://war.app/wiki/Cards>
+
+# Territory picks
 
 ## How picks are granted
 
@@ -79,3 +83,96 @@ compactness). A fallback that outscores the primary is warned about.
    compact only when it is.
 7. **Read the opponent.** Strong picks depend on what the other player is likely to pick and
    where they will start. **Not encoded** — a later strategy phase (it needs their history).
+
+# The rest of the game — `warapp_strategy`
+
+`warapp_strategy(game_id?, map_id?, topic?)` serves the notes below. With a game it picks the
+notes whose condition fits the game's profile (`feedProfile`: format, settings and phase from
+GameFeed alone — the standing needs the board, so notes for ahead and behind both apply until
+`warapp_plan_turn` judges it) and adds map notes; with only a map it gives the map notes; with
+neither, every note. The general notes are also the MCP resource `warapp://strategy`, and a map
+this process has loaded is `warapp://strategy/map/{mapId}`.
+
+Each note is marked **encoded** (where the server acts on it) or **advice only**, and with its
+basis: *source* — the linked page states the idea; *derived* — our reasoning from the rule or
+advice the linked page gives (the listed pages do not cover Local Deployment, No-Split, team
+play or the effect of each card, so those notes are reasoned from the game rules and say so).
+The pages were read on 2026-11-13; nothing is quoted.
+
+## Map notes (computed, no extra traffic)
+
+- **Bonuses by value per army** — each positive bonus's value over the armies it takes to capture
+  every territory from neutral at the game's kill rates, luck and neutral size, with its entry
+  points (the territories outside it that touch it). **Encoded:** `src/strategy/map-notes.ts`.
+  Wastelands and picked territories are not known from the map, so every territory is costed as
+  a neutral of the settings' size (an assumption the notes state).
+- **Chokepoints** — articulation points, bridges between bonus clusters and narrow connectors
+  (`findChokepoints`, as `warapp_get_map`). **Encoded.**
+- **Income targets by turn** — while picks are open, the pick advisor's opening simulation run
+  with every territory pickable: the base income plus the bonuses its best group completes,
+  turn by turn. **Encoded**, as a pace to aim for (`warapp_plan_picks` uses the live pickables).
+
+## Format
+
+- `1v1-break-bonuses` — at contact, cut income by taking a territory in each enemy bonus
+  rather than trading armies. **Advice only.** Source: Good 1v1 strategies.
+- `1v1-contact-ground` — foresee where you will meet; a bonus behind a narrow front is worth some
+  income. **Advice only** (the map notes list the bottlenecks). Source: Good 1v1 strategies.
+- `ffa-strike-last` — let rivals fight each other and move in after. **Advice only.** Source: FFA strategy.
+- `ffa-pick-fights` — avoid a war on two borders at once. **Advice only**, derived. Source: FFA strategy.
+- `ffa-diplomacy` — truces free armies; guard against betrayal. **Advice only.** Source: FFA strategy.
+- `ffa-big-stack` — fill behind a giant stack, wall it, or wait in the fog. **Advice only.** Source: FFA strategy.
+- `teams-focus` — teammates attack the same opponent so its one income covers two fronts.
+  **Advice only**, derived from the combat rules. Source: Combat basics.
+
+## Settings
+
+- `settings-efficient-sizes` — attack at the breakpoint; armies between breakpoints are wasted.
+  **Encoded:** the planner sizes attacks at their breakpoints (`src/analysis/combat.ts`). Source: Combat basics.
+- `settings-defend-with-three` — three defenders cost an attacker five, two only three.
+  **Advice only.** Source: General strategy guidelines.
+- `settings-poke` — a one-army attack can break an exact-size attack. **Advice only.** Source:
+  General strategy guidelines.
+- `settings-move-order` — learn the move order and sort orders by when they should land.
+  **Advice only.** Source: General strategy guidelines.
+- `settings-no-luck-exact` — with no luck, results are exact. **Encoded:** `armiesToTake`. Source: Luck modifier.
+- `settings-luck-guaranteed` — with luck, count only the kills the roll cannot remove and add a
+  margin. **Encoded:** `winChance`, `guaranteedKills`, `min_win_chance`. Derived. Source: Luck modifier.
+- `settings-weighted-rounding` — weighted rounding makes breakpoints uncertain. **Encoded:**
+  `winChance` models it. Derived. Source: Luck modifier.
+- `settings-local-deployments` — each bonus pays only inside itself. **Encoded:** deploy pools
+  (`src/analysis/local-deploy.ts`). Derived. Source: General strategy guidelines.
+- `settings-no-split` — one move per territory a turn; stage armies ahead. **Encoded:** one move
+  per source in the planner. Derived. Source: General strategy guidelines.
+
+## Cards
+
+- `cards-piece-each-turn` — one capture a turn earns the piece; more earn nothing. **Advice
+  only.** Source: Cards.
+- `cards-order-delay` — orders go last: for an attack that should land after the defender
+  moves. **Advice only**, derived. Source: Cards.
+- `cards-order-priority` — orders go first: withdraw from a doomed territory or strike a stack.
+  **Encoded:** the planner's `cardAdvice` (`warapp_plan_turn`). Derived. Source: Cards.
+- `cards-blockade-own-bonus` — when weaker, blockade your own border to wall a bonus. **Advice
+  only**, derived; shown when behind or the standing is unknown. Source: Cards.
+
+## Reading the game
+
+- `reading-count-armies` — the armies an opponent gains beyond losses are its income.
+  **Encoded:** per-opponent deploy estimates and the profile's standing. Source: Good 1v1 strategies.
+- `reading-infer-bonuses` — deploys minus base income are the bonuses held. **Advice only**,
+  derived. Source: Good 1v1 strategies.
+- `reading-border-neutrals` — hold off on neutrals next to an enemy. **Advice only.** Source:
+  General strategy guidelines.
+- `reading-idle-armies` — walk backline armies to the front. **Advice only.** Source: FFA strategy.
+- `reading-ahead` — ahead, trade and keep pressure. **Encoded:** 1v1 pressure when ahead (profile
+  rule 0p). Derived. Source: Good 1v1 strategies.
+- `reading-behind` — behind, avoid even trades and defend. **Encoded:** the defend goal and
+  minimal sizes when behind (profile rule 0p). Derived. Source: Good 1v1 strategies.
+
+## Map (general)
+
+- `map-defensible-bonuses` — weigh a bonus by the cost to take and to keep it. **Encoded:** the
+  map notes' ranking and entry points; the pick advisor's entry-point discount. Source: Good 1v1 strategies.
+- `map-chokepoints` — hold the bottlenecks in front of your bonuses. **Encoded:** chokepoints in
+  the map notes and `warapp_get_map`. Source: Good 1v1 strategies.

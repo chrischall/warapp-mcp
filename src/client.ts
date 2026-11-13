@@ -257,6 +257,14 @@ export class WarappClient {
   }
 
   /**
+   * A map this process has already loaded (with some game), by map id; `undefined`
+   * otherwise. GameFeed serves maps only with a game, so this never makes a request.
+   */
+  cachedMap(mapId: number): GameMap | undefined {
+    return this.#cache.get(mapId);
+  }
+
+  /**
    * Prove the credentials work without loading a real game: ask for
    * {@link PROBE_GAME_ID}. `ServerGameKeyNotFound` (or, improbably, a game)
    * means authenticated; `Auth failed` throws `credential_rejected`.
