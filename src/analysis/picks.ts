@@ -70,7 +70,7 @@ import { analyzeBonus } from './bonuses.js';
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { captureCost, WASTELAND_FACTOR } from './planner.js';
-import { DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
+import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 
 /** Turns the opening simulation runs (income by turn 3). */
 export const PICK_HORIZON = 3;
@@ -224,8 +224,9 @@ function simulate(ctx: Ctx, start: readonly number[]): SimResult {
   };
   checkComplete(0);
   for (let turn = 1; turn <= PICK_HORIZON; turn++) {
-    let budget = territoryIncome(held.size, ctx.baseIncome, ctx.bonusArmyPer);
-    for (const id of completions.keys()) budget += ctx.bonuses.get(id)!.value;
+    // The one income rule (#85): every bonus held in full counts — negative ones and superbonuses
+    // too, not only the anchorable bonuses the simulation steers for.
+    let budget = boardIncome(ctx.g, held, { base: ctx.baseIncome, per: ctx.bonusArmyPer }).total;
     const startHeld = [...held].sort(byNum);
     const startSet = new Set(startHeld);
     // Movable armies of the territories held at the start of the turn (captured ones never attack).

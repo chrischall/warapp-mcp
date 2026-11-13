@@ -332,7 +332,7 @@ import {
 } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { chargeDeploys, deployPools } from './local-deploy.js';
-import { analyzePlayer, DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
+import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from './player.js';
 import { gameProfile, type GameProfile, type ProfilePlayer } from './profile.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
@@ -488,8 +488,13 @@ export interface PlanInput {
   board: BoardState;
   /** My player id. */
   me: number;
-  /** Armies to deploy this turn (see {@link incomeFor}). */
+  /** Armies to deploy this turn (see {@link incomeFor}), card armies included. */
   income: number;
+  /**
+   * The part of `income` that comes from this turn's card plays (Reinforcement): it is not
+   * earned again next turn, so `expected.nextIncome` leaves it out. Default 0.
+   */
+  cardArmies?: number;
   /**
    * The same player's view one turn earlier, when known: enemy stacks next to me
    * that grew since then project their growth into next turn's threat.
@@ -857,14 +862,12 @@ export function enemyDeployEstimates(
   return players.map((playerId) => {
     // Its visible territories are a lower bound on what it holds, so on its
     // per-territory income too.
-    let held = 0;
-    for (const p of owner.values()) if (p === playerId) held++;
+    const theirs = new Set<number>();
+    for (const [t, p] of owner) if (p === playerId) theirs.add(t);
+    const held = theirs.size;
     const base = territoryIncome(held, minimum, per);
-    let bonusIncome = 0;
-    for (const b of g.map.bonuses) {
-      const ts = bonusTerritories(g, b.id);
-      if (ts.length && ts.every((t) => owner.get(t) === playerId)) bonusIncome += b.value;
-    }
+    // The one income rule (#85) over what it visibly holds; `bonusIncome` is what it adds to the base.
+    const bonusIncome = boardIncome(g, theirs, { base: minimum, per }).total - base;
     let adjacent = 0;
     let any = 0;
     for (const [t, p] of owner) {
@@ -946,9 +949,16 @@ export function defaultEnemyDeploy(
   );
 }
 
-/** This turn's income from the existing income code (max(base, per-territory) + held bonuses). */
+/**
+ * This turn's income on the board, cards aside: {@link boardIncome} over the territories `me`
+ * holds. warapp_plan_turn and warapp_submit_turn both use it (plus the armies of the card
+ * plays in their orders), so the plan's deploy total is the total the submit check requires.
+ */
 export function incomeFor(g: MapGraph, board: BoardState, me: number, settings?: GameSettings): number {
-  return analyzePlayer(g, board, me, settings).income.total;
+  const held = new Set<number>();
+  for (const t of board.territories)
+    if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.owner.playerId === me) held.add(t.territoryId);
+  return boardIncome(g, held, incomeRules(settings)).total;
 }
 
 interface Target {
@@ -1062,6 +1072,14 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
   const mine = [...state.keys()].filter(isMine).sort(byNum);
   const mineSet = new Set(mine);
+  // Next turn's income (#85): this turn's, less its card armies, moved by what the one income rule
+  // ({@link boardIncome}) says the holdings `after` change — bonuses completed (negative ones
+  // too), per-territory armies, the floor at 0.
+  const incomeRulesNow = { base: baseIncome, per: s.bonusArmyPer ?? 0 };
+  const boardIncomeNow = boardIncome(g, mineSet, incomeRulesNow).total;
+  const cardArmies = Math.max(0, Math.floor(input.cardArmies ?? 0));
+  const incomeAfter = (after: ReadonlySet<number>) =>
+    Math.max(0, income - cardArmies + boardIncome(g, after, incomeRulesNow).total - boardIncomeNow);
   const armiesOf = (id: number) => state.get(id)?.armies ?? 0;
   /** The armies the special units on `id` fight as (a commander: {@link COMMANDER_STRENGTH}). */
   const unitsAt = (id: number) => specialUnitStrength(state.get(id)?.specialUnits);
@@ -1110,7 +1128,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       profile,
       deploys: [],
       moves: [],
-      expected: { captures: [], bonusesCompleted: [], nextIncome: income },
+      expected: { captures: [], bonusesCompleted: [], nextIncome: Math.max(0, income - cardArmies) },
       warnings,
       rationale,
       enemyDeploy,
@@ -2066,11 +2084,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       })
       .sort((a, b) => a.id - b.id);
     if (!completes.length) return true;
-    const gained = g.map.bonuses.reduce((sum, b) => {
-      const ts = bonusTerritories(g, b.id);
-      return ts.length && ts.every((x) => after.has(x)) && !ts.every((x) => mineSet.has(x)) ? sum + b.value : sum;
-    }, 0);
-    const nextIncome = income + gained;
+    const nextIncome = incomeAfter(after);
     const spare = Math.max(0, budget - reserve);
     const stays = (m: number) => {
       if (mineSet.has(m)) return avail.get(m)! + guard + (incoming.get(m) ?? 0);
@@ -3518,7 +3532,6 @@ export function planTurn(input: PlanInput): TurnPlan {
     warnings.push(notCompleted.get(id)!.warning);
     rationale.push(notCompleted.get(id)!.why);
   }
-  const gained = completed.reduce((sum, id) => sum + g.bonusById.get(id)!.value, 0);
 
   // Issue #69, second point: several borders facing one opponent are each sized for its whole
   // deploy. That is each border's worst case — the opponent picks where to land after I
@@ -3544,7 +3557,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       .sort((a, b) => a[0] - b[0])
       .map(([territoryId, armies]) => ({ territoryId, armies })),
     moves,
-    expected: { captures: [...captured].sort(byNum), bonusesCompleted: completed, nextIncome: income + gained },
+    expected: { captures: [...captured].sort(byNum), bonusesCompleted: completed, nextIncome: incomeAfter(after) },
     warnings,
     rationale,
     enemyDeploy,

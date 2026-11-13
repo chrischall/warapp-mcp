@@ -94,6 +94,40 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   number. The live board (`GetLatestGameInfo`) carries no income figure — the client computes it
   from the standing — so the authoritative number is the game's "armies per turn".
 
+## Income — overlapping, negative and superbonuses — verified from the bundle (#85)
+
+- Rule, read from the client bundle's per-player income function (read-only): after the base /
+  per-territory armies above, it walks **every bonus on the map** and asks whether this player
+  owns it: a bonus is owned when **all of its territories** belong to one player (any territory
+  unowned, neutral or fogged → nobody). Each owned bonus adds its game value once — the game's
+  `OverriddenBonuses` value when set, else the map's — **whatever other bonuses it overlaps**:
+  a territory in five held bonuses pays all five, and a single-territory "(hidden)" bonus is a
+  bonus like any other. There is no superbonus term: a superbonus is one more bonus over all its
+  member territories (`bonusTerritories` flattens member bonuses; a member id that is also a
+  territory id is the territory).
+- **Negative bonuses** are summed apart and subtracted after the positives (and after the base
+  top-up): `income = max(base, floor(T / per)) + Σ positive held − Σ |negative held|`, and the
+  subtraction **floors at 0** (subtracting at least the total zeroes it). 0-value bonuses add
+  nothing. Under Local Deployment the positive bonuses become pools and the negative total is
+  taken from the free armies and the pools a little at a time (not modelled: `deployPools`
+  takes the net income, so its anywhere pool absorbs the negatives first).
+- Then cities, the army cap, Sanctions, and **last the Reinforcement card armies** (added after
+  the 0 floor, so a card always pays in full).
+- Implemented once, in `boardIncome` (`src/analysis/player.ts`): `incomeFor` (warapp_plan_turn and
+  warapp_submit_turn's deploy check), `analyzePlayer` (warapp_analyze_board), the planner's
+  `expected.nextIncome` and per-opponent enemy estimate, and the pick advisor's simulated budget.
+- **#85 (plan 76 vs submit 58, then 98 vs 80), deduced from the code (not re-checked live):** both tools already shared `incomeFor`; the
+  constant gap is the Reinforcement card. `warapp_plan_turn` plays every Reinforcement card it can
+  value and counts its armies in `income`, with the card play in `orders`; submit counts card
+  armies only for the card plays in the orders it is given. Orders built from the plan's deploys
+  without its card order (an overridden plan) carried the card's 18 armies with no card play, so
+  submit (and war.app) wanted 58 — and the card, still unplayed, did the same on the next turn.
+  Now plan_turn's warnings say how much of `income` is the card's, the submit refusal names an
+  unplayed Reinforcement card whose armies explain the surplus, and the planner's next income
+  leaves out this turn's card armies (`PlanInput.cardArmies`); the planner had also counted them
+  again in `expected.nextIncome`. The bundle check above also led to two model fixes: the 0 floor,
+  and the pick advisor counting negative bonuses and superbonuses in its budget.
+
 ## Overridden bonus values (`OverriddenBonuses`) — verified (#62)
 
 - Meaning (live, 2026-11-12): a Local Deployment game, base 2, overrode two single-territory

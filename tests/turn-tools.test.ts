@@ -7,6 +7,9 @@ import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.
 import { normalizeMap } from '../src/normalize.js';
 import { AHEAD_PRESSURE_FACTOR, PRESSURE_FACTOR } from '../src/analysis/planner.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
+import { overlapRawMap } from './analysis/helpers.js';
+import { buildGraph } from '../src/analysis/graph.js';
+import { boardIncome } from '../src/analysis/player.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
@@ -1537,5 +1540,79 @@ describe('No-Split in the turn tools (G3, issue #31)', () => {
     );
     expect(ok.confirmToken).toEqual(expect.any(String));
     expect(sent).toEqual([]);
+  });
+});
+
+describe('Income on an overlapping-bonus map (#85)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  // Synthetic: tests/analysis/helpers.ts overlapRawMap. Ann holds 1–5: base 5, + North 4, East 3,
+  // Realm 5, Hidden 3 (+1), − Hidden 1 (2), Hidden 2 (1) = 15 (war.app's client rule, hand-computed).
+  const OVERLAP_BOARD: SyntheticTerritory[] = [
+    { id: 1, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+    { id: 2, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+    { id: 3, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+    { id: 4, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+    { id: 5, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+    { id: 6, fogLevel: 1, owner: BOB.inGame, armies: 4 },
+    { id: 7, fogLevel: 1, owner: BOB.inGame, armies: 4 },
+    { id: 8, fogLevel: 1, owner: 0, armies: 2 },
+  ];
+  const BOARD_INCOME = 15;
+  const R1 = '0123456789abcdef0123456789abcdef';
+  const overlapGame = () => game('Playing', { map: overlapRawMap(), settings: modelledSettings() });
+  const withHand = (hand: SyntheticCard[]) => () =>
+    ({
+      body: (w) => writeLatestGameInfo(w, OVERLAP_BOARD, [ANN.inGame, BOB.inGame], { [ANN.inGame]: hand }),
+    }) satisfies Partial<ReplyFrame>;
+
+  it("plan_turn's income is the hand-computed rule, and its orders pass submit_turn's deploy check", async () => {
+    h = await liveHarness({ feed: [overlapGame()], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(OVERLAP_BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(BOARD_INCOME);
+    expect(p.deploys.reduce((s, d) => s + d.armies, 0)).toBe(BOARD_INCOME);
+    const preview = payload<{ confirmToken?: string }>(
+      await h.call('warapp_submit_turn', { game_id: GAME, orders: p.orders }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
+  });
+
+  it('with a Reinforcement card: the plan plays it, says so, and its orders pass; without the card play the check names it', async () => {
+    h = await liveHarness({
+      feed: [overlapGame()],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: withHand([{ id: R1, type: 1, armies: 4 }]) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(BOARD_INCOME + 4);
+    expect(p.deploys.reduce((s, d) => s + d.armies, 0)).toBe(BOARD_INCOME + 4);
+    expect(p.warnings.join('\n')).toMatch(/includes 4 armies from the Reinforcement card/);
+    // Next turn's income does not count this turn's card again: the rule on next turn's holdings.
+    const after = new Set([1, 2, 3, 4, 5, ...p.expected.captures.map((c) => c.id)]);
+    expect(p.expected.nextIncome).toBe(boardIncome(buildGraph(normalizeMap(overlapRawMap())), after, { base: 5, per: 0 }).total);
+    const ok = payload<{ confirmToken?: string }>(
+      await h.call('warapp_submit_turn', { game_id: GAME, orders: p.orders }),
+    );
+    expect(ok.confirmToken).toEqual(expect.any(String));
+    // The plan's deploys without its card play: refused, and the hint says why.
+    const noCard = p.orders.filter((o) => o.kind !== 'card');
+    const bad = await h.call('warapp_submit_turn', { game_id: GAME, orders: noCard });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toMatch(new RegExp(`your income is ${BOARD_INCOME} this turn`));
+    expect(textOf(bad)).toMatch(/Reinforcement card .*4 armies.*not played/);
+    // Deploying the board income without the card is accepted (the card stays in hand).
+    const plain = payload<{ confirmToken?: string }>(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [{ kind: 'deploy', territory: 5, armies: BOARD_INCOME }],
+      }),
+    );
+    expect(plain.confirmToken).toEqual(expect.any(String));
+  });
+
+  it('analyze_board reports the same income', async () => {
+    h = await liveHarness({ feed: [overlapGame()], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(OVERLAP_BOARD) }) });
+    const res = await h.call('warapp_analyze_board', { game_id: GAME, player: 'Ann' });
+    expect(res.isError).toBeFalsy();
+    expect(payload<{ income: { total: number } }>(res).income.total).toBe(BOARD_INCOME);
   });
 });
