@@ -26,6 +26,17 @@ export interface TerritoryState {
   armies: number | null;
   /** The feed's fog level for this territory (e.g. `Visible`, `Fogged`), when sent. */
   fogLevel?: string;
+  /** Special units standing here (live board only); absent when there are none. */
+  specialUnits?: BoardSpecialUnit[];
+}
+
+/** A special unit on a territory: a commander, a boss or a custom unit. */
+export interface BoardSpecialUnit {
+  kind: 'commander' | 'boss' | 'custom' | 'unknown';
+  /** The unit's GUID. */
+  id: string;
+  /** Its owner, keyed like `TerritoryOwner.playerId` (GameFeed id when known). */
+  playerId: number;
 }
 
 export interface BoardState {

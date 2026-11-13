@@ -226,6 +226,26 @@ fetchproxy bridge, so the request runs inside the signed-in tab:
 `TerritoryStanding`: territory id, owner, `Armies { count, fogged, specialUnits }`, fog level.
 Owner `0` = neutral, `-2` = available to pick, otherwise an in-game player id.
 
+**Special units (from the bundle, #61; the commander layout matches a live standing decoded
+for the issue).** `Armies` is read as `bool fogged, int32 count`, then — protocol ≥ 107 — a
+`byte` unit count and that many `SpecialUnit`s (count 0 = none); the reader builds it through
+its constructor (`new Armies(count, units, fogged)`), so the decoded fields are fogged, count,
+units. Each `SpecialUnit` is a `byte` tag, the subclass's own fields, then the shared base
+fields `GUID id, int32 ownerId` (in-game id):
+
+| Tag | Class | Own fields before the base |
+|---|---|---|
+| 1 | `Commander` | none |
+| 2 | `Boss1` | int32 health (400 at creation) |
+| 3 | `Boss2` | int32 |
+| 4 | `Boss3` | int32 |
+| 5 | `Boss4` | int32 health |
+| 6 | `CustomSpecialUnit` | bool present + int32, string metadata |
+
+Any other tag makes the client throw "Unexpected token". The board reader takes the kind from
+the class name and the GUID and owner from the last two fields; a fogged territory's units
+are not reported.
+
 **Player ids.** GameFeed and the invite token give a player's id wrapped in two leading
 and two trailing check digits; the in-game id is the middle: `id[2:-2]` (e.g. a token
 `AB1234567CD` → `1234567`). The digits vary per player — do not assume a fixed `64…16`.

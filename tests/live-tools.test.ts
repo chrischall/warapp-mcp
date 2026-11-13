@@ -135,12 +135,50 @@ describe('warapp_get_live_board', () => {
       armies: 6,
       fogged: false,
       fogLevel: 'Visible',
+      specialUnits: [],
     });
     expect(territories[4]).toMatchObject({ id: 135, owner: 'fogged', ownerId: -1, armies: null, fogged: true, fogLevel: 'Fogged' });
     const players = p.players as Array<Record<string, unknown>>;
     expect(players[0]!.inGameId).toBe(ANN.inGame);
     expect(players[2]!.inGameId).toBeNull();
     expect(p).not.toHaveProperty('counts');
+  });
+
+  const CMDR_ANN = '0123456789abcdef0123456789abcdef';
+  const CMDR_BOB = 'fedcba9876543210fedcba9876543210';
+  const COMMANDER_BOARD: SyntheticTerritory[] = [
+    { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 15, units: [{ kind: 'commander', id: CMDR_ANN, owner: ANN.inGame }] },
+    { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+    { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 0, units: [{ kind: 'commander', id: CMDR_BOB, owner: BOB.inGame }] },
+    {
+      id: 157,
+      fogLevel: 1,
+      owner: BOB.inGame,
+      armies: 2,
+      units: [{ kind: 'boss', id: '00112233445566778899aabbccddeeff', owner: BOB.inGame, health: 400 }],
+    },
+  ];
+
+  it('compact: a commander flag naming its owner on the territory it stands on', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(COMMANDER_BOARD) }) });
+    const p = payload(await h.call('warapp_get_live_board', { game_id: GAME }));
+    const territories = p.territories as Array<Record<string, unknown>>;
+    expect(territories[0]).toEqual({ id: 159, name: mapName(159), owner: 'Ann', armies: 15, commander: 'Ann' });
+    expect(territories[1]).not.toHaveProperty('commander');
+    expect(territories[2]).toMatchObject({ id: 158, owner: 'Bob', armies: 0, commander: 'Bob' });
+    expect(territories[3]).not.toHaveProperty('commander');
+  });
+
+  it('full: every special unit with kind, GUID and owner', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(COMMANDER_BOARD) }) });
+    const p = payload(await h.call('warapp_get_live_board', { game_id: GAME, view: 'full' }));
+    const territories = p.territories as Array<Record<string, unknown>>;
+    expect(territories[0]!.specialUnits).toEqual([{ kind: 'commander', id: CMDR_ANN, owner: 'Ann', ownerId: ANN.inGame }]);
+    expect(territories[1]!.specialUnits).toEqual([]);
+    expect(territories[2]!.specialUnits).toEqual([{ kind: 'commander', id: CMDR_BOB, owner: 'Bob', ownerId: BOB.inGame }]);
+    expect(territories[3]!.specialUnits).toEqual([
+      { kind: 'boss', id: '00112233445566778899aabbccddeeff', owner: 'Bob', ownerId: BOB.inGame },
+    ]);
   });
 
   it('labels an unlisted owner and an unknown negative owner', async () => {

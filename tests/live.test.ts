@@ -121,6 +121,128 @@ describe('readLiveStanding', () => {
   });
 });
 
+describe('special units', () => {
+  const CMDR_A = '0123456789abcdef0123456789abcdef';
+  const CMDR_B = 'fedcba9876543210fedcba9876543210';
+  const BOSS = '00112233445566778899aabbccddeeff';
+  const CUSTOM = 'ffeeddccbbaa99887766554433221100';
+
+  it('reads a commander with its GUID and in-game owner, through the Armies constructor', () => {
+    const r = body(
+      [
+        { id: 7, fogLevel: 1, owner: 123456, armies: 15, units: [{ kind: 'commander', id: CMDR_A, owner: 123456 }] },
+        { id: 8, fogLevel: 1, owner: 765432, armies: 0, units: [{ kind: 'commander', id: CMDR_B, owner: 765432 }] },
+        { id: 9, fogLevel: 1, owner: 0, armies: 2 },
+      ],
+      [123456],
+    );
+    expect(readLiveStanding(bundle, r)).toEqual([
+      {
+        territoryId: 7,
+        fogLevel: 1,
+        fogged: false,
+        owner: 123456,
+        armies: 15,
+        specialUnits: [{ kind: 'commander', id: CMDR_A, owner: 123456 }],
+      },
+      {
+        territoryId: 8,
+        fogLevel: 1,
+        fogged: false,
+        owner: 765432,
+        armies: 0,
+        specialUnits: [{ kind: 'commander', id: CMDR_B, owner: 765432 }],
+      },
+      { territoryId: 9, fogLevel: 1, fogged: false, owner: 0, armies: 2 },
+    ]);
+    expect(r.remaining).toBe(0);
+  });
+
+  it('names bosses and custom units by kind, the owner always the last field', () => {
+    const r = body([
+      {
+        id: 3,
+        fogLevel: 1,
+        owner: 123456,
+        armies: 4,
+        units: [
+          { kind: 'boss', id: BOSS, owner: 123456, health: 400 },
+          { kind: 'custom', id: CUSTOM, owner: 123456, power: 9, name: 'Synthetic' },
+          { kind: 'custom', id: CMDR_B, owner: 123456, power: null, name: 'Other' },
+          { kind: 'commander', id: CMDR_A, owner: 123456 },
+        ],
+      },
+    ]);
+    expect(readLiveStanding(bundle, r)![0]!.specialUnits).toEqual([
+      { kind: 'boss', id: BOSS, owner: 123456 },
+      { kind: 'custom', id: CUSTOM, owner: 123456 },
+      { kind: 'custom', id: CMDR_B, owner: 123456 },
+      { kind: 'commander', id: CMDR_A, owner: 123456 },
+    ]);
+    expect(r.remaining).toBe(0);
+  });
+
+  it('a fogged territory reports no units', () => {
+    const out = readLiveStanding(
+      bundle,
+      body([{ id: 8, fogLevel: 4, owner: -1, armies: 0, fogged: true, units: [{ kind: 'commander', id: CMDR_A, owner: 765432 }] }]),
+    );
+    expect(out![0]).not.toHaveProperty('specialUnits');
+  });
+
+  const reading = (unit: unknown) => {
+    const info = {
+      $type: 'L',
+      s: {
+        $type: 'warlight.shared.GameStanding',
+        t: [
+          [
+            3,
+            {
+              $type: 'warlight.shared.TerritoryStanding',
+              a: 1,
+              b: 3,
+              c: { $type: 'warlight.shared.Armies', f: false, n: 3, u: [unit] },
+              d: 5,
+            },
+          ],
+        ],
+      },
+    };
+    const fake: ClassReader = { readClass: () => info };
+    const w = new Writer();
+    w.bool(true);
+    return () => readLiveStanding(fake, new Reader(w.bytes()));
+  };
+
+  it('an unrecognised unit class is kind unknown, keeping its type name', () => {
+    expect(reading({ $type: 'warlight.shared.Boss9', x: 1, g: CMDR_A, o: 5 })()![0]!.specialUnits).toEqual([
+      { kind: 'unknown', type: 'warlight.shared.Boss9', id: CMDR_A, owner: 5 },
+    ]);
+  });
+
+  it('rejects a unit without a GUID and owner rather than guessing', () => {
+    expect(reading({ $type: 'warlight.shared.Commander', g: CMDR_A })).toThrow(/special unit/);
+    expect(reading({ $type: 'warlight.shared.Commander', o: 5, g: CMDR_A })).toThrow(LiveBoardFormatError);
+    expect(reading(7)).toThrow(/special unit/);
+  });
+
+  it('BoardState carries the units, owners keyed by GameFeed id', () => {
+    const me = player('3312345644', 'Me');
+    const board = boardStateFromLive(
+      [
+        { territoryId: 1, fogLevel: 1, fogged: false, owner: 123456, armies: 5, specialUnits: [{ kind: 'commander', id: CMDR_A, owner: 123456 }] },
+        { territoryId: 2, fogLevel: 1, fogged: false, owner: 4242, armies: 0, specialUnits: [{ kind: 'commander', id: CMDR_B, owner: 4242 }] },
+        { territoryId: 3, fogLevel: 1, fogged: false, owner: 0, armies: 2 },
+      ],
+      me,
+    );
+    expect(board.territories[0]!.specialUnits).toEqual([{ kind: 'commander', id: CMDR_A, playerId: 3312345644 }]);
+    expect(board.territories[1]!.specialUnits).toEqual([{ kind: 'commander', id: CMDR_B, playerId: 4242 }]);
+    expect(board.territories[2]).not.toHaveProperty('specialUnits');
+  });
+});
+
 describe('toBoardState', () => {
   it('keys players by GameFeed id and names every owner kind', () => {
     const players = [player('3312345644', 'Ann')];

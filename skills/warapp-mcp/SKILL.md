@@ -106,7 +106,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   `warapp_get_game`; never resend blindly. Other players see the results.
 - **"Show me the board" / "what can I pick?"** → `warapp_get_live_board`: every territory with
   its owner (player name, `neutral`, or `pickable` during picks), armies and fog, read through
-  the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game.
+  the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game. In a
+  Commanders game a territory's `commander` names whose commander stands there (`full` lists
+  every special unit); losing your commander eliminates you.
 - **"What should I pick?"** → `warapp_plan_picks`, then `warapp_submit_picks` once the user agrees.
   Picking stage only, read-only: a ranked pick list by name and id — a compact primary group of the
   territory limit and a disjoint fallback — with each pick's reasons and `submitPicks` (pass its
