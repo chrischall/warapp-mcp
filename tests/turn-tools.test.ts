@@ -1734,6 +1734,49 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
   });
 });
 
+describe('the submit preview sizes each attack (#130)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  const FOUR = BOARD.map((t) => (t.id === 157 ? { ...t, armies: 4 } : t));
+
+  it('lists each attack\'s expected kills and win chance, and marks one that cannot capture', async () => {
+    const settings = { ...modelledSettings(), OffensiveKillRate: 30 };
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(FOUR) }) });
+    const preview = payload<{ confirmToken: string; preview: { attacks?: Array<Record<string, unknown>>; warnings?: string[] } }>(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 161, to: 157, armies: 7 },
+        ],
+      }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    expect(preview.preview.attacks).toEqual([
+      { from: { id: 161, name: mapName(161) }, to: { id: 157, name: mapName(157) }, armies: 7, defenders: 4, expectedKills: 2.1, winChance: 0, cannotCapture: true },
+    ]);
+    expect(preview.preview.warnings?.join('\n')).toMatch(/cannot capture/);
+  });
+
+  it('a sure capture carries no warning; a transfer and a fogged target are not listed', async () => {
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const preview = payload<{ preview: { attacks?: Array<Record<string, unknown>> } }>(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 161, to: 157, armies: 5 },
+          { kind: 'move', from: 161, to: 159, armies: 1 },
+          { kind: 'move', from: 159, to: 135, armies: 2 },
+        ],
+      }),
+    );
+    expect(preview.preview.attacks).toEqual([
+      { from: { id: 161, name: mapName(161) }, to: { id: 157, name: mapName(157) }, armies: 5, defenders: 2, expectedKills: 3, winChance: 1 },
+    ]);
+    expect(JSON.stringify(preview)).not.toMatch(/cannot capture/);
+  });
+});
+
 describe('Multi-Attack in the turn tools (#130)', () => {
   const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
   const map = normalizeMap(lobbyFixture().map);

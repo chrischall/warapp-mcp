@@ -25,7 +25,11 @@ import {
 } from '../cards.js';
 import {
   chargeDeploys,
+  DEFAULT_OFFENSIVE_KILL_RATE,
   deployPools,
+  expectedKills,
+  specialUnitStrength,
+  winChance,
   incomeFor,
   deployCheckUncertainties,
   overrideUncertainties,
@@ -435,6 +439,59 @@ export function validateTurn(args: {
     }
   }
   return { warnings };
+}
+
+/** One attack in the submit preview, sized against the defenders standing there now (#130). */
+export interface AttackSize {
+  from: { id: number; name: string };
+  to: { id: number; name: string };
+  armies: number;
+  /** Visible armies on the target at the start of the turn, a commander counted as {@link COMMANDER_STRENGTH}. */
+  defenders: number;
+  /** The luck-free kills of these armies at the game's offensive kill rate. */
+  expectedKills: number;
+  /** The exact chance of capturing them (kill rates, luck, rounding); deploys there this turn are not counted. */
+  winChance: number;
+  cannotCapture?: true;
+}
+
+/**
+ * Each move into a territory that is not mine and is visible, sized against what stands there
+ * now: a transfer, a fogged target and a target an earlier move captures are left out.
+ */
+export function attackSizes(
+  board: readonly LiveTerritory[],
+  myInGameId: number,
+  moves: ReadonlyArray<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }>,
+  settings: PlannerSettings,
+): AttackSize[] {
+  const standing = new Map(board.map((t) => [t.territoryId, t]));
+  const off = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const out: AttackSize[] = [];
+  const entered = new Set<number>();
+  for (const m of moves) {
+    const t = standing.get(m.to.id);
+    const attack = t !== undefined && !t.fogged && t.owner !== myInGameId && !entered.has(m.to.id);
+    entered.add(m.to.id);
+    if (!attack) continue;
+    const defenders = (t.armies ?? 0) + specialUnitStrength(t.specialUnits);
+    const chance = winChance(m.armies, defenders, {
+      ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
+      ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
+      ...(settings.luckModifier !== undefined ? { luck: settings.luckModifier } : {}),
+      ...(settings.roundingMode !== undefined ? { rounding: settings.roundingMode } : {}),
+    });
+    out.push({
+      from: m.from,
+      to: m.to,
+      armies: m.armies,
+      defenders,
+      expectedKills: Math.round(expectedKills(m.armies, off) * 10) / 10,
+      winChance: Math.round(chance * 1000) / 1000,
+      ...(chance === 0 ? { cannotCapture: true as const } : {}),
+    });
+  }
+  return out;
 }
 
 /** The card types warapp_submit_turn can play, by the encoder's name. */
@@ -968,7 +1025,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
             'stack, which war.app moves anyway); under Multi-Attack, a move may go on from a territory an ' +
             'earlier move in the list captures (warapp_plan_turn obeys these and the kill rates). ' +
-            'Always sent as ' +
+            'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance) ' +
+            'and warns about one that cannot capture. Always sent as ' +
             'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
             `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
@@ -1068,6 +1126,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             });
             if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
             if (handUnknown) warnings.push(UNREADABLE_HAND);
+            const attacks = attackSizes(territories, playerId, moves, plannerSettings(game.settings));
+            const hopeless = attacks.filter((a) => a.cannotCapture);
+            if (hopeless.length) {
+              warnings.push(
+                `${hopeless.map((a) => `${label(a.from)} → ${label(a.to)}`).join(', ')}: ${hopeless.length === 1 ? 'this attack' : 'these attacks'} ` +
+                  'cannot capture against the armies there now at this game\'s kill rates (see `attacks`).',
+              );
+            }
             // Deploys first (as the client sends them), merged per territory.
             const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
             for (const d of deploys) {
@@ -1102,6 +1168,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 willSend: { game: game.id, player: me.name, turn: turnNumber, income, orders: named },
                 preview: {
                   note: 'These orders reach the game; once the turn resolves, other players see the results.',
+                  ...(attacks.length ? { attacks } : {}),
                   ...(warnings.length ? { warnings } : {}),
                 },
               },
