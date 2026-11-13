@@ -302,3 +302,11 @@ describe('planPicks — commanders (#129)', () => {
     expect(p.rationale.join(' ')).toMatch(/commander/i);
   });
 });
+
+describe('planPicks — completion turns, per pick and per group (#129)', () => {
+  it('says a pick’s reasons are its opening alone and a group’s bonuses the joint one', () => {
+    const g = mkGraph([[1, 2], [2, 3]], [{ id: 100, name: 'Trio', value: 3, territoryIds: [1, 2, 3] }]);
+    const p = plan({ graph: g, pickable: [1, 3], territoryLimit: 2, maxPicks: 2 });
+    expect(p.rationale.join(' ')).toMatch(/reasons are its opening alone.*joint opening/);
+  });
+});

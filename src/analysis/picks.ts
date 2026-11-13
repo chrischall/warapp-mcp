@@ -1004,6 +1004,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       `${pickArmies} starting armies, ${baseIncome} base income${ctx.bonusArmyPer > 0 ? ` (or 1 per ${ctx.bonusArmyPer} territories when more)` : ''}, ` +
       `capture costs at ${off}/${def} kill rates against the neutrals' real sizes; ` +
       `armies attack only from a territory held at the start of the turn that borders the target, topped up by that turn's deploys.`,
+    `A pick's reasons are its opening alone (a fallback pick's with the primary taken); a group's bonuses are its picks' joint opening, so one bonus can complete on different turns in the two.`,
     `Bonuses are weighted by defensibility (fewer entry points is better${hardness > 1 ? '; attacks here are dearer than at 60/70, so this weighs more' : ''}).`,
     contestWeight > 0
       ? `With ${players} players central picks are likely contested: scores drop by up to ${Math.round(contestWeight * 100)}% with centrality, and ` +
