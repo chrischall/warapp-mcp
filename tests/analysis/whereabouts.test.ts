@@ -269,6 +269,7 @@ describe('starts — an encounter moves the belief', () => {
     const l = likelihoods(o);
     expect(l.get(2)).toBeCloseTo(1 / (1 + EXPLAINS_EARLIEST), 10);
     expect(l.get(6)).toBeCloseTo(EXPLAINS_EARLIEST / (1 + EXPLAINS_EARLIEST), 10);
+    expect(l.get(2)!).toBeGreaterThan(2 * l.get(6)!);
   });
 });
 

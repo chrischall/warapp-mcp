@@ -48,7 +48,8 @@ export async function loadAward(
 ): Promise<AwardContext | undefined> {
   if (!dataDir || turn === null || game.players.length < 2) return undefined;
   const record = await readPickRecord(dataDir, game.id, me.id);
-  if (!record) return undefined;
+  // A record that keeps only the pickable territories has no list to read the award from.
+  if (!record?.list) return undefined;
   let reading = record.award;
   if (reading === undefined) {
     // Only the first board shows what was granted: later I hold what I captured, too.
