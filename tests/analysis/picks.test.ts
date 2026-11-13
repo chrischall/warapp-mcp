@@ -39,7 +39,6 @@ function plan(input: Partial<PlanPicksInput> & Pick<PlanPicksInput, 'graph' | 'p
 const scoreOf = (p: PickPlan, id: number) => p.picks.find((x) => x.territoryId === id)!.score;
 const reasonsOf = (p: PickPlan, id: number) => p.picks.find((x) => x.territoryId === id)!.reasons.join(' | ');
 
-/** Every territory in `ids` has another in `ids` within 2 hops (trivially true for one). */
 /** One cluster whose picks link up in steps of at most 2 hops. */
 function compact(g: MapGraph, ids: number[]): boolean {
   if (ids.length < 2) return true;
