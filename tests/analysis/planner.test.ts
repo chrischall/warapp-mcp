@@ -478,9 +478,8 @@ describe('planTurn — value-aware defence', () => {
   });
 
   it('(a) withdraws a conceded border\'s movable armies behind it, first, with Order Priority advice', () => {
-    // (#51: 38 ≤ PAYBACK_TURNS × 4, so the held +4 would pay it back; the 35 income cannot cover it.)
     const p = planTurn({ graph: ag, board: aBoard(15), me: ME, income: 35, settings: STD, options: { goal: 'defend', enemyDeploy: 38 } });
-    expect(p.warnings).toContain('T1 (#1) cannot be held with the 35 armies left to deploy (needs 38, protects +4): conceded');
+    expect(p.warnings).toContain('T1 (#1) cannot be held economically (needs 38, protects +4): conceded');
     expect(p.deploys.find((d) => d.territoryId === 1)).toBeUndefined();
     // Toward the frontier (T2, one step from T3), not into the dead end T5.
     expect(p.moves[0]).toEqual(expect.objectContaining({ from: 1, to: 2, armies: 14, kind: 'transfer' }));
@@ -500,11 +499,9 @@ describe('planTurn — value-aware defence', () => {
   it('(a) never sends idle interior armies into a conceded border', () => {
     // T2 (10 armies) is interior next to the conceded T1: its idle armies never go
     // back into the border the plan gives up (which defend is withdrawing 14 from).
-    // (#51: against the default ~5 the hold is 18, which the held +4 pays back, so the
-    // lesson passes ~38: 38 more than the 35 income.)
     const s = board([mine(1, 15), mine(2, 10), mine(3, 4), neutral(4, 2), mine(5, 1), enemy(9, 50)]);
     for (const goal of ['expand', 'defend', 'balanced'] as const) {
-      const p = planTurn({ graph: ag, board: s, me: ME, income: 35, settings: STD, options: { goal, enemyDeploy: 38 } });
+      const p = planTurn({ graph: ag, board: s, me: ME, income: 35, settings: STD, options: { goal } });
       expect(p.conceded, goal).toEqual([1]);
       expect(p.moves.filter((m) => m.to === 1), goal).toEqual([]);
       // Once T4 falls, the only front left lies past T1, so T2's armies stay put.

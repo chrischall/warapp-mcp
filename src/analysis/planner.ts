@@ -89,15 +89,18 @@
 //     or none (holding some while conceding another breaks it anyway). Its hold cost
 //     is the sum of its borders' (a border shared by two held bonuses counts in both
 //     units' feasibility, and is paid for once). A unit pays for itself when that cost
-//     ≤ PAYBACK_TURNS × its value; one that does not is conceded whole. Rule 1a's
-//     CONCEDE_FACTOR test does not apply to a unit's borders (the unit's test replaces
-//     it). A unit that pays is funded before any capture that completes no bonus
-//     (advances, breaks, other expansion, unless focused): under `defend` with the
+//     ≤ PAYBACK_TURNS × its value and, as rule 1a asks of every border, ≤ CONCEDE_FACTOR
+//     × its worth (waived when a member was just taken from a weak opponent); one that
+//     does not is conceded whole. A unit that pays is funded before any capture that
+//     completes no bonus (advances, breaks, other expansion, unless focused): under `defend` with the
 //     other holds, by worth per army (worth = value + the armies its holds save /
 //     PAYBACK_TURNS); under `balanced` it competes on that score with holds and
 //     completions, and at the first advance or break every pending unit runs first
-//     (with the completions outscoring the weakest of them). It waits for rule 4a's
-//     expansion share only until then. Finishing off (rule 1e) keeps its place before
+//     (with the completions outscoring the weakest of them). A completion that runs
+//     before a pending unit and would leave too little to fund it runs only when its
+//     bonus earns more than the units it starves; otherwise it waits until they are
+//     funded (concede a held bonus only for alternatives that earn more). It waits for
+//     rule 4a's expansion share only until then. Finishing off (rule 1e) keeps its place before
 //     it. A unit the armies left cannot cover is conceded whole ("conceding bonus …:
 //     holding all N threatened borders needs X, more than …"; a one-border unit keeps
 //     rule 1a's warnings). Each border of a conceded unit is then judged alone by rule
@@ -912,8 +915,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     cost: number;
     /** Its value plus the armies its holds save, in income terms. */
     worth: number;
-    /** cost ≤ PAYBACK_TURNS × value. */
-    pays: boolean;
+    /** Why it does not pay for itself, if it does not (see {@link UnitLoss}). */
+    loss: 'payback' | 'factor' | null;
     conceded: boolean;
   }
   const units: Unit[] = [];
@@ -926,13 +929,17 @@ export function planTurn(input: PlanInput): TurnPlan {
       const members = threatened.filter((t) => ts.includes(t.id)).sort((x, y) => x.id - y.id);
       if (!members.length) continue;
       const cost = members.reduce((n, m) => n + m.holdCost, 0);
+      const worth = b.value + members.reduce((n, m) => n + m.have / PAYBACK_TURNS, 0);
+      // It pays back within PAYBACK_TURNS, and (as rule 1a asks of every border) costs at
+      // most CONCEDE_FACTOR × its worth, unless a member was just taken from a weak opponent.
+      const recent = members.some((m) => m.recentFrom !== undefined);
       units.push({
         bonusId: b.id,
         value: b.value,
         members,
         cost,
-        worth: b.value + members.reduce((n, m) => n + m.have / PAYBACK_TURNS, 0),
-        pays: cost <= PAYBACK_TURNS * b.value,
+        worth,
+        loss: cost > PAYBACK_TURNS * b.value ? 'payback' : !recent && cost > CONCEDE_FACTOR * worth ? 'factor' : null,
         conceded: false,
       });
     }
@@ -948,7 +955,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const unitBorders = (u: Unit) =>
     `${u.members.length} threatened border${u.members.length === 1 ? '' : 's'}`;
   /** Why a unit is conceded: it does not pay for itself, or the armies left cannot cover it. */
-  type UnitLoss = { economic: true } | { economic: false; left: number };
+  type UnitLoss = { economic: 'payback' | 'factor' } | { economic: false; left: number };
   /**
    * Concede `u` as a whole, then judge each of its members no other live unit owns on its
    * own merits (`single`, quietly: other bonuses, per-territory income, the stack it saves).
@@ -968,13 +975,18 @@ export function planTurn(input: PlanInput): TurnPlan {
         );
       return;
     }
-    const why = loss.economic
-      ? `more than it pays back in ${PAYBACK_TURNS} turns (${PAYBACK_TURNS} × +${u.value} = ${PAYBACK_TURNS * u.value})`
-      : `more than the ${loss.left} armies left to deploy`;
+    const why =
+      loss.economic === false
+        ? `more than the ${loss.left} armies left to deploy`
+        : loss.economic === 'payback'
+          ? `more than it pays back in ${PAYBACK_TURNS} turns (${PAYBACK_TURNS} × +${u.value} = ${PAYBACK_TURNS * u.value})`
+          : `more than ${CONCEDE_FACTOR} × its worth (~${Math.round(u.worth * 10) / 10})`;
     warnings.push(
       `conceding bonus ${bonusName(u.bonusId)} (+${u.value}): holding all ${u.members.length} threatened borders (${u.members.map((m) => label(m.id)).join(', ')}) needs ${u.cost}, ${why}`,
     );
   };
+  /** The armies `u` may still deploy, for its warning: a one-border unit's room (pools respected). */
+  const leftFor = (u: Unit) => (u.members.length === 1 ? roomAt(u.members[0]!.id) : budget);
   /**
    * Deploy every hold of `u` not yet funded, or nothing: false when they do not all fit.
    * `each` may take over one member's hold (attacking on top of it), given the deploys
@@ -997,8 +1009,15 @@ export function planTurn(input: PlanInput): TurnPlan {
       }
       for (const d of done) undeploy(d.id, d.holdCost);
     }
+    const one = u.members.length === 1;
+    // What this unit deploys itself: a border another unit already holds costs it nothing.
+    const needs = !todo.length
+      ? `${one ? 'is' : 'are'} already held for another bonus`
+      : cost < u.cost
+        ? `need${one ? 's' : ''} ${cost} more (${u.cost - cost} already deployed for another bonus)`
+        : `need${one ? 's' : ''} ${cost} in all`;
     rationale.push(
-      `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: its ${unitBorders(u)} need${u.members.length === 1 ? 's' : ''} ${u.cost} in all (it pays back within ${PAYBACK_TURNS} turns), before any capture that completes no bonus.`,
+      `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: its ${unitBorders(u)} ${needs} (it pays back within ${PAYBACK_TURNS} turns), before any capture that completes no bonus.`,
     );
     let rest = cost;
     for (const m of todo) {
@@ -1016,7 +1035,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     buildUnits();
     if (goal === 'expand')
       for (const u of units)
-        if (u.pays)
+        if (!u.loss)
           warnings.push(
             `goal expand does not defend held bonus ${bonusName(u.bonusId)} (+${u.value}) first: holding its ${unitBorders(u)} needs ${u.cost} (it pays back within ${PAYBACK_TURNS} turns).`,
           );
@@ -1047,9 +1066,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         heldBorders.add(t.id);
       }
     };
-    for (const u of units)
-      if (!u.pays)
-        concedeUnit(u, { economic: true }, single);
+    for (const u of units) if (u.loss) concedeUnit(u, { economic: u.loss }, single);
     type Item = { unit: Unit } | { border: Threatened };
     const items: Item[] = [
       ...units.filter((u) => !u.conceded).map((unit) => ({ unit })),
@@ -1076,7 +1093,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (!heldBorders.has(it.border.id) && !conceded.has(it.border.id)) single(it.border);
         continue;
       }
-      if (!fundUnit(it.unit)) concedeUnit(it.unit, { economic: false, left: budget }, single);
+      if (!fundUnit(it.unit)) concedeUnit(it.unit, { economic: false, left: leftFor(it.unit) }, single);
     }
   };
 
@@ -1528,14 +1545,11 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
 
   // ---- pass 1: complete a bonus this turn (all or nothing) ----
-  const complete = (p: BonusPlan) => {
-    if (!p.completable) return;
-    const todo = p.remaining
-      .filter((t) => !captured.has(t))
-      .sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
-    if (!todo.length) return;
+  /** Snapshot the captures, deploys and notes so far; the result undoes everything since. */
+  const snapshot = () => {
     const snap = {
       budget,
+      anchor,
       deployed: new Map(deployed),
       avail: new Map(avail),
       incoming: new Map(incoming),
@@ -1545,24 +1559,37 @@ export function planTurn(input: PlanInput): TurnPlan {
       rationale: rationale.length,
       warnings: warnings.length,
     };
+    return () => {
+      budget = snap.budget;
+      anchor = snap.anchor;
+      deployed.clear();
+      for (const [k, v] of snap.deployed) deployed.set(k, v);
+      for (const [k, v] of snap.avail) avail.set(k, v);
+      incoming.clear();
+      for (const [k, v] of snap.incoming) incoming.set(k, v);
+      for (const m of moves.splice(snap.moves)) captured.delete(m.to);
+      combined.clear();
+      for (const t of snap.combined) combined.add(t);
+      survivorsAt.clear();
+      for (const [k, v] of snap.survivorsAt) survivorsAt.set(k, v);
+      rationale.length = snap.rationale;
+      warnings.length = snap.warnings;
+    };
+  };
+  const complete = (p: BonusPlan) => {
+    if (!p.completable) return;
+    const todo = p.remaining
+      .filter((t) => !captured.has(t))
+      .sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
+    if (!todo.length) return;
+    const first = moves.length;
+    const restore = snapshot();
     const ok = todo.every((t) => tryCapture(t, `completes bonus ${bonusName(p.bonusId)} (+${p.value})`));
     if (ok) {
-      anchor ??= moves[snap.moves]?.from;
+      anchor ??= moves[first]?.from;
       return;
     }
-    budget = snap.budget;
-    deployed.clear();
-    for (const [k, v] of snap.deployed) deployed.set(k, v);
-    for (const [k, v] of snap.avail) avail.set(k, v);
-    incoming.clear();
-    for (const [k, v] of snap.incoming) incoming.set(k, v);
-    for (const m of moves.splice(snap.moves)) captured.delete(m.to);
-    combined.clear();
-    for (const t of snap.combined) combined.add(t);
-    survivorsAt.clear();
-    for (const [k, v] of snap.survivorsAt) survivorsAt.set(k, v);
-    rationale.length = snap.rationale;
-    warnings.length = snap.warnings;
+    restore();
   };
 
   // ---- pass 2: advance a bonus one capture at a time ----
@@ -2137,12 +2164,13 @@ export function planTurn(input: PlanInput): TurnPlan {
     const waiting: Unit[] = [];
     const fundOrConcede = (u: Unit) => {
       if (u.conceded) return;
-      if (!fundUnit(u, holdAndBreak)) concedeUnit(u, { economic: false, left: budget }, singleNow);
+      if (!fundUnit(u, holdAndBreak)) concedeUnit(u, { economic: false, left: leftFor(u) }, singleNow);
     };
     let unitsDue = false;
+    const unitOf = new Map<Candidate, Unit>();
     for (const u of units) {
       if (u.conceded) continue;
-      candidates.push({
+      const c: Candidate = {
         kind: 'unit',
         score: u.members.some((m) => m.recentFrom !== undefined) ? Infinity : u.worth / u.cost,
         cost: u.cost,
@@ -2164,7 +2192,9 @@ export function planTurn(input: PlanInput): TurnPlan {
           }
           fundOrConcede(u);
         },
-      });
+      };
+      candidates.push(c);
+      unitOf.set(c, u);
     }
     candidates.sort(
       (a, b) =>
@@ -2179,9 +2209,47 @@ export function planTurn(input: PlanInput): TurnPlan {
     // no bonus (an advance or a break, unless focused): at the first such capture, every
     // unit still pending runs first, with the completions that outscore the weakest of them.
     const done = new Set<Candidate>();
+    // Rule 1h.3: a completion that outscores a pending unit per army still must not starve
+    // it. When completing it first leaves too little to fund units it could have, it runs
+    // only if its bonus earns more than those units; otherwise it waits until they are funded.
+    const postponed: Candidate[] = [];
+    const unitNeed = (u: Unit) => u.members.filter((m) => !heldBorders.has(m.id)).reduce((n, m) => n + m.holdCost, 0);
+    /** The units `b` armies fund, taken in order (a unit that does not fit is skipped). */
+    const fundable = (us: Unit[], b: number) =>
+      us.filter((u) => {
+        const need = unitNeed(u);
+        if (need > b) return false;
+        b -= need;
+        return true;
+      });
     const run = (c: Candidate) => {
       done.add(c);
+      const pending =
+        c.kind === 'complete' && !c.focus
+          ? [...waiting, ...candidates.filter((d) => d.kind === 'unit' && !done.has(d)).map((d) => unitOf.get(d)!)].filter(
+              (u) => !u.conceded,
+            )
+          : [];
+      if (!pending.length) return c.run();
+      const before = fundable(pending, budget);
+      const restore = snapshot();
+      const spent = expansionSpent;
+      const left = expansionLeft;
       c.run();
+      const after = new Set(fundable(pending, budget));
+      const starved = before.filter((u) => !after.has(u));
+      const lost = starved.reduce((n, u) => n + u.value, 0);
+      if (!starved.length || c.value > lost) return;
+      restore();
+      expansionSpent = spent;
+      expansionLeft = left;
+      postponed.push(c);
+      rationale.push(
+        `Complete bonus ${bonusName(c.id)} (+${c.value}) only after holding ${starved.map((u) => `${bonusName(u.bonusId)} (+${u.value})`).join(', ')}: completing it first would leave too little to hold ${starved.length === 1 ? 'it' : 'them'}, and it earns no more.`,
+      );
+    };
+    const runPostponed = () => {
+      for (const c of postponed.splice(0)) c.run();
     };
     candidates.forEach((c, i) => {
       if (done.has(c)) return;
@@ -2195,11 +2263,13 @@ export function planTurn(input: PlanInput): TurnPlan {
           for (const d of candidates.slice(i + 1))
             if (!done.has(d) && (d.kind === 'unit' || (d.kind === 'complete' && d.score > bar))) run(d);
         }
+        runPostponed();
       }
       run(c);
     });
     unitsDue = true;
     for (const u of waiting.splice(0)) fundOrConcede(u);
+    runPostponed();
     for (const t of deferred) {
       const room = roomAt(t.id);
       if (t.holdCost > room) concedeUnaffordable(t, room);

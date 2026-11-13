@@ -151,6 +151,38 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
     expect(attacks(p).map((m) => m.to)).toEqual([20]);
   });
 
+  it('(b) under balanced, never concedes the +4 bonus to complete the smaller +3 when the income covers the hold', () => {
+    // Completing Plain (+3 for 4) outscores the unit per army (0.75 against 4.6 / 12), but
+    // completing it first leaves too little to hold Keep (+4): a net loss of 1 a turn.
+    for (const income of [12, 13, 14, 15]) {
+      const p = planB(income);
+      expect(p.conceded, `income ${income}`).toEqual([]);
+      // Each border gets at least its hold (a leftover may top one up).
+      for (const t of [1, 2, 3]) expect(deployedTo(p, t), `income ${income}`).toBeGreaterThanOrEqual(4);
+      expect(deploySum(p), `income ${income}`).toBe(income);
+      expect(p.expected.bonusesCompleted, `income ${income}`).toEqual([]);
+      expect(p.warnings.join('\n'), `income ${income}`).not.toMatch(/conceding/);
+      expect(p.rationale.join('\n'), `income ${income}`).toMatch(
+        /Complete bonus Plain \(#602\) \(\+3\) only after holding Keep \(#601\) \(\+4\)/,
+      );
+    }
+    // With the hold and the completion both affordable, both happen.
+    const both = planB(16);
+    expect(both.conceded).toEqual([]);
+    for (const t of [1, 2, 3]) expect(deployedTo(both, t)).toBe(4);
+    expect(both.expected.bonusesCompleted).toEqual([602]);
+  });
+
+  it('(b) still completes a bonus worth more than the unit it starves', () => {
+    // Plain at +5 earns more than Keep's +4: completing it is worth conceding Keep.
+    const map = keepMap(true);
+    map.bonuses = map.bonuses.map((b) => (b.id === 602 ? { ...b, value: 5 } : b));
+    const p = planTurn({ graph: buildGraph(map), board: BOARD_B, me: ME, income: 12, settings: STD });
+    expect(p.expected.bonusesCompleted).toEqual([602]);
+    expect(p.conceded).toEqual([1, 2, 3]);
+    expect(p.warnings.join('\n')).toMatch(/conceding bonus Keep \(#601\) \(\+4\)/);
+  });
+
   it('(b) concedes the +4 bonus as a unit when its three borders are unaffordable: none is held, the income goes elsewhere', () => {
     const p = planB(9);
     expect(p.conceded).toEqual([1, 2, 3]);
@@ -188,13 +220,43 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
       enemy(11, 2), enemy(12, 2), enemy(13, 2), enemy(14, 2), fogged(15),
     ]);
     const p = planTurn({ graph: buildGraph(map), board: b, me: ME, income: 20, settings: STD });
-    expect(12).toBeGreaterThan(PAYBACK_TURNS * 1);
     expect(p.conceded).toEqual([1, 2, 3, 4]);
     for (const t of [1, 2, 3, 4]) expect(deployedTo(p, t)).toBe(0);
     expect(deployedTo(p, 5)).toBe(20);
     expect(p.warnings.join('\n')).toMatch(
       /conceding bonus Tiny \(#701\) \(\+1\): holding all 4 threatened borders .* needs 12, more than it pays back in 10 turns \(10 × \+1 = 10\)/,
     );
+  });
+
+  it('holds the same four borders once the bonus is worth enough to pay them back', () => {
+    // Tiny at +4: 12 ≤ PAYBACK_TURNS × 4, and 12 ≤ CONCEDE_FACTOR × (4 + 8 / PAYBACK_TURNS).
+    const map = makeMap(
+      [1, 2, 3, 4, 5, 11, 12, 13, 14, 15, 20],
+      [
+        [1, 2], [2, 3], [3, 4], [1, 5], [5, 20],
+        [1, 11], [2, 12], [3, 13], [4, 14],
+        [11, 15], [12, 15], [13, 15], [14, 15],
+      ],
+      [[701, 'Tiny', 4, [1, 2, 3, 4]]],
+    );
+    const b = board([
+      mine(1, 2), mine(2, 2), mine(3, 2), mine(4, 2), mine(5, 3), neutral(20, 1),
+      enemy(11, 2), enemy(12, 2), enemy(13, 2), enemy(14, 2), fogged(15),
+    ]);
+    const p = planTurn({ graph: buildGraph(map), board: b, me: ME, income: 20, settings: STD });
+    expect(12).toBeLessThanOrEqual(PAYBACK_TURNS * 4);
+    expect(p.conceded).toEqual([]);
+    for (const t of [1, 2, 3, 4]) expect(deployedTo(p, t)).toBe(3);
+    expect(p.rationale.join('\n')).toMatch(/Hold bonus Tiny \(#701\) \(\+4\) whole: its 4 threatened borders need 12 in all/);
+  });
+
+  it('concedes a held bonus whose borders fail rule 1a\'s CONCEDE_FACTOR × worth test, even when it pays back', () => {
+    // Reef (+5) of case (a), its border facing ~38 more: 31 ≤ PAYBACK_TURNS × 5, but
+    // 31 > CONCEDE_FACTOR × (5 + 1 / PAYBACK_TURNS). The income covers it; it is not poured in.
+    const p = planA(40, { enemyDeploy: 38 });
+    expect(p.conceded).toEqual([1]);
+    expect(deployedTo(p, 1)).toBe(0);
+    expect(p.warnings.join('\n')).toMatch(/T1 \(#1\) cannot be held economically \(needs \d+, protects \+5\): conceded/);
   });
 
   it('a border shared by two held bonuses is paid for once', () => {
@@ -212,5 +274,93 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
     expect(p.conceded).toEqual([]);
     expect(deployedTo(p, 2)).toBe(8);
     expect(deploySum(p)).toBe(10);
+    // The second unit deploys nothing more for it, and says so.
+    const why = p.rationale.join('\n');
+    expect(why).toMatch(/Hold bonus North \(#801\) \(\+3\) whole: its 1 threatened border needs 8 in all/);
+    expect(why).toMatch(/Hold bonus South \(#802\) \(\+3\) whole: its 1 threatened border is already held/);
+  });
+
+  describe('with Local Deployment', () => {
+    // Case (a) plus Isle (+4) on 4 and 5: its pool may only be deployed on 4 and 5.
+    const map = makeMap(MAP_A.territories.map((t) => t.id), [], []);
+    map.territories = MAP_A.territories;
+    map.bonuses = [...MAP_A.bonuses, { id: 504, name: 'Isle', value: 4, territoryIds: [4, 5], bonusIds: [] }];
+    const g = buildGraph(map);
+    const local = (income: number) =>
+      planTurn({ graph: g, board: BOARD_A, me: ME, income, settings: { ...STD, localDeployments: true } });
+
+    it('holds the unit when its border\'s room covers the hold (Reef pool 5 + anywhere)', () => {
+      // Income 14: Reef 5 and Isle 4 pooled, 5 anywhere: T1 may take 10.
+      const p = local(14);
+      expect(p.conceded).toEqual([]);
+      expect(deployedTo(p, 1)).toBe(8);
+      expect(deploySum(p)).toBe(14);
+    });
+
+    it('concedes it when the room on the border is short, though the income is not', () => {
+      // Income 10: Reef 5, Isle 4, 1 anywhere: T1 may take 6 < 8; Isle's 4 cannot help.
+      const p = local(10);
+      expect(p.conceded).toEqual([1]);
+      expect(deployedTo(p, 1)).toBe(0);
+      expect(deploySum(p)).toBe(10);
+      expect(p.warnings).toContain('T1 (#1) cannot be held with the 6 armies left to deploy (needs 8, protects +5): conceded');
+    });
+
+    it('rolls back a partly deployed unit: none of its borders keeps a deploy', () => {
+      // Case (b) plus Moat (+5) on 30 31 (mine, quiet): income 12 pools Keep 4 and Moat 5,
+      // with 3 anywhere. T1 takes 4 (Keep's pool), then T2 has room for only 3 < 4.
+      const kmap = keepMap(false);
+      kmap.territories = [
+        ...kmap.territories.map((t) => (t.id === 4 ? { ...t, connectedTo: [...t.connectedTo, 30] } : t)),
+        { id: 30, name: 'T30', connectedTo: [4, 31] },
+        { id: 31, name: 'T31', connectedTo: [30] },
+      ];
+      kmap.bonuses = [...kmap.bonuses, { id: 603, name: 'Moat', value: 5, territoryIds: [30, 31], bonusIds: [] }];
+      const kboard = board([...BOARD_B.territories, mine(30, 1), mine(31, 1)]);
+      const run = (localDeployments: boolean) =>
+        planTurn({ graph: buildGraph(kmap), board: kboard, me: ME, income: 12, settings: { ...STD, localDeployments } });
+      // Without pools the 12 covers it.
+      const plain = run(false);
+      expect(plain.conceded).toEqual([]);
+      for (const t of [1, 2, 3]) expect(deployedTo(plain, t)).toBe(4);
+      const p = run(true);
+      expect(p.conceded).toEqual([1, 2, 3]);
+      for (const t of [1, 2, 3]) expect(deployedTo(p, t)).toBe(0);
+      expect(deploySum(p)).toBe(12);
+    });
+  });
+
+  describe('a unit member attacking its only threat on top of its hold', () => {
+    // Twin (+5): 1 2 — mine. T1 (4) faces only T5 (2), a member of the enemy's complete
+    // Den (+4): 5 6 7; T2 (1) faces T9 (2), in no bonus. Each threat is 1 movable + ~5 = 6:
+    // T1 holds with 1 more (5 need 8), T2 with 4 more (5 need 8). Capturing T5 costs 3.
+    const tmap = makeMap(
+      [1, 2, 5, 6, 7, 9],
+      [[1, 2], [1, 5], [5, 6], [6, 7], [2, 9]],
+      [
+        [901, 'Twin', 5, [1, 2]],
+        [902, 'Den', 4, [5, 6, 7]],
+      ],
+    );
+    const tg = buildGraph(tmap);
+    const tboard = board([mine(1, 4), mine(2, 1), enemy(5, 2), enemy(6, 2), enemy(7, 2), enemy(9, 2)]);
+    const twin = (income: number) => planTurn({ graph: tg, board: tboard, me: ME, income, settings: STD });
+
+    it('breaks Den from T1 when the income covers both holds and the capture (1 + 3 + 4)', () => {
+      const p = twin(8);
+      expect(p.conceded).toEqual([]);
+      expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 5]]);
+      expect(deployedTo(p, 2)).toBe(4);
+      expect(deploySum(p)).toBe(8);
+    });
+
+    it('just holds when the capture would eat the hold T2 still needs (7 < 8)', () => {
+      const p = twin(7);
+      expect(p.conceded).toEqual([]);
+      expect(attacks(p).some((m) => m.from === 1)).toBe(false);
+      expect(deployedTo(p, 1)).toBeGreaterThanOrEqual(1);
+      expect(deployedTo(p, 2)).toBe(4);
+      expect(deploySum(p)).toBe(7);
+    });
   });
 });
