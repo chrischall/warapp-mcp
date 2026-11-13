@@ -8,7 +8,7 @@ import { parseGameId } from '../client.js';
 import { activeGameIds } from '../my-games.js';
 import type { Game } from '../normalize.js';
 import type { PushListener } from '../push/listener.js';
-import { gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
+import { currentTurn, gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
@@ -40,15 +40,28 @@ export interface GameCheck {
   /** The turn being played (GameFeed numberOfTurns + 1), or null. */
   turn: number | null;
   waitingOnYou: boolean;
+  /** Set when no turn of mine can come in this game: why (it finished, or my seat is out). */
+  ended?: string;
+}
+
+/** Why no turn of mine can come in `game` any more, or undefined while one still can (#130). */
+export function endedReason(game: Game, playerId: number): string | undefined {
+  if (game.state === 'Finished') return 'The game is finished.';
+  if (!ACTION_STATES.has(game.state)) return undefined;
+  const me = game.players.find((p) => p.id === playerId);
+  if (me?.state !== undefined && me.state !== 'Playing') return `You are out of this game (your state: ${me.state}).`;
+  return undefined;
 }
 
 export function checkOf(game: Game, playerId: number): GameCheck {
+  const ended = endedReason(game, playerId);
   return {
     id: game.id,
     name: game.name ?? null,
     state: game.state,
-    turn: game.numberOfTurns !== undefined && game.numberOfTurns >= 0 ? game.numberOfTurns + 1 : null,
+    turn: currentTurn(game),
     waitingOnYou: isWaitingOn(game, playerId),
+    ...(ended ? { ended } : {}),
   };
 }
 
@@ -76,7 +89,8 @@ export interface WaitOptions {
 }
 
 export interface WaitOutcome {
-  status: 'your_turn' | 'timed_out';
+  /** `game_over`: every watched game finished or has my seat out — no turn is coming (#130). */
+  status: 'your_turn' | 'timed_out' | 'game_over';
   /** The latest view of every game, in the order asked. */
   games: GameCheck[];
   /** Pushes received for these games while waiting. */
@@ -157,7 +171,10 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
       waitedMs: now() - start,
       errors,
     });
+    const allEnded = () => [...latest.values()].every((c) => c.ended !== undefined);
     if ([...latest.values()].some((c) => c.waitingOnYou)) return outcome('your_turn');
+    // Every game ended (finished, or my seat out): no turn can come, so return before watching (#130).
+    if (allEnded()) return outcome('game_over');
     opts.signal?.throwIfAborted();
     const live = [...ids].filter((id) => !TERMINAL_STATES.has(latest.get(id)!.state));
     if (live.length) {
@@ -205,6 +222,7 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
           latest.set(id, c);
           settle(c);
           if (c.waitingOnYou) return outcome('your_turn');
+          if (allEnded()) return outcome('game_over');
           opts.progress?.(now() - start, `Game ${id} updated; not your turn there yet.`);
         } catch (e) {
           errors.push(`Game ${id}: ${e instanceof Error ? e.message : String(e)}`);
@@ -268,7 +286,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
       description: untrustedDescription(
         'Wait until one of the given war.app (Warzone) games is waiting on you — the game is being played or its ' +
           'territories picked, you are still playing, and you have not committed — and return as soon as it is, ' +
-          'or at the timeout (default 300 s, max 1800 s). It checks each game once at the start, then listens to ' +
+          'or at the timeout (default 300 s, max 1800 s) — or at once with `game_over` when every game has finished or ' +
+          'your seat is out (each says why in `ended`). It checks each game once at the start, then listens to ' +
           "war.app's push notifications — over a direct WebSocket while a linked war.app session serves calls, else " +
           'through your signed-in war.app tab (ContextMint Bridge) — and re-checks a game whenever war.app says it ' +
           'changed, and every game after the push socket reconnects. Pass the game ids to watch (1–20), or omit them to watch every game ' +
@@ -363,7 +382,9 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         next:
           out.status === 'your_turn'
             ? 'Plan the turn with warapp_plan_turn (or, while territories are being picked, warapp_get_live_board and warapp_submit_picks).'
-            : st.connected
+            : out.status === 'game_over'
+              ? 'No turn is coming in these games (each finished or your seat is out — see `ended`), so stop watching them.'
+              : st.connected
               ? 'No game needed you before the timeout. Call warapp_wait_for_turn again to keep waiting.'
               : 'No game needed you before the timeout, and the push socket was not connected (no war.app tab paired?), ' +
                 'so only the start was checked. Open and focus a signed-in war.app tab, then retry.',

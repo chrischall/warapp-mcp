@@ -101,6 +101,22 @@ describe('warapp_wait_for_turn', () => {
     expect(h!.calls.every((c) => c.url.includes('GetMap=false'))).toBe(true);
   });
 
+  it('a finished game or an eliminated seat returns at once: no turn is coming (#130)', async () => {
+    await setup([game('Finished')]);
+    const t0 = Date.now();
+    let p = payload(await call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 60 }));
+    expect(p.status).toBe('game_over');
+    expect((p.games as GameCheck[])[0]!.ended).toMatch(/finished/i);
+    expect(p.next).not.toMatch(/again/);
+    expect(Date.now() - t0).toBeLessThan(5000);
+    await h!.harness.close();
+    socket!.close();
+    await setup([game('Playing', { state: 'Eliminated' })]);
+    p = payload(await call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 60 }));
+    expect(p.status).toBe('game_over');
+    expect((p.games as GameCheck[])[0]!.ended).toMatch(/Eliminated/);
+  });
+
   it('waits for a GameUpdated push, re-reads GameFeed, and resolves when it is my turn', async () => {
     const { h, socket } = await setup([COMMITTED(), COMMITTED(), READY()]);
     const pending = call('warapp_wait_for_turn', { game_ids: [String(GAME), GAME], timeout_seconds: 60 });
@@ -358,6 +374,25 @@ describe('waitForTurn', () => {
     expect(fp.listeners()).toBe(0);
   });
 
+  it('stops when the last watched game ends while waiting (#130)', async () => {
+    const fp = fakePush();
+    let n = 0;
+    const pending = waitForTurn({
+      gameIds: [1, 2],
+      timeoutMs: 60_000,
+      push: fp.push,
+      check: async (id) => {
+        n++;
+        return id === 1 || n > 2 ? { ...notReady(id), state: 'Finished', ended: 'The game is finished.' } : notReady(id);
+      },
+    });
+    await until(() => n === 2, 'initial checks');
+    fp.emit(2);
+    const out = await pending;
+    expect(out.status).toBe('game_over');
+    expect(out.games.every((g) => g.ended)).toBe(true);
+  });
+
   it('re-reads every game after a push-socket reconnect (pushes in the gap are lost), then resolves', async () => {
     const fp = fakePush();
     const checks: number[] = [];
@@ -567,6 +602,12 @@ describe('isWaitingOn / checkOf', () => {
     expect(isWaitingOn(g('Playing', { hasCommittedOrders: 'True' }), Number(ANN))).toBe(false);
     expect(isWaitingOn(g('Playing', { state: 'Eliminated' }), Number(ANN))).toBe(false);
     expect(isWaitingOn(g('Playing'), 42)).toBe(false);
+  });
+  it('says when no turn is coming: the game finished or my seat is out (#130)', () => {
+    expect(checkOf(g('Finished'), Number(ANN)).ended).toMatch(/finished/i);
+    expect(checkOf(g('Playing', { state: 'Booted' }), Number(ANN)).ended).toMatch(/Booted/);
+    expect(checkOf(g('Playing'), Number(ANN))).not.toHaveProperty('ended');
+    expect(checkOf(g('WaitingForPlayers'), Number(ANN))).not.toHaveProperty('ended');
   });
   it('reports the turn being played, null before the game starts', () => {
     expect(checkOf(g('Playing'), Number(ANN)).turn).toBe(3);

@@ -214,7 +214,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   privately to one player. Confirm-gated — a message reaches other players and cannot be unsent.
 - **"Tell me when it's my turn"** → `warapp_wait_for_turn` with the game ids to watch (1–20; omit
   them to watch every game of the user's being played or picked; `timeout_seconds` default 300, max 1800): it returns as soon as one is waiting on the user
-  (or at the timeout), woken by war.app's push notifications through the signed-in war.app tab.
+  (or at the timeout; at once with `game_over` when every game finished or the user's seat is out —
+  each game's `ended` says why, so stop watching it), woken by war.app's push notifications through the signed-in war.app tab.
   `warapp_recent_events` lists the pushes this server has seen and whether the socket is
   connected. When it returns a game, go on to `warapp_plan_turn` (or picks).
 - **"How far is X from Y?"** → `warapp_plan_route` with `from` / `to` as a territory id,
