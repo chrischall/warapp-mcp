@@ -26,6 +26,61 @@ the person reviewing the list).
 - No-Split mode — <https://war.app/wiki/No-split_mode>
 - Multi-Attack — <https://war.app/wiki/Multi-attack>
 
+# Turn resolution — `warapp_check_plan`
+
+`src/analysis/turn-sim.ts` carries one turn out from every player's orders, and
+`src/analysis/stress.ts` runs a proposed list of orders against the replies an opponent could
+make with one deploy (`warapp_check_plan`). The rules are the wiki's, read on 2026-11-13 and
+restated here in our own words; each is pinned by a test in `tests/analysis/turn-sim.test.ts`.
+
+- **A battle** — the attackers kill the offensive kill rate × their number, the defenders the
+  defensive kill rate × theirs, both at once, rounded to nearest. The territory is taken when
+  every defender dies and an attacker lives, and all survivors move in; otherwise the survivors
+  stay where they started. When both sides are wiped out the attack fails and one defender
+  stands again. <https://war.app/wiki/Basic_combat>
+- **The guard, and one move per army** — one army stays on every territory unless the game
+  turns that off (an army that arrived this turn can be that guard), and each army attacks or
+  transfers once a turn, so armies that arrived cannot be ordered on.
+  <https://war.app/wiki/Gameplay_Basics>, <https://war.app/wiki/One_Army_Must_Stand_Guard>
+- **Attack or transfer** — decided when the order runs, by who then holds the target: yours or a
+  teammate's is a transfer, anything else an attack. Attack-only does nothing on a friendly
+  target, transfer-only nothing on any other. <https://war.app/wiki/Transfer_Only>,
+  <https://war.app/wiki/Team_Games>
+- **The order of orders** — deployments first, then attacks and transfers interleaved in a
+  zigzag over the turn's move order (1 2 … n, n … 2 1, 1 2 … n). An order that moves no armies
+  takes no slot. <https://war.app/wiki/Move_Order>, <https://war.app/wiki/Turn_phases>
+- **Order Priority** — its player moves first that turn: its first order runs before the
+  others' first, and the rest of the turn is the usual zigzag from there. Two players who both
+  play one cancel out. <https://war.app/wiki/Order_priority_card>
+- **Multi-Attack** — armies may attack any number of times in a turn; armies that transferred
+  are done. <https://war.app/wiki/Multi-attack>
+- **Commanders** — a commander fights as 7 armies, takes damage only after the armies with it,
+  cannot be partly damaged (7 in one battle kills it), and its death eliminates its owner: all
+  it held turns neutral. It moves only when an order takes it along, never onto a teammate's
+  territory, and it is not the army that stands guard (the developer's 2022 update note: to
+  attack out of a commander's territory that holds no armies, deploy two).
+  <https://war.app/wiki/Commanders>,
+  <https://war.app/blog/index.php/2022/10/update-5-21-tanks-mod-improvements-commander-improvements/>
+
+**Assumed, because the wiki does not say** (the result names each one it relied on): an order
+sends what its territory can still move when that is fewer than ordered; an order from a
+territory captured earlier in the turn does nothing; losses on a territory that is attacked
+fall first on the armies that could still move; with the guard off, two sides wiped out in one
+battle still leave one defender. **Not exact** with luck or weighted-random rounding: each
+battle is then resolved at its luck-free, straight-rounded expectation and the result says so.
+**Not modelled:** the Limited Attacks mod (a cap on orders per turn).
+
+**What the stress test tries**, per opponent, with its whole estimated deploy in one place: an
+attack from each stack (its commander with it) on each territory of mine it touches (now, or
+after my own orders); sitting on a territory I attack; and every stack attacking at once, both
+spread over different targets and concentrated on the most valuable. Each is run with me moving
+first and with the opponent moving first unless the first mover is given. The opponents are
+whoever holds a stack on the board, whatever GameFeed says of the player. **Not tried:** stacks
+hidden by fog (armies included), a deploy above the estimate, a split deploy, opponents acting
+together, a chain of attacks under Multi-Attack, and cards other than my own Order Priority —
+so "safe" only ever means safe against these, and when no reply could be tried the answer is
+"nothing tested" (`safe: null`), never "safe".
+
 # Territory picks
 
 ## How picks are granted
