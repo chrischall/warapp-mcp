@@ -47,7 +47,10 @@
 //     at what the opponent could earn on this board: its base income plus every bonus none of
 //     whose territories someone else visibly holds, owner-only included (a warning says when). A rationale line names
 //     the turns compared and the territories counted vs skipped as reveals; the warning
-//     names which source won.
+//     names which source won. Given `tracks` (`trackOpponents` over my board history, S3), an
+//     opponent observed over at least TRACKED_MIN_TURNS turns gets its tracked income (median
+//     of its last three observed turns, floored at base + visible bonuses) in place of the
+//     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
 //     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
 //     enemy territory next to me that was visible then (owner and armies, #69) under the same owner and
@@ -332,6 +335,7 @@
 // the plan is valid with or without multi-attack.
 
 import type { BoardState, TerritoryState } from '../board.js';
+import type { OpponentTrack } from './opponents.js';
 import type { GameSettings } from '../normalize.js';
 import { analyzeBonus, bonusTerritories } from './bonuses.js';
 import {
@@ -360,6 +364,12 @@ export const PAYBACK_TURNS = 10;
 export const WASTELAND_FACTOR = 5;
 /** Floor of the default enemy deploy estimate (a player's base income). */
 export const MIN_ENEMY_DEPLOY = DEFAULT_BASE_INCOME;
+
+/**
+ * Observed turns an opponent track needs before the planner uses its income in place of the
+ * single-turn observed figure (S3).
+ */
+export const TRACKED_MIN_TURNS = 2;
 
 /** Fog reveals named in the observed-deploy rationale before "and N more". */
 const MAX_NAMED_REVEALS = 6;
@@ -524,6 +534,12 @@ export interface PlanInput {
    * observed-deploy rationale names the two turns.
    */
   turn?: number;
+  /**
+   * Opponent tracks over my board history ({@link trackOpponents}, ending on `board`): an
+   * opponent observed over at least {@link TRACKED_MIN_TURNS} turns gets its tracked income in
+   * place of the single-turn observed figure.
+   */
+  tracks?: readonly OpponentTrack[];
   settings?: PlannerSettings;
   options?: PlanOptions;
   /** The game around the board, for the profile (rule 0p). */
@@ -681,8 +697,19 @@ export interface EnemyDeployEstimate {
   observedCap: number | null;
   /** Which territories the observation counted and skipped; `null` without a previous board. */
   observation: DeployObservation | null;
-  /** `'observed'` when the observed figure beat the visible-bonus one (and set the estimate). */
-  source: 'visible' | 'observed';
+  /**
+   * Its tracked income ({@link OpponentTrack.income}) when its track has at least
+   * {@link TRACKED_MIN_TURNS} observed turns; it then replaces `observed` in the estimate.
+   * `null` otherwise.
+   */
+  tracked: number | null;
+  /** The observed turns behind `tracked` (`from` turns, oldest first); empty when `tracked` is `null`. */
+  trackedTurns: number[];
+  /**
+   * `'tracked'` when the tracked income beat the visible-bonus figure, else `'observed'` when the
+   * single-turn observed figure did (only without a usable track), else `'visible'`.
+   */
+  source: 'visible' | 'observed' | 'tracked';
 }
 
 /**
@@ -715,7 +742,7 @@ export function visibleState(t: TerritoryState | undefined): TerritoryState | un
  * `t` when a board shows its owner (a player or a neutral), whatever its armies: visible, or
  * owner-only (light fog); `undefined` when fogged, even under a placeholder owner.
  */
-function ownerShown(t: TerritoryState | undefined): TerritoryState | undefined {
+export function ownerShown(t: TerritoryState | undefined): TerritoryState | undefined {
   if (!t || (t.owner.kind !== 'player' && t.owner.kind !== 'neutral')) return undefined;
   if (t.fogLevel !== undefined && OWNER_HIDDEN_FOG.test(t.fogLevel)) return undefined;
   return t;
@@ -862,6 +889,7 @@ export function enemyDeployEstimates(
   me: number,
   settings: PlannerSettings = {},
   previous?: BoardState,
+  tracks?: readonly OpponentTrack[],
 ): EnemyDeployEstimate[] {
   const owner = new Map<number, number>();
   const armies = new Map<number, number>();
@@ -922,8 +950,19 @@ export function enemyDeployEstimates(
     }
     const observedRaw = observation?.deploy ?? null;
     const observed = observation ? Math.min(observation.deploy, observedCap!) : null;
-    const source = observed !== null && observed > visible ? 'observed' : 'visible';
-    const estimate = source === 'observed' ? observed! : visible;
+    // A track over enough turns replaces the single-turn observed figure (S3).
+    const track = tracks?.find((t) => t.playerId === playerId);
+    const usable = track && track.income !== null && track.turns.length >= TRACKED_MIN_TURNS ? track : undefined;
+    const tracked = usable ? usable.income : null;
+    const source: EnemyDeployEstimate['source'] =
+      tracked !== null
+        ? tracked > visible
+          ? 'tracked'
+          : 'visible'
+        : observed !== null && observed > visible
+          ? 'observed'
+          : 'visible';
+    const estimate = source === 'tracked' ? tracked! : source === 'observed' ? observed! : visible;
     return {
       playerId,
       estimate,
@@ -937,6 +976,8 @@ export function enemyDeployEstimates(
       observedRaw,
       observedCap,
       observation,
+      tracked,
+      trackedTurns: usable ? usable.incomeTurns : [],
       source,
     };
   });
@@ -952,6 +993,7 @@ export function defaultEnemyDeploy(
   me: number,
   settings: PlannerSettings = {},
   previous?: BoardState,
+  tracks?: readonly OpponentTrack[],
 ): number {
   const mineIds = new Set(
     board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me ? [t.territoryId] : [])),
@@ -962,7 +1004,7 @@ export function defaultEnemyDeploy(
     if (!g.territoryById.has(t.territoryId)) continue;
     if (neighborsOf(g, t.territoryId).some((n) => mineIds.has(n))) next.add(t.owner.playerId);
   }
-  return enemyDeployEstimates(g, board, me, settings, previous).reduce(
+  return enemyDeployEstimates(g, board, me, settings, previous, tracks).reduce(
     (m, e) => (next.has(e.playerId) ? Math.max(m, e.estimate) : m),
     MIN_ENEMY_DEPLOY,
   );
@@ -1010,7 +1052,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const baseIncome = Math.max(0, Math.floor(s.baseIncome ?? DEFAULT_BASE_INCOME));
   const opts = input.options ?? {};
   const income = Math.max(0, Math.floor(input.income));
-  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard);
+  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard, input.tracks);
   // ---- 0p. the game profile ----
   const ctx = input.game ?? {};
   const profile = gameProfile({
@@ -1049,7 +1091,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const custom = opts.enemyDeploy !== undefined;
   const enemyDeploy = custom
     ? Math.max(0, Math.floor(opts.enemyDeploy!))
-    : defaultEnemyDeploy(g, board, me, s, input.previousBoard);
+    : defaultEnemyDeploy(g, board, me, s, input.previousBoard, input.tracks);
   const estimates = new Map(estimateList.map((e) => [e.playerId, e]));
   /** The deploy assumed for one opponent's threat: the override, else its own estimate. */
   const deployOf = (player: number) => (custom ? enemyDeploy : (estimates.get(player)?.estimate ?? MIN_ENEMY_DEPLOY));
@@ -1479,6 +1521,19 @@ export function planTurn(input: PlanInput): TurnPlan {
             warnings.push(
               `player ${p} was observed to deploy +${e.observedRaw}/turn, more than it could earn on this board (base ${e.base} for its ${e.held} visible territories + bonuses it could still hold +${e.observedCap! - e.base} = ${e.observedCap}): capped at ${e.observedCap}. Armies moved in from the fog, a Reinforcement card, or a bonus it has lost since may explain the rest.`,
             );
+        }
+        if (e.tracked !== null) {
+          const track = input.tracks!.find((t) => t.playerId === p)!;
+          const used = track.turns.filter((x) => e.trackedTurns.includes(x.from));
+          rationale.push(
+            `Tracked income for player ${p}: ~${e.tracked}/turn, the median of its last ${used.length} observed turns (${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}), at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
+          );
+        }
+        if (e.source === 'tracked') {
+          warnings.push(
+            `Enemy deploy estimate for player ${p}: ~${e.estimate} (tracked over ${e.trackedTurns.length} observed turns, more than ${visible}; the stack cap does not cut a tracked figure); it holds income the fog hides, and could deploy more.`,
+          );
+          continue;
         }
         if (e.source === 'observed') {
           warnings.push(

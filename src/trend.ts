@@ -2,7 +2,8 @@
 // never throws: GameFeed's `GetHistory` standing for the previous turn when the
 // feed sends one (UNVERIFIED for games in progress — see docs/WARAPP-API.md),
 // else the board this server planned on for the previous turn, cached on disk
-// (the newest two planned turns per game).
+// (the newest CACHED_TURNS turns per game, planned or tracked: opponent tracking
+// reads the whole history).
 //
 // The cache holds only the player's own fogged view (what the live board
 // showed them), at `<dataDir>/boards/<gameId>.json`.
@@ -112,10 +113,12 @@ export function historyBoards(
 export const boardCachePath = (dir: string, gameId: number) => join(dir, 'boards', `${gameId}.json`);
 
 /**
- * Turns kept per game. Two, so a turn planned again (another goal, or after a
- * hand override) still finds the board of the turn before it.
+ * Turns kept per game: enough history for opponent tracking (a median over the
+ * last three observed turns needs four boards; more shows where the armies went
+ * since an opponent was first seen), and a turn planned again (another goal, or
+ * after a hand override) still finds the board of the turn before it.
  */
-const CACHED_TURNS = 2;
+export const CACHED_TURNS = 10;
 
 interface CachedBoards {
   gameId: number;
@@ -147,7 +150,11 @@ export async function readBoardCache(
   playerId: number,
   turn: number,
 ): Promise<BoardState | undefined> {
-  const b = (await readCachedTurns(dir, gameId, playerId))[String(turn)];
+  return boardOf((await readCachedTurns(dir, gameId, playerId))[String(turn)]);
+}
+
+/** A cached board, loosely: unusable entries are dropped, never thrown on. */
+function boardOf(b: unknown): BoardState | undefined {
   if (!isRec(b) || !Array.isArray(b.territories)) return undefined;
   const territories = (b.territories as unknown[]).filter(
     (t): t is TerritoryState =>
@@ -157,6 +164,28 @@ export async function readBoardCache(
       (typeof t.armies === 'number' || t.armies === null),
   );
   return { source: b.source === 'gamefeed' ? 'gamefeed' : 'browser', verified: b.verified === true, territories };
+}
+
+/**
+ * Every board cached for `gameId` as `playerId` saw it, oldest turn first, only turns below
+ * `before` when given; `[]` when there are none. Never throws.
+ */
+export async function readBoardHistory(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  before?: number,
+): Promise<{ turn: number; board: BoardState }[]> {
+  const turns = await readCachedTurns(dir, gameId, playerId);
+  const out: { turn: number; board: BoardState }[] = [];
+  for (const [k, v] of Object.entries(turns)) {
+    if (!/^\d+$/.test(k)) continue;
+    const turn = Number(k);
+    if (before !== undefined && turn >= before) continue;
+    const board = boardOf(v);
+    if (board) out.push({ turn, board });
+  }
+  return out.sort((a, b) => a.turn - b.turn);
 }
 
 /**

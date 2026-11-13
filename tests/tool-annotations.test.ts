@@ -67,6 +67,7 @@ describe('tool annotations', () => {
       'warapp_submit_picks',
       'warapp_submit_turn',
       'warapp_surrender',
+      'warapp_track_opponents',
       'warapp_uncommit_turn',
       'warapp_wait_for_turn',
     ]);

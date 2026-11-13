@@ -146,6 +146,10 @@
       "description": "Plan your turn from the live board: deploys and moves by name, expected bonuses, and submit-ready orders"
     },
     {
+      "name": "warapp_track_opponents",
+      "description": "Track each opponent over your board history: deploys per turn, income, armies hidden in the fog, and bonuses that could explain the gap"
+    },
+    {
       "name": "warapp_plan_picks",
       "description": "Plan your territory picks: a ranked list in a compact primary and fallback group, with reasons and submit-ready ids"
     },

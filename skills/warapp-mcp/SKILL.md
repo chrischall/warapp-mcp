@@ -90,7 +90,18 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   just came out of the fog are reveals, not income — and capped at what it could earn). Enemy income is unseen: say so, and raise it when the user
   knows an opponent earns more. An enemy stack next to the user that grew since last turn
   ("is building: +G/turn") raises that border's threat by its growth; `trendSource` says where
-  last turn's board came from (`history`, `cache`, or null when there was none).
+  last turn's board came from (`history`, `cache`, or null when there was none). Once an
+  opponent has 2+ observed turns in the board history, the plan uses its tracked income instead
+  ("Tracked income for player …: the median of its last … observed turns").
+- **"What is my opponent earning?" / "track my opponents"** → `warapp_track_opponents` with
+  `game_id` (read-only; `view: "full"` adds the territories each turn counted and skipped).
+  Per opponent: its observed deploy each turn, an income estimate (median of the last three
+  observed turns, at least what it visibly earns), `unaccountedArmies` (armies that must be in
+  the fog) and `inferredBonuses` — bonuses it could hold that would explain the income gap.
+  Present those as candidates ("one of these, or something the fog hides"), never as fact, and
+  pass on its `notes`. It needs a history: the boards `warapp_plan_turn` and this tool have read
+  on consecutive turns (or the game history when war.app sends it), so early on it may have
+  nothing to observe yet.
 - **Reading a balanced plan** (the default goal): income goes where it earns most per army —
   holds of borders that protect bonus income, completing or advancing cheap bonuses, and
   breaking an enemy bonus ("breaks enemy bonus …" in the reasoning). At least 30% of income
@@ -226,8 +237,8 @@ with intent **lookup** (but `warapp_wait_for_turn`, intent **whats-new**), `wara
 `warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_map_stats`, `warapp_analyze_board`, `warapp_plan_route`,
-  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_picks`, `warapp_plan_turn`, `warapp_strategy`, `warapp_get_chat` and
-  `warapp_scout_player` and `warapp_recent_events` are lookups the group reaches by their
+  `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_picks`, `warapp_plan_turn`, `warapp_track_opponents`,
+  `warapp_strategy`, `warapp_get_chat` and `warapp_scout_player` and `warapp_recent_events` are lookups the group reaches by their
   aliases ("warzone game", "whose turn is it", "best bonuses", "chokepoints", "analyze my
   board", "what should i attack", "warzone route", "warzone strategy", "scout player", "head to head", …).
 - **`warapp_my_games` is the canonical "what's new" read**: which games are waiting on the
