@@ -115,6 +115,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.minimumArmyBonus !== undefined) out.baseIncome = s.minimumArmyBonus;
   if (s.localDeployments) out.localDeployments = true;
   if (s.noSplit) out.noSplit = true;
+  if (s.armyCap !== undefined && s.armyCap !== null && s.armyCap > 0) out.armyCap = s.armyCap;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game.

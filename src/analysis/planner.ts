@@ -336,6 +336,16 @@
 //     facing border without completing a bonus (not focused) is undone when the hold cost
 //     would then exceed the next income and the start-of-turn hold cost; a warning ("Frontier
 //     grows faster than income") names it, and also fires when the plan's frontier ends so.
+//  4e. Never stand still (#104; every goal but `complete-bonus`, after pass 3). A plan that makes
+//     no capture at all (no expansion, break, finishing off or strike) in the opening or expansion
+//     phase takes one neutral capture toward the positive bonus (net > 0, never a negative one)
+//     with the fewest armies to finish (ties: higher value, then id), uneconomic or not: its
+//     reachable members in pass 2's order, the first that the armies left after every hold afford
+//     (usual sizing; rule 4d may still stop it), never one that lowers income. The rationale says
+//     nothing passed the economy test and standing still is worse than the cheapest expansion;
+//     when nothing fits, a warning names that capture. Army cap (`armyCap`, × income): when my
+//     armies after deploy exceed cap × income, armies above it are wasted, so the same fallback
+//     fires in any phase, and the rationale says so. The cap's cut to income is not modelled.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border: it goes to the held border with the highest
 //     protected value still short of COMFORT_MARGIN × its threat (counting armies
@@ -508,6 +518,11 @@ export interface PlannerSettings {
   localDeployments?: boolean;
   /** No-Split: a territory issues at most one attack or transfer this turn. Default `false`. */
   noSplit?: boolean;
+  /**
+   * Army cap (the game's ArmyCap, × income): armies above it are wasted, so spending them is
+   * free (rule 4e). `null` / absent: no cap.
+   */
+  armyCap?: number | null;
 }
 
 export interface PlanOptions {
@@ -2407,6 +2422,8 @@ export function planTurn(input: PlanInput): TurnPlan {
 
   // ---- bonus scoring ----
   const plans: BonusPlan[] = [];
+  /** Every positive bonus worth completing (net > 0) still missing members: its armies to finish (rule 4e). */
+  const finishCost = new Map<number, { cost: number; value: number; net: number }>();
   const economicMember = new Set<number>();
   const uneconomicMember = new Set<number>();
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
@@ -2446,6 +2463,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       cost += c;
       worst = Math.max(worst, c);
     }
+    if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net });
     const economic = isFocus || (cost <= PAYBACK_TURNS * net && worst <= WASTELAND_FACTOR * net);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
@@ -3959,6 +3977,56 @@ export function planTurn(input: PlanInput): TurnPlan {
       .sort((a, b) => targetScoreCost(a.id) - targetScoreCost(b.id) || a.cost - b.cost || a.id - b.id);
     // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
     for (const t of rest) if (gainWith([t.id]) >= 0 || inFocus(t.id)) tryExpand(t.id, 'expands territory');
+  }
+
+  // ---- 4e. never stand still (#104) ----
+  // A plan with no capture at all (no expansion, break, finishing off or strike), in the opening
+  // or expansion phase or with my armies over the army cap, takes the cheapest affordable neutral
+  // capture toward the positive bonus with the fewest armies to finish, uneconomic or not. It runs
+  // after every hold, so it only spends what they leave.
+  if (goal !== 'complete-bonus' && captured.size === 0) {
+    const early = profile.phase === 'opening' || profile.phase === 'expansion';
+    const cap = s.armyCap ?? null;
+    const total = mine.reduce((n, id) => n + armiesOf(id), 0) + income;
+    const capped = cap !== null && cap > 0 && income > 0 && total > cap * income;
+    if (early || capped) {
+      const toward = [...finishCost]
+        .filter(([, f]) => f.net > 0)
+        .sort(([a, x], [b, y]) => x.cost - y.cost || y.value - x.value || a - b);
+      const steps = toward.flatMap(([id, f]) =>
+        bonusTs
+          .get(id)!
+          .filter((t) => targets.has(t) && !targets.get(t)!.enemy && !captured.has(t) && gainWith([t]) >= 0)
+          .sort((a, b) => targetScoreCost(a) - targetScoreCost(b) || targets.get(a)!.cost - targets.get(b)!.cost || a - b)
+          .map((t) => ({ t, id, f })),
+      );
+      const economicLeft = plans.some((p) => p.remaining.some(bonusTarget));
+      const why = [
+        ...(early
+          ? [
+              economicLeft
+                ? `${profile.phase} phase: no economic capture fits this turn; standing still is worse than the cheapest expansion`
+                : `${profile.phase} phase: nothing passed the economy test; standing still is worse than the cheapest expansion`,
+            ]
+          : []),
+        ...(capped
+          ? [
+              `my ${total} armies after deploy exceed the army cap of ${cap * income} (${cap}× income ${income}): armies above it are wasted, so spending them is free`,
+            ]
+          : []),
+      ].join('; ');
+      const taken = steps.find(({ t, id, f }) =>
+        tryExpand(
+          t,
+          `cheapest expansion toward bonus ${bonusName(id)} (+${f.value}, ${f.cost} armies to finish, the fewest of any bonus in reach)`,
+        ),
+      );
+      if (taken) rationale.push(`Take ${label(taken.t)} though no planned capture is economic: ${why}.`);
+      else if (steps[0])
+        warnings.push(
+          `Standing still: no capture is planned, and the cheapest expansion (${label(steps[0].t)}, ${targets.get(steps[0].t)!.cost} armies, toward bonus ${bonusName(steps[0].id)}) does not fit what the holds leave (${budget - reserve} to deploy).`,
+        );
+    }
   }
 
   // ---- rule 4c's guard: planned captures never lower next income (#70) ----
