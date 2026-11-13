@@ -187,7 +187,8 @@ describe('a changed client fails loudly, never a wrong verified board (#131)', (
   });
 
   it('the Armies constructor failing midway', () => {
-    const b = variant('this.g2=a;', 'this.g2="number"==typeof a?a:0;');
+    // An operator the interpreter refuses (~) makes the constructor fail partway through.
+    const b = variant('this.g2=a;', 'this.g2=~a;');
     expect(() => readLiveStanding(b, board())).toThrow(LiveBoardFormatError);
   });
 

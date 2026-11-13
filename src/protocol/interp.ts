@@ -1233,6 +1233,9 @@ export class BundleInterpreter {
         if (n.operator === '!') return !v;
         if (n.operator === '-') return -(this.numeric(v, n, where) as number);
         if (n.operator === 'void') return undefined;
+        // The client's runtime type checks (`"number"==typeof a`, `"function"==typeof b` for a
+        // class) reach this on some boards; the interpreter's own values map onto JS's answers.
+        if (n.operator === 'typeof') return typeOf(v);
         throw this.unsupported(`operator ${n.operator}`, n, where);
       }
       case 'BinaryExpression':
@@ -1633,6 +1636,13 @@ function readMember(o: unknown, k: string): unknown {
   else if (isObject(o) && Object.hasOwn(o, k)) v = o[k];
   else v = undefined;
   return fromNative(v);
+}
+
+/** `typeof` over interpreter values: a class, a closure or a callback is a function. */
+function typeOf(v: unknown): string {
+  if (v instanceof ClassRef || v instanceof Closure || (typeof v === 'function' && CALLBACKS.has(v))) return 'function';
+  if (v === null || typeof v === 'object' || typeof v === 'function') return 'object';
+  return typeof v;
 }
 
 function describe(v: unknown): string {
