@@ -143,3 +143,41 @@ export function chargeDeploys(pools: DeployPools, deploys: ReadonlyMap<number, n
   for (const n of left.values()) anywhereUsed += n;
   return { anywhereUsed, used };
 }
+
+/**
+ * An opponent's deploy under Local Deployment (#180), as the planner bounds it (#128): a bonus it
+ * visibly holds in full pays only into that bonus's territories, so on `on` it may deploy its
+ * estimate less the pools it counts (income in the fog counts as deployable anywhere), plus the
+ * pools that contain one of `on`, never above the estimate. Only what it holds above its free
+ * floor — max(`floor`, its base income) — is taken as pooled: the free base always lands anywhere.
+ * `pools` are the values and members of the bonuses it holds; with none the whole estimate reaches.
+ */
+export function enemyDeployReaching(
+  estimate: number,
+  base: number,
+  floor: number,
+  pools: readonly { value: number; members: ReadonlySet<number> }[],
+  on: readonly number[],
+): number {
+  if (!pools.length) return estimate;
+  const pooled = pools.reduce((n, q) => n + q.value, 0);
+  const here = pools.reduce((n, q) => n + (on.some((t) => q.members.has(t)) ? q.value : 0), 0);
+  const free = Math.min(estimate, Math.max(floor, base));
+  return Math.min(estimate, Math.max(free, estimate - pooled) + here);
+}
+
+/** Each player's bonuses (value above 0) whose every territory it is shown to own: its Local Deployment pools. */
+export function heldBonusPools(
+  g: MapGraph,
+  ownerOf: (territory: number) => number | undefined,
+): Map<number, { bonusId: number; value: number; members: ReadonlySet<number> }[]> {
+  const out = new Map<number, { bonusId: number; value: number; members: ReadonlySet<number> }[]>();
+  for (const b of g.map.bonuses) {
+    if (b.value <= 0) continue;
+    const ts = bonusTerritories(g, b.id);
+    const p = ts.length ? ownerOf(ts[0]!) : undefined;
+    if (p === undefined || !ts.every((t) => ownerOf(t) === p)) continue;
+    out.set(p, [...(out.get(p) ?? []), { bonusId: b.id, value: b.value, members: new Set(ts) }]);
+  }
+  return out;
+}
