@@ -662,10 +662,19 @@
 //     not sized for its deploy (a defender kills 70% per army, an attacker 60%: attacking second
 //     fights its survivors — 24 against 28 loses attacking first and wins attacking second) and
 //     contested neutrals whose survivors would fall (taken last, they meet what is left there).
-//     Ties keep decision order. Dependencies hold: attacks on one target keep their order
+//     Within a slot, early moves go largest first (one grouped early transfer beats several
+//     small ones); other ties keep decision order. Dependencies hold: attacks on one target keep their order
 //     (softeners before the finisher), a move out of a territory stays after any earlier move
 //     into it, and a transfer into a territory captured this turn after the capture. A rationale
 //     line "Move order (#127): …" names the protected order and each move put last, and why.
+//     With one opponent in view, a line "Move position (#127): …" gives each move put last its
+//     place in the zigzag (`opponentOrdersBefore`: moving first, my k-th order runs after
+//     2·floor(k/2) of the opponent's; moving second, after 2·ceil(k/2) − 1; both when the order is
+//     not known, first when Order Priority is advised) and, against the opponent's territories in
+//     view with armies to move (one order each, at least), the index from which it runs after
+//     them all (`indexAfterAll`) and how many more orders above it that takes. It adds no fillers.
+//     Deploys are listed next to a visible enemy first, in the back after (ascending id within
+//     each): they interleave too, and their order shows the opponent my income and the move order.
 //     Order Priority (`cardAdvice`) moves only my FIRST order ahead of the opponent's first: for a
 //     move out of a conceded border it is advised only when I hold one (`holdsOrderPriority`), I
 //     am not known to move first (`movesFirst`), and that order carries at least
@@ -743,7 +752,7 @@ import {
   type KillRates,
 } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
-import { MoveSlot, scheduleMoves } from './schedule.js';
+import { indexAfterAll, MoveSlot, opponentOrdersBefore, scheduleMoves, type MoverPosition } from './schedule.js';
 import { chargeDeploys, deployPools } from './local-deploy.js';
 import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from './player.js';
 import { BEHIND_RATIO, gameProfile, type GameProfile, type ProfilePlayer } from './profile.js';
@@ -7986,7 +7995,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     );
   }
   const decided = [...moves];
-  let scheduled = scheduleMoves(decided, slotOf);
+  /** Within a slot, a larger early move first: one grouped early transfer beats several small ones. */
+  const rankOf = (m: PlannedMove) => (slotOf(m) === MoveSlot.Early ? m.armies : 0);
+  let scheduled = scheduleMoves(decided, slotOf, rankOf);
   if (firstOrder && scheduled[0] !== firstOrder) {
     // A move it depends on (one into its source, say) must run before it, so it is not my first
     // order, and the card protects only that one: my first order is whatever the schedule puts first.
@@ -8000,7 +8011,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     firstOrder = outOfConceded.includes(head) ? head : undefined;
     lastWhy.clear();
-    scheduled = scheduleMoves(decided, slotOf);
+    scheduled = scheduleMoves(decided, slotOf, rankOf);
   }
   moves.splice(0, moves.length, ...scheduled);
   // Order Priority moves only my first order ahead of the opponent's first: spend the card only
@@ -8048,6 +8059,35 @@ export function planTurn(input: PlanInput): TurnPlan {
     );
   }
 
+  // Where each move put last lands among the opponent's orders (two players only: with more,
+  // the interleave runs through every player). An Order Priority played (and not matched) makes me
+  // the first mover for the turn, whichever I was.
+  const foes = [
+    ...new Set([...state.values()].flatMap((st) => (st.owner.kind === 'player' && foe(st.owner.playerId) ? [st.owner.playerId] : []))),
+  ];
+  const lastMoves = scheduled.filter((m) => lastWhy.has(m));
+  if (foes.length === 1 && lastMoves.length) {
+    const p = foes[0]!;
+    const mover: MoverPosition =
+      opts.movesFirst === true || cardAdvice === 'order-priority'
+        ? 'first'
+        : opts.movesFirst === false
+          ? 'second'
+          : 'unknown';
+    const orders = (ownedBy.get(p) ?? []).filter((t) => Math.max(0, armiesOf(t) - guard) + unitsAt(t) > 0).length;
+    const need = indexAfterAll(orders, mover);
+    const items = lastMoves.map((m) => {
+      const k = scheduled.indexOf(m) + 1;
+      const before =
+        mover === 'unknown'
+          ? `after ${opponentOrdersBefore(k, 'first')} of player ${p}'s orders if I move first, ${opponentOrdersBefore(k, 'second')} if it does`
+          : `after ${opponentOrdersBefore(k, mover)} of player ${p}'s orders (${mover === 'first' ? 'I move' : 'it moves'} first)`;
+      const short = need - k;
+      return `${label(m.to)} is my order ${k}: ${before}; player ${p} has ${orders} ${orders === 1 ? 'territory' : 'territories'} in view with armies to move, so it runs after them all${short > 0 ? ` from order ${need} (${short} more ${short === 1 ? 'order' : 'orders'} above it)` : ''}.`;
+    });
+    rationale.push(`Move position (#127): ${items.join(' ')}`);
+  }
+
   const offenceList = [...offence.values()].map(({ bonusId, ...o }): OffenceEntry => {
     // A strike attack's cost is what the final orders send (a top-up can raise it).
     // The strike stack's own entry is final as built.
@@ -8077,9 +8117,11 @@ export function planTurn(input: PlanInput): TurnPlan {
   return {
     goal,
     profile,
+    // Deploys interleave like moves, and the order they land in shows the opponent my income and
+    // the move order: next to a visible enemy first, in the back after (ascending id within each).
     deploys: [...deployed]
       .filter(([, n]) => n > 0)
-      .sort((a, b) => a[0] - b[0])
+      .sort((a, b) => Number(facesEnemy(b[0])) - Number(facesEnemy(a[0])) || a[0] - b[0])
       .map(([territoryId, armies]) => ({ territoryId, armies })),
     moves,
     expected: {

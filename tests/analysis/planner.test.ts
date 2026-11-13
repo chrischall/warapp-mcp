@@ -800,10 +800,11 @@ describe('planTurn — balanced', () => {
     ]);
     // T2 holds (3 deployed); T3 waits behind the expansion share, then only 1 of its 3 is
     // left: short by 2, a near miss (#59), so it gets that 1 and keeps its armies.
+    // Deploys next to the enemy (T2, T3) land before the one in the back (T1, #127).
     expect(p.deploys).toEqual([
-      { territoryId: 1, armies: 2 },
       { territoryId: 2, armies: 3 },
       { territoryId: 3, armies: 1 },
+      { territoryId: 1, armies: 2 },
     ]);
     expect(p.conceded).toEqual([]);
     expect(p.warnings.join('\n')).toMatch(
@@ -819,10 +820,11 @@ describe('planTurn — balanced', () => {
     // Income 8: the 30% share (3) stops T3's hold until the +3 is done (2), then 3 are left for it.
     const p = planTurn({ ...dInput('balanced'), income: 8 });
     expect(p.expected.bonusesCompleted).toEqual([801]);
+    // Deploys next to the enemy (T2, T3) land before the one in the back (T1, #127).
     expect(p.deploys).toEqual([
-      { territoryId: 1, armies: 2 },
       { territoryId: 2, armies: 3 },
       { territoryId: 3, armies: 3 },
+      { territoryId: 1, armies: 2 },
     ]);
     expect(p.conceded).toEqual([]);
     expect(p.cardAdvice).toBeNull();

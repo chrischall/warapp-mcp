@@ -43,11 +43,17 @@ function dependsOn(i: SchedulableMove, j: SchedulableMove): boolean {
 }
 
 /**
- * The moves in the order to send them: each in its slot (earliest first; ties keep decision
- * order), never ahead of a move it depends on (see {@link dependsOn}). Stable and deterministic.
+ * The moves in the order to send them: each in its slot (earliest first), within a slot the
+ * higher `rankOf` first (ties keep decision order), never ahead of a move it depends on (see
+ * {@link dependsOn}). Stable and deterministic.
  */
-export function scheduleMoves<M extends SchedulableMove>(moves: readonly M[], slotOf: (m: M, index: number) => MoveSlot): M[] {
+export function scheduleMoves<M extends SchedulableMove>(
+  moves: readonly M[],
+  slotOf: (m: M, index: number) => MoveSlot,
+  rankOf: (m: M) => number = () => 0,
+): M[] {
   const slot = moves.map((m, i) => slotOf(m, i));
+  const rank = moves.map((m) => rankOf(m));
   const deps = moves.map((m, j) => moves.slice(0, j).flatMap((p, i) => (dependsOn(p, m) ? [i] : [])));
   const done = new Set<number>();
   const out: M[] = [];
@@ -55,10 +61,34 @@ export function scheduleMoves<M extends SchedulableMove>(moves: readonly M[], sl
     let pick = -1;
     for (let j = 0; j < moves.length; j++) {
       if (done.has(j) || !deps[j]!.every((i) => done.has(i))) continue;
-      if (pick < 0 || slot[j]! < slot[pick]!) pick = j;
+      if (pick < 0 || slot[j]! < slot[pick]! || (slot[j] === slot[pick] && rank[j]! > rank[pick]!)) pick = j;
     }
     done.add(pick);
     out.push(moves[pick]!);
   }
   return out;
+}
+
+/** My place in a two-player turn: the first mover, the second, or not known. */
+export type MoverPosition = 'first' | 'second' | 'unknown';
+
+/**
+ * How many of the opponent's orders run before my `k`-th (1-based) in a two-player turn. The
+ * interleave is F S S F F S S …: the first mover's k-th runs after 2·floor(k/2) of the other's,
+ * the second mover's after 2·ceil(k/2) − 1. (Once the opponent's list runs out, mine run in a row.)
+ */
+export function opponentOrdersBefore(k: number, mover: 'first' | 'second'): number {
+  return mover === 'first' ? 2 * Math.floor(k / 2) : 2 * Math.ceil(k / 2) - 1;
+}
+
+/**
+ * The first index (1-based) of mine that runs after all `n` of the opponent's orders: the
+ * smallest even number ≥ n moving first, the smallest odd number ≥ n moving second, n + 1 when
+ * not known (it must hold either way). Never below 1.
+ */
+export function indexAfterAll(n: number, mover: MoverPosition): number {
+  if (mover === 'unknown') return n + 1;
+  const parity = mover === 'first' ? 0 : 1;
+  const k = n % 2 === parity ? n : n + 1;
+  return Math.max(1, k);
 }

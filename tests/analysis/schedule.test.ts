@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MoveSlot, scheduleMoves, type SchedulableMove } from '../../src/analysis/schedule.js';
+import { indexAfterAll, MoveSlot, opponentOrdersBefore, scheduleMoves, type SchedulableMove } from '../../src/analysis/schedule.js';
 
 type M = SchedulableMove & { tag: string; slot: MoveSlot };
 const m = (tag: string, from: number, to: number, kind: 'attack' | 'transfer', slot: MoveSlot): M => ({ tag, from, to, kind, slot });
@@ -50,5 +50,48 @@ describe('scheduleMoves (#127)', () => {
   it('does not reorder unrelated moves sharing nothing', () => {
     expect(order([])).toEqual([]);
     expect(order([m('a', 1, 2, 'attack', MoveSlot.Filler)])).toEqual(['a']);
+  });
+});
+
+describe('scheduleMoves tie-break (#127)', () => {
+  it('within a slot, sends the larger move first when asked (one grouped early transfer beats small ones)', () => {
+    const ms = [
+      m('small', 1, 2, 'transfer', MoveSlot.Early),
+      m('big', 3, 4, 'transfer', MoveSlot.Early),
+      m('filler', 5, 6, 'transfer', MoveSlot.Filler),
+    ];
+    const size: Record<string, number> = { small: 2, big: 6, filler: 9 };
+    const out = scheduleMoves(ms, (x) => x.slot, (x) => (x.slot === MoveSlot.Early ? size[x.tag]! : 0)).map((x) => x.tag);
+    expect(out).toEqual(['big', 'small', 'filler']);
+  });
+
+  it('never lets the tie-break pass a dependency', () => {
+    const ms = [m('capture', 1, 5, 'attack', MoveSlot.Early), m('on', 5, 6, 'attack', MoveSlot.Early)];
+    const out = scheduleMoves(ms, (x) => x.slot, (x) => (x.tag === 'on' ? 9 : 1)).map((x) => x.tag);
+    expect(out).toEqual(['capture', 'on']);
+  });
+});
+
+describe('zigzag position arithmetic, two players (#127)', () => {
+  it("counts the opponent's orders that run before my k-th", () => {
+    // F S S F F S S F F …
+    expect([1, 2, 3, 4, 5].map((k) => opponentOrdersBefore(k, 'first'))).toEqual([0, 2, 2, 4, 4]);
+    expect([1, 2, 3, 4, 5].map((k) => opponentOrdersBefore(k, 'second'))).toEqual([1, 1, 3, 3, 5]);
+  });
+
+  it("gives the first index that runs after all m of the opponent's orders", () => {
+    expect([0, 1, 2, 3, 4].map((n) => indexAfterAll(n, 'first'))).toEqual([1, 2, 2, 4, 4]);
+    expect([0, 1, 2, 3, 4].map((n) => indexAfterAll(n, 'second'))).toEqual([1, 1, 3, 3, 5]);
+    expect([0, 1, 2, 3, 4].map((n) => indexAfterAll(n, 'unknown'))).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('agrees with the interleave it is derived from', () => {
+    for (const mover of ['first', 'second'] as const) {
+      for (let n = 0; n <= 6; n++) {
+        const k = indexAfterAll(n, mover);
+        expect(Math.min(n, opponentOrdersBefore(k, mover))).toBe(n);
+        if (k > 1) expect(opponentOrdersBefore(k - 1, mover)).toBeLessThan(n);
+      }
+    }
   });
 });

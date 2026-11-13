@@ -95,4 +95,60 @@ describe('move order within a turn (#127)', () => {
     // With no deploy, T5's 2 movable armies cannot take the 2 survivors on T8 (4 needed).
     expect(legs(p).indexOf('4>8')).toBe(0);
   });
+
+  it("says where each move put last lands among the opponent's orders (zigzag arithmetic)", () => {
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 16), enemy(2, 10), neutral(3, 2), mine(4, 4), enemy(5, 3), neutral(6, 2), neutral(7, 2), neutral(8, 2)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+    });
+    expect(legs(p)).toEqual(['1>3', '1>2', '4>8']);
+    // Player 20 can order from T2 and T5. My 2nd order runs after 2 of its orders moving first,
+    // 1 moving second; not knowing, only my 3rd is sure to run after both.
+    const line = p.rationale.find((l) => l.startsWith('Move position (#127)'))!;
+    expect(line).toMatch(/T2 \(#2\) is my order 2: after 2 of player 20's orders if I move first, 1 if it does/);
+    expect(line).toMatch(/2 territories in view with armies to move/);
+    expect(line).toMatch(/after them all from order 3 \(1 more order above it\)/);
+    expect(line).toMatch(/T8 \(#8\) is my order 3: .*after them all/);
+  });
+
+  it('uses the known move order for the arithmetic', () => {
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 16), enemy(2, 10), neutral(3, 2), mine(4, 4), enemy(5, 3), neutral(6, 2), neutral(7, 2), neutral(8, 2)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      options: { movesFirst: true },
+    });
+    const line = p.rationale.find((l) => l.startsWith('Move position (#127)'))!;
+    // Moving first, my 2nd order already runs after the opponent's 1st and 2nd.
+    expect(line).toMatch(/T2 \(#2\) is my order 2: after 2 of player 20's orders \(I move first\); .*after them all\./);
+  });
+
+  it('deploys next to the opponent first, in the back after (deploys interleave too)', () => {
+    // T2(neutral) ─ T1 ─ T3 ─ T4(enemy)   bonus 901 (T1, T2, T3)
+    const g2 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4],
+        [
+          [1, 2],
+          [3, 4],
+          [1, 3],
+        ],
+        [[901, 3, [1, 2, 3]]],
+      ),
+    );
+    const p = planTurn({
+      graph: g2,
+      board: board([mine(1, 1), neutral(2, 2), mine(3, 2), enemy(4, 4)]),
+      me: ME,
+      income: 8,
+      settings: STD,
+    });
+    // The hold on T3 (next to player 20) lands before the capture's deploy on T1, whatever the ids.
+    expect(p.deploys.map((d) => d.territoryId)).toEqual([3, 1]);
+  });
 });

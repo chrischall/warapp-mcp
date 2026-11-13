@@ -317,7 +317,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     deploys there first, filler (uncontested neutrals, interior transfers), and last the attacks
     into a stack that can fight back (attacking second fights survivors) and contested neutrals
     whose survivors would not hold — softeners before finishers, moves into a territory before
-    moves out of it.
+    moves out of it; early moves largest first. With one opponent in view a "Move position" line
+    gives each move put last its place in the zigzag (`opponentOrdersBefore` / `indexAfterAll`;
+    known, Order Priority, or both cases). Deploys are listed next to a visible enemy first.
   - **The game profile (`src/analysis/profile.ts`, S1)** is on every plan (`profile`): format
     (players' teams — the shared `carriesTeam` test in `src/teams.ts` — and who is still
     playing), phase, standing (my income vs the strongest opponent's estimate; the armies on
