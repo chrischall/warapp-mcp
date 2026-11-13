@@ -340,16 +340,29 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
             await ctx.rpc.call('SendTerritoryPicks', Method.SendTerritoryPicks, (w) =>
               writeSendTerritoryPicksParams(w, gameId, ids),
             );
-            const readBack = await loadPicks(ctx, gameId, playerId);
-            const verified = readBack.length === ids.length && readBack.every((id, i) => id === ids[i]);
-            return { sent: true, verified, game: gameId, picks, readBack };
+            // The send went through: a failed read-back must not hide that (#130).
+            let readBack: number[] | null;
+            let readBackError: string | undefined;
+            try {
+              readBack = await loadPicks(ctx, gameId, playerId);
+            } catch (e) {
+              readBack = null;
+              readBackError = e instanceof Error ? e.message : String(e);
+            }
+            const verified = readBack !== null && readBack.length === ids.length && readBack.every((id, i) => id === ids[i]);
+            return { sent: true, verified, game: gameId, picks, readBack, ...(readBackError ? { readBackError } : {}) };
           },
           render: (r) =>
             respond(undefined, ['compact'], () => ({
               ...r,
               ...(r.verified
                 ? {}
-                : { warning: 'war.app did not read back exactly these picks. Check warapp_get_my_picks before resubmitting.' }),
+                : {
+                    warning:
+                      r.readBack === null
+                        ? 'war.app accepted the picks, but reading them back failed. Check warapp_get_my_picks before resubmitting.'
+                        : 'war.app did not read back exactly these picks. Check warapp_get_my_picks before resubmitting.',
+                  }),
             })),
           batchable: false,
         }),

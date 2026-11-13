@@ -418,6 +418,20 @@ describe('warapp_submit_picks', () => {
     expect(p.warning).toMatch(/did not read back exactly/);
   });
 
+  it('a read-back that fails after the send still reports sent: true (#130)', async () => {
+    const s = picksServer();
+    const warapp = (req: DecodedRequest, n: number) =>
+      req.method === Method.GetTerritoryPicks ? { status: 500, body: '', url: 'https://war.app/Services' } : s.warapp(req, n);
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp });
+    const res = await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159] });
+    expect(res.isError).toBeFalsy();
+    const p = payload(res);
+    expect(s.sent).toHaveLength(1);
+    expect(p).toMatchObject({ sent: true, verified: false, readBack: null });
+    expect(p.readBackError).toMatch(/HTTP 500/);
+    expect(p.warning).toMatch(/warapp_get_my_picks/);
+  });
+
   it('a shorter read-back is not verified', async () => {
     const s = picksServer([161]);
     h = await liveHarness({
