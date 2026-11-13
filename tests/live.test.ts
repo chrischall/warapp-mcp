@@ -214,6 +214,58 @@ describe('a changed client fails loudly, never a wrong verified board (#131)', (
   });
 });
 
+describe('the army count cannot come out wrong and still read as verified (#148)', () => {
+  const variant = (from: string, to: string) => {
+    expect(LIVE_BUNDLE).toContain(from);
+    return new WarappBundle(LIVE_BUNDLE.replace(from, to), 'variant');
+  };
+  const board = () =>
+    body(
+      [
+        { id: 1, fogLevel: 1, owner: 123456, armies: 12 },
+        { id: 2, fogLevel: 2, owner: 765432, armies: 30 },
+        { id: 3, fogLevel: 1, owner: 123456, armies: 4 },
+      ],
+      [123456],
+    );
+
+  it('an Armies record with a second number set before the count is refused, not read as 0 armies', () => {
+    // A client release adds a numeric field (say, a version) assigned before the count.
+    const b = variant('this.g1=!1;this.g2=0;', 'this.g0=0;this.g1=!1;this.g2=0;');
+    expect(() => readLiveStanding(b, board())).toThrow(LiveBoardFormatError);
+    expect(() => readLiveStanding(b, board())).toThrow(/2 numbers/);
+  });
+
+  it('every territory of mine reading 0 armies is refused: a misread count, not a board', () => {
+    const fake: ClassReader = {
+      readClass: () => ({
+        $type: 'L',
+        s: {
+          $type: 'warlight.shared.GameStanding',
+          t: [1, 2, 3].map((id) => [
+            id,
+            { $type: 'warlight.shared.TerritoryStanding', a: id === 2 ? 2 : 1, b: id, c: { $type: 'warlight.shared.Armies', f: false, n: 0 }, d: 9 },
+          ]),
+        },
+      }),
+    };
+    const w = new Writer();
+    w.bool(true);
+    expect(() => readLiveStanding(fake, new Reader(w.bytes()))).toThrow(/every territory of yours reads 0 armies/);
+  });
+
+  it('one empty territory of mine among others is a board (a commander can stand alone)', () => {
+    const r = body(
+      [
+        { id: 1, fogLevel: 1, owner: 123456, armies: 0 },
+        { id: 3, fogLevel: 1, owner: 123456, armies: 4 },
+      ],
+      [123456],
+    );
+    expect(readLiveStanding(bundle, r)?.map((t) => t.armies)).toEqual([0, 4]);
+  });
+});
+
 describe('the current standing is the current field, not the first one present (#131)', () => {
   // LatestGameInfo as the client builds it: the current standing, a turn number, then the previous
   // turn's standing, each through a temporary (`e=…;d.f=e`).
@@ -255,6 +307,18 @@ describe('the current standing is the current field, not the first one present (
     const info = readLatestGameInfo(b, reply(false));
     expect(currentStanding(info)).toBeUndefined();
     expect(standingFromInfo(info)).toBeNull();
+  });
+
+  it('a reader shape the bundle check does not recognise is refused, never last turn\'s board (#148)', () => {
+    // The standings read through a local closure: fieldsReadAs cannot name the current field.
+    const closure =
+      'Lg.Ha=function(a,b,d){null==d&&(d=242);var e=new Lg,g=function(){return a.Ua()?Gs.Ha(a,e,d):null};' +
+      'e.cur=g();e.turn=P.Ya(a);e.prev=g();return e};';
+    const b = new WarappBundle(LIVE_BUNDLE.replace(LG_LINE, closure), 'closure');
+    expect(b.fieldsReadAs('warlight.shared.LatestGameInfo', 'warlight.shared.GameStanding')).toEqual([]);
+    expect(() => readLatestGameInfo(b, reply(false))).toThrow(LiveBoardFormatError);
+    expect(() => readLatestGameInfo(b, reply(false))).toThrow(/current standing/);
+    expect(() => readLatestGameInfo(b, reply(true))).toThrow(/current standing/);
   });
 
   it('the bundle names the fields its reader fills from a class, in read order', () => {
