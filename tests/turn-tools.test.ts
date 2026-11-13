@@ -653,7 +653,7 @@ describe('warapp_plan_turn — never stand still (#107)', () => {
     expect(p.conceded.map((t) => t.id)).toEqual([158]);
     expect(p.moves.map((m) => [m.from.id, m.to.id, m.armies, m.kind])).toEqual([[158, 157, 6, 'attack']]);
     expect(p.deploys.find((d) => d.territory.id === 158)?.armies).toBe(1);
-    expect(p.cardAdvice).toBeNull();
+    expect(p.cardAdvice).toBe('order-priority');
     expect(p.rationale.join('\n')).toMatch(/Attack out of conceded .* \(#158\) rather than withdraw/);
     expect(p.warnings.join('\n')).not.toMatch(/standing still/i);
   });

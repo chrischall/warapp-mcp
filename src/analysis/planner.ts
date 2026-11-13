@@ -4663,6 +4663,11 @@ export function planTurn(input: PlanInput): TurnPlan {
           rationale.push(
             `Attack out of conceded ${label(out)} rather than withdraw: its ${before} movable armies${need ? ` (and ${need} deployed there, which leave with the attack)` : ''} take ${label(st.t)}; one capture is worth more than saving them.`,
           );
+          // Like the withdrawal it replaces, the attack only runs if the border is still mine.
+          warnings.push(
+            `The attack out of ${label(out)} only executes if ${label(out)} is still mine when the order runs; play Order Priority so it goes first.`,
+          );
+          cardAdvice = 'order-priority';
         } else unreclaim();
         const viaOut = out !== undefined && move.from === out;
         return () => {

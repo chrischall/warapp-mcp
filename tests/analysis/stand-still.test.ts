@@ -399,7 +399,8 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
       expect(p.moves.filter((m) => m.kind === 'transfer' && m.from === 1)).toEqual([]);
       expect(p.deploys.find((d) => d.territoryId === 1)?.armies).toBe(1);
       expect(deploySum(p)).toBe(5);
-      expect(p.cardAdvice).toBeNull();
+      expect(p.cardAdvice).toBe('order-priority');
+      expect(p.warnings).toContain('The attack out of T1 (#1) only executes if T1 (#1) is still mine when the order runs; play Order Priority so it goes first.');
       const r = p.rationale.join('\n');
       expect(r).toMatch(
         /Attack out of conceded T1 \(#1\) rather than withdraw: its 5 movable armies \(and 1 deployed there, which leave with the attack\) take T3 \(#3\)/,
