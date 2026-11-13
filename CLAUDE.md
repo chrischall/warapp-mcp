@@ -144,7 +144,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   bridge** (`src/push/socketio.ts`): the first poll must return the connect packet `1::` before
   any POST (a POST first is HTTP 400). Both answer `2::` heartbeats and send `Subscribe`
   (method 238, no auth block) to `Game.<id>`. A push is method 241 `GameUpdated` carrying only
-  the game id, so `warapp_wait_for_turn` re-reads GameFeed on each one. **A reconnect loses the
+  the game id, so `warapp_wait_for_turn` re-reads GameFeed after one (debounced per game, below). **A reconnect loses the
   pushes sent during the gap** (war.app has closed a healthy socket after ~60 s): close, error
   or a missed heartbeat reconnects (new handshake, new sid, re-subscribe) and `onReconnect`
   fires, on which `warapp_wait_for_turn` re-reads every watched game — as it does when a failed
@@ -152,6 +152,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   game (membership included) before it watches any, so a game not mine is never subscribed; a
   released game is unwatched (not re-subscribed on a reconnect); at most `MAX_WATCHED_GAMES` games
   are watched at once; and GameFeed re-reads are debounced per game (one in flight, one queued).
+  A wait that starts the socket reads each game twice up front (its check, then the re-read on
+  the first connect): accepted, since skipping it could miss a turn. A push for a game no wait
+  watches is not recorded. Two waits on one game: the second's `watch` waits for a Subscribe the
+  first has in flight, or sees (`mark`) one that went through after it began reading, and
+  re-reads. When the Subscribe retries on a session run out (five), the listener starts a new
+  session itself. An instant `2::` heartbeat reply is paced like an empty poll.
   The push transport shows
   in `warapp_session_status` (`pushTransport`) and the push tools. One listener per process
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
@@ -179,9 +185,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   land), not a double count.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
   border's threat to movable + max(that opponent's deploy, growth). `warapp_plan_turn` gets it from
-  GameFeed `GetHistory` (unverified in progress, parsed loosely in `src/trend.ts`), else from
-  `<dataDir>/boards/<gameId>.json`, written after each plan or track (newest ten turns kept, so
-  re-planning a turn keeps the trend and opponent tracking has a history); it reports `trendSource`.
+  `<dataDir>/boards/<gameId>.json` first — the verified live boards written after each plan or
+  track (newest ten turns kept, so re-planning a turn keeps the trend and opponent tracking has a
+  history) — and from GameFeed `GetHistory` (unverified in progress, parsed loosely in
+  `src/trend.ts`) only for turns the cache lacks, not at all when the two previous turns are
+  cached; it reports `trendSource`. A board the decoder refuses is never written there.
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
   turn, income = median of the last three observed turns floored at base + visibly held bonuses,
@@ -322,8 +330,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `<dataDir>/bundle/<version>.<sha256>.js` (`MCP_DATA_DIR`, else `~/.config/warapp-mcp`), deleting
   older versions once the current one loads. A cached copy is loaded only when its bytes still hash
   to the digest in its name; when the page naming the version cannot be read, the newest copy that
-  verifies stands in for 5 minutes. Loading checks the built-in reader helpers against the bundle's
-  own (a mismatch refuses the bundle). **The bundle is treated as hostile code:** the interpreter
+  verifies stands in for 5 minutes. Loading checks the built-in reader helpers against every
+  definition the bundle gives them — `P.x=function`, an alias, an object-literal property — and
+  builders by their item reads (`verifyDialect`, docs/WEB-PROTOCOL.md): a mismatch refuses the
+  bundle, and so does an unverifiable `P.Ya`/`P.Yc`/`P.uq` (they read every army count); the
+  result and the stand-in flag show in `warapp_session_status` and the live board's full view
+  (`decoder`). A board whose `Armies` carry two numbers, on which every territory of mine reads 0
+  armies, or whose current standing the reader's source does not name is refused, never shown as
+  verified (#148). **The bundle is treated as hostile code:** the interpreter
   reads own properties only, refuses `constructor` / `__proto__` / `prototype`, lets natives call
   only interpreter closures (and the load-time check's own item readers), and bounds every read by a step budget, a call depth, size caps and a
   wall-clock deadline (`InterpError` kinds `forbidden` and `budget`) — the load-time helper check
@@ -408,11 +422,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `WARAPP_STATS=1`, always off when hosted (recognised by mcp-host's child-only variables —
   `HOSTED_MARKERS` in `src/hosted.ts`), and `mint.yaml` never sets `WARAPP_STATS`. GameIDFeed + GameFeed
   `GetHistory=true` through `WarappClient`, ≥ 1 s apart, finished games cached forever as
-  name-free records at `<dataDir>/stats/<mapId>/<gameId>.json`.
+  name-free records at `<dataDir>/stats/<mapId>/<gameId>.json`. Each game is read with
+  `GetMap=false` (a cached map is attached by its id); only a finished game on an uncached map
+  costs one more request, for the map.
 - **All GameFeed traffic goes through `WarappClient` (`src/client.ts`)**, including the
   credential healthcheck probe; all `/Services` traffic goes through `WarappRpc`
   (`src/protocol/rpc.ts`), which echoes the reply extras into the next request. Maps are
-  cached per process (`MapCache`), and a known game is re-fetched with `GetMap=false`.
+  cached per process (`MapCache`), and a known game is re-fetched with `GetMap=false`; a tool
+  that never uses the map (the turn wait, surrender, uncommit, chat, join-game, scout, begin-turn,
+  submit-turn's read-back) always asks `GetMap=false`, even for a game it has not seen.
 
 ## Commands
 

@@ -141,20 +141,41 @@ Reader primitives (`P.*`): `Ya` int32 · `wc` string · `Yc` bool · `uq` byte �
 3,2,1,0,5,4,7,6,8…15) · `sL` int32-length bytes · `Sd`/`ms`/`uL` int32-count list (-1 = null) ·
 `ef` int32-count dict (-1 = null).
 
-**Checked against the bundle at load (#131).** These primitives are built in (`DEFAULT_DIALECT`,
+**Checked against the bundle at load (#131, #148).** These primitives are built in (`DEFAULT_DIALECT`,
 pinned to one client release) and shadow the bundle's own definitions, while the bundle itself
 floats. So loading a bundle runs `verifyDialect`: each `P.*` static above is evaluated from the
-bundle's own definition on a few probe byte strings and must read the same value and the same
-number of bytes as the built-in; a mismatch refuses the bundle. What that check covers:
+bundle's own definition on a few probe byte strings and must read the same value, call its item
+readers in the same order at the same positions, and read the same number of bytes as the
+built-in; a mismatch refuses the bundle (`dialect-mismatch`). Every definition of a name counts:
+`P.x=function…`, an alias `P.x=Q.y` (checked as `Q.y`'s definition) and a property of an object
+literal assigned to `P` (`P={x:function…}`, or one aliasing a static); all of them must agree.
+What that check covers:
 
-- **verified:** the `P.*` statics whose bundle definition the interpreter evaluates to a plain
-  value on the probes (the int, string, bool, byte, float, bytes and list reads).
-- **unverified (a known blind spot):** a `P.*` static the probes cannot compare — `P.Td` (datetime)
-  and `P.tL` (GUID), and one that builds a client collection (a dictionary such as `P.ef`) — is
-  reported unverified, not refused; and the reader methods called on the reader itself (`a.Og()`,
-  `a.Ua()` and the rest, the dialect's `readerMethods`) are not checked at all. A client release
-  that renames or repurposes one of these decodes through the old read without an error; suspect
-  them first when a new client misreads a reply.
+- **verified:** a `P.*` static whose bundle definition the interpreter evaluates on the probes and
+  that reads alike on at least one probe that shows its reads — for a helper taking item readers
+  (a list or dictionary), one on which it read items; a `-1 → null` answer alone does not count.
+  A dictionary or collection that builds a client object (`new Je`) is compared by its item reads
+  and the bytes consumed, so one that reads the value before the key, or an item twice, is
+  **mismatched**.
+- **unverified (reported, with a reason):** a definition the interpreter cannot evaluate, one
+  assigned in a form the check cannot follow (anything but a function, an alias of a static's
+  function, or an object-literal property), and a builder never seen reading an item. On the
+  client cached on 2026-11-13: `P.Td` (datetime) and `P.tL` (GUID) cannot be evaluated, and
+  `P.ef` and `P.uL` build client collections through methods the interpreter does not run (11
+  verified, none mismatched). `P.ef` is how every standing is read, so a swap of its key and value
+  reads is caught (it differs on its first item read) but nothing more is proven about it.
+- **refused when unverified:** `P.Ya`, `P.Yc` and `P.uq` (`REQUIRED_HELPERS`) read every army
+  count, fog flag and unit count; a bundle whose definition of one of them cannot be verified is
+  refused (`dialect-unverified`) and, like a mismatch, remembered for five minutes.
+- **not checked:** the reader methods called on the reader itself (`a.Og()`, `a.Ua()` and the
+  rest, the dialect's `readerMethods`), and a helper given to `P` some other way (`Object.assign`,
+  a computed key). A client release that renames or repurposes one of these decodes through the
+  old read without an error; suspect them first when a new client misreads a reply.
+
+The result is shown (#148): `warapp_session_status` reports the loaded bundle (`decoder`: version,
+whether a cached stand-in is decoding, the helpers verified and the unverified ones with why),
+and `warapp_get_live_board` carries the same `decoder` on its full view (on compact only when a
+cached stand-in decoded the board).
 
 The project does not redistribute the bundle: the decoder loads it from War.app's CDN at
 runtime, so class layouts track the live client. Field names in the bundle are minified and
@@ -260,6 +281,19 @@ refuses a deploy on 3 or 4 as "fogged"; a fully fogged standing is fog level 4, 
 `Armies(0, fogged)`. The reader keeps an owner-only territory's owner but not its army count (#69). Whether the owner
 shows is read from the fog level alone: a Light Fog owner-only standing carries a real owner under
 `Armies(…, fogged)` (#131, seen in a live board's raw standing).
+
+**The army count cannot be misread quietly (#148).** The count is the `Armies` record's one number
+(fogged flag, count, units — the client's constructor assigns exactly one, checked on the bundle
+cached 2026-11-13). A record carrying two numbers is refused (`LiveBoardFormatError`): nothing
+says which is the count. And a board on which every territory of mine (fog level You) reads 0
+armies is refused as a misread count; one empty territory of mine among others is a board (a
+commander standing alone, or a game without "one army stands guard").
+
+**The current standing, never last turn's (#131, #148).** `LatestGameInfo` carries the current
+`GameStanding` and the previous turn's; the current one is the first field its reader fills from
+`GameStanding` (`fieldsReadAs`, read from the reader's source). When the reader's source does not
+show it (the standings read in another class, through a local closure or an own-class helper the
+check does not follow), the board is refused rather than taking the first standing present.
 
 **Special units (from the bundle, #61; the commander layout matches a live standing decoded
 for the issue).** `Armies` is read as `bool fogged, int32 count`, then — protocol ≥ 107 — a
@@ -527,8 +561,13 @@ resolving. `src/push/listener.ts` holds one socket per process, (re)subscribes t
 through, consumers are told to re-read GameFeed too, since a turn that resolved before it sent no
 push. A game is watched only while a wait holds it and only after the wait has checked the account
 plays in it; no Unsubscribe is sent, so a released game stays subscribed until the session ends but
-is not re-subscribed. Over xhr-polling, a poll answered at once with nothing to say is paced (doubling from the
-initial backoff, capped at 5 s), so a push is at most a few seconds late.
+is not re-subscribed, and a push for it (or for any game no wait watches) is ignored, not recorded
+(#148). When the retries on a session run out (five) with games still unsubscribed, the listener
+starts a new session itself rather than leave them unwatched until war.app drops the socket (#148).
+Two waits on one game: the second's `watch` waits for a Subscribe the first has in flight, or sees
+one that went through after it started reading (`mark`), and re-reads (#148). Over xhr-polling, a
+poll answered at once with nothing to say — an empty body, a noop, a heartbeat — is paced (doubling
+from the initial backoff, capped at 5 s), so a push is at most a few seconds late.
 
 ### WebSocket transport (verified live 2026-11-12, GitHub issue #32)
 

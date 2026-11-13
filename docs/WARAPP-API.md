@@ -265,7 +265,11 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
 - Maps never change for a given map id, and the feed's terms of use ask callers to cache.
   `MapCache` keeps maps per process. A game whose map is already cached is fetched with
   `GetMap=false`. A new game is fetched once with its map, because its map id is unknown
-  until the response arrives.
+  until the response arrives — except by a caller that never uses the map (#148): the turn wait,
+  surrender, uncommit, chat, join-game, scout, begin-turn and submit-turn's read-back always ask
+  `GetMap=false`. Map statistics ask `GetMap=false` with `GetSettings=true`, so a map cached under
+  the settings' map id is attached without a download; only a finished game on a map not cached
+  yet costs a second request, for the map.
 
 ## Board state — UNVERIFIED
 
