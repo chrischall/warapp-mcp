@@ -312,18 +312,15 @@ interface TurnState {
 }
 
 /**
- * war.app's error 11 (deploys ≠ its income), with a hint naming the modelled
- * number. The live board carries no income figure — war.app's client computes it
- * from the standing — so its own number is the "armies per turn" the game shows.
- */
-/**
  * How to read back an Order Delay placed among the moves (#186) — a position no live commit has
  * used yet. Error 10 on the commit would mean it is not allowed there; accepted, the card leaves
  * the hand, and the turn's replay shows whether the moves after it ran after the opponents'.
  */
-function orderDelayCheck(at: readonly number[]): string {
+export function orderDelayCheck(at: readonly number[]): string {
+  // Two cards above the same move are one position: name each once, in move order.
+  const moves = [...new Set(at)].sort((a, b) => a - b);
   return (
-    `The Order Delay was placed above move ${at.join(' and ')}, a position not yet verified live. war.app did not refuse it ` +
+    `The Order Delay${at.length > 1 ? 's were' : ' was'} placed above move${moves.length > 1 ? 's' : ''} ${moves.join(' and ')}, a position not yet verified live. war.app did not refuse it ` +
     'with error 10 (OrdersInIncorrectOrder). Once the turn resolves, check: the card is gone ' +
     "from your hand (warapp_plan_turn's `cards.hand`, or a played Order Delay in the turn's replay), and in the game's replay " +
     "of this turn your moves from that one on ran after the opponents' attacks instead of alternating with them. Report " +
@@ -340,6 +337,11 @@ function orderDelayRefused(e: WarappServerError): McpToolError {
   );
 }
 
+/**
+ * war.app's error 11 (deploys ≠ its income), with a hint naming the modelled
+ * number. The live board carries no income figure — war.app's client computes it
+ * from the standing — so its own number is the "armies per turn" the game shows.
+ */
 function incomeRefused(e: WarappServerError, income: number, given = false): McpToolError {
   return new McpToolError(e.message, {
     kind: 'unknown',

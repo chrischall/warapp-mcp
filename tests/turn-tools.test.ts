@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
-import { attackSizes, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
+import { attackSizes, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { untrustedText } from '../src/tools/common.js';
 import { normalizeMap } from '../src/normalize.js';
 import { AHEAD_PRESSURE_FACTOR, PRESSURE_FACTOR } from '../src/analysis/planner.js';
@@ -1832,6 +1832,14 @@ describe('cards in the turn tools', () => {
       ),
     );
     expect(JSON.stringify(r)).toMatch(/orderDelayCheck.*error 10.*hand.*after the opponents/);
+  });
+
+  it('orderDelayCheck names each placement once, in move order (#186)', () => {
+    expect(orderDelayCheck([2])).toMatch(/placed above move 2,/);
+    // Two Order Delays above the same move: one position, not "move 2 and 2".
+    expect(orderDelayCheck([2, 2])).toMatch(/placed above move 2,/);
+    expect(orderDelayCheck([2, 2])).not.toMatch(/2 and 2/);
+    expect(orderDelayCheck([3, 1, 3])).toMatch(/placed above moves 1 and 3,/);
   });
 
   it('submit_turn names a refused placement when war.app answers error 10 to a placed Order Delay (#186)', async () => {
