@@ -551,7 +551,8 @@ function visiblyBroken(g: MapGraph, before: BoardState, after: BoardState, playe
  * {@link observeDeploy}'s comment says:
  * - a failed attack of mine (a move onto a territory it shows on both boards): its defenders lost
  *   what my attackers killed, round(armies × the offensive kill rate) — the board reads that loss
- *   as a shrink, so it counts back;
+ *   as a shrink, so it counts back. Not when its source fell this turn: it may have been taken
+ *   before my attack ran;
  * - a hold of mine that fell to it: its defenders were my armies there plus what I deployed there
  *   less what I sent out of it; the board reading priced the capture at the guard (#123, the
  *   least I may have left), so the difference in what they killed (at the defensive kill rate)
@@ -581,7 +582,8 @@ export function measureOrders(
   for (const m of orders.moves) sent.set(m.from, (sent.get(m.from) ?? 0) + Math.max(0, m.armies));
   let measured = 0;
   for (const m of orders.moves) {
-    if (!g.territoryById.has(m.to) || !owns(visibleState(was.get(m.from)), me)) continue;
+    // A source that fell this turn may have been taken before my attack ran: not measured.
+    if (!g.territoryById.has(m.to) || !owns(visibleState(was.get(m.from)), me) || !owns(visibleState(now.get(m.from)), me)) continue;
     if (owns(visibleState(was.get(m.to)), playerId) && owns(visibleState(now.get(m.to)), playerId))
       measured += straightKills(Math.max(0, m.armies), offensive);
   }

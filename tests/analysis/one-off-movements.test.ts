@@ -343,6 +343,20 @@ describe('5. unexplained armies leave out combat deaths (#123)', () => {
     expect(turns().turns[0]).toMatchObject({ measured: 0, combat: 5 });
   });
 
+  it('an attack of mine from a territory that fell measures nothing: it may never have run', () => {
+    // My T2 (10) sent 5 at its T3 (20); its T3 took T2 (now 12 there, 6 left on T3). The hold-fell
+    // correction stays (5 defenders kill round(3.5) = 4, against the 1 the guard kills); my attack
+    // adds nothing.
+    const b = (t2: ReturnType<typeof mine>, t3: number) => board([mine(1, 5), t2, enemy(3, t3), enemy(4, 2)]);
+    const [t] = trackOpponents(
+      g,
+      [{ turn: 3, board: b(mine(2, 10), 20), orders: { deploys: [], moves: [{ from: 2, to: 3, armies: 5 }] } }, { turn: 4, board: b(enemy(2, 12), 6) }],
+      ME,
+      STD,
+    );
+    expect(t!.turns[0]!.measured).toBe(straightKills(5, 70) - straightKills(1, 70));
+  });
+
   it('a hold of mine beside two opponents is not pinned on either: the heuristic counts it', () => {
     // T1 – T2 – T3 and T2 – T5: my T2 (20) between its T3 (20) and another player's T5 (8).
     const g2 = buildGraph(makeMap([1, 2, 3, 4, 5], [...line(4), [2, 5]], []));
