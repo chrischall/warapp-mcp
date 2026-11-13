@@ -105,8 +105,8 @@ territories another player was granted first. The grant goes round by round in
 move order, the order reversing each round (a zigzag): each player in turn receives their
 highest-ranked territory still free, and a list that runs out is filled at random (Manual
 distribution, in Sources). The wiki page states no maximum list length; players × territories per
-player is where war.app's client stops a list (`clientPickLimits`), and the community guides give
-the same length: a shorter list risks a random start, a longer one changes nothing. So the list
+player is where war.app's client stops a list (`clientPickLimits`, docs/WARAPP-API.md), and a
+shorter list risks a random start. So the list
 has two parts: the first `TerritoryLimit` picks are the plan you want, and the rest are granted
 only when some of the first went to someone else. **Encoded:** the primary group is exactly the
 territory limit: compact, a 1v1 included, relaxed one hop at a time, with a warning, when the
@@ -268,7 +268,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
 
 - **Bonuses by value per army** — each positive bonus's value over the armies it takes to capture
   every territory from neutral at the game's kill rates, luck and neutral size, with its entry
-  points (the territories outside it that touch it). **Encoded:** `src/strategy/map-notes.ts`.
+  points (the territories outside it that touch it), naming the double borders (an entry point
+  next to two or more of its territories, #166). **Encoded:** `src/strategy/map-notes.ts`.
   Wastelands and picked territories are not known from the map, so every territory is costed as
   a neutral of the settings' size (an assumption the notes state).
 - **Chokepoints** — articulation points, bridges between bonus clusters and narrow connectors
