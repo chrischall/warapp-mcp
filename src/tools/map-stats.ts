@@ -122,7 +122,8 @@ export function registerMapStatsTool(
             }),
         assumptions:
           'Starting territories are read from the first history board where players hold land (a game with no ' +
-          'such board is left out and counted in unreadableGames), a player counts toward every bonus holding one ' +
+          'such board is left out of every figure and never cached; `collected.unreadable` says how many this call skipped, ' +
+          'across the ladder), a player counts toward every bonus holding one ' +
           'of its starts, and a bonus ' +
           'turn is the history entry (completed turns) on which a player first held a whole positive bonus. ' +
           'The game-ID feed and history shapes are unverified (docs/WARAPP-API.md).',

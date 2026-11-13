@@ -126,6 +126,9 @@ describe('warapp_map_stats', () => {
       { bonusId: 2, name: 'South', players: 6, wins: 0, winRate: 0, lowSample: true },
     ]);
     expect(p.stats.unreadableGames).toBe(0);
+    // Unreadable games are never cached, so the tool points at the per-call count (#136).
+    expect(p.assumptions).toMatch(/`collected\.unreadable` says how many this call skipped/);
+    expect(p.assumptions).not.toMatch(/counted in unreadableGames/);
     expect(p.stats.firstBonusTurn).toMatchObject({ completed: 6, median: 1 });
 
     // A second call: every game is cached — only the feed is asked.
