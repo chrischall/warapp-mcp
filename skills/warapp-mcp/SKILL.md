@@ -163,9 +163,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
    moved in to hold. At default kill rates defenders kill 70% and attackers 60%, so a border is
    cheaper to hold than to take back.
 2. **The enemy income estimate looks wrong.** Check the "Enemy deploy estimate" line against
-   what the opponent can plausibly earn: its territory count and the bonuses it can hold.
-   Territories revealed from the fog have been counted as growth (#69). When the figure is off,
-   re-plan with `enemy_deploy`.
+   what the opponent can plausibly earn: its territory count and the bonuses it can hold. The
+   estimate only sees one previous turn and caps itself at what the opponent could earn, so it
+   can still miss income hidden in the fog. When the figure is off, re-plan with `enemy_deploy`.
 3. **Income drops.** Look for a negative-value bonus in `expected.bonusesCompleted`, or a
    `nextIncome` below this turn's income without a reason the user accepts.
 4. **A rule the plan may not model.** Compare the plan's income with the game's deploy panel,
