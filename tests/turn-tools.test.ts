@@ -79,7 +79,13 @@ interface PlanPayload {
   enemyDeploy: number;
   deploys: Array<{ territory: Named; armies: number }>;
   moves: Array<{ from: Named; to: Named; armies: number; kind: string; reason?: string }>;
-  expected: { captures: Named[]; bonusesCompleted: Array<Named & { value: number }>; nextIncome: number };
+  expected: {
+    captures: Named[];
+    bonusesCompleted: Array<Named & { value: number }>;
+    nextIncome: number;
+    nextIncomeIfConcededFall?: number;
+    bonusesAtRisk?: Array<Named & { value: number; conceded: Named[] }>;
+  };
   warnings: string[];
   rationale: string[];
   orders: Array<Record<string, unknown>>;
@@ -247,6 +253,45 @@ describe('warapp_plan_turn', () => {
     });
     expect(p.deploys.some((d) => d.territory.id === 161)).toBe(false);
     expect(p.warnings.join('\n')).toContain(`play Order Priority so it goes first`);
+  });
+
+  it('reports the next income if the conceded borders fall, and the bonuses at risk (#109)', async () => {
+    // Ann holds all of bonus 118 (+2); Bob's 60 on Bolton Moors faces every member, so the
+    // bonus is conceded: next income 7 if it holds, 5 if the conceded borders fall.
+    const held: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+      { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 60 },
+      { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+    ];
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(held) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.conceded.map((c) => c.id)).toEqual([157, 159, 161]);
+    expect(p.expected.nextIncome).toBe(7);
+    expect(p.expected.nextIncomeIfConcededFall).toBe(5);
+    expect(p.expected.bonusesAtRisk).toEqual([
+      {
+        id: 118,
+        name: expect.any(String),
+        value: 2,
+        conceded: [157, 159, 161].map((id) => ({ id, name: mapName(id) })),
+      },
+    ]);
+    expect(p.warnings.join('\n')).toMatch(/next income 7 if they hold, 5 if the conceded borders fall/);
+    expect(p.frontier).toMatch(/next income 7, 5 if the conceded borders fall/);
+  });
+
+  it('omits the at-risk fields when nothing is conceded (#109)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' }));
+    expect(p.conceded).toEqual([]);
+    expect(p.expected).not.toHaveProperty('nextIncomeIfConcededFall');
+    expect(p.expected).not.toHaveProperty('bonusesAtRisk');
+    const { tools } = await h.harness.client.listTools();
+    const tool = tools.find((t) => t.name === 'warapp_plan_turn')!;
+    expect(tool.description).toContain('`nextIncomeIfConcededFall`');
+    expect(tool.description).toContain('`bonusesAtRisk`');
   });
 
   it('reports a combined (multi-source) capture by name, with its attack order (R4)', async () => {

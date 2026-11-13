@@ -573,7 +573,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       description: untrustedDescription(
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
           "game's settings: your income, deploys and attacks/transfers by territory name and id, the expected " +
-          'captures, completed bonuses and next income, warnings (threats, fog, luck) and the reasoning. Threat ' +
+          'captures, completed bonuses and next income (when the plan concedes borders of a bonus it holds, also ' +
+          '`nextIncomeIfConcededFall` — the next income if those borders fall — and `bonusesAtRisk`), warnings (threats, fog, luck) and the reasoning. Threat ' +
           'checks assume each enemy deploys `enemy_deploy` (default per opponent: base income plus the bonuses it visibly holds, capped by its largest stack next to you, or what it was observed to deploy since the previous turn when larger: territories visible both turns only, never more than it could earn). It reports ' +
           'your cards and whether you must play or discard (more whole cards than the hold limit), and plays ' +
           'Reinforcement cards (their armies are planned) and, when cards must go, Order Priority, else discards the ' +
@@ -789,7 +790,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         frontier:
           rung === 'full'
             ? plan.frontier
-            : `${plan.frontier.borders} borders (${plan.frontier.enemyBorders} facing an enemy): holding them next turn needs ${plan.frontier.holdCost}, next income ${plan.frontier.income}`,
+            : `${plan.frontier.borders} borders (${plan.frontier.enemyBorders} facing an enemy): holding them next turn needs ${plan.frontier.holdCost}, next income ${plan.frontier.income}${
+                plan.expected.nextIncomeIfConcededFall !== undefined &&
+                plan.expected.nextIncomeIfConcededFall < plan.frontier.income
+                  ? `, ${plan.expected.nextIncomeIfConcededFall} if the conceded borders fall`
+                  : ''
+              }`,
         // #72: the offensive options considered, full view only.
         ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
         cards: {
@@ -816,6 +822,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             return { id, name: b.name, value: b.value };
           }),
           nextIncome: plan.expected.nextIncome,
+          // #109: present only when the plan's concessions put income at risk.
+          ...(plan.expected.nextIncomeIfConcededFall !== undefined
+            ? {
+                nextIncomeIfConcededFall: plan.expected.nextIncomeIfConcededFall,
+                bonusesAtRisk: (plan.expected.bonusesAtRisk ?? []).map((b) => ({
+                  id: b.bonusId,
+                  name: b.name,
+                  value: b.value,
+                  conceded: b.conceded.map(name),
+                })),
+              }
+            : {}),
         },
         warnings,
         rationale: plan.rationale,

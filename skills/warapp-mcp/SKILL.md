@@ -210,7 +210,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
    Local Deployment the bonus's own pool already defends its most threatened border and its
    garrisons stay unless it truly cannot be held.) Check whether an adjacent stack can be
    moved in to hold. At default kill rates defenders kill 70% and attackers 60%, so a border is
-   cheaper to hold than to take back.
+   cheaper to hold than to take back. `expected.nextIncome` assumes every conceded border holds;
+   read `expected.nextIncomeIfConcededFall` (with `bonusesAtRisk`, and a "This plan concedes
+   bonus …" warning) for the income if they fall.
 2. **The enemy income estimate looks wrong.** Check the "Enemy deploy estimate" line against
    what the opponent can plausibly earn. It reads territories visible on both turns, counts a
    stack that captured out of the fog as a threat rather than income, uses tracked income over

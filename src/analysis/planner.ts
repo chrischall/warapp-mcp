@@ -255,6 +255,16 @@
 //     army): withdrawing turns "might lose it" into "certainly loses it". A warning says which
 //     case applied ("… is conceded but might still hold" / "… cannot be held"); a kept border
 //     may also take the leftover deploy.
+//  1i. Income at risk (#109). `expected.nextIncome` is next turn's income if every territory
+//     the plan keeps and captures is held — the borders it concedes included, withdrawn from
+//     or not. A conceded border is not kept, so the plan also reports
+//     `expected.nextIncomeIfConcededFall` — the one income rule (`incomeAfter`, negative and
+//     overlapping bonuses and per-territory armies included) over the holdings after the plan
+//     less every conceded border — and `expected.bonusesAtRisk`: each positive bonus complete
+//     after the plan (held at the start or completed this turn) with a conceded member. Both are
+//     present only when the figures differ or a bonus is at risk. When the at-risk figure is
+//     lower a warning names both ("This plan concedes bonus …: next income A if they hold, B if
+//     the conceded borders fall."), and the frontier rationale's next income names both.
 //  2. Targets: visible neutrals adjacent to a territory I held at the start of
 //     the turn (plus visible enemy territories under `goal: 'complete-bonus'`, and
 //     under `balanced` only enemy territories in a breakable bonus — one whose
@@ -682,8 +692,23 @@ export interface TurnPlan {
   expected: {
     captures: number[];
     bonusesCompleted: number[];
-    /** This turn's income plus newly completed bonuses (nothing lost, no per-territory income). */
+    /**
+     * Next turn's income if every territory the plan keeps and captures is held — conceded
+     * borders included (#109: see `nextIncomeIfConcededFall`). One income rule ({@link boardIncome}).
+     */
     nextIncome: number;
+    /**
+     * Next turn's income if every border the plan concedes falls (#109): the same income rule
+     * over the holdings after the plan less `conceded`. Present only when it differs from
+     * `nextIncome` or a bonus is at risk.
+     */
+    nextIncomeIfConcededFall?: number;
+    /**
+     * The positive bonuses complete after the plan (held at the start or completed this turn)
+     * with at least one member it concedes, by bonus id; `conceded` lists those members.
+     * Present together with `nextIncomeIfConcededFall`.
+     */
+    bonusesAtRisk?: BonusAtRisk[];
   };
   warnings: string[];
   rationale: string[];
@@ -732,6 +757,33 @@ export interface OffenceEntry {
   value: number;
   taken: boolean;
   why: string;
+}
+
+export interface BonusAtRisk {
+  bonusId: number;
+  name: string;
+  value: number;
+  /** Its members the plan concedes, sorted. */
+  conceded: number[];
+}
+
+/**
+ * The positive bonuses complete over `after` (the holdings after a plan) with at least one
+ * member in `conceded`, sorted by id (#109): what the plan's concessions put at risk.
+ */
+export function bonusesAtRisk(g: MapGraph, after: ReadonlySet<number>, conceded: ReadonlySet<number>): BonusAtRisk[] {
+  if (!conceded.size) return [];
+  return g.map.bonuses
+    .filter((b) => b.value > 0)
+    .map((b) => ({ b, ts: bonusTerritories(g, b.id) }))
+    .filter(({ ts }) => ts.length > 0 && ts.every((t) => after.has(t)) && ts.some((t) => conceded.has(t)))
+    .sort((x, y) => x.b.id - y.b.id)
+    .map(({ b, ts }) => ({
+      bonusId: b.id,
+      name: b.name,
+      value: b.value,
+      conceded: ts.filter((t) => conceded.has(t)).sort(byNum),
+    }));
 }
 
 export interface FrontierBudget {
@@ -4800,6 +4852,23 @@ export function planTurn(input: PlanInput): TurnPlan {
     rationale.push(notCompleted.get(id)!.why);
   }
 
+  // Issue #109: the income the plan's concessions put at risk. `nextIncome` counts every
+  // territory the plan keeps (conceded borders included); a second figure drops the conceded
+  // borders, by the same income rule, and names the bonuses they break.
+  const nextIncome = incomeAfter(after);
+  const atRisk = bonusesAtRisk(g, after, conceded);
+  const ifFall = incomeAfter(new Set([...after].filter((t) => !conceded.has(t))));
+  const reportRisk = atRisk.length > 0 || ifFall !== nextIncome;
+  if (ifFall < nextIncome) {
+    const what = atRisk.length
+      ? `bonus ${atRisk.map((b) => `${bonusName(b.bonusId)} (+${b.value})`).join(', ')}`
+      : [...conceded].sort(byNum).map(label).join(', ');
+    warnings.push(
+      `This plan concedes ${what}: next income ${nextIncome} if they hold, ${ifFall} if the conceded borders fall.`,
+    );
+  }
+  const nextIncomeText = ifFall < nextIncome ? `${nextIncome}, ${ifFall} if the conceded borders fall` : `${nextIncome}`;
+
   // Rule 4d's frontier budget (#71): the frontier this plan leaves against the next income.
   const frontier: FrontierBudget = {
     ...frontierOf(after, (x) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0))),
@@ -4827,7 +4896,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   }
   if (frontier.enemyBorders)
     rationale.push(
-      `Frontier after this plan: ${frontier.borders} borders, ${frontier.enemyBorders} facing an enemy, needing ${frontier.holdCost} next turn to hold at the expected deploy (next income ${frontier.income}); every capture's score paid for the borders it adds.`,
+      `Frontier after this plan: ${frontier.borders} borders, ${frontier.enemyBorders} facing an enemy, needing ${frontier.holdCost} next turn to hold at the expected deploy (next income ${nextIncomeText}); every capture's score paid for the borders it adds.`,
     );
 
   // Issue #69, second point: several borders facing one opponent are each sized for its whole
@@ -4889,7 +4958,12 @@ export function planTurn(input: PlanInput): TurnPlan {
       .sort((a, b) => a[0] - b[0])
       .map(([territoryId, armies]) => ({ territoryId, armies })),
     moves,
-    expected: { captures: [...captured].sort(byNum), bonusesCompleted: completed, nextIncome: incomeAfter(after) },
+    expected: {
+      captures: [...captured].sort(byNum),
+      bonusesCompleted: completed,
+      nextIncome,
+      ...(reportRisk ? { nextIncomeIfConcededFall: ifFall, bonusesAtRisk: atRisk } : {}),
+    },
     warnings,
     rationale,
     enemyDeploy,
