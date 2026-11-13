@@ -90,7 +90,7 @@ const attacks = (p: TurnPlan) => p.moves.filter((m) => m.kind === 'attack');
 const deploySum = (p: TurnPlan) => p.deploys.reduce((s, d) => s + d.armies, 0);
 
 /** The plan passes warapp_submit_turn's validator. */
-function valid(p: TurnPlan, b: BoardState, income: number, map = MAP) {
+function valid(p: TurnPlan, b: BoardState, income: number, map = MAP, guard = true) {
   const names = new Map(map.territories.map((t) => [t.id, t.name]));
   const ref = (id: number) => ({ id, name: names.get(id)! });
   return validateTurn({
@@ -106,7 +106,7 @@ function valid(p: TurnPlan, b: BoardState, income: number, map = MAP) {
     ),
     myInGameId: ME,
     income,
-    guard: true,
+    guard,
     deploys: p.deploys.map((d) => ({ territory: ref(d.territoryId), armies: d.armies })),
     moves: p.moves.map((m) => ({ from: ref(m.from), to: ref(m.to), armies: m.armies })),
   }).warnings;
@@ -888,5 +888,106 @@ describe('#112: the contact fallback takes the capture that loses the fewest arm
     expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 25, kind: 'attack' })]);
     expect(attacks(p)[0]!.reason).toMatch(/^cheapest expansion \(loses ~11 armies\) toward bonus Crown \(#601\)/);
     expect(valid(p, b, 5, map)).toEqual([]);
+  });
+});
+
+// The real shape that showed it (an 8-player opening: every stack 15, every neutral 15, income 5,
+// one-army-stands-guard off): to take one neutral that completes nothing, the fallback emptied a
+// stack standing next to enemy stacks — once alone, once as the softener of a combined capture —
+// and, when rule 4d refused that, waived 4d for it. The contact phase already required every
+// source to still hold its border once the attack leaves; the opening and expansion phases, the
+// army-cap case and the waiver did not. A capture that leaves its source to fall is worse than
+// standing still: it trades a held territory and its armies for a neutral that pays nothing.
+describe('never stand still, but never by emptying a border that holds (every phase)', () => {
+  const OFF: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: false };
+  const EIGHT: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80, 90].map((id) => ({ id })), turn: 1 };
+  //   1 (mine) ─ 3 (a neutral, in Far with 15-neutrals on 6 and 7: uneconomic for +3)
+  //   1 ─ 4 (P2, 15) and 1 ─ 5 (P3, 15): two enemy stacks next to my stack.
+  //   2 (mine) ─ 3 as well, with no enemy next to it.
+  const map = makeMap(
+    [1, 2, 3, 4, 5, 6, 7],
+    [[1, 3], [2, 3], [1, 4], [1, 5], [3, 6], [6, 7]],
+    [[501, 'Far', 3, [3, 6, 7]]],
+  );
+  const kg = buildGraph(map);
+  const shape = (one: number, two: number, near = 15): BoardState =>
+    board([mine(1, one), mine(2, two), neutral(3, near), player(4, 15, P2), player(5, 15, P3), neutral(6, 15), neutral(7, 15)]);
+  const plan = (b: BoardState, game: PlanGameContext = EIGHT, settings: PlannerSettings = OFF) =>
+    planTurn({ graph: kg, board: b, me: ME, income: 5, settings, game });
+  const deployedTo = (p: TurnPlan, t: number) => p.deploys.filter((d) => d.territoryId === t).reduce((n, d) => n + d.armies, 0);
+  /** The plan passes warapp_submit_turn's validator with one-army-stands-guard off. */
+  const ok = (p: TurnPlan, b: BoardState) => valid(p, b, 5, map, false);
+
+  it('the arithmetic: a 15-neutral takes 25, a 4-neutral 6; 21 armies need 35, 13 need 21, 8 need 13', () => {
+    expect(armiesToTake(15)).toBe(25);
+    expect(armiesToTake(4)).toBe(6);
+    expect(straightKills(15, 70)).toBe(11);
+    expect(armiesToTake(21)).toBe(35);
+    expect(armiesToTake(13)).toBe(21);
+    expect(armiesToTake(8)).toBe(13);
+  });
+
+  it('opening: a 20-stack next to two enemy 15-stacks does not send everything at a neutral', () => {
+    // 20 + 5 deployed take the neutral exactly, and leave T1 empty beside two 15-stacks (each
+    // 15 + ~5). Before, it attacked with 25.
+    const b = shape(20, 1);
+    const p = plan(b);
+    expect(p.profile.phase).toBe('opening');
+    expect(attacks(p)).toEqual([]);
+    expect(p.conceded).toEqual([]);
+    expect(p.warnings.join('\n')).toMatch(
+      /Standing still: no capture is planned, and the cheapest expansion \(T3 \(#3\), 25 armies, toward bonus Far \(#501\)\) is not taken: attacking it would leave T1 \(#1\) unable to hold its border/,
+    );
+    expect(p.rationale.join('\n')).not.toMatch(/frontier stop is waived/);
+    expect(deploySum(p)).toBe(5);
+    expect(ok(p, b)).toEqual([]);
+  });
+
+  it('opening: nor in a combined capture that leaves the border stack short (15 from behind, 10 from the border)', () => {
+    // No single stack can afford the 25: T2 wears the neutral down with all 15 and T1 finishes
+    // with 10 of its 15, leaving 5 (10 with every deploy) beside two 15-stacks. Before, it did.
+    const b = shape(15, 15);
+    const p = plan(b);
+    expect(p.profile.phase).toBe('opening');
+    expect(attacks(p)).toEqual([]);
+    expect(p.warnings.join('\n')).toMatch(/Standing still: .*T3 \(#3\).* is not taken: attacking it would leave T1 \(#1\) unable to hold its border/);
+    expect(p.rationale.join('\n')).not.toMatch(/frontier stop is waived/);
+    expect(ok(p, b)).toEqual([]);
+  });
+
+  it('a stack that still holds once the attack leaves does attack', () => {
+    // A 4-neutral: 6 of the 22 take it, and the 16 left (21 with the deploys) need 27 or more.
+    const b = shape(22, 1, 4);
+    const p = plan(b);
+    expect(p.profile.phase).toBe('opening');
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 6 })]);
+    expect(ok(p, b)).toEqual([]);
+  });
+
+  it('a stack left short gets the deploys still available there that make it hold, then attacks', () => {
+    // 14 − 6 leaves 8, which 13 take; all 5 deploys make it 13, which need 21.
+    const b = shape(14, 1, 4);
+    const p = plan(b);
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 6 })]);
+    expect(deployedTo(p, 1)).toBe(5);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 5 to T1 \(#1\) so it still holds its border after the attack on T3 \(#3\) \(13 stay against a threat of 20\)/);
+    expect(ok(p, b)).toEqual([]);
+  });
+
+  it('one army fewer and the deploys cannot make it hold: no attack', () => {
+    // 13 − 6 leaves 7; with all 5 deploys 12, which 20 take.
+    const b = shape(13, 1, 4);
+    const p = plan(b);
+    expect(attacks(p)).toEqual([]);
+    expect(p.warnings.join('\n')).toMatch(/is not taken: attacking it would leave T1 \(#1\) unable to hold its border \(7 would stay, 12 with the 5 deploys left there, against a threat of 20\)/);
+    expect(ok(p, b)).toEqual([]);
+  });
+
+  it('a source with no enemy next to it is free to send everything, as before', () => {
+    // T2 has no enemy neighbour: 20 + 5 take the neutral and nothing is left to fall.
+    const b = shape(1, 20);
+    const p = plan(b);
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 3, armies: 25 })]);
+    expect(ok(p, b)).toEqual([]);
   });
 });

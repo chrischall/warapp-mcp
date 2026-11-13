@@ -388,7 +388,12 @@
 //     names the closer bonus and why it was passed over. Rule 4d may stop a step, except in the
 //     opening: when 4d refused every step that fits, the first of them is taken anyway (one capture
 //     that grows the frontier beats none; the rationale says 4d is waived for it, and 4d still
-//     judges every other capture). The rationale says nothing passed the economy test and standing
+//     judges every other capture). In every phase, and under the waiver too, every source of the
+//     capture must still hold its border once the attack leaves (a softener of a combined capture
+//     included; a conceded source excepted): a source left short gets the deploys still available
+//     there that make it hold, and a capture they cannot cover is not made — standing still beats
+//     trading a held territory and its armies for a neutral that pays nothing (live, an 8-player
+//     opening sent a 15-stack's every army at a 15-neutral from beside two enemy 15-stacks). The rationale says nothing passed the economy test and standing
 //     still is worse than the cheapest expansion; when nothing is taken, a warning names the
 //     top-ranked step and the actual reason: rule 4d's frontier stop, R3 (it completes a bonus
 //     that falls next turn), No-Split, no neighbour able to attack (each named as holding its
@@ -4629,8 +4634,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         | { kind: 'size' };
       const failed = new Map<number, Fail>();
       /**
-       * In contact (#107): every source of the attack on `t` must still hold its border once `t` is
-       * taken. A source left short gets the deploys still available there that make it hold (they
+       * Every source of the attack on `t` must still hold its border once `t` is taken (#107 in
+       * contact; every phase since the opening emptied border stacks live). A source left short gets the deploys still available there that make it hold (they
        * are placed now, so the leftover deploy cannot go elsewhere; the step's undo takes them
        * back). A source that cannot be made to hold is returned, with what stays, the deploys that
        * were available and the threat it faces; else `undefined`. A conceded border is skipped: its
@@ -4731,7 +4736,10 @@ export function planTurn(input: PlanInput): TurnPlan {
           failed.set(st.t, r ?? { kind: 'size' });
           continue;
         }
-        const short = contact ? holdLeftShort(st.t) : undefined;
+        // Every phase, not only contact: a capture that leaves its source to fall is worse than
+        // standing still (live, an opening plan sent a 15-stack's every army at a 15-neutral
+        // from beside two enemy 15-stacks).
+        const short = holdLeftShort(st.t);
         if (short) {
           undo();
           failed.set(st.t, { kind: 'hold', ...short });
@@ -4753,9 +4761,18 @@ export function planTurn(input: PlanInput): TurnPlan {
       let waived: { holdCost: number; income: number } | undefined;
       if (!taken && profile.phase === 'opening') {
         const st = steps.find((x) => failed.get(x.t)?.kind === '4d');
-        if (st && attempt(st, reasonOf(st))) {
-          taken = { kind: 'neutral', st };
-          waived = failed.get(st.t) as { holdCost: number; income: number };
+        const undo = st ? attempt(st, reasonOf(st)) : null;
+        if (st && undo) {
+          // The waiver is for the frontier the captured territory adds, never for a source the
+          // attack leaves unable to hold: that is checked (and its deploys placed) again here.
+          const short = holdLeftShort(st.t);
+          if (short) {
+            undo();
+            failed.set(st.t, { kind: 'hold', ...short });
+          } else {
+            taken = { kind: 'neutral', st };
+            waived = failed.get(st.t) as { holdCost: number; income: number };
+          }
         }
       }
       // #112, in contact: after the fallback's capture, every other candidate that loses no armies
