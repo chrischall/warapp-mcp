@@ -809,6 +809,15 @@
 // whole stack, only when it need not hold; its one order goes to the strike before a small
 // expansion (an attack on a neutral that completes no bonus this turn: taken back, its armies
 // rejoin the stack). Efficient sizes (S2) do not apply. Off (the default), plans are unchanged.
+// Guard off (#165; `oneArmyStandsGuard: false`, not under No-Split): every army may move, but an
+// empty territory falls to any single army, so each territory of mine next to a visible enemy at the
+// start of the turn keeps one army all the same (never my commander's: it is not empty; a rationale
+// line names them) — every pass, withdrawals from a conceded border included, counts it as staying.
+// And after the holds, before any other capture (every goal), an enemy territory next to mine at 0
+// armies (no special unit) whose owner holds a positive bonus it is in is attacked with one army —
+// it breaks the bonus — from the neighbour with the most to spare beyond what holds it once the
+// target falls, else one deployed on a neighbour not conceded; never one lowering income. Sized for
+// the board as it stands: if the owner deploys there first, the one army is lost.
 // Special units: a commander fights as COMMANDER_STRENGTH (7) armies, attacking and
 // defending, and takes no partial damage (armies die first; it falls to 7 damage left
 // over), so a stack of d armies plus a commander defends exactly as d + 7: every capture
@@ -848,6 +857,7 @@ import {
   type KillRates,
 } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
+import { guardOffExposure } from './guard-off.js';
 import { classifyExchange, forecastBorder, type Exchange, type ExchangeCase } from './exchange.js';
 import { twoStepReaches, type TwoStepReach } from './lookahead.js';
 import { indexAfterAll, MoveSlot, opponentOrdersBefore, scheduleMoves, type MoverPosition } from './schedule.js';
@@ -2593,8 +2603,29 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- mutable plan state ----
   let budget = income;
   const deployed = new Map<number, number>();
+  // #165: with the guard off, a territory of mine next to a visible enemy at the start of the turn
+  // keeps one army all the same (an empty territory falls to any single army) — never my commander's
+  // (it is not empty), and not under No-Split (an order sends the whole stack).
+  const sentinel = new Set(
+    guard || noSplit
+      ? []
+      : mine.filter(
+          (id) =>
+            !myCommanders.has(id) &&
+            neighborsOf(g, id).some((n) => {
+              const o = state.get(n)?.owner;
+              return o?.kind === 'player' && foe(o.playerId);
+            }),
+        ),
+  );
+  /** Armies that stay on my `id` whatever its orders: the guard, or (#165) the army kept next to an enemy. */
+  const guardAt = (id: number) => (guard || sentinel.has(id) ? 1 : 0);
+  if (sentinel.size)
+    rationale.push(
+      `One Army Must Stand Guard is off: every army may move, but an empty territory falls to any single army, so ${[...sentinel].sort(byNum).map(label).join(', ')} ${sentinel.size === 1 ? 'keeps' : 'each keep'} one army (next to an enemy).`,
+    );
   // May start at −1 (a 0-army territory still owes its guard): deploys there pay for it first.
-  const avail = new Map(mine.map((id) => [id, armiesOf(id) - guard]));
+  const avail = new Map(mine.map((id) => [id, armiesOf(id) - guardAt(id)]));
   const locked = new Set<number>();
   /**
    * #179: what a territory covering a finished-off player's exit keeps (in `avail` terms): its
@@ -3229,7 +3260,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     t.holdCost > CONCEDE_FACTOR * t.worth &&
     !(profile.phase === 'opening' && t.holdCost <= t.have);
   /** Armies that stay on my `id` after this turn's deploys, outgoing moves and incoming withdrawals so far. */
-  const stayAt = (id: number) => avail.get(id)! + guard + (incoming.get(id) ?? 0);
+  const stayAt = (id: number) => avail.get(id)! + guardAt(id) + (incoming.get(id) ?? 0);
   /**
    * Armies (in `avail` terms) that must stay on my `x` for it to hold against the visible
    * threat next to it (its special units counted; the territories `gone` says fall this turn
@@ -4869,7 +4900,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const nextIncome = keptIncome(after);
     const spare = Math.max(0, budget - reserve);
     const stays = (m: number) => {
-      if (mineSet.has(m)) return avail.get(m)! + guard + (incoming.get(m) ?? 0);
+      if (mineSet.has(m)) return avail.get(m)! + guardAt(m) + (incoming.get(m) ?? 0);
       if (m === t) return survivors;
       // An earlier capture this turn: the survivors of its finishing attack.
       return survivorsAt.get(m) ?? 0;
@@ -5656,7 +5687,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           // No-Split (#124): nothing is kept back, the whole stack moves; a source that must hold
           // against what is left issues no order instead (tryCapture asks `mustHold`).
           if (noSplit) continue;
-          const keep = Math.max(0, need - guard);
+          const keep = Math.max(0, need - guardAt(x));
           keepAt.set(x, keep);
           avail.set(x, avail.get(x)! - keep);
         } else if (cost > 0) elsewhere.push({ x, cost, worth });
@@ -5685,13 +5716,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           const threat = deployReaching(p, adj) + adj.reduce((n, t) => n + Math.max(0, armiesOf(t) - guard) + unitsAt(t), 0);
           const need = Math.max(0, holdArmies(threat) - unitsAt(x));
           covers.add(x);
-          coverAt.set(x, Math.max(0, need - guard));
+          coverAt.set(x, Math.max(0, need - guardAt(x)));
           if (sources.has(x)) {
             if (noSplit) {
               uncoverable = true;
               break;
             }
-            const keep = Math.max(need - guard, straightKills(threat, rates.offensiveKillRate));
+            const keep = Math.max(need - guardAt(x), straightKills(threat, rates.offensiveKillRate));
             // It keeps the loss buffer too through the later passes, not only the hold.
             coverAt.set(x, keep);
             const extra = keep - (keepAt.get(x) ?? 0);
@@ -6208,6 +6239,45 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     rationale.push(
       `My commander stays on ${[...myCommanders].map(label).join(', ')}: planned moves carry armies only, never the commander.`,
     );
+
+  // ---- #165: guard off — an empty enemy territory that breaks a bonus ----
+  // With One Army Must Stand Guard off, an enemy territory next to mine standing at 0 armies (no
+  // special unit) falls to one army; when its owner holds a positive bonus it is in, that one army
+  // breaks the bonus. Every goal, after the holds and before any other capture: one army from the
+  // neighbour with the most to spare beyond what holds it once the target falls (a conceded border's
+  // armies are lost anyway), else one deployed on a neighbour that is not conceded. Never one that
+  // lowers income, nor under No-Split (an order sends the whole stack). It is sized for the board as
+  // it stands: if the owner deploys there first, the one army is lost.
+  if (!guard && !noSplit) {
+    const empties = guardOffExposure({ graph: g, board, me, friends: allies, deploys: [], moves: [] }).breaks;
+    for (const e of empties) {
+      const n = e.territoryId;
+      if (captured.has(n) || spared.has(n) || uncounted(n) || unitsAt(n) > 0 || gainWith([n]) < 0) continue;
+      const near = neighborsOf(g, n).filter((x) => mineSet.has(x));
+      const spareOf = (x: number) =>
+        Math.max(0, avail.get(x)! - Math.max(keepFor(x, (y) => y === n), twoStepKeep(x, (y) => y === n), coverOf(x)));
+      let src = near.map((x) => ({ x, spare: spareOf(x) })).filter((o) => o.spare >= 1).sort((a, b) => b.spare - a.spare || a.x - b.x)[0]?.x;
+      let bought = 0;
+      if (src === undefined && budget - reserve >= 1) {
+        src = near.filter((x) => !conceded.has(x) && roomAt(x) >= 1).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b)[0];
+        if (src !== undefined) {
+          deploy(src, 1);
+          bought = 1;
+        }
+      }
+      if (src === undefined) continue;
+      const from = src;
+      avail.set(from, avail.get(from)! - 1);
+      captured.add(n);
+      survivorsAt.set(n, 1);
+      captureOrder.push(n);
+      captureUndo.set(n, () => avail.set(from, avail.get(from)! + 1));
+      if (!targets.has(n)) targets.set(n, { id: n, cost: 1, enemy: true, sources: near });
+      const reason = `One Army Must Stand Guard is off and ${label(n)} stands at 0: one army breaks player ${e.playerId}'s bonus ${bonusName(e.bonusId)} (+${e.value}) unless it deploys there first`;
+      moves.push({ from, to: n, armies: 1, kind: 'attack', reason, winChance: chanceOf(1, 0) });
+      rationale.push(`Attack ${label(n)} from ${label(from)} with 1${bought ? ' (deploy 1 there)' : ''}: ${reason}.`);
+    }
+  }
 
   if (balanced) {
     // ---- balanced: greedy by income per army ----
@@ -7652,7 +7722,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /** A territory the plan has not given up (or gave up but whose garrison may still hold it). */
   const open = (id: number) => !conceded.has(id) || mayHold.has(id);
   /** Armies that stay on a border after its deploys, outgoing moves and incoming withdrawals. */
-  const stays = (id: number) => avail.get(id)! + guard + (incoming.get(id) ?? 0);
+  const stays = (id: number) => avail.get(id)! + guardAt(id) + (incoming.get(id) ?? 0);
   // Concentrate (#72, adapting in a 1v1 facing the opponent): the spare deploys go to one strike stack
   // on the border facing the strongest opponent (the highest income estimate, tracked when its
   // track is trusted), the stack that keeps the most there, rather than to comfort margins.
@@ -7707,7 +7777,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         if (cost === null || gainWith([n]) < 0) continue;
         const threat = Math.max(threatAt(x, (y) => captured.has(y) || y === n)?.threat ?? 0, deployOf(player.p));
         const hold = Math.max(0, holdArmies(threat) - unitsAt(x));
-        const can = stackAt(x) + room - guard;
+        const can = stackAt(x) + room - guardAt(x);
         const spare = Math.min(can - cost, stackAt(x) + room - cost - hold);
         if (spare < 0) continue;
         if (!best || spare > best.spare || (spare === best.spare && n < best.n)) best = { n, cost, extra, spare, can };
@@ -8181,7 +8251,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         const { threat, need } = holdAfter(gone);
         // #179: what covers a finished-off player's exit stays too.
         const movable = avail.get(S)! - Math.max(pinned, coverOf(S));
-        const stay = avail.get(S)! + guard + (incoming.get(S) ?? 0) - c.cost;
+        const stay = avail.get(S)! + guardAt(S) + (incoming.get(S) ?? 0) - c.cost;
         if (c.cost > movable) {
           refused.set(c.id, `it needs ${c.cost}, more than the ${Math.max(0, movable)} the stack can send`);
           continue;
@@ -8213,7 +8283,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const reinforced = new Map<number, number>();
     if (!noSplit) {
       const { need } = holdAfter(new Set());
-      const room = () => Math.min(avail.get(S)! - Math.max(pinned, coverOf(S)), avail.get(S)! + guard + (incoming.get(S) ?? 0) - need);
+      const room = () => Math.min(avail.get(S)! - Math.max(pinned, coverOf(S)), avail.get(S)! + guardAt(S) + (incoming.get(S) ?? 0) - need);
       // The stack's earlier attacks on a player (a break or counter-attack from it) first.
       for (const m of moves) {
         if (m.from !== S || m.kind !== 'attack' || combined.has(m.to) || worstCase.has(m.to) || strikes.has(m.to)) continue;
@@ -8255,7 +8325,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       locked.add(S);
     }
     const { threat: finalThreat, need: finalNeed } = holdAfter(new Set());
-    const stays = avail.get(S)! + guard + (incoming.get(S) ?? 0);
+    const stays = avail.get(S)! + guardAt(S) + (incoming.get(S) ?? 0);
     for (const { c, effect, value, armies, chance } of taken) {
       const reason = `the strike stack ${effect ?? 'takes an adjacent enemy territory'}`;
       moves.push({ from: S, to: c.id, armies, kind: 'attack', reason, winChance: chance });
@@ -8319,7 +8389,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // A kept border the leftover could not make safe: the completed bonus can fall with it.
   for (const t of [...kept].sort(byNum)) {
     const b = borders.get(t)!;
-    const stays = avail.get(t)! + guard + (incoming.get(t) ?? 0);
+    const stays = avail.get(t)! + guardAt(t) + (incoming.get(t) ?? 0);
     const take = toTake(stays + unitsAt(t));
     if (take !== null && take <= b.threat)
       warnings.push(
@@ -8659,7 +8729,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // this turn and attack it next. The larger hold binds (never the two added together).
       const far = twoStepHold(t);
       const twoStep = far !== null && far.stay > keep128 ? far : null;
-      const keep = Math.max(keep128, twoStep?.stay ?? 0, coverKeep.has(t) ? coverKeep.get(t)! + guard : 0);
+      const keep = Math.max(keep128, twoStep?.stay ?? 0, coverKeep.has(t) ? coverKeep.get(t)! + guardAt(t) : 0);
       // No-Split (#124): a transfer sends the whole stack, so one that must keep some sends none.
       const part = Math.min(n, Math.max(0, stayAt(t) - keep));
       const k = noSplit && part < n ? 0 : part;
