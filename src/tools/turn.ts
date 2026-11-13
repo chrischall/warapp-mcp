@@ -441,9 +441,12 @@ export function validateTurn(args: {
     );
   }
   // No-Split moves the whole stack (#124: the wiki, and a live turn that left every source at 0):
-  // an order for fewer armies still sends them all, so say what will actually move.
+  // an order for fewer armies still sends them all, so say what will actually move. A source captured
+  // earlier in the list (Multi-Attack) is left out: the armies standing there at the start were the
+  // defenders', and what moves on is the capture's survivors, which this cannot size.
   if (args.noSplit) {
     for (const m of moves) {
+      if (chained.has(m.from.id)) continue;
       const max = (standing.get(m.from.id)?.armies ?? 0) + (deployedOn.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
       if (m.armies < max)
         warnings.push(

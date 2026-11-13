@@ -1936,6 +1936,40 @@ describe('Multi-Attack in the turn tools (#130)', () => {
     expect(() => run([[161, 157, 7], [157, 158, 7]], true)).toThrow(/at most 6.*upper bound/s);
   });
 
+  it('under No-Split too, a captured territory is not warned about by the armies that stood there before', () => {
+    // 157's armies at the start are the defenders', not mine: what moves on from it is the survivors
+    // of the capture, which the whole-stack warning cannot size. (Its 9 defenders would read as a
+    // stack of 8 that a 4-army order under-sends.)
+    const out = validateTurn({
+      map,
+      board: live.map((t) => (t.territoryId === 157 ? { ...t, armies: 9 } : t)),
+      myInGameId: ANN.inGame,
+      income: 5,
+      guard: true,
+      deploys: [{ territory: T(161), armies: 5 }],
+      moves: [
+        { from: T(161), to: T(157), armies: 7 },
+        { from: T(157), to: T(158), armies: 4 },
+      ],
+      multiAttack: true,
+      noSplit: true,
+    });
+    expect(out.warnings.join('\n')).not.toMatch(/\(157\) →/);
+    // A source held at the start still gets the warning.
+    const short = validateTurn({
+      map,
+      board: live,
+      myInGameId: ANN.inGame,
+      income: 5,
+      guard: true,
+      deploys: [{ territory: T(161), armies: 5 }],
+      moves: [{ from: T(161), to: T(157), armies: 3 }],
+      multiAttack: true,
+      noSplit: true,
+    });
+    expect(short.warnings.join('\n')).toMatch(/No-Split: .*\(161\) → .*sends 3.*all 7/);
+  });
+
   it('warapp_submit_turn passes the game\'s Multi-Attack setting through', async () => {
     const settings = { ...modelledSettings(), MultiAttack: 'True' };
     h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
