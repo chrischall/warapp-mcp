@@ -466,8 +466,9 @@ latest standing). The client ignores server error **4** and refreshes as on succ
 error is thrown. `warapp_begin_turn` (confirm-gated) refuses games past turn 1, games whose move
 order is known and not `NoLuckCycle`, seats not `Playing`, and games whose board is already
 visible; after the send it reads the board back with `GetLatestGameInfo` and reports `begun` only
-when a standing arrives (`unconfirmed` otherwise; after an error 4 with the board still hidden,
-`not_begun` — what error 4 means is unverified, so the board alone decides; a transport failure is `unknown` and never
+when a standing arrives (`unconfirmed` otherwise; after an error 4 with the board read back and
+still hidden, `not_begun` — what error 4 means is unverified, so the board alone decides; a read-back
+that fails stays `unconfirmed`, since nothing was read; a transport failure is `unknown` and never
 retried). The encoder is pinned by a golden test built from synthetic ids; the owner verifies it
 live.
 

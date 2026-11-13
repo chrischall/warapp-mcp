@@ -182,12 +182,14 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
             }
 
             let territories: LiveTerritory[] | undefined;
+            let readFailure: string | undefined;
             try {
               territories = await liveBoard(ctx, gameId);
-            } catch {
-              territories = undefined;
+            } catch (e) {
+              // Nothing was read: never conclude the board is hidden from a failed read (#130).
+              readFailure = failureText(e);
             }
-            if (!territories && ignored) {
+            if (!territories && ignored && readFailure === undefined) {
               return {
                 status: 'not_begun' as const,
                 game,
@@ -202,8 +204,12 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
                 status: 'unconfirmed' as const,
                 game,
                 warning:
-                  'war.app accepted Begin, but the board could not be read back yet. Check warapp_get_live_board ' +
-                  'shortly — your timer is probably running.',
+                  (ignored
+                    ? `war.app answered Begin with error ${IGNORED_ERROR} (the web client ignores it)`
+                    : 'war.app accepted Begin') +
+                  `, but the board could not be read back${readFailure ? ` (${readFailure})` : ' yet'}. ` +
+                  'Check warapp_get_live_board shortly — your timer is probably running; do not press Begin ' +
+                  'again blindly.',
               };
             }
             return {

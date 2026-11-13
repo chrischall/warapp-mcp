@@ -41,15 +41,16 @@ function feedGame(extra: Record<string, unknown> = {}, myState = 'Playing'): Rec
 
 /**
  * A fake war.app: GetLatestGameInfo answers from `boards` in turn (the last
- * repeating; null: no standing), BeginFirstTurn records what it was sent and
+ * repeating; null: no standing; 'fail': a war.app error), BeginFirstTurn records what it was sent and
  * answers `begin`.
  */
-function server(boards: Array<SyntheticTerritory[] | null>, begin: Partial<ReplyFrame> = { body: (w) => w.bool(false) }) {
+function server(boards: Array<SyntheticTerritory[] | null | 'fail'>, begin: Partial<ReplyFrame> = { body: (w) => w.bool(false) }) {
   const begun: Array<{ gameId: number; left: number }> = [];
   let reads = 0;
   const warapp = (req: DecodedRequest): Partial<ReplyFrame> => {
     if (req.method === Method.GetLatestGameInfo) {
       const b = boards[Math.min(reads++, boards.length - 1)]!;
+      if (b === 'fail') return { error: { code: 99, message: 'read failed' } };
       return { body: (w) => writeLatestGameInfo(w, b, [ME.inGame]) };
     }
     if (req.method === Method.BeginFirstTurn) {
@@ -122,6 +123,17 @@ describe('warapp_begin_turn', () => {
     expect(p.status).toBe('not_begun');
     expect(String(p.warning)).toMatch(/error 4/);
     expect(String(p.warning)).not.toMatch(/probably running/);
+  });
+
+  it('error 4 then a failed read-back stays unconfirmed: nothing was read, so nothing is claimed', async () => {
+    const s = server([null, null, 'fail'], { error: { code: 4, message: 'x' } });
+    h = await liveHarness({ pages: SIGNED_IN, feed: [feedGame()], warapp: s.warapp });
+    const res = await confirmed({ game_id: GAME_ID });
+    expect(res.isError).toBeFalsy();
+    const p = payload(res);
+    expect(p.status).toBe('unconfirmed');
+    expect(String(p.warning)).toMatch(/could not be read/);
+    expect(String(p.warning)).not.toMatch(/did not take effect/);
   });
 
   it('surfaces any other war.app error', async () => {
