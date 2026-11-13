@@ -307,6 +307,10 @@ bridged POSTs time out while GETs still work; reloading the tab clears it.
   (`ServerError … MyGamesFilters.Filter()`); the client's default is `{4, 10, 2}` — then
   bool, int32 0, bool, bool. Reply `warlight.shared.MyGamesReturn`: one entry per game with
   id, name, map id and state codes (mapping the codes is still to do).
+  **Unverified (#130):** whether `count` (10, the client default, always sent) caps the reply —
+  an account in more than ten games may see only ten in `warapp_my_games` and
+  `warapp_wait_for_turn` with no truncation marker. Needs a live check with an account in at
+  least ten games before the count is raised or a marker added.
 - `GetFullProfile` (180): auth, int32 in-game player id. Reply
   `warlight.shared.FullProfileData`: name, level, member-since, per-format records
   (`{Wins, Games, NumTeams, TeamSize}`) and many counters. It also carries the player's
