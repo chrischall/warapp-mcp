@@ -371,7 +371,8 @@
 //     reports `frontier` (borders, enemy-facing borders, their hold cost — conceded borders
 //     excluded — and the next income). Under a guarded goal, a capture that adds an enemy-
 //     facing border without completing a bonus (not focused) is undone when the hold cost
-//     would then exceed the next income and the start-of-turn hold cost; a warning ("Frontier
+//     would then exceed the next income and the start-of-turn hold cost (in rule 4e's contact/late
+//     fallback it is a cost instead, #114); a warning ("Frontier
 //     grows faster than income") names it, and also fires when the plan's frontier ends so.
 //  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
 //     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
@@ -386,14 +387,15 @@
 //     stack beats a far step toward a bonus with fewer armies to finish; the reason says "the
 //     fewest of any bonus in reach" or "… with a capture affordable this turn", and the rationale
 //     names the closer bonus and why it was passed over. Rule 4d may stop a step, except in the
-//     opening: when 4d refused every step that fits, the first of them is taken anyway (one capture
-//     that grows the frontier beats none; the rationale says 4d is waived for it, and 4d still
-//     judges every other capture). In every phase, and under the waiver too, every source of the
-//     capture must still hold its border once the attack leaves (a softener of a combined capture
-//     included; a conceded source excepted): a source left short gets the deploys still available
-//     there that make it hold, and a capture they cannot cover is not made — standing still beats
-//     trading a held territory and its armies for a neutral that pays nothing (live, an 8-player
-//     opening sent a 15-stack's every army at a 15-neutral from beside two enemy 15-stacks). The rationale says nothing passed the economy test and standing
+//     contact/late fallback (a cost there, below, #114) and in the opening: when 4d refused every
+//     step that fits, the first of them is taken anyway (one capture that grows the frontier beats
+//     none; the rationale says 4d is waived for it, and 4d still judges every other capture). In
+//     every phase, and under the waiver too, every source of the capture must still hold its border
+//     once the attack leaves (a softener of a combined capture included; a conceded source
+//     excepted): a source left short gets the deploys still available there that make it hold, and
+//     a capture they cannot cover is not made — standing still beats trading a held territory and
+//     its armies for a neutral that pays nothing (live, an 8-player opening sent a 15-stack's every
+//     army at a 15-neutral from beside two enemy 15-stacks). The rationale says nothing passed the economy test and standing
 //     still is worse than the cheapest expansion; when nothing is taken, a warning names the
 //     top-ranked step and the actual reason: rule 4d's frontier stop, R3 (it completes a bonus
 //     that falls next turn), No-Split, no neighbour able to attack (each named as holding its
@@ -412,22 +414,34 @@
 //     below even"), and every source must still hold its border once the attack leaves: a source
 //     left short gets the deploys still available there that make it hold (a rationale line says
 //     so), and a capture they cannot cover is refused (a conceded source excepted; a warning names
-//     an enemy capture refused so, with what would stay and the deploys left). Order (#112):
-//     affordable first, then the armies the capture is expected to lose (the defenders' kills on
-//     its attackers at the game's rates; for a combined capture, the total over its attacks), then
-//     the armies it sends, then one that breaks a bonus (its owner holds it in full) or advances
-//     one of mine (a tie-break only), then (neutral steps) the order above, then id; the reason
-//     names the cost ("loses ~3 armies", "loses no armies"). So an enemy 4 taken for ~3 lost, or
-//     an empty one for none, beats a 15-neutral taken for ~11 toward a big bonus. After the
-//     capture taken, every other candidate that loses no armies is taken too (by armies sent,
-//     then id), when every hold stays covered and income does not fall, never attacking out of a
-//     conceded border; a rationale line says "Also take …: it costs nothing" (and, for one that
-//     opens a second front, "… taken only because it costs nothing"). In an FFA with two or more
+//     an enemy capture refused so, with what would stay and the deploys left). Here rule 4d's
+//     frontier stop is a cost, not a veto (#114): each candidate is tried (and undone) to find its
+//     armies at risk — the survivors its capture leaves on a border that cannot hold next turn at
+//     the expected enemy deploy (4d's and R3's arithmetic; 0 when it holds or faces no enemy).
+//     Order (#112, #114): affordable first, then its cost — the armies the capture is expected to
+//     lose (the defenders' kills on its attackers at the game's rates; for a combined capture, the
+//     total over its attacks) plus its armies at risk — then the armies it sends, then one that
+//     breaks a bonus (its owner holds it in full) or advances one of mine (a tie-break only), then
+//     (neutral steps) the order above, then id; the reason names both parts ("loses ~3 armies, and
+//     its 5 survivors may fall next turn", "loses no armies"). So an enemy 4 taken for ~3 lost, or
+//     an empty one for none, beats a 15-neutral taken for ~11 toward a big bonus, even when 4d
+//     would refuse their new border. After the capture taken, every other candidate that loses no
+//     armies is taken too (by armies sent, then id), when every hold stays covered and income does
+//     not fall, never attacking out of a conceded border; 4d does not stop one either (its
+//     survivors at risk never exceed the armies it sends); a rationale line says "Also take …: it
+//     costs nothing" (with "; its S survivors may fall next turn …" when its border is exposed,
+//     and, for one that opens a second front, "… taken only because it costs nothing"). Every
+//     candidate considered and not taken is named in one rationale line, "Other candidates not
+//     taken: …", with its reason (refused, does not fit, ranked after the capture taken and at
+//     what cost, or — rule 0p.2 — tried only after every other); when nothing is taken, the top
+//     one is in the stand-still warning instead. In an FFA with two or more
 //     opponents (rule 0p.2's setting, applied here whether or not the plan adapts), a capture
 //     against a player that cannot currently attack me (it could take no territory of mine next
 //     turn) opens a second front and is tried only after every other; the rationale says which
 //     ("can already attack me …: opens no new front" / "cannot attack me now: … opens a second
-//     front (no second front in an FFA), taken only because no neutral capture fits"), and the trade ("kills K for L lost"). Rule 4d still judges every candidate. An
+//     front (no second front in an FFA), taken only because no neutral capture fits"), and the trade ("kills K for L lost"). Outside
+//     the contact/late fallback (passes 1–3, the opening/expansion and army-cap fallback) rule 4d
+//     keeps its veto. An
 //     enemy capture carries the usual warning that it assumes the owner does not reinforce first.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, and
 //     in the opening and expansion phases, completions and advances keep the slots their scores
@@ -4587,30 +4601,40 @@ export function planTurn(input: PlanInput): TurnPlan {
         };
       };
       const loss = new Map(picks.map((p) => [p.st.t, lossOf(p.st)]));
-      /** "loses ~N armies" / "loses no armies": what a capture costs (#112). */
+      /**
+       * In contact (#114): the survivors a capture leaves on a border that cannot hold next turn
+       * (rule 4d's and R3's arithmetic: survivors against the threat at the expected enemy deploy),
+       * with that threat. Absent when it can be held or faces no enemy. Filled below, by a trial of
+       * each candidate.
+       */
+      const risk = new Map<number, { survivors: number; threat: number }>();
+      /** A candidate's ranking cost in contact (#114): the armies it loses plus its survivors at risk. */
+      const costOfPick = (t: number) => loss.get(t)!.lost + (risk.get(t)?.survivors ?? 0);
+      /** "N survivor(s)". */
+      const survivorsText = (n: number) => `${n} survivor${n === 1 ? '' : 's'}`;
+      /**
+       * "loses ~N armies" / "loses no armies": what a capture costs (#112); in contact, and when its
+       * border cannot hold next turn, ", and its S survivors may fall next turn" (#114).
+       */
       const lossText = (t: number) => {
         const n = loss.get(t)!.lost;
-        return n === 0 ? 'loses no armies' : `loses ~${n} ${n === 1 ? 'army' : 'armies'}`;
+        const r = risk.get(t);
+        return `${n === 0 ? 'loses no armies' : `loses ~${n} ${n === 1 ? 'army' : 'armies'}`}${
+          r ? `, and its ${survivorsText(r.survivors)} may fall next turn` : ''
+        }`;
       };
-      // In contact (#112): affordable first, then the armies the capture loses, then the armies it
-      // sends; breaking or advancing a bonus is only a tie-break. Under rule 0p.2 a capture that
-      // opens a second front still comes after every other.
+      // In contact (#112, #114): affordable first, then the cost (the armies the capture loses plus
+      // its survivors at risk), then the armies it sends; breaking or advancing a bonus is only a
+      // tie-break. Under rule 0p.2 a capture that opens a second front still comes after every other.
       const keyOf = (p: Pick) => [
         p.kind === 'enemy' && p.st.secondFront ? 1 : 0,
         shortOf(p.st),
-        loss.get(p.st.t)!.lost,
+        costOfPick(p.st.t),
         loss.get(p.st.t)!.sent,
         p.kind === 'enemy' && !p.st.bonus ? 1 : 0,
         p.kind === 'neutral' ? rank4e.get(p.st.t)! : Infinity,
         p.st.t,
       ];
-      if (contact)
-        picks.sort((a, b) => {
-          const x = keyOf(a);
-          const y = keyOf(b);
-          for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
-          return 0;
-        });
       const reasonFor = (p: Pick) => {
         const r = p.kind === 'neutral' ? reasonOf(p.st) : enemyReason(p.st);
         // In contact the reason names what the capture costs (#112).
@@ -4726,6 +4750,36 @@ export function planTurn(input: PlanInput): TurnPlan {
           unwind();
         };
       };
+      /**
+       * After `t` is captured in the plan (#114): its survivors and the threat they face, when they
+       * cannot hold it next turn (rule 4d's border arithmetic: they need deploys), else `undefined`.
+       */
+      const exposure = (t: number): { survivors: number; threat: number } | undefined => {
+        const held = heldNow();
+        const survivors = survivorsAt.get(t) ?? 0;
+        const b = borderOf(t, held, survivors);
+        if (!b.enemy || b.need <= 0) return undefined;
+        return { survivors, threat: threatAt(t, (n) => held.has(n))!.threat };
+      };
+      if (contact) {
+        // #114: rule 4d is a cost here, not a veto. Each candidate is tried (and undone) to see
+        // what its capture leaves exposed; then they are ranked.
+        evenTradesOnly = true;
+        for (const pick of picks) {
+          const undo = attempt(pick.st, '');
+          if (!undo) continue;
+          const e = exposure(pick.st.t);
+          if (e) risk.set(pick.st.t, e);
+          undo();
+        }
+        evenTradesOnly = false;
+        picks.sort((a, b) => {
+          const x = keyOf(a);
+          const y = keyOf(b);
+          for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
+          return 0;
+        });
+      }
       let taken: Pick | undefined;
       evenTradesOnly = contact;
       for (const pick of picks) {
@@ -4745,7 +4799,8 @@ export function planTurn(input: PlanInput): TurnPlan {
           failed.set(st.t, { kind: 'hold', ...short });
           continue;
         }
-        const stop = outgrows(st.t);
+        // #114: in contact rule 4d is a cost (ranked above), not a veto.
+        const stop = contact ? null : outgrows(st.t);
         if (stop === null) {
           taken = pick;
           break;
@@ -4775,38 +4830,6 @@ export function planTurn(input: PlanInput): TurnPlan {
           }
         }
       }
-      // #112, in contact: after the fallback's capture, every other candidate that loses no armies
-      // is taken too, by armies sent, then id — when every hold stays covered and income does not
-      // fall. Rule 4d still judges each. A conceded border never attacks out for one.
-      const free: Pick[] = [];
-      if (contact && taken) {
-        evenTradesOnly = true;
-        const others = picks
-          .filter((p) => p !== taken && loss.get(p.st.t)!.lost === 0)
-          .sort((a, b) => loss.get(a.st.t)!.sent - loss.get(b.st.t)!.sent || a.st.t - b.st.t);
-        for (const pick of others) {
-          const t = pick.st.t;
-          if (captured.has(t) || gainWith([t]) < 0) continue;
-          const now: Cand = { ...reachOf(t), t, cost: pick.st.cost };
-          if (now.from === undefined || conceded.has(now.from)) continue;
-          const undo = attempt(now, reasonFor(pick));
-          if (!undo) continue;
-          if (tradeOf(t).lost > 0 || holdLeftShort(t)) {
-            undo();
-            continue;
-          }
-          const stop = outgrows(t);
-          if (stop !== null) {
-            undo();
-            if (!rationale.includes(stop)) rationale.push(stop);
-            continue;
-          }
-          free.push(pick);
-        }
-        evenTradesOnly = false;
-      }
-      // Enemy targets added for this rule and not taken are dropped again.
-      for (const t of added) if (!captured.has(t)) targets.delete(t);
       /** The bonuses `t` would complete that R3 refused, as "name (#id)". */
       const refusedBonuses = (t: number) =>
         [...notCompleted.keys()]
@@ -4858,6 +4881,58 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (held > 0 && st.reach + held >= st.cost) return `does not fit what the holds leave: ${reachText(st, held)}`;
         return `does not fit this turn: ${reachText(st, 0)}`;
       };
+      // #112, in contact: after the fallback's capture, every other candidate that loses no armies
+      // is taken too, by armies sent, then id — when every hold stays covered and income does not
+      // fall. Its survivors at risk never exceed the armies it sends, so rule 4d does not stop one
+      // either (#114); the rationale says when the new border may fall. A conceded border never
+      // attacks out for one. Why one was not taken is kept for the list of dropped candidates.
+      const free: { pick: Pick; exposed?: { survivors: number; threat: number } }[] = [];
+      /** Why a candidate that loses nothing was not also taken, as a clause after its name. */
+      const freeWhy = new Map<number, string>();
+      if (contact && taken) {
+        evenTradesOnly = true;
+        const others = picks
+          .filter((p) => p !== taken && loss.get(p.st.t)!.lost === 0)
+          .sort((a, b) => loss.get(a.st.t)!.sent - loss.get(b.st.t)!.sent || a.st.t - b.st.t);
+        for (const pick of others) {
+          const t = pick.st.t;
+          if (captured.has(t)) continue;
+          if (gainWith([t]) < 0) {
+            freeWhy.set(t, 'is not taken: with the captures planned it would lower next income');
+            continue;
+          }
+          const now: Cand = { ...reachOf(t), t, cost: pick.st.cost };
+          if (now.from === undefined) {
+            freeWhy.set(t, `cannot be reached after the first capture: ${blockedText(now)}`);
+            continue;
+          }
+          if (conceded.has(now.from)) {
+            freeWhy.set(t, `is not taken: only conceded ${label(now.from)} could still attack it, and a conceded border never attacks out for a capture that only costs nothing`);
+            continue;
+          }
+          const undo = attempt(now, reasonFor(pick));
+          if (!undo) {
+            freeWhy.set(t, failText(now, (refusal as typeof refusal) ?? { kind: 'size' }));
+            continue;
+          }
+          const lost = tradeOf(t).lost;
+          if (lost > 0) {
+            undo();
+            freeWhy.set(t, `is not taken: after the first capture it would lose ~${lost} ${lost === 1 ? 'army' : 'armies'}, so it no longer costs nothing`);
+            continue;
+          }
+          const short = holdLeftShort(t);
+          if (short) {
+            undo();
+            freeWhy.set(t, failText(now, { kind: 'hold', ...short }));
+            continue;
+          }
+          free.push({ pick, exposed: exposure(t) });
+        }
+        evenTradesOnly = false;
+      }
+      // Enemy targets added for this rule and not taken are dropped again.
+      for (const t of added) if (!captured.has(t)) targets.delete(t);
       // A capture of a player's territory refused as a trade below even, or for a hold it would
       // leave short: said whatever was taken.
       for (const e of enemySteps) {
@@ -4908,10 +4983,14 @@ export function planTurn(input: PlanInput): TurnPlan {
             );
           }
         }
-        for (const pick of free) {
+        for (const { pick, exposed } of free) {
           const t = pick.st.t;
           rationale.push(
-            `Also take ${label(t)}: it costs nothing (it loses no armies, every hold stays covered and income does not fall).`,
+            `Also take ${label(t)}: it costs nothing (it loses no armies, every hold stays covered and income does not fall)${
+              exposed
+                ? `; its ${survivorsText(exposed.survivors)} may fall next turn (a threat of ${exposed.threat} against them), no more than the armies it sends`
+                : ''
+            }.`,
           );
           if (pick.kind === 'enemy' && ffaFronts && pick.st.secondFront)
             rationale.push(
@@ -4927,6 +5006,28 @@ export function planTurn(input: PlanInput): TurnPlan {
         const tail = `${failText(top.st, failed.get(top.st.t))}.`;
         warnings.push(`${head} ${tail}`);
       }
+      // #114: every candidate the fallback considered and dropped leaves a reason (the top one,
+      // when nothing is taken, is in the stand-still warning).
+      const dropped = picks.flatMap((p) => {
+        const t = p.st.t;
+        if (captured.has(t) || (!taken && p === picks[0])) return [];
+        const fail = failed.get(t);
+        if (fail) return [`${label(t)} ${failText(p.st, fail)}`];
+        const why = freeWhy.get(t);
+        if (why) return [`${label(t)} ${why}`];
+        if (!taken) return [`${label(t)} ${failText(p.st, undefined)}`];
+        if (shortOf(p.st) > 0) return [`${label(t)} ${failText(p.st, undefined)}`];
+        const after = `is ranked after ${label(taken.st.t)}`;
+        if (p.kind === 'enemy' && p.st.secondFront && !(taken.kind === 'enemy' && taken.st.secondFront))
+          return [`${label(t)} ${after}: player ${p.st.player} cannot attack me now, so it is tried only after every other capture`];
+        if (!contact) return [`${label(t)} ${after} in rule 4e's order (what this turn can afford, then its bonus's armies to finish)`];
+        const c = costOfPick(t);
+        const tc = costOfPick(taken.st.t);
+        return [
+          `${label(t)} ${after}: it costs ${c} (${lossText(t)}) against ${tc}${c === tc ? ' (ties go by armies sent, then a bonus, then id)' : ''}`,
+        ];
+      });
+      if (dropped.length) rationale.push(`Other candidates not taken: ${dropped.join('; ')}.`);
     }
   }
 

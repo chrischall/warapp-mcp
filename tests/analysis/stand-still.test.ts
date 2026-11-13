@@ -515,12 +515,16 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
       }
     });
 
-    it('later, with no waiver (contact, over the army cap): rule 4d stops it, and the withdrawal stands', () => {
-      // An army cap of 1× income: my 20 armies after deploy exceed 5, so 4e runs in contact.
+    it('later (contact, over the army cap): rule 4d is a cost, not a veto (#114); the capture goes ahead from 4 and 5, and the withdrawal stands', () => {
+      // An army cap of 1× income: my 20 armies after deploy exceed 5, so 4e runs in contact. Every
+      // candidate is tried and undone to rank it: the withdrawal survives those undos too.
       const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: { ...STD, armyCap: 1 }, game: { ...SEVEN, turn: 5 } });
       expect(p.profile.phase).toBe('contact');
-      expect(p.rationale.join('\n')).toMatch(/Do not take T3 \(#3\)/);
-      expect(attacks(p)).toEqual([]);
+      expect(p.rationale.join('\n')).not.toMatch(/Do not take T3 \(#3\)/);
+      expect(attacks(p).map((m) => m.to)).toEqual([3, 3]);
+      expect(attacks(p).every((m) => m.from !== 1)).toBe(true);
+      // 3 faces the 15-army enemy on 23: its 4 survivors cannot hold it next turn.
+      expect(attacks(p)[1]!.reason).toMatch(/^cheapest expansion \(loses ~7 armies, and its 4 survivors may fall next turn\)/);
       withdrawal(p);
       expect(valid(p, cb, 5, cmap)).toEqual([]);
     });
@@ -624,7 +628,10 @@ describe('#107: in contact, never stand still either', () => {
       // a bonus is only a tie-break. Sized at 1, then topped up from the stack's idle armies to the
       // next kill breakpoint (3), as every attack on a player's is. 22 is no free capture.
       expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 3, kind: 'attack' })]);
-      expect(attacks(p)[0]!.reason).toMatch(/^cheapest capture \(loses no armies\): takes a territory of player 40/);
+      // #114: its 1 survivor cannot hold 23 against player 40's 3 on 25 (+ deploy): at risk.
+      expect(attacks(p)[0]!.reason).toMatch(
+        /^cheapest capture \(loses no armies, and its 1 survivor may fall next turn\): takes a territory of player 40/,
+      );
       expect(p.expected.captures).toEqual([23]);
       const r = p.rationale.join('\n');
       expect(r).toMatch(/Take T23 \(#23\) though no planned capture is economic: contact phase: no capture is planned/);
@@ -989,5 +996,129 @@ describe('never stand still, but never by emptying a border that holds (every ph
     const p = plan(b);
     expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 3, armies: 25 })]);
     expect(ok(p, b)).toEqual([]);
+  });
+});
+
+// #114: an 8-player FFA in contact, at 60/70, every neutral 15, income 5. The contact fallback
+// still took a 15-neutral with 25 (≈11 lost): rule 4d's frontier stop refused the empty enemy
+// territory next to one 15-stack, and the 4-army enemy territory next to the other left no line
+// at all (its owner could not attack me, so rule 0p.2 tried it only after the neutral, which was
+// taken first, and nothing reported the candidates never tried). In the contact/late fallback 4d
+// is now a cost, not a veto: a capture's ranking cost is the armies it is expected to lose plus
+// the survivors it leaves on a border that cannot hold next turn; and every candidate the
+// fallback drops is named with its reason.
+describe('#114: the contact fallback counts the frontier as armies at risk, not a veto', () => {
+  const EIGHT: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80, 90].map((id) => ({ id })), turn: 3 };
+  //   My 15-stacks on 1 and 2, a 25-stack on 8 behind them, and a 1-army 7 (conceded).
+  //   1 borders 23 (player 40, 0) and 24 (player 30, 12); 2 borders 22 (player 30, 4) and 25
+  //   (player 40, 12). 23 then faces 25, 22 faces 24. Crown (+6) is the four 15-neutrals 3 4 5 6:
+  //   8 alone reaches 3 (25 to take). 7 borders 25 (player 40 can attack me) and, when
+  //   `bothFront`, 24 (so can player 30). 26 and 27 keep both players out of my reach.
+  const shape = (bothFront: boolean) =>
+    makeMap(
+      [1, 2, 3, 4, 5, 6, 7, 8, 22, 23, 24, 25, 26, 27],
+      [
+        [1, 2], [8, 1], [8, 2], [8, 3], [1, 23], [1, 24], [2, 4], [2, 22], [2, 25], [2, 7],
+        [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27],
+        ...(bothFront ? ([[7, 24]] as [number, number][]) : []),
+      ],
+      [[701, 'Crown', 6, [3, 4, 5, 6]]],
+    );
+  const shapeBoard = (): BoardState =>
+    board([
+      mine(1, 15),
+      mine(2, 15),
+      mine(7, 1),
+      mine(8, 25),
+      neutral(3, 15),
+      neutral(4, 15),
+      neutral(5, 15),
+      neutral(6, 15),
+      player(22, 4, P2),
+      player(23, 0, P3),
+      player(24, 12, P2),
+      player(25, 12, P3),
+      player(26, 3, P2),
+      player(27, 3, P3),
+    ]);
+  const run = (b: BoardState, map: GameMap) =>
+    planTurn({ graph: buildGraph(map), board: b, me: ME, income: 5, settings: STD, game: EIGHT, options: { adapt: false } });
+
+  it('the arithmetic: the empty one loses nothing, the 4 loses ~3, the 15-neutral ~11', () => {
+    expect(armiesToTake(0)).toBe(1);
+    expect(armiesToTake(4)).toBe(6);
+    expect(armiesToTake(15)).toBe(25);
+    expect(straightKills(4, 70)).toBe(3);
+    expect(straightKills(15, 70)).toBe(11);
+    // 25's threat on 23: 11 movable + ~5 deploy = 16; 1 survivor (2 to take) cannot hold.
+    expect(armiesToTake(1)!).toBeLessThanOrEqual(16);
+  });
+
+  it('takes the empty enemy territory 4d refused, not the 15-neutral, and names its survivors at risk', () => {
+    const map = shape(false);
+    const b = shapeBoard();
+    const p = run(b, map);
+    expect(p.profile.phase).toBe('contact');
+    expect(p.conceded).toEqual([7]);
+    // 23 costs 0 lost + 1 survivor at risk = 1; the neutral costs 11 (3 faces no enemy).
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 23, kind: 'attack' })]);
+    expect(attacks(p)[0]!.reason).toMatch(
+      /^cheapest capture \(loses no armies, and its 1 survivor may fall next turn\): takes a territory of player 40/,
+    );
+    expect(p.expected.captures).toEqual([23]);
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/Take T23 \(#23\) though no planned capture is economic/);
+    // The 4d refusal is not said of a capture the fallback takes.
+    expect(r).not.toMatch(/Do not take T23/);
+    expect(p.warnings.join('\n')).not.toMatch(/T23 \(#23\) \(the frontier would need/);
+    expect(r).not.toMatch(/Attack T3 \(#3\)|Attack T22 \(#22\)/);
+    // Every candidate dropped has a reason: the 4 (its owner cannot attack me, so it is tried
+    // last) and the neutral (it costs more).
+    const line = p.rationale.find((l) => l.startsWith('Other candidates not taken: '));
+    expect(line).toBeDefined();
+    expect(line).toMatch(/T3 \(#3\) is ranked after T23 \(#23\): it costs 11 \(loses ~11 armies\) against 1/);
+    expect(line).toMatch(/T22 \(#22\) is ranked after T23 \(#23\): player 30 cannot attack me now, so it is tried only after every other capture/);
+    expect(valid(p, b, 5, map)).toEqual([]);
+  });
+
+  it('when both owners can attack me: the 4 costs 3 lost + its survivors at risk, still above the empty one', () => {
+    const map = shape(true);
+    const b = shapeBoard();
+    const p = run(b, map);
+    expect(p.profile.phase).toBe('contact');
+    expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 23]]);
+    const line = p.rationale.find((l) => l.startsWith('Other candidates not taken: '))!;
+    // 22: 6 sent, 3 lost, 3 survivors facing 24 (threat 16) = 6; the neutral 11.
+    expect(line).toMatch(/T22 \(#22\) is ranked after T23 \(#23\): it costs 6 \(loses ~3 armies, and its 3 survivors may fall next turn\) against 1/);
+    expect(line).toMatch(/T3 \(#3\) is ranked after T23 \(#23\): it costs 11 \(loses ~11 armies\) against 1/);
+    expect(valid(p, b, 5, map)).toEqual([]);
+  });
+
+  it('outside the fallback 4d still stops a capture that grows the enemy frontier past income', () => {
+    // 9, a 1-neutral next to 8, completes Nook (+2): an economic capture, so no fallback runs.
+    // Enemy territories are no plain-expansion target under `balanced`, so 4d's stop is shown on
+    // the neutral 11 (1 army, in no bonus) next to 1 and to player 40's 12-stack on 25: plain
+    // expansion (pass 3) tries it, and its 2 survivors there would need 8 more to hold.
+    const base = shape(false);
+    const map = makeMap(
+      [...base.territories.map((t) => t.id), 9, 11],
+      [
+        [1, 2], [8, 1], [8, 2], [8, 3], [1, 23], [1, 24], [2, 4], [2, 22], [2, 25], [2, 7],
+        [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27], [8, 9], [1, 11], [11, 25],
+      ],
+      [
+        [701, 'Crown', 6, [3, 4, 5, 6]],
+        [702, 'Nook', 2, [9]],
+      ],
+    );
+    const b = board([...shapeBoard().territories, neutral(9, 1), neutral(11, 1)]);
+    const p = run(b, map);
+    expect(p.profile.phase).toBe('contact');
+    expect(p.expected.captures).toEqual([9]);
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/Do not take T11 \(#11\): it adds a border facing an enemy without completing a bonus/);
+    expect(r).not.toMatch(/though no planned capture is economic/);
+    expect(r).not.toMatch(/Other candidates not taken/);
+    expect(valid(p, b, 5, map)).toEqual([]);
   });
 });
