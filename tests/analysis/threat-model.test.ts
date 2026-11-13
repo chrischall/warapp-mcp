@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import { enemyDeployEstimates, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, mine, neutral } from './helpers.js';
 
@@ -172,5 +172,22 @@ describe('a hold deferred for the expansion share is not then conceded (#128)', 
     expect(plan.conceded).toEqual([]);
     expect(deployedTo(plan, 1)).toBeGreaterThanOrEqual(4);
     expect(plan.moves.filter((m) => m.from === 1)).toEqual([]);
+  });
+});
+
+describe('opening-board detection reads only the players\' stacks (#128)', () => {
+  // 1 mine; 2 and 4 player 20's (it holds +5 bonus 502 in full); 5 player 30's; 3 a 2-army neutral.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [1, 3], [2, 4], [1, 5]], [[501, 1, [3]], [502, 5, [2, 4]]]));
+  it('starting stacks of 5 beside 2-army neutrals are the opening board', () => {
+    const b = board([mine(1, 5), player(2, 5, 20), neutral(3, 2), player(4, 5, 20), player(5, 5, 30)]);
+    const es = enemyDeployEstimates(g, b, ME);
+    expect(es.map((e) => [e.playerId, e.opening])).toEqual([
+      [20, true],
+      [30, true],
+    ]);
+  });
+  it('one player stack off the starting count is not', () => {
+    const b = board([mine(1, 5), player(2, 8, 20), neutral(3, 2), player(4, 5, 20), player(5, 5, 30)]);
+    expect(enemyDeployEstimates(g, b, ME).every((e) => !e.opening)).toBe(true);
   });
 });

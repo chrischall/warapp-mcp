@@ -88,7 +88,7 @@
 //     opening board made every base-income opponent look like ~11; and capping
 //     the estimate at 0.75 × a small stack hid income held in plain view — a
 //     +10 holder with a 2-stack on my border read as 5). On the opening board (every
-//     visible territory still holds the same count) every opponent gets the
+//     visible player territory still holds the same count; neutrals aside, #128) every opponent gets the
 //     floor. Given `previousBoard`, each estimate is at least the deploy observed since
 //     then (`observeDeploy`, issue #57: the net change of its armies visible on both
 //     boards — shrinks included, so a transfer between its own territories is not deploy —
@@ -1582,11 +1582,15 @@ export function observedDeploy(
   return observeDeploy(g, board, previous, playerId, rates).deploy;
 }
 
-/** The army count every visible territory holds, when they all hold the same one (the initial allotment). */
+/**
+ * The army count every visible player territory holds, when they all hold the same one (the
+ * initial allotment). Neutrals are left out (#128): their stacks are not the starting stacks on
+ * ordinary maps, so counting them meant this never fired.
+ */
 function openingArmies(g: MapGraph, board: BoardState): number | null {
   const counts = new Set<number>();
   for (const t of board.territories)
-    if (g.territoryById.has(t.territoryId) && t.armies !== null && t.owner.kind !== 'unknown') counts.add(t.armies);
+    if (g.territoryById.has(t.territoryId) && t.armies !== null && t.owner.kind === 'player') counts.add(t.armies);
   return counts.size === 1 ? [...counts][0]! : null;
 }
 
@@ -1596,7 +1600,7 @@ function openingArmies(g: MapGraph, board: BoardState): number | null {
  * below max({@link MIN_ENEMY_DEPLOY}, base income). Its stack next to me does not
  * limit it — income held in plain view can all be deployed on my border, however
  * small the stack there. Bonuses in the fog are unseen, so this is what the
- * visible board supports. On the opening board (every visible territory holds
+ * visible board supports. On the opening board (every visible player territory holds
  * the same count) every opponent gets the floor.
  */
 export function enemyDeployEstimates(
@@ -2655,7 +2659,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         const seen = e.observed !== null ? ` Its deploy was observed +${e.observed}/turn since last turn, below that.` : '';
         warnings.push(
           (opening !== null
-            ? `Enemy deploy estimate for player ${p}: ~${e.estimate} (opening board: every visible territory holds ${opening}, so no one has deployed yet and every opponent gets its base income, at least ${MIN_ENEMY_DEPLOY}); enemy income is unknown, so they could deploy more.`
+            ? `Enemy deploy estimate for player ${p}: ~${e.estimate} (opening board: every visible player territory holds ${opening}, so no one has deployed yet and every opponent gets its base income, at least ${MIN_ENEMY_DEPLOY}); enemy income is unknown, so they could deploy more.`
             : `Enemy deploy estimate for player ${p}: ~${e.estimate} (${visible}, at least max(${MIN_ENEMY_DEPLOY}, base); its largest stack next to me (${e.largestStack}) is what can move, not a limit on what it deploys); enemy income beyond its visible bonuses is unknown, so they could deploy more.`) + seen,
         );
       }
