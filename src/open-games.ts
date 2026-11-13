@@ -16,6 +16,7 @@ import { cardTypeName } from './cards.js';
 import { colorIndexOf } from './join-color.js';
 import type { ClassReader } from './live.js';
 import { Reader } from './protocol/codec.js';
+import { carriesTeam } from './teams.js';
 
 export const OPEN_GAMES_URL = 'https://war.app/MultiPlayer/OpenGames';
 export const GAME_INFO = 'warlight.shared.GameInfo';
@@ -43,7 +44,6 @@ const GP = { color: 0, id: 6, state: 7, team: 8 } as const;
 const GP_MIN_FIELDS = 9;
 /** Player states not holding a seat: Declined, RemovedByHost. */
 const NOT_SEATED = new Set([5, 6]);
-const NO_TEAM = -1;
 
 /** GameInfoSettings field positions in read order. */
 const GS = {
@@ -312,7 +312,7 @@ function readOpenGame(record: unknown): { game: OpenGame; lobby: OpenLobby } | u
   const random = isInt(randomTeamsOf) && randomTeamsOf > 0 ? randomTeamsOf : undefined;
   // The client's own test (its "Team Game" settings icon): random teams, or any player
   // record — whatever its state — or open seat carrying a team.
-  const teamGame = random !== undefined || all.some((p) => p.team !== NO_TEAM) || openSeatTeams.some((t) => t !== NO_TEAM);
+  const teamGame = random !== undefined || all.some((p) => carriesTeam(p.team)) || openSeatTeams.some(carriesTeam);
   const settings = readSettings(f[GI.settings]);
   const rules = [...(settings?.rules ?? [])];
   if (teamGame) rules.push(random !== undefined ? `Team game (random teams of ${random})` : 'Team game');

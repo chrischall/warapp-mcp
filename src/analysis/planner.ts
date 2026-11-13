@@ -3,6 +3,25 @@
 // I/O. Advisory only — it never submits orders.
 //
 // Rules, in decision order:
+//  0p. Game profile (`gameProfile`, src/analysis/profile.ts), computed on every plan and
+//     returned as `profile`: format (1v1 / ffa / teams), phase (opening / expansion /
+//     contact / late), standing (my income against the strongest opponent's estimate:
+//     ahead ≥ AHEAD_RATIO×, behind ≤ BEHIND_RATIO×, unknown when fog hides most of the
+//     board) and the settings that shape strategy. Only with `options.adapt` and no `goal`
+//     does it change the plan (each rule a rationale line when it fires):
+//       1. 1v1 in contact: a break is weighted like a completion of equal value (weight 1),
+//          and an advance (expansion that completes no bonus) ranks below every hold, unit,
+//          break and completion, and never defers a hold for the expansion share.
+//       2. FFA with two or more opponents left: no second front — a break (also from a held
+//          border, rule 4a) against a player that can take no member of a bonus I hold next
+//          turn and loses nothing to this turn's strike / finishing off is skipped when a
+//          neutral bonus capture scores at least SECOND_FRONT_SIMILAR × its score per army.
+//          Finishing off (rule 1e) and strikes (rule 1s) are untouched.
+//       3. Behind: the goal is `defend`, and pressure (rule 1e) is sized with no margin.
+//          Ahead in a 1v1: pressure is allowed up to AHEAD_PRESSURE_FACTOR typical
+//          expansions (instead of PRESSURE_FACTOR).
+//       4. An explicit `goal` always wins: none of the above, and the rationale says the
+//          profile was overridden.
 //  1. Defence. A visible enemy next to my territory T threatens it when
 //     `armiesToTake(armies(T)) ≤ E + enemyDeploy`, where E is that player's
 //     movable armies (minus the guard) summed over its territories bordering T.
@@ -196,7 +215,13 @@
 //     produce a warning.
 //  3. Capture cost: `armiesToTake` (0% luck, straight round). With luck L > 0
 //     the cost becomes `ceil(cost / (1 − L))`, i.e. the luck-free share of the
-//     attack alone still takes the territory.
+//     attack alone still takes the territory. S2: with `minWinChance` below 1 an
+//     ordinary capture instead gets the fewest armies whose exact `winChance`
+//     reaches it (worst-case sizings stay guaranteed); every attack carries its
+//     `winChance`; after the leftover deploy an attack is topped up to its next kill
+//     breakpoint from idle armies on its source (never a hold, a conceded border, my
+//     commander's territory or a source still facing an enemy) when its target is a
+//     player's or it is not certain; otherwise an attack between breakpoints is named.
 //  3a. Combined (multi-source) captures (R4). When no single source can afford a
 //     target (its movable armies plus the deploys left), two or more of my
 //     sources held at the start of the turn (not locked, not conceded) attack it
@@ -288,15 +313,23 @@ import type { BoardState, TerritoryState } from '../board.js';
 import type { GameSettings } from '../normalize.js';
 import { analyzeBonus, bonusTerritories } from './bonuses.js';
 import {
+  armiesForChance,
   armiesToTake,
   COMMANDER_STRENGTH,
   DEFAULT_DEFENSIVE_KILL_RATE,
   DEFAULT_OFFENSIVE_KILL_RATE,
+  guaranteedKills,
+  luckFraction,
+  nextBreakpoint,
   specialUnitStrength,
+  straightKills,
+  winChance,
+  type CombatSettings,
 } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { chargeDeploys, deployPools } from './local-deploy.js';
 import { analyzePlayer, DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
+import { gameProfile, type GameProfile, type ProfilePlayer } from './profile.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
@@ -349,6 +382,18 @@ export const PRESSURE_MARGIN_ARMIES = 2;
 export function pressureMargin(deploy: number): number {
   return Math.max(PRESSURE_MARGIN_ARMIES, Math.ceil(PRESSURE_MARGIN * deploy));
 }
+
+/**
+ * Ahead in a 1v1 under the game profile (rule 0p): pressure on an opponent next to the fog is
+ * allowed when each margin-sized capture costs at most this many typical expansion captures
+ * (instead of {@link PRESSURE_FACTOR}) — a lead is pressed, not left to sit.
+ */
+export const AHEAD_PRESSURE_FACTOR = 8;
+/**
+ * FFA with two or more opponents left (rule 0p): a break against a player that threatens no
+ * bonus of mine is skipped when a neutral capture scores at least this share of it per army.
+ */
+export const SECOND_FRONT_SIMILAR = 0.5;
 
 /** Denying +V to the opponent is worth this many times gaining +V yourself (per opponent: divided among them). */
 export const BREAK_WEIGHT = 1.0;
@@ -403,6 +448,35 @@ export interface PlanOptions {
    * and my commander's territory is threatened, `cardAdvice` says to play it (rule 1s).
    */
   holdsOrderPriority?: boolean;
+  /**
+   * Adapt to the game profile (rule 0p): with no `goal`, pick it from the profile (behind:
+   * `defend`, else `balanced`) and apply the profile's rules. An explicit `goal` always wins
+   * (the plan says the profile was overridden). Default `false`: the plan ignores the profile.
+   */
+  adapt?: boolean;
+  /**
+   * The least win chance an ordinary capture is sized for, 0.5–1. Default 1: today's
+   * guaranteed sizing (`captureCost`). Below 1, each capture of a neutral or an enemy
+   * territory sized for its current armies gets the fewest armies whose {@link winChance}
+   * reaches it. Worst-case sizings (finishing a player off, fog pressure, commander strikes)
+   * stay guaranteed.
+   */
+  minWinChance?: number;
+}
+
+/** What the game profile needs beyond the board (rule 0p); every field optional. */
+export interface PlanGameContext {
+  /** Every player of the game (GameFeed ids, like the board's); default the players in sight. */
+  players?: ProfilePlayer[];
+  /** The turn being played. */
+  turn?: number | null;
+  /** Territories are still being picked. */
+  picking?: boolean;
+  /** GameFeed's `Fog` setting. */
+  fog?: string;
+  commanders?: boolean;
+  /** Any card is in play. */
+  cards?: boolean;
 }
 
 export interface PlanInput {
@@ -424,6 +498,8 @@ export interface PlanInput {
   turn?: number;
   settings?: PlannerSettings;
   options?: PlanOptions;
+  /** The game around the board, for the profile (rule 0p). */
+  game?: PlanGameContext;
 }
 
 export interface PlannedDeploy {
@@ -437,12 +513,22 @@ export interface PlannedMove {
   armies: number;
   kind: 'attack' | 'transfer';
   reason: string;
+  /**
+   * Attacks only: the exact probability this attack captures its target as the board stands
+   * (every defender dies, an attacker survives) at the game's kill rates, luck and rounding.
+   * 1 when certain. A softener of a combined capture fails by design (0).
+   */
+  winChance?: number;
 }
 
 /** A card the submission should play for the plan to work (the planner itself never plays cards). */
 export type CardAdvice = 'order-priority';
 
 export interface TurnPlan {
+  /** The goal planned for: the explicit one, else (adapting) the profile's, else `balanced`. */
+  goal: PlanGoal;
+  /** The game profile (rule 0p), computed on every plan. */
+  profile: GameProfile;
   /** Sorted by territory id; sums to the income whenever I own a territory. */
   deploys: PlannedDeploy[];
   /** Withdrawals from conceded borders first, then attacks in decision order, then transfers. */
@@ -477,15 +563,33 @@ export interface TurnPlan {
 }
 
 const byNum = (a: number, b: number) => a - b;
+/** A probability as a whole percent, for the rationale. */
+const pct = (p: number) => `${Math.round(p * 1000) / 10}%`;
 
-function luckFraction(v: number | undefined): number {
-  if (!v || v <= 0) return 0;
-  const f = v > 1 ? v / 100 : v;
-  return Math.min(f, 0.95);
+/** The combat model's view of the planner settings. */
+export function combatSettings(settings: PlannerSettings = {}): CombatSettings {
+  return {
+    offensiveKillRate: settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
+    defensiveKillRate: settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
+    luck: luckFraction(settings.luckModifier),
+    ...(settings.roundingMode !== undefined ? { rounding: settings.roundingMode } : {}),
+  };
 }
 
-/** Armies to send at a territory held by `defenders`, luck margin included; `null` when it cannot be taken. */
-export function captureCost(defenders: number, settings: PlannerSettings = {}): number | null {
+/** A `minWinChance` option clamped to [0.5, 1] (default 1). */
+export function minWinChanceOf(v: number | undefined): number {
+  if (v === undefined || !Number.isFinite(v)) return 1;
+  return Math.min(1, Math.max(0.5, v));
+}
+
+/**
+ * Armies to send at a territory held by `defenders`; `null` when it cannot be taken. With
+ * `minWinChance` 1 (default) the guaranteed sizing: `armiesToTake` (0% luck, straight round)
+ * plus the luck margin `ceil(cost / (1 − luck))`. Below 1, the fewest armies whose exact
+ * {@link winChance} reaches it.
+ */
+export function captureCost(defenders: number, settings: PlannerSettings = {}, minWinChance = 1): number | null {
+  if (minWinChance < 1) return armiesForChance(defenders, minWinChanceOf(minWinChance), combatSettings(settings));
   const base = armiesToTake(defenders, {
     offensiveKillRate: settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
     defensiveKillRate: settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
@@ -807,18 +911,48 @@ export function planTurn(input: PlanInput): TurnPlan {
   const s = input.settings ?? {};
   const baseIncome = Math.max(0, Math.floor(s.baseIncome ?? DEFAULT_BASE_INCOME));
   const opts = input.options ?? {};
-  const goal: PlanGoal = opts.goal ?? 'balanced';
+  const income = Math.max(0, Math.floor(input.income));
+  const estimateList = enemyDeployEstimates(g, board, me, s, input.previousBoard);
+  // ---- 0p. the game profile ----
+  const ctx = input.game ?? {};
+  const profile = gameProfile({
+    graph: g,
+    board,
+    me,
+    players: ctx.players ?? [],
+    settings: {
+      ...(s.luckModifier !== undefined ? { luckModifier: s.luckModifier } : {}),
+      ...(s.roundingMode !== undefined ? { roundingMode: s.roundingMode } : {}),
+      ...(ctx.cards !== undefined ? { cards: ctx.cards } : {}),
+      ...(s.localDeployments !== undefined ? { localDeployments: s.localDeployments } : {}),
+      ...(s.noSplit !== undefined ? { noSplit: s.noSplit } : {}),
+      ...(ctx.commanders !== undefined ? { commanders: ctx.commanders } : {}),
+      ...(ctx.fog !== undefined ? { fog: ctx.fog } : {}),
+    },
+    ...(ctx.turn !== undefined ? { turn: ctx.turn } : {}),
+    ...(ctx.picking !== undefined ? { picking: ctx.picking } : {}),
+    income,
+    estimates: estimateList,
+  });
+  /** The profile picks the goal and tunes the scoring (rule 0p): adapting, with no explicit goal. */
+  const auto = opts.adapt === true && opts.goal === undefined;
+  const goal: PlanGoal = opts.goal ?? (auto && profile.standing === 'behind' ? 'defend' : 'balanced');
   const balanced = goal === 'balanced';
+  /** Rule 0p.3: behind — defend first and size attacks at the minimum (no pressure margin). */
+  const minimal = auto && profile.standing === 'behind';
+  /** Rule 0p.3: ahead in a 1v1 — pressure allowed at {@link AHEAD_PRESSURE_FACTOR}. */
+  const pressureFactor = auto && profile.format === '1v1' && profile.standing === 'ahead' ? AHEAD_PRESSURE_FACTOR : PRESSURE_FACTOR;
+  /** The pressure margin over an estimated deploy: none when sizing at the minimum. */
+  const marginFor = (d: number) => (minimal ? 0 : pressureMargin(d));
   /** Goals that refuse to complete a bonus they cannot hold (R3); the others only warn. */
   const guarded = balanced || goal === 'defend';
   const focus = new Set(opts.focusBonusIds ?? []);
-  const income = Math.max(0, Math.floor(input.income));
   const reserve = Math.min(income, Math.max(0, Math.floor(opts.reserve ?? 0)));
   const custom = opts.enemyDeploy !== undefined;
   const enemyDeploy = custom
     ? Math.max(0, Math.floor(opts.enemyDeploy!))
     : defaultEnemyDeploy(g, board, me, s, input.previousBoard);
-  const estimates = new Map(enemyDeployEstimates(g, board, me, s, input.previousBoard).map((e) => [e.playerId, e]));
+  const estimates = new Map(estimateList.map((e) => [e.playerId, e]));
   /** The deploy assumed for one opponent's threat: the override, else its own estimate. */
   const deployOf = (player: number) => (custom ? enemyDeploy : (estimates.get(player)?.estimate ?? MIN_ENEMY_DEPLOY));
   const guard = (s.oneArmyStandsGuard ?? true) ? 1 : 0;
@@ -826,8 +960,34 @@ export function planTurn(input: PlanInput): TurnPlan {
     offensiveKillRate: s.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
     defensiveKillRate: s.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
   };
+  /** The exact combat model's settings (S2): kill rates, luck, rounding. */
+  const combat = combatSettings(s);
+  const chanceOf = (armies: number, defenders: number) => winChance(armies, defenders, combat);
+  /** The least win chance an ordinary capture is sized for (S2). */
+  const minWin = minWinChanceOf(opts.minWinChance);
+  const costMemo = new Map<number, number | null>();
+  /** An ordinary capture's size against `defenders`, at {@link minWin}. */
+  const costOf = (defenders: number): number | null => {
+    if (!costMemo.has(defenders)) costMemo.set(defenders, captureCost(defenders, s, minWin));
+    return costMemo.get(defenders)!;
+  };
   const warnings: string[] = [];
   const rationale: string[] = [];
+  const profileText = `${profile.format}, ${profile.phase}, ${profile.standing}`;
+  if (opts.adapt && opts.goal !== undefined)
+    rationale.push(`Goal ${goal} was given explicitly, so it overrides the game profile (${profileText}): none of the profile's rules apply.`);
+  else if (auto) {
+    const strongest = estimateList.reduce((m, e) => Math.max(m, e.estimate), 0);
+    rationale.push(
+      minimal
+        ? `Goal defend from the game profile (${profileText}): behind on income (${income} against ~${strongest}), so defend first and size attacks at the minimum (no extra margin beyond what the rules require).`
+        : `Goal balanced from the game profile (${profileText}): the base goal.`,
+    );
+    if (pressureFactor !== PRESSURE_FACTOR)
+      rationale.push(
+        `Ahead in a 1v1 (${income} against ~${strongest}): keep attacking — pressure on an opponent next to the fog is allowed when each capture costs up to ${pressureFactor}× a typical neutral capture (instead of ${PRESSURE_FACTOR}×).`,
+      );
+  }
 
   const state = new Map<number, TerritoryState>();
   for (const t of board.territories) if (g.territoryById.has(t.territoryId)) state.set(t.territoryId, t);
@@ -851,16 +1011,25 @@ export function planTurn(input: PlanInput): TurnPlan {
   if (!board.verified)
     warnings.push('Board state comes from an unverified parser of the GameFeed standing; check it against the game.');
   const luck = luckFraction(s.luckModifier);
+  const weightedRounding = s.roundingMode !== undefined && s.roundingMode !== 'StraightRound';
   if (luck > 0)
     warnings.push(
-      `Luck is ${Math.round(luck * 100)}%: each attack carries a margin (armies = ceil(cost / (1 − luck))) and can still fail.`,
+      minWin < 1
+        ? `Luck is ${Math.round(luck * 100)}%: each capture is sized for at least a ${Math.round(minWin * 100)}% win chance (min_win_chance), so it can fail; each attack's winChance says how likely it is.`
+        : `Luck is ${Math.round(luck * 100)}%: each attack carries a margin (armies = ceil(cost / (1 − luck))) so the luck-free share alone takes it${weightedRounding ? '' : ' (win chance 1 under straight rounding)'}; each attack's winChance says how likely it is.`,
     );
   if (s.offensiveKillRate === undefined || s.defensiveKillRate === undefined)
     warnings.push(
       `Kill rates missing from the game settings; assuming ${rates.offensiveKillRate}% offense, ${rates.defensiveKillRate}% defense.`,
     );
   if (s.roundingMode !== undefined && s.roundingMode !== 'StraightRound')
-    warnings.push(`Capture costs assume straight rounding; this game uses ${s.roundingMode}.`);
+    warnings.push(
+      `Capture costs assume straight rounding; this game uses ${s.roundingMode}: each attack's winChance is computed under it (an attack can fail).`,
+    );
+  if (minWin < 1)
+    rationale.push(
+      `Captures are sized for at least a ${Math.round(minWin * 100)}% win chance (min_win_chance), not a guaranteed take: each gets the fewest armies whose exact win chance reaches it. Attacks sized for a worst case (finishing a player off, fog pressure, commander strikes) stay guaranteed.`,
+    );
   if (s.multiAttack)
     rationale.push('Multi-attack is on, but the plan does not chain attacks from captured territories.');
   const noSplit = s.noSplit === true;
@@ -873,6 +1042,8 @@ export function planTurn(input: PlanInput): TurnPlan {
   if (!mine.length) {
     warnings.push(`Player ${me} holds no territories on this board, so there is nothing to deploy or move.`);
     return {
+      goal,
+      profile,
       deploys: [],
       moves: [],
       expected: { captures: [], bonusesCompleted: [], nextIncome: income },
@@ -1701,7 +1872,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (st.owner.kind === 'available') continue;
     const enemy = st.owner.kind === 'player';
     if (enemy && goal !== 'complete-bonus' && !(balanced && breakMember.has(t))) continue;
-    const cost = captureCost(defenceAt(t), s);
+    const cost = costOf(defenceAt(t));
     if (cost === null) continue;
     targets.set(t, { id: t, cost, enemy, sources });
   }
@@ -1730,7 +1901,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const t of remaining) {
       const st = state.get(t);
       if (!st || st.owner.kind === 'unknown' || st.armies === null) continue;
-      const c = captureCost(defenceAt(t), s) ?? Infinity;
+      const c = costOf(defenceAt(t)) ?? Infinity;
       cost += c;
       worst = Math.max(worst, c);
     }
@@ -1751,7 +1922,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const exposed = exposure(ts, (n) => rem.has(n), (m) => {
         if (!rem.has(m)) return armiesOf(m);
         const c = targets.get(m)!.cost;
-        return c - Math.round((defenceAt(m) * rates.defensiveKillRate) / 100);
+        return c - straightKills(defenceAt(m), rates.defensiveKillRate);
       });
       defenseCost = exposed.reduce((sum, e) => sum + e.need, 0);
       if (defenseCost > 0)
@@ -1779,6 +1950,17 @@ export function planTurn(input: PlanInput): TurnPlan {
       Number(b.focus) - Number(a.focus) || ratio(b) - ratio(a) || a.borders - b.borders || a.bonusId - b.bonusId,
   );
   const bonusName = (id: number) => `${g.bonusById.get(id)!.name} (#${id})`;
+  /**
+   * A break's retake check, by its target: the warning it raised (if any) and what it was
+   * judged on, so a top-up that adds survivors re-judges it.
+   */
+  const retakeChecks = new Map<number, { bonusId: number; survivors: number; counter: number; warning?: string }>();
+  const retakeWarning = (t: number, bonusId: number, survivors: number, counter: number): string | undefined => {
+    const take = armiesToTake(survivors, rates);
+    return take !== null && take <= counter
+      ? `${label(t)} can be retaken after it breaks ${bonusName(bonusId)}: ${survivors} survivors need ${take} to take, against ~${counter} next turn.`
+      : undefined;
+  };
 
   // ---- R3: a completion must leave a frontier I can hold ----
   /**
@@ -1886,7 +2068,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     deploy(src, need);
     avail.set(src, avail.get(src)! - tg.cost);
     captured.add(t);
-    const survivors = tg.cost - Math.round((defendersAt(t) * rates.defensiveKillRate) / 100);
+    const survivors = tg.cost - straightKills(defendersAt(t), rates.defensiveKillRate);
     // A commander strike is never refused by R3: killing the commander eliminates a player.
     if (!strikes.has(t) && !defensible(t, survivors)) {
       // Undo: under a guarded goal a bonus that falls next turn is not completed.
@@ -1899,7 +2081,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       return false;
     }
     survivorsAt.set(t, survivors);
-    moves.push({ from: src, to: t, armies: tg.cost, kind: 'attack', reason });
+    moves.push({ from: src, to: t, armies: tg.cost, kind: 'attack', reason, winChance: chanceOf(tg.cost, defenceAt(t)) });
     if (tg.enemy && !worstCase.has(t))
       warnings.push(`Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`);
     rationale.push(
@@ -1953,10 +2135,10 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const x of eligible.slice(1, k).sort(byNum)) {
         // Never kill the last defender: the finisher's attack is the one that moves in.
         let a = avail.get(x)!;
-        while (a > 0 && Math.round((a * off) / 100) >= Math.min(left, real)) a--;
-        const kills = Math.round((a * off) / 100);
+        while (a > 0 && straightKills(a, off) >= Math.min(left, real)) a--;
+        const kills = straightKills(a, off);
         if (a <= 0 || kills <= 0) continue;
-        const lost = Math.min(a, Math.round((left * def) / 100));
+        const lost = Math.min(a, straightKills(left, def));
         softeners.push({ from: x, armies: a, kills, before: left, survivors: a - lost });
         left -= kills;
         real -= kills;
@@ -1966,7 +2148,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (armies === null) return null;
       const need = Math.max(0, armies - avail.get(finisher)!);
       if (need > spareAt(finisher)) continue;
-      const survivors = armies - Math.round((left * def) / 100);
+      const survivors = armies - straightKills(left, def);
       return { softeners, finisher, armies, need, left, survivors };
     }
     return null;
@@ -2009,8 +2191,16 @@ export function planTurn(input: PlanInput): TurnPlan {
         armies: x.armies,
         kind: 'attack',
         reason: `wears ${label(t)} down for a combined capture (${reason})`,
+        winChance: chanceOf(x.armies, x.before),
       });
-    moves.push({ from: plan.finisher, to: t, armies: plan.armies, kind: 'attack', reason });
+    moves.push({
+      from: plan.finisher,
+      to: t,
+      armies: plan.armies,
+      kind: 'attack',
+      reason,
+      winChance: chanceOf(plan.armies, plan.left),
+    });
     if (tg.enemy && !worstCase.has(t))
       warnings.push(`Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`);
     const order = [...plan.softeners.map((x) => x.from), plan.finisher].map(label).join(', then ');
@@ -2216,7 +2406,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const pressure = fogged.length > 0;
     /** Its estimated deploy; under pressure, sized for with a margin over it (#60). */
     const estimateP = deployOf(p);
-    const marginP = pressure ? pressureMargin(estimateP) : 0;
+    const marginP = pressure ? marginFor(estimateP) : 0;
     const deployP = estimateP + marginP;
     const deployText = marginP ? `~${estimateP} deploy plus a margin of ${marginP}` : `~${deployP} deploy`;
     const start = checkpoint(ts);
@@ -2294,7 +2484,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           const finisher = at[at.length - 1]!;
           const kills = at
             .slice(0, -1)
-            .reduce((n, m) => n + Math.round((m.armies * rates.offensiveKillRate) / 100), 0);
+            .reduce((n, m) => n + straightKills(m.armies, rates.offensiveKillRate), 0);
           return Math.max(0, kills + takesUpTo(finisher.armies) - defenceAt(t) + 1);
         });
         const falls = guaranteedFalls(saveCost, deployP);
@@ -2409,7 +2599,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         `Pressure player ${p}: take all ${ts.length} of its visible territories (${names}) this turn, each sized for its full ${deployText} landing there; it may hold more in the fog (next to ${edge}), so this is not an elimination.`,
       );
       warnings.push(
-        `Pressuring player ${p} assumes it deploys at most ~${deployP} (its ~${estimateP} estimate plus a margin of ${marginP}); more income than that (unseen bonuses, cards) could still save a territory.`,
+        `Pressuring player ${p} assumes it deploys at most ~${deployP} (its ~${estimateP} estimate ${marginP ? `plus a margin of ${marginP}` : 'with no margin: behind, attacks are sized at the minimum'}); more income than that (unseen bonuses, cards) could still save a territory.`,
         `player ${p} may hold more territories in the fog (next to ${edge}): taking its ${ts.length} visible territories is pressure, not an elimination.`,
       );
       return true;
@@ -2580,14 +2770,15 @@ export function planTurn(input: PlanInput): TurnPlan {
     const expansionCost = neutralCosts.length ? neutralCosts[(neutralCosts.length - 1) >> 1]! : null;
     /**
      * Each of `p`'s visible territories, sized for its full deploy plus the pressure margin,
-     * costs at most PRESSURE_FACTOR typical expansions (with no visible neutral next to me,
+     * costs at most PRESSURE_FACTOR typical expansions (AHEAD_PRESSURE_FACTOR ahead in a 1v1 under
+     * the profile, rule 0p.3; with no visible neutral next to me,
      * nothing to compare with: no limit). All or nothing.
      */
     const pressureAffordable = (p: number) => {
       const d = deployOf(p);
       return (
         expansionCost === null ||
-        ownedBy.get(p)!.every((t) => (captureCost(armiesOf(t) + d + pressureMargin(d), s) ?? Infinity) <= PRESSURE_FACTOR * expansionCost)
+        ownedBy.get(p)!.every((t) => (captureCost(armiesOf(t) + d + marginFor(d), s) ?? Infinity) <= pressureFactor * expansionCost)
       );
     };
     for (const p of candidates) {
@@ -2637,7 +2828,68 @@ export function planTurn(input: PlanInput): TurnPlan {
           ).size,
       ),
     );
-    const weight = BREAK_WEIGHT / opponents;
+    // Rule 0p.1: in a 1v1 in contact, a break is a completion of equal value (the opponent
+    // loses that income), and expansion that completes nothing ranks below holds and breaks.
+    const oneVsOne = auto && profile.format === '1v1' && facing.size > 0;
+    // Rule 0p.2: in an FFA with two or more opponents left, no second front.
+    const ffa = auto && profile.format === 'ffa' && profile.opponents >= 2;
+    if (oneVsOne)
+      rationale.push(
+        '1v1 in contact: breaking an enemy bonus counts like completing one of equal value (the opponent loses that income), and expansion that completes no bonus this turn ranks below holding, breaking and completing.',
+      );
+    const weight = oneVsOne ? 1 : BREAK_WEIGHT / opponents;
+    /** Bonuses I hold in full (value > 0). */
+    const heldBonusMembers = g.map.bonuses
+      .filter((b) => b.value > 0)
+      .map((b) => bonusTerritories(g, b.id))
+      .filter((ts) => ts.length > 0 && ts.every((t) => mineSet.has(t)));
+    /** Player `p` could take a member of a bonus I hold next turn (its stacks next to it plus its deploy). */
+    const threatensMyBonus = (p: number) =>
+      heldBonusMembers.some((ts) =>
+        ts.some((m) => {
+          let movable = 0;
+          let growth = 0;
+          let next = false;
+          for (const n of neighborsOf(g, m)) {
+            const st = state.get(n);
+            if (st?.owner.kind !== 'player' || st.owner.playerId !== p || st.armies === null) continue;
+            next = true;
+            movable += Math.max(0, st.armies - guard) + unitsAt(n);
+            growth = Math.max(growth, growthOf.get(n)?.growth ?? 0);
+          }
+          const take = armiesToTake(defenceAt(m), rates);
+          return next && take !== null && take <= movable + Math.max(deployOf(p), growth);
+        }),
+      );
+    /** Player `p` loses a territory to this turn's earlier passes (a strike, finishing off, pressure). */
+    const beingFinished = (p: number) =>
+      [...captured].some((t) => {
+        const o = state.get(t)?.owner;
+        return o?.kind === 'player' && o.playerId === p;
+      });
+    /** The best neutral bonus capture per army (complete or advance), 0 with none. */
+    const bestNeutral = Math.max(0, ...plans.map(ratio));
+    /**
+     * Rule 0p.2: breaking `b` would open a second front (said once per bonus; the general rule
+     * is said with the first break it skips). Call it only for a break the plan could afford.
+     */
+    const secondFrontSaid = new Set<number>();
+    const opensSecondFront = (b: Breakable, score: number): boolean =>
+      ffa && !threatensMyBonus(b.player) && !beingFinished(b.player) && bestNeutral >= SECOND_FRONT_SIMILAR * score;
+    const secondFront = (b: Breakable, score: number): boolean => {
+      if (!opensSecondFront(b, score)) return false;
+      if (!secondFrontSaid.has(b.bonusId)) {
+        if (!secondFrontSaid.size)
+          rationale.push(
+            `FFA with ${profile.opponents} opponents left: no second front — a player that threatens no bonus of mine and is not being finished off is not attacked while a neutral capture of similar value exists.`,
+          );
+        secondFrontSaid.add(b.bonusId);
+        rationale.push(
+          `Not breaking ${bonusName(b.bonusId)} (+${b.value} from player ${b.player}): no second front in an FFA — player ${b.player} threatens no bonus of mine and is not being finished off, and a neutral capture earns ${bestNeutral.toFixed(2)} per army against ${score.toFixed(2)}.`,
+        );
+      }
+      return true;
+    };
     // Enemy armies that could hit `t` next turn once it is mine (its own armies excluded).
     const counterThreat = (t: number) => {
       const byPlayer = new Map<number, number>();
@@ -2682,20 +2934,28 @@ export function planTurn(input: PlanInput): TurnPlan {
     // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
     const breakOption = (t: number) => {
       const cost = targets.get(t)!.cost;
-      const survivors = cost - Math.round((defenceAt(t) * rates.defensiveKillRate) / 100);
+      const survivors = cost - straightKills(defenceAt(t), rates.defensiveKillRate);
       const counter = counterThreat(t);
       const take = armiesToTake(survivors, rates);
       return { t, cost, survivors, counter, take, survives: take === null || take > counter };
     };
     type BreakOption = ReturnType<typeof breakOption>;
+    /**
+     * At most what a capture of `t` could draw on now: every source free to attack plus the
+     * deployable budget. Below its cost the capture cannot be planned this turn.
+     */
+    const affordable = (t: number) => {
+      const tg = targets.get(t)!;
+      const free = tg.sources.filter((x) => !locked.has(x) && !orderOf(x)).reduce((n, x) => n + Math.max(0, avail.get(x)!), 0);
+      return free + Math.max(0, budget - reserve) >= tg.cost;
+    };
     const broken = (b: Breakable) => bonusTerritories(g, b.bonusId).some((x) => captured.has(x));
     const breakReason = (b: Breakable) =>
       `breaks enemy bonus ${bonusName(b.bonusId)} (+${b.value} from player ${b.player})`;
     const warnRetake = (b: Breakable, o: BreakOption) => {
-      if (!o.survives)
-        warnings.push(
-          `${label(o.t)} can be retaken after it breaks ${bonusName(b.bonusId)}: ${o.survivors} survivors need ${o.take} to take, against ~${o.counter} next turn.`,
-        );
+      const warning = retakeWarning(o.t, b.bonusId, o.survivors, o.counter);
+      retakeChecks.set(o.t, { bonusId: b.bonusId, survivors: o.survivors, counter: o.counter, warning });
+      if (warning) warnings.push(warning);
     };
     const breakOf = new Map<number, Breakable>();
     for (const b of breakable) for (const t of bonusTerritories(g, b.bonusId)) breakOf.set(t, b);
@@ -2716,6 +2976,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (!b || !targets.has(n) || broken(b) || orderOf(t.id)) return false;
       const o = breakOption(n);
       if (t.holdCost + o.cost > spareAt(t.id) - rest) return false;
+      if (secondFront(b, (weight * b.value) / Math.max(1, o.cost))) return false;
       const before = budget;
       noteRecent(t);
       deploy(t.id, t.holdCost);
@@ -2742,9 +3003,14 @@ export function planTurn(input: PlanInput): TurnPlan {
         .sort((a, b) => Number(b.survives) - Number(a.survives) || a.cost - b.cost || a.t - b.t);
       const o = options[0];
       if (!o) continue;
+      const score = (weight * b.value) / Math.max(1, o.cost);
+      // An FFA skips a second-front break, but only one the plan could pay for is named as
+      // skipped: an unaffordable one is dropped quietly (it could not run either way).
+      if (opensSecondFront(b, score) && !affordable(o.t)) continue;
+      if (secondFront(b, score)) continue;
       candidates.push({
         kind: 'break',
-        score: (weight * b.value) / Math.max(1, o.cost),
+        score,
         cost: o.cost,
         id: b.bonusId,
         value: b.value,
@@ -2760,7 +3026,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       });
     }
     expansionLeft = candidates.length;
-    topValue = Math.max(0, ...candidates.map((c) => c.value));
+    // Under rule 0p.1 an advance never outranks a hold, so it never defers one either.
+    topValue = Math.max(0, ...candidates.filter((c) => !(oneVsOne && c.kind === 'advance')).map((c) => c.value));
     const floor = expansionLeft ? Math.ceil(MIN_EXPANSION_SHARE * income) : 0;
     for (const t of holds)
       candidates.push({
@@ -2846,6 +3113,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     candidates.sort(
       (a, b) =>
         Number(b.focus) - Number(a.focus) ||
+        (oneVsOne ? Number(a.kind === 'advance') - Number(b.kind === 'advance') : 0) ||
         b.score - a.score ||
         a.cost - b.cost ||
         a.borders - b.borders ||
@@ -2944,6 +3212,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const t of rest) tryCapture(t.id, 'expands territory');
   }
 
+  /** Territories locked before the leftover deploy: holds, kept and standing borders, withdrawals. */
+  const holdLocked = new Set(locked);
   // ---- leftover deploy ----
   if (budget > 0) {
     const open = (id: number) => !conceded.has(id);
@@ -3039,6 +3309,64 @@ export function planTurn(input: PlanInput): TurnPlan {
       );
   }
 
+  // ---- efficient sizes (S2) ----
+  // An attack below its next kill breakpoint is topped up to it from armies that would sit
+  // idle on its source — never from a hold, a conceded border, my commander's territory, or
+  // a source still facing an enemy after this turn's captures — when the extra kill can matter:
+  // the target is a player's (its owner may reinforce it) or the attack is not certain.
+  // Otherwise an attack between breakpoints is named as wasting armies.
+  const rounding = s.roundingMode ?? 'StraightRound';
+  const killsBy = (n: number) => guaranteedKills(n, rates.offensiveKillRate, luck, rounding);
+  /**
+   * Armies on `src` that would sit idle: none on a hold, a conceded border, my commander's
+   * territory, or a border still facing an enemy once this turn's captures land (what stays
+   * there defends it).
+   */
+  const idleAt = (src: number): number => {
+    if (!mineSet.has(src) || holdLocked.has(src) || conceded.has(src) || myCommanders.has(src)) return 0;
+    if (borderAt(src, (x) => captured.has(x))) return 0;
+    return Math.max(0, avail.get(src)!);
+  };
+  for (const m of moves) {
+    if (m.kind !== 'attack' || combined.has(m.to)) continue;
+    // Sized for a worst case already (finishing a player off, fog pressure, a commander strike).
+    const worst = worstCase.has(m.to) || strikes.has(m.to);
+    const d = defenceAt(m.to);
+    const chance = m.winChance ?? chanceOf(m.armies, d);
+    const enemyTarget = state.get(m.to)?.owner.kind === 'player';
+    const next = nextBreakpoint(m.armies, rates.offensiveKillRate, luck, rounding);
+    const add = next === null ? 0 : next - m.armies;
+    if (next !== null && add > 0 && !worst && (enemyTarget || chance < 1) && add <= idleAt(m.from)) {
+      const before = m.armies;
+      avail.set(m.from, avail.get(m.from)! - add);
+      m.armies = next;
+      m.winChance = chanceOf(next, d);
+      if (survivorsAt.has(m.to)) survivorsAt.set(m.to, survivorsAt.get(m.to)! + add);
+      // A break's retake warning was judged on the survivors before the top-up: re-judge it.
+      const check = retakeChecks.get(m.to);
+      const at = check?.warning === undefined ? -1 : warnings.indexOf(check.warning);
+      if (check && at >= 0) {
+        check.survivors += add;
+        check.warning = retakeWarning(m.to, check.bonusId, check.survivors, check.counter);
+        if (check.warning) warnings[at] = check.warning;
+        else warnings.splice(at, 1);
+      }
+      const why = enemyTarget ? 'its owner may reinforce it' : `the win chance rises from ${pct(chance)} to ${pct(m.winChance)}`;
+      rationale.push(
+        `Top up the attack on ${label(m.to)} from ${label(m.from)} from ${before} to ${next} with ${add} idle armies there: ${next} is the next efficient size, killing ${killsBy(next)} for sure instead of ${killsBy(before)} (${why}).`,
+      );
+      continue;
+    }
+    const kills = killsBy(m.armies);
+    if (kills <= 0 || killsBy(m.armies - 1) < kills) continue;
+    let b = m.armies - 1;
+    while (b > 1 && killsBy(b - 1) === kills) b--;
+    if (chanceOf(b, d) < chance) continue;
+    rationale.push(
+      `The attack on ${label(m.to)} from ${label(m.from)} sends ${m.armies}, but ${b} already kill ${kills} for sure: the other ${m.armies - b} add no kill (only survivors)${next !== null ? `; the next kill needs ${next}` : ''}.`,
+    );
+  }
+
   // ---- transfers ----
   if (s.allowTransferOnly ?? true) {
     const held = new Set([...mine, ...captured]);
@@ -3132,6 +3460,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       'No-Split is on: each order sends the planned armies, not every movable army; whether war.app also requires sending all movable armies from a territory is unverified.',
     );
   return {
+    goal,
+    profile,
     deploys: [...deployed]
       .filter(([, n]) => n > 0)
       .sort((a, b) => a[0] - b[0])

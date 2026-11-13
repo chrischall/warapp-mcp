@@ -29,9 +29,8 @@ import { mintMeta, withToolConfig } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
 import { openGamesPage } from './open-games.js';
+import { NO_TEAM } from '../teams.js';
 
-/** The team an open seat of a no-team game carries. */
-const NO_TEAM = -1;
 /** GameFeed player states that do not hold a seat. */
 const NOT_SEATED = new Set(['Declined', 'RemovedByHost']);
 /** war.app's "already in the game" code: the client treats it as a successful join. */

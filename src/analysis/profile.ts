@@ -1,0 +1,181 @@
+// Game profile: what kind of game this is, from one player's view — the format, the
+// settings that shape strategy, the phase and whether I am ahead. Pure and deterministic;
+// no I/O. The planner (rule 0p in planner.ts) reads it to pick a default goal and to tune
+// its scoring; the plan echoes it.
+
+import type { BoardState } from '../board.js';
+import { carriesTeam } from '../teams.js';
+import { neighborsOf, type MapGraph } from './graph.js';
+
+/** Ahead when my income is at least this many times the strongest opponent's estimated income. */
+export const AHEAD_RATIO = 1.25;
+/** Behind when my income is at most this many times the strongest opponent's estimated income. */
+export const BEHIND_RATIO = 0.8;
+
+export type GameFormat = '1v1' | 'ffa' | 'teams';
+export type GamePhase = 'opening' | 'expansion' | 'contact' | 'late';
+export type GameStanding = 'ahead' | 'even' | 'behind' | 'unknown';
+
+/** One player of the game, as far as the profile needs it (GameFeed ids, like the board's). */
+export interface ProfilePlayer {
+  id: number;
+  /** Its team; absent or -1 (`NO_TEAM`) in a no-team game. */
+  team?: number;
+  /** GameFeed state, e.g. `Playing`, `Eliminated`; absent counts as `Playing`. */
+  state?: string;
+}
+
+/** The settings the profile echoes; every one optional (off / unknown when absent). */
+export interface ProfileSettings {
+  /** Fraction (0.16) or percent (16). */
+  luckModifier?: number;
+  roundingMode?: string;
+  /** Any card is in play. */
+  cards?: boolean;
+  localDeployments?: boolean;
+  noSplit?: boolean;
+  commanders?: boolean;
+  /** GameFeed's `Fog` setting, e.g. `Foggy`, `NoFog`. */
+  fog?: string;
+}
+
+export interface ProfileInput {
+  graph: MapGraph;
+  board: BoardState;
+  me: number;
+  /** Every player of the game; empty when unknown (the board's players stand in). */
+  players: readonly ProfilePlayer[];
+  settings?: ProfileSettings;
+  /** The turn being played; `null` / absent when unknown. */
+  turn?: number | null;
+  /** Territories are still being picked. */
+  picking?: boolean;
+  /** My income this turn. */
+  income: number;
+  /** Each visible opponent's estimated income (the planner's per-opponent deploy estimate). */
+  estimates: ReadonlyArray<{ playerId: number; estimate: number }>;
+}
+
+export interface GameProfile {
+  format: GameFormat;
+  /** Opponents still playing (teammates excluded). */
+  opponents: number;
+  settings: {
+    /** Percent. */
+    luck: number;
+    rounding: string | null;
+    cards: boolean;
+    localDeployments: boolean;
+    noSplit: boolean;
+    commanders: boolean;
+    fog: string | null;
+  };
+  phase: GamePhase;
+  standing: GameStanding;
+  notes: string[];
+}
+
+/** Player states that never held a seat: they did not start the game. */
+const NEVER_SEATED = new Set(['Invited', 'Declined', 'RemovedByHost']);
+const playing = (p: ProfilePlayer) => (p.state ?? 'Playing') === 'Playing';
+
+function luckPercent(v: number | undefined): number {
+  if (!v || v <= 0) return 0;
+  return Math.round((v > 1 ? v : v * 100) * 100) / 100;
+}
+
+export function gameProfile(input: ProfileInput): GameProfile {
+  const { graph: g, board, me } = input;
+  const notes: string[] = [];
+  const s = input.settings ?? {};
+
+  // ---- who is playing, and on which side ----
+  const owners = new Map<number, number>();
+  for (const t of board.territories)
+    if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.armies !== null)
+      owners.set(t.territoryId, t.owner.playerId);
+  let players = input.players;
+  if (!players.length) {
+    players = [{ id: me }, ...[...new Set(owners.values())].filter((p) => p !== me).sort((a, b) => a - b).map((id) => ({ id }))];
+    notes.push('No player list: the opponents are the players in sight on the board.');
+  }
+  const teams = players.some((p) => carriesTeam(p.team));
+  const myTeam = players.find((p) => p.id === me)?.team;
+  /** Players on my side (me, and my teammates in a team game). */
+  const ally = (id: number) =>
+    id === me || (teams && carriesTeam(myTeam) && players.find((p) => p.id === id)?.team === myTeam);
+  const opponents = players.filter((p) => !ally(p.id) && playing(p)).length;
+  const started = players.filter((p) => !NEVER_SEATED.has(p.state ?? 'Playing')).length;
+  const format: GameFormat = teams ? 'teams' : opponents <= 1 ? '1v1' : 'ffa';
+
+  // ---- phase ----
+  const mine = [...owners].filter(([, p]) => p === me).map(([t]) => t);
+  const enemyAt = (t: number) => {
+    const p = owners.get(t);
+    return p !== undefined && !ally(p);
+  };
+  const contact = mine.some((t) => neighborsOf(g, t).some(enemyAt));
+  const side = (p: number) => (teams ? (players.find((x) => x.id === p)?.team ?? p) : p);
+  const bySide = new Map<string, number>();
+  for (const p of owners.values()) {
+    const key = teams && carriesTeam(players.find((x) => x.id === p)?.team) ? `team ${side(p)}` : `player ${p}`;
+    bySide.set(key, (bySide.get(key) ?? 0) + 1);
+  }
+  const total = g.territoryById.size;
+  const dominant = [...bySide].find(([, n]) => n > total / 2);
+  let phase: GamePhase;
+  if (input.picking || (input.turn !== null && input.turn !== undefined && input.turn <= 2)) phase = 'opening';
+  else if (started >= 3 && opponents === 1) {
+    phase = 'late';
+    notes.push(`Late game: one opponent is left of the ${started} players who started.`);
+  } else if (dominant) {
+    phase = 'late';
+    notes.push(`Late game: ${dominant[0]} holds ${dominant[1]} of the map's ${total} territories, over half.`);
+  } else phase = contact ? 'contact' : 'expansion';
+
+  // ---- standing ----
+  let standing: GameStanding;
+  const enemies = input.estimates.filter((e) => !ally(e.playerId)).sort((a, b) => b.estimate - a.estimate || a.playerId - b.playerId);
+  const visible = new Map(board.territories.filter((t) => g.territoryById.has(t.territoryId)).map((t) => [t.territoryId, t]));
+  const mineSet = new Set(mine);
+  const notMine = [...g.territoryById.keys()].filter((t) => !mineSet.has(t));
+  const foggedCount = notMine.filter((t) => {
+    const st = visible.get(t);
+    return !st || st.owner.kind === 'unknown' || st.armies === null;
+  }).length;
+  const strongest = enemies[0];
+  if (!strongest) {
+    standing = 'unknown';
+    notes.push('Standing unknown: no opponent is in sight, so its income cannot be estimated.');
+  } else if (notMine.length && foggedCount > notMine.length / 2) {
+    standing = 'unknown';
+    notes.push(
+      `Standing unknown: ${foggedCount} of the ${notMine.length} territories I do not hold are in the fog, so the opponents' income is mostly unseen.`,
+    );
+  } else {
+    const ratio = strongest.estimate > 0 ? input.income / strongest.estimate : Infinity;
+    standing = ratio >= AHEAD_RATIO ? 'ahead' : ratio <= BEHIND_RATIO ? 'behind' : 'even';
+    notes.push(
+      `Standing ${standing}: my income ${input.income} against the strongest opponent, player ${strongest.playerId} (~${strongest.estimate} estimated)${
+        standing === 'ahead' ? `, at least ${AHEAD_RATIO}×` : standing === 'behind' ? `, at most ${BEHIND_RATIO}×` : ''
+      }.`,
+    );
+  }
+
+  return {
+    format,
+    opponents,
+    settings: {
+      luck: luckPercent(s.luckModifier),
+      rounding: s.roundingMode ?? null,
+      cards: s.cards === true,
+      localDeployments: s.localDeployments === true,
+      noSplit: s.noSplit === true,
+      commanders: s.commanders === true,
+      fog: s.fog ?? null,
+    },
+    phase,
+    standing,
+    notes,
+  };
+}

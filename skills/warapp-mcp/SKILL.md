@@ -58,10 +58,13 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   sends no board it reads the live board through the user's signed-in war.app tab; a lobby
   has none — fall back to `warapp_get_map`. Pass its `assumptions` on with the advice.
 - **"Plan my turn"** → `warapp_plan_turn` (defaults to the signed-in account; `goal` balanced
-  (default) / expand / complete-bonus / defend, `focus` bonuses, `reserve`, `enemy_deploy`): deploys and moves by
+  (default) / expand / complete-bonus / defend, `focus` bonuses, `reserve`, `enemy_deploy`, `min_win_chance`): deploys and moves by
   name and id, the expected captures, bonuses and next income, warnings and reasoning, plus an
   `orders` array. It is read-only and refuses outside a turn phase. Review the plan and its
-  warnings with the user before anything is submitted. In a Commanders game it counts each
+  warnings with the user before anything is submitted. Every plan carries the game `profile`
+  (format 1v1/ffa/teams, phase, standing ahead/even/behind/unknown); with no `goal` the profile
+  picks it (`goalSource: "profile"` — defend when behind) and the first rationale line says why.
+  Pass a `goal` only when the user asks for one: it overrides the profile. In a Commanders game it counts each
   commander as 7 armies, never concedes the territory holding the user's commander, and
   attacks an adjacent enemy commander first (killing it eliminates that player) once the user's
   commander's hold is funded; when the user's commander is threatened it advises Order

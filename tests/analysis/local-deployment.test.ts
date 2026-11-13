@@ -274,7 +274,10 @@ describe('planTurn — Local Deployment (G2)', () => {
   it('holding no bonus, the flag changes nothing', () => {
     const s2 = board([mine(1, 1), mine(3, 1), neutral(2, 1), neutral(4, 3), neutral(6, 2)]);
     const off = planTurn({ graph: g, board: s2, me: ME, income: 5, settings: STD });
-    expect(planTurn({ graph: g, board: s2, me: ME, income: 5, settings: LOCAL })).toEqual(off);
+    const on = planTurn({ graph: g, board: s2, me: ME, income: 5, settings: LOCAL });
+    // The profile echoes the setting (S1); the plan itself is unchanged.
+    expect(on.profile.settings.localDeployments).toBe(true);
+    expect({ ...on, profile: off.profile }).toEqual(off);
   });
 });
 
