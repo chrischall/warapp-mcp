@@ -259,6 +259,14 @@ describe('BundleInterpreter containment', () => {
     for (const p of [Object.prototype, Array.prototype] as Record<string, unknown>[]) delete p.polluted;
   };
 
+  it('answers typeof like JS for the values a runtime type check meets', () => {
+    // The client's `Std.is`-style checks: "number"==typeof a, "function"==typeof b for a class.
+    const r = run(
+      'var f=function(){};return [typeof 1,typeof "s",typeof true,typeof null,typeof void 0,typeof [],typeof f,typeof Hx,"function"==typeof Hx,"number"==typeof a]',
+    );
+    expect(r).toEqual(['number', 'string', 'boolean', 'object', 'undefined', 'object', 'function', 'function', true, false]);
+  });
+
   it('blocks the array-prototype route to the host Function constructor, with no side effect', () => {
     clean();
     for (const body of [
