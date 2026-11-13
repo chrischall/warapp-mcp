@@ -1333,6 +1333,18 @@ export function guaranteedFalls(saveCosts: readonly number[], deploy: number): n
   return saveCosts.length - saved;
 }
 
+/**
+ * {@link guaranteedFalls} when not all of the owner's deploy can reach every target (#179: Local
+ * Deployment pays a bonus only into its own territories): `reaches[i]` is the most it can deploy on
+ * target i. A target whose save costs more than that falls for sure; the rest share the one budget
+ * `deploy`, cheapest first. An upper bound on what it saves (its pools may not cover the cheapest
+ * set together), so the falls stay sure.
+ */
+export function guaranteedFallsReaching(saveCosts: readonly number[], reaches: readonly number[], deploy: number): number {
+  const savable = saveCosts.filter((c, i) => c <= (reaches[i] ?? deploy));
+  return saveCosts.length - savable.length + guaranteedFalls(savable, deploy);
+}
+
 /** One visible opponent's estimated deploy next turn and how it was reached. */
 export interface EnemyDeployEstimate {
   playerId: number;
@@ -5507,6 +5519,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const marginP = pressure ? marginFor(estimateP) : 0;
     const deployP = estimateP + marginP;
     const deployText = marginP ? `~${estimateP} deploy plus a margin of ${marginP}` : `~${deployP} deploy`;
+    /**
+     * #179: what it may deploy on `t` — under Local Deployment its bonus pools pay only into their
+     * own territories (`deployReaching`), so a territory outside them faces less; else all of it.
+     */
+    const reachOn = new Map(ts.map((t) => [t, Math.min(deployP, deployReaching(p, [t]) + marginP)] as const));
+    const reachText = (t: number) =>
+      reachOn.get(t)! < deployP ? `the ~${reachOn.get(t)!} of its deploy that can reach it (Local Deployment)` : `its full ${deployText}`;
     const start = checkpoint(ts);
     if (ts.some((t) => captureCost(defenceAt(t), s) === null)) return false;
     /**
@@ -5555,7 +5574,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         funded.set(h.x, h.cost);
       }
       const reserved = checkpoint(ts);
-      const fullReason = `takes player ${p}'s territory, sized for its full ${deployText} landing there`;
+      const fullReason = (t: number) => `takes player ${p}'s territory, sized for ${reachText(t)} landing there`;
       /** Size and plan the attacks for `sizes` (from `reserved`), and judge the result. */
       const attempt = (sizes: number[]): Attempt => {
         tried.forEach((t, i) => {
@@ -5575,11 +5594,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           .sort((a, b) => targets.get(a.t)!.cost - targets.get(b.t)!.cost || a.t - b.t);
         // No-Split (#124): a source must hold only against what stays; each target sized for the
         // full deploy is taken for sure, so it threatens nothing once attacked.
-        const sure = new Set(order.filter((x) => x.e >= deployP).map((x) => x.t));
+        const sure = new Set(order.filter((x) => x.e >= reachOn.get(x.t)!).map((x) => x.t));
         assumeGone = (n) => sure.has(n);
         const attacked = order
           .filter(({ t, e }) =>
-            tryCapture(t, e >= deployP ? fullReason : `presses player ${p}: sized for ${e} of its ~${deployP} deploy landing there`),
+            tryCapture(
+              t,
+              e >= reachOn.get(t)! ? fullReason(t) : `presses player ${p}: sized for ${e} of its ~${reachOn.get(t)!} deploy landing there`,
+            ),
           )
           .map((x) => x.t)
           .sort(byNum);
@@ -5593,7 +5615,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
             .reduce((n, m) => n + straightKills(m.armies, rates.offensiveKillRate), 0);
           return Math.max(0, kills + takesUpTo(finisher.armies) - defenceAt(t) + 1);
         });
-        const falls = guaranteedFalls(saveCost, deployP);
+        const falls = guaranteedFallsReaching(
+          saveCost,
+          attacked.map((t) => reachOn.get(t)!),
+          deployP,
+        );
         const all = falls === ts.length;
         const left = ts.filter((t) => !attacked.includes(t));
         const attackers = new Set(ours.map((m) => m.from));
@@ -5626,10 +5652,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const LIMIT = 1024;
       let levels = deployP + 2;
       while (levels > 1 && levels ** tried.length > LIMIT) levels--;
-      const spaced = Array.from({ length: Math.max(1, levels - 1) }, (_, i) =>
-        Math.round(deployP - (i * deployP) / Math.max(1, levels - 2)),
-      );
-      const shares = levels >= 2 ? [...new Set(spaced), SKIP] : [deployP];
+      /** Each target's sizings: its reachable deploy (#179) evenly spaced down to 0, or not attacked. */
+      const sharesOf = tried.map((t) => {
+        const r = reachOn.get(t)!;
+        const spaced = Array.from({ length: Math.max(1, levels - 1) }, (_, i) =>
+          Math.round(r - (i * r) / Math.max(1, levels - 2)),
+        );
+        return levels >= 2 ? [...new Set(spaced), SKIP] : [r];
+      });
       /** Every sizing tried; the state is left as reserved. */
       const search = () => {
         let best: Attempt | null = null;
@@ -5647,7 +5677,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
             } else if (!best || better(a, best) > 0) best = a;
             return;
           }
-          for (const e of shares) {
+          for (const e of sharesOf[i]!) {
             sizes[i] = e;
             visit(i + 1);
           }
@@ -5688,6 +5718,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (!chosen) return false;
     reserve(stay).commit(chosen);
     const { attacked, falls, left } = chosen;
+    const local = attacked.filter((t) => reachOn.get(t)! < deployP);
+    if (local.length)
+      rationale.push(
+        `Local Deployment (#179): player ${p}'s bonus pools pay only into their own territories, so ${local.map((t) => `${label(t)} can be reinforced with ~${reachOn.get(t)!}`).join(', ')} at most, and ${local.length === 1 ? 'its attack is' : 'their attacks are'} sized for that.`,
+      );
     // The territories left unattacked stay ordinary (non-worst-case) targets.
     for (const t of left) {
       worstCase.delete(t);
@@ -5764,11 +5799,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const adjacent = neighborsOf(g, t).filter((n) => mineSet.has(n));
     if (!adjacent.length) continue;
     const p = st.owner.playerId;
-    const deployP = deployOf(p);
+    // #179: under Local Deployment only what can reach the commander's territory (its pools pay elsewhere).
+    const deployP = deployReaching(p, [t]);
+    const pooled = deployP < deployOf(p);
     const defenders = defenceAt(t) + deployP;
     const cost = captureCost(defenders, s);
     const at = `Player ${p}'s commander on ${label(t)}`;
-    const sizing = `its ${armiesOf(t)} armies + the commander's ${COMMANDER_STRENGTH} + its owner's full ~${deployP} deploy`;
+    const sizing = `its ${armiesOf(t)} armies + the commander's ${COMMANDER_STRENGTH} + ${pooled ? `the ~${deployP} deploy that can reach it (Local Deployment)` : `its owner's full ~${deployP} deploy`}`;
     if (cost === null) continue;
     // Only the struck territory stops threatening (once taken). war.app interleaves both
     // players' attacks, so the owner's other stacks still attack this turn: elimination
