@@ -212,7 +212,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   me is no part of the estimate: a stack says what can move, not what can be deployed (capping
   the figure at 0.75 × a small stack read a visible +10 holder as 5; guessing 0.75 × a 15-stack
   on the opening board read every base-income opponent as ~11). On the opening board (every visible
-  territory holds the same count) every opponent gets that floor. A warning
+  player territory holds the same count; neutrals aside, #128) every opponent gets that floor.
+  The threat at a border (#128, `forceAt`) is the larger of one attack of a player's stacks plus
+  its deploy and the single attack equal to its stacks attacking separately (each rounds on its
+  own); opponents on one team combine, FFA players do not (a warning when two together could take
+  a border); teammates are never a threat or a target; under Local Deployment an opponent's
+  visible bonus pools reach only their own territories. A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also
   *observed* (`observedDeploy`, #57): the *net* change of its armies on territories visible
   both times (shrinks included — a transfer between its own territories is not deploy; counting
