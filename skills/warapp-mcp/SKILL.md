@@ -181,7 +181,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   deploys = income + played Reinforcement armies; when war.app refuses the modelled total with
   error 11, read the "armies per turn" the game shows and resend with it as `income`), refuses when the hand is over the hold
   limit and too few cards are played or discarded, and refuses outside a turn phase or when the user has already
-  committed this turn (withdraw them first with `warapp_uncommit_turn`, or modify orders in the game). Report its `status`: `resolved` (the
+  committed this turn (withdraw them first with `warapp_uncommit_turn`, or modify orders in the game)
+  or the user's seat is no longer `Playing` (as `warapp_plan_turn` does). A plan with
+  `cards.handReadable: false` could not read the hand: say so and check it in the game. Report its `status`: `resolved` (the
   turn advanced), `committed` (orders in, waiting on others) or `unknown` — then check
   `warapp_get_game` (its `turn` is the turn being played, as every tool reports it: a `turn` above
   the submitted one means it resolved; `turnsCompleted` counts the finished turns); never resend

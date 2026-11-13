@@ -519,6 +519,47 @@ describe('warapp_plan_turn', () => {
   });
 });
 
+describe('the seat and the hand (#130)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+
+  it('plan and submit refuse a seat that is no longer Playing', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: modelledSettings() }, { state: 'Booted' })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    for (const [tool, args] of [
+      ['warapp_plan_turn', { game_id: GAME }],
+      ['warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] }],
+    ] as const) {
+      const res = await h.call(tool, args);
+      expect(res.isError, tool).toBe(true);
+      expect(textOf(res), tool).toMatch(/no longer playing.*Booted/);
+    }
+    expect(h.exchanges).toEqual([]);
+  });
+
+  it('an unreadable hand is said, not shown as no cards', async () => {
+    // The standing has no player entry for me: the hand cannot be read.
+    const noEntry = () => ({ body: (w: Writer) => writeLatestGameInfo(w, BOARD, [BOB.inGame]) }) satisfies Partial<ReplyFrame>;
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: noEntry }) });
+    const p = payload<PlanPayload & { cards: { hand: unknown[]; handReadable?: boolean } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME }),
+    );
+    expect(p.cards.handReadable).toBe(false);
+    expect(p.warnings.join('\n')).toMatch(/hand could not be read/);
+    const preview = payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] }));
+    expect(JSON.stringify(preview)).toMatch(/hand could not be read/);
+  });
+
+  it('a readable empty hand says nothing about it', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload & { cards: { handReadable?: boolean } }>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(p.cards).not.toHaveProperty('handReadable');
+    expect(p.warnings.join('\n')).not.toMatch(/hand could not be read/);
+  });
+});
+
 describe('warapp_plan_turn — threat trend', () => {
   // The previous turn's standing (turn 3 is being played, so 2 turns are done
   // and the previous board is the one after 1). Bob's Bolton Moors grew 3 → 7.

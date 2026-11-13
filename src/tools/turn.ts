@@ -17,6 +17,7 @@ import {
   chooseCardPlays,
   normalizeGuid,
   cardsToShed,
+  handReadable,
   readHand,
   reinforcementArmies,
   type Card,
@@ -134,6 +135,19 @@ export function requireTurnPhase(game: Game): void {
         : 'Turns are planned only while the game is being played.',
   });
 }
+
+/** Throw unless my seat is still `Playing` (#130): an eliminated, booted or surrendered seat has no turn. */
+export function requirePlayingSeat(game: Game, me: Player): void {
+  if (me.state === undefined || me.state === 'Playing') return;
+  throw new McpToolError(`${me.name} is no longer playing in game ${game.id} (state: ${me.state}), so there is no turn to play.`, {
+    hint: 'warapp_get_game shows each player\'s state.',
+  });
+}
+
+/** What to say when cards are in play but my hand could not be read (#130). */
+const UNREADABLE_HAND =
+  'Your hand could not be read from the live board (no player entry for you), so the cards shown as none may be ' +
+  'wrong: check the hand in the game — war.app refuses a commit while you hold more cards than the limit (error 51).';
 
 const namer = (map: GameMap) => {
   const names = new Map(map.territories.map((t) => [t.id, t.name]));
@@ -716,7 +730,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       // read fails, a history read already under way still reaches GameFeed after the tool has
       // returned (one wasted, harmless read; boardHistory never throws); and when the account and
       // board reads both fail, whichever fails first is the error reported (each is a true error).
-      const meRead = resolveMe(ctx, game.players, player);
+      const meRead = resolveMe(ctx, game.players, player).then((m) => {
+        requirePlayingSeat(game, m);
+        return m;
+      });
       const [me, { territories, info }, history] = await Promise.all([
         meRead,
         loadLiveGame(ctx, game),
@@ -727,6 +744,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const settings = plannerSettings(game.settings);
       const rules = cardRules(game.settings);
       const hand = readHand(info, inGameId(me));
+      const handUnknown = rules.inPlay.length > 0 && !handReadable(info, inGameId(me));
       const cards = chooseCardPlays(hand, rules);
       const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
       const trend = history.previous;
@@ -780,6 +798,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 'with warapp_uncommit_turn (or modify orders in the game).',
             ]
           : []),
+        ...(handUnknown ? [UNREADABLE_HAND] : []),
         ...cards.warnings,
         ...(cards.extraArmies > 0 ? [cardIncomeNote(income, cards.extraArmies)] : []),
         ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
@@ -831,6 +850,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
         cards: {
           hand: hand.map(cardView),
+          ...(handUnknown ? { handReadable: false } : {}),
           maxCardsHold: rules.maxCardsHold ?? null,
           playRequired: cards.required,
           plays: plays.map(cardView),
@@ -942,6 +962,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
             requireTurnPhase(game);
             const me = await requireSignedInMe(ctx, game, player);
+            requirePlayingSeat(game, me);
             if (me.hasCommittedOrders) {
               throw new McpToolError(`You have already committed orders for this turn of game ${game.id}.`, {
                 hint:
@@ -979,6 +1000,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const playerId = inGameId(me);
             const rules = cardRules(game.settings);
             const hand = readHand(info, playerId);
+            const handUnknown = rules.inPlay.length > 0 && !handReadable(info, playerId);
             const plays = resolveCardPlays(map, hand, rules, cardInputs);
             const discards = resolveDiscards(hand, plays, discardInputs);
             // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
@@ -1023,6 +1045,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               ],
             });
             if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
+            if (handUnknown) warnings.push(UNREADABLE_HAND);
             // Deploys first (as the client sends them), merged per territory.
             const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
             for (const d of deploys) {

@@ -128,6 +128,32 @@ export function readHand(info: unknown, myInGameId: number): Card[] {
   return out;
 }
 
+/**
+ * Whether my hand can be read at all: the current standing carries a player entry keyed by
+ * `myInGameId` (a `[id, value]` pair). Without one, {@link readHand}'s empty hand means "unknown",
+ * not "no cards" (#130). Unverified live: assumes war.app sends every player's entry, as the
+ * synthetic shape does.
+ */
+export function handReadable(info: unknown, myInGameId: number): boolean {
+  let found = false;
+  const walk = (v: unknown, depth: number): void => {
+    if (found || depth > MAX_DEPTH) return;
+    if (Array.isArray(v)) {
+      if (v.length === 2 && v[0] === myInGameId && v[1] !== null && typeof v[1] === 'object') {
+        found = true;
+        return;
+      }
+      for (const item of v) walk(item, depth + 1);
+      return;
+    }
+    if (!isObj(v)) return;
+    for (const [k, f] of Object.entries(v)) if (k !== '$type') walk(f, depth + 1);
+  };
+  const standing = currentStanding(info);
+  if (standing) walk(standing, 0);
+  return found;
+}
+
 /** The game's card rules, from GameFeed settings. */
 export interface CardRules {
   /** Holding more whole cards than this, war.app requires a play or discard (error 51). */

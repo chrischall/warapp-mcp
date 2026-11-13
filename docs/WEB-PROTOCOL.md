@@ -228,6 +228,12 @@ appear in all of them. Only the current standing's cards are playable: an instan
 only in the previous standing or the turn's receive/play orders was already played, and playing
 it is refused with error 50 `CardInstanceUnavailable`.
 
+**An unreadable hand (#130) — unverified.** The hand sits under a per-player entry keyed by the
+in-game id. When cards are in play and the current standing has no entry for my id,
+`handReadable` is false: `warapp_plan_turn` reports `cards.handReadable: false` with a warning, and
+`warapp_submit_turn` warns in its preview, instead of treating the hand as empty. That every
+player's entry is sent even with no cards is assumed from the synthetic shape, not checked live.
+
 ## Verified end to end through the browser bridge
 
 Frames built outside the browser (by this project's encoder) and sent through the
