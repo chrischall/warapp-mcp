@@ -149,6 +149,32 @@ describe('warapp_join_game', () => {
     expect(p.preview.screen).toMatchObject({ cheapestNeutral: 2, armiesToTake: 3, passes: true });
   });
 
+  it('says whether the lobby keeps the joining policy, advisory: it still previews a lobby that breaks it (#134)', async () => {
+    h = await harness({ warapp: joinServer().warapp, feed: [feedGame(3001, false)] });
+    const ok = payload<{ preview: { policy: Record<string, unknown> } }>(await h.call('warapp_join_game', { game_id: 3001 }));
+    expect(ok.preview.policy).toEqual({ passes: true, breaks: [] });
+    await h.harness.close();
+
+    const lobby = feedGame(3007, false);
+    const costly = { ...lobby, settings: { ...(lobby.settings as object), InitialNonDistributionArmies: 10, InitialNeutralsInDistribution: 12 } };
+    const big: SyntheticGame = { ...OPEN.plain!, id: 3007, openSeats: [-1, -1, -1, -1, -1], bootTimeMs: 6 * 3_600_000 };
+    h = await harness({ warapp: joinServer().warapp, feed: [costly], games: [big] });
+    const p = payload<{ confirmToken: string; preview: { policy: { passes: boolean; breaks: string[] } } }>(
+      await h.call('warapp_join_game', { game_id: 3007 }),
+    );
+    expect(p.preview.policy.passes).toBe(false);
+    expect(p.preview.policy.breaks.join(' ')).toMatch(/6 seats/);
+    expect(p.preview.policy.breaks.join(' ')).toMatch(/Boot time 6h/);
+    expect(p.preview.policy.breaks.join(' ')).toMatch(/Costly neutrals/);
+    expect(p.confirmToken).toEqual(expect.any(String));
+  });
+
+  it('a policy without a neutral screen is unchecked, not passed (#134)', async () => {
+    h = await harness({ warapp: joinServer().warapp, feed: [{ termsOfUse: 'x', error: 'Auth failed' }] });
+    const p = payload<{ preview: { policy: Record<string, unknown> } }>(await h.call('warapp_join_game', { game_id: 3001 }));
+    expect(p.preview.policy).toMatchObject({ passes: null, breaks: [] });
+  });
+
   it('when GameFeed cannot read the lobby the preview says there is no screen, and still previews', async () => {
     h = await harness({ warapp: joinServer().warapp, feed: [{ termsOfUse: 'x', error: 'Auth failed' }] });
     const p = payload<{ preview: { screen: unknown; screenNote: string; game: { name: string } } }>(

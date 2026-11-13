@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { parseGameId } from '../client.js';
 import { chooseJoinColor, readAccountColors, STANDARD_COLORS, type JoinColor } from '../join-color.js';
 import type { ClassReader } from '../live.js';
-import { feedScreen, parseOpenGamesPage, type JoinScreen, type OpenGame, type OpenLobby } from '../open-games.js';
+import { feedScreen, joiningPolicy, parseOpenGamesPage, type JoinScreen, type OpenGame, type OpenLobby } from '../open-games.js';
 import {
   GAME_COLOR_COUNT,
   Method,
@@ -213,7 +213,9 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
             'games are refused unless allowed (scenario and mod games always), and so is a game you already joined. ' +
             'It joins with your preferred colour, else your secondary, else a free standard colour (or the color you ' +
             'pass); the preview shows which, plus a screen from the lobby\'s GameFeed settings (does the cheapest ' +
-            'neutral cost at most one turn of base income; Light Fog). You become a player and are expected ' +
+            'neutral cost at most one turn of base income; Light Fog) and `policy`: whether the lobby keeps the ' +
+            'joining policy (no Commerce, mods or custom scenarios; that cheap neutral; at most four seats; a boot time ' +
+            'of at least a day) — advisory, the join is not refused for it. You become a player and are expected ' +
             'to take turns — leaving later means declining or being booted.' +
             `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
@@ -286,6 +288,8 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                   // #132: worth joining only when the cheapest neutral costs at most a turn of base income.
                   screen: screened.screen,
                   ...(screened.note ? { screenNote: screened.note } : {}),
+                  // #134: the owner's joining policy — advisory, the join is not refused for it.
+                  policy: joiningPolicy(game, screened.screen),
                   color: { index: color, source },
                   account: token === undefined ? 'the signed-in war.app account (could not be read)' : String(token),
                   note: 'Joining makes you a player who must take turns until the game ends.',

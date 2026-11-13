@@ -515,3 +515,45 @@ export function feedScreen(s: GameSettings): { screen?: JoinScreen; gaps: string
   }
   return { ...(screen ? { screen } : {}), gaps };
 }
+
+/** The owner's joining policy (#134): at most this many seats (1v1 preferred). */
+export const POLICY_MAX_SEATS = 4;
+/** …and a boot time of at least a day. */
+export const POLICY_MIN_BOOT_MINUTES = 24 * 60;
+
+/** Whether a lobby keeps the joining policy. Advisory: nothing is refused for it. */
+export interface JoinPolicy {
+  /** true: keeps it; false: breaks it; null: nothing broke, but part of it could not be checked. */
+  passes: boolean | null;
+  /** Each rule the lobby breaks, in policy order. */
+  breaks: string[];
+  /** What could not be checked (the neutral cost needs the lobby's GameFeed settings). */
+  unchecked?: string[];
+}
+
+/**
+ * The owner's joining policy (#134), checked against an open game and, when GameFeed could read
+ * the lobby, its neutral-cost screen: no Commerce, mods or custom scenarios; the cheapest neutral
+ * costs at most one turn of base income; at most four seats; a boot time of at least a day (no
+ * boot time — war.app's "never" — keeps it). Lobbies are not counted against the game cap. Pure.
+ */
+export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null): JoinPolicy {
+  const breaks: string[] = [];
+  if (game.rules.some((r) => r.startsWith('Commerce'))) breaks.push('Commerce — the policy joins no Commerce games');
+  if (game.rules.includes('Mods')) breaks.push('Mods — the policy joins no mod games');
+  if (game.rules.includes('Custom scenario')) breaks.push('Custom scenario — the policy joins no custom scenarios');
+  if (screen && !screen.passes) {
+    breaks.push(
+      screen.armiesToTake === null
+        ? 'Costly neutrals — the cheapest cannot be taken at these kill rates; the policy is at most one turn of base income'
+        : `Costly neutrals — the cheapest takes ${screen.armiesToTake} armies, ${screen.turnsOfBaseIncome ?? '∞'} turns of base income; the policy is at most one turn`,
+    );
+  }
+  const seats = game.maxPlayers ?? game.seats;
+  if (seats > POLICY_MAX_SEATS) breaks.push(`${seats} seats — the policy is 1v1 or at most four players`);
+  if (game.bootTimeMinutes !== undefined && game.bootTimeMinutes < POLICY_MIN_BOOT_MINUTES) {
+    breaks.push(`Boot time ${game.bootTime} — the policy wants at least a day`);
+  }
+  if (breaks.length) return { passes: false, breaks };
+  return screen ? { passes: true, breaks } : { passes: null, breaks, unchecked: ["the cheapest neutral's cost"] };
+}
