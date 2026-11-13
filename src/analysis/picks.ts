@@ -23,7 +23,9 @@
 //     that source and saved for the next turn, and the next-best bonuses are still tried
 //     with the movable armies of other sources alone. A capture's survivors stay on the captured
 //     territory and attack from there next turn (captured armies never attack the turn
-//     they capture). A bonus held in full by the picks themselves (a single-territory
+//     they capture). Nothing is parked (#129): an attacking source's spare movable armies,
+//     and the turn's unspent deploys, go with its attack into its most forward capture, so
+//     a bonus behind one neutral completes on turn 2 as it does by hand. A bonus held in full by the picks themselves (a single-territory
 //     bonus) completes on turn 0; one completed on turn 1 is a first-turn bonus (FTB).
 //     (Before #47 every pick's armies and the captured survivors were one pool, so a
 //     bonus was "completed" with armies on picks nowhere near it.)
@@ -273,6 +275,8 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
     let saveAt: number | null = null;
     // Bonuses whose next capture cannot be paid for this turn.
     const skipped = new Set<number>();
+    // This turn's attacks, in order: the armies left over follow them (#129).
+    const attacks: { source: number; target: number }[] = [];
     for (;;) {
       let best: { id: number; ratio: number; rem: number; target: number; cost: number } | null = null;
       for (const id of relevant(startHeld)) {
@@ -325,11 +329,29 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
       armiesOn.set(source, armiesOn.get(source)! - fromOwn);
       budget -= best.cost - fromOwn;
       captured.add(best.target);
+      attacks.push({ source, target: best.target });
       armiesOn.set(best.target, Math.max(0, best.cost - ctx.lost.get(best.target)!));
     }
-    if (budget > 0 && startHeld.length) {
-      const at = saveAt ?? startHeld[0]!;
+    // Armies are not parked (#129): what is left goes with the attacks, as a player would
+    // send it — each attacking source's spare movable armies, and the unspent deploys (on the
+    // first attack's source), join that source's most forward capture (the most territories
+    // next to it neither held nor captured; ties: lowest id). Deploys saved for an attack
+    // next turn stay on its source; with no attack at all they go on the start territory
+    // with the most unheld neighbours.
+    const unheld = (t: number) => neighborsOf(ctx.g, t).filter((n) => !held.has(n) && !captured.has(n)).length;
+    const forward = (ids: number[]) => ids.reduce((a, b) => (unheld(b) > unheld(a) || (unheld(b) === unheld(a) && b < a) ? b : a));
+    if (saveAt !== null) armiesOn.set(saveAt, armiesOn.get(saveAt)! + budget);
+    else if (budget > 0 && !attacks.length && startHeld.length) {
+      const at = forward(startHeld);
       armiesOn.set(at, armiesOn.get(at)! + budget);
+    }
+    const sources = [...new Set(attacks.map((a) => a.source))].filter((t) => t !== saveAt);
+    for (const src of sources) {
+      const to = forward(attacks.filter((a) => a.source === src).map((a) => a.target));
+      let move = avail.get(src)!;
+      if (saveAt === null && src === attacks[0]!.source) move += budget;
+      armiesOn.set(src, armiesOn.get(src)! - avail.get(src)!);
+      armiesOn.set(to, armiesOn.get(to)! + move);
     }
     for (const t of captured) held.add(t);
     checkComplete(turn);

@@ -120,3 +120,30 @@ describe('planPicks — negative bonuses (#129)', () => {
     expect(pick(withThorn, 1).score).toBeLessThan(pick(without, 1).score);
   });
 });
+
+describe('planPicks — the opening simulation does not park armies (#129)', () => {
+  it('a bonus behind one neutral completes on turn 2, as by hand', () => {
+    // Pick 1 borders only 2; 2 is the hub of 3, 4 and 5. Hub (+5) = {1,…,5}, neutrals of 2.
+    // By hand: turn 1 everything (4 movable + 5 deployed) takes 2 and stands there; turn 2 those 8
+    // movable + 5 deployed take 3, 4 and 5 (3 armies each).
+    const g = mkGraph([[1, 2], [2, 3], [2, 4], [2, 5], [5, 9]], [{ id: 100, name: 'Hub', value: 5, territoryIds: [1, 2, 3, 4, 5] }]);
+    const p = plan({ graph: g, pickable: [1], territoryLimit: 1, maxPicks: 1 });
+    expect(p.groups.primary.bonuses).toEqual([{ bonusId: 100, name: 'Hub', value: 5, turn: 2 }]);
+  });
+
+  it('the deploys go where the attack is, not to the lowest id', () => {
+    // The same position relabelled: the dead-end pick's id does not change the plan.
+    const at = (dead: number) =>
+      plan({
+        graph: mkGraph(
+          [[dead, 2], [50, 51], [51, 52], [51, 53], [51, 54], [2, 60]],
+          [{ id: 100, name: 'Star', value: 6, territoryIds: [50, 51, 52, 53, 54] }],
+        ),
+        pickable: [dead, 50],
+        territoryLimit: 2,
+        maxPicks: 2,
+      }).groups.primary.bonuses;
+    expect(at(1)).toEqual(at(99));
+    expect(at(1)[0]?.turn).toBe(2);
+  });
+});
