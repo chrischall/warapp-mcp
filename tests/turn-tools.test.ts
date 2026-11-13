@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
-import { attackSizes, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
+import { attackSizes, commerceWarning, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { untrustedText } from '../src/tools/common.js';
 import { normalizeMap } from '../src/normalize.js';
 import { AHEAD_PRESSURE_FACTOR, PRESSURE_FACTOR } from '../src/analysis/planner.js';
@@ -853,6 +853,19 @@ describe('plannerSettings', () => {
     // Army cap (#104): armies above it are free to spend; null means no cap.
     expect(plannerSettings({ cards: [], raw: {}, armyCap: 8 })).toEqual({ armyCap: 8 });
     expect(plannerSettings({ cards: [], raw: {}, armyCap: null })).toEqual({});
+    // Wastelands (#167): passed through when there are any.
+    expect(plannerSettings({ cards: [], raw: {}, wastelands: { count: 3, size: 12 } })).toEqual({ wastelands: { count: 3, size: 12 } });
+    expect(plannerSettings({ cards: [], raw: {}, wastelands: { count: 0, size: 0 } })).toEqual({});
+  });
+});
+
+describe('commerceWarning (#167)', () => {
+  it('says gold and cities are not modelled in a commerce game, and nothing otherwise', () => {
+    expect(commerceWarning(undefined)).toEqual([]);
+    expect(commerceWarning({ cards: [], raw: {}, commerce: false })).toEqual([]);
+    const w = commerceWarning({ cards: [], raw: {}, commerce: true });
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(/commerce game.*gold.*cities/i);
   });
 });
 

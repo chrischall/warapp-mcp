@@ -183,6 +183,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.localDeployments) out.localDeployments = true;
   if (s.noSplit) out.noSplit = true;
   if (s.armyCap !== undefined && s.armyCap !== null && s.armyCap > 0) out.armyCap = s.armyCap;
+  if (s.wastelands && s.wastelands.count > 0) out.wastelands = { ...s.wastelands };
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game. The
@@ -364,6 +365,19 @@ export function modsWarning(s: GameSettings | undefined): string[] {
   return [
     `This game runs ${what}: a mod can change the rules (combat, income, orders, cards, special units), so the rules ` +
       'this plan assumes may not hold. Check the mods in the game settings.',
+  ];
+}
+
+/**
+ * #167: a commerce game pays gold and lets players buy armies and cities; the planner plans income as
+ * armies only. Said whenever the feed's `Commerce` object carries settings (the shape a commerce
+ * game sends is unverified: a plain game sends `{}`).
+ */
+export function commerceWarning(s: GameSettings | undefined): string[] {
+  if (!s?.commerce) return [];
+  return [
+    'This looks like a commerce game (its Commerce settings are not empty): the plan models income as armies only — ' +
+      'it does not model gold, buying armies or cities. Check what gold buys before following it.',
   ];
 }
 
@@ -1184,6 +1198,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...(tracks ?? []).flatMap((t) => t.warnings),
         ...plan.warnings,
         ...modsWarning(game.settings),
+        ...commerceWarning(game.settings),
         ...guardOffWarnings(graph, map, board, me.id, friendsOf(game.players, me), game.settings, plan.deploys, plan.moves),
       ];
       // The plan advises Order Priority (a withdrawal, a commander strike): play the one I
@@ -1244,6 +1259,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               }`,
         // #72: the offensive options considered, full view only.
         ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
+        // #167: each attack on a player judged by its exchange, full view only.
+        ...(rung === 'full' && plan.exchanges
+          ? { exchanges: plan.exchanges.map((e) => ({ ...e, from: name(e.from), to: name(e.to) })) }
+          : {}),
         cards: {
           hand: hand.map(cardView),
           ...(handUnknown ? { handReadable: false } : {}),

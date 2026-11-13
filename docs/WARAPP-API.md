@@ -83,6 +83,13 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   Cities and per-player income mods are **not detected** (no known settings key says they
   pay income; the `Commerce` key is present, as `{}`, even in a plain lobby game), so a game
   using them still gets the hard refusal and the owner must fall back to the in-game number.
+- **Wastelands and Commerce (#167).** `Wastelands` is `{ NumberOfWastelands, WastelandSize }` (verified
+  as zeros on a lobby game; `normalizeSettings` → `settings.wastelands`). With wastelands on, the planner
+  costs a fogged missing bonus member with the expected surcharge of being one (the picking board, where
+  wastelands are visible in a manual-distribution game, is not kept yet). `Commerce` is `{}` in a plain
+  game; a non-empty object is read as a commerce game (`settings.commerce`) and `warapp_plan_turn` warns
+  that gold, buying armies and cities are not modelled — **UNVERIFIED**: no commerce game's feed has been
+  seen (the bundle's commerce settings are `CommerceArmyCostMultiplier` and `CommerceCityBaseCost`).
 - **Trade-off — Sanctions:** the bundle cuts income only when a Sanctions card is actually
   *active* against the player, but this repo does not decode the live board's active-card list
   (its shape in `GetLatestGameInfo` is unverified), so the warning fires whenever the card is

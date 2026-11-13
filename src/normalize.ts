@@ -238,6 +238,18 @@ export interface GameSettings {
   overriddenBonuses?: ReadonlyMap<number, number>;
   /** `true` when `OverriddenBonuses` could not be read in full (malformed entries skipped, or an unknown shape with no values). */
   overriddenBonusesUnparsed?: true;
+  /**
+   * #167: automatic Wastelands (`Wastelands: { NumberOfWastelands, WastelandSize }`, verified on a
+   * lobby game as zeros): how many neutrals start at `size` armies. Absent when the feed does not send
+   * a readable object.
+   */
+  wastelands?: { count: number; size: number };
+  /**
+   * #167: a commerce game (gold, cities). `false` for the `{}` every plain game sends, `true` when the
+   * feed's `Commerce` object carries settings (UNVERIFIED: no commerce game seen yet), absent when the
+   * key is missing.
+   */
+  commerce?: boolean;
   /** Every setting as the feed sent it. */
   raw: Rec;
 }
@@ -292,6 +304,12 @@ export function normalizeSettings(raw: unknown): GameSettings {
   for (const [k, v] of Object.entries(r)) {
     if (k.endsWith('Card') && isRec(v)) s.cards.push(k.slice(0, -'Card'.length));
   }
+  if (isRec(r.Wastelands)) {
+    const count = asInt(r.Wastelands.NumberOfWastelands);
+    const size = asInt(r.Wastelands.WastelandSize);
+    if (count !== undefined && size !== undefined) s.wastelands = { count, size };
+  }
+  if (r.Commerce !== undefined && r.Commerce !== null) s.commerce = isRec(r.Commerce) ? Object.keys(r.Commerce).length > 0 : true;
   if (r.Mods !== undefined && r.Mods !== null) {
     const empty = r.Mods === '' || (isRec(r.Mods) && Object.keys(r.Mods).length === 0);
     s.mods = Array.isArray(r.Mods) ? r.Mods.length : empty ? 0 : -1;

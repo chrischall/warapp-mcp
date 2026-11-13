@@ -212,6 +212,19 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ Mods: 'something' }).mods).toBe(-1);
   });
 
+  it('reads Wastelands and whether Commerce is on (#167)', () => {
+    // The lobby fixture: `Wastelands: { NumberOfWastelands: 0, WastelandSize: 0 }` and `Commerce: {}`.
+    expect(s.wastelands).toEqual({ count: 0, size: 0 });
+    expect(s.commerce).toBe(false);
+    const w = normalizeSettings({ Wastelands: { NumberOfWastelands: '4', WastelandSize: 10 }, Commerce: { CommerceArmyCostMultiplier: 1 } });
+    expect(w.wastelands).toEqual({ count: 4, size: 10 });
+    expect(w.commerce).toBe(true);
+    // Absent or unreadable: unknown.
+    expect(normalizeSettings({}).wastelands).toBeUndefined();
+    expect(normalizeSettings({}).commerce).toBeUndefined();
+    expect(normalizeSettings({ Wastelands: 'x' }).wastelands).toBeUndefined();
+  });
+
   it('lists enabled cards only', () => {
     expect(s.cards).toEqual(['Reinforcement', 'Blockade', 'Airlift', 'Diplomacy', 'Sanctions', 'Reconnaissance']);
   });
