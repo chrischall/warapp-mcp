@@ -4,6 +4,7 @@ import {
   BundleInterpreter,
   DEFAULT_DIALECT,
   DEFAULT_MAX_MILLIS,
+  DEFAULT_MAX_STEPS,
   InterpError,
   MAX_NESTING,
   MAX_THROW_MESSAGE,
@@ -239,8 +240,15 @@ describe('BundleInterpreter', () => {
 // The bundle is downloaded at run time, so the interpreter treats it as hostile: interpreted code
 // must not reach anything of the host process. Every bundle here is hand-written.
 describe('BundleInterpreter containment', () => {
+  // A read that must END at the step budget gets a small one: the default (30M steps) is half a
+  // second of CPU alone and several seconds when the suite runs many files at once, which made the
+  // old wall-clock assertions fail under load. One test below still runs the default.
+  const SMALL: ConstructorParameters<typeof BundleInterpreter>[1] = { maxSteps: 5_000_000 };
+  // What proves a stop is the error's kind. The wall-clock bound only tells a read whose work was
+  // charged from one that ran on for minutes, so it is generous (slow CI, a loaded machine).
+  const SOON_MS = 4_000;
   /** Evaluate `body` as the reader `Hx.Ha=function(a,b,d){…}` of a one-class bundle. */
-  const run = (body: string, bytes: Uint8Array = new Uint8Array(8), opts?: ConstructorParameters<typeof BundleInterpreter>[1]) =>
+  const run = (body: string, bytes: Uint8Array = new Uint8Array(8), opts: ConstructorParameters<typeof BundleInterpreter>[1] = SMALL) =>
     new BundleInterpreter(parseBundle(`function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a,b,d){${body}};`), opts).readClass(
       'h.X',
       new Reader(bytes),
@@ -328,11 +336,16 @@ describe('BundleInterpreter containment', () => {
     expect(interpError(() => run('return O.fA(function(){return 1})')).kind).toBe('forbidden');
   });
 
-  it('stops a nested-loop bomb within the step budget, quickly', () => {
-    const t = Date.now();
+  it('stops a nested-loop bomb within the step budget', () => {
     const e = interpError(() => run('for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){}}return 1'));
     expect(e.kind).toBe('budget');
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(e.message).toContain(`${SMALL.maxSteps} steps`);
+  });
+
+  it('stops a nested-loop bomb under the DEFAULT limits too (the step budget or the deadline)', { timeout: 30_000 }, () => {
+    const e = interpError(() => run('for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){}}return 1', undefined, {}));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toMatch(new RegExp(`${DEFAULT_MAX_STEPS} steps|${DEFAULT_MAX_MILLIS} ms`));
   });
 
   it('stops unbounded recursion at the call-depth limit, never a RangeError', () => {
@@ -340,15 +353,15 @@ describe('BundleInterpreter containment', () => {
     const e = interpError(() => run('return Hx.Ha(a,b,d)'));
     expect(e.kind).toBe('budget');
     expect(e.message).toContain('depth');
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
   });
 
   it('stops exponential fan-out at the step budget', () => {
     const t = Date.now();
     const b = parseBundle('W["h.F"]=Hf;Hf.Ha=function(a){return Hf.f(60)};Hf.f=function(n){if(n<1)return 1;return Hf.f(n-1)+Hf.f(n-1)};');
-    const e = interpError(() => new BundleInterpreter(b).readClass('h.F', new Reader(new Uint8Array())));
+    const e = interpError(() => new BundleInterpreter(b, SMALL).readClass('h.F', new Reader(new Uint8Array())));
     expect(e.kind).toBe('budget');
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
   });
 
   it('takes the step budget and depth limit as options, and resets them per read', () => {
@@ -389,7 +402,7 @@ describe('BundleInterpreter containment', () => {
       run('return E.Sa(E.Za(E.Range(0,P.Ya(a)),function(i){return 1}))', new Writer().int32(0x7fffffff).bytes()),
     );
     expect(e.kind).toBe('bad-value');
-    expect(Date.now() - t).toBeLessThan(500);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     const { E } = DEFAULT_DIALECT.statics;
     for (const n of [-1, 1.5, Number.NaN, Infinity, 2 ** 31, '3']) expect(() => E.Range(0, n), String(n)).toThrow(InterpError);
     expect(E.Range(2, 3)).toEqual([2, 3, 4]);
@@ -425,7 +438,7 @@ describe('BundleInterpreter containment', () => {
     const t = Date.now();
     const e = interpError(() => run('for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){E.Sa(E.Range(0,1000000))}}return 1'));
     expect(e.kind).toBe('budget');
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     // One Range of a million costs at least a million steps, charged before it allocates.
     expect(interpError(() => run('return E.Range(0,1000000)', undefined, { maxSteps: 999_999 })).kind).toBe('budget');
     expect(run('return E.Sa(E.Range(0,3))', undefined, { maxSteps: 1000 })).toEqual([0, 1, 2]);
@@ -454,7 +467,7 @@ describe('BundleInterpreter containment', () => {
     expect(
       run('var x=E.Sa(E.Range(0,1000000)),n=0;for(var i=0;i<200;i++){switch("x"){case x:n++;break;default:}}return n'),
     ).toBe(0);
-    expect(Date.now() - t).toBeLessThan(1000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     // Without conversion an object never loosely equals a primitive, even one its join would match.
     expect(run('var x=[1];return [x==1,x=="1",x!=1,1==x,x==x,x==null,x!=undefined]')).toEqual([
       false,
@@ -491,7 +504,7 @@ describe('BundleInterpreter containment', () => {
       run('var s="x";for(var i=0;i<19;i++){s=s+s}var u=s+"y",v=s+"y",n=0;for(var j=0;j<999999;j++){if(u===v)n++}return n'),
     );
     expect(c.kind).toBe('budget');
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     // Short strings still concatenate.
     expect(run('var s="a";s=s+1+"b";return s')).toBe('a1b');
   });
@@ -513,7 +526,7 @@ describe('BundleInterpreter containment', () => {
       run('var x=18446744073709551617n;for(var i=0;i<22;i++){x=x*x}for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){var y=x*3n}}return 1'),
     );
     expect(e.kind).toBe('bad-value');
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     // Ordinary literals still evaluate.
     expect(run('return [1,"s",true,null]')).toEqual([1, 's', true, null]);
   });
@@ -540,7 +553,7 @@ describe('BundleInterpreter containment', () => {
     );
     const t = Date.now();
     const v = new BundleInterpreter(b).readClass('h.M', new Reader(new Uint8Array())) as { $ctorError?: string };
-    expect(Date.now() - t).toBeLessThan(1000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     // The failure still surfaces as before.
     expect(v.$ctorError).toContain('no definition for X.nope');
   });
@@ -549,7 +562,7 @@ describe('BundleInterpreter containment', () => {
     const t = Date.now();
     const e = interpError(() => run('var s="1",i,x;for(i=0;i<19;i++){s=s+s}for(i=0;i<999999;i++){x="ab"[s]}return 1'));
     expect(e.kind).toBe('budget');
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     // The same holds for a write and for a static looked up by a computed name.
     expect(interpError(() => run('var s="1",i,e=new Hx;for(i=0;i<19;i++){s=s+s}for(i=0;i<999999;i++){e[s]=1}return 1')).kind).toBe(
       'budget',
@@ -580,7 +593,7 @@ describe('BundleInterpreter containment', () => {
       const e = interpError(() => run(`${long}for(i=0;i<999999;i++){${op}}return n`));
       expect(e.kind, op).toBe('budget');
     }
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     // Short strings still convert as before.
     expect(run('var s="12";return [s==12,s<13,s-2,s*2,s|1,-s,1&s,s==true]')).toEqual([true, true, 10, 24, 13, -12, 0, false]);
     expect(run('var s="3";s++;return s')).toBe(4);
@@ -607,7 +620,7 @@ describe('BundleInterpreter containment', () => {
     const e = interpError(() => run(bomb, undefined, { maxSteps: Number.MAX_SAFE_INTEGER, maxMillis: 50 }));
     expect(e.kind).toBe('budget');
     expect(e.message).toContain('50 ms');
-    expect(Date.now() - t).toBeLessThan(1000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     // An injected clock: the deadline is per read, so the next read starts afresh.
     const src = 'function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a){var i;for(i=0;i<5000;i++){}return i};';
     let clock = 0;
@@ -636,9 +649,9 @@ describe('BundleInterpreter containment', () => {
     const ctor = `W["h.C"]=Hc;function Hc(x){throw [${lits}]}`;
     const loop = parseBundle(`${ctor}W["h.B"]=Hb;Hb.Ha=function(a){for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){new Hc(1)}}return 0};`);
     const t = Date.now();
-    const e = interpError(() => new BundleInterpreter(loop).readClass('h.B', new Reader(new Uint8Array())));
+    const e = interpError(() => new BundleInterpreter(loop, SMALL).readClass('h.B', new Reader(new Uint8Array())));
     expect(e.kind).toBe('budget');
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
     const one = parseBundle(`${ctor}W["h.O"]=Ho;Ho.Ha=function(a){return new Hc(1)};`);
     const v = new BundleInterpreter(one).readClass('h.O', new Reader(new Uint8Array())) as { $ctorError: string };
     expect(v.$ctorError).toContain('reader threw: x x x');
@@ -663,7 +676,7 @@ describe('BundleInterpreter containment', () => {
     const e = interpError(() => run(nested(MAX_NESTING - 2, lookups)));
     expect(e.kind).toBe('budget');
     expect(e.message).toContain('steps');
-    expect(Date.now() - t).toBeLessThan(2000);
+    expect(Date.now() - t).toBeLessThan(SOON_MS);
   });
 
   it('refuses a reader argument that is not the reader, as an InterpError', () => {
@@ -689,10 +702,11 @@ describe('BundleInterpreter containment', () => {
 
   // The per-function AST walks were quadratic (a duplicate check by array scan, a reader test repeated
   // for every enclosing assignment) and uncharged, so a few megabytes of bundle took minutes. The clock
-  // is held still in these: only the step count (or the walks being linear) can end them.
+  // is held still in these: only the step count (or the walks being linear) can end them. A quadratic
+  // walk would take minutes, so the generous timeouts (for a loaded machine) still catch one.
   const still = { now: () => 0 };
 
-  it('hoists a function with many `var` names in linear time, the walk charged', { timeout: 4000 }, () => {
+  it('hoists a function with many `var` names in linear time, the walk charged', { timeout: 30_000 }, () => {
     const names = Array.from({ length: 200_000 }, (_, k) => `a${k}`).join(',');
     // Declared in an untaken branch, so only the hoisting does work.
     expect(run(`var g=function(){if(0){var ${names}}return 3};return g()`, undefined, still)).toBe(3);
@@ -703,16 +717,16 @@ describe('BundleInterpreter containment', () => {
     expect(interpError(() => tight.readClass('h.X', new Reader(new Uint8Array()))).kind).toBe('budget');
   });
 
-  it('charges each call the parameters and hoisted names it declares', { timeout: 8000 }, () => {
+  it('charges each call the parameters and hoisted names it declares', { timeout: 30_000 }, () => {
     const names = Array.from({ length: 1000 }, (_, k) => `a${k}`).join(',');
     for (const fn of [`function(){if(0){var ${names}}}`, `function(${names}){}`]) {
-      const e = interpError(() => run(`var g=${fn};for(var i=0;i<999999999;i++){g()}return 0`, undefined, still));
+      const e = interpError(() => run(`var g=${fn};for(var i=0;i<999999999;i++){g()}return 0`, undefined, { ...still, ...SMALL }));
       expect(e.kind, fn.slice(0, 20)).toBe('budget');
       expect(e.message).toContain('steps');
     }
   });
 
-  it('finds the fields a reader fills in linear time, the walks charged', { timeout: 4000 }, () => {
+  it('finds the fields a reader fills in linear time, the walks charged', { timeout: 30_000 }, () => {
     // A reader making many distinct calls to its own statics, none of them a field read.
     const calls = Array.from({ length: 100_000 }, (_, k) => `Lg.x${k}()`).join(';');
     const src = `W["t.Lg"]=Lg;W["t.F"]=Ff;\nLg.Ha=function(a,b,d){${calls}};\n`;

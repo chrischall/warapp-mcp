@@ -140,7 +140,9 @@ async function readCapped(res: Response, maxBytes: number, what: string, signal:
       }
       chunks.push(value);
     }
-    return Buffer.concat(chunks).toString('utf8');
+    // Decoded as `Response.text()` decodes (a leading byte-order mark dropped), so the cached
+    // bundle is the same text the unbounded read produced.
+    return new TextDecoder().decode(Buffer.concat(chunks));
   } finally {
     signal.removeEventListener('abort', onAbort);
   }

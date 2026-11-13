@@ -57,6 +57,21 @@ describe('bundleFetcher limits', () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it('decodes the streamed body exactly as res.text() did: a byte-order mark is dropped, a split character is whole', async () => {
+    // A BOM, then "é" (2 bytes) split across two chunks.
+    const chunks = [new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xc3]), new Uint8Array([0xa9, 0x62])];
+    const body = () =>
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          for (const k of chunks) c.enqueue(k);
+          c.close();
+        },
+      });
+    const get = bundleFetcher(bridge, (async () => new Response(body())) as typeof fetch);
+    expect(await get(URL_)).toBe(await new Response(body()).text());
+    expect(await get(URL_)).toBe('aéb');
+  });
+
   it('cuts off a body larger than the cap while it streams, without buffering it all', async () => {
     let produced = 0;
     let cancelled = false;
