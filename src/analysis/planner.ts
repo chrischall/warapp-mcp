@@ -61,8 +61,10 @@
 //     whose territories someone else visibly holds, owner-only included (a warning says when). A rationale line names
 //     the turns compared and the territories counted vs skipped as reveals; the warning
 //     names which source won. Given `tracks` (`trackOpponents` over my board history, S3), an
-//     opponent observed over at least TRACKED_MIN_TURNS turns gets its tracked income (median
-//     of its last three observed turns, floored at base + visible bonuses) in place of the
+//     opponent observed over at least TRACKED_MIN_TURNS turns gets its tracked income (the
+//     larger of the most it was observed to deploy over its last three observed turns — each a
+//     lower bound — and its visible army growth plus losses per turn less fog arrivals, capped at what it could
+//     earn, floored at base + visible bonuses; #99, `trackedIncome`) in place of the
 //     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
 //     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
@@ -375,7 +377,7 @@
 // the plan is valid with or without multi-attack.
 
 import type { BoardState, TerritoryState } from '../board.js';
-import type { OpponentTrack } from './opponents.js';
+import { incomeBasis, type OpponentTrack } from './opponents.js';
 import type { GameSettings } from '../normalize.js';
 import { analyzeBonus, bonusTerritories } from './bonuses.js';
 import {
@@ -841,6 +843,8 @@ export interface DeployObservation {
    * cost plus what the visible sources sent; the stack stays a threat.
    */
   fromFog: number[];
+  /** The armies that arrived from the fog on `fromFog` (the stacks beyond what visible sources sent): moves, never income. */
+  fogArmies: number;
   /** Its territories now that last turn's board did not show: fog reveals, never income. */
   reveals: number[];
 }
@@ -881,6 +885,7 @@ export function observeDeploy(
   const counted: number[] = [];
   const captured: number[] = [];
   const fromFog: number[] = [];
+  let fogArmies = 0;
   const reveals: number[] = [];
   const now = new Map(board.territories.map((t) => [t.territoryId, t]));
   const defensive = rates.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
@@ -927,11 +932,13 @@ export function observeDeploy(
         arrived -= take;
         total += take;
       }
-      if (arrived > 0 && ns.some(hidden)) fromFog.push(t.territoryId);
-      else total += arrived;
+      if (arrived > 0 && ns.some(hidden)) {
+        fromFog.push(t.territoryId);
+        fogArmies += arrived;
+      } else total += arrived;
     }
   }
-  return { deploy: Math.max(0, total), counted, captured, fromFog, reveals };
+  return { deploy: Math.max(0, total), counted, captured, fromFog, fogArmies, reveals };
 }
 
 /** {@link observeDeploy}'s deploy figure alone. */
@@ -1647,7 +1654,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           const track = input.tracks!.find((t) => t.playerId === p)!;
           const used = track.turns.filter((x) => e.trackedTurns.includes(x.from));
           rationale.push(
-            `Tracked income for player ${p}: ~${e.tracked}/turn, the median of its last ${used.length} observed turns (${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}), at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
+            `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
           );
         }
         if (e.source === 'tracked') {

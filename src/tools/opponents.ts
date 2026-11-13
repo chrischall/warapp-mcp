@@ -32,8 +32,10 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           `warapp_plan_turn and this tool have read, the last ${CACHED_TURNS} turns, or the game history when war.app sends it): ` +
           'per opponent, by name, its observed deploy each turn (the net change of its armies on territories visible ' +
           'both turns plus what its captures cost; a stack that only came out of the fog is not income, and no turn ' +
-          'exceeds what it could earn), its income estimate (the median of its last three observed turns, at least ' +
-          'its base income plus the bonuses it visibly holds), its unaccounted armies (income earned since first ' +
+          'exceeds what it could earn), its income estimate (each observed deploy is a lower bound under fog, so: the ' +
+          'largest of its last three observed turns, or its visible army growth plus losses per turn (stacks out of the fog left out) when more, capped ' +
+          'at what it could earn and at least its base income plus the bonuses it visibly holds; with the method used ' +
+          'and the observed range), its unaccounted armies (income earned since first ' +
           'seen minus its visible army change and losses: armies that must be in the fog) and inferred bonuses (the ' +
           'combinations of bonuses it could hold whose values best explain the gap between that income and what it ' +
           `visibly earns — every combination that fits is listed, as candidates). Once an opponent has ${TRACKED_MIN_TURNS}+ ` +
@@ -115,6 +117,9 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
               base: t.base,
               visibleBonuses: t.bonusIncome,
               turns: t.incomeTurns,
+              // #99: which term set the estimate, and the spread of what it was observed to deploy.
+              method: t.incomeMethod,
+              observedRange: t.observedRange,
               usedByPlanner: t.income !== null && t.turns.length >= TRACKED_MIN_TURNS,
             },
             unaccountedArmies: t.unaccounted,

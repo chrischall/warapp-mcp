@@ -69,7 +69,14 @@ interface TrackPayload {
     player: { id: number; name: string };
     firstSeen: number;
     observed: Array<{ turn: number; deploy: number; reveals?: unknown[] }>;
-    income: { estimate: number | null; visible: number; usedByPlanner: boolean; turns: number[] };
+    income: {
+      estimate: number | null;
+      visible: number;
+      usedByPlanner: boolean;
+      turns: number[];
+      method: string | null;
+      observedRange: { min: number; max: number } | null;
+    };
     unaccountedArmies: number | null;
     inferredBonuses: unknown;
     notes: string[];
@@ -102,7 +109,8 @@ describe('warapp_track_opponents', () => {
     h = await liveHarness();
     const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_track_opponents')!;
     expect(tool.annotations).toMatchObject({ readOnlyHint: true });
-    expect(tool.description).toMatch(/median/);
+    expect(tool.description).toMatch(/largest of its last three observed turns/);
+    expect(tool.description).not.toMatch(/median/);
   });
 
   it('reports each opponent by name over the cached history, and caches the board it read', async () => {
@@ -119,9 +127,15 @@ describe('warapp_track_opponents', () => {
       [3, 5],
       [4, 5],
     ]);
-    expect(bob.income).toMatchObject({ estimate: 5, usedByPlanner: true, turns: [3, 4] });
+    expect(bob.income).toMatchObject({
+      estimate: 5,
+      usedByPlanner: true,
+      turns: [3, 4],
+      method: 'visible',
+      observedRange: { min: 5, max: 5 },
+    });
     expect(bob.unaccountedArmies).toBe(0);
-    expect(bob.notes.join(' ')).toMatch(/median/);
+    expect(bob.notes.join(' ')).toMatch(/its visible base \+ bonuses, observed 5–5 over turns 3–4/);
     const cached = JSON.parse(readFileSync(join(dir, 'boards', `${GAME}.json`), 'utf8')) as { turns: object };
     expect(Object.keys(cached.turns)).toEqual(['3', '4', '5']);
   });
@@ -130,7 +144,7 @@ describe('warapp_track_opponents', () => {
     const { last } = await playTurns('warapp_track_opponents', [7]);
     const bob = (last as TrackPayload).opponents.find((o) => o.player.name === 'Bob')!;
     expect(bob.observed).toEqual([]);
-    expect(bob.income).toMatchObject({ estimate: null, usedByPlanner: false });
+    expect(bob.income).toMatchObject({ estimate: null, usedByPlanner: false, method: null, observedRange: null });
     expect(bob.notes.join(' ')).toMatch(/fewer than 2 observed turns/);
   });
 
@@ -181,7 +195,7 @@ describe('warapp_plan_turn with a tracked history', () => {
   it('uses the tracked income once an opponent has two observed turns, and says so', async () => {
     const { last } = await playTurns('warapp_plan_turn', [7, 12, 17]);
     const p = last as { rationale: string[] };
-    expect(p.rationale.join('\n')).toMatch(/Tracked income for player \d+: ~5\/turn, the median of its last 2 observed turns/);
+    expect(p.rationale.join('\n')).toMatch(/Tracked income for player \d+: ~5\/turn \(its visible base \+ bonuses, observed 5–5 over turns 3–4\)/);
   });
 
   it('warns about an opponent out of sight, and the profile names what it has received (#94)', async () => {
