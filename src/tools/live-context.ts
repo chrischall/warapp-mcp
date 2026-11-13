@@ -4,7 +4,7 @@
 import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
-import { readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
+import { inGameId, readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
 import type { Game } from '../normalize.js';
 import { BundleProvider } from '../protocol/bundle.js';
 import {
@@ -27,18 +27,31 @@ export interface LiveContext {
    * war.app's InviteToken page through the bridge; `undefined` when it cannot be read.
    */
   myInviteToken: () => Promise<number | undefined>;
+  /**
+   * The signed-in account's in-game id, sliced from the token TEXT: a token whose first check
+   * digit is 0 loses it as a number, and the slice would then be wrong (#130).
+   */
+  myInGameId: () => Promise<number | undefined>;
   /** GET a war.app page as text through the signed-in tab. */
   fetchPage: (url: string) => Promise<string>;
   /** Where state that survives a restart lives (bundle cache, last planned boards); none: nothing is cached. */
   dataDir?: string;
 }
 
-/** The token from war.app's `/InviteToken` page ("Your invite token is N"). */
-export function parseInviteToken(html: string): number | undefined {
+/**
+ * The token from war.app's `/InviteToken` page ("Your invite token is N"), as text — the
+ * check digits are part of it, a leading 0 included (#130).
+ */
+export function parseInviteTokenText(html: string): string | undefined {
   const m = /Your invite token is\s*(\d{5,20})/.exec(html);
   if (!m) return undefined;
-  const n = Number(m[1]);
-  return Number.isSafeInteger(n) ? n : undefined;
+  return Number.isSafeInteger(Number(m[1])) ? m[1] : undefined;
+}
+
+/** The token as a number (= the GameFeed player id GameFeed reports). */
+export function parseInviteToken(html: string): number | undefined {
+  const t = parseInviteTokenText(html);
+  return t === undefined ? undefined : Number(t);
 }
 
 export const INVITE_TOKEN_URL = 'https://war.app/InviteToken';
@@ -85,11 +98,11 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
   });
   const load = opts.bundle ?? (() => provider.get());
   const fetchText = bundleFetcher(opts.bridge, opts.fetchImpl);
-  let token: Promise<number | undefined> | undefined;
-  const myInviteToken = (): Promise<number | undefined> => {
+  let token: Promise<string | undefined> | undefined;
+  const tokenText = (): Promise<string | undefined> => {
     // Cache a success; let a failure (bridge down, signed out) be retried next call.
     token ??= fetchText(INVITE_TOKEN_URL)
-      .then(parseInviteToken)
+      .then(parseInviteTokenText)
       .catch(() => undefined)
       .then((t) => {
         if (t === undefined) token = undefined;
@@ -97,8 +110,17 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
       });
     return token;
   };
+  const myInviteToken = async (): Promise<number | undefined> => {
+    const t = await tokenText();
+    return t === undefined ? undefined : Number(t);
+  };
+  const myInGameId = async (): Promise<number | undefined> => {
+    const t = await tokenText();
+    return t === undefined ? undefined : inGameId({ id: Number(t), feedId: t });
+  };
   return {
     myInviteToken,
+    myInGameId,
     fetchPage: fetchText,
     dataDir: dir,
     client: opts.client,

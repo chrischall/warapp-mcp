@@ -139,6 +139,14 @@ describe('warapp_my_games', () => {
     expect(t.params()).toBe('01040a0000000200000000000000');
   });
 
+  it('an account whose token starts with a 0 check digit still finds its seat (#130)', async () => {
+    // 07 + 123456 + 98: read as a number the leading 0 is lost and the slice gives 23456.
+    await harness(GAMES, { 'https://war.app/InviteToken': '<p>Your invite token is 0712345698</p>' });
+    const p = payload(await h!.call('warapp_my_games'));
+    expect(p.waitingOnYou).toBe(2);
+    expect((p.games as Array<Record<string, unknown>>)[0]).toMatchObject({ id: 1002, waitingOnYou: true });
+  });
+
   it('answers an empty list when war.app sends no games', async () => {
     await harness(null);
     const p = payload(await h!.call('warapp_my_games'));

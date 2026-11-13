@@ -1,7 +1,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import { describe, expect, it } from 'vitest';
 import { MapCache, WarappClient } from '../src/client.js';
-import { bundleFetcher, createLiveContext, parseInviteToken } from '../src/tools/live-context.js';
+import { bundleFetcher, createLiveContext, parseInviteToken, parseInviteTokenText } from '../src/tools/live-context.js';
 import { withToolConfig } from '../src/tools/hints.js';
 import { mockWarappBridge } from './bridge-mock.js';
 
@@ -76,6 +76,16 @@ describe('invite token (the signed-in account)', () => {
     expect(parseInviteToken('<div>Your invite token is 3312345644</div>')).toBe(3312345644);
     expect(parseInviteToken('<html>Sign in</html>')).toBeUndefined();
     expect(parseInviteToken('Your invite token is 99999999999999999999')).toBeUndefined();
+  });
+
+  it('keeps the token as text, so a leading 0 check digit survives (#130)', async () => {
+    expect(parseInviteToken('Your invite token is 0712345698')).toBe(712345698);
+    expect(parseInviteTokenText('Your invite token is 0712345698')).toBe('0712345698');
+    const { bridge } = mockWarappBridge(() => ({ status: 200, body: 'Your invite token is 0712345698', url: 'https://war.app/InviteToken' }));
+    const client = new WarappClient({ env: {}, fetchImpl: async () => new Response('{}'), mapCache: new MapCache() });
+    const ctx = createLiveContext({ client, bridge, bundle: async () => { throw new Error('unused'); } });
+    expect(await ctx.myInviteToken()).toBe(712345698);
+    expect(await ctx.myInGameId()).toBe(123456);
   });
 
   it('caches a success and retries after a failure', async () => {

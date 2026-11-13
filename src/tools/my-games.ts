@@ -4,7 +4,6 @@
 import { McpToolError, untrustedEnvelope } from '@chrischall/mcp-utils';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { inGameId } from '../live.js';
 import { briefGameLine, readMyGames, summarizeMyGames, type MyGame, type RawMyGame } from '../my-games.js';
 import { Method, writeGetMyGamesParams } from '../protocol/methods.js';
 import { readAnnotations, respond, untrustedDescription, WARAPP_UNTRUSTED_NOTE } from './common.js';
@@ -21,13 +20,13 @@ function briefResult(games: readonly MyGame[]): CallToolResult {
 
 /** The signed-in account's in-game id; refuses when it cannot be read. */
 async function myInGameId(ctx: LiveContext): Promise<number> {
-  const token = await ctx.myInviteToken();
-  if (token === undefined) {
+  const me = await ctx.myInGameId();
+  if (me === undefined) {
     throw new McpToolError('Could not tell which account is signed in to war.app, so its games cannot be listed.', {
       hint: 'Make sure a signed-in war.app tab is open and paired, then retry.',
     });
   }
-  return inGameId({ id: token });
+  return me;
 }
 
 /** The signed-in account's in-game id and its games, through GetMyGames. */
