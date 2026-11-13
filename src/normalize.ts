@@ -213,8 +213,8 @@ export interface GameSettings {
   cards: string[];
   /**
    * The game's overridden bonus values (`OverriddenBonuses`), bonus id → value; set
-   * whenever the feed sends the key (empty when none). Its JSON shape is UNVERIFIED
-   * (docs/WARAPP-API.md): see {@link parseOverriddenBonuses}.
+   * whenever the feed sends the key (empty when none). Its JSON shape is verified live
+   * (#62: an array of `{ bonusID, value }` numbers; docs/WARAPP-API.md): see {@link parseOverriddenBonuses}.
    */
   overriddenBonuses?: ReadonlyMap<number, number>;
   /** `true` when `OverriddenBonuses` could not be read in full (malformed entries skipped, or an unknown shape with no values). */
@@ -277,7 +277,7 @@ export function normalizeSettings(raw: unknown): GameSettings {
   return s;
 }
 
-/** Key spellings tried for an override entry's bonus id and value (the feed's shape is unverified). */
+/** Key spellings tried for an override entry: `bonusID` / `value` is the verified live shape (#62); the rest are read only to be tolerant. */
 const OVERRIDE_ID_KEYS = ['bonusID', 'BonusID', 'bonusId', 'BonusId', 'bonusid', 'id', 'ID', 'Id', 'key', 'Key', 'bonus', 'Bonus'];
 const OVERRIDE_VALUE_KEYS = ['value', 'Value', 'val', 'Val', 'armies', 'Armies'];
 
