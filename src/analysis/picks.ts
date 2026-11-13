@@ -72,13 +72,14 @@
 //  6. Reasons. reasons[0] is the bonus the pick anchors (worth most to it alone) and its
 //     completion turn and the income it adds, or how much of it is held by the horizon;
 //     then the other bonuses it completes or advances; negatives (shortfalls,
-//     wastelands, contest) come last.
+//     wastelands — a member other than the pick larger than an ordinary neutral —, contest,
+//     negative bonuses held) come last.
 
 import type { GameSettings } from '../normalize.js';
 import { analyzeBonus } from './bonuses.js';
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
-import { captureCost, WASTELAND_FACTOR } from './planner.js';
+import { captureCost } from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 
 /** Turns the opening simulation runs (income by turn 3). */
@@ -452,6 +453,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   const standard = armiesToTake(HARDNESS_PROBE)!;
   const hardness = probe === null ? 4 : Math.max(0.25, probe / standard);
 
+  /** The size a neutral starts at when nothing special is placed on it. */
+  const ordinary = (t: number) => (pickSet.has(t) ? neutralsIn : neutralsOut);
+
   // Anchorable bonuses: value > 0, territories listed directly (superbonuses skipped).
   const bonuses = new Map<number, BonusInfo>();
   const bonusesOf = new Map<number, number[]>();
@@ -565,7 +569,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
         worth = PROGRESS_WEIGHT * b.value * share;
       }
       worth *= b.defense;
-      const waste = b.members.filter((m) => (cost.get(m) ?? Infinity) > WASTELAND_FACTOR * b.value).sort(byNum);
+      // A wasteland is a member other than the pick standing larger than an ordinary neutral
+      // (#129: the pick itself, at the 4-army distribution size, was called one).
+      const waste = b.members.filter((m) => m !== t && !taken.has(m) && armies.get(m)! > ordinary(m)).sort(byNum);
       if (waste.length)
         negatives.push(
           `${head} holds a wasteland: ${waste.map((m) => `${terrName(m)} (${armies.get(m)} armies)`).join(', ')}`,

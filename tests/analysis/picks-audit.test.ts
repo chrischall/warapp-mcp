@@ -147,3 +147,19 @@ describe('planPicks — the opening simulation does not park armies (#129)', () 
     expect(at(1)[0]?.turn).toBe(2);
   });
 });
+
+describe('planPicks — wastelands (#129)', () => {
+  it('neither the pick itself nor a neutral of the ordinary size is a wasteland', () => {
+    // Pair (+1) = {1,2}, both pickable at the default 4-army distribution size.
+    const g = mkGraph([[1, 2], [2, 3]], [{ id: 100, name: 'Pair', value: 1, territoryIds: [1, 2] }]);
+    const p = plan({ graph: g, pickable: [1, 2], territoryLimit: 1, maxPicks: 2 });
+    expect(reasonsOf(p, 1)).not.toMatch(/wasteland/);
+    expect(reasonsOf(p, 2)).not.toMatch(/wasteland/);
+  });
+
+  it('a member larger than the ordinary neutral is one', () => {
+    const g = mkGraph([[1, 2], [2, 3]], [{ id: 100, name: 'Pair', value: 1, territoryIds: [1, 2] }]);
+    const p = plan({ graph: g, pickable: [1], territoryLimit: 1, maxPicks: 1, neutralArmies: new Map([[2, 10]]) });
+    expect(reasonsOf(p, 1)).toMatch(/Pair \(\+1\) holds a wasteland: T2 \(10 armies\)/);
+  });
+});
