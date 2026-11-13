@@ -25,8 +25,11 @@ export interface TwoStepInput {
   opponents: readonly { id: number; deploy: number }[];
   /** My deploys this turn (default none: the board as it stands). */
   deploys?: readonly { territoryId: number; armies: number }[];
-  /** My attacks and transfers this turn, in order (default none). */
-  moves?: readonly { from: number; to: number; armies: number }[];
+  /**
+   * My attacks and transfers this turn, in order (default none), with their options (#165:
+   * attack-only / transfer-only, percentage, commander) so the turn is simulated as submitted.
+   */
+  moves?: readonly SimOrder[];
   settings?: SimSettings;
   teams?: ReadonlyMap<number, number>;
   /** Who moves first this turn, when known; otherwise both are tried. */
@@ -64,7 +67,7 @@ export function twoStepReaches(input: TwoStepInput): TwoStepReach[] {
   const friendly = (owner: unknown): boolean =>
     owner === me || (typeof owner === 'number' && teams !== undefined && teams.get(owner) !== undefined && teams.get(owner) === teams.get(me));
   const myDeploys: SimDeploy[] = (input.deploys ?? []).map((d) => ({ player: me, territoryId: d.territoryId, armies: d.armies }));
-  const myOrders: SimOrder[] = (input.moves ?? []).map((m) => ({ from: m.from, to: m.to, armies: m.armies }));
+  const myOrders: SimOrder[] = (input.moves ?? []).map((m) => ({ ...m }));
   const simulate = (deploys: SimDeploy[], theirs: { player: number; orders: SimOrder[] } | undefined, moveOrder: number[]): SimResult =>
     simulateTurn({
       graph,

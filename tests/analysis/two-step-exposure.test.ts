@@ -481,3 +481,18 @@ describe('a two-step hold is stated once, with the final stay (#172)', () => {
     expect(p.rationale.join('\n')).toContain(`it needs ${s!.needs} to hold; bring ${s!.needs - s!.kept} more next turn`);
   });
 });
+
+describe('the shared look-ahead simulates my moves as submitted, options included (#189)', () => {
+  const g = buildGraph(reportedMap);
+  const b = reported(60);
+  const reach = (moves: Parameters<typeof twoStepReaches>[0]['moves']) =>
+    twoStepReaches({ graph: g, board: b, me: ME, opponents: [{ id: ENEMY, deploy: 5 }], settings: STD, moves }).find((x) => x.territory === 1);
+  it('a percentage transfer leaves what the percentage leaves, not the whole stack', () => {
+    const half = reach([{ from: 1, to: 4, armies: 50, byPercent: true }]);
+    const all = reach([{ from: 1, to: 4, armies: 50 }]);
+    expect(half).toBeDefined();
+    expect(half!.armies).toBeGreaterThan(all?.armies ?? 0);
+    // 50% of the 27 that can move is 13 (a half rounds down): 15 stay.
+    expect(half!.armies).toBe(reach([{ from: 1, to: 4, armies: 13 }])!.armies);
+  });
+});
