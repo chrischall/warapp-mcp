@@ -261,3 +261,24 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
 
 When an in-progress game is captured live, record its shape here, add an anonymized fixture,
 tighten `boardFromStanding`, and set `verified: true`.
+
+## Game-ID feed (`GameIDFeed`) — UNVERIFIED
+
+Used only by the opt-in `warapp_map_stats` (`WARAPP_STATS=1`, never hosted). From war.app's
+public wiki page "Game ID feed API" (read 2026-11-12, not called live):
+
+- `https://war.app/API/GameIDFeed?LadderID=<n>` or `?TournamentID=<n>` returns the game ids of
+  a ladder or tournament, for use with GameFeed. Ladder ids: 1v1 `0`, 2v2 `1`, 3v3 `4`.
+- The wiki says the parameters are "GET parameters" but names **no method, no auth, no reply
+  shape, no limit and no terms**. `WarappClient.getGameIds` therefore POSTs the GameFeed
+  credentials (harmless if the feed is public), maps `{ error }` bodies like GameFeed, and
+  reads the ids loosely (`gameIdsOf`): a bare array, or `gameIDs` / `gameIds` / `GameIDs` /
+  `games`, each a number, a numeric string or `{ id | gameID }`. Distinct, highest id first.
+- Each listed game is then loaded with `GetHistory=true&GetSettings=true` — the history of a
+  **finished** game, which the docs say the feed returns. Its shape is as unverified as the
+  in-progress one above: `historyBoards` (`src/trend.ts`) reads it with the same loose parser.
+  **Assumed:** the first board where players hold land is the starting picks, and an entry's
+  number is the count of completed turns.
+- Throttle (ours, not war.app's): at most 50 new games per call (default 10), ≥ 1 s between
+  requests, finished games cached forever at `<dataDir>/stats/<mapId>/<gameId>.json` as
+  name-free records. When the feed is called live, record its method, auth and reply here.

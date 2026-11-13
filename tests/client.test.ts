@@ -214,3 +214,41 @@ describe('WarappClient.probeAuth', () => {
     expect(err.kind).toBe('credential_rejected');
   });
 });
+
+describe('WarappClient.getGameIds (GameIDFeed — response shape UNVERIFIED)', () => {
+  it('POSTs /API/GameIDFeed?LadderID=<n> with the credentials and reads the ids', async () => {
+    const { calls, fetchImpl } = stubFetch({ body: { gameIDs: [3, '1', 2, 2] } });
+    expect(await client(fetchImpl).getGameIds({ ladderId: 0 })).toEqual([3, 2, 1]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('https://war.app/API/GameIDFeed?LadderID=0');
+    expect(calls[0]!.init.method).toBe('POST');
+    expect(String(calls[0]!.init.body)).toBe(`Email=${encodeURIComponent(EMAIL)}&APIToken=${TOKEN}`);
+  });
+
+  it('accepts the plausible layouts: a bare array, gameIds, games of {id}', async () => {
+    for (const body of [[5, 4], { gameIds: ['4', '5'] }, { games: [{ id: 4 }, { gameID: '5' }] }]) {
+      const { fetchImpl } = stubFetch({ body });
+      expect(await client(fetchImpl).getGameIds({ ladderId: 1 })).toEqual([5, 4]);
+    }
+  });
+
+  it('names a tournament instead of a ladder', async () => {
+    const { calls, fetchImpl } = stubFetch({ body: { gameIDs: [] } });
+    await client(fetchImpl).getGameIds({ tournamentId: 1234 });
+    expect(calls[0]!.url).toBe('https://war.app/API/GameIDFeed?TournamentID=1234');
+  });
+
+  it('maps an { error } body and scrubs the token from it', async () => {
+    const { fetchImpl } = stubFetch({ body: { error: `bad ladder for ${TOKEN}` } });
+    const e = await rejection(client(fetchImpl).getGameIds({ ladderId: 99 }));
+    expect(e).toBeInstanceOf(McpToolError);
+    expect(e.message).toMatch(/GameIDFeed/);
+    expect(e.message).not.toContain(TOKEN);
+  });
+
+  it('refuses a bad ladder id without a request', async () => {
+    const { calls, fetchImpl } = stubFetch({ body: [] });
+    await rejection(client(fetchImpl).getGameIds({ ladderId: -1 }));
+    expect(calls).toHaveLength(0);
+  });
+});

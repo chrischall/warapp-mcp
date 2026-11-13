@@ -54,6 +54,7 @@ describe('tool annotations', () => {
       'warapp_join_game',
       'warapp_link_session',
       'warapp_list_open_games',
+      'warapp_map_stats',
       'warapp_my_games',
       'warapp_plan_picks',
       'warapp_plan_route',

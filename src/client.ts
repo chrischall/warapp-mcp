@@ -223,6 +223,40 @@ export class WarappClient {
   }
 
   /**
+   * The game ids of a ladder or tournament, from war.app's game-ID feed
+   * (`/API/GameIDFeed?LadderID=<n>` or `?TournamentID=<n>`, documented on the
+   * public wiki page "Game ID feed API": 1v1 ladder 0, 2v2 1, 3v3 4).
+   * UNVERIFIED: the wiki names neither the method, the auth nor the reply, so
+   * this POSTs the GameFeed credentials (harmless if the feed is public) and
+   * reads the ids loosely — a bare array, or `gameIDs` / `gameIds` / `games`,
+   * each a number, numeric string or `{ id | gameID }`. Distinct, newest
+   * (highest id) first.
+   */
+  async getGameIds(source: { ladderId: number } | { tournamentId: number }): Promise<number[]> {
+    const [key, raw] = 'ladderId' in source ? ['LadderID', source.ladderId] : ['TournamentID', source.tournamentId];
+    if (!Number.isInteger(raw) || raw < 0 || raw >= 2 ** 31) {
+      throw new McpToolError(`${key} must be a whole number from 0 (got ${String(raw).slice(0, 20)}).`, {
+        hint: 'Ladders: 1v1 is 0, 2v2 is 1, 3v3 is 4.',
+      });
+    }
+    const { email, token } = this.#credentials();
+    const body = await this.#api.fetchJson<unknown>('POST', `/API/GameIDFeed?${key}=${raw}`, {
+      rawBody: new URLSearchParams({ Email: email, APIToken: token }).toString(),
+      contentType: 'application/x-www-form-urlencoded',
+      idempotent: true,
+    });
+    const error = Array.isArray(body) ? undefined : feedErrorOf(body);
+    if (error === 'Auth failed') {
+      throw new McpToolError('war.app rejected the email + API token (Auth failed).', {
+        kind: 'credential_rejected',
+        hint: AUTH_FAILED_HINT,
+      });
+    }
+    if (error !== undefined) throw new McpToolError(`war.app GameIDFeed error: ${this.#redact(error)}`, { kind: 'http' });
+    return gameIdsOf(body);
+  }
+
+  /**
    * Prove the credentials work without loading a real game: ask for
    * {@link PROBE_GAME_ID}. `ServerGameKeyNotFound` (or, improbably, a game)
    * means authenticated; `Auth failed` throws `credential_rejected`.
@@ -235,4 +269,18 @@ export class WarappClient {
     }
     return { authenticated: true };
   }
+}
+
+/** Game ids out of a GameIDFeed body, in any of the plausible layouts; distinct, descending. */
+export function gameIdsOf(body: unknown): number[] {
+  const rec = body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : undefined;
+  const list = Array.isArray(body) ? body : (rec?.gameIDs ?? rec?.gameIds ?? rec?.GameIDs ?? rec?.games);
+  if (!Array.isArray(list)) return [];
+  const ids = new Set<number>();
+  for (const e of list) {
+    const v = e && typeof e === 'object' ? ((e as Record<string, unknown>).id ?? (e as Record<string, unknown>).gameID) : e;
+    const n = asInt(v);
+    if (n !== undefined && n > 0 && n < 2 ** 31) ids.add(n);
+  }
+  return [...ids].sort((a, b) => b - a);
 }

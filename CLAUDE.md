@@ -297,6 +297,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **API facts live in `docs/WARAPP-API.md`**, each marked verified or unverified. The board
   standing parser (`src/board.ts`) is unverified and must stay loose (never throw). Territory
   and bonus ids overlap, so a bonus member is a territory first and a superbonus only otherwise.
+- **Map statistics are opt-in and local-only** (`warapp_map_stats`, `src/stats.ts`): off unless
+  `WARAPP_STATS=1`, always off when hosted (recognised by mcp-host's child-only variables —
+  `HOSTED_MARKERS`), and `mint.yaml` never sets `WARAPP_STATS`. GameIDFeed + GameFeed
+  `GetHistory=true` through `WarappClient`, ≥ 1 s apart, finished games cached forever as
+  name-free records at `<dataDir>/stats/<mapId>/<gameId>.json`.
 - **All GameFeed traffic goes through `WarappClient` (`src/client.ts`)**, including the
   credential healthcheck probe; all `/Services` traffic goes through `WarappRpc`
   (`src/protocol/rpc.ts`), which echoes the reply extras into the next request. Maps are
