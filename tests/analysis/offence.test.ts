@@ -437,6 +437,14 @@ describe('concentrate outranks a comfort margin on a held bonus border', () => {
     expect(p.deploys).toEqual([{ territoryId: 1, armies: 10 }]);
     expect(why(p)).toMatch(/Deploy the leftover 10 to T1 \(#1\): one strike stack on the border facing player 30/);
   });
+
+  it('adapting in an FFA while behind (goal defend): no strike stack, the comfort margin keeps it', () => {
+    const p = planTurn({ ...input({ adapt: true }), tracks: [track(THIRD, 20)] });
+    expect(p.profile).toMatchObject({ format: 'ffa', standing: 'behind' });
+    expect(p.goal).toBe('defend');
+    expect(p.deploys).toEqual([{ territoryId: 3, armies: 10 }]);
+    expect(why(p)).not.toMatch(/strike stack/);
+  });
 });
 
 // Counter-attack. Last turn the enemy's T5 (12) attacked my T1 and failed: it shows 4 now, and
@@ -587,5 +595,51 @@ describe("a border's break of its only threat has its own offence entry (#72)", 
     expect(p.offence[0]!.why).toBe(
       'breaks enemy bonus B833 (#833) (+4 from player 20), removing the only visible threat to T1 (#1)',
     );
+  });
+});
+
+// Holds before the strike stack. B907 (+4) is T1 and T2: T1 (2) is mine and faces player 20's
+// T4 (6); T3 (30) takes the neutral T2, completing B907, and faces player 20's T5 (2). Rule 1c
+// keeps T1 for the completed bonus and garrisons it from the leftover — its only funding — so
+// the strike stack gets only what is left after T1 would hold.
+describe('a kept or falling border is garrisoned before the strike stack', () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5, 6],
+      [
+        [1, 2],
+        [1, 4],
+        [2, 3],
+        [3, 5],
+        [5, 6],
+      ],
+      [[907, 4, [1, 2]]],
+    ),
+  );
+  const input = (options: PlanInput['options']): PlanInput => ({
+    graph: g,
+    board: board([mine(1, 2), neutral(2, 2), mine(3, 30), enemy(4, 6), enemy(5, 2), enemy(6, 2)]),
+    me: ME,
+    income: 8,
+    settings: STD,
+    game: { players: [{ id: ME }, { id: ENEMY }] },
+    options,
+  });
+
+  it('without the profile, the leftover garrisons the kept border', () => {
+    const p = planTurn(input({}));
+    expect(deployedTo(p, 1)).toBe(8);
+  });
+
+  it('adapting: the kept border is garrisoned first, and the bonus is not warned as falling', () => {
+    const p = planTurn(input({ adapt: true }));
+    // 2 + 6 = 8 armies need 13 to take: above 1.25 × the ~10 threat. The stack gets the other 2.
+    expect(p.deploys).toEqual([
+      { territoryId: 1, armies: 6 },
+      { territoryId: 3, armies: 2 },
+    ]);
+    expect(p.warnings.join('\n')).not.toMatch(/T1 \(#1\) is kept for the bonus this turn completes/);
+    expect(why(p)).toMatch(/Deploy 6 to T1 \(#1\) before the strike stack: it is kept for the bonus this turn completes/);
+    expect(why(p)).toMatch(/Deploy the leftover 2 to T3 \(#3\): one strike stack/);
   });
 });

@@ -29,7 +29,10 @@
 //       3c. Concentrate (#72; adapting and facing an opponent): the leftover deploy (rule 5) goes
 //          to one strike stack — the open border holding the most armies next to the strongest
 //          opponent (highest income estimate, tracked when trusted) — before any comfort margin;
-//          the rationale names it and `offence` reports it as a strike.
+//          the rationale names it and `offence` reports it as a strike. Holds still come first:
+//          a border kept for a bonus this turn completes (rule 1c) is first topped up to a
+//          comfortable margin, and any other open border that would fall to just hold. Not
+//          under `defend` (behind outside a 1v1), where the comfort margins keep the leftover.
 //       4. An explicit `goal` always wins: none of the above, and the rationale says the
 //          profile was overridden.
 //  1. Defence. A visible enemy next to my territory T threatens it when
@@ -3736,8 +3739,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       });
     }
     // Counter-attacks (#72): a stack that shrank fighting me, scored like a break that breaks no
-    // bonus (the armies its owner must spend to retake it). It attacked me, so it is never a
-    // second front.
+    // bonus (the armies its owner must spend to retake it). It is already fighting me (it
+    // attacked me, or held off my attack), so it is never a second front.
     for (const [t, c] of counterAt) {
       if (!targets.has(t)) continue;
       const o = breakOption(t);
@@ -4039,8 +4042,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     // Concentrate (#72, adapting and facing an opponent): the spare deploys go to one strike stack
     // on the border facing the strongest opponent (the highest income estimate, tracked when its
     // track is trusted), the stack that keeps the most there, rather than to comfort margins.
+    // Never under `defend` (behind outside a 1v1): there the comfort margins come first.
     let stack: { id: number; player: number; income: number; source: string } | undefined;
-    if (auto && facing.size) {
+    if (auto && goal !== 'defend' && facing.size) {
       const player = [...facing]
         .map((p) => ({ p, e: estimates.get(p) }))
         .sort((a, b) => (b.e?.estimate ?? 0) - (a.e?.estimate ?? 0) || a.p - b.p)[0]!;
@@ -4062,6 +4066,31 @@ export function planTurn(input: PlanInput): TurnPlan {
           source: player.e?.source === 'tracked' ? 'tracked' : player.e?.source === 'observed' ? 'observed' : 'estimated',
         };
     }
+    // Holds before the strike stack: a border kept for the bonus this turn completes (rule 1c:
+    // the leftover is its only garrison) is topped up to a comfortable margin, and any other
+    // open border that would fall (its take at or below the threat) to just hold. The stack
+    // gets the rest.
+    if (stack)
+      for (const b of short) {
+        const kept1c = kept.has(b.id);
+        const bar = kept1c ? COMFORT_MARGIN * b.threat : b.threat;
+        const room = roomAt(b.id);
+        let d = 0;
+        for (;;) {
+          const take = armiesToTake(stays(b.id) + d + unitsAt(b.id), rates);
+          if (take === null || take > bar || d >= room) break;
+          d++;
+        }
+        if (d <= 0) continue;
+        rationale.push(
+          `Deploy ${d} to ${label(b.id)} before the strike stack: ${
+            kept1c
+              ? `it is kept for the bonus this turn completes, and the leftover is its only garrison`
+              : `it would fall to the ~${b.threat} threat`
+          } (protects +${valueOf(b.id)}).`,
+        );
+        deploy(b.id, d);
+      }
     let where: number;
     let why: string;
     let lock = false;
