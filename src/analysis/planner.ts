@@ -55,10 +55,11 @@
 //     more with those holds reserved and those territories left unattacked, and its
 //     best is kept if it beats the first search's. With no success, nothing changes.
 //     An opponent bordering the fog is never eliminated (issue #60): it is pressured
-//     instead — every visible territory attacked, each sized for its full deploy, and
+//     instead — every visible territory attacked, each sized for its full deploy plus
+//     pressureMargin (an attack sized for exactly the estimate failed live), and
 //     only when all of them fall for sure ("Pressure player …: take all N of its visible
 //     territories …, so this is not an elimination", with a warning that it may hold more
-//     in the fog) — when each of those captures costs at most PRESSURE_FACTOR × a typical
+//     in the fog) — when each of those margin-sized captures costs at most PRESSURE_FACTOR × a typical
 //     expansion capture (the median capture cost of the visible neutrals next to me; with
 //     none, any cost). Otherwise it is not attempted (a warning says so when its visible
 //     territories could all be taken); with fog anywhere else, the
@@ -265,11 +266,27 @@ export function nearMissMargin(need: number): number {
 
 /**
  * An opponent next to the fog (it may hold unseen territories) is still pressured — all its
- * visible territories attacked, each sized for its full estimated deploy — when each of
- * those captures costs at most this many times a typical expansion capture (the median
- * capture cost of the visible neutrals next to me; issue #60).
+ * visible territories attacked, each sized for its full estimated deploy plus
+ * {@link pressureMargin} — when each of those margin-sized captures costs at most this many
+ * times a typical expansion capture (the median capture cost of the visible neutrals next to
+ * me; issue #60). All or nothing: one visible territory over it blocks the pressure on all.
+ * Not tuned to admit #60: at ~6 its 0-army territory costs 15 with the margin, five 2-army
+ * neutrals — "more than the expansion it displaces" (the owner's live calibration) — so it is
+ * not attempted; at ~4 it costs 10 and is.
  */
 export const PRESSURE_FACTOR = 4;
+/**
+ * A pressure attack is sized for its target's armies + the full estimated deploy + this share
+ * of that deploy (at least {@link PRESSURE_MARGIN_ARMIES}): the opponent's income is unseen
+ * under fog, and live (#60) an attack sized for exactly its ~6 deploy failed.
+ */
+export const PRESSURE_MARGIN = 0.5;
+/** The pressure margin is never below this many armies. */
+export const PRESSURE_MARGIN_ARMIES = 2;
+/** The extra defenders a pressure attack is sized for, over an estimated `deploy`. */
+export function pressureMargin(deploy: number): number {
+  return Math.max(PRESSURE_MARGIN_ARMIES, Math.ceil(PRESSURE_MARGIN * deploy));
+}
 
 /** Denying +V to the opponent is worth this many times gaining +V yourself (per opponent: divided among them). */
 export const BREAK_WEIGHT = 1.0;
@@ -1911,7 +1928,11 @@ export function planTurn(input: PlanInput): TurnPlan {
     const ts = ownedBy.get(p)!;
     /** Next to the fog (#60): only taking every visible territory for sure counts, as pressure. */
     const pressure = fogged.length > 0;
-    const deployP = deployOf(p);
+    /** Its estimated deploy; under pressure, sized for with a margin over it (#60). */
+    const estimateP = deployOf(p);
+    const marginP = pressure ? pressureMargin(estimateP) : 0;
+    const deployP = estimateP + marginP;
+    const deployText = marginP ? `~${estimateP} deploy plus a margin of ${marginP}` : `~${deployP} deploy`;
     const start = checkpoint(ts);
     if (ts.some((t) => captureCost(armiesOf(t), s) === null)) return false;
     /**
@@ -1955,7 +1976,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         funded.set(h.x, h.cost);
       }
       const reserved = checkpoint(ts);
-      const fullReason = `takes player ${p}'s territory, sized for its full ~${deployP} deploy landing there`;
+      const fullReason = `takes player ${p}'s territory, sized for its full ${deployText} landing there`;
       /** Size and plan the attacks for `sizes` (from `reserved`), and judge the result. */
       const attempt = (sizes: number[]): Attempt => {
         tried.forEach((t, i) => {
@@ -2097,10 +2118,10 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (chosen.all && pressure) {
       const edge = fogged.map(label).join(', ');
       rationale.push(
-        `Pressure player ${p}: take all ${ts.length} of its visible territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there; it may hold more in the fog (next to ${edge}), so this is not an elimination.`,
+        `Pressure player ${p}: take all ${ts.length} of its visible territories (${names}) this turn, each sized for its full ${deployText} landing there; it may hold more in the fog (next to ${edge}), so this is not an elimination.`,
       );
       warnings.push(
-        `Pressuring player ${p} assumes it deploys at most ~${deployP} (its estimate); more income than that (unseen bonuses, cards) could still save a territory.`,
+        `Pressuring player ${p} assumes it deploys at most ~${deployP} (its ~${estimateP} estimate plus a margin of ${marginP}); more income than that (unseen bonuses, cards) could still save a territory.`,
         `player ${p} may hold more territories in the fog (next to ${edge}): taking its ${ts.length} visible territories is pressure, not an elimination.`,
       );
       return true;
@@ -2150,10 +2171,18 @@ export function planTurn(input: PlanInput): TurnPlan {
     // A typical expansion capture: the median cost of the visible neutrals next to me.
     const neutralCosts = [...targets.values()].filter((tg) => !tg.enemy).map((tg) => tg.cost).sort(byNum);
     const expansionCost = neutralCosts.length ? neutralCosts[(neutralCosts.length - 1) >> 1]! : null;
-    /** Each of `p`'s visible territories, sized for its full deploy, costs about what expansion does. */
-    const pressureAffordable = (p: number) =>
-      expansionCost === null ||
-      ownedBy.get(p)!.every((t) => (captureCost(armiesOf(t) + deployOf(p), s) ?? Infinity) <= PRESSURE_FACTOR * expansionCost);
+    /**
+     * Each of `p`'s visible territories, sized for its full deploy plus the pressure margin,
+     * costs at most PRESSURE_FACTOR typical expansions (with no visible neutral next to me,
+     * nothing to compare with: no limit). All or nothing.
+     */
+    const pressureAffordable = (p: number) => {
+      const d = deployOf(p);
+      return (
+        expansionCost === null ||
+        ownedBy.get(p)!.every((t) => (captureCost(armiesOf(t) + d + pressureMargin(d), s) ?? Infinity) <= PRESSURE_FACTOR * expansionCost)
+      );
+    };
     for (const p of candidates) {
       const edge = fogEdge(p);
       if (edge.length) {

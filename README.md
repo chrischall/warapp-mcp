@@ -173,10 +173,12 @@ and chat text comes back marked as untrusted third-party content.
    territories first; holds worth paying for against other players, and against what a
    "Pressure" plan leaves the opponent, are funded first (pressure is dropped when they cannot
    be). An opponent next to the fog is never called eliminated, but its visible territories
-   are all attacked as "Pressure" (each sized for its full estimated deploy) when each capture
-   costs at most 4× a typical neutral capture next to you; otherwise it is not attempted (a
-   warning says so only when its visible territories could all fall), and with fog anywhere
-   else on the board the elimination is
+   are all attacked as "Pressure" (each sized for its full estimated deploy plus a margin of
+   half that deploy, at least 2, since its income is unseen) when each capture costs at most
+   4× a typical neutral capture next to you (with no neutral next to you, any cost). It is all
+   or nothing: one visible territory too costly blocks the pressure on all of them. Otherwise
+   it is not attempted (a warning says so only when its visible territories could all fall),
+   and with fog anywhere else on the board the elimination is
    hedged (it may hold unseen territories). A
    border just taken last turn from a weak opponent (fewer territories, smaller deploy) is never
    conceded. A border too costly to hold for

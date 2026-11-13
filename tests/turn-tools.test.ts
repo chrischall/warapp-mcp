@@ -5,6 +5,7 @@ import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/co
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { normalizeMap } from '../src/normalize.js';
+import { PRESSURE_FACTOR } from '../src/analysis/planner.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
@@ -208,12 +209,12 @@ describe('warapp_plan_turn', () => {
 
   it('reports a conceded border and the Order Priority advice its withdrawal needs', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    // With an enemy deploy of 1, Bob's 6 movable + 1 threaten only Sheepshead Hills (3): it
-    // protects +0, so it is conceded, and its 2 movable armies withdraw to Hornwood (6), which
-    // holds. (At 0, his 7 next to the fog would cost 11 to take — within 4× the 3 a neutral
-    // costs — so the plan would pressure him instead, #60.)
+    // With no enemy deploy, Bob's 6 movable threaten only Sheepshead Hills (3): it protects +0,
+    // so it is conceded, and its 2 movable armies withdraw to Hornwood (6), which holds.
+    // (Bob borders the fog; pressuring his 7 is sized for 0 + a margin of 2 = 9 defenders, 15
+    // armies — over PRESSURE_FACTOR × the 3 a neutral costs — so it is not attempted, #60.)
     const p = payload<PlanPayload>(
-      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend', enemy_deploy: 1 }),
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend', enemy_deploy: 0 }),
     );
     expect(p.conceded).toEqual([{ id: 161, name: mapName(161) }]);
     expect(p.cardAdvice).toBe('order-priority');
@@ -311,6 +312,15 @@ describe('warapp_plan_turn', () => {
       localDeployments: false,
       noSplit: false,
     });
+  });
+
+  it('the plan description states the fog pressure gate from PRESSURE_FACTOR, its margin and that it is all or nothing (#60)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({}) });
+    const { tools } = await h.harness.client.listTools();
+    const d = tools.find((t) => t.name === 'warapp_plan_turn')!.description!;
+    expect(d).toContain(`at most ${PRESSURE_FACTOR}× a typical neutral capture`);
+    expect(d).toMatch(/full deploy plus a margin/);
+    expect(d).toMatch(/one visible territory too costly blocks the pressure on all of them/);
   });
 
   it('the plan and submit descriptions say kill rates, Local Deployment and No-Split are obeyed (G4)', async () => {

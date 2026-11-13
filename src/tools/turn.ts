@@ -28,6 +28,7 @@ import {
   overrideUncertainties,
   neighborsOf,
   planTurn,
+  PRESSURE_FACTOR,
   type PlanGoal,
   type PlannerSettings,
 } from '../analysis/index.js';
@@ -533,8 +534,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'visible and borders yours is attacked at once when, whatever way it splits its one estimated deploy to ' +
           'save territories, that still eliminates it or cuts it to one territory (or takes at least half); a ' +
           'pressure plan may leave some of its territories unattacked. One next to the fog is never called ' +
-          'eliminated, but all its visible territories are attacked as pressure (each sized for its full deploy) ' +
-          'when each costs at most 4× a typical neutral capture. This runs before any border facing it is ' +
+          'eliminated, but all its visible territories are attacked as pressure (each sized for its full deploy plus a margin) ' +
+          `when each costs at most ${PRESSURE_FACTOR}× a typical neutral capture; one visible territory too costly blocks the pressure on all of them. ` +
+          'This runs before any border facing it is ' +
           'conceded (holds worth paying for against other players are funded first). Hopeless borders are listed in `conceded` and get no ' +
           'deploys (unless every territory you hold is conceded); under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
           'Priority so the withdrawal runs before the border falls. A held bonus\'s border short of a sure hold by a near ' +
