@@ -201,9 +201,22 @@ describe('the bundle cache is pruned and survives a failed version lookup (#131)
 
   it('keeps only the version in use once it loads', async () => {
     const dataDir = tempDir();
-    seed(dataDir, { '111.js': MINI_BUNDLE, '222.js': MINI_BUNDLE, '987.js.tmp-1': 'x', 'notes.txt': 'keep' });
+    seed(dataDir, { '111.js': MINI_BUNDLE, '222.js': MINI_BUNDLE, '987.js.tmp-2147483646': 'x', 'notes.txt': 'keep' });
     await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }).fetchText, pageUrl: PAGE });
     expect(readdirSync(join(dataDir, 'bundle')).sort()).toEqual(['987.js', 'notes.txt']);
+  });
+
+  // #140: a partial download belongs to whichever process is writing it; pruning it under a live
+  // process makes that process's rename fail.
+  it("keeps another live process's partial download, prunes a dead process's or a stale one", async () => {
+    const dataDir = tempDir();
+    const live = `987.js.tmp-${process.ppid}`;
+    const dead = '987.js.tmp-2147483646';
+    const stale = `988.js.tmp-${process.ppid}`;
+    const old = Math.floor(Date.now() / 1000) - 3600;
+    seed(dataDir, { [live]: 'x', [dead]: 'x', [stale]: 'x' }, { [stale]: old });
+    await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }).fetchText, pageUrl: PAGE });
+    expect(readdirSync(join(dataDir, 'bundle')).sort()).toEqual(['987.js', live]);
   });
 
   it('falls back to the newest cached copy when the page naming the version cannot be read', async () => {
