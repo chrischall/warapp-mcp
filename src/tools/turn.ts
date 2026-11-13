@@ -219,11 +219,10 @@ const shownPlace = (x: { id: number; name: string }) => ({ id: x.id, name: untru
 
 /** An order as the preview shows it: every territory name delimited. */
 function shownOrder(o: NamedOrder): NamedOrder {
-  const t = (x: { id: number; name: string } | undefined) => (x ? { id: x.id, name: untrustedText(x.name) } : undefined);
   const out: NamedOrder = { ...o };
   for (const k of ['target', 'territory', 'from', 'to'] as const) {
-    const v = t(o[k]);
-    if (v) out[k] = v;
+    const place = o[k];
+    if (place) out[k] = shownPlace(place);
   }
   return out;
 }

@@ -47,13 +47,15 @@ const CLOSE = '⟧';
  * to the confirmToken, or in a thrown error, neither of which is inside the
  * untrusted-content envelope. The text is NFKC-normalised first (folding
  * fullwidth and other compatibility forms onto plain ones), control and format
- * characters go (line breaks become spaces), whitespace collapses, every quote
- * mark (ASCII, typographic, prime-like) and backtick becomes a look-alike letter
+ * characters go (line breaks become spaces), whitespace collapses, the ASCII and
+ * typographic quote marks, the primes and the backtick become look-alike letters
  * so the text cannot close the quoting around it, the ⟦ ⟧ delimiter becomes
  * ASCII brackets, every other non-ASCII character in the Unicode opening,
  * closing, initial-quote and final-quote punctuation categories is removed (so
- * no look-alike of a quote or of the delimiter survives), the length is capped
- * with an ellipsis, and the result is wrapped in ⟦ ⟧.
+ * no bracket that could pass for the delimiter survives; a quote-like letter
+ * outside those categories may, which is harmless — the delimiter is what marks
+ * where the text ends), the length is capped with an ellipsis, and the result is
+ * wrapped in ⟦ ⟧.
  */
 export function untrustedText(value: unknown, max = UNTRUSTED_NAME_MAX): string {
   let raw: string;

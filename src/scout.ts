@@ -14,7 +14,7 @@
 // A value of the wrong shape is null.
 //
 // The anchor is war.app's own label markup (`<font class="text-muted">Joined:</font>
-// value<br>`), which a player cannot write: Played is the one whole `<div>` worded
+// value<br>`), which a player cannot write: Played is the one whole block (div, p, li or td) worded
 // "Played in …" straight after a run of label rows, Level the whole block straight
 // before them, Last seen and Booted the whole blocks straight after Played. No
 // such block, or two, reads as null for all four. What this still relies on (the

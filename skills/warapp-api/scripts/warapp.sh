@@ -15,9 +15,10 @@
 #
 # Extra Param=value arguments are checked against a conservative character set, and
 # curl runs with URL globbing off, reads no config file (-q, which must come first),
-# speaks only the checked origin's protocol and follows no redirect, so one call is
-# exactly one request, to the checked origin. A loopback test origin bypasses every
-# proxy; war.app keeps the environment's proxy settings.
+# speaks only the checked origin's protocol and follows no redirect, so every request
+# of a call (one, or two when curl's single retry answers a transient error) goes to
+# the checked origin and nowhere else. A loopback test origin bypasses every proxy;
+# war.app keeps the environment's proxy settings.
 #
 # Return codes: 0 ok · 1 usage (bad game id, bad extra argument, refused
 # WARAPP_BASE_URL) · 2 no credentials ·

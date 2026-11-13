@@ -12,7 +12,7 @@
 // window, and each stat is read only from its own block (never from the name,
 // tagline or location the player writes); a value of the wrong shape is null.
 // The anchor is war.app's label markup, which a player cannot write: Played is
-// the one whole <div> "Played in …" straight after a run of label rows, Level the
+// the one whole block (div, p, li or td) "Played in …" straight after a run of label rows, Level the
 // block straight before them, Last seen and Booted the blocks straight after
 // Played (src/scout.ts's header says what that relies on).
 //

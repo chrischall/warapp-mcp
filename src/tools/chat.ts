@@ -189,7 +189,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
                 willSend: { game: gameId, to: shownRecipient?.name ?? 'everyone in the game', message },
                 preview: {
                   note: 'Other players will see this message; it cannot be unsent.',
-                  game: { id: game.id, name: game.name == null ? null : untrustedText(game.name), state: game.state },
+                  game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state },
                   ...(shownRecipient ? { recipient: shownRecipient } : {}),
                   untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
