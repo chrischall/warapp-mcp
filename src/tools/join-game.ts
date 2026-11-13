@@ -26,7 +26,7 @@ import {
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import type { LiveContext } from './live-context.js';
+import { failureText, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
 import { openGamesPage } from './open-games.js';
 import { NO_TEAM } from '../teams.js';
@@ -307,7 +307,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                   status: 'unknown' as const,
                   game,
                   warning:
-                    `war.app did not confirm the join (${e instanceof Error ? e.message : String(e)}), so you may ` +
+                    `war.app did not confirm the join (${failureText(e)}), so you may ` +
                     'already have joined. Check warapp_my_games before trying again.',
                 };
               }

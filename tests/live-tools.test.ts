@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
+import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Method } from '../src/protocol/methods.js';
 import { EMAIL, liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
@@ -335,6 +336,22 @@ describe('warapp_get_my_picks', () => {
     delete settings.TerritoryLimit;
     h = await liveHarness({ feed: [{ ...f, settings }], warapp: routes({ [Method.GetTerritoryPicks]: picksReply([]) }) });
     expect(payload(await h.call('warapp_get_my_picks', { game_id: GAME, player: 'Ann' })).maxPicks).toBeNull();
+  });
+});
+
+describe('a frozen war.app tab (#130)', () => {
+  const frozen = (m: string) => () => {
+    throw new FetchproxyTimeoutError({ url: `https://war.app/Services?m=${m}&js=1`, timeoutMs: 30000, retrySafe: false });
+  };
+
+  it('a /Services read that times out says to reload or focus the war.app tab', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: frozen('GetLatestGameInfo') }) });
+    const res = await h.call('warapp_get_live_board', { game_id: GAME });
+    expect(res.isError).toBe(true);
+    const all = JSON.stringify(res);
+    expect(all).toMatch(/did not respond within 30000ms/);
+    expect(all).toMatch(/frozen/);
+    expect(all).toMatch(/reload or focus/i);
   });
 });
 

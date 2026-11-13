@@ -86,9 +86,42 @@ export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch 
   };
 }
 
+/** What to do about a frozen tab, said on every bridged `/Services` timeout (#130). */
+export const FROZEN_TAB_HINT =
+  'Chrome freezes background tabs, and war.app calls are relayed through a page tab: a frozen tab stalls them ' +
+  'while page reads still work. Reload or focus a war.app tab, then check the game before retrying.';
+
+/** A bridge timeout (fetchproxy's `FetchproxyTimeoutError`, matched by name across package copies). */
+const isBridgeTimeout = (e: unknown): e is Error => e instanceof Error && e.name === 'FetchproxyTimeoutError';
+
+/**
+ * The bridge with its `/Services` POST timeouts carrying {@link FROZEN_TAB_HINT}: the message is
+ * kept whole (it says whether the call may already have run), only the hint is added.
+ */
+function withFrozenTabHint(bridge: ReadyBridge): ReadyBridge {
+  return {
+    fetch: async (init) => {
+      try {
+        return await bridge.fetch(init);
+      } catch (e) {
+        if (!isBridgeTimeout(e)) throw e;
+        throw new McpToolError(e.message, { kind: 'unknown', hint: FROZEN_TAB_HINT, cause: e });
+      }
+    },
+  };
+}
+
+type ReadyBridge = Awaited<ReturnType<ReadyFetchBridge['ready']>>;
+
+/** A failed send's message for a result warning, with the frozen-tab hint when it was a bridge timeout. */
+export function failureText(e: unknown): string {
+  const message = e instanceof Error ? e.message : String(e);
+  return e instanceof McpToolError && e.hint === FROZEN_TAB_HINT ? `${message} ${FROZEN_TAB_HINT}` : message;
+}
+
 export function createLiveContext(opts: LiveContextOptions): LiveContext {
   const rpc = new WarappRpc({
-    bridge: () => opts.bridge.ready(),
+    bridge: async () => withFrozenTabHint(await opts.bridge.ready()),
     ...(opts.env ? { env: opts.env as NodeJS.ProcessEnv } : {}),
   });
   const dir = dataDir(opts.env);

@@ -350,7 +350,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **A frozen war.app tab stalls bridged POSTs.** Chrome freezes background tabs; the bridge
   relays `/Services` POSTs through a page tab, so they time out ("did not respond within
   30000ms") while GETs (run by the extension) still work. Reloading or focusing a war.app tab
-  clears it. Live verification found this repeatedly — say so in any timeout hint.
+  clears it. Live verification found this repeatedly — say so in any timeout hint. Every bridged
+  `/Services` timeout carries `FROZEN_TAB_HINT` (`src/tools/live-context.ts`), and the write tools'
+  `unknown` warnings repeat it (`failureText`).
 - **"Me" is the signed-in account.** The live tools default `player` to the account whose
   invite token (`https://war.app/InviteToken`, read through the bridge) matches a GameFeed
   player id; the bundle is discovered from `https://war.app/MultiPlayer` (the homepage does

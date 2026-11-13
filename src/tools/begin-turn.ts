@@ -22,7 +22,7 @@ import { Method, writeBeginFirstTurnParams, writeGetLatestGameInfoParams } from 
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import { SPEED_FIRST_TURN_MOVE_ORDER, type LiveContext } from './live-context.js';
+import { failureText, SPEED_FIRST_TURN_MOVE_ORDER, type LiveContext } from './live-context.js';
 
 const PLAYING = 'Playing';
 const DISTRIBUTING = 'DistributingTerritories';
@@ -171,7 +171,7 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
                   status: 'unknown' as const,
                   game,
                   warning:
-                    `war.app did not confirm Begin (${e instanceof Error ? e.message : String(e)}), so it may ` +
+                    `war.app did not confirm Begin (${failureText(e)}), so it may ` +
                     'already have gone through and your timer may be running. Check warapp_get_live_board; do not ' +
                     'press Begin again blindly.',
                 };

@@ -19,7 +19,7 @@ import { Method, writeSurrenderParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import type { LiveContext } from './live-context.js';
+import { failureText, type LiveContext } from './live-context.js';
 
 const PLAYING = 'Playing';
 const SURRENDERED = 'SurrenderAccepted';
@@ -170,7 +170,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                 game,
                 warning:
                   `war.app did not confirm the ${undo ? 'take-back' : 'surrender'} ` +
-                  `(${e instanceof Error ? e.message : String(e)}), so it may already have gone through. ` +
+                  `(${failureText(e)}), so it may already have gone through. ` +
                   'Check warapp_get_game to see your state in the game.',
               };
             }

@@ -17,7 +17,7 @@ import { WarappServerError } from '../protocol/rpc.js';
 import { asInt } from '../scalars.js';
 import { gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
-import type { LiveContext } from './live-context.js';
+import { failureText, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
 
 const DEFAULT_LIMIT = 50;
@@ -188,7 +188,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
                 game: gameId,
                 to,
                 warning:
-                  `war.app did not confirm this message (${e instanceof Error ? e.message : String(e)}), so it may ` +
+                  `war.app did not confirm this message (${failureText(e)}), so it may ` +
                   'already have been posted. Check warapp_get_chat before sending it again.',
               };
             }

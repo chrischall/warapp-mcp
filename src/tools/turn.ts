@@ -45,7 +45,7 @@ import { Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
 import { currentTurn, gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
-import { loadLiveGame, type LiveContext } from './live-context.js';
+import { failureText, loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
@@ -1091,7 +1091,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 status: 'unknown' as const,
                 ...base,
                 warning:
-                  `war.app did not confirm these orders (${e instanceof Error ? e.message : String(e)}), so they may ` +
+                  `war.app did not confirm these orders (${failureText(e)}), so they may ` +
                   `already have been committed. ${check}`,
               };
             }

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
@@ -877,6 +878,24 @@ describe('warapp_submit_turn', () => {
     const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
     expect(p.status).toBe('unknown');
     expect(p.warning).toMatch(/may already have been committed/);
+    expect(p.warning).toMatch(/Do not resend/i);
+  });
+
+  it('a send that times out through a frozen tab is unknown and says to reload or focus the tab (#130)', async () => {
+    h = await liveHarness({
+      feed: [game('Playing')],
+      pages: ME_PAGE,
+      warapp: routes({
+        [Method.GetLatestGameInfo]: board(BOARD),
+        [Method.SendOrders]: () => {
+          throw new FetchproxyTimeoutError({ url: 'https://war.app/Services?m=SendOrders&js=1', timeoutMs: 30000, retrySafe: false });
+        },
+      }),
+    });
+    const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
+    expect(p.status).toBe('unknown');
+    expect(p.warning).toMatch(/may already have run/);
+    expect(p.warning).toMatch(/Reload or focus a war\.app tab/);
     expect(p.warning).toMatch(/Do not resend/i);
   });
 
