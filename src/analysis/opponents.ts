@@ -498,9 +498,9 @@ export function trackOpponents(
           start === null ? ` Its starting armies are not counted: ${game?.startUnknown ?? 'the settings do not give them'}.` : ''
         }${caveats.length ? ` The base income each turn may not hold: ${caveats.join('; ')}.` : ''}`,
       );
-      const head = `Player ${nameOf(playerId)} has been ${outOfSight} and has received at least ${total} armies (${
-        start !== null ? 'starting armies + ' : ''
-      }base income × turns)`;
+      const head = `Player ${nameOf(playerId)} has been ${outOfSight} and has received at least ${total} armies since the game started (${
+        start !== null ? `starting armies ${start} + ` : ''
+      }base income ${baseIncome} × ${paid} turn${s(paid)})`;
       if (earnedAtLeast.exceedsLargest)
         warnings.push(`${head}; it could be banking a stack larger than your largest (${largestStack}).`);
       if (earnedAtLeast.exceedsTotal)

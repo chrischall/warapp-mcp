@@ -37,8 +37,8 @@ const unseenBoard: SyntheticTerritory[] = [
   { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
 ];
 const BOB_WARNINGS = [
-  'Player Bob has been out of sight for at least 1 turn (no board of mine for turn 2) and has received at least 39 armies (starting armies + base income × turns); it could be banking a stack larger than your largest (6).',
-  'Player Bob has been out of sight for at least 1 turn (no board of mine for turn 2) and has received at least 39 armies (starting armies + base income × turns); it could be banking more than your total visible armies (9).',
+  'Player Bob has been out of sight for at least 1 turn (no board of mine for turn 2) and has received at least 39 armies since the game started (starting armies 24 + base income 5 × 3 turns); it could be banking a stack larger than your largest (6).',
+  'Player Bob has been out of sight for at least 1 turn (no board of mine for turn 2) and has received at least 39 armies since the game started (starting armies 24 + base income 5 × 3 turns); it could be banking more than your total visible armies (9).',
 ];
 
 // Ann holds 159 and 161; Bob's 158 borders both. 135 stays fogged.

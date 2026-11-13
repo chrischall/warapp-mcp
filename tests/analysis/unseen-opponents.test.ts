@@ -99,8 +99,8 @@ describe('trackOpponents: unseen opponents (#94)', () => {
     // Bound 21. My 5 + 5: both warnings.
     const [both] = trackOpponents(g, history([1, hidden()], [2, hidden()], [3, hidden()]), ME, STD, GAME);
     expect(both!.warnings).toEqual([
-      'Player Zed has been out of sight for 3 turns and has received at least 21 armies (starting armies + base income × turns); it could be banking a stack larger than your largest (5).',
-      'Player Zed has been out of sight for 3 turns and has received at least 21 armies (starting armies + base income × turns); it could be banking more than your total visible armies (10).',
+      'Player Zed has been out of sight for 3 turns and has received at least 21 armies since the game started (starting armies 6 + base income 5 × 3 turns); it could be banking a stack larger than your largest (5).',
+      'Player Zed has been out of sight for 3 turns and has received at least 21 armies since the game started (starting armies 6 + base income 5 × 3 turns); it could be banking more than your total visible armies (10).',
     ]);
     expect(both!.earnedAtLeast).toMatchObject({ largestStack: 5, visibleArmies: 10, exceedsLargest: true, exceedsTotal: true });
     // My 20 + 5: only the largest-stack warning (21 > 20, 21 ≤ 25).
@@ -115,7 +115,7 @@ describe('trackOpponents: unseen opponents (#94)', () => {
 
   it('the base-income-only bound says so in the warning', () => {
     const [t] = trackOpponents(g, history([3, hidden()]), ME, STD, { players: GAME.players, startUnknown: 'unknown' });
-    expect(t!.warnings[0]).toMatch(/received at least 15 armies \(base income × turns\)/);
+    expect(t!.warnings[0]).toMatch(/received at least 15 armies since the game started \(base income 5 × 3 turns\)/);
   });
 
   it('teammates and eliminated or surrendered players are not listed', () => {
