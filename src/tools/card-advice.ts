@@ -132,10 +132,9 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
     warnings.push(
       `Play Order Delay above move ${delay.before}${delay.before <= plan.moves.length ? ` (${moveLabel(delay.before)})` : ''}: ` +
         `${delay.attacks.map(moveLabel).join(', ')} ${delay.attacks.length === 1 ? 'is an attack' : 'are attacks'} the opponent can answer first, ` +
-        'and the orders after the card wait until the opponent has moved. Add `cards.advice.orderDelay.order` (the card with ' +
-        '`before`) to the orders for warapp_submit_turn — placing the card among the moves is UNVERIFIED live until one ' +
-        'commit uses it — or play it in the game client. Without `before`, warapp_submit_turn writes the card after every ' +
-        'move (its verified position), where it delays nothing.',
+        'and the orders after the card wait until the opponent has moved. The orders carry it (the card with `before`): ' +
+        'war.app accepts a card placed among the moves (verified live); that the later moves then wait for the ' +
+        "opponent's is read from the client, not yet seen in a replay. Drop it from the orders to keep the card.",
     );
   }
 
