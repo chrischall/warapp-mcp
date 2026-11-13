@@ -631,6 +631,31 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
   });
 
+  it('(h) reports the outlook once 3 turns of boards agree, and logs it name-free per game (#178)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const first = payload<PlanPayload & { outlook: { state: string | null; basis: string } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(first.outlook.state).toBeNull();
+    expect(first.outlook.basis).toMatch(/Only 1 turn of boards/);
+    const dir = h.dataDir;
+    await h.harness.close();
+    let last: { outlook: { state: string | null; basis: string; turns?: unknown[] } } | undefined;
+    for (const done of ['3', '4', '5']) {
+      h = await liveHarness({ dataDir: dir, feed: [game('Playing', { numberOfTurns: done })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+      last = payload(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+      await h.harness.close();
+    }
+    h = undefined;
+    // Nothing changed hands along the Ann ─ Bob front for three turns (four boards: each turn against the one before).
+    expect(last!.outlook.state).toBe('stalemate');
+    expect(last!.outlook.turns).toHaveLength(3);
+    const log = JSON.parse(readFileSync(join(dir, 'outlook', `${GAME}.json`), 'utf8')) as { turns: object; latest: { state: string } };
+    expect(Object.keys(log.turns)).toEqual(['3', '4', '5', '6']);
+    expect(log.latest.state).toBe('stalemate');
+    expect(JSON.stringify(log)).not.toMatch(/Ann|Bob/);
+  });
+
   it('(h) the verified cached board of the previous turn beats an unverified history standing (#131)', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });

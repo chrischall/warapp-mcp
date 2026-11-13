@@ -82,6 +82,8 @@ import {
   writeOrdersCache,
   type TrendSource,
 } from '../trend.js';
+import { gameOutlook } from '../analysis/outlook.js';
+import { recordOutlook } from '../outlook-log.js';
 import type { BoardState } from '../board.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -990,7 +992,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'the borders given up (`conceded`), the `frontier` budget, your cards (plays and discards when you must), ' +
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
-          'ahead/even/behind/unknown on income). With no `goal` the profile picks and tunes it (`goalSource` ' +
+          'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
+          'armies + 3 × income held over 3 turns of boards, with its `basis`; thresholds unmeasured, so advice, not a verdict). With no `goal` the profile picks and tunes it (`goalSource` ' +
           '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
           'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
           `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
@@ -1182,6 +1185,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);
+      // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
+      const outlook = gameOutlook({
+        graph,
+        me: me.id,
+        boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
+        settings,
+        game: trackGame(game.players, game.settings, map),
+        cards: rules.inPlay.length > 0,
+      });
+      if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       const name = namer(map);
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
       // and the cards in effect. Advice only: the orders below are the plan's.
@@ -1238,7 +1251,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 phase: plan.profile.phase,
                 standing: plan.profile.standing,
                 ...(plan.profile.standingSource === 'tracked' ? { standingSource: 'tracked' as const } : {}),
+                ...(plan.profile.endsWith !== null ? { endsWith: plan.profile.endsWith } : {}),
               },
+        // #178: the outlook and its basis; full adds each turn judged.
+        outlook: rung === 'full' ? outlook : { state: outlook.state, basis: outlook.basis },
         income,
         enemyDeploy: plan.enemyDeploy,
         // #127: who moves first this turn and how it is known; null when unknown.
