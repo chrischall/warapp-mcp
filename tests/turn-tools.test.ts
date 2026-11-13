@@ -361,6 +361,7 @@ describe('warapp_plan_turn', () => {
     });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.warnings[0]).toMatch(/already committed orders/);
+    expect(p.warnings[0]).toContain('warapp_uncommit_turn');
   });
 
   it.each(['WaitingForPlayers', 'DistributingTerritories', 'Finished'])(
@@ -726,6 +727,7 @@ describe('warapp_submit_turn', () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/already committed/);
     expect(textOf(res)).toMatch(/modify/i);
+    expect(textOf(res)).toContain('warapp_uncommit_turn');
     expect(h.exchanges).toEqual([]);
   });
 
@@ -920,6 +922,21 @@ describe('cards in the turn tools', () => {
     expect(p.income).toBe(10);
     expect(p.deploys.reduce((s, d) => s + d.armies, 0)).toBe(10);
     expect(p.orders[0]).toEqual({ kind: 'card', card: R1 });
+    expect(p.orders.filter((o) => o.kind === 'card')).toHaveLength(1);
+    expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
+  });
+
+  it('plan_turn plays the Order Priority card it holds when the plan advises it, so the orders carry it', async () => {
+    // As in "reports a conceded border": Sheepshead Hills is conceded and withdraws, so the
+    // plan advises Order Priority; holding one, the orders play it (not only the advice).
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: withHand([{ id: OP, type: 4 }]) }) });
+    const p = payload<CardsPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend', enemy_deploy: 0 }),
+    );
+    expect(p.cardAdvice).toBe('order-priority');
+    expect(p.cards.playRequired).toBe(false);
+    expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
+    expect(p.orders[0]).toEqual({ kind: 'card', card: OP });
     expect(p.orders.filter((o) => o.kind === 'card')).toHaveLength(1);
     expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
   });

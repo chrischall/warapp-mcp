@@ -254,3 +254,23 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
   }
   return { required: shed > 0, plays, discards, extraArmies, warnings };
 }
+
+/**
+ * Whether I can play an Order Priority card this turn: one is in my hand and the chosen
+ * card plays do not discard it (the planner advises it for a commander strike, #61).
+ */
+export function holdsOrderPriority(hand: readonly Card[], choice: CardChoice): boolean {
+  const discarded = new Set(choice.discards.map((c) => c.id));
+  return hand.some((c) => c.type === CARD_ORDER_PRIORITY && !discarded.has(c.id));
+}
+
+/**
+ * The Order Priority card to add to the chosen plays when the plan advises one (a withdrawal
+ * or a commander strike), so the orders carry it: one in my hand the choice neither discards
+ * nor already plays. `undefined` when the choice already plays one, or none is left to play.
+ */
+export function advisedOrderPriority(hand: readonly Card[], choice: CardChoice): Card | undefined {
+  if (choice.plays.some((c) => c.type === CARD_ORDER_PRIORITY)) return undefined;
+  const discarded = new Set(choice.discards.map((c) => c.id));
+  return hand.find((c) => c.type === CARD_ORDER_PRIORITY && !discarded.has(c.id));
+}

@@ -161,6 +161,7 @@ describe('packaging for the browser bridge (phase 2)', () => {
     'warapp_join_game',
     'warapp_surrender',
     'warapp_begin_turn',
+    'warapp_uncommit_turn',
   ];
   const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
 
@@ -487,5 +488,46 @@ describe('packaging for the speed first turn (#44)', () => {
     expect(section).toMatch(/int32[^\n]*game id/);
     expect(section).toContain('NoLuckCycle');
     expect(section).toMatch(/timer/);
+  });
+});
+
+describe('packaging for uncommit (#61)', () => {
+  const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const claude = doc('../CLAUDE.md');
+  const readme = doc('../README.md');
+  const skill = doc('../skills/warapp-mcp/SKILL.md');
+  const protocol = doc('../docs/WEB-PROTOCOL.md');
+
+  it('CLAUDE.md lists warapp_uncommit_turn among the confirm-gated write tools', () => {
+    const bullet = claude.slice(claude.indexOf('tools write'), claude.indexOf('tools write') + 400);
+    expect(bullet).toMatch(/confirm-gated/);
+    expect(bullet).toContain('warapp_uncommit_turn');
+  });
+
+  it('README counts warapp_uncommit_turn among the confirm-gated writes and only-reads exceptions', () => {
+    const gated = readme.slice(readme.indexOf('confirmation-gated') - 250, readme.indexOf('confirmation-gated'));
+    expect(gated).toContain('warapp_uncommit_turn');
+    const reads = readme.slice(readme.indexOf('Everything except'), readme.indexOf('only reads'));
+    expect(reads).toContain('warapp_uncommit_turn');
+  });
+
+  it('the skill names warapp_uncommit_turn as a confirm-gated write in the change group', () => {
+    const head = skill.slice(skill.indexOf('tools write'), skill.indexOf('tools write') + 300);
+    expect(head).toContain('warapp_uncommit_turn');
+    expect(skill).toMatch(/warapp_uncommit_turn[^\n]*\*\*change\*\*|\*\*change\*\*[^.]*warapp_uncommit_turn/s);
+  });
+
+  it('WEB-PROTOCOL.md documents UnCommit (80) as verified from the bundle, not live', () => {
+    const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
+    expect(methods).toMatch(/\| 80 \| \*\*UnCommit\*\*/);
+    const start = protocol.indexOf('## UnCommit');
+    expect(start).toBeGreaterThan(-1);
+    const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
+    expect(section).toContain('m=UnCommit&js=1');
+    expect(section).toMatch(/int32[^\n]*game id/);
+    expect(section).toMatch(/bundle/i);
+    expect(section).toMatch(/not (yet )?(verified|captured) live/i);
+    for (const code of ['**99**', '**4**', '**7**', '**230**']) expect(section, code).toContain(code);
+    expect(section).toMatch(/hasCommittedOrders/);
   });
 });

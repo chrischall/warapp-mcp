@@ -19,6 +19,7 @@ import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
 import { registerSurrenderTool } from './surrender.js';
 import { registerTurnTools } from './turn.js';
+import { registerUncommitTool } from './uncommit.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { pushWebSocketLeg } from '../push/websocket.js';
 import { readSession } from '../direct/session.js';
@@ -78,6 +79,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerBeginTurnTool(server, live);
   registerScoutTool(server, live);
   registerTurnTools(server, live);
+  registerUncommitTool(server, live);
   registerChatTools(server, live);
   // One push socket per process: keyed on the shared fetchproxy bridge so
   // connections share it, with requests routed through the direct-first bridge.

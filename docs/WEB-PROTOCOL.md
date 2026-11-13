@@ -103,7 +103,7 @@ string email                  the signed-in account's email
 | 77 | SendInProgressPicks | as 76 without the two trailing bools (draft save) |
 | 78 | **BeginFirstTurn** | params: int32 gameId — read from the bundle, not verified live; see [Begin first turn](#begin-first-turn) |
 | 79 | GetTerritoryPicks | |
-| 80 | UnCommit | |
+| 80 | **UnCommit** | params: int32 gameId — see [UnCommit](#uncommit) |
 | 81 | GetTurns | |
 | 238 | Subscribe | push channel only, **no auth**; params: bool true, list of topic strings, string null; reply dict topic→int32 error |
 | 241 | GameUpdated | server push, **no auth**; msgNum `0x80000000`, 61 bytes, starts with the game id; carries no detail — re-read GameFeed |
@@ -245,6 +245,16 @@ fields `GUID id, int32 ownerId` (in-game id):
 Any other tag makes the client throw "Unexpected token". The board reader takes the kind from
 the class name and the GUID and owner from the last two fields; a fogged territory's units
 are not reported.
+
+**Commander combat (from the bundle, #61; not verified in a live battle).** The `Commander`
+class reports attack power and defence power both as `armies + 7`, a combat order of 10000
+(it takes damage after every army: "armies protect the commander"), and absorbs damage only
+in a whole 7 — less than 7 left over after the armies with it are dead does nothing (the
+in-game guide: "Commanders are worth 7 armies … cannot be partially damaged"; losing one
+turns its owner's territories neutral and eliminates them). So `d` armies plus a commander
+defend exactly as `d + 7` armies, which is what the planner uses
+(`COMMANDER_STRENGTH`, `src/analysis/combat.ts`). Order encoding sends no special units, so
+a planned move never carries the commander.
 
 **Player ids.** GameFeed and the invite token give a player's id wrapped in two leading
 and two trailing check digits; the in-game id is the middle: `id[2:-2]` (e.g. a token
@@ -416,6 +426,25 @@ visible; after the send it reads the board back with `GetLatestGameInfo` and rep
 when a standing arrives (`unconfirmed` otherwise; a transport failure is `unknown` and never
 retried). The encoder is pinned by a golden test built from synthetic ids; the owner verifies it
 live.
+
+## UnCommit
+
+**Read from the client bundle's writer; not yet verified live.** Withdrawing committed orders for
+the current turn (the client's "Modify orders") is `UnCommit` (80),
+`POST /Services?m=UnCommit&js=1` through `WarappRpc`. After the auth block the writer sends only:
+
+1. `int32` game id.
+
+No trailing bools (unlike `Surrender`), and **no result payload** on success: the client keeps the
+orders it had and re-opens them for editing itself, so nothing about the account's state comes back.
+`warapp_uncommit_turn` refuses outside a turn phase and when GameFeed's `hasCommittedOrders` is false,
+then re-reads GameFeed after sending and reports `uncommitted` (the flag cleared on the same turn) or
+`unconfirmed` (still committed, the turn already resolved, or the feed could not be read). A transport
+failure is `unknown` — the withdrawal may have gone through — and is never retried. The client warns
+that modifying orders close to the boot timer risks a boot, since the game waits on the player again.
+Error codes, with the client's meaning: **99** the other players committed first and the turn is
+advancing; **4** the game is over; **7** and **230** you are no longer active in the game. The
+encoder is pinned by a golden test built from synthetic ids.
 
 ## Push channel (socket.io)
 

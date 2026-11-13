@@ -5,6 +5,8 @@ import {
   cardTypeByName,
   cardsToShed,
   chooseCardPlays,
+  holdsOrderPriority,
+  advisedOrderPriority,
   playRequired,
   readHand,
   type Card,
@@ -266,5 +268,36 @@ describe('the must-play threshold', () => {
   it('never applies without a known limit', () => {
     expect(cardsToShed(hand(9), { inPlay: [] })).toBe(0);
     expect(playRequired(hand(9), { inPlay: [] })).toBe(false);
+  });
+});
+
+describe('holdsOrderPriority', () => {
+  const op: Card = { id: G2, type: 4, name: 'Order Priority' };
+  const od: Card = { id: G3, type: 5, name: 'Order Delay' };
+
+  it('is true with an Order Priority card that is not discarded (played or kept)', () => {
+    expect(holdsOrderPriority([op], { required: false, plays: [], discards: [], extraArmies: 0, warnings: [] })).toBe(true);
+    expect(holdsOrderPriority([op], { required: true, plays: [op], discards: [], extraArmies: 0, warnings: [] })).toBe(true);
+  });
+
+  it('is false without one, or when the only one is discarded', () => {
+    expect(holdsOrderPriority([od], { required: false, plays: [], discards: [], extraArmies: 0, warnings: [] })).toBe(false);
+    expect(holdsOrderPriority([op], { required: true, plays: [], discards: [op], extraArmies: 0, warnings: [] })).toBe(false);
+  });
+});
+
+describe('advisedOrderPriority', () => {
+  const op: Card = { id: G2, type: 4, name: 'Order Priority' };
+  const od: Card = { id: G3, type: 5, name: 'Order Delay' };
+  const choice = (plays: Card[], discards: Card[]) => ({ required: false, plays, discards, extraArmies: 0, warnings: [] });
+
+  it('is the Order Priority card the choice neither plays nor discards', () => {
+    expect(advisedOrderPriority([od, op], choice([], []))).toBe(op);
+  });
+
+  it('is undefined when the choice already plays one, discards it, or there is none', () => {
+    expect(advisedOrderPriority([op], choice([op], []))).toBeUndefined();
+    expect(advisedOrderPriority([op], choice([], [op]))).toBeUndefined();
+    expect(advisedOrderPriority([od], choice([], []))).toBeUndefined();
   });
 });
