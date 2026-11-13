@@ -24,7 +24,8 @@ import {
   chargeDeploys,
   deployPools,
   incomeFor,
-  incomeUncertainties,
+  deployCheckUncertainties,
+  overrideUncertainties,
   neighborsOf,
   planTurn,
   type PlanGoal,
@@ -215,8 +216,10 @@ const label = (t: { id: number; name: string }) => `${t.name} (${t.id})`;
  * Validate resolved orders against the live board and income; throws a clear
  * refusal on the first problem. A deploy total that differs from the income is
  * refused only when the income model is certain: with `incomeUncertain` reasons
- * (see `incomeUncertainties`) it is returned as a warning instead, and war.app
- * itself has the last word (error 11).
+ * (see `deployCheckUncertainties`) it is returned as a warning instead, and war.app
+ * itself has the last word (error 11). The Local Deployment check is likewise a
+ * warning when `poolsUncertain` gives reasons (overridden bonuses, see
+ * `overrideUncertainties`).
  */
 export function validateTurn(args: {
   map: GameMap;
@@ -232,6 +235,8 @@ export function validateTurn(args: {
   noSplit?: boolean;
   /** Why the modelled income may be wrong; non-empty makes the deploy-total check a warning. */
   incomeUncertain?: readonly string[];
+  /** Why the Local Deployment pools may be wrong (overridden bonuses); non-empty makes that check a warning. */
+  poolsUncertain?: readonly string[];
 }): { warnings: string[] } {
   const warnings: string[] = [];
   const { map, board, myInGameId, income, deploys, moves } = args;
@@ -306,15 +311,21 @@ export function validateTurn(args: {
         .map((p) => ({ p, used: use.used.get(p.bonusId) ?? 0 }))
         .filter(({ p, used }) => used < p.value)
         .map(({ p, used }) => `${p.name} (bonus ${p.bonusId}): +${p.value} earned, only ${used} deployed inside it`);
-      throw new McpToolError(
+      const problem =
         `Local Deployment: these orders deploy ${use.anywhereUsed} armies outside the held bonuses' own pools, but only ` +
-          `${pools.anywhere} may go anywhere this turn (${use.anywhereUsed - pools.anywhere} too many). ${short.join('; ')}.`,
-        {
+        `${pools.anywhere} may go anywhere this turn (${use.anywhereUsed - pools.anywhere} too many). ${short.join('; ')}.`;
+      if (args.poolsUncertain?.length) {
+        warnings.push(
+          `${problem} The modelled pools may be off (${args.poolsUncertain.join(' ')}), so they are not refused here: ` +
+            "check the game's deploy panel — war.app refuses deploys outside a bonus's own pool.",
+        );
+      } else {
+        throw new McpToolError(problem, {
           hint:
             "This game uses Local Deployment: deploy each held bonus's armies on that bonus's own territories; only " +
             'the rest of your income (base income and card armies) may go anywhere.',
-        },
-      );
+        });
+      }
     }
   }
   const out = new Map<number, { from: { id: number; name: string }; armies: number }>();
@@ -615,7 +626,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ? ['You have already committed orders this turn; warapp_submit_turn will refuse — modify orders in the game instead.']
           : []),
         ...cards.warnings,
-        ...incomeUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
+        ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
         ...plan.warnings,
       ];
       const orders = [
@@ -784,7 +795,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               moves,
               localDeployments: game.settings?.localDeployments ?? false,
               noSplit: game.settings?.noSplit ?? false,
-              incomeUncertain: incomeUncertainties(game.settings),
+              incomeUncertain: deployCheckUncertainties(game.settings),
+              poolsUncertain: overrideUncertainties(game.settings),
             });
             // Deploys first (as the client sends them), merged per territory.
             const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();

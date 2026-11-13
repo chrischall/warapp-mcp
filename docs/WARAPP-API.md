@@ -68,9 +68,10 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   base (from that opponent's visible territories, a lower bound), and the pick advisor's
   opening simulation (`src/analysis/picks.ts`).
 - **Not modelled** (the same bundle function has these terms): an army cap (`ArmyCap`, can cut
-  income), overridden bonus values (`OverriddenBonuses`), the Sanctions card (cuts a sanctioned
-  player's income by its `Percentage`), income from cities, and per-player income mods.
-  `incomeUncertainties` names the army cap, overridden bonuses and an enabled Sanctions card
+  income), the Sanctions card (cuts a sanctioned player's income by its `Percentage`), income
+  from cities, and per-player income mods. Overridden bonus values are modelled since #62 (see
+  "Overridden bonus values" below).
+  `incomeUncertainties` names the army cap, `OverriddenBonuses` it could not read and an enabled Sanctions card
   (`SanctionsCard` present in the settings) when a game's settings switch them on; then `warapp_plan_turn` warns and
   `warapp_submit_turn`'s deploy-total check becomes a preview warning instead of a refusal.
   Cities and per-player income mods are **not detected** (no known settings key says they
@@ -86,6 +87,33 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
 - **Error 11 hint:** when war.app refuses a deploy total (error 11), the hint names the modelled
   number. The live board (`GetLatestGameInfo`) carries no income figure — the client computes it
   from the standing — so the authoritative number is the game's "armies per turn".
+
+## Overridden bonus values (`OverriddenBonuses`) — verified (#62)
+
+- Meaning (live, 2026-11-12): a Local Deployment game, base 2, overrode two single-territory
+  bonuses to 12 and 7; war.app's deploy panel said 21 = "2 anywhere, 12 in <bonus>, 7 in
+  <bonus>", the map values gave 13, and war.app accepted the 21 split per the panel. So an
+  override replaces the bonus's value everywhere the value counts: income, Local Deployment
+  pools, and so bonus scoring.
+- Type, from the client bundle (read-only): the game settings hold `OverriddenBonuses` as a
+  dictionary of bonus id → value (the summary shows "None" when it has no keys); the create-game
+  check refuses a bonus id not on the map and a value below −1000 or above 1000
+  (`OverriddenBonusesInvalid`).
+- **GameFeed's JSON shape — verified live (2026-11-12):** an array of
+  `{ "bonusID": <int>, "value": <int> }` with JSON **numbers** (unlike most GameFeed scalars), one
+  entry per overridden bonus (a game on a large map sent 303), and `[]` when nothing is overridden.
+  `parseOverriddenBonuses` (`src/normalize.ts`) reads it loosely, never throwing: string numbers,
+  other key spellings, `[id, value]` pairs, an object keyed by bonus id, or any of those as a JSON
+  string. A malformed entry is skipped (the rest are kept) and the read flagged
+  `overriddenBonusesUnparsed`; an unknown shape gives no values and the same flag.
+- Applied at one choke point: `applyBonusOverrides` (`src/analysis/overrides.ts`), called by the
+  tools' `mapOf`, returns the map with the game's values (superbonuses included) without touching
+  the cached map. Unreadable overrides: the map's own values are used and `incomeUncertainties`
+  says so.
+- **Pre-checks:** `OVERRIDES_VERIFIED` is `true`, so overrides that read in full keep
+  `warapp_submit_turn`'s deploy-total and Local Deployment pre-checks hard. Overrides that did not
+  read in full make both warn instead of refuse (war.app enforces both) and `warapp_plan_turn` notes
+  it.
 
 ## Local Deployment — key verified, pool rules UNVERIFIED
 

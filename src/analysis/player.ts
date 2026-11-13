@@ -6,6 +6,7 @@ import type { GameSettings } from '../normalize.js';
 import { bonusTerritories } from './bonuses.js';
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from './combat.js';
 import { neighborsOf, type MapGraph } from './graph.js';
+import { OVERRIDES_UNPARSED, overrideUncertainties } from './overrides.js';
 
 /** Warzone's default base income when the settings do not say. */
 export const DEFAULT_BASE_INCOME = 5;
@@ -38,7 +39,8 @@ export function territoryIncome(territories: number, base: number, per: number):
 /**
  * Settings that make the income model uncertain, each as a reason: war.app's
  * income has a term the model does not compute. Empty when every income rule
- * the game uses is modelled (base, BonusArmyPer, held bonuses, card armies).
+ * the game uses is modelled (base, BonusArmyPer, held bonuses, card armies,
+ * overridden bonus values once read — only unreadable overrides are listed).
  * Cities and per-player income mods have no known settings key, so they are
  * not detected: those games still get the hard deploy-total check. Sanctions is
  * flagged when the card is merely enabled: the live board's active-card list is
@@ -51,15 +53,22 @@ export function incomeUncertainties(settings: GameSettings | undefined): string[
     out.push(`The game's base income is missing from its settings; the model assumes ${DEFAULT_BASE_INCOME}.`);
   if (settings?.armyCap !== undefined && settings.armyCap !== null)
     out.push(`This game has an army cap (${settings.armyCap}× income), which can cut income; the model does not apply it.`);
-  const overridden = settings?.raw?.OverriddenBonuses;
-  if (Array.isArray(overridden) && overridden.length > 0)
-    out.push("This game has overridden bonus values; the model uses the map's own values.");
+  // Overrides that were read are applied to the map (applyBonusOverrides), so only unreadable ones make income uncertain.
+  if (settings?.overriddenBonusesUnparsed) out.push(OVERRIDES_UNPARSED);
   if (settings?.cards.includes('Sanctions')) {
     const pct = settings.raw?.SanctionsCard;
     const p = isRecord(pct) && typeof pct.Percentage === 'number' ? ` by ${Math.round(pct.Percentage * 100)}%` : '';
     out.push(`This game has the Sanctions card, which cuts a sanctioned player's income${p}; the model does not apply it.`);
   }
   return out;
+}
+
+/**
+ * Why warapp_submit_turn's deploy-total check must warn rather than refuse: the income
+ * uncertainties plus, while the overrides' shape is unverified, a game's overrides.
+ */
+export function deployCheckUncertainties(settings: GameSettings | undefined): string[] {
+  return [...new Set([...incomeUncertainties(settings), ...overrideUncertainties(settings)])];
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -229,6 +238,7 @@ export function analyzePlayer(
     assumptions.push(`Base income missing from settings; using the default of ${DEFAULT_BASE_INCOME}.`);
   if (settings?.roundingMode !== undefined && settings.roundingMode !== 'StraightRound')
     assumptions.push(`Armies needed assume straight rounding; this game uses ${settings.roundingMode}.`);
+  if (settings?.overriddenBonusesUnparsed) assumptions.push(OVERRIDES_UNPARSED);
   if ((settings?.luckModifier ?? 0) > 0)
     assumptions.push('Armies needed assume 0% luck; this game has luck, so outcomes can vary.');
 

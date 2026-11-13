@@ -1,7 +1,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { analyzeBonuses, findChokepoints, type BonusAnalysis, type MapGraph } from '../analysis/index.js';
+import { analyzeBonuses, applyBonusOverrides, findChokepoints, type BonusAnalysis, type MapGraph } from '../analysis/index.js';
 import type { WarappClient } from '../client.js';
 import type { Game, GameMap } from '../normalize.js';
 import { gameIdArg, graphOf, mapSummary, readAnnotations, respond, round2, untrustedDescription, viewArg } from './common.js';
@@ -20,9 +20,12 @@ const SORTS: Record<Sort, (a: BonusAnalysis, b: BonusAnalysis) => number> = {
   name: (a, b) => a.name.localeCompare(b.name) || a.bonusId - b.bonusId,
 };
 
-/** The game's map, or a clear error when the feed did not send one. */
+/**
+ * The game's map with the game's bonus values (its `OverriddenBonuses` applied —
+ * load the game with `settings: true`), or a clear error when the feed did not send one.
+ */
 export function mapOf(game: Game): GameMap {
-  if (game.map) return game.map;
+  if (game.map) return applyBonusOverrides(game.map, game.settings);
   throw new McpToolError(`war.app sent no map for game ${game.id}.`, {
     hint: 'Try again in a moment; if it persists the game may not have a map assigned yet.',
   });
@@ -103,7 +106,8 @@ export function registerMapTool(server: McpServer, client: WarappClient): void {
       }),
     },
     async ({ game_id, bonus, sort, limit, view }) => {
-      const game = await client.getGame(game_id);
+      // Settings carry the game's overridden bonus values, which the bonus table reports.
+      const game = await client.getGame(game_id, { settings: true });
       const map = mapOf(game);
       const g = graphOf(map);
       const order = SORTS[sort ?? 'easiest'];

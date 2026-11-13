@@ -144,9 +144,11 @@ describe('incomeUncertainties', () => {
   });
   it('names an army cap, overridden bonuses and a missing base income', () => {
     expect(incomeUncertainties(settings({ minimumArmyBonus: 5, armyCap: 3 })).join('\n')).toMatch(/army cap/i);
+    // Overrides the model could not read (#62); ones it read are applied to the map instead.
     expect(
-      incomeUncertainties(settings({ minimumArmyBonus: 5, raw: { OverriddenBonuses: [{ ID: 1, Value: 9 }] } })).join('\n'),
+      incomeUncertainties(settings({ minimumArmyBonus: 5, overriddenBonuses: new Map(), overriddenBonusesUnparsed: true })).join('\n'),
     ).toMatch(/overridden bonus/i);
+    expect(incomeUncertainties(settings({ minimumArmyBonus: 5, overriddenBonuses: new Map([[1, 9]]) }))).toEqual([]);
     expect(incomeUncertainties(settings({})).join('\n')).toMatch(/base income/i);
     expect(incomeUncertainties(undefined).join('\n')).toMatch(/base income/i);
   });
