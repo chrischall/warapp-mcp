@@ -361,3 +361,110 @@ describe('#107: never stand still, live shapes', () => {
     });
   });
 });
+
+// #107, the live root cause: in a several-player opening my only stack next to a cheap neutral
+// borders a big enemy stack, so rule 1a concedes it and rule 1b withdraws its armies — and 4e
+// then had no usable source (a conceded border is never deployed to, and its 5 movable armies
+// alone cannot take a 4-neutral). The plan withdrew, deployed everything to the biggest stack
+// and captured nothing, with a frontier needing 0. A conceded border's armies are lost anyway:
+// rather than stand still, 4e attacks out of it with its movable armies plus deploys.
+describe('#107: a conceded border attacks out rather than stand still', () => {
+  const SEVEN: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80].map((id) => ({ id })), turn: 2 };
+  const CAP: PlannerSettings = { ...STD, armyCap: 8 };
+  //   My 6-stack on 1 borders 3 (Pair, +2, with 12-neutrals on 5 and 6) and a 25-army enemy on 22.
+  //   My 1-army 2 is behind 1, next to a 12-neutral on 7.
+  const map = makeMap(
+    [1, 2, 3, 5, 6, 7, 22],
+    [[1, 2], [1, 3], [3, 5], [5, 6], [1, 22], [2, 7]],
+    [[401, 'Pair', 2, [3, 5, 6]]],
+  );
+  const mg = buildGraph(map);
+  const at = (near: number): BoardState =>
+    board([mine(1, 6), mine(2, 1), neutral(3, near), neutral(5, 12), neutral(6, 12), neutral(7, 12), player(22, 25, P2)]);
+  const run = (b: BoardState, settings: PlannerSettings = CAP, adapt = false) =>
+    planTurn({ graph: mg, board: b, me: ME, income: 5, settings, game: SEVEN, options: { adapt } });
+
+  it('takes the 4-neutral from the conceded stack (5 movable + 1 deploy) instead of withdrawing', () => {
+    const b = at(4);
+    for (const adapt of [false, true]) {
+      const p = run(b, CAP, adapt);
+      expect(p.profile.phase).toBe('opening');
+      expect(p.conceded).toEqual([1]);
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 6, kind: 'attack' })]);
+      expect(p.moves.filter((m) => m.kind === 'transfer' && m.from === 1)).toEqual([]);
+      expect(p.deploys.find((d) => d.territoryId === 1)?.armies).toBe(1);
+      expect(deploySum(p)).toBe(5);
+      expect(p.cardAdvice).toBeNull();
+      const r = p.rationale.join('\n');
+      expect(r).toMatch(
+        /Attack out of conceded T1 \(#1\) rather than withdraw: its 5 movable armies \(and 1 deployed there, which leave with the attack\) take T3 \(#3\)/,
+      );
+      expect(r).not.toMatch(/Withdraw 5 from T1/);
+      const w = p.warnings.join('\n');
+      expect(w).not.toMatch(/withdrawal from T1/);
+      expect(w).not.toMatch(/standing still/i);
+      expect(valid(p, b, 5, map)).toEqual([]);
+    }
+  });
+
+  it('under No-Split the withdrawal no longer occupies the conceded stack', () => {
+    const b = at(4);
+    const p = run(b, { ...CAP, noSplit: true });
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 6 })]);
+    expect(p.moves.filter((m) => m.from === 1)).toHaveLength(1);
+    expect(p.warnings.join('\n')).not.toMatch(/No-Split: T1/);
+  });
+
+  it('too big even attacking out: the withdrawal stands, and the warning names the concession', () => {
+    // An 8-neutral takes 13: 5 movable + 5 deploys = 10.
+    const b = at(8);
+    const p = run(b);
+    expect(attacks(p)).toEqual([]);
+    expect(p.moves).toEqual([expect.objectContaining({ from: 1, to: 2, armies: 5, kind: 'transfer' })]);
+    expect(p.cardAdvice).toBe('order-priority');
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/The withdrawal from T1 \(#1\) only executes/);
+    expect(w).toMatch(
+      /Standing still: no capture is planned, and the cheapest expansion \(T3 \(#3\), 13 armies, toward bonus Pair \(#401\)\) does not fit this turn: it needs 13, and at most 10 can reach it this turn \(5 movable on T1 \(#1\), a conceded border, \+ 5 to deploy\)\./,
+    );
+    expect(w).not.toMatch(/hold their borders/);
+    expect(valid(p, b, 5, map)).toEqual([]);
+  });
+});
+
+describe('#107: the stand-still warning names the actual reason', () => {
+  it('R3: a capture that completes a bonus that falls next turn is refused, not "does not fit"', () => {
+    // Pair (+2) is 1 and 3; a 40-army enemy borders both. Taking 3 fits (5 movable + 5 deploy)
+    // but completes Pair, which could not be held next turn.
+    const map = makeMap([1, 3, 22], [[1, 3], [1, 22], [3, 22]], [[401, 'Pair', 2, [1, 3]]]);
+    const b = board([mine(1, 6), neutral(3, 4), player(22, 40, P2)]);
+    const p = planTurn({
+      graph: buildGraph(map),
+      board: b,
+      me: ME,
+      income: 5,
+      settings: STD,
+      game: { players: [ME, P2, P3, 50, 60].map((id) => ({ id })), turn: 2 },
+    });
+    expect(attacks(p)).toEqual([]);
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(
+      /Standing still: no capture is planned, and the cheapest expansion \(T3 \(#3\), 6 armies, toward bonus Pair \(#401\)\) is refused by rule R3: taking it completes bonus Pair \(#401\), which could not be held next turn \(see "completing Pair \(#401\) leaves …: not completed"\)\./,
+    );
+    expect(w).not.toMatch(/does not fit/);
+  });
+
+  it('every neighbour holds: the warning says each one holds, not that it is conceded or too small', () => {
+    // Keep (+3) is 1 and 2, mine; an 8-army enemy on 22 threatens 1, the only neighbour of 3.
+    const map = makeMap([1, 2, 3, 5, 22], [[1, 2], [1, 3], [3, 5], [1, 22]], [
+      [401, 'Keep', 3, [1, 2]],
+      [402, 'Pair', 2, [3, 5]],
+    ]);
+    const b = board([mine(1, 4), mine(2, 3), neutral(3, 4), neutral(5, 12), player(22, 8, P2)]);
+    const p = plan(b, 5, { map: buildGraph(map) });
+    expect(attacks(p)).toEqual([]);
+    expect(p.warnings.join('\n')).toMatch(
+      /\(T3 \(#3\), 6 armies, toward bonus Pair \(#402\)\) cannot be reached: no neighbour of mine can attack it \(T1 \(#1\) stays to hold its border\)\./,
+    );
+  });
+});

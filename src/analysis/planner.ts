@@ -379,7 +379,9 @@
 //     one), uneconomic or not, never one that lowers income. Its candidate steps (#107) are ranked
 //     by what this turn can afford first — each step's shortfall: its cost less the armies that can
 //     reach it (its best usable source's movable armies plus what may still be deployed there,
-//     after every hold) — then by its bonus's armies to finish (ties: higher value, then id), then
+//     after every hold; a conceded border counts with the armies rule 1b withdrew and with deploys:
+//     rather than withdraw, it attacks out, its deploys leaving with the attack, and the rationale
+//     says so) — then by its bonus's armies to finish (ties: higher value, then id), then
 //     pass 2's order; the first that fits is taken (usual sizing). So a cheap neutral next to my
 //     stack beats a far step toward a bonus with fewer armies to finish; the reason says "the
 //     fewest of any bonus in reach" or "… with a capture affordable this turn", and the rationale
@@ -388,9 +390,10 @@
 //     that grows the frontier beats none; the rationale says 4d is waived for it, and 4d still
 //     judges every other capture). The rationale says nothing passed the economy test and standing
 //     still is worse than the cheapest expansion; when nothing is taken, a warning names the
-//     top-ranked step and the actual reason: rule 4d's frontier stop, the holds (it would fit
-//     without what they took), or its size (its cost against the movable armies and deploys that
-//     can reach it). Army cap (`armyCap`, × income): when my
+//     top-ranked step and the actual reason: rule 4d's frontier stop, R3 (it completes a bonus
+//     that falls next turn), No-Split, no neighbour able to attack (each named as holding its
+//     border or already ordered), the holds (it would fit without what they took), or its size
+//     (its cost against the movable armies and deploys that can reach it). Army cap (`armyCap`, × income): when my
 //     armies after deploy exceed cap × income, armies above it are wasted, so the same fallback
 //     fires in any phase, and the rationale says so. The cap's cut to income is not modelled.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, and
@@ -2842,6 +2845,16 @@ export function planTurn(input: PlanInput): TurnPlan {
 
   // ---- capture helper ----
   let anchor: number | undefined;
+  /** Why the last {@link tryCapture} refused (R3, or No-Split on a source that could take it); else size. */
+  let refusal: { kind: 'r3' } | { kind: 'split'; from: number } | undefined;
+  /** Armies on my `x` free to attack `t`: my commander's territory keeps what holds it (rule 1k). */
+  const movableFor = (x: number, t: number) => avail.get(x)! - (myCommanders.has(x) ? keepFor(x, (n) => n === t) : 0);
+  /**
+   * A conceded border attacks out only with the armies already on it (it is never deployed to),
+   * unless every territory I hold is conceded, when there is nowhere better.
+   */
+  const concededSource = (x: number, t: number, cost: number) =>
+    movableFor(x, t) >= cost || mine.every((id) => conceded.has(id));
   /** Enemy commanders' territories attacked as a commander strike (rule 1s): exempt from R3. */
   const strikes = new Set<number>();
   /**
@@ -2854,15 +2867,22 @@ export function planTurn(input: PlanInput): TurnPlan {
    * Capture `t` from its best source. A conceded border is never deployed to: it attacks
    * out only with the armies already on it (unless every territory I hold is conceded,
    * when there is nowhere better). `force` names the source (it may be locked) and the
-   * armies on it that stay out of the attack.
+   * armies on it that stay out of the attack. `fromConceded` (rule 4e only) lets a conceded
+   * border attack out with deploys too: they leave with the attack.
    */
-  const tryCapture = (t: number, reason: string, force?: { from: number; keep: number }): boolean => {
+  const tryCapture = (
+    t: number,
+    reason: string,
+    force?: { from: number; keep: number },
+    fromConceded = false,
+  ): boolean => {
+    refusal = undefined;
     const tg = targets.get(t)!;
     // My commander's territory keeps what holds it (rule 1k).
-    const spare = (x: number) => avail.get(x)! - (force?.keep ?? (myCommanders.has(x) ? keepFor(x, (n) => n === t) : 0));
+    const spare = (x: number) => (force ? avail.get(x)! - force.keep : movableFor(x, t));
     if (force && orderOf(force.from)) return false;
     const usable = (x: number) =>
-      !locked.has(x) && (!conceded.has(x) || avail.get(x)! >= tg.cost || mine.every((id) => conceded.has(id)));
+      !locked.has(x) && (!conceded.has(x) || fromConceded || concededSource(x, t, tg.cost));
     const sources = force
       ? [force.from]
       : tg.sources.filter((x) => usable(x) && !orderOf(x)).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
@@ -2877,7 +2897,10 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (tryCombined(t, reason)) return true;
       // No-Split: name a source that could have taken it alone but already issues an order.
       const split = tg.sources.find((x) => usable(x) && orderOf(x) && needAt(x) <= spareAt(x));
-      if (split !== undefined) warnSplit(split, `the attack on ${label(t)} is not planned`);
+      if (split !== undefined) {
+        warnSplit(split, `the attack on ${label(t)} is not planned`);
+        refusal = { kind: 'split', from: split };
+      }
       return false;
     }
     deploy(src, need);
@@ -2893,6 +2916,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       else deployed.delete(src);
       budget += need;
       captured.delete(t);
+      refusal = { kind: 'r3' };
       return false;
     }
     survivorsAt.set(t, survivors);
@@ -4258,31 +4282,80 @@ export function planTurn(input: PlanInput): TurnPlan {
         .filter(([, f]) => f.net > 0)
         .sort(([a, x], [b, y]) => asc(x.cost, y.cost) || y.value - x.value || a - b);
       const bonusRank = new Map(toward.map(([id], i) => [id, i]));
+      const WITHDRAWS = 'withdraws from a conceded border';
+      /** Armies rule 1b withdrew from conceded `x` this turn (they may attack out instead). */
+      const withdrawnFrom = (x: number) =>
+        moves.find((m) => m.from === x && m.kind === 'transfer' && m.reason === WITHDRAWS)?.armies ?? 0;
+      interface Reach {
+        from: number | undefined;
+        movable: number;
+        deploy: number;
+        reach: number;
+        /** The source is a conceded border: it attacks out (with deploys) rather than withdraw. */
+        viaConceded: boolean;
+        /** No usable source: why each neighbour of mine is out. */
+        blocked: { x: number; why: 'hold' | 'split' }[];
+      }
       /**
        * What can reach `t` this turn, as {@link tryCapture} judges it: its best single source's
        * movable armies (my commander's territory keeps what holds it) plus what may still be
-       * deployed there (none on a conceded border). No usable source (each one held, conceded or
-       * already ordered): `from` is undefined and nothing reaches it.
+       * deployed there. A source that holds its border (locked) or already issues an order
+       * (No-Split) is out. A conceded border counts with the armies rule 1b would withdraw and
+       * with deploys (#107): rather than stand still it attacks out, and its deploys leave with
+       * the attack. On a tie a source that is not conceded wins.
        */
-      const reachOf = (t: number) => {
-        let best: { from: number | undefined; movable: number; deploy: number; reach: number } = {
-          from: undefined,
-          movable: 0,
-          deploy: 0,
-          reach: 0,
-        };
+      const reachOf = (t: number): Reach => {
+        let best: Reach = { from: undefined, movable: 0, deploy: 0, reach: 0, viaConceded: false, blocked: [] };
+        const blocked: Reach['blocked'] = [];
         const tg = targets.get(t)!;
-        const allConceded = mine.every((id) => conceded.has(id));
         for (const x of [...tg.sources].sort(byNum)) {
-          if (locked.has(x) || orderOf(x)) continue;
-          const keep = myCommanders.has(x) ? keepFor(x, (n) => n === t) : 0;
-          const movable = Math.max(0, avail.get(x)! - keep);
-          if (conceded.has(x) && !allConceded && movable < tg.cost) continue;
-          const deploy = conceded.has(x) && !allConceded ? 0 : Math.max(0, spareAt(x));
-          if (best.from === undefined || movable + deploy > best.reach)
-            best = { from: x, movable, deploy, reach: movable + deploy };
+          const back = conceded.has(x) ? withdrawnFrom(x) : 0;
+          if (back === 0 && locked.has(x)) {
+            blocked.push({ x, why: 'hold' });
+            continue;
+          }
+          if (back === 0 && orderOf(x)) {
+            blocked.push({ x, why: 'split' });
+            continue;
+          }
+          const movable = Math.max(0, movableFor(x, t) + back);
+          // Deploys reach a conceded source only through the attack-out path below.
+          const viaConceded = conceded.has(x) && !concededSource(x, t, tg.cost);
+          const deploy = Math.max(0, spareAt(x));
+          const reach = movable + deploy;
+          if (best.from === undefined || reach > best.reach || (reach === best.reach && best.viaConceded && !viaConceded))
+            best = { from: x, movable, deploy, reach, viaConceded, blocked: [] };
         }
-        return best;
+        return best.from === undefined ? { ...best, blocked } : best;
+      };
+      /**
+       * Undo rule 1b's withdrawal from conceded `x` so it may attack out (#107); the result redoes
+       * it. A conceded border never withdrawn (nowhere to go) needs nothing undone.
+       */
+      const reclaim = (x: number): (() => void) => {
+        const i = moves.findIndex((m) => m.from === x && m.kind === 'transfer' && m.reason === WITHDRAWS);
+        if (i < 0) return () => {};
+        const [m] = moves.splice(i, 1) as [PlannedMove];
+        const had = { avail: avail.get(x)!, incoming: incoming.get(m.to) ?? 0, card: cardAdvice };
+        avail.set(x, had.avail + m.armies);
+        locked.delete(x);
+        if (had.incoming - m.armies > 0) incoming.set(m.to, had.incoming - m.armies);
+        else incoming.delete(m.to);
+        const r = rationale.findIndex((l) => l.startsWith(`Withdraw ${m.armies} from ${label(x)} to `));
+        const rLine = r >= 0 ? rationale.splice(r, 1)[0] : undefined;
+        const w = warnings.findIndex((l) => l.startsWith(`The withdrawal from ${label(x)} only executes`));
+        const wLine = w >= 0 ? warnings.splice(w, 1)[0] : undefined;
+        if (!moves.some((o) => o.kind === 'transfer' && o.reason === WITHDRAWS)) cardAdvice = null;
+        return () => {
+          moves.splice(i, 0, m);
+          avail.set(x, had.avail);
+          locked.add(x);
+          if (had.incoming > 0) incoming.set(m.to, had.incoming);
+          else incoming.delete(m.to);
+          if (rLine !== undefined) rationale.splice(r, 0, rLine);
+          if (wLine !== undefined) warnings.splice(w, 0, wLine);
+          cardAdvice = had.card;
+        };
       };
       const seen = new Set<number>();
       const steps = toward
@@ -4322,13 +4395,48 @@ export function planTurn(input: PlanInput): TurnPlan {
         `cheapest expansion toward bonus ${bonusName(id)} (+${f.value}, ${toFinish(f.cost, f.fogged, f.fogEach)}, ${
           f.cost === fewest ? 'the fewest of any bonus in reach' : 'the fewest of any bonus with a capture affordable this turn'
         })`;
-      /** Why a step was not taken: rule 4d's frontier stop (with the frontier it would leave), or its size. */
-      const failed = new Map<number, { holdCost: number; income: number } | 'size'>();
+      /**
+       * Why a step was not taken: rule 4d's frontier stop (with the frontier it would leave), R3
+       * (it completes a bonus that falls next turn), No-Split (a source that could take it already
+       * issues an order), or its size.
+       */
+      type Fail =
+        | { kind: '4d'; holdCost: number; income: number }
+        | { kind: 'r3' }
+        | { kind: 'split'; from: number }
+        | { kind: 'size' };
+      const failed = new Map<number, Fail>();
+      /**
+       * Try one step. From a conceded border (#107) rule 1b's withdrawal is undone first and the
+       * border attacks out with deploys, a rationale line saying so. The result undoes it all.
+       */
+      const attempt = (st: (typeof steps)[number]): (() => void) | null => {
+        const out = st.from !== undefined && conceded.has(st.from) ? st.from : undefined;
+        const unreclaim = out === undefined ? () => {} : reclaim(out);
+        const before = out === undefined ? 0 : movableFor(out, st.t);
+        const restore = snapshot();
+        if (!tryCapture(st.t, reasonOf(st), undefined, out !== undefined)) {
+          unreclaim();
+          return null;
+        }
+        const move = [...moves].reverse().find((m) => m.kind === 'attack' && m.to === st.t)!;
+        if (out !== undefined && move.from === out) {
+          const need = Math.max(0, st.cost - before);
+          rationale.push(
+            `Attack out of conceded ${label(out)} rather than withdraw: its ${before} movable armies${need ? ` (and ${need} deployed there, which leave with the attack)` : ''} take ${label(st.t)}; one capture is worth more than saving them.`,
+          );
+        } else unreclaim();
+        return () => {
+          restore();
+          if (out !== undefined && move.from === out) unreclaim();
+        };
+      };
       let taken: (typeof steps)[number] | undefined;
       for (const st of steps) {
-        const restore = snapshot();
-        if (!tryCapture(st.t, reasonOf(st))) {
-          failed.set(st.t, 'size');
+        const undo = attempt(st);
+        if (!undo) {
+          const r = refusal as typeof refusal;
+          failed.set(st.t, r ?? { kind: 'size' });
           continue;
         }
         const stop = outgrows(st.t);
@@ -4336,26 +4444,61 @@ export function planTurn(input: PlanInput): TurnPlan {
           taken = st;
           break;
         }
-        restore();
+        undo();
         if (!rationale.includes(stop)) rationale.push(stop);
         const f = stopped.find((x) => x.t === st.t)!;
-        failed.set(st.t, { holdCost: f.holdCost, income: f.income });
+        failed.set(st.t, { kind: '4d', holdCost: f.holdCost, income: f.income });
       }
       // #107: in the opening, rule 4d's frontier stop must not make the plan stand still: one
       // capture that grows the frontier is better than none (4d still judges every other capture).
       let waived: { holdCost: number; income: number } | undefined;
       if (!taken && profile.phase === 'opening') {
-        const st = steps.find((x) => failed.get(x.t) !== 'size' && failed.has(x.t));
-        if (st && tryCapture(st.t, reasonOf(st))) {
+        const st = steps.find((x) => failed.get(x.t)?.kind === '4d');
+        if (st && attempt(st)) {
           taken = st;
           waived = failed.get(st.t) as { holdCost: number; income: number };
         }
       }
-      /** "needs C, and at most R can reach it this turn (M movable on S + D to deploy[; the holds took H])". */
+      /** The bonuses `t` would complete that R3 refused, as "name (#id)". */
+      const refusedBonuses = (t: number) =>
+        [...notCompleted.keys()]
+          .filter((id) => bonusTs.get(id)?.includes(t))
+          .sort(byNum)
+          .map(bonusName);
+      /** Why no neighbour of mine can attack `st`: each holds its border, or already issues an order. */
+      const blockedText = (st: (typeof steps)[number]) =>
+        `no neighbour of mine can attack it (${st.blocked
+          .map(({ x, why }) =>
+            why === 'hold' ? `${label(x)} stays to hold its border` : `${label(x)} already issues an order under No-Split`,
+          )
+          .join('; ')})`;
+      /** "needs C, and at most R can reach it this turn (M movable on S[, a conceded border] + D to deploy[; the holds took H])". */
       const reachText = (st: (typeof steps)[number], held: number) =>
         st.from === undefined
-          ? `its neighbours of mine (${targets.get(st.t)!.sources.map(label).join(', ')}) all stay to hold their borders`
-          : `it needs ${st.cost}, and at most ${st.reach} can reach it this turn (${st.movable} movable on ${label(st.from)} + ${st.deploy} to deploy${held > 0 ? `; the holds took ${held}` : ''})`;
+          ? blockedText(st)
+          : `it needs ${st.cost}, and at most ${st.reach} can reach it this turn (${st.movable} movable on ${label(st.from)}${
+              conceded.has(st.from) ? ', a conceded border,' : ''
+            } + ${st.deploy} to deploy${held > 0 ? `; the holds took ${held}` : ''})`;
+      /** Why `st` was not taken, as a clause after its name. */
+      const failText = (st: (typeof steps)[number], fail: Fail | undefined) => {
+        if (fail?.kind === '4d')
+          return `is refused by rule 4d's frontier stop: the frontier would then need ${fail.holdCost} next turn to hold, more than the next income of ${fail.income}`;
+        if (fail?.kind === 'r3') {
+          const names = refusedBonuses(st.t);
+          return names.length
+            ? `is refused by rule R3: taking it completes bonus ${names.join(', ')}, which could not be held next turn (see "completing ${names[0]} leaves …: not completed")`
+            : 'is refused by rule R3: the bonus it completes could not be held next turn';
+        }
+        if (fail?.kind === 'split')
+          return `is not planned under No-Split: ${label(fail.from)} could take it but already issues an order (one attack or transfer per territory)`;
+        if (st.from === undefined) return `cannot be reached: ${blockedText(st)}`;
+        // What the holds took before this rule ran (no capture spent anything yet).
+        const held = income - budget;
+        if (st.reach >= st.cost)
+          return `is not taken, though ${st.reach} could reach it (it needs ${st.cost}): no single source can deliver them this turn`;
+        if (held > 0 && st.reach + held >= st.cost) return `does not fit what the holds leave: ${reachText(st, held)}`;
+        return `does not fit this turn: ${reachText(st, 0)}`;
+      };
       if (taken) {
         rationale.push(`Take ${label(taken.t)} though no planned capture is economic: ${why}.`);
         if (waived)
@@ -4368,26 +4511,18 @@ export function planTurn(input: PlanInput): TurnPlan {
           const fail = failed.get(closer.t);
           rationale.push(
             `${bonusName(closer.id)} has fewer armies to finish (${closer.f.cost}), but ${
-              fail !== undefined && fail !== 'size'
+              fail?.kind === '4d'
                 ? `rule 4d's frontier stop refuses ${label(closer.t)}`
-                : closer.from === undefined
-                  ? `${label(closer.t)} cannot be reached: ${reachText(closer, 0)}`
+                : fail?.kind === 'r3' || fail?.kind === 'split' || closer.from === undefined
+                  ? `${label(closer.t)} ${failText(closer, fail)}`
                   : `${label(closer.t)} needs ${closer.cost} and at most ${closer.reach} can reach it this turn`
             }.`,
           );
         }
       } else if (steps[0]) {
         const top = steps[0];
-        const fail = failed.get(top.t);
         const head = `Standing still: no capture is planned, and the cheapest expansion (${label(top.t)}, ${top.cost} armies, toward bonus ${bonusName(top.id)})`;
-        // What the holds took before this rule ran (no capture spent anything yet).
-        const held = income - budget;
-        let tail: string;
-        if (fail !== undefined && fail !== 'size')
-          tail = `is refused by rule 4d's frontier stop: the frontier would then need ${fail.holdCost} next turn to hold, more than the next income of ${fail.income}.`;
-        else if (held > 0 && (top.from === undefined || top.reach + held >= top.cost))
-          tail = `does not fit what the holds leave: ${reachText(top, held)}.`;
-        else tail = `does not fit this turn: ${reachText(top, 0)}.`;
+        const tail = `${failText(top, failed.get(top.t))}.`;
         warnings.push(`${head} ${tail}`);
       }
     }
