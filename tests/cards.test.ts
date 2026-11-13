@@ -217,6 +217,14 @@ describe('chooseCardPlays', () => {
     expect(c.discards).toEqual([]);
   });
 
+  it('says it plays an Order Priority because it must go, not because the plan advises it', () => {
+    const c = chooseCardPlays([op, r()], { maxCardsHold: 1, inPlay: [] });
+    expect(c.warnings).toContain(
+      'You hold 2 cards (the limit is 1), so 1 must be played or discarded this turn. Playing Order Priority because it is ' +
+        'the card that must go (a play costs nothing a discard would keep), whatever the plan advises for it.',
+    );
+  });
+
   it('a Reinforcement play satisfies the hold limit', () => {
     const c = chooseCardPlays([op, r(5), bl], { maxCardsHold: 2, inPlay: [] });
     expect(c.plays).toEqual([r(5)]);

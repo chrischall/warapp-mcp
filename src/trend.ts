@@ -12,7 +12,8 @@
 // Beside the boards, the same file keeps the orders this server sent for a turn
 // (`warapp_submit_turn`, #119): my own orders are measurements of what an opponent
 // deployed (analysis/opponents.ts `measureOrders`). Orders sent from the web client
-// stay unknown, which changes nothing.
+// stay unknown, which changes nothing; a confirmed `warapp_uncommit_turn` drops the
+// turn's cached orders, so a resend from the web client does not leave them standing.
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { boardFromStanding, type BoardState, type TerritoryState } from './board.js';
@@ -250,6 +251,24 @@ export async function writeOrdersCache(
     const kept: Record<string, MyOrders> = {};
     for (const n of newestTurns(all)) kept[String(n)] = all[String(n)] as MyOrders;
     await writeCache(dir, { gameId, playerId, turns: cache.turns as Record<string, BoardState>, orders: kept });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Forget the orders cached for turn `turn` of `gameId` as `playerId` (they were withdrawn with
+ * warapp_uncommit_turn, so they may never run and no longer measure that turn), keeping every
+ * other turn and every board. Writes nothing when none are cached. Never throws.
+ */
+export async function dropOrdersCache(dir: string, gameId: number, playerId: number, turn: number): Promise<boolean> {
+  try {
+    const cache = await readCache(dir, gameId, playerId);
+    if (!(String(turn) in cache.orders)) return true;
+    const orders = { ...cache.orders } as Record<string, MyOrders>;
+    delete orders[String(turn)];
+    await writeCache(dir, { gameId, playerId, turns: cache.turns as Record<string, BoardState>, orders });
     return true;
   } catch {
     return false;

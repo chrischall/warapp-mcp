@@ -14,6 +14,7 @@ import {
   readCachedOrders,
   writeBoardCache,
   writeOrdersCache,
+  dropOrdersCache,
 } from '../src/trend.js';
 
 // Synthetic GameFeed ids: the in-game id wrapped in two check digits each end.
@@ -220,6 +221,22 @@ describe('orders cache (#119: my own orders as measurements)', () => {
     expect(await readCachedOrders(dir, 43, ANN.id)).toEqual(new Map());
     await writeBoardCache(dir, 42, BOB.id, 5, board);
     expect(await readCachedOrders(dir, 42, ANN.id)).toEqual(new Map());
+  });
+
+  it('drops one turn\'s orders (an uncommit), keeping the other turns and the boards', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    await writeBoardCache(dir, 42, ANN.id, 4, board);
+    await writeOrdersCache(dir, 42, ANN.id, 3, orders(3));
+    await writeOrdersCache(dir, 42, ANN.id, 4, orders(4));
+    expect(await dropOrdersCache(dir, 42, ANN.id, 4)).toBe(true);
+    expect(await readCachedOrders(dir, 42, ANN.id)).toEqual(new Map([[3, orders(3)]]));
+    expect(await readBoardCache(dir, 42, ANN.id, 4)).toEqual(board);
+    // Nothing cached for that turn, game or player: nothing to drop, and no file is written.
+    expect(await dropOrdersCache(dir, 42, ANN.id, 9)).toBe(true);
+    expect(await dropOrdersCache(dir, 43, ANN.id, 4)).toBe(true);
+    expect(existsSync(boardCachePath(dir, 43))).toBe(false);
+    expect(await dropOrdersCache(dir, 42, BOB.id, 3)).toBe(true);
+    expect(await readCachedOrders(dir, 42, ANN.id)).toEqual(new Map([[3, orders(3)]]));
   });
 
   it(`keeps the newest ${CACHED_TURNS} turns of orders`, async () => {

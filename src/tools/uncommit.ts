@@ -17,6 +17,7 @@ import { parseGameId } from '../client.js';
 import type { Game, Player } from '../normalize.js';
 import { Method, writeUnCommitParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
+import { dropOrdersCache } from '../trend.js';
 import { gameIdArg, respond, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { signedInHint } from './session.js';
 import { mintMeta, withToolConfig } from './hints.js';
@@ -192,6 +193,9 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
             }
             const seat = after.players.find((p) => p.id === me);
             if (seat && !seat.hasCommittedOrders) {
+              // The orders cached when they were sent (#119) may never run now: a resend from the web
+              // client would leave them standing in for that turn, so they are forgotten.
+              if (ctx.dataDir && turn !== null) await dropOrdersCache(ctx.dataDir, gameId, me, turn);
               return {
                 status: 'uncommitted' as const,
                 ...base,

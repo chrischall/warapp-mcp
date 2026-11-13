@@ -256,7 +256,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it;
   my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
   deploys and moves it sent beside the boards, and `boardHistory` attaches them as
-  `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing),
+  `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing;
+  `warapp_uncommit_turn` drops the turn's cached orders once the withdrawal is confirmed),
   unexplained armies (earned since first seen − visible army change − visible losses − likely
   combat deaths) and inferred bonuses (combinations of up to three bonuses it could hold that
   best fit the income gap, within reach and affordable, none listed when too many fit — see the
@@ -303,7 +304,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     still mine. Order Priority moves only that first order ahead of the opponent's first, so the
     plan sets `cardAdvice: 'order-priority'` only when I hold one (`holdsOrderPriority`), I am
     not known to move first (`movesFirst`), and the order it protects carries at least
-    `ORDER_PRIORITY_MIN_ARMIES` (#127). The planner never plays cards itself;
+    `ORDER_PRIORITY_MIN_ARMIES` (#127; waived by `orderPriorityForced`, when the hand is over the
+    limit and the card is played anyway). The protected order is checked against the schedule:
+    if a move it depends on runs first, that move is my first order and the card is judged for
+    it; a strike is protected only when rule 1s advised the card for it (my commander
+    threatened), never because a withdrawal did. The planner never plays cards itself;
     `warapp_plan_turn` adds the Order Priority I hold to `orders` when `cardAdvice` asks for it.
   - **Move order (#127).** Orders zigzag (the first mover's 1st, the other's 1st and 2nd, …), so
     the plan's `moves` are scheduled last (`src/analysis/schedule.ts`): the protected order, then

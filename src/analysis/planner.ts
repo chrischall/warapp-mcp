@@ -648,8 +648,10 @@
 //  7. Move order (#127; every goal, last). Orders zigzag — the first mover's 1st, the other's
 //     1st and 2nd, the first mover's 2nd and 3rd, … — so `moves` is scheduled
 //     (`scheduleMoves`, src/analysis/schedule.ts), earliest first: the one order Order Priority
-//     protects (the strike, rule 1s; else the move out of a conceded border carrying the most
-//     armies, which is my first order whether or not the card is advised); withdrawals, attacks
+//     protects (the strike, when rule 1s advised the card for it; else the move out of a conceded
+//     border carrying the most armies, which is my first order whether or not the card is
+//     advised — and if a move it depends on must run before it, that move is my first order
+//     instead, and the card is judged for it); withdrawals, attacks
 //     out of a conceded border and transfers into a territory facing a visible enemy at the start
 //     of the turn; attacks on a player sized for its owner's whole deploy (rules 1e, 1s, 3's #120
 //     sizing) and neutral captures another player can reach whose survivors (sent less the
@@ -892,6 +894,12 @@ export interface PlanOptions {
    * move out of a conceded border worth a card, too (rule 7, #127). Without it no card is advised.
    */
   holdsOrderPriority?: boolean;
+  /**
+   * The Order Priority I hold is played this turn anyway (the hand is over the card limit and it
+   * must go): it costs nothing, so rule 7 advises it for a move out of a conceded border however
+   * few armies that saves (ORDER_PRIORITY_MIN_ARMIES does not apply).
+   */
+  orderPriorityForced?: boolean;
   /**
    * I move first this turn (#127): the caller knows it (Cycle and No-Luck Cycle swap the first
    * mover every turn). My first order then already runs before the opponent's first, so
@@ -7722,11 +7730,14 @@ export function planTurn(input: PlanInput): TurnPlan {
     });
     return b !== null && (toTake(stayAt(c) + unitsAt(c)) ?? Infinity) <= b.threat;
   });
+  /** The threat to my commander, not a withdrawal, advised Order Priority for the strike (rule 1s). */
+  let strikeCard = false;
+  const strikeWho = [...struck].sort(byNum).map((p) => `player ${p}`).join(' and ');
   if (struck.size && commanderThreatened) {
     const where = [...myCommanders].map(label).join(', ');
-    const who = [...struck].sort(byNum).map((p) => `player ${p}`).join(' and ');
+    const who = strikeWho;
     if (opts.holdsOrderPriority) {
-      cardAdvice = 'order-priority';
+      strikeCard = true;
       rationale.push(
         `Play Order Priority: my commander's territory ${where} is threatened this turn by what is left on it after this turn's orders, and with the card my attacks resolve first, so the strike on ${who}'s commander lands before its attacks.`,
       );
@@ -7863,44 +7874,12 @@ export function planTurn(input: PlanInput): TurnPlan {
   // Orders zigzag (the first mover's 1st, the other's 1st and 2nd, …), so the place of a move in
   // the list decides what it meets. One order is protected when Order Priority is advised.
   const CONCEDED_ORDER = /; play Order Priority so it goes first\.$/;
-  const outOfConceded = moves.filter((m) => conceded.has(m.from) && !strikes.has(m.to));
-  let firstOrder: PlannedMove | undefined;
-  /** Why Order Priority is not advised for the protected move out of a conceded border, if not. */
-  let why: string | undefined;
-  if (struck.size && cardAdvice === 'order-priority') {
-    firstOrder = moves.find((m) => m.kind === 'attack' && strikes.has(m.to));
-    if (opts.movesFirst) {
-      cardAdvice = null;
-      rationale.push("Order Priority is not needed for the strike: I move first this turn, so my first order already runs before any of the opponent's.");
-    }
-  } else if (outOfConceded.length) {
-    // The one order the card protects: the move out of a conceded border carrying the most armies.
-    firstOrder = [...outOfConceded].sort((a, b) => b.armies - a.armies || a.from - b.from || a.to - b.to)[0]!;
-    // Order Priority moves only my first order ahead of the opponent's first: spend the card only
-    // when the order it protects saves enough, when I hold one, and when I do not move first anyway.
-    const n = firstOrder.armies;
-    why = opts.movesFirst
-      ? "I move first this turn, so my first order already runs before any of the opponent's"
-      : !opts.holdsOrderPriority
-        ? 'I hold no Order Priority card to play'
-        : n < ORDER_PRIORITY_MIN_ARMIES
-          ? `it saves only ${n} ${n === 1 ? 'army' : 'armies'}, under the ${ORDER_PRIORITY_MIN_ARMIES} a card is worth`
-          : undefined;
-    cardAdvice = why === undefined ? 'order-priority' : null;
-  } else if (!struck.size) cardAdvice = null;
-  // Each move out of a conceded border says where it stands: the protected first order, or early
-  // but possibly too late (the card protects one order only).
-  const top = firstOrder && outOfConceded.includes(firstOrder) ? label(firstOrder.from) : undefined;
-  for (let i = 0; i < warnings.length; i++) {
-    if (!CONCEDED_ORDER.test(warnings[i]!)) continue;
-    const head = warnings[i]!.replace(CONCEDED_ORDER, '');
-    const isTop = top !== undefined && (head.startsWith(`The withdrawal from ${top} only`) || head.startsWith(`The attack out of ${top} only`));
-    warnings[i] = !isTop
-      ? `${head}; it is listed early, but only my first order can run before the opponent's first, so it may come too late.`
-      : why === undefined
-        ? `${head}; play Order Priority: it is my first order, and the card runs it before the opponent's first.`
-        : `${head}; it is my first order (Order Priority not advised: ${why}).`;
-  }
+  /** The strike Order Priority protects (rule 1s), when the threat to my commander advised the card. */
+  const strikeOrder = strikeCard ? moves.find((m) => m.kind === 'attack' && strikes.has(m.to)) : undefined;
+  const outOfConceded = moves.filter((m) => conceded.has(m.from) && m !== strikeOrder);
+  /** My first order: the one Order Priority would protect. Checked against the schedule below. */
+  let firstOrder: PlannedMove | undefined =
+    strikeOrder ?? [...outOfConceded].sort((a, b) => b.armies - a.armies || a.from - b.from || a.to - b.to)[0];
   /** The visible stacks of one player next to `t` plus its deploy: what can reach `t` this turn. */
   const reachOf = (t: number) => {
     const byPlayer = new Map<number, number>();
@@ -7956,8 +7935,57 @@ export function planTurn(input: PlanInput): TurnPlan {
     );
   }
   const decided = [...moves];
-  const scheduled = scheduleMoves(decided, slotOf);
+  let scheduled = scheduleMoves(decided, slotOf);
+  if (firstOrder && scheduled[0] !== firstOrder) {
+    // A move it depends on (one into its source, say) must run before it, so it is not my first
+    // order, and the card protects only that one: my first order is whatever the schedule puts first.
+    const head = scheduled[0]!;
+    if (firstOrder === strikeOrder) {
+      const r = rationale.findIndex((l) => l.startsWith("Play Order Priority: my commander's territory"));
+      if (r >= 0) rationale.splice(r, 1);
+      warnings.push(
+        `The strike on ${strikeWho}'s commander cannot be my first order: ${label(head.from)} → ${label(head.to)} must run before it, so Order Priority would not make it land before ${strikeWho}'s attacks on my commander's territory.`,
+      );
+    }
+    firstOrder = outOfConceded.includes(head) ? head : undefined;
+    lastWhy.clear();
+    scheduled = scheduleMoves(decided, slotOf);
+  }
   moves.splice(0, moves.length, ...scheduled);
+  // Order Priority moves only my first order ahead of the opponent's first: spend the card only
+  // for that order — the strike rule 1s advised it for, else a move out of a conceded border that
+  // saves enough — when I hold one, and when I do not move first anyway.
+  /** Why Order Priority is not advised for the protected first order, if not. */
+  let why: string | undefined;
+  if (!firstOrder) cardAdvice = null;
+  else {
+    const n = firstOrder.armies;
+    why = opts.movesFirst
+      ? "I move first this turn, so my first order already runs before any of the opponent's"
+      : firstOrder === strikeOrder
+        ? undefined
+        : !opts.holdsOrderPriority
+          ? 'I hold no Order Priority card to play'
+          : n < ORDER_PRIORITY_MIN_ARMIES && !opts.orderPriorityForced
+            ? `it saves only ${n} ${n === 1 ? 'army' : 'armies'}, under the ${ORDER_PRIORITY_MIN_ARMIES} a card is worth`
+            : undefined;
+    cardAdvice = why === undefined ? 'order-priority' : null;
+    if (firstOrder === strikeOrder && opts.movesFirst)
+      rationale.push("Order Priority is not needed for the strike: I move first this turn, so my first order already runs before any of the opponent's.");
+  }
+  // Each move out of a conceded border says where it stands: the protected first order, or early
+  // but possibly too late (the card protects one order only).
+  const top = firstOrder && conceded.has(firstOrder.from) ? label(firstOrder.from) : undefined;
+  for (let i = 0; i < warnings.length; i++) {
+    if (!CONCEDED_ORDER.test(warnings[i]!)) continue;
+    const head = warnings[i]!.replace(CONCEDED_ORDER, '');
+    const isTop = top !== undefined && (head.startsWith(`The withdrawal from ${top} only`) || head.startsWith(`The attack out of ${top} only`));
+    warnings[i] = !isTop
+      ? `${head}; it is listed early, but only my first order can run before the opponent's first, so it may come too late.`
+      : why === undefined
+        ? `${head}; play Order Priority: it is my first order, and the card runs it before the opponent's first.`
+        : `${head}; it is my first order (Order Priority not advised: ${why}).`;
+  }
   const lasts = scheduled.filter((m) => lastWhy.has(m)).map((m) => lastWhy.get(m)!);
   if (lasts.length || scheduled.some((m, i) => m !== decided[i])) {
     rationale.push(

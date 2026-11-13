@@ -519,6 +519,17 @@ describe('planTurn — value-aware defence', () => {
     );
   });
 
+  it('(a) #127: an Order Priority the card limit plays anyway is advised for a small withdrawal too', () => {
+    // As above, but the hand is over the limit and the card must go: it costs nothing, so it
+    // protects the withdrawal however few armies it saves.
+    const p = planTurn({ graph: ag, board: board([mine(1, 4), mine(2, 1), mine(3, 4), neutral(4, 2), fogged(5), enemy(9, 50)]), me: ME, income: 35, settings: STD, options: { goal: 'defend', enemyDeploy: 38, holdsOrderPriority: true, orderPriorityForced: true } });
+    expect(p.moves[0]).toEqual(expect.objectContaining({ from: 1, to: 2, armies: 3, kind: 'transfer' }));
+    expect(p.cardAdvice).toBe('order-priority');
+    expect(p.warnings).toContain(
+      "The withdrawal from T1 (#1) only executes if T1 (#1) is still mine when the order runs; play Order Priority: it is my first order, and the card runs it before the opponent's first.",
+    );
+  });
+
   it('(a) #127: Order Priority is not advised when I move first this turn', () => {
     const p = planTurn({ graph: ag, board: board([mine(1, 15), mine(2, 1), mine(3, 4), neutral(4, 2), fogged(5), enemy(9, 50)]), me: ME, income: 35, settings: STD, options: { goal: 'defend', enemyDeploy: 38, holdsOrderPriority: true, movesFirst: true } });
     expect(p.moves[0]).toEqual(expect.objectContaining({ from: 1, to: 2, armies: 14, kind: 'transfer' }));

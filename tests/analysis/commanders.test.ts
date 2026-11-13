@@ -539,6 +539,39 @@ describe('planner: commander rules after review (C2b, #61)', () => {
     });
   });
 
+  describe('a strike planned, my commander not threatened, and a withdrawal (rule 7 gates the card)', () => {
+    // My commander on T1 (26) strikes player 20's commander on T2 (0); T7 (8) faces player 20's
+    // T8 (200), is conceded, and withdraws into T1. The strike moves out of T1, so it waits on
+    // the withdrawal: the withdrawal is my first order, and only rule 7 decides the card.
+    const gw = buildGraph(makeMap([1, 2, 3, 5, 7, 8], [[1, 2], [1, 3], [2, 5], [1, 7], [7, 8]]));
+    const bw = board(
+      [withCommander(mine(1, 26), ME), withCommander(enemy(2, 0), ENEMY), neutral(3, 1), enemy(5, 3), mine(7, 8), enemy(8, 200)],
+      true,
+    );
+    const plan = (holdsOrderPriority: boolean) =>
+      planTurn({ graph: gw, board: bw, me: ME, income: 5, settings: STD, options: { goal: 'balanced', holdsOrderPriority } });
+
+    it('advises no card I do not hold, and calls the withdrawal my first order', () => {
+      const p = plan(false);
+      expect(attacks(p).some((m) => m.from === 1 && m.to === 2)).toBe(true);
+      expect(p.moves[0]).toMatchObject({ from: 7, to: 1, kind: 'transfer' });
+      expect(p.cardAdvice).toBeNull();
+      expect(p.warnings).toContain(
+        'The withdrawal from T7 (#7) only executes if T7 (#7) is still mine when the order runs; it is my first order (Order Priority not advised: I hold no Order Priority card to play).',
+      );
+      expect(p.warnings.some((w) => w.includes('may come too late'))).toBe(false);
+    });
+
+    it('with the card, advises it for the withdrawal it protects', () => {
+      const p = plan(true);
+      expect(p.moves[0]).toMatchObject({ from: 7, to: 1, kind: 'transfer' });
+      expect(p.cardAdvice).toBe('order-priority');
+      expect(p.warnings).toContain(
+        "The withdrawal from T7 (#7) only executes if T7 (#7) is still mine when the order runs; play Order Priority: it is my first order, and the card runs it before the opponent's first.",
+      );
+    });
+  });
+
   it('names the reserve only when it, not a source\'s keep, is what stops the strike', () => {
     // My commander on T1 (3) needs 5 against player 30's T5 (~24): reserved first. T3 (25) is
     // next to player 20's commander on T2 (0: 20 to kill) and keeps 11 against player 40's T6

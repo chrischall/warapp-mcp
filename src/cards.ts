@@ -272,6 +272,14 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
     const byValue = rest.map((c, i) => ({ c, i })).sort((a, b) => keepValue(a.c) - keepValue(b.c) || a.i - b.i);
     for (const { c } of byValue.slice(0, shed - plays.length)) (c.type === CARD_ORDER_PRIORITY ? plays : discards).push(c);
   }
+  const forced = plays.filter((c) => c.type === CARD_ORDER_PRIORITY);
+  if (forced.length) {
+    warnings.push(
+      `You hold ${hand.length} cards (the limit is ${rules.maxCardsHold}), so ${shed} must be played or discarded this ` +
+        `turn. Playing Order Priority because it is the card that must go (a play costs nothing a discard would keep), ` +
+        'whatever the plan advises for it.',
+    );
+  }
   if (discards.length) {
     warnings.push(
       `You hold ${hand.length} cards (the limit is ${rules.maxCardsHold}), so ${shed} must be played or discarded this ` +
@@ -280,6 +288,11 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
     );
   }
   return { required: shed > 0, plays, discards, extraArmies, warnings };
+}
+
+/** Whether the chosen plays spend an Order Priority card anyway (the hand is over the limit and it must go). */
+export function playsOrderPriority(choice: CardChoice): boolean {
+  return choice.plays.some((c) => c.type === CARD_ORDER_PRIORITY);
 }
 
 /**
