@@ -226,8 +226,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
    plan's warnings for assumed settings: luck, rounding, Local Deployment, No-Split, overridden
    bonuses and commanders.
 5. **The overall shape.** The planner is single-turn: it charges each capture for the frontier
-   it adds and, in a 1v1, breaks probable enemy bonuses and builds a strike stack, but it does not
-   plan a campaign over several turns. In an FFA it never concentrates on one front and avoids
+   it adds, commits to the bonus closest to completion until one is held (keeping last turn's
+   unless another is strictly closer) and, in a 1v1, breaks probable enemy bonuses and builds a
+   strike stack, but it does not plan a campaign over several turns. In an FFA it never concentrates on one front and avoids
    second fronts; judge yourself when a leader must be attacked.
 
 Every ~3 turns, step back and compare income trends (yours vs each opponent), frontier vs

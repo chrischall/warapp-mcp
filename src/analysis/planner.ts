@@ -346,6 +346,16 @@
 //     when nothing fits, a warning names that capture. Army cap (`armyCap`, × income): when my
 //     armies after deploy exceed cap × income, armies above it are wasted, so the same fallback
 //     fires in any phase, and the rationale says so. The cap's cut to income is not modelled.
+//  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, and
+//     in the opening and expansion phases, completions and advances keep the slots their scores
+//     give them (rules 4, 4a) but fill them closest to completion first: fewest turns to finish at
+//     this income (armies to finish, counting the members I hold, over the income), so a farther
+//     bonus gets only armies the closer ones cannot use; bonuses as close as each other keep the
+//     score order. Given `previousBoard`, a bonus advanced last turn (a member captured since) keeps
+//     priority unless another is strictly closer; the rationale lists the order and says which
+//     kept or gave way. Armies to finish count every missing member: a fogged one at its bonus's
+//     costliest visible missing member (counted as free before, the figure jumped when it came into
+//     view), named in every "N armies to finish".
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border: it goes to the held border with the highest
 //     protected value still short of COMFORT_MARGIN × its threat (counting armies
@@ -1146,6 +1156,10 @@ interface BonusPlan {
   net: number;
   /** The frontier its missing members add, in armies (rule 4d; negative when it closes gaps). */
   frontier: number;
+  /** Missing members in the fog (#101), each counted in `cost` at `fogEach` armies. */
+  fogged: number;
+  /** The armies each fogged member counts for: its bonus's costliest visible missing member. */
+  fogEach: number;
 }
 
 export function planTurn(input: PlanInput): TurnPlan {
@@ -2421,9 +2435,13 @@ export function planTurn(input: PlanInput): TurnPlan {
   const startHold = () => frontierOf(mineSet, armiesOf).holdCost;
 
   // ---- bonus scoring ----
+  /** "N armies to finish", naming the fogged members counted in it (#101). */
+  const fogNote = (fogged: number, each: number) =>
+    fogged ? ` (${fogged} fogged member${fogged === 1 ? '' : 's'} counted at ${each} each)` : '';
+  const toFinish = (cost: number, fogged: number, each: number) => `${cost} armies to finish${fogNote(fogged, each)}`;
   const plans: BonusPlan[] = [];
   /** Every positive bonus worth completing (net > 0) still missing members: its armies to finish (rule 4e). */
-  const finishCost = new Map<number, { cost: number; value: number; net: number }>();
+  const finishCost = new Map<number, { cost: number; value: number; net: number; fogged: number; fogEach: number }>();
   const economicMember = new Set<number>();
   const uneconomicMember = new Set<number>();
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
@@ -2454,22 +2472,31 @@ export function planTurn(input: PlanInput): TurnPlan {
         rationale.push(`Skip bonus ${b.name} (#${b.id}): completing it costs more income than it pays (net ${net}).`);
       continue;
     }
+    // Armies to finish (#101): every missing member's capture cost. A fogged member counts at its
+    // bonus's costliest visible missing member (it cannot be costed, and counting it as free made
+    // the figure jump when it came into view); with none visible, the bonus cannot be costed.
     let cost = 0;
     let worst = 0;
+    let fogged = 0;
     for (const t of remaining) {
       const st = state.get(t);
-      if (!st || st.owner.kind === 'unknown' || st.armies === null) continue;
+      if (!st || st.owner.kind === 'unknown' || st.armies === null) {
+        fogged++;
+        continue;
+      }
       const c = costOf(defenceAt(t)) ?? Infinity;
       cost += c;
       worst = Math.max(worst, c);
     }
-    if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net });
+    const fogEach = fogged ? (fogged < remaining.length ? worst : Infinity) : 0;
+    cost += fogged * fogEach;
+    if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach });
     const economic = isFocus || (cost <= PAYBACK_TURNS * net && worst <= WASTELAND_FACTOR * net);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
     if (!economic) {
       rationale.push(
-        `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${cost} armies to finish, ${worst} for its costliest territory).`,
+        `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${toFinish(cost, fogged, fogEach)}, ${worst} for its costliest territory).`,
       );
       continue;
     }
@@ -2508,6 +2535,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       defenseCost,
       net,
       frontier,
+      fogged,
+      fogEach,
     });
   }
   const ratio = (p: BonusPlan) => {
@@ -2519,6 +2548,69 @@ export function planTurn(input: PlanInput): TurnPlan {
       Number(b.focus) - Number(a.focus) || ratio(b) - ratio(a) || a.borders - b.borders || a.bonusId - b.bonusId,
   );
   const bonusName = (id: number) => `${g.bonusById.get(id)!.name} (#${id})`;
+
+  // ---- #101: commit to the closest bonus ----
+  // While no bonus is held (and in the opening and expansion phases), expansion goes to the bonus
+  // closest to completion — fewest turns to finish at this income (its armies to finish, counting
+  // the members I hold, over the income) — then the next closest, instead of one capture into each
+  // of several large bonuses by value per army. Bonuses as close as each other keep the score order
+  // (value per army, rule 4), except that a bonus advanced last turn (a member captured since
+  // `previousBoard`) keeps priority unless another is strictly closer. Focused bonuses come first.
+  const holdsBonus = g.map.bonuses.some((b) => {
+    const ts = bonusTs.get(b.id)!;
+    return b.value > 0 && ts.length > 0 && ts.every((t) => mineSet.has(t));
+  });
+  const committing = !holdsBonus || profile.phase === 'opening' || profile.phase === 'expansion';
+  const advancedLast = new Set<number>();
+  if (input.previousBoard) {
+    const before = new Map(input.previousBoard.territories.map((t) => [t.territoryId, t]));
+    for (const p of plans) {
+      const took = bonusTs.get(p.bonusId)!.some((t) => {
+        const o = before.get(t)?.owner;
+        return mineSet.has(t) && o !== undefined && o.kind !== 'unknown' && !(o.kind === 'player' && o.playerId === me);
+      });
+      if (took) advancedLast.add(p.bonusId);
+    }
+  }
+  /** Turns to finish a bonus at this income (with no income, its armies to finish). */
+  const turnsOf = (p: BonusPlan) => (income > 0 ? Math.ceil(p.cost / income) : p.cost);
+  const scoreRank = new Map(plans.map((p, i) => [p.bonusId, i]));
+  /** Bonus plans closest to completion first (focus first; ties: advanced last turn, then the score order). */
+  const byCloseness = committing
+    ? [...plans].sort(
+        (a, b) =>
+          Number(b.focus) - Number(a.focus) ||
+          turnsOf(a) - turnsOf(b) ||
+          Number(advancedLast.has(b.bonusId)) - Number(advancedLast.has(a.bonusId)) ||
+          scoreRank.get(a.bonusId)! - scoreRank.get(b.bonusId)!,
+      )
+    : plans;
+  const turnsText = (p: BonusPlan) => {
+    const n = turnsOf(p);
+    return income > 0 ? `${n} turn${n === 1 ? '' : 's'}` : 'no income';
+  };
+  if (committing && byCloseness.length > 1) {
+    const why = holdsBonus ? `${profile.phase[0]!.toUpperCase()}${profile.phase.slice(1)} phase` : 'No bonus held';
+    rationale.push(
+      `${why}: expansion goes to the bonus closest to completion first — ${byCloseness
+        .map(
+          (p, i) =>
+            `${bonusName(p.bonusId)} ${i ? p.cost : `${p.cost} armies to finish`}${fogNote(p.fogged, p.fogEach)}, ${turnsText(p)}${i || income <= 0 ? '' : ` at income ${income}`}`,
+        )
+        .join(', ')} — and a farther bonus gets only armies the closer ones cannot use.`,
+    );
+    const top = byCloseness.find((p) => !p.focus);
+    for (const p of byCloseness.filter((x) => advancedLast.has(x.bonusId))) {
+      if (p === top)
+        rationale.push(
+          `${bonusName(p.bonusId)} keeps priority: I advanced it last turn, and no bonus is strictly closer to completion.`,
+        );
+      else if (top && !p.focus && turnsOf(top) < turnsOf(p))
+        rationale.push(
+          `${bonusName(p.bonusId)}, advanced last turn, gives way to ${bonusName(top.bonusId)}: it is strictly closer to completion (${turnsText(top)} to finish against ${turnsText(p)}).`,
+        );
+    }
+  }
   /**
    * A break's retake check, by its target: the warning it raised (if any) and what it was
    * judged on, so a top-up that adds survivors re-judges it.
@@ -2957,7 +3049,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const stepping = !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
       if (stepping === null) continue;
       const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
-      const reason = stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${p.cost} to finish)`;
+      const reason = stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${toFinish(p.cost, p.fogged, p.fogEach)})`;
       if (tryExpand(t, reason)) {
         anchor ??= moves[moves.length - 1]!.from;
         if (stepping) {
@@ -3886,6 +3978,16 @@ export function planTurn(input: PlanInput): TurnPlan {
         rank[a.kind] - rank[b.kind] ||
         a.id - b.id,
     );
+    // #101: completions and advances keep the slots their scores give them, but fill them
+    // closest to completion first.
+    if (committing) {
+      const order = new Map(byCloseness.map((p, i) => [p.bonusId, i]));
+      for (const kind of ['complete', 'advance'] as const) {
+        const slots = candidates.flatMap((c, i) => (c.kind === kind ? [i] : []));
+        const sorted = slots.map((i) => candidates[i]!).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+        slots.forEach((i, k) => (candidates[i] = sorted[k]!));
+      }
+    }
     // A held-bonus unit that pays for itself is funded before any capture that completes
     // no bonus (an advance or a break, unless focused): at the first such capture, every
     // unit still pending runs first, with the completions that outscore the weakest of them.
@@ -3959,8 +4061,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     reconsider();
     withdraw();
   } else {
-    for (const p of plans) complete(p);
-    for (const p of plans) advance(p);
+    for (const p of byCloseness) complete(p);
+    for (const p of byCloseness) advance(p);
     reconsider();
     if (acting) withdraw();
   }
@@ -4018,7 +4120,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const taken = steps.find(({ t, id, f }) =>
         tryExpand(
           t,
-          `cheapest expansion toward bonus ${bonusName(id)} (+${f.value}, ${f.cost} armies to finish, the fewest of any bonus in reach)`,
+          `cheapest expansion toward bonus ${bonusName(id)} (+${f.value}, ${toFinish(f.cost, f.fogged, f.fogEach)}, the fewest of any bonus in reach)`,
         ),
       );
       if (taken) rationale.push(`Take ${label(taken.t)} though no planned capture is economic: ${why}.`);

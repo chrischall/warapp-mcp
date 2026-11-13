@@ -438,6 +438,6 @@ describe('negative bonuses (#70): reasons and warnings name the right cause', ()
       settings: STD,
     });
     expect(attacks(p).map((m) => m.to)).toEqual([11]);
-    expect(attacks(p)[0]!.reason).toMatch(/^advances bonus Sea \(#600\) \(\+22, net \+14, \d+ to finish\)$/);
+    expect(attacks(p)[0]!.reason).toMatch(/^advances bonus Sea \(#600\) \(\+22, net \+14, \d+ armies to finish\)$/);
   });
 });

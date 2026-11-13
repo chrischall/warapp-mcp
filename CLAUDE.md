@@ -209,6 +209,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     attacks it on top of its hold (hold + capture deployed there, so it still holds if the
     member is reinforced and the attack fails); unable to afford both, it just holds — never
     a capture instead of the hold. `defend` holds first, `expand` never attacks players.
+  - **Commit to the closest bonus (#101, rule 4f).** While no bonus is held, and in the opening
+    and expansion phases, completions and advances go to the bonus fewest turns from completion
+    first (equally close ones by score); a bonus advanced last turn keeps priority unless another
+    is strictly closer. "N armies to finish" counts fogged members at the bonus's costliest
+    visible missing member.
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin, else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border).
