@@ -2,7 +2,7 @@
 // visible threats. Pure: consumes a source-agnostic BoardState only.
 
 import type { BoardState, TerritoryOwner, TerritoryState } from '../board.js';
-import type { GameSettings } from '../normalize.js';
+import type { Bonus, GameSettings } from '../normalize.js';
 import { bonusTerritories } from './bonuses.js';
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from './combat.js';
 import { neighborsOf, type MapGraph } from './graph.js';
@@ -42,6 +42,30 @@ export interface IncomeRules {
   per: number;
 }
 
+interface BonusMembers {
+  bonus: Bonus;
+  /** Its territories, member bonuses flattened ({@link bonusTerritories}). */
+  territories: readonly number[];
+}
+const inIdOrder = new WeakMap<MapGraph, { from: readonly Bonus[]; count: number; sorted: readonly BonusMembers[] }>();
+
+/**
+ * A graph's bonuses in id order, each with its territories, remembered per graph: the pick
+ * advisor asks for the income thousands of times in one plan, and sorting a large map's bonuses
+ * and looking each one's territories up every time was a quarter of it. Built again when the
+ * map's bonus list is replaced or changes length.
+ */
+function bonusesInIdOrder(g: MapGraph): readonly BonusMembers[] {
+  const from = g.map.bonuses;
+  const hit = inIdOrder.get(g);
+  if (hit && hit.from === from && hit.count === from.length) return hit.sorted;
+  const sorted = [...from]
+    .sort((x, y) => x.id - y.id)
+    .map((bonus) => ({ bonus, territories: bonusTerritories(g, bonus.id) }));
+  inIdOrder.set(g, { from, count: from.length, sorted });
+  return sorted;
+}
+
 /**
  * THE income rule (#85): every income figure — warapp_plan_turn's income, warapp_submit_turn's
  * deploy check, warapp_analyze_board, the planner's next income and per-opponent estimate, the
@@ -59,9 +83,10 @@ export function boardIncome(g: MapGraph, held: ReadonlySet<number>, rules: Incom
   for (const t of held) if (g.territoryById.has(t)) territories++;
   const perTerritory = rules.per > 0 ? Math.floor(territories / rules.per) : 0;
   const bonuses: Income['bonuses'] = [];
-  for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
-    const ts = bonusTerritories(g, b.id);
-    if (ts.length && ts.every((t) => held.has(t))) bonuses.push({ bonusId: b.id, name: b.name, value: b.value });
+  for (const { bonus: b, territories: ts } of bonusesInIdOrder(g)) {
+    // The first territory settles most bonuses without walking the rest.
+    if (ts.length && held.has(ts[0]!) && ts.every((t) => held.has(t)))
+      bonuses.push({ bonusId: b.id, name: b.name, value: b.value });
   }
   const total = Math.max(0, territoryIncome(territories, rules.base, rules.per) + bonuses.reduce((s, b) => s + b.value, 0));
   return { base: rules.base, perTerritory, bonuses, total };

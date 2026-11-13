@@ -87,6 +87,20 @@ export function analyzeBonus(g: MapGraph, bonusId: number): BonusAnalysis | unde
   };
 }
 
+/**
+ * Each entry point of a bonus (a territory outside it next to one of its territories) with
+ * the number of its territories that entry point borders, ascending by id. One that borders
+ * two or more is a double border: a single stack there threatens several members at once.
+ * Unknown bonus → empty.
+ */
+export function entryTouches(g: MapGraph, bonusId: number): Map<number, number> {
+  const inside = new Set(bonusTerritories(g, bonusId));
+  const touches = new Map<number, number>();
+  for (const t of inside)
+    for (const n of neighborsOf(g, t)) if (!inside.has(n)) touches.set(n, (touches.get(n) ?? 0) + 1);
+  return new Map([...touches].sort((a, b) => a[0] - b[0]));
+}
+
 /** Every bonus on the map, in map order. */
 export function analyzeBonuses(g: MapGraph): BonusAnalysis[] {
   return g.map.bonuses.map((b) => analyzeBonus(g, b.id)!);

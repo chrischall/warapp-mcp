@@ -99,47 +99,79 @@ most armies is shown. It does not change this turn's `safe`.
 
 ## How picks are granted
 
-A game allows twice its territory limit in picks, but grants only the territory limit, in list
-order, skipping territories another player was granted first. The grant goes round by round in
+A pick list may be as long as players × territories per player (twice the territory limit in a
+two-player game), but a player is granted only the territory limit, in list order, skipping
+territories another player was granted first. The grant goes round by round in
 move order, the order reversing each round (a zigzag): each player in turn receives their
 highest-ranked territory still free, and a list that runs out is filled at random (Manual
-distribution, in Sources). The wiki states no maximum list length; the "twice the limit" cap
-is this server's reading and fits a two-player game. So the list is two plans: the
-first `TerritoryLimit` picks are the plan you want, the rest a fallback that still makes sense
-when some of the first ones are lost. **Encoded:** the primary group is exactly the territory
-limit and the fallback is disjoint from it, each group built by the same rule on its own: compact,
-a 1v1 included, relaxed one hop at a time, with a warning, when the remaining picks allow nothing
-tighter. The fallback is what covers a counter-pick — when the primary picks are taken, the next
-ones are granted in order from it — so in a 1v1 it goes to a different area: among equally scored
-compact fallbacks, the one farthest from the primary wins (never at the cost of its own
-compactness). A fallback that outscores the primary is warned about.
+distribution, in Sources). The wiki page states no maximum list length; players × territories per
+player is where war.app's client stops a list (`clientPickLimits`, docs/WARAPP-API.md), and a
+shorter list risks a random start. So the list
+has two parts: the first `TerritoryLimit` picks are the plan you want, and the rest are granted
+only when some of the first went to someone else. **Encoded:** the primary group is exactly the
+territory limit: compact, a 1v1 included, relaxed one hop at a time, with a warning, when the
+pickable territories allow nothing tighter. The fallback is disjoint from it, and its picks are
+scored with the primary held by someone else, since only then are they granted. With three or
+more players it is a second group built by the same rule (in tiers of the primary's size when the
+list is longer than twice the limit). In a two-player game with two to four picks each it is not
+a second plan: each fallback pick is chosen for the outcomes that grant it (heuristic 6). In the
+two-player games left over (a primary of one pick, or of five or more) it is a group again, in a
+different area: among equally scored compact fallbacks, the one farthest from the primary wins
+(never at the cost of its own compactness). A fallback that outscores the primary is warned about.
 
 ## Heuristics
 
 1. **Safety and room to grow before greed.** A pick set should not lose outright to one bad
-   draw, and every pick should have neutral territory to expand into. **Encoded in part:** each
-   group is compact by default, in a 1v1 as with more players (one cluster whose picks link up in
+   draw, and every pick should have neutral territory to expand into. **Encoded in part:** the
+   primary group (and a fallback built as a group, see above) is compact by default, in a 1v1 as
+   with more players (one cluster whose picks link up in
    steps of at most two hops, measured on the map graph `warapp_plan_route` uses) so its armies
    can support each other and the start has one front; when no compact group of the territory
    limit exists the limit relaxes one hop at a time, with a warning. A 1v1 primary spread over
    several bonuses against a counter-pick meant a frontier on each of them from turn 1, broken one
-   at a time (#73); the fallback group is the counter-pick insurance instead. A pick is
-   only worth what its own armies can capture next to it. **Not encoded:** judging whether a
-   specific opponent's likely picks would trap yours (counter-picking needs their history).
+   at a time (#73); the fallback picks are the answer to a counter-pick instead (heuristic 6). A
+   pick is only worth what its own armies can capture next to it, and a bonus only what is left of
+   it once the places an opponent may start are counted (heuristic 2). **Not encoded:** what a
+   specific opponent is likely to pick (it needs their history).
 2. **Income by turn.** Early income compounds: a bonus finished on turn 1 (a first-turn bonus,
    using the pick's starting armies plus base income) pays every turn after, and a pick that
    finishes a second bonus soon after is better still. A single-territory bonus pays at once.
+   But a bonus is income only while it stands: one an opponent can stand next to by the turn it
+   completes is attacked the turn after, and one they can stand inside never completes. A bonus
+   no pickable territory reaches in time is safe on its own; one reached through a single
+   neighbouring pickable is made safe by listing that neighbour too — granted both, it is safe,
+   and when the neighbour is not granted you know where the opponent is.
    **Encoded:** a three-turn opening simulation credits each bonus by the turns it pays out,
    flags first-turn bonuses and single-territory bonuses in the reasons. Armies attack only from
    a territory held at the start of the turn that borders the target, plus that turn's deploys;
-   armies on another pick never help, and captured armies wait a turn. Each pick's first reason
+   armies on another pick are never pooled into an attack, and captured armies wait a turn. At 0%
+   luck under straight rounding, and with No-Split off, a neutral that no single order can pay for
+   may be taken with two — a first attack that only wears it down, from the same territory or
+   from another that borders it, then one sized for what is left (at 60%/70% a 3-army neutral
+   costs 5 armies in one order, 4 as 1 and then 3); the first attack's armies do not move again
+   that turn, and each group's `twoOrderCaptures` lists where its opening relies on this. Each
+   pick's first reason
    names the bonus it anchors and when it completes (or how much of it is held by turn 3).
+   A completed bonus is then credited by who can reach it: it loses up to half its credit with
+   the chance that an opponent starts on a pickable territory whose armies stand in the bonus or
+   next to it by the turn it completes — a lone stack from that start with its base income,
+   taking one neighbour a turn at the neutrals' real sizes, so a wasteland in the way delays it.
+   The chance is 1 for a start already known to be an opponent's, and otherwise assumes their
+   remaining starts fall evenly on the pickable territories left (a simplification). A pick of
+   yours is never a threat, so a list that also holds the threatening neighbour gets the credit
+   back when both are granted; the reason names the threats, and says "safe only if you also
+   hold …" when there are one or two. Each group's bonuses carry the same list (`threats`).
 3. **Efficient bonuses.** Prefer bonuses that give the most income for the armies it takes to
    finish them, and that have few territories outside them to watch (entry points) — they are
-   cheaper to hold. **Encoded:** captures are costed exactly at the game's kill rates against the
-   neutrals' real sizes, and a bonus's worth is discounted per entry point — ×1/(1 + 0.05 ×
-   entry points × hardness), twice as steep in a 1v1 (0.1 per entry point: the one opponent finds
-   every way in), so there a bonus with few entry points wins ties against a wide one.
+   cheaper to hold. An entry point next to two of a bonus's territories (a double border) is
+   worse than one next to a single territory: one stack there threatens both at once.
+   **Encoded:** captures are costed exactly at the game's kill rates against the
+   neutrals' real sizes, and a bonus's worth is discounted by its exposure — ×1/(1 + 0.05 ×
+   exposure × hardness), where exposure counts each entry point once per territory of the bonus
+   it borders (so a double border counts twice, and a bonus without one is discounted per entry
+   point as before) — twice as steep in a 1v1 (0.1: the one opponent finds
+   every way in), so there a bonus with few entry points wins ties against a wide one. The
+   reasons and the map notes name the double borders.
 4. **Settings change the arithmetic.** Small neutrals make every neighbour cheap, so a pick
    bordering many small bonuses is strong; a wasteland inside a bonus makes it slow or not worth
    taking; harsh kill rates (e.g. 30% offence / 75% defence) make attacking players expensive, so a
@@ -155,8 +187,21 @@ compactness). A fallback that outscores the primary is warned about.
 6. **1v1: do not put everything in one basket — but do not split the start either.** Ladder
    guides for small 1v1 templates spread picks over adjacent bonuses so one counter-pick cannot
    wipe the plan; on a large multi-continent map that leaves a frontier on every continent from
-   turn 1. **Encoded:** by default a 1v1 primary is compact like any other, and the fallback, in
-   another area, is the insurance (see "How picks are granted"). Only `spread: true` on
+   turn 1. And the picks below the primary are not a second plan somewhere else: one of them is
+   granted only when the opponent holds picks above it, so it should be the best pick for a board
+   on which those are enemy starts — usually one that can fight the lost pick's bonus — while
+   still being worth holding when the opponent turns out not to be there.
+   **Encoded:** by default a 1v1 primary is compact like any other. In a two-player game with a
+   primary of two to four picks, the positions after it are filled one at a time. For each, every
+   outcome of the award order in which that position is the last one granted settles what I hold
+   and which picks above it went to the opponent; a candidate is worth my opening from there
+   less half the opponent's opening from the picks I lost, in which my picks are known threats
+   to their bonuses (heuristic 2). So a pick that reaches the bonus of a lost pick scores higher,
+   and its own bonus still counts. The best average over those outcomes is listed, and its
+   reasons say which lost picks it answers. Since those outcomes depend on the order of the
+   primary, the fallback is chosen again when the award order reorders it. With a primary of one
+   pick, or of five or more, the fallback is still a second compact group in another area (see
+   "How picks are granted"). Only `spread: true` on
    `warapp_plan_picks` restores the old rule — usually worse on large maps: a pick may join the
    primary group by anchoring a bonus no other pick anchors, even when it is not within two hops,
    but only within four, unless a group spread farther scores at least 1.5× as much (or no bounded
@@ -223,7 +268,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
 
 - **Bonuses by value per army** — each positive bonus's value over the armies it takes to capture
   every territory from neutral at the game's kill rates, luck and neutral size, with its entry
-  points (the territories outside it that touch it). **Encoded:** `src/strategy/map-notes.ts`.
+  points (the territories outside it that touch it), naming the double borders (an entry point
+  next to two or more of its territories, #166). **Encoded:** `src/strategy/map-notes.ts`.
   Wastelands and picked territories are not known from the map, so every territory is costed as
   a neutral of the settings' size (an assumption the notes state).
 - **Chokepoints** — articulation points, bridges between bonus clusters and narrow connectors

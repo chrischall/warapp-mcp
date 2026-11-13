@@ -1,10 +1,10 @@
 // Map notes: what the map itself says about strategy, computed with no extra traffic —
-// bonuses ranked by value per army to take at the game's settings, their entry points,
-// the chokepoints, and (before the opening) income targets by turn from the pick
+// bonuses ranked by value per army to take at the game's settings, their entry points (and
+// which of those are double borders, #166), the chokepoints, and (before the opening) income targets by turn from the pick
 // advisor's opening simulation over the territories the game lists as pickable (never a
 // start nobody can pick, #132). Pure and deterministic.
 
-import { analyzeBonuses } from '../analysis/bonuses.js';
+import { analyzeBonuses, entryTouches } from '../analysis/bonuses.js';
 import { findChokepoints } from '../analysis/chokepoints.js';
 import type { MapGraph } from '../analysis/graph.js';
 import {
@@ -60,6 +60,8 @@ export interface BonusEfficiency {
   valuePerArmy: number;
   /** Territories outside the bonus next to it: where it is attacked from. */
   entryPoints: Named[];
+  /** The entry points next to two or more of its territories, with how many (#166). */
+  doubleBorders: Array<Named & { touches: number }>;
 }
 
 export interface MapChokepoint {
@@ -126,6 +128,7 @@ export function mapNotes(input: MapNotesInput): MapNotes {
         armiesToTake: armies,
         valuePerArmy: round2(b.value / armies),
         entryPoints: b.entryPointIds.map(name),
+        doubleBorders: [...entryTouches(g, b.bonusId)].filter(([, k]) => k > 1).map(([id, k]) => ({ ...name(id), touches: k })),
       });
     }
     ranked.sort(
@@ -195,11 +198,15 @@ export function mapNotes(input: MapNotesInput): MapNotes {
 export function mapNotesMarkdown(mapName: string, n: MapNotes): string {
   const lines = [`# Strategy notes for the map ${mapName}`, ''];
   lines.push(`## Bonuses by value per army to take (${n.bonuses.length} of ${n.bonusesRanked})`, '');
-  for (const b of n.bonuses)
+  for (const b of n.bonuses) {
+    const double = new Map(b.doubleBorders.map((d) => [d.id, d.touches]));
+    const entry = (e: Named) =>
+      double.has(e.id) ? `${e.name} (a double border: next to ${double.get(e.id)} of its territories)` : e.name;
     lines.push(
       `- ${b.name} (+${b.value}): ${b.territories} territories, ${b.armiesToTake} armies to take, ` +
-        `${b.valuePerArmy} per army; entry points: ${b.entryPoints.map((e) => e.name).join(', ') || 'none'}`,
+        `${b.valuePerArmy} per army; entry points: ${b.entryPoints.map(entry).join(', ') || 'none'}`,
     );
+  }
   lines.push('', '## Chokepoints', '');
   for (const c of n.chokepoints)
     lines.push(`- ${c.name} (${c.reasons.join(', ')})${c.connects.length ? `: joins ${[c.bonus, ...c.connects].filter(Boolean).join(', ')}` : ''}`);
