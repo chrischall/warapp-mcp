@@ -248,8 +248,9 @@
 //     scored by its net worth (rule 4c), not its value, in every test above.
 //  4c. Net income (#70). Maps with overlapping bonuses (each sea tile a single-territory
 //     −4 bonus and a member of a +22 group) are scored by every capture's effect on
-//     income: `incomeGain` — the exact sum over every bonus whose completion status
-//     changes, the one computation `expected.nextIncome` and R3 use. A positive bonus's
+//     income: `incomeGain` — the one income rule's (`boardIncome`, #85) total after the
+//     captures less its total now (every bonus whose completion changes, per-territory
+//     armies, the 0 floor), the one computation `expected.nextIncome` and R3 use. A positive bonus's
 //     net worth is its value plus the (negative) values of the other negative bonuses its
 //     missing members complete (= value on a map without negative bonuses); net ≤ 0 is
 //     uneconomic unless focused. Completing it is all or nothing (pass 1), refused when it
@@ -1101,8 +1102,17 @@ export function planTurn(input: PlanInput): TurnPlan {
   const incomeRulesNow = { base: baseIncome, per: s.bonusArmyPer ?? 0 };
   const boardIncomeNow = boardIncome(g, mineSet, incomeRulesNow).total;
   const cardArmies = Math.max(0, Math.floor(input.cardArmies ?? 0));
-  const incomeAfter = (after: ReadonlySet<number>) =>
-    Math.max(0, income - cardArmies + boardIncome(g, after, incomeRulesNow).total - boardIncomeNow);
+  /**
+   * The income change (#70, #85) from holding `after` instead of what I held at the start: the one
+   * income rule's ({@link boardIncome}) total over `after` less its total now — every bonus whose
+   * completion changes (negative ones and superbonuses included), per-territory armies, and the
+   * floor at 0 on both sides, so a change computed below the floor is what war.app pays.
+   * Next income, R3, rule 4c's scoring and its guard all read it.
+   */
+  const incomeGain = (after: ReadonlySet<number>): number => boardIncome(g, after, incomeRulesNow).total - boardIncomeNow;
+  /** Next income after a change of `gain`: this turn's, less its card armies, moved by `gain`. */
+  const nextIncomeWith = (gain: number) => Math.max(0, income - cardArmies + gain);
+  const incomeAfter = (after: ReadonlySet<number>) => nextIncomeWith(incomeGain(after));
   const armiesOf = (id: number) => state.get(id)?.armies ?? 0;
   /** The armies the special units on `id` fight as (a commander: {@link COMMANDER_STRENGTH}). */
   const unitsAt = (id: number) => specialUnitStrength(state.get(id)?.specialUnits);
@@ -1185,12 +1195,6 @@ export function planTurn(input: PlanInput): TurnPlan {
       })
       .map((b) => b.id)
       .sort(byNum);
-  /**
-   * The exact income change from holding `after` instead of what I held at the start: the sum
-   * of every bonus whose completion status changes (negative ones and superbonuses included).
-   */
-  const incomeGain = (after: ReadonlySet<number>): number =>
-    completedBy(after).reduce((sum, id) => sum + g.bonusById.get(id)!.value, 0);
   const heldNow = () => new Set([...mine, ...captured]);
   /** The income change of also capturing `ts`, on top of this turn's captures so far. */
   const gainWith = (ts: readonly number[]): number => {
@@ -2475,7 +2479,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const step = gainWith([t]);
     // The income left once this step (and this turn's other captures) lands: the staging
     // capture itself lowers it, so the turns to finish are counted at that income (#70).
-    const after = income + incomeGain(new Set([...heldNow(), t]));
+    const after = incomeAfter(new Set([...heldNow(), t]));
     const turns = after > 0 ? Math.max(1, Math.ceil(restCost / after)) : Infinity;
     const interim = turns * penalty;
     if (turns <= PAYBACK_TURNS && interim <= PAYBACK_TURNS * p.net) {
@@ -3501,7 +3505,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         )
           warnings.splice(i, 1);
       rationale.push(
-        `Drop the attack on ${label(t)}: it completes ${negatives.join(', ')}, and next income would fall below this turn's ${income} (next income ${income + gain} → ${income + after} without it); its armies stay where they are.`,
+        `Drop the attack on ${label(t)}: it completes ${negatives.join(', ')}, and next income would fall below this turn's ${nextIncomeWith(0)} (next income ${nextIncomeWith(gain)} → ${nextIncomeWith(after)} without it); its armies stay where they are.`,
       );
       gain = after;
     }
@@ -3527,7 +3531,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         return [`${label(t)} (${negs.join(', ')}; ${why})`];
       });
       warnings.push(
-        `This plan lowers next income from ${income} to ${income + gain}: its captures complete negative bonuses — ${kept.join('; ')}.`,
+        `This plan lowers next income from ${nextIncomeWith(0)} to ${nextIncomeWith(gain)}: its captures complete negative bonuses — ${kept.join('; ')}.`,
       );
     }
   }

@@ -36,8 +36,9 @@ complete negative bonuses while "advancing" a far-off positive one: nextIncome f
 - Check `(hidden)` bonuses: confirm the planner sees every bonus in the map data regardless of how
   `warapp_get_map`'s default view presents them; if the map tool hides them by default, say so in
   its output (a count of hidden bonuses) rather than changing the default.
-- Superbonuses and overlapping bonuses: income delta is the exact sum over every bonus whose
-  completion status changes (reuse the income computation `nextIncome` uses; never a parallel one).
+- Superbonuses and overlapping bonuses: income delta is `boardIncome(after) − boardIncome(now)`
+  (#85's one income rule, which `nextIncome` uses; never a parallel one), so per-territory income
+  and the 0 floor are counted as war.app pays them.
 - **Tests:** synthetic sea map: four tiles each a −4 single-territory bonus and together a +22
   bonus. (a) Only one tile affordable → no sea capture, income unchanged. (b) All four affordable
   this turn → the whole cluster is taken, nextIncome +6. (c) Two of four already held (paying −8):

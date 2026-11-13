@@ -100,17 +100,33 @@ describe('negative bonuses (#70): captures are scored by their net effect on inc
   });
 
   it('(c) two of four held (paying −8): completing the last two beats a +3 elsewhere', () => {
-    // 11 and 12 are mine (income 6 already pays their −8). 13 and 14 cost 3 each (6):
+    // 11 and 12 are mine (base 14 − their 8 = income 6). 13 and 14 cost 3 each (6):
     // +22 − 8 = +14 for 6 armies, against +3 for 2 on land 2; 6 income covers only one.
     const p = planTurn({
       graph: SEA,
       board: board([mine(1, 1), mine(11, 1), mine(12, 1), neutral(2, 1), neutral(13, 2), neutral(14, 2)]),
       me: ME,
       income: 6,
-      settings: STD,
+      settings: { ...STD, baseIncome: 14 },
     });
     expect(attacks(p).map((m) => m.to).sort()).toEqual([13, 14]);
     expect(p.expected.nextIncome).toBe(20);
+  });
+
+  it('(c) below the 0 floor: the gain is what war.app pays, not the bonuses that change', () => {
+    // Base 5 with 11 and 12 held (−8): war.app pays 0, not −3. Completing the cluster pays
+    // 5 + 22 − 16 = 11 — a gain of 11 over 0, not the +14 the changed bonuses sum to. The stack
+    // on 1 (7, 6 movable) takes 13 and 14 (3 each) with no income to deploy.
+    const p = planTurn({
+      graph: SEA,
+      board: board([mine(1, 7), mine(11, 1), mine(12, 1), neutral(2, 40), neutral(13, 2), neutral(14, 2)]),
+      me: ME,
+      income: 0,
+      settings: STD,
+    });
+    expect(attacks(p).map((m) => m.to).sort()).toEqual([13, 14]);
+    expect(p.expected.bonusesCompleted).toEqual([600, 603, 604]);
+    expect(p.expected.nextIncome).toBe(11);
   });
 
   it('stages one tile only when the cluster is repaid within PAYBACK_TURNS (rule c), and says so', () => {
@@ -233,7 +249,7 @@ describe('negative bonuses (#70): captures are scored by their net effect on inc
     expect(p.multiSourceCaptures).toEqual([]);
     expect(p.expected.captures).toEqual([]);
     expect(p.expected.nextIncome).toBe(3);
-    expect(p.rationale.join('\n')).toMatch(/Drop the attack on T21 \(#21\): it completes Swamp \(#901\) -4.*next income -1 → 3/);
+    expect(p.rationale.join('\n')).toMatch(/Drop the attack on T21 \(#21\): it completes Swamp \(#901\) -4.*next income 0 → 3/);
     expect(p.rationale.join('\n')).not.toMatch(/Attack T21|wears T21/);
     expect(p.warnings.join('\n')).not.toMatch(/The capture of T21 \(#21\) combines/);
     // Both stacks are whole again (the softener's armies back, its survivors' return undone),
