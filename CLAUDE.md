@@ -245,6 +245,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the tests feed a page that carries a location and assert it is absent.
 - **Every GameFeed scalar is a string** (ids, counts, booleans); normalize before use —
   see `docs/PLAN.md` "Facts". Fixtures under `tests/fixtures/` are anonymized.
+- **A game's map comes from `mapOf(game)`** (`src/tools/map.ts`), which applies the game's
+  `OverriddenBonuses` (`applyBonusOverrides`); load the game with `settings: true` wherever bonus
+  values matter. The overrides' JSON shape is unverified: `OVERRIDES_VERIFIED`
+  (`src/analysis/overrides.ts`) keeps the submit pre-checks soft until the owner verifies it live.
 - **API facts live in `docs/WARAPP-API.md`**, each marked verified or unverified. The board
   standing parser (`src/board.ts`) is unverified and must stay loose (never throw). Territory
   and bonus ids overlap, so a bonus member is a territory first and a superbonus only otherwise.

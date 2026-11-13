@@ -211,6 +211,14 @@ export interface GameSettings {
   initialNeutralsInDistribution?: number;
   /** Enabled cards by name (`Reinforcement`, `Airlift`, …). */
   cards: string[];
+  /**
+   * The game's overridden bonus values (`OverriddenBonuses`), bonus id → value; set
+   * whenever the feed sends the key (empty when none). Its JSON shape is UNVERIFIED
+   * (docs/WARAPP-API.md): see {@link parseOverriddenBonuses}.
+   */
+  overriddenBonuses?: ReadonlyMap<number, number>;
+  /** `true` when `OverriddenBonuses` was sent in a shape that could not be read (then `overriddenBonuses` is empty). */
+  overriddenBonusesUnparsed?: true;
   /** Every setting as the feed sent it. */
   raw: Rec;
 }
@@ -261,7 +269,76 @@ export function normalizeSettings(raw: unknown): GameSettings {
   for (const [k, v] of Object.entries(r)) {
     if (k.endsWith('Card') && isRec(v)) s.cards.push(k.slice(0, -'Card'.length));
   }
+  if (r.OverriddenBonuses !== undefined && r.OverriddenBonuses !== null) {
+    const o = parseOverriddenBonuses(r.OverriddenBonuses);
+    s.overriddenBonuses = o.values;
+    if (o.unparsed) s.overriddenBonusesUnparsed = true;
+  }
   return s;
+}
+
+/** Key spellings tried for an override entry's bonus id and value (the feed's shape is unverified). */
+const OVERRIDE_ID_KEYS = ['bonusID', 'BonusID', 'bonusId', 'BonusId', 'bonusid', 'id', 'ID', 'Id', 'key', 'Key', 'bonus', 'Bonus'];
+const OVERRIDE_VALUE_KEYS = ['value', 'Value', 'val', 'Val', 'armies', 'Armies'];
+
+function overrideEntry(e: unknown): [number, number] | undefined {
+  if (Array.isArray(e)) {
+    if (e.length !== 2) return undefined;
+    const id = asInt(e[0]);
+    const value = asInt(e[1]);
+    return id !== undefined && value !== undefined ? [id, value] : undefined;
+  }
+  if (!isRec(e)) return undefined;
+  const idKey = OVERRIDE_ID_KEYS.find((k) => k in e);
+  const valueKey = OVERRIDE_VALUE_KEYS.find((k) => k in e);
+  if (idKey === undefined || valueKey === undefined) return undefined;
+  const id = asInt(e[idKey]);
+  const value = asInt(e[valueKey]);
+  return id !== undefined && value !== undefined ? [id, value] : undefined;
+}
+
+/**
+ * Read GameFeed's `OverriddenBonuses` (bonus id → value). war.app's client keeps it as
+ * a `Dictionary<bonusId, value>` (values −1000..1000); how GameFeed serialises it is
+ * UNVERIFIED (a lobby with none sent `[]`), so this accepts, without throwing: an
+ * array of `{ <id key>, <value key> }` objects (several key spellings) or `[id, value]`
+ * pairs, an object keyed by bonus id, string scalars throughout, and any of those as a
+ * JSON string. Anything else — or any entry that does not read — gives no values and
+ * `unparsed: true` (all or nothing: a half-read map would be silently wrong).
+ */
+export function parseOverriddenBonuses(raw: unknown): { values: ReadonlyMap<number, number>; unparsed: boolean } {
+  const none = { values: new Map<number, number>(), unparsed: false };
+  const fail = { values: new Map<number, number>(), unparsed: true };
+  let v = raw;
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (t === '') return none;
+    try {
+      v = JSON.parse(t) as unknown;
+    } catch {
+      return fail;
+    }
+    if (typeof v === 'string') return fail;
+  }
+  const values = new Map<number, number>();
+  if (Array.isArray(v)) {
+    for (const e of v) {
+      const pair = overrideEntry(e);
+      if (!pair) return fail;
+      values.set(pair[0], pair[1]);
+    }
+    return { values, unparsed: false };
+  }
+  if (isRec(v)) {
+    for (const [k, val] of Object.entries(v)) {
+      const id = asInt(k);
+      const value = asInt(val);
+      if (id === undefined || value === undefined) return fail;
+      values.set(id, value);
+    }
+    return { values, unparsed: false };
+  }
+  return fail;
 }
 
 // ---------- game ----------

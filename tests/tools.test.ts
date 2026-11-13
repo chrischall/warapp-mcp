@@ -149,6 +149,16 @@ describe('warapp_get_map', () => {
     expect(p).not.toHaveProperty('chokepoints');
   });
 
+  it("reports the game's overridden bonus values (#62)", async () => {
+    const f = lobbyFixture();
+    h = await harnessFor({
+      ...f,
+      settings: { ...(f.settings as Record<string, unknown>), OverriddenBonuses: [{ bonusID: '118', value: '9' }] },
+    });
+    const p = payload(await h.call('warapp_get_map', { game_id: GAME, bonus: 'broken branch' }));
+    expect((p.bonuses as Array<{ value: number }>)[0]!.value).toBe(9);
+  });
+
   it('sort: value orders by value desc; limit caps rows', async () => {
     h = await harnessFor();
     const p = payload(await h.call('warapp_get_map', { game_id: GAME, sort: 'value', limit: 5 }));

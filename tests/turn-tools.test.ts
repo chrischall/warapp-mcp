@@ -1298,6 +1298,85 @@ describe('Local Deployment in the turn tools (G2, issue #29)', () => {
   });
 });
 
+describe('Overridden bonus values in the turn tools (#62)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  // The live case on the fixture map: base 2, Local Deployment; Ann holds Storm's End 9090
+  // (bonus 8, +6 on the map, overridden to 12) and Torrhen's Square 3241 (bonus 52, +5 → 7).
+  // war.app's panel: 21 = 2 anywhere + 12 + 7; the map values said 13.
+  const OVERRIDE_BOARD: SyntheticTerritory[] = [
+    { id: 9090, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+    { id: 3241, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+  ];
+  const overrideSettings = (overrides: unknown) => ({
+    ...modelledSettings(),
+    MinimumArmyBonus: 2,
+    LocalDeployments: true,
+    OverriddenBonuses: overrides,
+  });
+  const LIVE = [
+    { bonusID: '8', value: '12' },
+    { bonusID: '52', value: '7' },
+  ];
+
+  it('warapp_plan_turn plans income 21 within the overridden pools, noting the unverified shape', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: overrideSettings(LIVE) })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(21);
+    const on = (id: number) => p.deploys.filter((d) => d.territory.id === id).reduce((n, d) => n + d.armies, 0);
+    expect(on(9090) + on(3241)).toBe(21);
+    expect(on(9090)).toBeGreaterThanOrEqual(12);
+    expect(on(3241)).toBeGreaterThanOrEqual(7);
+    expect(p.warnings.join('\n')).toMatch(/overrides 2 bonus values.*unverified/);
+  });
+
+  it("warapp_submit_turn accepts the deploy panel's split, and only warns on a split outside the pools", async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: overrideSettings(LIVE) })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
+    });
+    const ok = payload<{ confirmToken: string; warnings?: string[] }>(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 9090, armies: 14 },
+          { kind: 'deploy', territory: 3241, armies: 7 },
+        ],
+      }),
+    );
+    expect(ok.confirmToken).toEqual(expect.any(String));
+    expect(JSON.stringify(ok)).not.toMatch(/Local Deployment/);
+    // Everything on Storm's End: the model would refuse it, but while the shape is unverified it warns.
+    const soft = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [{ kind: 'deploy', territory: 9090, armies: 21 }],
+    });
+    expect(soft.isError).toBeFalsy();
+    expect(textOf(soft)).toMatch(/Local Deployment.*not refused here/);
+  });
+
+  it('an unreadable OverriddenBonuses: map values, a warning, and soft checks for the panel’s 21', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: overrideSettings('House Baratheon=12') })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
+    });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 9090, armies: 14 },
+        { kind: 'deploy', territory: 3241, armies: 7 },
+      ],
+    });
+    expect(res.isError).toBeFalsy();
+    expect(textOf(res)).toMatch(/deploy 21 armies.*modelled income is 13/);
+    expect(textOf(res)).toMatch(/could not be read/);
+  });
+});
+
 describe('No-Split in the turn tools (G3, issue #31)', () => {
   const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
   // Ann holds only Oldcastle 453745 (12), which borders the neutrals White Harbor 23473 (1)
