@@ -204,7 +204,7 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 2. **The enemy income estimate looks wrong.** Check the "Enemy deploy estimate" line against
    what the opponent can plausibly earn. It reads territories visible on both turns, counts a
    stack that captured out of the fog as a threat rather than income, uses tracked income over
-   several turns once `warapp_track_opponents` has two, and caps itself at what the opponent could
+   several turns once that opponent has 2 or more observed turns (consecutive turns compared, as `warapp_track_opponents` reports), and caps itself at what the opponent could
    earn, but income hidden in the fog can still be missed. When the figure is off, re-plan with
    `enemy_deploy`.
 3. **Income drops.** A `nextIncome` below this turn's income always comes with a warning (a
