@@ -10,6 +10,9 @@
 // and constructors that assign `this.*`. Anything else raises an {@link InterpError}
 // naming the function and the bundle offset of the construct.
 //
+// The primitive helpers (`P.Ya`, the dialect) are built in and shadow the bundle's own
+// definitions; `verifyDialect` checks them against those definitions when a bundle loads.
+//
 // Classes are registered in the bundle as `W["warlight.shared.Foo"]=Xy;` — the type name
 // is stable, the var is minified. Decoded objects carry the type name as `$type`.
 
@@ -155,6 +158,63 @@ export const DEFAULT_DIALECT: Dialect = {
   wrappers: ['Z', 'Yb', 'uc', 'dc', 'oc', 'ec', 'fc'],
 };
 
+/** The class whose statics are the reader helpers (`P.Ya(a)`), checked by `verifyDialect`. */
+export const READER_HELPERS = 'P';
+
+/** What `verifyDialect` found: built-in helpers by `Class.name`. */
+export interface DialectCheck {
+  /** The bundle's definition read the same as the built-in on the probes. */
+  verified: string[];
+  /** Defined in the bundle, but not in a form the interpreter can evaluate. */
+  unverified: string[];
+  /** The bundle's definition reads differently: the built-in would mis-read. */
+  mismatched: string[];
+}
+
+/** Byte strings each helper is run on: small counts, a -1 count, ascending bytes, zeros. */
+const DIALECT_PROBES: readonly Uint8Array[] = [
+  Uint8Array.from([2, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]),
+  Uint8Array.from([1, 1, 0, 0, 0, 1, 7, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]),
+  Uint8Array.from([255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+  Uint8Array.from({ length: 32 }, (_, i) => i),
+  new Uint8Array(32),
+];
+
+type ProbeOutcome =
+  | { kind: 'value'; value: unknown; position: number }
+  | { kind: 'read-error' }
+  | { kind: 'unevaluable' };
+
+/** Run a helper on a probe: the reader, then one item reader (a byte) per extra parameter. */
+function runProbe(probe: Uint8Array, arity: number, call: (args: unknown[]) => unknown): ProbeOutcome {
+  const r = new Reader(probe);
+  const args: unknown[] = [r];
+  for (let i = 1; i < arity; i++) args.push(() => r.u8());
+  try {
+    const value = call(args);
+    return { kind: 'value', value, position: r.position };
+  } catch (e) {
+    return e instanceof InterpError && e.kind !== 'reader-threw' ? { kind: 'unevaluable' } : { kind: 'read-error' };
+  }
+}
+
+const isClientObject = (v: unknown): boolean =>
+  isObject(v) && !Array.isArray(v) && !(v instanceof Date) && !(v instanceof Uint8Array) && typeof v.$type === 'string';
+
+function sameOutcome(a: ProbeOutcome, b: ProbeOutcome): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind !== 'value' || b.kind !== 'value') return true;
+  return a.position === b.position && sameValue(a.value, b.value);
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (a instanceof Date && b instanceof Date) return Object.is(a.getTime(), b.getTime());
+  if (a instanceof Uint8Array && b instanceof Uint8Array) return a.length === b.length && a.every((x, i) => x === b[i]);
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => sameValue(x, b[i]));
+  return false;
+}
+
 export interface InterpOptions {
   /** The protocol version handed to every `Ha` (default {@link PROTOCOL_VERSION}). */
   version?: number;
@@ -286,6 +346,61 @@ export class BundleInterpreter {
   /** Read one instance of a class (`<Var>.Ha(reader, null, version)`). */
   readClass(typeNameOrVar: string, reader: Reader): unknown {
     return this.callStatic(this.resolveVar(typeNameOrVar), 'Ha', [reader, null, this.version]);
+  }
+
+  /**
+   * Check the built-in reader helpers (the dialect's statics on {@link READER_HELPERS}) against
+   * the bundle's own definitions of the same names: each definition is evaluated on a few probe
+   * byte strings and must read the same value and the same number of bytes as the built-in. The
+   * built-ins shadow the bundle's definitions, so a new client that gives a name to another helper
+   * would otherwise decode every field through the wrong read without an error (#131). A
+   * definition the interpreter cannot evaluate is unverified, not a mismatch.
+   */
+  verifyDialect(): DialectCheck {
+    const out: DialectCheck = { verified: [], unverified: [], mismatched: [] };
+    const natives = this.dialect.statics[READER_HELPERS] ?? {};
+    const defined = this.indexDefinitions(READER_HELPERS, Object.keys(natives));
+    for (const name of [...defined].sort()) {
+      const native = natives[name]!;
+      const key = `${READER_HELPERS}.${name}`;
+      let agreed = 0;
+      let mismatch = false;
+      for (const probe of DIALECT_PROBES) {
+        const mine = runProbe(probe, native.length, (args) => native(...args));
+        const theirs = runProbe(probe, native.length, (args) => {
+          const { node, where } = this.resolveStatic(READER_HELPERS, name);
+          return this.invoke(node, args, new Scope(), where);
+        });
+        // A client collection (`new Je`, a dictionary) is not comparable with the built-in's
+        // JS array: only plain values say whether the two read alike.
+        if (theirs.kind === 'unevaluable' || (theirs.kind === 'value' && isClientObject(theirs.value))) continue;
+        if (sameOutcome(mine, theirs)) agreed++;
+        else mismatch = true;
+      }
+      if (mismatch) out.mismatched.push(key);
+      else if (agreed) out.verified.push(key);
+      else out.unverified.push(key);
+    }
+    return out;
+  }
+
+  /** Which of `names` the bundle defines as `<cls>.<name>=function`, found in one pass and cached. */
+  private indexDefinitions(cls: string, names: readonly string[]): Set<string> {
+    const wanted = new Set(names);
+    const found = new Set<string>();
+    const re = new RegExp(`(?<![\\w$.])${escapeRe(cls)}\\.([\\w$]+)\\s*=\\s*function\\b`, 'g');
+    for (const m of this.bundle.src.matchAll(re)) {
+      const name = m[1]!;
+      if (!wanted.has(name) || found.has(name)) continue;
+      found.add(name);
+      const where = `${cls}.${name}`;
+      try {
+        this.fnCache.set(where, { node: this.parseFunctionAt(m.index! + m[0].length - 'function'.length, where), where });
+      } catch {
+        found.delete(name);
+      }
+    }
+    return found;
   }
 
   /**
@@ -651,6 +766,8 @@ export class BundleInterpreter {
     const f = this.eval(callee, scope, where);
     const args = argNodes.map((a) => this.eval(a, scope, where));
     if (f instanceof Closure) return this.invoke(f.node, args, f.scope, f.where);
+    // A host function handed in as an argument (the dialect check's item readers).
+    if (typeof f === 'function') return (f as Native)(...args);
     throw this.unsupported('call of a non-function', n, where);
   }
 }

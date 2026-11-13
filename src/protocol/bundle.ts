@@ -13,14 +13,14 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Reader } from './codec.js';
-import { BundleInterpreter, parseBundle, type InterpOptions } from './interp.js';
+import { BundleInterpreter, parseBundle, type DialectCheck, type InterpOptions } from './interp.js';
 
 /** A page that loads the game client (the homepage does not). */
 export const DEFAULT_PAGE_URL = 'https://war.app/MultiPlayer';
 /** Hosts a bundle may be served from (the host itself or any subdomain). */
 export const BUNDLE_HOSTS = ['war.app', 'warappcdn.com'];
 
-export type BundleErrorKind = 'no-script' | 'bad-url' | 'bad-version' | 'bad-bundle';
+export type BundleErrorKind = 'no-script' | 'bad-url' | 'bad-version' | 'bad-bundle' | 'dialect-mismatch';
 
 export class BundleError extends Error {
   constructor(
@@ -69,7 +69,20 @@ export class WarappBundle {
     opts: InterpOptions = {},
   ) {
     this.interp = new BundleInterpreter(parseBundle(src), opts);
+    // The built-in reader helpers are pinned to one client release while the bundle floats:
+    // refuse a bundle whose own helpers read differently, rather than decode it wrongly (#131).
+    this.dialectCheck = this.interp.verifyDialect();
+    if (this.dialectCheck.mismatched.length) {
+      throw new BundleError(
+        'dialect-mismatch',
+        `war.app's client bundle ${version} reads ${this.dialectCheck.mismatched.join(', ')} differently from this ` +
+          "server's built-in readers; the client changed and this server needs an update to read it.",
+      );
+    }
   }
+
+  /** The built-in reader helpers checked against this bundle's own definitions at load. */
+  readonly dialectCheck: DialectCheck;
 
   /** Whether a type name is registered in this bundle. */
   has(typeName: string): boolean {
