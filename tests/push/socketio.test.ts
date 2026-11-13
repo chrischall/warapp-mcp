@@ -245,6 +245,19 @@ describe('SocketIoClient', () => {
     expect(c.connectCount).toBe(1);
   });
 
+  it('paces heartbeats answered at once too: a server answering every poll with one cannot spin the loop (#148)', async () => {
+    const r = rig();
+    const { c } = client(r, { initialBackoffMs: 100, maxBackoffMs: 300 });
+    c.start();
+    await c.whenConnected();
+    for (let i = 0; i < 3; i++) r.socket.push('2::');
+    await until(() => r.sleeps.length === 3, 'paced heartbeats');
+    expect(r.sleeps).toEqual([100, 200, 300]);
+    // Each heartbeat is still answered.
+    await until(() => r.socket.posts.filter((p) => p.body === '2::').length === 3, 'heartbeat answers');
+    expect(c.connectCount).toBe(1);
+  });
+
   it('a long poll that ends idle after a while is not paced', async () => {
     const r = rig();
     let t = 1_700_000_000_000;
@@ -352,7 +365,7 @@ describe('PushListener', () => {
     const l = listener(r);
     const seen: unknown[] = [];
     const off = l.onUpdate((u) => seen.push(u));
-    await l.watch([1]);
+    await l.watch([1, 2, 3, 4, 5]);
     await until(() => subscribedTopics(r).length === 1, 'subscribe');
     r.socket.push(framed(`3:::${subscribeReplyHex(1, { 'Game.1': 12 })}`, `3:::${gameUpdatedHex(1)}`));
     await until(() => seen.length === 1, 'update');
@@ -662,30 +675,94 @@ describe('PushListener', () => {
     expect(l.status()).toEqual({ started: false, connected: false, watching: [], refused: {}, transport: 'xhr-polling' });
   });
 
-  it('a failed subscribe on a live session does not throw from watch; once its retries run out the reconnect re-subscribes', async () => {
+  it('a failed subscribe on a live session does not throw from watch; once its retries run out it starts a new session itself (#148)', async () => {
     const r = rig();
-    let failPosts = false;
+    // The next `toFail` Subscribe POSTs fail (the bridge refuses them); everything else goes through.
+    let toFail = 0;
     let refusedPosts = 0;
     const inner = r.transport;
     r.transport = async () => {
       const t = await inner();
       return {
         fetch: (init) =>
-          failPosts && init.method === 'POST' ? (refusedPosts++, Promise.reject(new Error('bridge down'))) : t.fetch(init),
+          toFail > 0 && init.method === 'POST' && init.body?.startsWith('3:::')
+            ? (toFail--, refusedPosts++, Promise.reject(new Error('bridge down')))
+            : t.fetch(init),
+      };
+    };
+    const l = listener(r);
+    const seen: Array<{ reconnect: boolean; resubscribed?: true }> = [];
+    l.onConnect((e) => seen.push(e));
+    await l.watch([1]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    // The first try, then the retries on the live session (#131), all refused.
+    toFail = 1 + MAX_SUBSCRIBE_RETRIES;
+    await expect(l.watch([2])).resolves.toBe(false);
+    // Retries spent on a socket that looks healthy: no waiting for war.app to drop it (#148).
+    await until(() => subscribedTopics(r).length === 2, 're-subscribe on a new session');
+    expect(refusedPosts).toBe(1 + MAX_SUBSCRIBE_RETRIES);
+    expect(subscribedTopics(r)[1]).toEqual({ sid: 'sid2', topics: ['Game.1', 'Game.2'] });
+    expect(r.socket.handshakes()).toBe(2);
+    await until(() => seen.length === 2, 'connect listeners told');
+    expect(seen[1]).toEqual({ reconnect: true });
+    expect(l.status()).not.toHaveProperty('pending');
+  });
+
+  it('a second wait on a game whose Subscribe another wait has in flight is told to re-read (#148)', async () => {
+    const r = rig();
+    let release: () => void = () => {};
+    let holding = false;
+    const inner = r.transport;
+    r.transport = async () => {
+      const t = await inner();
+      return {
+        fetch: async (init) => {
+          if (holding && init.method === 'POST' && init.body?.startsWith('3:::')) await new Promise<void>((res) => (release = res));
+          return t.fetch(init);
+        },
       };
     };
     const l = listener(r);
     await l.watch([1]);
     await until(() => subscribedTopics(r).length === 1, 'subscribe');
-    failPosts = true;
-    await expect(l.watch([2])).resolves.toBe(false);
-    // The first try, then the retries on the live session (#131), all refused.
-    await until(() => refusedPosts === 1 + MAX_SUBSCRIBE_RETRIES, 'retries');
+    holding = true;
+    const first = l.watch([2]);
+    let secondDone = false;
+    const second = l.watch([2]).then((v) => ((secondDone = true), v));
     await flush();
-    expect(refusedPosts).toBe(1 + MAX_SUBSCRIBE_RETRIES);
-    failPosts = false;
-    r.socket.push('0::');
-    await until(() => subscribedTopics(r).length === 2, 're-subscribe');
-    expect(subscribedTopics(r)[1]).toEqual({ sid: 'sid2', topics: ['Game.1', 'Game.2'] });
+    // The second waits for the Subscribe in flight rather than answering false at once.
+    expect(secondDone).toBe(false);
+    holding = false;
+    release();
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(subscribedTopics(r)).toHaveLength(2);
+  });
+
+  it('watch() with a mark says when another wait got a Subscribe through after the caller started reading (#148)', async () => {
+    const r = rig();
+    const l = listener(r);
+    await l.watch([1]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    // Wait B takes its mark and reads game 2; meanwhile wait A subscribes game 2.
+    const mark = l.mark();
+    expect(await l.watch([2])).toBe(true);
+    // B's watch sends nothing (already subscribed), but the Subscribe went through after its mark.
+    expect(await l.watch([2], { since: mark })).toBe(true);
+    // A caller that read after that Subscribe has nothing to re-read.
+    expect(await l.watch([2], { since: l.mark() })).toBe(false);
+  });
+
+  it('records a push only for a game some wait watches, not one released or never watched (#148)', async () => {
+    const r = rig();
+    const { l } = idleListener(r);
+    await l.watch([1, 2]);
+    await until(() => subscribedTopics(r).length === 1, 'subscribe');
+    l.release([2]);
+    r.socket.push(framed(`3:::${gameUpdatedHex(1)}`, `3:::${gameUpdatedHex(2)}`, `3:::${gameUpdatedHex(9)}`));
+    await until(() => l.recent().length === 1, 'update');
+    await r.socket.idle();
+    await flush();
+    expect(l.recent().map((e) => e.gameId)).toEqual([1]);
   });
 });
