@@ -61,7 +61,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"How should I play this game / map?" / "any strategy tips?"** → `warapp_strategy` with
   `game_id`: short heuristics fitted to the game's format and settings, each with its source
   link (pass the link on), plus map notes — bonuses by value per army, entry points,
-  chokepoints, and income targets by turn while picks are open. `topic` narrows to format /
+  chokepoints, and income targets by turn while picks are open (only when GameFeed lists the
+  pickable territories; otherwise `warapp_plan_picks` is the opening advisor). `topic` narrows to format /
   settings / cards / reading / map; with no arguments it lists every note.
 - **"What should I do this turn?"** → `warapp_analyze_board` with `player` (the user's war.app
   name, or part of it; omit it to list the players). It gives income, the bonuses closest to

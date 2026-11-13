@@ -126,8 +126,10 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - **Chokepoints** — articulation points, bridges between bonus clusters and narrow connectors
   (`findChokepoints`, as `warapp_get_map`). **Encoded.**
 - **Income targets by turn** — while picks are open, the pick advisor's opening simulation run
-  with every territory pickable: the base income plus the bonuses its best group completes,
-  turn by turn. **Encoded**, as a pace to aim for (`warapp_plan_picks` uses the live pickables).
+  over the territories GameFeed's standing lists as pickable (its primary group only): the base
+  income plus the bonuses that group completes, turn by turn. **Encoded**, as a pace to aim for.
+  With no pickables listed there are no targets (#132: a simulation over every territory paced a
+  start nobody could pick); `warapp_plan_picks` reads the live pickables.
 
 ## Format
 

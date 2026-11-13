@@ -1,7 +1,8 @@
 // Map notes: what the map itself says about strategy, computed with no extra traffic —
 // bonuses ranked by value per army to take at the game's settings, their entry points,
 // the chokepoints, and (before the opening) income targets by turn from the pick
-// advisor's opening simulation. Pure and deterministic.
+// advisor's opening simulation over the territories the game lists as pickable (never a
+// start nobody can pick, #132). Pure and deterministic.
 
 import { analyzeBonuses } from '../analysis/bonuses.js';
 import { findChokepoints } from '../analysis/chokepoints.js';
@@ -25,8 +26,18 @@ export const MAP_CHOKEPOINTS_LIMIT = 10;
 export interface MapNotesInput {
   graph: MapGraph;
   settings?: PickSettings;
-  /** Simulate the opening (picks still ahead): the players and each one's territory limit. */
-  opening?: { players: number; territoryLimit: number };
+  /**
+   * Simulate the opening (picks still ahead): the players, each one's territory limit, and the
+   * territories the game lists as pickable (with the neutral armies on the board, when known).
+   * Without `pickable` there are no income targets: a simulation over every territory paces a
+   * start nobody can pick (#132).
+   */
+  opening?: {
+    players: number;
+    territoryLimit: number;
+    pickable?: readonly number[];
+    neutralArmies?: ReadonlyMap<number, number>;
+  };
   /** Bonus and chokepoint rows (default {@link MAP_NOTES_LIMIT} and {@link MAP_CHOKEPOINTS_LIMIT}). */
   limit?: number;
   /** The game overrides bonus values that could not all be read (`settings.overriddenBonusesUnparsed`). */
@@ -142,27 +153,40 @@ export function mapNotes(input: MapNotesInput): MapNotes {
   // ---- income targets from the opening simulation ----
   if (input.opening && input.opening.territoryLimit > 0) {
     const { players, territoryLimit } = input.opening;
-    const plan = planPicks({
-      graph: g,
-      pickable: [...g.territoryById.keys()],
-      settings: s,
-      players: Math.max(2, players),
-      territoryLimit,
-      maxPicks: territoryLimit * 2,
-    });
-    const base = s.minimumArmyBonus ?? DEFAULT_BASE_INCOME;
-    const done = plan.groups.primary.bonuses;
-    out.incomeTargets = Array.from({ length: PICK_HORIZON + 1 }, (_, i) => {
-      const turn = i + 1;
-      // A bonus completed during turn k (0: held by the picks) pays from turn k + 1.
-      const held = done.filter((b) => b.turn < turn);
-      return { turn, income: base + held.reduce((n, b) => n + b.value, 0), bonuses: held.map((b) => b.name) };
-    });
-    assumptions.push(
-      'Income targets come from the pick advisor\'s best opening with every territory pickable and nobody in the way: ' +
-        'a pace to aim for, not a promise (warapp_plan_picks uses the live pickable territories).',
-    );
-    if (s.bonusArmyPer) assumptions.push('Income targets leave out per-territory income.');
+    const pickable = (input.opening.pickable ?? []).filter((t) => g.territoryById.has(t));
+    if (!pickable.length) {
+      assumptions.push(
+        'No income targets: the game did not list its pickable territories here, and a simulation over every ' +
+          'territory would pace a start nobody can pick. warapp_plan_picks reads them from the live board.',
+      );
+    } else {
+      // Only the primary group sets the pace, so only it is searched (maxPicks = the limit): the
+      // fallback search behind it took ~10 s in a 1v1 on a 761-territory map, on the server's thread.
+      const plan = planPicks({
+        graph: g,
+        pickable,
+        settings: s,
+        players: Math.max(2, players),
+        territoryLimit,
+        maxPicks: territoryLimit,
+        ...(input.opening.neutralArmies ? { neutralArmies: input.opening.neutralArmies } : {}),
+      });
+      const base = s.minimumArmyBonus ?? DEFAULT_BASE_INCOME;
+      const done = plan.groups.primary.bonuses;
+      out.incomeTargets = Array.from({ length: PICK_HORIZON + 1 }, (_, i) => {
+        const turn = i + 1;
+        // A bonus completed during turn k (0: held by the picks) pays from turn k + 1.
+        const held = done.filter((b) => b.turn < turn);
+        return { turn, income: base + held.reduce((n, b) => n + b.value, 0), bonuses: held.map((b) => b.name) };
+      });
+      assumptions.push(
+        `Income targets come from the pick advisor's best opening over the ${pickable.length} territor${
+          pickable.length === 1 ? 'y' : 'ies'
+        } the game lists as pickable, with nobody in the way: a pace to aim for, not a promise ` +
+          '(warapp_plan_picks gives the picks and a fallback group).',
+      );
+      if (s.bonusArmyPer) assumptions.push('Income targets leave out per-territory income.');
+    }
   }
   return out;
 }
