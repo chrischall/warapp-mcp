@@ -196,10 +196,16 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
   return bundle;
 }
 
-/** How long a fallback bundle is used before the current version is looked up again. */
+/**
+ * How long a fallback bundle is used, or a refused (dialect-mismatch) bundle is remembered, before
+ * the current version is looked up again.
+ */
 export const FALLBACK_RETRY_MS = 5 * 60_000;
 
-/** Loads the bundle once per process; a failed load is retried on the next call. */
+/**
+ * Loads the bundle once per process; a failed load is retried on the next call, except a bundle
+ * refused as a dialect mismatch, which is retried after {@link FALLBACK_RETRY_MS}.
+ */
 export class BundleProvider {
   private pending: Promise<WarappBundle> | null = null;
 
@@ -219,8 +225,12 @@ export class BundleProvider {
           // A cached copy stands in only until the version can be looked up again.
           if (b.fallback && this.pending === p) this.fallbackUntil = now() + FALLBACK_RETRY_MS;
         },
-        () => {
-          if (this.pending === p) this.pending = null;
+        (e) => {
+          if (this.pending !== p) return;
+          // A bundle this server cannot read stays unreadable: remember the refusal for a while
+          // instead of re-reading and re-checking ~16 MB on every live call (#131).
+          if (e instanceof BundleError && e.kind === 'dialect-mismatch') this.fallbackUntil = now() + FALLBACK_RETRY_MS;
+          else this.pending = null;
         },
       );
     }

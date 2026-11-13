@@ -163,6 +163,19 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
     expect(() => new WarappBundle(swapped, 'swapped')).toThrow(/P\.Ya.*P\.uq|P\.uq.*P\.Ya/);
   });
 
+  it('the provider remembers a refused bundle for a while instead of re-reading it on every call', async () => {
+    const swapped = 'var W={};var P={};P.Ya=function(a){return a.MGb()};P.uq=function(a){return a.Og()};' + READER;
+    let now = 1_000_000;
+    const { calls, fetchText } = fakeFetch({ [PAGE]: html(CDN), [CDN]: swapped });
+    const p = new BundleProvider({ dataDir: tempDir(), fetchText, pageUrl: PAGE, now: () => now });
+    await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-mismatch' });
+    await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-mismatch' });
+    expect(calls).toEqual([PAGE, CDN]);
+    now += 5 * 60_000;
+    await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-mismatch' });
+    expect(calls).toEqual([PAGE, CDN, PAGE]); // looked up again; the refused version was cached on disk
+  });
+
   it('leaves a helper it cannot evaluate unverified, not refused', () => {
     const b = new WarappBundle('var W={};var P={};P.Td=function(a){return O.N3c(a)};' + READER, 'opaque');
     expect(b.dialectCheck.unverified).toContain('P.Td');
