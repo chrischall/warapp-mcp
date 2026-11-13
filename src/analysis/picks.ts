@@ -1937,13 +1937,8 @@ export function coverageModel(input: CoverageInput): (picks: readonly number[]) 
     luckModifier: s.luckModifier,
   };
   const ordinary = (t: number) => (pickSet.has(t) ? neutralsIn : neutralsOut);
-  const waste = new Set<number>();
-  const cost = new Map<number, number | null>();
-  for (const t of g.map.territories) {
-    const n = Math.max(0, known.get(t.id) ?? ordinary(t.id));
-    if (n > ordinary(t.id)) waste.add(t.id);
-    cost.set(t.id, captureCost(n, rates));
-  }
+  const { armies, cost } = territoryCosts(g, (t) => known.get(t) ?? ordinary(t), rates);
+  const waste = new Set([...armies].filter(([t, n]) => n > ordinary(t)).map(([t]) => t));
   const candidates: { id: number; name: string; ratio: number; zone: Set<number> }[] = [];
   for (const b of g.map.bonuses) {
     if (b.value <= 0 || b.bonusIds.length > 0) continue;
