@@ -669,4 +669,44 @@ describe('BundleInterpreter containment', () => {
     expect(run('return "ab"["12345678901"]')).toBeUndefined();
     expect(run('var x=[5];x["1"]=6;return [x[1],"ab"["1"]]')).toEqual([6, 'b']);
   });
+
+  // The per-function AST walks were quadratic (a duplicate check by array scan, a reader test repeated
+  // for every enclosing assignment) and uncharged, so a few megabytes of bundle took minutes. The clock
+  // is held still in these: only the step count (or the walks being linear) can end them.
+  const still = { now: () => 0 };
+
+  it('hoists a function with many `var` names in linear time, the walk charged', { timeout: 4000 }, () => {
+    const names = Array.from({ length: 200_000 }, (_, k) => `a${k}`).join(',');
+    // Declared in an untaken branch, so only the hoisting does work.
+    expect(run(`var g=function(){if(0){var ${names}}return 3};return g()`, undefined, still)).toBe(3);
+    // The walk is charged to the step count: a budget that covers the parse alone runs out in it.
+    const src = `function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a,b,d){if(0){var ${names}}return 3};`;
+    const parse = src.length - src.indexOf('function(a,b,d)');
+    const tight = new BundleInterpreter(parseBundle(src), { ...still, maxSteps: parse + 10 });
+    expect(interpError(() => tight.readClass('h.X', new Reader(new Uint8Array()))).kind).toBe('budget');
+  });
+
+  it('charges each call the parameters and hoisted names it declares', { timeout: 8000 }, () => {
+    const names = Array.from({ length: 1000 }, (_, k) => `a${k}`).join(',');
+    for (const fn of [`function(){if(0){var ${names}}}`, `function(${names}){}`]) {
+      const e = interpError(() => run(`var g=${fn};for(var i=0;i<999999999;i++){g()}return 0`, undefined, still));
+      expect(e.kind, fn.slice(0, 20)).toBe('budget');
+      expect(e.message).toContain('steps');
+    }
+  });
+
+  it('finds the fields a reader fills in linear time, the walks charged', { timeout: 4000 }, () => {
+    // A reader making many distinct calls to its own statics, none of them a field read.
+    const calls = Array.from({ length: 100_000 }, (_, k) => `Lg.x${k}()`).join(';');
+    const src = `W["t.Lg"]=Lg;W["t.F"]=Ff;\nLg.Ha=function(a,b,d){${calls}};\n`;
+    expect(new BundleInterpreter(parseBundle(src), still).fieldsReadAs('t.Lg', 't.F')).toEqual([]);
+    // A long assignment chain is judged once per node, not once per enclosing assignment.
+    const chain = `${'e='.repeat(4000)}Ff.Ha(a)`;
+    const deep = new BundleInterpreter(parseBundle(`W["t.Lg"]=Lg;W["t.F"]=Ff;\nLg.Ha=function(a,b,d){var e;${chain};d.f=e;d.g=Ff.Ha(a);d.f=e};\n`), still);
+    expect(deep.fieldsReadAs('t.Lg', 't.F')).toEqual(['f', 'g']);
+    // The walks are charged: a step budget covering the parse alone runs out in them.
+    const parse = src.length - src.indexOf('function(a,b,d)');
+    const tight = new BundleInterpreter(parseBundle(src), { ...still, maxSteps: parse + 10 });
+    expect(interpError(() => tight.fieldsReadAs('t.Lg', 't.F')).kind).toBe('budget');
+  });
 });

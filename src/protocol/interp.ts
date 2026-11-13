@@ -60,9 +60,12 @@
 //   builds it, else a literal (bounded by the bundle, whose parsing is charged) or a wire string
 //   (bounded by the frame); an array handed to a native is at most MAX_RANGE long, `E.Range` allocates at
 //   most MAX_RANGE, a wire list's count is capped by the codec, and every other array grows by one
-//   element per charged step (dense writes, `push` of the source's own arguments); a parse, the
-//   definition index and the per-function AST walks (hoisting, `fieldsReadAs`, a throw's literals) are
-//   bounded by the bundle's size and done once per function or per interpreter.
+//   element per charged step (dense writes, `push` of the source's own arguments); a parse and the
+//   definition index are bounded by the bundle's size and done once per function or per interpreter.
+// - the per-function AST walks (hoisting, `fieldsReadAs`, a throw's literals) are iterative, linear in
+//   the nodes they visit (duplicates removed with a Set, whether an expression calls a reader worked
+//   out once per node) and charge each node to the step count; a call also pays for the parameters
+//   and hoisted names it declares.
 
 import {
   parseExpressionAt,
@@ -690,8 +693,9 @@ export class BundleInterpreter {
       return [];
     }
     if (!fieldVar) return [];
-    const out: string[] = [];
+    const out = new Set<string>();
     const seen = new Set<string>();
+    const where = `${ownerVar}.Ha`;
     const visit = (fn: string, depth: number): void => {
       if (seen.has(fn) || depth > 3) return;
       seen.add(fn);
@@ -701,13 +705,14 @@ export class BundleInterpreter {
       } catch {
         return;
       }
-      const found = fieldAssignments(node, fieldVar);
-      for (const f of found) if (!out.includes(f)) out.push(f);
-      if (!found.length) for (const next of ownStaticCalls(node, ownerVar)) visit(next, depth + 1);
+      const charge = (n: number) => this.spend(n, where, node.start);
+      const found = fieldAssignments(node, fieldVar, charge);
+      for (const f of found) out.add(f);
+      if (!found.length) for (const next of ownStaticCalls(node, ownerVar, charge)) visit(next, depth + 1);
     };
-    // Parsing a reader is charged to a step budget like any other entry into the bundle.
+    // Parsing a reader, and walking it, is charged to a step budget like any other entry into the bundle.
     this.budgeted(undefined, () => visit('Ha', 0));
-    return out;
+    return [...out];
   }
 
   // -------------------------------------------------------------------------
@@ -880,10 +885,13 @@ export class BundleInterpreter {
       throw new InterpError('budget', `functions nested past ${MAX_NESTING}`, where, node.start);
     }
     if (self !== undefined) scope.declare('this', self);
-    node.params.forEach((p, i) => scope.declare(this.paramName(p, where), args[i]));
     // `var` is function-scoped and hoisted: a var declared only in an untaken branch is undefined,
-    // not an unknown name (which would read as a class reference).
-    for (const name of hoistedVars(node)) if (!scope.hasOwn(name)) scope.declare(name, undefined);
+    // not an unknown name (which would read as a class reference). The walk that finds them is
+    // charged once per function; declaring them, and the parameters, is charged on every call.
+    const hoisted = hoistedVars(node, (n) => this.spend(n, where, node.start));
+    this.spend(node.params.length + hoisted.length, where, node.start);
+    node.params.forEach((p, i) => scope.declare(this.paramName(p, where), args[i]));
+    for (const name of hoisted) if (!scope.hasOwn(name)) scope.declare(name, undefined);
     const c = this.execBlock(node.body.body, scope, where);
     return c?.type === 'return' ? c.value : undefined;
   }
@@ -1268,21 +1276,58 @@ export class BundleInterpreter {
 
 const hoistCache = new WeakMap<FunctionExpression, string[]>();
 
-/** The names a function declares with `var` anywhere in its body (not in nested functions). */
-function hoistedVars(fn: FunctionExpression): string[] {
+/** Charge `n` nodes walked to the step budget of the read that walks them. */
+type Charge = (n: number) => void;
+
+/**
+ * Walk the AST under `root` iteratively (a deeply nested bundle cannot overflow the host stack),
+ * charging one step per node visited: `enter` on the way down (returning false skips the node's
+ * children), `leave` on the way up, children from `kids` (default: all, in source order).
+ */
+function walkAst(
+  root: AstNode,
+  charge: Charge,
+  visit: { enter?: (n: AstNode) => boolean | void; leave?: (n: AstNode) => void; kids?: (n: AstNode) => AstNode[] },
+): void {
+  const kids = visit.kids ?? childrenOf;
+  const stack: { n: AstNode; c: AstNode[]; i: number }[] = [];
+  const push = (n: AstNode): void => {
+    charge(1);
+    const descend = visit.enter?.(n) !== false;
+    stack.push({ n, c: descend ? kids(n) : [], i: 0 });
+  };
+  push(root);
+  while (stack.length) {
+    const top = stack[stack.length - 1];
+    if (top.i < top.c.length) push(top.c[top.i++]);
+    else {
+      stack.pop();
+      visit.leave?.(top.n);
+    }
+  }
+}
+
+const isFunctionNode = (n: AstNode): boolean =>
+  n.type === 'FunctionExpression' || n.type === 'FunctionDeclaration' || n.type === 'ArrowFunctionExpression';
+
+/**
+ * The names a function declares with `var` anywhere in its body (not in nested functions), in first
+ * declaration order. Walked once per function (cached), each node charged.
+ */
+function hoistedVars(fn: FunctionExpression, charge: Charge): string[] {
   let out = hoistCache.get(fn);
   if (out) return out;
-  const names: string[] = [];
-  const walk = (n: AstNode): void => {
-    if (n.type === 'FunctionExpression' || n.type === 'FunctionDeclaration' || n.type === 'ArrowFunctionExpression') return;
-    if (n.type === 'VariableDeclarator') {
-      const id = n.id as AstNode;
-      if (id.type === 'Identifier' && !names.includes(id.name as string)) names.push(id.name as string);
-    }
-    for (const c of childrenOf(n)) walk(c);
-  };
-  for (const st of fn.body.body) walk(st as unknown as AstNode);
-  out = names;
+  const names = new Set<string>();
+  walkAst(fn.body as unknown as AstNode, charge, {
+    enter: (n) => {
+      if (isFunctionNode(n)) return false;
+      if (n.type === 'VariableDeclarator') {
+        const id = n.id as AstNode;
+        if (id.type === 'Identifier') names.add(id.name as string);
+      }
+    },
+  });
+  out = [...names];
   hoistCache.set(fn, out);
   return out;
 }
@@ -1301,27 +1346,35 @@ function childrenOf(n: AstNode): AstNode[] {
   return out.sort((a, b) => a.start - b.start);
 }
 
-/** Whether an expression calls `<cls>.Ha(…)` (not counting nested functions). */
-function callsReader(n: AstNode, cls: string): boolean {
-  if (n.type === 'FunctionExpression') return false;
-  if (n.type === 'CallExpression') {
-    const c = n.callee as AstNode;
-    const o = c.object as AstNode | undefined;
-    const p = c.property as AstNode | undefined;
-    if (c.type === 'MemberExpression' && o?.type === 'Identifier' && o.name === cls && p?.name === 'Ha') return true;
-  }
-  return childrenOf(n).some((c) => callsReader(c, cls));
+/** Whether a node is itself a call `<cls>.Ha(…)`. */
+function isReaderCall(n: AstNode, cls: string): boolean {
+  if (n.type !== 'CallExpression') return false;
+  const c = n.callee as AstNode;
+  const o = c.object as AstNode | undefined;
+  const p = c.property as AstNode | undefined;
+  return c.type === 'MemberExpression' && o?.type === 'Identifier' && o.name === cls && p?.name === 'Ha';
 }
 
 /**
  * The `this`-free member assignments (`d.f = …`) of a reader whose value comes from `<cls>.Ha`,
  * directly or through a local (`e = a.Ua() ? Cls.Ha(a, d, b) : null; d.f = e`), in source order.
+ * Whether an expression calls the reader (not counting nested functions) is worked out once per
+ * node, bottom-up, so a long assignment chain is not re-walked for each of its assignments.
  */
-function fieldAssignments(fn: FunctionExpression, cls: string): string[] {
+function fieldAssignments(fn: FunctionExpression, cls: string, charge: Charge): string[] {
+  const root = fn as unknown as AstNode;
+  const calls = new Set<AstNode>();
+  walkAst(root, charge, {
+    enter: (n) => n === root || n.type !== 'FunctionExpression',
+    leave: (n) => {
+      if (n !== root && n.type === 'FunctionExpression') return;
+      if (isReaderCall(n, cls) || childrenOf(n).some((c) => calls.has(c))) calls.add(n);
+    },
+  });
   const holds = new Set<string>();
   const out: string[] = [];
   const assign = (target: AstNode, value: AstNode) => {
-    const yes = callsReader(value, cls) || (value.type === 'Identifier' && holds.has(value.name as string));
+    const yes = calls.has(value) || (value.type === 'Identifier' && holds.has(value.name as string));
     if (target.type === 'Identifier') {
       if (yes) holds.add(target.name as string);
       else holds.delete(target.name as string);
@@ -1329,44 +1382,39 @@ function fieldAssignments(fn: FunctionExpression, cls: string): string[] {
       out.push((target.property as AstNode).name as string);
     }
   };
-  const walk = (n: AstNode): void => {
-    if (n.type === 'FunctionExpression' && n !== (fn as unknown)) return;
-    if (n.type === 'VariableDeclarator') {
-      const init = n.init as AstNode | null;
-      if (init) {
-        walk(init);
-        assign(n.id as AstNode, init);
-      }
-      return;
-    }
-    if (n.type === 'AssignmentExpression' && n.operator === '=') {
-      walk(n.right as AstNode);
-      assign(n.left as AstNode, n.right as AstNode);
-      return;
-    }
-    for (const c of childrenOf(n)) walk(c);
-  };
-  walk(fn as unknown as AstNode);
+  walkAst(root, charge, {
+    kids: (n) => {
+      if (n.type === 'FunctionExpression' && n !== root) return [];
+      if (n.type === 'VariableDeclarator') return n.init ? [n.init as AstNode] : [];
+      if (n.type === 'AssignmentExpression' && n.operator === '=') return [n.right as AstNode];
+      return childrenOf(n);
+    },
+    leave: (n) => {
+      if (n.type === 'VariableDeclarator' && n.init) assign(n.id as AstNode, n.init as AstNode);
+      else if (n.type === 'AssignmentExpression' && n.operator === '=') assign(n.left as AstNode, n.right as AstNode);
+    },
+  });
   return out;
 }
 
-/** The statics of `cls` a function calls (`Cls.R(…)`), in source order. */
-function ownStaticCalls(fn: FunctionExpression, cls: string): string[] {
-  const out: string[] = [];
-  const walk = (n: AstNode): void => {
-    if (n.type === 'FunctionExpression' && n !== (fn as unknown)) return;
-    if (n.type === 'CallExpression') {
-      const c = n.callee as AstNode;
-      const o = c.object as AstNode | undefined;
-      const p = c.property as AstNode | undefined;
-      if (c.type === 'MemberExpression' && !c.computed && o?.type === 'Identifier' && o.name === cls && p?.name) {
-        if (!out.includes(p.name as string)) out.push(p.name as string);
+/** The statics of `cls` a function calls (`Cls.R(…)`), in source order, each once. */
+function ownStaticCalls(fn: FunctionExpression, cls: string, charge: Charge): string[] {
+  const root = fn as unknown as AstNode;
+  const out = new Set<string>();
+  walkAst(root, charge, {
+    enter: (n) => {
+      if (n.type === 'FunctionExpression' && n !== root) return false;
+      if (n.type === 'CallExpression') {
+        const c = n.callee as AstNode;
+        const o = c.object as AstNode | undefined;
+        const p = c.property as AstNode | undefined;
+        if (c.type === 'MemberExpression' && !c.computed && o?.type === 'Identifier' && o.name === cls && p?.name) {
+          out.add(p.name as string);
+        }
       }
-    }
-    for (const c of childrenOf(n)) walk(c);
-  };
-  walk(fn as unknown as AstNode);
-  return out;
+    },
+  });
+  return [...out];
 }
 
 /** A native's result, refused if it would hand a host function to the bundle. */
