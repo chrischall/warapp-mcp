@@ -7,6 +7,7 @@ import type { GameMap } from '../../src/normalize.js';
 import {
   feedProfile,
   generalNotes,
+  hasCostlyBonus,
   type NoteContext,
   NOTE_TOPICS,
   notesFor,
@@ -47,7 +48,10 @@ describe('strategy notes: the data', () => {
       seen.add(n.id);
       expect(NOTE_TOPICS).toContain(n.topic);
       expect(n.text.length, n.id).toBeGreaterThan(40);
-      expect(n.source, n.id).toMatch(/^https:\/\/war\.app\/(Forum|wiki)\//);
+      // The war.app wiki and forum, or one of the community guides they link to.
+      expect(n.source, n.id).toMatch(/^https:\/\/(war\.app\/(Forum|wiki)\/|warlight\.nghood\.com\/|docs\.google\.com\/document\/d\/)/);
+      // Short enough to read at a glance: one or two sentences.
+      expect(n.text.length, n.id).toBeLessThanOrEqual(340);
       expect(sources.has(n.source), `${n.id}: ${n.source}`).toBe(true);
       expect(['source', 'derived']).toContain(n.basis);
     }
@@ -202,6 +206,26 @@ describe('feedProfile: a profile from GameFeed alone', () => {
     const p = feedProfile({ graph, players: [{ id: 7 }, { id: 9 }, { id: 11, state: 'Eliminated' }], turn: 9 });
     expect(p.format).toBe('1v1');
     expect(p.phase).toBe('late');
+  });
+});
+
+describe('hasCostlyBonus: a bonus whose completion cuts income', () => {
+  const map = (bonuses: Array<[number, number, number[]]>): GameMap => ({
+    id: 1,
+    name: 'Bonuses',
+    territories: [1, 2, 3, 4].map((id) => ({ id, name: `T${id}`, connectedTo: [id - 1, id + 1].filter((x) => x >= 1 && x <= 4) })),
+    bonuses: bonuses.map(([id, value, territoryIds]) => ({ id, name: `B${id}`, value, territoryIds, bonusIds: [] })),
+    distributionModes: [],
+  });
+  it('is false with no negative bonus, true with one that stands alone', () => {
+    expect(hasCostlyBonus(buildGraph(map([[10, 3, [1, 2]]])))).toBe(false);
+    expect(hasCostlyBonus(buildGraph(map([[10, 3, [1, 2]], [11, -2, [3, 4]]])))).toBe(true);
+  });
+  it('is false when the bonuses inside a negative one pay more than it costs (overlapping "progressive" maps)', () => {
+    // −1 over territories 1–3, but the +2 and +1 inside it make the set worth +2.
+    expect(hasCostlyBonus(buildGraph(map([[10, -1, [1, 2, 3]], [11, 2, [1, 2]], [12, 1, [3]]])))).toBe(false);
+    // A bonus only partly inside does not offset it.
+    expect(hasCostlyBonus(buildGraph(map([[10, -1, [1, 2, 3]], [11, 5, [3, 4]]])))).toBe(true);
   });
 });
 

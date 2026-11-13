@@ -11,11 +11,15 @@ import { mapNotes, mapNotesMarkdown, type MapNotes } from '../strategy/map-notes
 import {
   feedProfile,
   generalNotes,
+  hasCostlyBonus,
   NOTE_TOPICS,
+  noteContext,
   notesFor,
   notesMarkdown,
+  TOPIC_TITLES,
   type StrategyNote,
 } from '../strategy/notes.js';
+import { cardClock } from '../strategy/card-clock.js';
 import { cardRules } from '../cards.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg, WARAPP_UNTRUSTED_NOTE } from './common.js';
 import { lookupMeta } from './hints.js';
@@ -103,12 +107,16 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
       description: untrustedDescription(
         'Strategy notes for war.app (Warzone), each a short heuristic in our own words with the community guide or ' +
           'wiki page it comes from, by topic: format (1v1, free-for-all, teams), settings (attack sizes, luck, ' +
-          'Local Deployment, No-Split), cards, reading the game (counting armies, ahead/behind play) and the map. ' +
-          'With `game_id`: the notes that fit its profile (format, settings, phase, read from GameFeed — standing is ' +
-          'left to warapp_plan_turn) plus map notes: bonuses ranked by value per army to take at its settings with ' +
-          'their entry points, chokepoints, and in the picking stage income targets by turn from the pick ' +
-          "advisor's opening over the territories the game lists as pickable. With only `map_id` (a map already " +
-          'loaded with a game): the map notes. With neither: every general note. Read-only.',
+          'commanders, the guard, income, Local Deployment, No-Split), cards (each card, and when cards arrive), ' +
+          'reading the game (fog, picks, counting armies), opening (picks and the first turns), timing (the order ' +
+          'of orders within a turn), fighting (stacks in contact, ahead and behind) and the map. With `game_id`: ' +
+          'the notes that fit the game (its format, phase, fog, move order, distribution, kill rates and the cards ' +
+          'in play, read from GameFeed — standing is left to warapp_plan_turn), its `cardClock` (per card: pieces, ' +
+          'and the first turn it can be played, fastest and guaranteed) and map notes: bonuses ranked by value per ' +
+          'army to take at its settings with their entry points, chokepoints, and in the picking stage income ' +
+          "targets by turn from the pick advisor's opening over the territories the game lists as pickable. With " +
+          'only `map_id` (a map already loaded with a game): the map notes. With neither: the list of topics ' +
+          '(pass `topic` for its notes, or view "full" for every note). Read-only.',
       ),
       _meta: lookupMeta(['warzone strategy', 'strategy tips', 'how to play this map', 'warzone advice']),
       annotations: readAnnotations('war.app strategy notes'),
@@ -127,7 +135,16 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
     async ({ game_id, map_id, topic, view }) => {
       const withMap = topic === undefined || topic === 'map';
       if (game_id === undefined && map_id === undefined) {
-        return respond(view, VIEWS, (rung) => ({ scope: 'general', notes: generalNotes(topic).map(noteView(rung === 'full')) }));
+        return respond(view, VIEWS, (rung) =>
+          // Every note at once is a long read: with no topic the compact answer is the index.
+          topic === undefined && rung !== 'full'
+            ? {
+                scope: 'general',
+                topics: NOTE_TOPICS.map((t) => ({ topic: t, title: TOPIC_TITLES[t], notes: generalNotes(t).map((n) => n.id) })),
+                next: 'Pass `topic` for one topic\'s notes, `game_id` for the notes that fit a game, or view "full" for every note.',
+              }
+            : { scope: 'general', notes: generalNotes(topic).map(noteView(rung === 'full')) },
+        );
       }
       if (game_id === undefined) {
         const map = client.cachedMap(map_id!);
@@ -171,12 +188,9 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
         picking: game.state === PICK_PHASE_STATE,
         ...(game.standing ? { board: game.standing } : {}),
       });
-      const notes = notesFor(profile, topic, {
-        ...(s?.offensiveKillRate !== undefined ? { offensiveKillRate: s.offensiveKillRate } : {}),
-        ...(s?.defensiveKillRate !== undefined ? { defensiveKillRate: s.defensiveKillRate } : {}),
-        ...(s?.armyCap !== undefined ? { armyCap: s.armyCap } : {}),
-        ...(s?.multiAttack !== undefined ? { multiAttack: s.multiAttack } : {}),
-      });
+      // The map is the game's own (bonus overrides applied), so a bonus made negative here counts.
+      const notes = notesFor(profile, topic, { ...noteContext(s), negativeBonus: hasCostlyBonus(graphOf(map)) });
+      const clock = topic === undefined || topic === 'cards' ? cardClock(s) : undefined;
       const mapped = withMap ? gameMapNotes(game, map) : undefined;
       return respond(view, VIEWS, (rung) => ({
         scope: 'game',
@@ -186,6 +200,8 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
             ? profile
             : { format: profile.format, opponents: profile.opponents, phase: profile.phase, standing: profile.standing },
         notes: notes.map(noteView(rung === 'full')),
+        // When each card can first be in a hand, from the game's card settings (absent with no cards).
+        ...(clock ? { cardClock: clock } : {}),
         ...(mapped ? { map: mapView(map, mapped, rung === 'full') } : {}),
       }));
     },

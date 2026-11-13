@@ -89,13 +89,27 @@ interface StrategyPayload {
 }
 
 describe('warapp_strategy', () => {
-  it('with no arguments: every general note, with no traffic', async () => {
+  it('with no arguments: the topics and their note ids, with no traffic (every note at once is a long read)', async () => {
     h = await harnessFor(game());
-    const p = payload<StrategyPayload>(await h.call('warapp_strategy'));
+    const p = payload<StrategyPayload & { topics: Array<{ topic: string; title: string; notes: string[] }>; next: string }>(
+      await h.call('warapp_strategy'),
+    );
     expect(p.scope).toBe('general');
-    expect(p.notes.map((n) => n.id)).toEqual(STRATEGY_NOTES.map((n) => n.id));
-    expect(p.notes.every((n) => n.source.startsWith('https://war.app/'))).toBe(true);
+    expect(p.notes).toBeUndefined();
+    expect(p.topics.map((t) => t.topic)).toEqual(['format', 'settings', 'cards', 'reading', 'opening', 'timing', 'fighting', 'map']);
+    expect(p.topics.flatMap((t) => t.notes).sort()).toEqual(STRATEGY_NOTES.map((n) => n.id).sort());
+    expect(p.topics.every((t) => t.title.length > 0 && t.notes.length > 0)).toBe(true);
+    expect(p.next).toMatch(/topic/);
+    expect(JSON.stringify(p).length).toBeLessThan(5000);
     expect(p.map).toBeUndefined();
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('with no arguments and view full: every general note, each with its source', async () => {
+    h = await harnessFor(game());
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { view: 'full' }));
+    expect(p.notes.map((n) => n.id)).toEqual(STRATEGY_NOTES.map((n) => n.id));
+    expect(p.notes.every((n) => n.source.startsWith('https://'))).toBe(true);
     expect(h.calls).toHaveLength(0);
   });
 
@@ -121,6 +135,53 @@ describe('warapp_strategy', () => {
     expect(p.map!.chokepoints.length).toBeGreaterThan(0);
     expect(p.map!.incomeTargets).toBeUndefined();
     expect(h.calls).toHaveLength(1);
+  });
+
+  it('offers a card\'s notes only when that card is in the game, and gives the card clock', async () => {
+    const settings = {
+      NumberOfCardsToReceiveEachTurn: 2,
+      ReinforcementCard: { NumPieces: 4, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1, FixedArmies: 4 },
+      BombCard: { NumPieces: 5, InitialPieces: 1, MinimumPiecesPerTurn: 1, Weight: 1 },
+      OrderDelayCard: 'none',
+      MoveOrder: 'Cycle',
+      AutomaticTerritoryDistribution: 'Manual',
+      AllowTransferOnly: true,
+      Wastelands: { NumberOfWastelands: 2, WastelandSize: 10 },
+    };
+    h = await harnessFor(game({ settings }));
+    const p = payload<StrategyPayload & { cardClock?: { piecesPerTurn: number; fixed: boolean; cards: Array<{ card: string; firstPlayableTurn: { fastest: number | null; guaranteed: number | null } }> } }>(
+      await h.call('warapp_strategy', { game_id: GAME }),
+    );
+    const ids = p.notes.map((n) => n.id);
+    expect(ids).toEqual(expect.arrayContaining(['cards-count-arrival', 'cards-bomb-hold', 'cards-opponent-reinforcement-due', 'timing-transfer-only-reinforce']));
+    expect(ids).not.toContain('cards-order-delay');
+    expect(ids).not.toContain('cards-airlift-defend');
+    expect(ids).not.toContain('timing-attack-only-retake');
+    // Every piece is a minimum, so the clock is exact: 4 pieces at 1 a turn is playable on turn 5.
+    expect(p.cardClock).toMatchObject({ piecesPerTurn: 2, fixed: true });
+    expect(p.cardClock!.cards).toEqual([
+      expect.objectContaining({ card: 'Reinforcement', firstPlayableTurn: { fastest: 5, guaranteed: 5 } }),
+      expect.objectContaining({ card: 'Bomb', firstPlayableTurn: { fastest: 5, guaranteed: 5 } }),
+    ]);
+    // One topic: the clock comes with the cards, not with the others.
+    const timing = payload<StrategyPayload & { cardClock?: unknown }>(await h.call('warapp_strategy', { game_id: GAME, topic: 'timing' }));
+    expect(timing.notes.every((n) => n.topic === 'timing')).toBe(true);
+    expect(timing.cardClock).toBeUndefined();
+    const cards = payload<StrategyPayload & { cardClock?: unknown }>(await h.call('warapp_strategy', { game_id: GAME, topic: 'cards' }));
+    expect(cards.cardClock).toBeDefined();
+  });
+
+  it('a game without cards has no card clock, and a negative bonus on its map brings that note', async () => {
+    h = await harnessFor(game());
+    const p = payload<StrategyPayload & { cardClock?: unknown }>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(p.cardClock).toBeUndefined();
+    expect(p.notes.map((n) => n.id)).not.toContain('settings-negative-bonus');
+    await h.harness.close();
+    // The game overrides the first bonus to −3.
+    const first = (MAP.bonuses as Array<{ id: string }>)[0]!;
+    h = await harnessFor(game({ settings: { OverriddenBonuses: [{ bonusID: Number(first.id), value: -3 }] } }));
+    const neg = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(neg.notes.map((n) => n.id)).toContain('settings-negative-bonus');
   });
 
   it('reads the GameFeed standing when the game has one: bordering the opponent is contact', async () => {
