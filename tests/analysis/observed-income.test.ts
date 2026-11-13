@@ -119,14 +119,15 @@ describe('enemy deploy from observed growth (#57)', () => {
   it('does not count growth on a territory that changed owner as deploy', () => {
     // T6: player 30's 4 last turn; T7: my 7 last turn. The enemy took both from T4 (40 → 10),
     // leaving 20 on T6 and 8 on T7. Its visible total went 40 + 0 → 10 + 20 + 8 (−2), and it
-    // lost about what it killed (4 + 7): observed = −2 + 11 = 9, not T6's growth (+16).
+    // lost what the defenders killed at 70% (round(2.8) + round(4.9) = 3 + 5, #86):
+    // observed = −2 + 8 = 6, not T6's growth (+16).
     const before = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 40), fogged(5), enemy(6, 4, OTHER), mine(7, 7), fogged(8)]);
     const after = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 10), fogged(5), enemy(6, 20), enemy(7, 8), fogged(8)]);
-    expect(enemyDeployEstimates(g, after, ME, STD, before)[0]!.observed).toBe(9);
+    expect(enemyDeployEstimates(g, after, ME, STD, before)[0]!.observed).toBe(6);
     // However the armies split between T4 and the capture, the figure is the same:
     // what moved in came out of T4.
     const split = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 1), fogged(5), enemy(6, 29), enemy(7, 8), fogged(8)]);
-    expect(enemyDeployEstimates(g, split, ME, STD, before)[0]!.observed).toBe(9);
+    expect(enemyDeployEstimates(g, split, ME, STD, before)[0]!.observed).toBe(6);
     // A territory under the same owner that shrank counts against the growth (its armies moved).
     const shrank = board([mine(1, 30), enemy(2, 5), enemy(3, 2), enemy(4, 21), ...fog]);
     expect(enemyDeployEstimates(g, shrank, ME, STD, then)[0]!.observed).toBe(0);
@@ -163,14 +164,16 @@ describe('enemy deploy from observed growth (#57)', () => {
 
   it('counts a visible neutral it captured, never a territory that was fogged', () => {
     // T8 was a visible 2-army neutral; T4 sent 10 (21 → 11) and 9 now sit on T8. Its visible
-    // total went 21 → 20 and it lost about the neutral's 2: observed = −1 + 2 = 1, not +9.
+    // total went 21 → 20 and the neutral's 2 killed round(1.4) = 1 (#86): observed = −1 + 1 = 0,
+    // not +9.
     const before = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 21), fogged(5), fogged(6), fogged(7), neutral(8, 2)]);
     const after = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 11), fogged(5), fogged(6), enemy(7, 30), enemy(8, 9)]);
     // T7 was fogged: it may simply have come into view, so it is not counted.
-    expect(enemyDeployEstimates(g, after, ME, STD, before)[0]!.observed).toBe(1);
-    // With T4 unchanged, the 9 on T8 were deployed (on T4, then moved): +9 + 2.
+    expect(enemyDeployEstimates(g, after, ME, STD, before)[0]!.observed).toBe(0);
+    // With T4 unchanged (visible both times, so the source), the 9 on T8 were deployed (on T4,
+    // then moved): +9 + 1.
     const deployed = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 21), fogged(5), fogged(6), enemy(7, 30), enemy(8, 9)]);
-    expect(enemyDeployEstimates(g, deployed, ME, STD, before)[0]!.observed).toBe(11);
+    expect(enemyDeployEstimates(g, deployed, ME, STD, before)[0]!.observed).toBe(10);
   });
 
   it('without a previous board nothing changes', () => {

@@ -44,9 +44,17 @@ and the planner conceded six held-bonus borders (≈ −29 income). With 30 it h
   `unknown`? armies `null`? a neutral? Write it down in the commit and in `docs/WARAPP-API.md`.
 - Growth counts only territories **visible on both boards with the same owner both times**.
   A territory fogged last turn contributes nothing, whoever holds it now.
-- A capture counts (armies now + armies the previous owner held) only when last turn showed that
+- A capture counts (see the #86 follow-up below for what) only when last turn showed that
   territory **visible** and owned by someone else (or a visible neutral). A territory that appears
   owned by the opponent and was fogged last turn is a reveal, not a capture.
+  - **#86 follow-up:** armies that arrive by an attack are a move, not income. A capture counts
+    what it cost (the attackers the previous defenders killed, `straightKills` at the game's
+    defensive kill rate), plus the armies now on it only up to what the opponent's neighbouring
+    territories visible on both boards sent away (their shrink, each claimed once, cancels them,
+    so the move nets to the attrition). The rest came from the fog when a neighbour was hidden
+    (or counts as deploy when every neighbour was in view): the observation lists it in `fromFog`,
+    the rationale names it as a threat ("stack next to you: N … (threat)") apart from the
+    estimated income, and the hold checks still size the borders next to it for it.
 - Plausibility cap: the observed figure never exceeds what the opponent could earn — its base
   income for its visible territory count plus the value of every bonus it could possibly hold (each
   bonus with no territory visibly held by someone else) — and a warning says when the cap cut it.

@@ -113,7 +113,7 @@ describe('fog reveals are not enemy income (#69)', () => {
     it(`observes the true small deploy when fog lifts over existing stacks (${shape})`, () => {
       const before = previous(hide);
       const o = observeDeploy(g, now, before, ENEMY);
-      expect(o).toEqual({ deploy: 5, counted: [4, 5], captured: [], reveals: [6, 7, 8] });
+      expect(o).toEqual({ deploy: 5, counted: [4, 5], captured: [], fromFog: [], reveals: [6, 7, 8] });
       expect(observedDeploy(g, now, before, ENEMY)).toBe(5);
       const [e] = enemyDeployEstimates(g, now, ME, STD, before);
       expect(e).toMatchObject({ playerId: ENEMY, observed: 5, estimate: 5 });
@@ -169,15 +169,17 @@ describe('fog reveals are not enemy income (#69)', () => {
       fogged(10),
       fogged(11),
     ]);
-    // Net −6 on T6, +5 on T9 and the 4 it killed there: 3.
-    expect(observeDeploy(g, after, before, ENEMY)).toEqual({ deploy: 3, counted: [4, 5, 6, 9], captured: [9], reveals: [] });
+    // Net −6 on T6, +5 on T9 and what my 4 killed taking it (round(4 × 70%) = 3, #86): 2.
+    expect(observeDeploy(g, after, before, ENEMY, STD)).toEqual({ deploy: 2, counted: [4, 5, 6, 9], captured: [9], fromFog: [], reveals: [] });
   });
 
   it('a territory fogged last turn and owned by it now is a reveal, not a capture', () => {
     const before = board([mine(1, 6), mine(2, 5), mine(3, 5), enemy(4, 3), enemy(5, 3), fogged(6), fogged(7), fogged(8), mine(9, 4), fogged(10), fogged(11)]);
     const after = board([mine(1, 6), mine(2, 5), mine(3, 5), enemy(4, 3), enemy(5, 3), enemy(6, 30), fogged(7), fogged(8), enemy(9, 7), fogged(10), fogged(11)]);
-    // T9 was visibly mine: a capture (7 + my 4). T6 was fogged: a reveal, whatever it holds.
-    expect(observeDeploy(g, after, before, ENEMY)).toEqual({ deploy: 11, counted: [4, 5, 9], captured: [9], reveals: [6] });
+    // T9 was visibly mine: a capture. T6 was fogged: a reveal, whatever it holds. No territory
+    // of its own next to T9 was visible both times, so the 7 arrived from the fog (#86): a move,
+    // not income. Only what my 4 killed taking it counts (round(4 × 70%) = 3).
+    expect(observeDeploy(g, after, before, ENEMY, STD)).toEqual({ deploy: 3, counted: [4, 5, 9], captured: [9], fromFog: [9], reveals: [6] });
   });
 
   it('caps the observed figure at what the opponent could earn, with a warning', () => {
