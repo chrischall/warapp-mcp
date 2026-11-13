@@ -77,7 +77,12 @@ export interface LiveTerritory {
 /** Reads a registered class from the reply (a loaded `WarappBundle`). */
 export interface ClassReader {
   readClass(typeName: string, reader: Reader): unknown;
+  /** The fields a class's reader fills from another class, in read order (a loaded bundle has it). */
+  fieldsReadAs?(ownerType: string, fieldType: string): string[];
 }
+
+/** On a decoded LatestGameInfo: the name of its CURRENT standing's field, from the bundle's reader. */
+const CURRENT_STANDING_FIELD = Symbol('currentStandingField');
 
 /** The live standing arrived in a shape this server does not understand. */
 export class LiveBoardFormatError extends McpToolError {
@@ -175,16 +180,25 @@ export function readLatestGameInfo(bundle: ClassReader, body: Reader): unknown {
   // The result is the whole body: bytes left over mean the readers and the reply disagree
   // on the layout, so what was read cannot be trusted (#131).
   if (body.remaining !== 0) throw new LiveBoardFormatError(`${body.remaining} bytes left unread after the LatestGameInfo`);
+  const current = bundle.fieldsReadAs?.(LATEST_GAME_INFO, GAME_STANDING)[0];
+  if (current !== undefined) Object.defineProperty(info, CURRENT_STANDING_FIELD, { value: current });
   return info;
 }
 
 /**
- * The CURRENT GameStanding of a decoded LatestGameInfo: its first `GameStanding`
- * field (verified 2026-11-12, #20 — the info also carries the previous turn's
- * standing, later in field order). `undefined` when there is none; never throws.
+ * The CURRENT GameStanding of a decoded LatestGameInfo: the first field its reader fills
+ * from GameStanding (verified 2026-11-12, #20 — the info also carries the previous turn's
+ * standing, later in field order). When the bundle named that field, a withheld (null)
+ * current standing is `undefined` — never last turn's standing in its place (#131);
+ * otherwise the first GameStanding present. `undefined` when there is none; never throws.
  */
 export function currentStanding(info: unknown): Obj | undefined {
   if (!isObj(info)) return undefined;
+  const field = (info as { [CURRENT_STANDING_FIELD]?: string })[CURRENT_STANDING_FIELD];
+  if (field !== undefined) {
+    const v = info[field];
+    return isType(v, GAME_STANDING) ? v : undefined;
+  }
   return fields(info).find((v): v is Obj => isType(v, GAME_STANDING));
 }
 

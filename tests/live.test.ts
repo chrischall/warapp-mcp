@@ -4,6 +4,9 @@ import {
   LiveBoardFormatError,
   playersByInGameId,
   readLiveStanding,
+  readLatestGameInfo,
+  currentStanding,
+  standingFromInfo,
   boardStateFromLive,
   toBoardState,
   type ClassReader,
@@ -208,6 +211,56 @@ describe('a changed client fails loudly, never a wrong verified board (#131)', (
     const w = new Writer();
     w.bool(true);
     expect(() => readLiveStanding(fake, new Reader(w.bytes()))).toThrow(/army count/);
+  });
+});
+
+describe('the current standing is the current field, not the first one present (#131)', () => {
+  // LatestGameInfo as the client builds it: the current standing, a turn number, then the previous
+  // turn's standing, each through a temporary (`e=…;d.f=e`).
+  const LG_LINE =
+    'Lg.Ha=function(a,b,d){null==d&&(d=242);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;e.k3=P.Ya(a);return e};';
+  const TWO_STANDINGS =
+    'Lg.Ha=function(a,b,d){null==d&&(d=242);return Lg.R(a,d)};' +
+    'Lg.R=function(a,b){var d=new Lg,e=a.Ua()?Gs.Ha(a,d,b):null;d.cur=e;e=P.Ya(a);d.turn=e;' +
+    'e=a.Ua()?Gs.Ha(a,d,b):null;d.prev=e;return d};';
+  const twoStandings = () => {
+    expect(LIVE_BUNDLE).toContain(LG_LINE);
+    return new WarappBundle(LIVE_BUNDLE.replace(LG_LINE, TWO_STANDINGS), 'two-standings');
+  };
+  const writeStanding = (w: Writer, id: number, armies: number) => {
+    w.bool(false); // no per-player data
+    w.bool(true).list([id], (ww, t) => {
+      ww.int32(t).bool(true).int32(1).int32(t).bool(false).int32(armies).u8(0).int32(123456).bool(false);
+    });
+  };
+  const reply = (current: boolean) => {
+    const w = new Writer();
+    w.bool(true);
+    w.bool(current);
+    if (current) writeStanding(w, 5, 20);
+    w.int32(3);
+    w.bool(true);
+    writeStanding(w, 5, 9);
+    return new Reader(w.bytes());
+  };
+
+  it('reads the current standing when both are sent', () => {
+    expect(readLiveStanding(twoStandings(), reply(true))).toEqual([
+      { territoryId: 5, fogLevel: 1, fogged: false, owner: 123456, armies: 20 },
+    ]);
+  });
+
+  it('a withheld current standing is no board, not last turn’s', () => {
+    const b = twoStandings();
+    const info = readLatestGameInfo(b, reply(false));
+    expect(currentStanding(info)).toBeUndefined();
+    expect(standingFromInfo(info)).toBeNull();
+  });
+
+  it('the bundle names the fields its reader fills from a class, in read order', () => {
+    expect(twoStandings().fieldsReadAs('warlight.shared.LatestGameInfo', 'warlight.shared.GameStanding')).toEqual(['cur', 'prev']);
+    expect(bundle.fieldsReadAs('warlight.shared.LatestGameInfo', 'warlight.shared.GameStanding')).toEqual(['k2']);
+    expect(bundle.fieldsReadAs('warlight.shared.LatestGameInfo', 'warlight.shared.Nope')).toEqual([]);
   });
 });
 

@@ -76,6 +76,19 @@ export class WarappBundle {
     return this.interp.bundle.varOf.has(typeName);
   }
 
+  private readonly fieldsCache = new Map<string, string[]>();
+
+  /** The fields `ownerType`'s reader fills from `fieldType`'s reader, in read order (cached). */
+  fieldsReadAs(ownerType: string, fieldType: string): string[] {
+    const key = `${ownerType}\u0000${fieldType}`;
+    let out = this.fieldsCache.get(key);
+    if (!out) {
+      out = this.interp.fieldsReadAs(ownerType, fieldType);
+      this.fieldsCache.set(key, out);
+    }
+    return [...out];
+  }
+
   /** Read one instance of a class, by registered type name (or minified var). */
   readClass(typeNameOrVar: string, reader: Reader): unknown {
     return this.interp.readClass(typeNameOrVar, reader);

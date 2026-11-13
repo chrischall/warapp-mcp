@@ -284,6 +284,40 @@ export class BundleInterpreter {
     return this.callStatic(this.resolveVar(typeNameOrVar), 'Ha', [reader, null, this.version]);
   }
 
+  /**
+   * The fields a class's reader fills from another class's reader, in read order — found by
+   * reading the reader's source, not by running it, so a field the reply leaves absent (null)
+   * is still named. Follows the reader into its own class's statics (`Lg.Ha` → `Lg.R`). Empty
+   * when either class is unknown or no field is read from it.
+   */
+  fieldsReadAs(ownerTypeOrVar: string, fieldType: string): string[] {
+    const fieldVar = this.bundle.varOf.get(fieldType);
+    let ownerVar: string;
+    try {
+      ownerVar = this.resolveVar(ownerTypeOrVar);
+    } catch {
+      return [];
+    }
+    if (!fieldVar) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const visit = (fn: string, depth: number): void => {
+      if (seen.has(fn) || depth > 3) return;
+      seen.add(fn);
+      let node: FunctionExpression;
+      try {
+        node = this.resolveStatic(ownerVar, fn).node;
+      } catch {
+        return;
+      }
+      const found = fieldAssignments(node, fieldVar);
+      for (const f of found) if (!out.includes(f)) out.push(f);
+      if (!found.length) for (const next of ownStaticCalls(node, ownerVar)) visit(next, depth + 1);
+    };
+    visit('Ha', 0);
+    return out;
+  }
+
   // -------------------------------------------------------------------------
   // Resolution
 
@@ -602,6 +636,88 @@ export class BundleInterpreter {
     if (f instanceof Closure) return this.invoke(f.node, args, f.scope, f.where);
     throw this.unsupported('call of a non-function', n, where);
   }
+}
+
+type AstNode = AcornNode & Record<string, unknown>;
+const isNode = (v: unknown): v is AstNode => isObject(v) && typeof v.type === 'string' && typeof v.start === 'number';
+
+/** A node's child nodes, in source order. */
+function childrenOf(n: AstNode): AstNode[] {
+  const out: AstNode[] = [];
+  for (const [k, v] of Object.entries(n)) {
+    if (k === 'type') continue;
+    if (Array.isArray(v)) for (const c of v) if (isNode(c)) out.push(c);
+    if (isNode(v)) out.push(v);
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/** Whether an expression calls `<cls>.Ha(…)` (not counting nested functions). */
+function callsReader(n: AstNode, cls: string): boolean {
+  if (n.type === 'FunctionExpression') return false;
+  if (n.type === 'CallExpression') {
+    const c = n.callee as AstNode;
+    const o = c.object as AstNode | undefined;
+    const p = c.property as AstNode | undefined;
+    if (c.type === 'MemberExpression' && o?.type === 'Identifier' && o.name === cls && p?.name === 'Ha') return true;
+  }
+  return childrenOf(n).some((c) => callsReader(c, cls));
+}
+
+/**
+ * The `this`-free member assignments (`d.f = …`) of a reader whose value comes from `<cls>.Ha`,
+ * directly or through a local (`e = a.Ua() ? Cls.Ha(a, d, b) : null; d.f = e`), in source order.
+ */
+function fieldAssignments(fn: FunctionExpression, cls: string): string[] {
+  const holds = new Set<string>();
+  const out: string[] = [];
+  const assign = (target: AstNode, value: AstNode) => {
+    const yes = callsReader(value, cls) || (value.type === 'Identifier' && holds.has(value.name as string));
+    if (target.type === 'Identifier') {
+      if (yes) holds.add(target.name as string);
+      else holds.delete(target.name as string);
+    } else if (target.type === 'MemberExpression' && !target.computed && yes) {
+      out.push((target.property as AstNode).name as string);
+    }
+  };
+  const walk = (n: AstNode): void => {
+    if (n.type === 'FunctionExpression' && n !== (fn as unknown)) return;
+    if (n.type === 'VariableDeclarator') {
+      const init = n.init as AstNode | null;
+      if (init) {
+        walk(init);
+        assign(n.id as AstNode, init);
+      }
+      return;
+    }
+    if (n.type === 'AssignmentExpression' && n.operator === '=') {
+      walk(n.right as AstNode);
+      assign(n.left as AstNode, n.right as AstNode);
+      return;
+    }
+    for (const c of childrenOf(n)) walk(c);
+  };
+  walk(fn as unknown as AstNode);
+  return out;
+}
+
+/** The statics of `cls` a function calls (`Cls.R(…)`), in source order. */
+function ownStaticCalls(fn: FunctionExpression, cls: string): string[] {
+  const out: string[] = [];
+  const walk = (n: AstNode): void => {
+    if (n.type === 'FunctionExpression' && n !== (fn as unknown)) return;
+    if (n.type === 'CallExpression') {
+      const c = n.callee as AstNode;
+      const o = c.object as AstNode | undefined;
+      const p = c.property as AstNode | undefined;
+      if (c.type === 'MemberExpression' && !c.computed && o?.type === 'Identifier' && o.name === cls && p?.name) {
+        if (!out.includes(p.name as string)) out.push(p.name as string);
+      }
+    }
+    for (const c of childrenOf(n)) walk(c);
+  };
+  walk(fn as unknown as AstNode);
+  return out;
 }
 
 function describe(v: unknown): string {
