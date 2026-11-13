@@ -114,10 +114,15 @@ const spreadBoard = board([
   theirs(8, 51), theirs(9, 5), theirs(10, 5), theirs(15, 6), neutral(18, 2), ...FAR,
 ]);
 
-/** Lesson 5: the stack at 15 went 51 → 76 next to my 58 at 4. */
+/**
+ * Lesson 5: the stack at 15 went 51 → 76 next to my 58 at 4. Its other neighbour, T16, is its
+ * own 2 in view on both boards: the growth can only be deploys (#123: next to the fog, growth
+ * beyond what it was expected to deploy could be a stack walking in, and is not projected).
+ */
 const QUIET = [
   mine(1, 2), mine(2, 3), mine(3, 4), mine(5, 2), mine(6, 2), mine(7, 2),
-  neutral(8, 2), theirs(9, 5), theirs(10, 5), neutral(18, 2), ...FAR,
+  neutral(8, 2), theirs(9, 5), theirs(10, 5), neutral(18, 2), theirs(16, 2),
+  ...FAR.filter((t) => t.territoryId !== 16),
 ];
 const growingNow = board([...QUIET, mine(4, 58), theirs(15, 76)]);
 const growingThen = board([...QUIET, mine(4, 58), theirs(15, 51)]);

@@ -50,7 +50,7 @@ const deployedTo = (p: TurnPlan, id: number) => p.deploys.find((d) => d.territor
 
 /** A track observed over two turns with `income`, and the bonus combinations that fit its gap. */
 function track(playerId: number, income: number, candidates: number[][] = [], visibleIncome = 5): OpponentTrack {
-  const turn = { from: 0, to: 1, observed: income, raw: income, cap: income, counted: [], captured: [], fromFog: [], reveals: [], visibleIncome, earned: income, net: 0, losses: 0, fogArmies: 0, measured: 0, broken: [], brokenValue: 0 };
+  const turn = { from: 0, to: 1, observed: income, raw: income, cap: income, counted: [], captured: [], fromFog: [], reveals: [], visibleIncome, earned: income, net: 0, losses: 0, fogArmies: 0, measured: 0, broken: [], brokenValue: 0, low: income, high: income, reinforced: [], grewFromFog: [], emptied: [], combat: 0 };
   return {
     playerId,
     firstSeen: 1,
@@ -67,7 +67,7 @@ function track(playerId: number, income: number, candidates: number[][] = [], vi
     observedRange: { min: income, max: income },
     incomeMethod: 'max-observed',
     incomeLowered: 0,
-    unaccounted: 0,
+    unexplained: 0,
     visible: 1,
     turnsUnseen: 0,
     turnsUnseenAtLeast: false,
@@ -77,8 +77,9 @@ function track(playerId: number, income: number, candidates: number[][] = [], vi
       ? {
           gap: income - visibleIncome,
           exact: true,
-          candidates: candidates.map((ids) => ({ bonusIds: ids, total: income - visibleIncome })),
+          candidates: candidates.map((ids) => ({ bonusIds: ids, total: income - visibleIncome, hops: 1 })),
           more: 0,
+          implausible: 0,
         }
       : null,
     notes: [],

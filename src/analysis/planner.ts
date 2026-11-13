@@ -84,8 +84,15 @@
 //     plus, on each territory it captured from a visibly held or neutral territory, the
 //     attackers the previous defenders killed at the game's kill rates, and its armies there
 //     only up to what its visible-both-turns neighbours sent away (their shrink, each claimed
-//     once, ascending id); the rest arrived from the fog when a neighbour was hidden (a move
-//     and a threat, never income, issue #86), or counts as deploy when every neighbour was in view). A territory hidden last turn
+//     once, ascending id); the rest, when a neighbour was hidden, counts as deployed on the
+//     visible stack that attacked when one did shrink into it (deploy-then-capture, #123, up to
+//     what it could earn), else arrived from the fog (a move and a threat, never income, issue
+//     #86), or counts as deploy when every neighbour was in view). One-off movements (#123):
+//     growth on a territory it held both times next to a hidden one, beyond what it was expected
+//     to deploy (its visible income, or the fog prior), is a stack walking in from the fog, not
+//     income; a capture from me is priced at what the guard I may have left kills, never my
+//     stack last turn (I may have attacked out of it). Each observation carries the low and the
+//     high reading of those ambiguous armies, and a rationale line names them. A territory hidden last turn
 //     (fogged, or under a fog level that hid its armies) is a fog reveal, never growth or a
 //     capture (issue #69). The observed figure is capped
 //     at what the opponent could earn on this board: its base income plus every bonus none of
@@ -111,7 +118,9 @@
 //     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
 //     enemy territory next to me that was visible then (owner and armies, #69) under the same owner and
-//     has grown is "building" at growth = armies now − armies then per turn (a
+//     has grown is "building" at growth = armies now − armies then per turn, less what a visible
+//     neighbour of the same owner sent (its shrink, claimed once: a transfer is a one-off, not a
+//     trend) and at most its owner's observed deploy (#123) (a
 //     warning naming my most exposed neighbour and the armies it needs to hold
 //     next turn and the turn after). A border's threat becomes movable +
 //     max(enemyDeploy, the owner's fastest growth next to it), so its hold cost
@@ -1160,10 +1169,66 @@ export interface DeployObservation {
    * cost plus what the visible sources sent; the stack stays a threat.
    */
   fromFog: number[];
-  /** The armies that arrived from the fog on `fromFog` (the stacks beyond what visible sources sent): moves, never income. */
+  /**
+   * The armies read as moves out of the fog, never income: the stacks on `fromFog` beyond what
+   * visible sources sent, plus the growth on `grewFromFog` beyond what it was expected to deploy.
+   */
   fogArmies: number;
   /** Its territories now that last turn's board did not show: fog reveals, never income. */
   reveals: number[];
+  /**
+   * Of `captured`, those it took with more armies than its visible neighbours visibly sent, where
+   * one of them did shrink into it and a neighbour was hidden (#123): the surplus counts as a
+   * deploy on the visible stack that attacked (deploy-then-capture), though a stack out of the
+   * fog may have joined it (`low` counts it so).
+   */
+  reinforced: number[];
+  /**
+   * Its territories held on both boards, next to a territory hidden on either, whose growth was
+   * read (at least partly) as a move out of the fog (#123): the growth there beyond what it was
+   * expected to deploy ({@link ObserveContext.expected}).
+   */
+  grewFromFog: number[];
+  /** The armies of that growth read as moves (part of `fogArmies`). */
+  fogGrowth: number;
+  /** {@link ObserveContext.expected}, when given. */
+  expected: number | null;
+  /**
+   * Of `captured`, those taken from me (#123, given {@link ObserveContext.me}): my orders are
+   * unknown here, so the capture is priced at what the guard I may have left kills, never at my
+   * stack last turn (I may have attacked out of it).
+   */
+  emptied: number[];
+  /** What `high` adds for `emptied` (my stack last turn standing there, not the guard). */
+  emptiedHigh: number;
+  /** The deploy with every ambiguous army read the low way (fog moves, emptied captures), floored at 0. */
+  low: number;
+  /** The deploy with every ambiguous army read the high way (deploys, my stack standing), floored at 0. */
+  high: number;
+}
+
+/**
+ * What {@link observeSigned} knows beyond the two boards (#123); every field optional, and
+ * without them the reading is the board-only one.
+ */
+export interface ObserveContext {
+  /** My player id: a capture from me is priced at the guard (`emptied`). */
+  me?: number;
+  /** Armies that stand guard on a territory (1, or 0 when the game lets a territory empty); default 1. */
+  guard?: number;
+  /**
+   * What it was expected to deploy without this observation (its visible income, or the fog
+   * prior): growth on its territories next to a hidden one beyond that is a move out of the
+   * fog (`grewFromFog`), not income. Absent: every growth counts as deploy.
+   */
+  expected?: number;
+  /**
+   * The most it could deploy (its base plus every bonus it could hold): a capture's surplus over
+   * what its visible attacker sent counts as deploy-then-capture only up to this, over the turn
+   * (`reinforced`); the rest arrived from the fog. Absent (a board-only reading): none does, as
+   * before #123.
+   */
+  most?: number;
 }
 
 /**
@@ -1196,8 +1261,9 @@ export function observeDeploy(
   previous: BoardState,
   playerId: number,
   rates: KillRates = {},
+  context: ObserveContext = {},
 ): DeployObservation {
-  const { signed: _signed, ...o } = observeSigned(g, board, previous, playerId, rates);
+  const { signed: _signed, ...o } = observeSigned(g, board, previous, playerId, rates, context);
   return o;
 }
 
@@ -1211,16 +1277,28 @@ export function observeSigned(
   previous: BoardState,
   playerId: number,
   rates: KillRates = {},
+  context: ObserveContext = {},
 ): DeployObservation & { signed: number } {
   const before = new Map(previous.territories.map((t) => [t.territoryId, t]));
   let total = 0;
+  /** What `low` and `high` differ from `total` by. */
+  let lowExtra = 0;
+  let highExtra = 0;
   const counted: number[] = [];
   const captured: number[] = [];
   const fromFog: number[] = [];
   let fogArmies = 0;
   const reveals: number[] = [];
+  const reinforced: number[] = [];
+  const emptied: number[] = [];
+  let emptiedHigh = 0;
+  /** Growth on its held territories next to a hidden one: armies that could have walked in from the fog. */
+  const grewBesideFog: { id: number; growth: number }[] = [];
   const now = new Map(board.territories.map((t) => [t.territoryId, t]));
   const defensive = rates.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
+  const guard = Math.max(0, context.guard ?? 1);
+  /** What deploy-then-capture may still account for this turn (`most`). */
+  let reinforceLeft = Math.max(0, context.most ?? 0);
   const mineBothTimes = (id: number) => {
     const a = visibleState(now.get(id));
     const b = visibleState(before.get(id));
@@ -1246,31 +1324,96 @@ export function observeSigned(
       continue;
     }
     counted.push(t.territoryId);
-    if (was.owner.kind === 'player' && was.owner.playerId === playerId) total += t.armies! - was.armies!;
-    else {
+    const ns = [...neighborsOf(g, t.territoryId)].sort((a, b) => a - b);
+    if (was.owner.kind === 'player' && was.owner.playerId === playerId) {
+      const growth = t.armies! - was.armies!;
+      total += growth;
+      if (growth > 0 && ns.some(hidden)) grewBesideFog.push({ id: t.territoryId, growth });
+    } else {
       captured.push(t.territoryId);
-      // What the capture cost it, always; the armies standing there only as far as a visible
-      // source's shrink accounts for them (it cancels them). Beyond that, with a neighbour that
-      // was hidden on either board, the rest arrived from the fog: a move, not income (#86).
-      // With none, the rest can only be a deploy on a visible source before it attacked.
-      total += straightKills(was.armies!, defensive);
+      // What the capture cost it, always. Taken from me (#123), the defenders were what I left
+      // there, which this board cannot tell (I may have attacked out of it): priced at the guard,
+      // my stack last turn the high reading.
+      if (context.me !== undefined && was.owner.kind === 'player' && was.owner.playerId === context.me) {
+        const least = straightKills(Math.min(was.armies!, guard), defensive);
+        total += least;
+        highExtra += straightKills(was.armies!, defensive) - least;
+        emptiedHigh += straightKills(was.armies!, defensive) - least;
+        emptied.push(t.territoryId);
+      } else total += straightKills(was.armies!, defensive);
+      // The armies standing there only as far as a visible source's shrink accounts for them
+      // (it cancels them). Beyond that, with a neighbour that was hidden on either board: when a
+      // visible source did shrink into it, the attack came from that stack and the rest was
+      // deployed on it first (deploy-then-capture, #123); when none did, the rest arrived from
+      // the fog — a move, not income (#86). With no hidden neighbour, the rest can only be a
+      // deploy on a visible source before it attacked.
       let arrived = t.armies!;
-      const ns = [...neighborsOf(g, t.territoryId)].sort((a, b) => a - b);
+      let claimed = 0;
       for (const n of ns) {
         const left = shrinkLeft.get(n);
         if (!left || !arrived) continue;
         const take = Math.min(left, arrived);
         shrinkLeft.set(n, left - take);
         arrived -= take;
+        claimed += take;
         total += take;
       }
       if (arrived > 0 && ns.some(hidden)) {
-        fromFog.push(t.territoryId);
-        fogArmies += arrived;
+        const deployed = claimed > 0 ? Math.min(arrived, reinforceLeft) : 0;
+        if (deployed > 0) {
+          reinforced.push(t.territoryId);
+          reinforceLeft -= deployed;
+          total += deployed;
+          lowExtra -= deployed;
+        }
+        if (arrived > deployed) {
+          fromFog.push(t.territoryId);
+          fogArmies += arrived - deployed;
+          highExtra += arrived - deployed;
+        }
       } else total += arrived;
     }
   }
-  return { deploy: Math.max(0, total), signed: total, counted, captured, fromFog, fogArmies, reveals };
+  // #123: growth on a held territory next to the fog may be a stack that walked in. Beyond what
+  // it was expected to deploy, the growth there (at most) is read as that move; the low reading
+  // takes all of it out, the high one none.
+  const grewFromFog: number[] = [];
+  let fogGrowth = 0;
+  const fogGrown = grewBesideFog.reduce((sum, x) => sum + x.growth, 0);
+  if (fogGrown > 0) {
+    const moved = context.expected !== undefined ? Math.min(fogGrown, Math.max(0, total - Math.max(0, context.expected))) : 0;
+    if (moved > 0) {
+      total -= moved;
+      fogArmies += moved;
+      highExtra += moved;
+      fogGrowth = moved;
+      // Named in id order until the moved armies are spent.
+      let left = moved;
+      for (const x of grewBesideFog) {
+        if (left <= 0) break;
+        grewFromFog.push(x.id);
+        left -= x.growth;
+      }
+    }
+    lowExtra -= fogGrown - moved;
+  }
+  return {
+    deploy: Math.max(0, total),
+    signed: total,
+    counted,
+    captured,
+    fromFog,
+    fogArmies,
+    reveals,
+    reinforced,
+    grewFromFog,
+    fogGrowth,
+    expected: context.expected ?? null,
+    emptied,
+    emptiedHigh,
+    low: Math.max(0, total + lowExtra),
+    high: Math.max(0, total + highExtra),
+  };
 }
 
 /** {@link observeDeploy}'s deploy figure alone. */
@@ -1352,7 +1495,6 @@ export function enemyDeployEstimates(
     // (#69): its base plus every bonus none of whose territories someone else visibly holds
     // (an owner-only territory is visibly held: its owner shows). Both come from this board,
     // so a bonus it lost since last turn is out, though it may have paid for that deploy.
-    const observation = previous ? observeDeploy(g, board, previous, playerId, settings) : null;
     let possible = 0;
     for (const b of g.map.bonuses) {
       const ts = bonusTerritories(g, b.id);
@@ -1364,6 +1506,20 @@ export function enemyDeployEstimates(
       if (!taken) possible += b.value;
     }
     const couldEarn = base + possible;
+    // #119: the fog prior. In a symmetric-start 1v1 an opponent bordering the fog earns at least
+    // what I earn, capped at what it could earn on this board. It only ever raises the figure.
+    const fogBeside = [...theirs].some((t) => neighborsOf(g, t).some((n) => !ownerShown(seenNow.get(n))));
+    const priorFigure = prior && fogBeside ? Math.min(Math.max(0, Math.floor(prior.myIncome)), couldEarn) : null;
+    // #123: what it was expected to deploy before this observation (its visible income, or the
+    // prior): growth beside the fog beyond it is a move; a capture from me is priced at the guard.
+    const observation = previous
+      ? observeDeploy(g, board, previous, playerId, settings, {
+          me,
+          guard: (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
+          expected: Math.max(visible, priorFigure ?? 0),
+          most: couldEarn,
+        })
+      : null;
     const observedCap = observation ? couldEarn : null;
     const observedRaw = observation?.deploy ?? null;
     const observed = observation ? Math.min(observation.deploy, observedCap!) : null;
@@ -1380,10 +1536,6 @@ export function enemyDeployEstimates(
           ? 'observed'
           : 'visible';
     const seen = seenSource === 'tracked' ? tracked! : seenSource === 'observed' ? observed! : visible;
-    // #119: the fog prior. In a symmetric-start 1v1 an opponent bordering the fog earns at least
-    // what I earn, capped at what it could earn on this board. It only ever raises the figure.
-    const fogBeside = [...theirs].some((t) => neighborsOf(g, t).some((n) => !ownerShown(seenNow.get(n))));
-    const priorFigure = prior && fogBeside ? Math.min(Math.max(0, Math.floor(prior.myIncome)), couldEarn) : null;
     const source: EnemyDeployEstimate['source'] = priorFigure !== null && priorFigure > seen ? 'prior' : seenSource;
     const estimate = source === 'prior' ? priorFigure! : seen;
     return {
@@ -1877,13 +2029,37 @@ export function planTurn(input: PlanInput): TurnPlan {
   const growthOf = new Map<number, Growth>();
   if (input.previousBoard) {
     const before = new Map(input.previousBoard.territories.map((t) => [t.territoryId, t]));
+    /** Same owner, shown with armies on both boards. */
+    const heldBoth = (id: number, player: number) => {
+      const a = visibleState(state.get(id));
+      const b = visibleState(before.get(id));
+      return a?.owner.kind === 'player' && a.owner.playerId === player && b?.owner.kind === 'player' && b.owner.playerId === player;
+    };
+    // #123: what each enemy territory visibly sent away (its shrink), claimed once (ascending ids)
+    // by a growing neighbour of the same owner: that growth was a transfer, a one-off, not a trend.
+    const shrinkLeft = new Map<number, number>();
+    for (const [id, st] of state)
+      if (st.owner.kind === 'player' && st.owner.playerId !== me && heldBoth(id, st.owner.playerId))
+        shrinkLeft.set(id, Math.max(0, visibleState(before.get(id))!.armies! - st.armies!));
     for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
       if (st.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
       if (!neighborsOf(g, id).some((n) => mineSet.has(n))) continue;
       // Visible both times (#69): a stack hidden last turn only came into view.
       const was = visibleState(before.get(id));
       if (was?.owner.kind !== 'player' || was.owner.playerId !== st.owner.playerId || was.armies === null) continue;
-      if (st.armies > was.armies) growthOf.set(id, { from: was.armies, to: st.armies, growth: st.armies - was.armies });
+      let growth = st.armies - was.armies;
+      if (growth <= 0) continue;
+      for (const n of [...neighborsOf(g, id)].sort((a, b) => a - b)) {
+        const left = shrinkLeft.get(n);
+        if (!left || growth <= 0 || !heldBoth(n, st.owner.playerId)) continue;
+        const take = Math.min(left, growth);
+        shrinkLeft.set(n, left - take);
+        growth -= take;
+      }
+      // Projected growth never beats what it was observed to deploy (#123): the rest moved in.
+      const observedDeploy = estimates.get(st.owner.playerId)?.observation?.deploy;
+      if (observedDeploy !== undefined) growth = Math.min(growth, observedDeploy);
+      if (growth > 0) growthOf.set(id, { from: was.armies, to: st.armies, growth });
     }
   }
   /**
@@ -2053,6 +2229,20 @@ export function planTurn(input: PlanInput): TurnPlan {
               `Player ${p}'s ${where}: ${armiesOf(id)} on ${label(id)} (threat), arrived from the fog by a capture: a move, not income.`,
             );
           }
+          // #123: the ambiguous readings, each named with the other way it could read.
+          if (o.grewFromFog.length) {
+            rationale.push(
+              `Player ${p}: ${o.fogGrowth} of its growth on ${o.grewFromFog.map(label).join(', ')} (beyond the ~${o.expected} it was expected to deploy) is next to the fog: read as a move out of the fog, not income — though it may be income the fog hides (observed +${o.low}–${o.high} either way).`,
+            );
+          }
+          if (o.reinforced.length)
+            rationale.push(
+              `Player ${p} took ${o.reinforced.map(label).join(', ')} with more than its visible stack next to ${o.reinforced.length === 1 ? 'it' : 'them'} sent: read as armies deployed on that stack before it attacked (deploy-then-capture), though a stack out of the fog may have joined (observed +${o.low}–${o.high} either way).`,
+            );
+          if (o.emptied.length)
+            rationale.push(
+              `Player ${p} took ${o.emptied.map(label).join(', ')} from you: priced at what the guard you may have left there kills, not your stack last turn (you may have attacked out of it); had it all stood there, it deployed +${o.high}.`,
+            );
           if (o.fromFog.length) {
             const n = o.fromFog.length;
             rationale.push(

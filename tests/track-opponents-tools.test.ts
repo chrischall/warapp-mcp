@@ -85,7 +85,7 @@ interface TrackPayload {
       lowered?: number;
       observedRange: { min: number; max: number } | null;
     };
-    unaccountedArmies: number | null;
+    unexplainedArmies: number | null;
     inferredBonuses: unknown;
     notes: string[];
   }>;
@@ -142,10 +142,23 @@ describe('warapp_track_opponents', () => {
       method: 'visible',
       observedRange: { min: 5, max: 5 },
     });
-    expect(bob.unaccountedArmies).toBe(0);
+    expect(bob.unexplainedArmies).toBe(0);
     expect(bob.notes.join(' ')).toMatch(/its visible base \+ bonuses, observed 5–5 over turns 3–4/);
     const cached = JSON.parse(readFileSync(join(dir, 'boards', `${GAME}.json`), 'utf8')) as { turns: object };
     expect(Object.keys(cached.turns)).toEqual(['3', '4', '5']);
+  });
+
+  it('#123: a stack that may have walked in from the fog reads as a move, with the range', async () => {
+    // Bob's 158 (next to the fogged 135) goes 7 → 22: beyond his visible 5, the 10 more may be a
+    // stack out of the fog. The deploy reads 5; the range says 0–15.
+    const { last } = await playTurns('warapp_track_opponents', [7, 22]);
+    const bob = (last as TrackPayload).opponents.find((o) => o.player.name === 'Bob')! as TrackPayload['opponents'][number] & {
+      observed: Array<{ range?: { low: number; high: number } }>;
+    };
+    expect(bob.observed[0]).toMatchObject({ turn: 3, deploy: 5, range: { low: 0, high: 15 } });
+    expect(bob.notes.join(' ')).toMatch(/walked in from the fog/);
+    const full = payload<TrackPayload>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann', view: 'full' }));
+    expect(full.opponents.find((o) => o.player.name === 'Bob')!.observed[0]).toMatchObject({ grewFromFog: [{ id: 158 }] });
   });
 
   it('with one board only, says there is nothing to observe yet', async () => {

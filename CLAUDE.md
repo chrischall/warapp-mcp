@@ -333,7 +333,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border).
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
-    the threat (see the threat model above), and warns "is building".
+    the threat (see the threat model above), and warns "is building" — less what a visible
+    neighbour of the same owner sent, and at most its observed deploy (#123: a transfer is a
+    one-off).
+  - **One-off movements are not income (#123, `observeDeploy`).** Growth on its territory next
+    to the fog beyond what it was expected to deploy (visible income or the fog prior) is a stack
+    walking in; a capture whose visible attacker shrank counts its surplus as deployed on that
+    attacker (up to what it could earn); a capture from me is priced at the guard unless my cached
+    orders say what stood there. Each observed turn has a low–high range for the ambiguity. The
+    tracker's `unexplained` armies leave out likely combat deaths (its stack and a neighbour of
+    another player both shrank), and inferred bonuses must lie within `INFER_REACH` hops and be
+    affordable — none listed when more than `MAX_LISTED_COMBINATIONS` fit.
   - **Lessons from three more lost games** (`tests/analysis/lessons-defensibility.test.ts`):
     - **Border value after captures (#18).** Triage runs before captures are known, so after
       the capture passes a conceded border in a bonus this turn's captures complete is kept —

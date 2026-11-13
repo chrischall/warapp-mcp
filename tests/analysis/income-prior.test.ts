@@ -222,7 +222,8 @@ describe('my own orders are measurements (#119)', () => {
   it('a hold of mine that fell: its defenders were what I deployed there too', () => {
     // My T2 had 5 and I deployed 10 there. Its T3 (20) got 5 and sent 23 into T2: 15 defenders
     // killed round(15 × 0.7) = 11, so 12 stand there and 2 on T3. Read off the boards alone, the
-    // capture cost round(5 × 0.7) = 4 and T3 shrank 18 for 12 arriving: −2, floored at 0.
+    // capture is priced at the guard I may have left (#123), round(0.7) = 1, and T3 shrank 18
+    // for 12 arriving: −5, floored at 0.
     const before = board([mine(1, 5), mine(2, 5), enemy(3, 20), enemy(4, 2), enemy(5, 2), ...FOG]);
     const after = board([mine(1, 5), enemy(2, 12), enemy(3, 2), enemy(4, 2), enemy(5, 2), ...FOG]);
     const blind = trackOpponents(gBig, [{ turn: 3, board: before }, { turn: 4, board: after }], ME, STD);
@@ -236,8 +237,8 @@ describe('my own orders are measurements (#119)', () => {
       ME,
       STD,
     );
-    // My orders say 15 defenders: 11 − 4 = 7 more, and the deploy reads 5.
-    expect(seen[0]!.turns[0]).toMatchObject({ raw: 5, observed: 5, measured: 7 });
+    // My orders say 15 defenders: 11 − 1 = 10 more, and the deploy reads 5.
+    expect(seen[0]!.turns[0]).toMatchObject({ raw: 5, observed: 5, measured: 10 });
   });
 });
 
