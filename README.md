@@ -58,7 +58,7 @@ no picks and no way to post chat. Those come from war.app's own web client (its 
 its profile pages), which is authenticated by your browser's war.app session rather than by
 the API token. So the live-game tools — `warapp_my_games`, `warapp_scout_player`,
 `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_picks`, `warapp_submit_picks`, `warapp_plan_turn`,
-`warapp_submit_turn`, `warapp_send_chat`, `warapp_wait_for_turn`, and `warapp_analyze_board`
+`warapp_submit_turn`, `warapp_uncommit_turn`, `warapp_send_chat`, `warapp_wait_for_turn`, and `warapp_analyze_board`
 when GameFeed sends no board — relay each request through your signed-in war.app tab with the [fetchproxy](https://github.com/chrischall/fetchproxy) bridge.
 They need:
 
@@ -124,10 +124,11 @@ active. `warapp_healthcheck` reports the same.
 | `warapp_plan_route` | Shortest path between two territories, given by name or id. |
 | `warapp_get_live_board` | The live board through your war.app tab: every territory with its owner (player, `neutral`, or `pickable` during picks), armies and fog, and in a Commanders game whose `commander` stands there. Works in the pick phase and mid-game. `view`: compact / full (every special unit — commanders, bosses — with its owner). |
 | `warapp_get_my_picks` | Your submitted territory picks in priority order, and how many the game allows. |
-| `warapp_plan_turn` | A plan for your turn from the live board (defaults to the signed-in account): income, your cards and whether you must play one, deploys and moves by name and id, expected captures, bonuses and next income, warnings and reasoning, and an `orders` array (card plays included). `goal`: balanced (default: best income per army across holds, bonuses and breaking enemy bonuses, with at least 30% on expansion) / expand / complete-bonus / defend; `focus` bonuses; `reserve`; `enemy_deploy` (armies an enemy is assumed to deploy; default per opponent from its visible bonuses, or its observed growth since last turn when that is larger). Reports the borders it gives up (`conceded`: not worth or not affordable to hold, never deployed to unless every territory you hold is conceded; it may still attack out with the armies already on it), `cardAdvice` (`order-priority` when a withdrawal from a conceded border must run first) and `trendSource` (where last turn's board came from — `history`, `cache` or null — for growing enemy stacks). Obeys the game's kill rates, Local Deployment and No-Split (`view: "full"` echoes the settings it assumed). Read-only; refuses outside a turn phase. |
+| `warapp_plan_turn` | A plan for your turn from the live board (defaults to the signed-in account): income, your cards and whether you must play one, deploys and moves by name and id, expected captures, bonuses and next income, warnings and reasoning, and an `orders` array (card plays included). `goal`: balanced (default: best income per army across holds, bonuses and breaking enemy bonuses, with at least 30% on expansion) / expand / complete-bonus / defend; `focus` bonuses; `reserve`; `enemy_deploy` (armies an enemy is assumed to deploy; default per opponent from its visible bonuses, or its observed growth since last turn when that is larger). Reports the borders it gives up (`conceded`: not worth or not affordable to hold, never deployed to unless every territory you hold is conceded; it may still attack out with the armies already on it), `cardAdvice` (`order-priority` when a withdrawal from a conceded border must run first) and `trendSource` (where last turn's board came from — `history`, `cache` or null — for growing enemy stacks). Obeys the game's kill rates, Local Deployment and No-Split (`view: "full"` echoes the settings it assumed). Read-only; refuses outside a turn phase. In a Commanders game a commander counts as 7 armies, your commander's territory is never conceded (it gets the deploys it needs to hold, or every army when that is not enough), and an adjacent enemy commander is attacked first, sized for its owner's full deploy. |
 | `warapp_plan_picks` | A pick list for a manual-distribution game in the picking stage, from the map, the settings and the live board's pickable territories: priority order by name and id, a compact primary group (the territory limit) and a disjoint fallback group, each pick's score and reasons (bonus, value, turns to complete, first-turn bonus, entry points, contested), warnings for assumed settings, and `submitPicks` — the ids in order, ready for `warapp_submit_picks`. The heuristics are in [docs/STRATEGY.md](docs/STRATEGY.md). `view`: compact / full. Read-only; refuses outside the picking stage. |
 | `warapp_submit_picks` | **Writes.** Replace your territory picks (priority order, pickable territories only, at most twice the territory limit). Confirm-gated; reads the picks back and reports `verified` only on an exact match. |
 | `warapp_submit_turn` | **Writes.** Commit your turn's orders (e.g. `warapp_plan_turn`'s `orders`) as the signed-in account: card plays (Reinforcement, Order Priority, Order Delay, Blockade), discards, deploys and moves. Confirm-gated; validated on the live board (cards in your hand, your territories, adjacent moves, armies available, deploys = income + played Reinforcement armies; bonus armies inside their bonus under Local Deployment; one attack/transfer per territory under No-Split; enough card plays or discards when you hold more cards than the limit); confirmed from game state (`resolved` / `committed` / `unknown`). Other players see the results. |
+| `warapp_uncommit_turn` | **Writes.** Withdraw your committed orders for the current turn (war.app's UnCommit, the game's "Modify orders") so you can submit corrected ones with `warapp_submit_turn`. Confirm-gated; refuses outside a turn phase and when your orders are not committed; reads the outcome from GameFeed (`uncommitted` / `unconfirmed`, or `unknown` when war.app did not answer — never resent). The game waits on you again, so recommit before the boot timer. |
 | `warapp_get_chat` | A game's chat, from GameFeed. |
 | `warapp_send_chat` | **Writes.** Post a chat message to the whole game or privately to one player. Confirm-gated; a message reaches other players and cannot be unsent. |
 | `warapp_wait_for_turn` | Wait until one of the given games (`game_ids`, 1–20; omitted, every game of yours being played or picked) is waiting on you, woken by war.app's push notifications through your war.app tab; returns at once if one already is, else at `timeout_seconds` (default 300, max 1800). Reports progress; honours cancellation. |
@@ -135,12 +136,12 @@ active. `warapp_healthcheck` reports the same.
 | `warapp_session_status` | Whether a war.app session is linked for the [direct transport](#direct-transport-no-browser), when it was captured and how old it is, and which transport is active. Never shows the session cookie. |
 | `warapp_link_session` | **Writes (locally).** Capture your signed-in war.app session cookie once and store it on this machine for the direct transport. Confirm-gated; stores a full-account credential locally (file mode `0600`) and never shows or sends it anywhere but war.app. |
 
-Everything except `warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender` and `warapp_begin_turn` only reads. Player, game, map
+Everything except `warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn` only reads. Player, game, map
 and chat text comes back marked as untrusted third-party content.
 
 ## Confirming writes
 
-`warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender` and `warapp_begin_turn` are confirmation-gated:
+`warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn` are confirmation-gated:
 
 - **Clients that support MCP elicitation** show a confirmation prompt describing the change.
 - **Other clients** make **no** change on the first call: it returns a preview and a
@@ -184,8 +185,8 @@ and chat text comes back marked as untrusted third-party content.
    conceded. A border too costly to hold for
    what it protects is `conceded`: nothing is deployed there (unless every territory you hold
    is conceded) and no attack from it is funded, its armies withdraw to a border
-   that holds, and `cardAdvice: "order-priority"` says to play Order Priority (add it to the
-   `orders` if you hold one) so the withdrawal runs before the border falls. A held bonus's
+   that holds, and `cardAdvice: "order-priority"` says to play Order Priority (the `orders`
+   already play it when you hold one) so the withdrawal runs before the border falls.
    border is not conceded on a near miss (short of a sure hold by at most 2 armies or 15%) or
    while it still holds against the expected attack (enemy movable + its deploy estimate):
    everything left goes there, with a warning that it may fall, and its armies stay.
@@ -197,7 +198,8 @@ and chat text comes back marked as untrusted third-party content.
    available with one left behind, deploys equal to your income plus played Reinforcement
    armies — a preview warning instead when a setting such as an army cap makes the modelled
    income uncertain), refuses with no card play when your hand is full, refuses outside a turn phase or
-   when you have already committed this turn (modify orders in the game instead), and shows the
+   when you have already committed this turn (withdraw them with `warapp_uncommit_turn` first, or modify
+   orders in the game), and shows the
    orders and the turn number before anything is sent.
 
 war.app's reply to a commit does not say whether it worked, so the result is read back from the

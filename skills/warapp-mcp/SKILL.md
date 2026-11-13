@@ -8,8 +8,8 @@ description: This skill should be used when the user asks about a war.app (Warzo
 An advisor. The tools read war.app as the signed-in player (fog of war applies): GameFeed
 for games, maps and chat, and the user's signed-in war.app tab for their games list, player
 scouting, the live board, picks, cards and turn notifications.
-Six tools write, all confirm-gated: `warapp_submit_picks`, `warapp_submit_turn`,
-`warapp_send_chat`, `warapp_join_game`, `warapp_surrender` and `warapp_begin_turn`. A turn goes plan → review → submit: `warapp_plan_turn` proposes it,
+Seven tools write, all confirm-gated: `warapp_submit_picks`, `warapp_submit_turn`,
+`warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn`. A turn goes plan → review → submit: `warapp_plan_turn` proposes it,
 the user reviews it, and only then does `warapp_submit_turn` commit it.
 
 ## Start here
@@ -61,7 +61,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   (default) / expand / complete-bonus / defend, `focus` bonuses, `reserve`, `enemy_deploy`): deploys and moves by
   name and id, the expected captures, bonuses and next income, warnings and reasoning, plus an
   `orders` array. It is read-only and refuses outside a turn phase. Review the plan and its
-  warnings with the user before anything is submitted.
+  warnings with the user before anything is submitted. In a Commanders game it counts each
+  commander as 7 armies, never concedes the territory holding the user's commander, and
+  attacks an adjacent enemy commander first (killing it eliminates that player) once the user's
+  commander's hold is funded; when the user's commander is threatened it advises Order
+  Priority (`cardAdvice`) so the strike resolves first.
 - **Cards** → `warapp_plan_turn` reports the hand and whether a play is required (hand at the
   hold limit — war.app then refuses a turn with no card play). It always plays Reinforcement
   (its armies are planned) and, when a play is required, Order Priority or else Order Delay; it
@@ -94,8 +98,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   against the expected attack (enemy movable + its deploy estimate): everything left goes
   there with a warning that it may fall, and its armies never withdraw. When `cardAdvice` is
   `"order-priority"`, tell the user a withdrawal only runs if the border is still theirs when
-  it executes, and suggest adding Order Priority to the `orders` if they hold one (the planner
-  only plays it when a card play is required).
+  it executes; when they hold Order Priority the `orders` already play it (without one,
+  nothing makes the withdrawal go first).
 - **Pick `defend` when** the user wants to hold everything worth holding before any expansion
   — e.g. they are ahead on income and only need to survive, or a bonus they hold is under
   attack from several sides. It still concedes hopeless borders. Pick `expand` to never attack
@@ -106,9 +110,15 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   the live board (cards in the hand, the user's territories, adjacent moves, armies available,
   deploys = income + played Reinforcement armies), refuses with no card play when the hand is
   full, and refuses outside a turn phase or when the user has already
-  committed this turn (they modify orders in the game). Report its `status`: `resolved` (the
+  committed this turn (withdraw them first with `warapp_uncommit_turn`, or modify orders in the game). Report its `status`: `resolved` (the
   turn advanced), `committed` (orders in, waiting on others) or `unknown` — then check
   `warapp_get_game`; never resend blindly. Other players see the results.
+- **"I committed the wrong orders" / "uncommit my turn"** → `warapp_uncommit_turn` with `game_id`
+  (confirm-gated): withdraws the committed orders for the current turn so corrected ones can go in
+  with `warapp_submit_turn`. It refuses outside a turn phase or when nothing is committed. Report its
+  `status`: `uncommitted` (the game waits on the user again — recommit before the boot timer),
+  `unconfirmed` (GameFeed still shows them committed, or the turn already resolved) or `unknown`
+  (war.app did not answer; check `warapp_get_game`, never resend blindly).
 - **"Show me the board" / "what can I pick?"** → `warapp_get_live_board`: every territory with
   its owner (player name, `neutral`, or `pickable` during picks), armies and fog, read through
   the signed-in war.app tab (ContextMint Bridge). Works in the pick phase and mid-game. In a
@@ -166,7 +176,7 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 On a host that serves context groups (mcp-host), every tool here except `warapp_healthcheck`
 is in the **work** group: `warapp_my_games` with **whats-new** (canonical), the other reads
 with intent **lookup** (but `warapp_wait_for_turn`, intent **whats-new**), `warapp_submit_picks`,
-`warapp_submit_turn`, `warapp_join_game`, `warapp_surrender` and `warapp_begin_turn` with **change**, and
+`warapp_submit_turn`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn` with **change**, and
 `warapp_send_chat` with **send**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,

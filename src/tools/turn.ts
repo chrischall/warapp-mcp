@@ -8,6 +8,8 @@ import {
   CARD_BLOCKADE,
   CARD_ORDER_DELAY,
   CARD_ORDER_PRIORITY,
+  holdsOrderPriority,
+  advisedOrderPriority,
   CARD_REINFORCEMENT,
   cardRules,
   cardTypeByName,
@@ -539,7 +541,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'This runs before any border facing it is ' +
           'conceded (holds worth paying for against other players are funded first). Hopeless borders are listed in `conceded` and get no ' +
           'deploys (unless every territory you hold is conceded); under balanced/defend their armies withdraw, and `cardAdvice` "order-priority" means play Order ' +
-          'Priority so the withdrawal runs before the border falls. A held bonus\'s border short of a sure hold by a near ' +
+          'Priority so the withdrawal runs before the border falls (or, in a Commanders game, so a strike on an enemy commander resolves before attacks on yours); when you hold one, `orders` already plays it. ' +
+          'A held bonus\'s border short of a sure hold by a near ' +
           'miss (at most 2 armies or 15%), or still holding against the expected attack, is funded with everything left ' +
           'instead (a warning says it may fall) and never withdrawn. A bonus whose new frontier would fall next turn is ' +
           'not completed under balanced/defend (a warning says so). A neutral no single stack can afford may be taken by ' +
@@ -622,6 +625,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           goal: chosen,
           focusBonusIds,
           ...(opponents > 0 ? { opponents } : {}),
+          holdsOrderPriority: holdsOrderPriority(hand, cards),
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
         },
@@ -630,15 +634,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const name = namer(map);
       const warnings = [
         ...(me.hasCommittedOrders
-          ? ['You have already committed orders this turn; warapp_submit_turn will refuse — modify orders in the game instead.']
+          ? [
+              'You have already committed orders this turn; warapp_submit_turn will refuse until you withdraw them ' +
+                'with warapp_uncommit_turn (or modify orders in the game).',
+            ]
           : []),
         ...cards.warnings,
         ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
         ...plan.warnings,
       ];
+      // The plan advises Order Priority (a withdrawal, a commander strike): play the one I
+      // hold, so the orders as returned carry it rather than only the advice.
+      const advised = plan.cardAdvice === 'order-priority' ? advisedOrderPriority(hand, cards) : undefined;
+      const plays = advised ? [...cards.plays, advised] : cards.plays;
       const orders = [
         ...cards.discards.map((c) => ({ kind: 'discard' as const, card: c.id })),
-        ...cards.plays.map((c) => ({ kind: 'card' as const, card: c.id })),
+        ...plays.map((c) => ({ kind: 'card' as const, card: c.id })),
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
         ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
       ];
@@ -657,7 +668,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           hand: hand.map(cardView),
           maxCardsHold: rules.maxCardsHold ?? null,
           playRequired: cards.required,
-          plays: cards.plays.map(cardView),
+          plays: plays.map(cardView),
           discards: cards.discards.map(cardView),
           armiesFromCards: cards.extraArmies,
         },
@@ -743,7 +754,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const me = await requireSignedInMe(ctx, game, player);
             if (me.hasCommittedOrders) {
               throw new McpToolError(`You have already committed orders for this turn of game ${game.id}.`, {
-                hint: 'To change them, use "Modify orders" in the game itself; this tool does not replace committed orders.',
+                hint:
+                  'To change them, withdraw them first with warapp_uncommit_turn (confirm-gated), then submit again — ' +
+                  'or use "Modify orders" in the game itself; this tool does not replace committed orders.',
               });
             }
             const turnNumber = currentTurn(game);

@@ -34,3 +34,34 @@ longer committed (`uncommitted` / `unconfirmed`); a transport failure reports `u
 retried. Mention in `warapp_submit_turn`'s "already committed" error that `warapp_uncommit_turn`
 exists. Mark the encoding verified-from-bundle, not live. Register it everywhere other write tools
 are listed (README, skill, manifest, CLAUDE.md, packaging/annotation tests).
+
+### C2b — commander rules, decided after three failed review rounds (owner's design decisions)
+The C2 commits on this branch are kept; fix them to these decisions (they override C2's text):
+1. **No vanishing.** war.app interleaves both players' attacks after deploys; a strike does NOT
+   remove the struck player's other territories as threats this turn. My commander's reserve, each
+   source's keep, and every border judgement use the full threat including the struck player's other
+   stacks. Elimination only changes NEXT turn's picture.
+2. **Strike vs commander safety.** My commander's must-hold reserve is funded first. A strike on an
+   enemy commander is then funded from what is left plus sources' movable armies beyond their keep;
+   a source whose own hold is hopeless may send everything (its armies are lost anyway) — that is not
+   "keeping all", fix `keepFor` accordingly.
+3. **No R3 veto.** The defensibility rule (completing a bonus I cannot hold next turn) never vetoes
+   a commander strike: killing a commander eliminates a player; the bonus side-effect is irrelevant.
+4. **Order Priority.** When a strike is planned and my commander's tile is threatened this turn,
+   set `cardAdvice` to Order Priority if I hold one (so my attacks resolve first) and say so.
+5. **Honest warnings.** A strike that is not planned names the actual reason (reserve for my
+   commander, source keep, No-Split, locked/conceded source, unaffordable).
+6. **Held-bonus units** (rule 1h) exclude a member already funded as my commander's hold from the
+   unit's cost and payback test.
+
+As built (departures the owner should know): decision 2's reserve is held as a deploy on my
+commander's territory while the strike is tried, so under Local Deployment it is charged to the
+pools that reach it. Decision 4: `warapp_plan_turn` also adds the held Order Priority card to the
+submitted `orders` whenever `cardAdvice` is `order-priority`, so submitting the plan spends the card.
+Decision 5: "locked/conceded source" is never named — strikes run before triage, when nothing is
+locked or conceded yet; when no other reason binds, the warning names what each source can send (and,
+under Local Deployment, its pool room).
+Tests: the three reviewer repros (strike vs reserve with the struck player's other stacks still
+threatening; a doomed source striking; a strike in a bonus R3 would veto, under balanced and defend)
+plus the Order Priority advice and each warning reason. Remove the copied territory name from
+tests/analysis/commanders.test.ts (synthetic description only).

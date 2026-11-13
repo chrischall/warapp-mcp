@@ -26,3 +26,21 @@ export function armiesToTake(defenders: number, rates: KillRates = {}): number |
   const lost = Math.round((defenders * def) / 100);
   return Math.max(toKill, lost + 1);
 }
+
+/**
+ * A commander fights as this many armies, attacking and defending (the client bundle's
+ * `Commander`: attack and defence power `a + 7`). It is never partially damaged — it dies
+ * only to 7 damage left over after the armies with it are all killed (armies take damage
+ * first; its combat order is last) — so a stack of `d` armies plus a commander falls to
+ * exactly the attack that takes `d + 7` armies.
+ */
+export const COMMANDER_STRENGTH = 7;
+
+/**
+ * The armies the special units on a territory fight as: {@link COMMANDER_STRENGTH} per
+ * commander. Bosses and custom units are not counted (their strength is per-unit data the
+ * board does not carry).
+ */
+export function specialUnitStrength(units: readonly { kind: string }[] | undefined): number {
+  return (units ?? []).reduce((n, u) => n + (u.kind === 'commander' ? COMMANDER_STRENGTH : 0), 0);
+}

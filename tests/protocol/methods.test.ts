@@ -419,6 +419,21 @@ describe('Surrender (method 67)', () => {
   });
 });
 
+describe('UnCommit (method 80)', () => {
+  it('has the client method-table id', async () => {
+    const { Method } = await import('../../src/protocol/methods.js');
+    expect(Method.UnCommit).toBe(80);
+  });
+
+  // From the client bundle's writer (not yet a live capture): after the auth block,
+  // only the int32 LE game id — 0x00BC614E = 4E 61 BC 00 — and no trailing bools.
+  it('writes only the game id (golden)', async () => {
+    const { writeUnCommitParams } = await import('../../src/protocol/methods.js');
+    expect(hex((w) => writeUnCommitParams(w, 0x00bc614e))).toBe('4E61BC00');
+    expect(hex((w) => writeUnCommitParams(w, 7))).toBe('07000000');
+  });
+});
+
 describe('discard orders', () => {
   it('match the bundle writer: tag 9, the GUID in .NET order, then the order base', () => {
     // From the bundle's GameOrderDiscard writer: tag 9, the GUID, the order base (playerId, no result, no updates).

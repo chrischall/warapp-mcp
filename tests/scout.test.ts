@@ -153,10 +153,10 @@ describe('warapp_scout_player', () => {
     expect(p.headToHead).toMatchObject({ count: 4, wins: 1, losses: 2, inProgress: 1 });
     expect(textOf(res)).not.toMatch(/Springfield|Nowhereland|Location|example\.com/i);
     expect(h.calls[0]!.url).toContain(`GameID=${GAME}`);
-    expect(h.bridge.requests.map((r) => [r.method, r.path])).toEqual([
-      ['GET', `https://war.app/Profile?p=${BOB.token}`],
-      ['GET', `https://war.app/CommonGames?p=${BOB.token}`],
-    ]);
+    // The two pages are fetched concurrently, so their order is not fixed.
+    expect(h.bridge.requests.map((r) => `${r.method} ${r.path}`).sort()).toEqual(
+      [`GET https://war.app/Profile?p=${BOB.token}`, `GET https://war.app/CommonGames?p=${BOB.token}`].sort(),
+    );
   });
 
   it('scouts by a raw invite token without a game', async () => {

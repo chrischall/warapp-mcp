@@ -155,6 +155,16 @@ export function writeBeginFirstTurnParams(w: Writer, gameId: number): void {
   w.int32(gameId);
 }
 
+/**
+ * UnCommit(auth, gameId) — withdraws the account's committed orders for the
+ * current turn ("Modify orders" in the client). VERIFIED FROM THE CLIENT
+ * BUNDLE's writer, not yet against a live capture: after the auth block only
+ * the int32 game id — no trailing bools — and no result payload.
+ */
+export function writeUnCommitParams(w: Writer, gameId: number): void {
+  w.int32(gameId);
+}
+
 /** GetLatestGameInfo(auth, gameId) — the parameters after the auth block. */
 export function writeGetLatestGameInfoParams(w: Writer, gameId: number): void {
   w.int32(gameId);

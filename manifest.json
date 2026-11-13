@@ -150,6 +150,10 @@
       "description": "Commit your turn's orders (confirm-gated), validated on the live board and confirmed from game state"
     },
     {
+      "name": "warapp_uncommit_turn",
+      "description": "Withdraw your committed orders for the current turn so you can submit corrected ones (confirm-gated)"
+    },
+    {
       "name": "warapp_get_chat",
       "description": "Read a game's chat"
     },

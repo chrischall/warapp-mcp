@@ -33,8 +33,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GameFeed answers as the player whose token is presented (fog of war included). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Six tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
-  `warapp_send_chat`, `warapp_join_game`, `warapp_surrender` and `warapp_begin_turn`, registered with mcp-utils' `defineWrite` / `registerWrite`
+- **Seven tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
+  `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn`, registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
@@ -60,6 +60,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn timer; the live tools say so instead of the lobby error. `warapp_begin_turn` sends
   `BeginFirstTurn` (78, confirm-gated, encoding read from the bundle — not verified live) and
   reports `begun` only once the board reads back.
+- **Withdrawing committed orders is `UnCommit` (80) via `warapp_uncommit_turn`, confirm-gated.** Its
+  parameters (only the int32 game id after the auth block) are read from the bundle's writer and
+  golden-pinned, NOT yet verified live. It refuses outside a turn phase and when `hasCommittedOrders`
+  is false, and reads the outcome from GameFeed (`uncommitted` / `unconfirmed`); a transport failure
+  is `unknown`, never retried. `warapp_submit_turn`'s "already committed" refusal points to it.
 - **Open games come from the `/MultiPlayer/OpenGames` page payload (`AllOpenGamesData`), not a `/Services` call; joining is `AcceptOpenSeat` (61) via `warapp_join_game`, confirm-gated** and reported `joined` only once GameFeed or `GetMyGames` shows the account seated (`docs/WEB-PROTOCOL.md` "Open games").
 - **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (card plays, then deploys, then moves;
   encoders in `src/protocol/methods.ts` are golden-pinned to a live commit), turn number =
@@ -69,7 +74,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a
   setting the income model does not compute, e.g. an army cap), and refuses outside a turn phase or when my
   `hasCommittedOrders` is already true (a second `SendOrders` replacing the first is
-  unverified; the client uses "Modify orders"). **Success is read from game state, never
+  unverified; the client uses "Modify orders" = `UnCommit`, which `warapp_uncommit_turn` sends). **Success is read from game state, never
   from the reply:** its bool is the "vacation ended" flag. After sending, GameFeed is re-read:
   `numberOfTurns` advanced → `resolved`; my `hasCommittedOrders` true → `committed`; neither,
   or a transport failure after sending → `unknown` (never suggest resending blindly).
@@ -78,6 +83,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   ends with the shared fields GUID, owner (in-game id), so the owner is the LAST field and the
   kind comes from the registered class name. Fogged territories report no units.
   `BoardState.specialUnits` keys owners by GameFeed id like territory owners.
+- **Commanders in the planner (#61).** A commander fights as 7 armies (bundle: attack and
+  defence `+7`, dies last, no partial damage), counted in every capture cost and threat.
+  My commander's territory is must-hold (never conceded; all deploys go there when the hold
+  does not fit); an adjacent enemy commander is attacked before anything else spends the
+  income (finishing off, triage, holds, expansion; only my commander's own hold is reserved
+  first), sized for its armies + 7 + its owner's full deploy. **No vanishing:** war.app
+  interleaves both players' attacks, so a strike never removes its owner's other stacks from
+  this turn's threats. R3 never vetoes a strike; when what stays on my commander's territory
+  after the plan's orders falls to the stacks next to it (the struck one included), `cardAdvice`
+  is Order Priority when I hold one. Planned moves never carry the commander.
 - **Cards (`src/cards.ts`).** The hand is read from the live board (`LatestGameInfo` standing →
   my in-game id → GUID → card instance, by bundle type name); the card **type is `Gb`, the LAST
   integer field** (the base reader sets it last) and a Reinforcement card's armies are `tc`, the
@@ -156,7 +171,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Withdraw** (under `balanced`/`defend`): a conceded border's movable armies go first to
     the neighbour nearest a border that holds, and the plan sets `cardAdvice:
     'order-priority'` because a withdrawal only executes while the border is still mine. The
-    planner never plays cards itself.
+    planner never plays cards itself; `warapp_plan_turn` adds the Order Priority I hold to
+    `orders` when `cardAdvice` asks for it.
   - **`balanced` is the default goal**: holds, completing/advancing bonuses and breaking a
     fully visible single-enemy bonus (`BREAK_WEIGHT` / opponents × value / cost) compete by
     income per army; `MIN_EXPANSION_SHARE` (30%) of income goes to expansion before holds that
