@@ -252,7 +252,7 @@ function checkArmies(territories: readonly LiveTerritory[]): void {
   const mine = territories.filter((t) => t.fogLevel === FOG_LEVEL_YOU && t.armies !== null && !t.specialUnits?.length);
   if (mine.length >= 2 && mine.every((t) => t.armies === 0)) {
     throw new LiveBoardFormatError(
-      `every territory of yours reads 0 armies (${mine.length} of them), so the army count was not read from the right field`,
+      `every territory of yours reads 0 armies (${mine.length} of them), so the army count was not read from the right field (if the board in war.app really shows 0 on all of them, e.g. with one-army-stands-guard off, report it: this check assumes that cannot happen)`,
     );
   }
 }
