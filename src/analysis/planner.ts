@@ -399,10 +399,15 @@
 //     the same scoring), and only when no single source suffices. The plan lists
 //     such targets in `multiSourceCaptures`.
 //  4. Bonuses (value > 0) are scored by value / remaining capture cost, ties by
-//     fewest external borders, then id; focused bonuses come first. A bonus whose
-//     remaining cost exceeds PAYBACK_TURNS × value, or with one remaining
-//     territory costing over WASTELAND_FACTOR × value, is uneconomic and its
-//     territories are not planned (unless focused or also in an economic bonus).
+//     fewest external borders, then id; focused bonuses come first. The economy test charges
+//     what a capture costs, not what it sends (#125): the armies its attackers lose (the
+//     defenders' kills at the defensive rate) plus the one army left on it, that army waived
+//     when a territory of mine beside it facing no visible enemy already has idle armies enough
+//     to take it. A bonus whose remaining members lose over PAYBACK_TURNS × value, or with one
+//     remaining territory losing over WASTELAND_FACTOR × value, is uneconomic and its
+//     territories are not planned (unless focused or also in an economic bonus); the "Skip
+//     bonus" line names both the armies to finish and the armies lost. Rule 1a's "being built"
+//     share uses the same test.
 //     A negative-value bonus is always uneconomic unless focused, so the plan
 //     never captures into it (completing one would cut income). A positive bonus is
 //     scored by its net worth (rule 4c), not its value, in every test above.
@@ -1815,6 +1820,28 @@ export function planTurn(input: PlanInput): TurnPlan {
   const unitsAt = (id: number) => specialUnitStrength(state.get(id)?.specialUnits);
   /** What a territory defends as now: its armies plus its special units. */
   const defenceAt = (id: number) => armiesOf(id) + unitsAt(id);
+  /**
+   * What capturing `x` costs the economy (#125): the armies its attackers lose (the defenders'
+   * kills at the defensive rate) plus the one army left on it — not the armies sent, whose
+   * survivors are still mine. That one army is waived when a territory of mine beside it that
+   * faces no visible enemy already has idle armies enough to take it (nothing is deployed for
+   * it). Infinity when it cannot be taken.
+   */
+  const econCostAt = (x: number): number => {
+    const c = costOf(defenceAt(x));
+    if (c === null) return Infinity;
+    const lost = Math.min(c - 1, straightKills(defenceAt(x), rates.defensiveKillRate));
+    const idle = neighborsOf(g, x).some(
+      (n) =>
+        isMine(n) &&
+        armiesOf(n) - guard >= c &&
+        !neighborsOf(g, n).some((y) => {
+          const o = state.get(y)?.owner;
+          return o?.kind === 'player' && o.playerId !== me;
+        }),
+    );
+    return lost + (idle ? 0 : 1);
+  };
   /** My territories where my own commander stands: must-hold (rule 1k). */
   const myCommanders = new Set(
     mine.filter((id) => (state.get(id)?.specialUnits ?? []).some((u) => u.kind === 'commander' && u.playerId === me)),
@@ -2008,7 +2035,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (holdings.has(x)) continue;
       const st = state.get(x);
       if (st?.owner.kind !== 'neutral' || st.armies === null) return false;
-      const c = costOf(defenceAt(x)) ?? Infinity;
+      const c = econCostAt(x);
       cost += c;
       worst = Math.max(worst, c);
     }
@@ -3608,6 +3635,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     let cost = 0;
     let worst = 0;
     let fogged = 0;
+    // #125: the economy test charges the armies lost, not the armies sent.
+    let loss = 0;
+    let worstLoss = 0;
     for (const t of remaining) {
       const st = state.get(t);
       if (!st || st.owner.kind === 'unknown' || st.armies === null) {
@@ -3617,16 +3647,21 @@ export function planTurn(input: PlanInput): TurnPlan {
       const c = costOf(defenceAt(t)) ?? Infinity;
       cost += c;
       worst = Math.max(worst, c);
+      const l = econCostAt(t);
+      loss += l;
+      worstLoss = Math.max(worstLoss, l);
     }
     const fogEach = fogged ? (fogged < remaining.length ? worst : Infinity) : 0;
+    const fogLoss = fogged ? (fogged < remaining.length ? worstLoss : Infinity) : 0;
     cost += fogged * fogEach;
+    loss += fogged * fogLoss;
     if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach });
-    const economic = isFocus || (cost <= PAYBACK_TURNS * net && worst <= WASTELAND_FACTOR * net);
+    const economic = isFocus || (loss <= PAYBACK_TURNS * net && worstLoss <= WASTELAND_FACTOR * net);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
     if (!economic) {
       rationale.push(
-        `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${toFinish(cost, fogged, fogEach)}, ${worst} for its costliest territory).`,
+        `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${toFinish(cost, fogged, fogEach)}, losing ~${loss}; ${worstLoss} lost on its costliest territory).`,
       );
       continue;
     }

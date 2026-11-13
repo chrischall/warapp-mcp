@@ -44,8 +44,9 @@ const player = (territoryId: number, armies: number, playerId: number): Territor
 //   2 is mine too, next to 6 (12, Vale) and, in some boards, an enemy on 22.
 //   Ridge (+2): 3 7 8 9 — 6 + 3 × 20 = 66 to finish.
 //   Vale  (+2): 4 5 6   — 6 + 2 × 20 = 46 to finish: the cheapest bonus.
-//   Marsh (+3): 10 11 12 — 3 × 20 = 60 to finish.
-//   Every one is uneconomic (over 10 × its value, or one member over 5 × its value).
+//   Marsh (+2): 10 11 12 — 3 × 20 = 60 to finish.
+//   Every one is uneconomic: #125 charges the armies a capture loses plus the one left on it (a
+//   4-neutral 4, a 12-neutral 9), and each loses over 10 × its value (Vale 22, Ridge 31, Marsh 27).
 //   Other players sit far away on 20 and 21.
 const EDGES: [number, number][] = [
   [1, 2], [1, 3], [1, 4], [1, 5], [1, 10], [2, 6], [4, 5], [5, 6],
@@ -55,7 +56,7 @@ const IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 20, 21, 22];
 const BONUSES: [number, string, number, number[]][] = [
   [201, 'Ridge', 2, [3, 7, 8, 9]],
   [202, 'Vale', 2, [4, 5, 6]],
-  [203, 'Marsh', 3, [10, 11, 12]],
+  [203, 'Marsh', 2, [10, 11, 12]],
 ];
 const MAP = makeMap(IDS, EDGES, BONUSES);
 const g = buildGraph(MAP);
@@ -1031,7 +1032,8 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
   const EIGHT: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80, 90].map((id) => ({ id })), turn: 3 };
   //   My 15-stacks on 1 and 2, a 25-stack on 8 behind them, and a 1-army 7 (conceded).
   //   1 borders 23 (player 40, 0) and 24 (player 30, 12); 2 borders 22 (player 30, 4) and 25
-  //   (player 40, 12). 23 then faces 25, 22 faces 24. Crown (+6) is the four 15-neutrals 3 4 5 6:
+  //   (player 40, 12). 23 then faces 25, 22 faces 24. Crown (+4) is the four 15-neutrals 3 4 5 6
+  //   (uneconomic: #125 charges ~11 lost + 1 left on each, 47 in all, over 10 × 4):
   //   8 alone reaches 3 (25 to take). 7 borders 25 (player 40 can attack me) and, when
   //   `bothFront`, 24 (so can player 30). 26 and 27 keep both players out of my reach.
   const shape = (bothFront: boolean) =>
@@ -1042,7 +1044,7 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
         [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27],
         ...(bothFront ? ([[7, 24]] as [number, number][]) : []),
       ],
-      [[701, 'Crown', 6, [3, 4, 5, 6]]],
+      [[701, 'Crown', 4, [3, 4, 5, 6]]],
     );
   const shapeBoard = (): BoardState =>
     board([
@@ -1124,7 +1126,7 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
         [1, 2], [8, 1], [8, 2], [8, 3], [1, 23], [1, 24], [2, 4], [2, 22], [2, 25],
         [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27], [7, 28], [28, 27],
       ],
-      [[701, 'Crown', 6, [3, 4, 5, 6]]],
+      [[701, 'Crown', 4, [3, 4, 5, 6]]],
     );
     const b = board([...shapeBoard().territories, player(28, 0, P3)]);
     const p = run(b, map);
@@ -1146,7 +1148,7 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
         [1, 2], [8, 1], [8, 2], [8, 3], [1, 23], [1, 24], [2, 4], [2, 22], [2, 25], [2, 7],
         [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27], [1, 28], [28, 25],
       ],
-      [[701, 'Crown', 6, [3, 4, 5, 6]]],
+      [[701, 'Crown', 4, [3, 4, 5, 6]]],
     );
     const b = board([...shapeBoard().territories, player(28, 0, P3)]);
     const p = run(b, map);
@@ -1173,7 +1175,7 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
         [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27], [8, 9], [1, 11], [11, 25],
       ],
       [
-        [701, 'Crown', 6, [3, 4, 5, 6]],
+        [701, 'Crown', 4, [3, 4, 5, 6]],
         [702, 'Nook', 2, [9]],
       ],
     );

@@ -257,7 +257,10 @@ describe('planTurn — targets', () => {
   const state = board([mine(1, 5), neutral(2, 10), neutral(3, 2), neutral(4, 2)]);
 
   it('avoids a bonus made uneconomic by a wasteland', () => {
-    const p = planTurn({ graph: g, board: state, me: ME, income: 20, settings: STD });
+    // #125: the test charges the armies a capture loses, so a 10-army neutral (7 lost + 1 left
+    // on it) is no wasteland for +2; a 20-army one (14 + 1, over 5 × 2) is.
+    const waste = board([mine(1, 5), neutral(2, 20), neutral(3, 2), neutral(4, 2)]);
+    const p = planTurn({ graph: g, board: waste, me: ME, income: 20, settings: STD });
     expect(attacks(p).map((m) => m.to)).toEqual([4]);
     expect(p.rationale.join(' ')).toMatch(/uneconomic/i);
     expect(PAYBACK_TURNS).toBeGreaterThan(0);
@@ -286,7 +289,8 @@ describe('planTurn — targets', () => {
   });
 
   it('attacks visible enemies only under complete-bonus', () => {
-    const s = board([mine(1, 9), neutral(2, 10), neutral(3, 2), enemy(4, 2)]);
+    // 2 is a wasteland (#125: 20 armies lose 15 to take, over 5 × +2), so W is not expanded into.
+    const s = board([mine(1, 9), neutral(2, 20), neutral(3, 2), enemy(4, 2)]);
     const expand = planTurn({ graph: g, board: s, me: ME, income: 0, settings: STD, options: { goal: 'expand' } });
     expect(expand.moves.some((m) => m.to === 4)).toBe(false);
     const complete = planTurn({ graph: g, board: s, me: ME, income: 0, settings: STD, options: { goal: 'complete-bonus' } });
@@ -1347,8 +1351,9 @@ describe('planTurn — border value after this turn\'s captures (R2)', () => {
     });
 
   it('control: a bonus this turn cannot complete leaves the border at +0, conceded as before', () => {
-    // T4 is a 30-army neutral: far beyond this turn's income (and a wasteland).
-    const p = planTurn({ graph: g, board: at(4, 30), me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    // T4 is a 40-army neutral: far beyond this turn's income, and a wasteland (#125: it loses 28
+    // armies + 1 left on it, over 5 × +5).
+    const p = planTurn({ graph: g, board: at(4, 40), me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
     expect(p.conceded).toEqual([1]);
     expect(p.warnings).toContain('T1 (#1) cannot be held economically (needs 3, protects +0): conceded');
     expect(p.expected.bonusesCompleted).toEqual([]);
