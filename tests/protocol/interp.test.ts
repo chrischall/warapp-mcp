@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { DATE_EPOCH_MS, NO_DATE_SENTINEL, Reader, Writer } from '../../src/protocol/codec.js';
-import { BundleInterpreter, DEFAULT_DIALECT, InterpError, parseBundle, type ReadBudget } from '../../src/protocol/interp.js';
+import {
+  BundleInterpreter,
+  DEFAULT_DIALECT,
+  DEFAULT_MAX_MILLIS,
+  InterpError,
+  MAX_NESTING,
+  MAX_THROW_MESSAGE,
+  parseBundle,
+  type ReadBudget,
+} from '../../src/protocol/interp.js';
 import { MINI_BUNDLE } from './mini-bundle.js';
 
 const GUID = '00112233445566778899aabbccddeeff';
@@ -571,5 +580,93 @@ describe('BundleInterpreter containment', () => {
     });
     expect(e.kind).toBe('budget');
     expect(budget.spent).toBeGreaterThan(1000);
+  });
+
+  it('ends a read at a wall-clock deadline, whatever the step count', () => {
+    expect(DEFAULT_MAX_MILLIS).toBe(5000);
+    const bomb = 'for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){}}return 1';
+    // A real clock: the step budget is out of reach, the deadline ends the read.
+    const t = Date.now();
+    const e = interpError(() => run(bomb, undefined, { maxSteps: Number.MAX_SAFE_INTEGER, maxMillis: 50 }));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toContain('50 ms');
+    expect(Date.now() - t).toBeLessThan(1000);
+    // An injected clock: the deadline is per read, so the next read starts afresh.
+    const src = 'function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a){var i;for(i=0;i<5000;i++){}return i};';
+    let clock = 0;
+    const i = new BundleInterpreter(parseBundle(src), { maxMillis: 10, now: () => clock });
+    expect(i.readClass('h.X', new Reader(new Uint8Array()))).toBe(5000);
+    clock = 1000; // time passing between reads does not count against the next one
+    expect(i.readClass('h.X', new Reader(new Uint8Array()))).toBe(5000);
+    // A clock that advances a millisecond per check runs out within the read.
+    const slow = new BundleInterpreter(parseBundle(src), { maxMillis: 10, now: () => (clock += 1) });
+    expect(interpError(() => slow.readClass('h.X', new Reader(new Uint8Array()))).kind).toBe('budget');
+  });
+
+  it('shares the deadline across reads that share a ReadBudget', () => {
+    let clock = 0;
+    const src = 'function Hx(){}W["h.X"]=Hx;Hx.Ha=function(a){var i;for(i=0;i<5000;i++){}return i};';
+    const i = new BundleInterpreter(parseBundle(src), { maxMillis: 10, now: () => clock });
+    const budget: ReadBudget = { spent: 0 };
+    expect(i.readClass('h.X', new Reader(new Uint8Array()), budget)).toBe(5000);
+    clock = 11;
+    expect(interpError(() => i.readClass('h.X', new Reader(new Uint8Array()), budget)).kind).toBe('budget');
+  });
+
+  it('builds the message of a thrown value once per throw site, capped and charged', () => {
+    // A constructor whose throw argument holds many string literals, failing in a loop.
+    const lits = Array.from({ length: 10_000 }, () => '"x"').join(',');
+    const ctor = `W["h.C"]=Hc;function Hc(x){throw [${lits}]}`;
+    const loop = parseBundle(`${ctor}W["h.B"]=Hb;Hb.Ha=function(a){for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){new Hc(1)}}return 0};`);
+    const t = Date.now();
+    const e = interpError(() => new BundleInterpreter(loop).readClass('h.B', new Reader(new Uint8Array())));
+    expect(e.kind).toBe('budget');
+    expect(Date.now() - t).toBeLessThan(2000);
+    const one = parseBundle(`${ctor}W["h.O"]=Ho;Ho.Ha=function(a){return new Hc(1)};`);
+    const v = new BundleInterpreter(one).readClass('h.O', new Reader(new Uint8Array())) as { $ctorError: string };
+    expect(v.$ctorError).toContain('reader threw: x x x');
+    expect(v.$ctorError.length).toBeLessThan(MAX_THROW_MESSAGE + 100);
+  });
+
+  it('caps lexical function nesting and charges each name lookup by the scopes it walks', () => {
+    const nested = (depth: number, body: string) => {
+      let inner = `function(){${body}}`;
+      for (let k = 0; k < depth; k++) inner = `function(){return ${inner}}`;
+      return `var f=${inner};for(var n=0;n<${depth + 1};n++){f=f()}return f`;
+    };
+    // Real readers nest a few functions deep: that still runs.
+    expect(run(nested(4, 'return 7'))).toBe(7);
+    // Past the cap, a read ends with a budget error rather than slow lookups.
+    const deep = interpError(() => run(nested(MAX_NESTING + 1, 'return 7')));
+    expect(deep.kind).toBe('budget');
+    expect(deep.message).toContain('nested');
+    // Inside the cap, an undeclared name looked up in a loop ends at the step budget quickly.
+    const t = Date.now();
+    const lookups = 'for(var i=0;i<999999;i++){for(var j=0;j<999999;j++){Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q,Q}}return 0';
+    const e = interpError(() => run(nested(MAX_NESTING - 2, lookups)));
+    expect(e.kind).toBe('budget');
+    expect(e.message).toContain('steps');
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
+  it('refuses a reader argument that is not the reader, as an InterpError', () => {
+    for (const body of [
+      'return P.Sd(new Hx,function(){return 1})',
+      'return P.ms("abc",function(){return 1})',
+      'return P.ef(1,function(){},function(){})',
+      'return P.Ya("abc")',
+    ]) {
+      const e = interpError(() => run(body, new Writer().int32(1).bytes()));
+      expect(e.kind, body).toBe('bad-value');
+    }
+    expect(() => DEFAULT_DIALECT.statics.P.Ya({})).toThrow(InterpError);
+  });
+
+  it('never treats a key longer than ten characters as an array index', () => {
+    // No canonical array index has more than ten digits: such a key is refused on an array write
+    // and reads as undefined on a string, without a pattern test over the whole key.
+    expect(interpError(() => run('var x=[];x["12345678901"]=1;return x')).kind).toBe('forbidden');
+    expect(run('return "ab"["12345678901"]')).toBeUndefined();
+    expect(run('var x=[5];x["1"]=6;return [x[1],"ab"["1"]]')).toEqual([6, 'b']);
   });
 });

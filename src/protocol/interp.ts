@@ -49,7 +49,20 @@
 // - host work that grows with something the bundle controls is charged too, or done once: a computed
 //   member key costs its length, parsing a function costs the characters parsed, a constructor failure
 //   kept as `$ctorError` costs CTOR_FAILURE_STEPS, and definitions are indexed in one pass over the
-//   source, with failed lookups cached, so no lookup rescans the bundle.
+//   source, with failed lookups cached, so no lookup rescans the bundle. A thrown value's message is
+//   built once per throw site, capped at MAX_THROW_MESSAGE and charged; a key longer than ten
+//   characters is never an array index (no pattern test over a long key); a name lookup costs the
+//   scopes it walks, and functions nest at most MAX_NESTING deep.
+// - a wall-clock deadline backs the step count up: each `readClass` (or shared `ReadBudget`) has
+//   `maxMillis` (default DEFAULT_MAX_MILLIS), checked every CLOCK_EVERY steps and raising the same
+//   budget error. It can only end a read between steps, so it bounds uncounted work only because every
+//   single host operation is itself size-bounded: a string is at most MAX_STRING characters when `+`
+//   builds it, else a literal (bounded by the bundle, whose parsing is charged) or a wire string
+//   (bounded by the frame); an array handed to a native is at most MAX_RANGE long, `E.Range` allocates at
+//   most MAX_RANGE, a wire list's count is capped by the codec, and every other array grows by one
+//   element per charged step (dense writes, `push` of the source's own arguments); a parse, the
+//   definition index and the per-function AST walks (hoisting, `fieldsReadAs`, a throw's literals) are
+//   bounded by the bundle's size and done once per function or per interpreter.
 
 import {
   parseExpressionAt,
@@ -143,7 +156,11 @@ function strBody(r: Reader): string {
   return new TextDecoder('utf-8', { fatal: true }).decode(r.raw(n));
 }
 
-const asReader = (x: unknown) => x as Reader;
+/** A helper's reader argument: the codec reader, else an InterpError (never a host TypeError). */
+function asReader(x: unknown): Reader {
+  if (!(x instanceof Reader)) throw new InterpError('bad-value', `expected the reader, got ${describe(x)}`);
+  return x;
+}
 
 /** Functions `toNative` made from interpreter closures: the only callables a native may call. */
 const CALLBACKS = new WeakSet<object>();
@@ -319,12 +336,16 @@ export interface InterpOptions {
   maxSteps?: number;
   /** Nesting of interpreted calls allowed per `readClass` (default {@link DEFAULT_MAX_DEPTH}). */
   maxDepth?: number;
+  /** Wall-clock milliseconds allowed per `readClass` (default {@link DEFAULT_MAX_MILLIS}). */
+  maxMillis?: number;
+  /** The clock the deadline is measured on (default `performance.now`); tests inject one. */
+  now?: () => number;
 }
 
 /**
  * Steps per `readClass`. Native element work counts too: an array handed to a native costs its
  * length, and `E.Range` its count. A synthetic 3,000-territory board with 40 players' hands and
- * special units (the test mini-bundle) takes about 0.43M steps; this is about 70 times that.
+ * special units (the test mini-bundle) takes about 0.49M steps (about 25 ms); this is about 60 times that.
  * Measured, it ends a runaway read in well under a second: a nested-loop bomb in about 0.4 s, and
  * one that repeats `E.Sa(E.Range(0,1e6))` in about 0.3 s.
  */
@@ -335,7 +356,27 @@ export const DEFAULT_MAX_STEPS = 30_000_000;
  */
 export interface ReadBudget {
   spent: number;
+  /** When the first read on this budget started (the interpreter's clock), so the reads share one deadline. */
+  startedAt?: number;
 }
+
+/**
+ * Wall-clock milliseconds per `readClass` (or per shared {@link ReadBudget}): the backstop for host
+ * work the step count does not see. A legitimate read of the large synthetic board takes about 25 ms.
+ */
+export const DEFAULT_MAX_MILLIS = 5_000;
+
+/** The clock is read once every this many steps. */
+const CLOCK_EVERY = 1024;
+
+/**
+ * Lexical function nesting allowed (a function inside a function inside …). A name lookup walks every
+ * enclosing scope, so without a cap one step could cost hundreds of lookups; real readers nest a few deep.
+ */
+export const MAX_NESTING = 32;
+
+/** The longest message kept for a thrown value (`reader threw: …`). */
+export const MAX_THROW_MESSAGE = 200;
 
 /** Interpreted call depth per `readClass`; real readers nest a few dozen deep at most. */
 export const DEFAULT_MAX_DEPTH = 256;
@@ -367,8 +408,11 @@ const STRING_COMPARE_OPS = new Set(['===', '!==', '<', '<=', '>', '>=']);
  */
 export const MAX_STRING = 1_000_000;
 
-/** A canonical array index (`"0"`, `"12"`, not `"01"` or `"1.0"`). */
-const isIndex = (k: string) => /^(?:0|[1-9]\d*)$/.test(k);
+/**
+ * A canonical array index (`"0"`, `"12"`, not `"01"` or `"1.0"`). No index has more than ten digits, so a
+ * longer key is refused before the pattern test, which would otherwise scan the whole key.
+ */
+const isIndex = (k: string) => k.length <= 10 && /^(?:0|[1-9]\d*)$/.test(k);
 
 // ---------------------------------------------------------------------------
 // Runtime values
@@ -385,32 +429,53 @@ class Closure {
   ) {}
 }
 
+/** What `Scope.lookup` returns for a name no enclosing scope declares. */
+const UNDECLARED: unique symbol = Symbol('undeclared');
+
 class Scope {
   private readonly vars = new Map<string, unknown>();
-  constructor(private readonly parent: Scope | null = null) {}
+  /** Enclosing scopes: a function's scope is one deeper than the scope its closure was made in. */
+  readonly depth: number;
+  constructor(private readonly parent: Scope | null = null) {
+    this.depth = parent ? parent.depth + 1 : 0;
+  }
 
-  has(name: string): boolean {
-    return this.vars.has(name) || (this.parent?.has(name) ?? false);
+  /**
+   * The value of the nearest declaration of `name`, or UNDECLARED; `walked` is called with the number
+   * of scopes visited, so the caller can charge the lookup. Iterative: no host recursion per scope.
+   */
+  lookup(name: string, walked: (n: number) => void): unknown {
+    let n = 0;
+    for (let s: Scope | null = this; s; s = s.parent) {
+      n++;
+      if (s.vars.has(name)) {
+        walked(n);
+        return s.vars.get(name);
+      }
+    }
+    walked(n);
+    return UNDECLARED;
   }
 
   hasOwn(name: string): boolean {
     return this.vars.has(name);
   }
 
-  get(name: string): unknown {
-    if (this.vars.has(name)) return this.vars.get(name);
-    return this.parent?.get(name);
-  }
 
   declare(name: string, value: unknown): void {
     this.vars.set(name, value);
   }
 
-  /** Assign to the nearest scope that declares `name` (else this one). */
-  assign(name: string, value: unknown): void {
+  /** Assign to the nearest scope that declares `name` (else this one); returns the scopes visited. */
+  assign(name: string, value: unknown): number {
+    let n = 1;
     let s: Scope | null = this;
-    while (s && !s.vars.has(name)) s = s.parent;
+    while (s && !s.vars.has(name)) {
+      s = s.parent;
+      n++;
+    }
     (s ?? this).vars.set(name, value);
+    return n;
   }
 }
 
@@ -475,8 +540,15 @@ export class BundleInterpreter {
   private readonly maxIterations: number;
   private readonly maxSteps: number;
   private readonly maxDepth: number;
+  private readonly maxMillis: number;
+  private readonly now: () => number;
   private steps = 0;
   private depth = 0;
+  /** When this read must end (the interpreter's clock), and the step count at which the clock is next read. */
+  private deadline = Infinity;
+  private nextClock = 0;
+  /** `reader threw: …` per throw site, built once (see `throwMessage`). */
+  private readonly throwMessages = new WeakMap<AcornNode, string>();
 
   constructor(
     readonly bundle: ParsedBundle,
@@ -486,6 +558,8 @@ export class BundleInterpreter {
     this.maxIterations = opts.maxIterations ?? 1e6;
     this.maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
     this.maxDepth = opts.maxDepth ?? DEFAULT_MAX_DEPTH;
+    this.maxMillis = opts.maxMillis ?? DEFAULT_MAX_MILLIS;
+    this.now = opts.now ?? (() => performance.now());
     const d = opts.dialect ?? {};
     this.dialect = {
       readerMethods: { ...DEFAULT_DIALECT.readerMethods, ...d.readerMethods },
@@ -519,6 +593,14 @@ export class BundleInterpreter {
   private budgeted<T>(budget: ReadBudget | undefined, run: () => T): T {
     this.steps = budget && Number.isFinite(budget.spent) && budget.spent > 0 ? budget.spent : 0;
     this.depth = 0;
+    // One deadline per read, or per shared budget: its first read records when it started.
+    let started = this.now();
+    if (budget) {
+      if (typeof budget.startedAt === 'number' && Number.isFinite(budget.startedAt)) started = budget.startedAt;
+      else budget.startedAt = started;
+    }
+    this.deadline = started + this.maxMillis;
+    this.nextClock = this.steps + CLOCK_EVERY;
     try {
       return run();
     } catch (e) {
@@ -763,6 +845,20 @@ export class BundleInterpreter {
     if (this.steps > this.maxSteps) {
       throw new InterpError('budget', `read ran past ${this.maxSteps} steps`, where, offset);
     }
+    if (this.steps >= this.nextClock) {
+      this.nextClock = this.steps + CLOCK_EVERY;
+      if (this.now() > this.deadline) throw new InterpError('budget', `read ran past ${this.maxMillis} ms`, where, offset);
+    }
+  }
+
+  /** Charge a name lookup that visited `walked` scopes: the first is the step's own, each further one a step. */
+  private chargeLookup(walked: number, where: string, node: AcornNode): void {
+    if (walked > 1) this.spend(walked - 1, where, node.start);
+  }
+
+  /** The value of `name` in `scope`, or UNDECLARED, its walk charged. */
+  private lookup(scope: Scope, name: string, where: string, node: AcornNode): unknown {
+    return scope.lookup(name, (walked) => this.chargeLookup(walked, where, node));
   }
 
   private invoke(node: FunctionExpression, args: unknown[], outer: Scope, where: string, self?: unknown): unknown {
@@ -780,6 +876,9 @@ export class BundleInterpreter {
 
   private invokeBody(node: FunctionExpression, args: unknown[], outer: Scope, where: string, self?: unknown): unknown {
     const scope = new Scope(outer);
+    if (scope.depth > MAX_NESTING) {
+      throw new InterpError('budget', `functions nested past ${MAX_NESTING}`, where, node.start);
+    }
     if (self !== undefined) scope.declare('this', self);
     node.params.forEach((p, i) => scope.declare(this.paramName(p, where), args[i]));
     // `var` is function-scoped and hoisted: a var declared only in an untaken branch is undefined,
@@ -863,11 +962,29 @@ export class BundleInterpreter {
         return undefined;
       case 'ThrowStatement':
         // The argument is not evaluated (it may read bytes or build exception objects);
-        // its string literals are the message.
-        throw new InterpError('reader-threw', `reader threw: ${stringLiterals(st.argument).join(' ') || '(no message)'}`, where, st.start);
+        // its string literals are the message, built once per throw site and capped.
+        throw new InterpError('reader-threw', this.throwMessage(st, where), where, st.start);
       default:
         throw this.unsupported(`statement ${st.type}`, st, where);
     }
+  }
+
+  /**
+   * `reader threw: <the argument's string literals>`, capped at MAX_THROW_MESSAGE characters. Walking the
+   * argument is host work in its size, so it is done once per throw site (and charged by the nodes
+   * walked); every throw is then charged the message's length, as building the error copies it.
+   */
+  private throwMessage(st: AcornNode & { argument: AcornNode }, where: string): string {
+    let msg = this.throwMessages.get(st);
+    if (msg === undefined) {
+      const { literals, nodes } = stringLiterals(st.argument, MAX_THROW_MESSAGE);
+      this.spend(nodes, where, st.start);
+      const text = literals.join(' ');
+      msg = `reader threw: ${text.length > MAX_THROW_MESSAGE ? `${text.slice(0, MAX_THROW_MESSAGE)}…` : text || '(no message)'}`;
+      this.throwMessages.set(st, msg);
+    }
+    this.spend(msg.length, where, st.start);
+    return msg;
   }
 
   // -------------------------------------------------------------------------
@@ -882,12 +999,16 @@ export class BundleInterpreter {
         if (n.value !== null && typeof n.value === 'object') throw new InterpError('bad-value', 'regexp literal', where, n.start);
         if (typeof n.value === 'bigint') throw new InterpError('bad-value', 'bigint literal', where, n.start);
         return n.value;
-      case 'Identifier':
-        if (scope.has(n.name)) return scope.get(n.name);
+      case 'Identifier': {
+        const v = this.lookup(scope, n.name, where, n);
+        if (v !== UNDECLARED) return v;
         if (n.name === 'undefined') return undefined;
         return new ClassRef(n.name);
-      case 'ThisExpression':
-        return scope.get('this');
+      }
+      case 'ThisExpression': {
+        const v = this.lookup(scope, 'this', where, n);
+        return v === UNDECLARED ? undefined : v;
+      }
       case 'SequenceExpression': {
         let v: unknown;
         for (const e of n.expressions) v = this.eval(e, scope, where);
@@ -915,7 +1036,7 @@ export class BundleInterpreter {
         const v = this.eval(n.right, scope, where);
         const t = n.left;
         if (t.type === 'Identifier') {
-          scope.assign(t.name, v);
+          this.chargeLookup(scope.assign(t.name, v), where, t);
           return v;
         }
         if (t.type === 'MemberExpression') {
@@ -943,9 +1064,10 @@ export class BundleInterpreter {
         if (n.argument.type !== 'Identifier') throw this.unsupported(`update of ${n.argument.type}`, n, where);
         const name = n.argument.name;
         // ToNumeric, as the language does (`"3"++` is 4), with a string's conversion charged.
-        const old = Number(this.numeric(scope.get(name), n, where));
+        const cur = this.lookup(scope, name, where, n);
+        const old = Number(this.numeric(cur === UNDECLARED ? undefined : cur, n, where));
         const next = n.operator === '++' ? old + 1 : old - 1;
-        scope.assign(name, next);
+        this.chargeLookup(scope.assign(name, next), where, n);
         return n.prefix ? next : old;
       }
       case 'FunctionExpression':
@@ -1274,18 +1396,29 @@ function describe(v: unknown): string {
   return typeof v;
 }
 
-/** Every string literal in an expression, in source order. */
-function stringLiterals(node: AcornNode): string[] {
-  const out: string[] = [];
-  const visit = (v: unknown): void => {
+/**
+ * The string literals of an expression in source order, until they add up to more than `maxChars`
+ * characters, and the number of nodes walked. Iterative: a deeply nested argument cannot overflow the stack.
+ */
+function stringLiterals(node: AcornNode, maxChars: number): { literals: string[]; nodes: number } {
+  const literals: string[] = [];
+  let chars = 0;
+  let nodes = 0;
+  const stack: unknown[] = [node];
+  while (stack.length && chars <= maxChars) {
+    const v = stack.pop();
     if (Array.isArray(v)) {
-      v.forEach(visit);
-      return;
+      for (let i = v.length - 1; i >= 0; i--) stack.push(v[i]);
+      continue;
     }
-    if (!isObject(v) || typeof v.type !== 'string') return;
-    if (v.type === 'Literal' && typeof v.value === 'string') out.push(v.value);
-    for (const [k, child] of Object.entries(v)) if (k !== 'type') visit(child);
-  };
-  visit(node);
-  return out;
+    if (!isObject(v) || typeof v.type !== 'string') continue;
+    nodes++;
+    if (v.type === 'Literal' && typeof v.value === 'string') {
+      literals.push(v.value);
+      chars += v.value.length + 1;
+    }
+    const children = Object.entries(v).filter(([k]) => k !== 'type');
+    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i][1]);
+  }
+  return { literals, nodes };
 }

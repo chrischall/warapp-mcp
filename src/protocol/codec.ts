@@ -71,7 +71,10 @@ export const MAX_WIRE_COUNT = 1_000_000;
 /**
  * The longest list or dict whose items may take no bytes at all. Every real item carries at least a
  * flag or a number; a count above this whose first item read nothing cannot be honest — it would
- * otherwise loop and allocate `count` times from a handful of bytes.
+ * otherwise loop and allocate `count` times from a handful of bytes. The check is per list: nested
+ * lists of zero-byte items still multiply (about this many items per four bytes of frame), bounded by
+ * the frame's size, and only an interpreted reader can read zero bytes, which the interpreter's step
+ * budget bounds.
  */
 export const MAX_EMPTY_ITEMS = 1024;
 

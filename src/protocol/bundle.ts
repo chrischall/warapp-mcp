@@ -4,11 +4,22 @@
 // The bundle's generated readers are the authority on every wire class layout, and those
 // layouts (and the minified names) change between client releases, so this module:
 //   1. fetches a war.app page and discovers the current bundle URL and version,
-//   2. reuses `<dataDir>/bundle/<version>.js` if present and it still matches the SHA-256
-//      recorded beside it at download (`<version>.js.sha256`), else downloads and caches it,
+//   2. reuses `<dataDir>/bundle/<version>.<sha256>.js` if present and its bytes still hash to the
+//      digest in its name, else downloads and caches it,
 //   3. exposes `readClass(typeName | var, reader)` keyed by the stable registered type
 //      name (e.g. `warlight.shared.LatestGameInfo`), evaluated by `BundleInterpreter`.
 // Fetching is injected so the transport (and tests) decide how pages are retrieved.
+//
+// The cache is content-addressed, because several processes share one cache directory. A cached
+// bundle is ONE file whose name carries the SHA-256 of its bytes, written to a private temporary
+// file and renamed into place in one step. So there is no moment at which another process can see a
+// bundle without its digest (and delete it as unverified), and pruning cannot remove half of a pair:
+// there is no pair. A file whose bytes do not hash to its name (a truncated write, a disk error, a
+// later edit) is deleted and never loaded. A cache from before this layout (`<version>.js`, with or
+// without a `<version>.js.sha256` beside it) is never read: it is downloaded again and the old files
+// pruned. Pruning follows #140: an unfinished download (`….tmp-<pid>[-<random>]`) is removed only when
+// this process wrote it, its writer is gone, or it is stale — never while another live process may
+// still rename it into place.
 
 import { createHash, randomBytes } from 'node:crypto';
 import { chmod, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
@@ -142,15 +153,18 @@ export interface BundleLoaderOptions {
   now?: () => number;
 }
 
-/** A cached bundle file: `<version>.js`. */
-const BUNDLE_FILE = /^([A-Za-z0-9._-]{1,64})\.js$/;
-/** A cached bundle's recorded digest: `<version>.js.sha256`, part of that bundle. */
-const DIGEST_FILE = /^([A-Za-z0-9._-]{1,64})\.js\.sha256$/;
+/** A cached bundle: `<version>.<sha256 of its bytes>.js`. */
+const BUNDLE_FILE = /^([A-Za-z0-9._-]{1,64})\.([0-9a-f]{64})\.js$/;
+/** A cache file of the earlier layouts, never read, only pruned: `<version>.js` and `<version>.js.sha256`. */
+const LEGACY_FILE = /^[A-Za-z0-9._-]{1,64}\.js(?:\.sha256)?$/;
 /**
- * A write that never finished, of a bundle or of its digest: `<version>.js[.sha256].tmp-<pid>`,
- * optionally followed by `-<random>` (what {@link writePrivateAtomic} writes).
+ * A write that never finished: `<version>[.<sha256>].js[.sha256].tmp-<pid>`, optionally followed by
+ * `-<random>` (what {@link writePrivateAtomic} writes; the shorter forms are the earlier layouts').
  */
-const PARTIAL_FILE = /^[A-Za-z0-9._-]{1,64}\.js(?:\.sha256)?\.tmp-(\d+)(?:-[0-9a-f]+)?$/;
+const PARTIAL_FILE = /^[A-Za-z0-9._-]{1,64}(?:\.[0-9a-f]{64})?\.js(?:\.sha256)?\.tmp-(\d+)(?:-[0-9a-f]+)?$/;
+
+/** The cache file name of `version` with these bytes' digest. */
+const bundleName = (version: string, digest: string) => `${version}.${digest}.js`;
 /** A partial download older than this is abandoned, whoever wrote it (a pid can be reused). */
 const STALE_PARTIAL_MS = 10 * 60_000;
 
@@ -164,12 +178,17 @@ function alive(pid: number): boolean {
   }
 }
 
+/** This process's unfinished writes (temporary files not yet renamed into place). */
+const writing = new Set<string>();
+
 /**
- * A partial download may be pruned when this process wrote it, its writer is gone, or it is
- * stale; never while another live process may still rename it into place (#140).
+ * A partial download may be pruned when this process wrote it and is no longer writing it, its
+ * writer is gone, or it is stale; never while a live process — another one, or a concurrent load
+ * in this one — may still rename it into place (#140).
  */
 async function abandoned(file: string, pid: number): Promise<boolean> {
-  if (pid === process.pid || !alive(pid)) return true;
+  if (pid === process.pid) return !writing.has(file);
+  if (!alive(pid)) return true;
   try {
     return Date.now() - (await stat(file)).mtimeMs > STALE_PARTIAL_MS;
   } catch {
@@ -178,15 +197,15 @@ async function abandoned(file: string, pid: number): Promise<boolean> {
 }
 
 /**
- * Delete every cached bundle but `keep` (each is ~16 MB, one per client release), its recorded
- * digest with it, and any unfinished download. `keep`'s digest is kept. Best effort: never throws.
+ * Delete every cached bundle but `keep` (each is ~16 MB, one per client release), every file of an
+ * earlier cache layout and any abandoned unfinished download. Best effort: never throws.
  */
 async function pruneBundles(dir: string, keep: string): Promise<void> {
   try {
     for (const name of await readdir(dir)) {
-      if (name === keep || name === `${keep}.sha256`) continue;
+      if (name === keep) continue;
       const partial = PARTIAL_FILE.exec(name);
-      if (!partial && !BUNDLE_FILE.test(name) && !DIGEST_FILE.test(name)) continue;
+      if (!partial && !BUNDLE_FILE.test(name) && !LEGACY_FILE.test(name)) continue;
       if (partial && !(await abandoned(join(dir, name), Number(partial[1])))) continue;
       await unlink(join(dir, name)).catch(() => undefined);
     }
@@ -195,16 +214,23 @@ async function pruneBundles(dir: string, keep: string): Promise<void> {
   }
 }
 
-/** Cached bundles, newest (by modification time) first. */
-async function cachedNewestFirst(dir: string): Promise<{ version: string; file: string }[]> {
-  const found: { version: string; file: string; mtime: number }[] = [];
+interface CachedBundle {
+  version: string;
+  digest: string;
+  name: string;
+  file: string;
+}
+
+/** Cached bundles (of `version`, when given), newest (by modification time) first. */
+async function cachedNewestFirst(dir: string, version?: string): Promise<CachedBundle[]> {
+  const found: (CachedBundle & { mtime: number })[] = [];
   try {
     for (const name of await readdir(dir)) {
       const m = BUNDLE_FILE.exec(name);
-      if (!m) continue;
+      if (!m || (version !== undefined && m[1] !== version)) continue;
       const file = join(dir, name);
       try {
-        found.push({ version: m[1]!, file, mtime: (await stat(file)).mtimeMs });
+        found.push({ version: m[1]!, digest: m[2]!, name, file, mtime: (await stat(file)).mtimeMs });
       } catch {
         // Gone since the listing (pruned by another process).
       }
@@ -212,17 +238,17 @@ async function cachedNewestFirst(dir: string): Promise<{ version: string; file: 
   } catch {
     return [];
   }
-  return found.sort((a, b) => b.mtime - a.mtime).map(({ version, file }) => ({ version, file }));
+  return found.sort((a, b) => b.mtime - a.mtime).map(({ mtime: _, ...c }) => c);
 }
 
 /**
- * The newest cached bundle that passes {@link readVerified} (its recorded digest and the content
- * check), or undefined. A copy that fails is deleted by that check, never loaded.
+ * The newest cached bundle (of `version`, when given) that passes {@link readVerified} (the digest in
+ * its name and the content check), or undefined. A copy that fails is deleted by that check, never loaded.
  */
-async function newestVerified(dir: string): Promise<{ version: string; src: string } | undefined> {
-  for (const { version, file } of await cachedNewestFirst(dir)) {
-    const src = await readVerified(file, `${file}.sha256`);
-    if (src !== null) return { version, src };
+async function newestVerified(dir: string, version?: string): Promise<{ version: string; name: string; src: string } | undefined> {
+  for (const c of await cachedNewestFirst(dir, version)) {
+    const src = await readVerified(c.file, c.digest);
+    if (src !== null) return { version: c.version, name: c.name, src };
   }
   return undefined;
 }
@@ -246,41 +272,40 @@ async function ensurePrivateDir(dir: string): Promise<void> {
 /** Write `data` to `file` `0600` through a fresh temporary file and a rename. */
 async function writePrivateAtomic(file: string, data: Buffer | string): Promise<void> {
   const tmp = `${file}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
+  writing.add(tmp);
   try {
     await writeFile(tmp, data, { mode: 0o600, flag: 'wx' });
     await rename(tmp, file);
   } catch (e) {
     await rm(tmp, { force: true });
     throw e;
+  } finally {
+    writing.delete(tmp);
   }
 }
 
 /**
- * The cached bundle's text when it still matches the digest recorded at download and still
- * passes the content check; `null` (nothing cached, or the copy was rejected and deleted).
+ * The cached bundle's text when its bytes still hash to `digest` (the one in its name) and it still
+ * passes the content check; `null` (gone, or the copy was rejected and deleted).
  *
  * This guards against later corruption of, or tampering with, the cache — a truncated write,
  * a disk error, or anything that rewrites the file after it was downloaded — so one bad copy
  * cannot persist across restarts. It is trust on first download: it does not protect against
  * a malicious first download (the digest is computed from what was received), which only the
- * pinned location and the interpreter's own hardening limit. A copy with no digest (cached
- * before digests were recorded) is treated as unverified and downloaded again.
+ * pinned location and the interpreter's own hardening limit. Deleting a rejected copy can race
+ * only with another process renaming a good copy of the same bytes to the same name; the cost is
+ * one extra download, never an unverified load.
  */
-async function readVerified(file: string, digestFile: string): Promise<string | null> {
+async function readVerified(file: string, digest: string): Promise<string | null> {
   let bytes: Buffer;
   try {
     bytes = await readFile(file);
   } catch {
     return null;
   }
-  const digest = await readFile(digestFile, 'utf8').then(
-    (d) => d.trim(),
-    () => null,
-  );
   const src = bytes.toString('utf8');
-  if (digest !== null && digest === sha256(bytes) && looksLikeBundle(src)) return src;
+  if (sha256(bytes) === digest && looksLikeBundle(src)) return src;
   await rm(file, { force: true });
-  await rm(digestFile, { force: true });
   return null;
 }
 
@@ -302,10 +327,12 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
     return b;
   }
   const { url, version } = source;
-  const file = join(dir, `${version}.js`);
-  const digestFile = `${file}.sha256`;
-  let src = await readVerified(file, digestFile);
-  if (src === null) {
+  const cached = await newestVerified(dir, version);
+  let src: string;
+  let name: string;
+  if (cached) {
+    ({ src, name } = cached);
+  } else {
     src = await opts.fetchText(url);
     if (!looksLikeBundle(src)) {
       throw new BundleError('bad-bundle', `${url} does not look like the war.app client bundle`);
@@ -313,13 +340,12 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
     await ensurePrivateDir(opts.dataDir);
     await ensurePrivateDir(dir);
     const bytes = Buffer.from(src, 'utf8');
-    // The bundle first, then its digest: a crash between the two leaves a copy with no
-    // digest, which the next load downloads again.
-    await writePrivateAtomic(file, bytes);
-    await writePrivateAtomic(digestFile, `${sha256(bytes)}\n`);
+    // One file, its digest in its name, made visible by one rename: never a bundle without its digest.
+    name = bundleName(version, sha256(bytes));
+    await writePrivateAtomic(join(dir, name), bytes);
   }
   const bundle = new WarappBundle(src, version, opts.interp);
-  await pruneBundles(dir, `${version}.js`);
+  await pruneBundles(dir, name);
   return bundle;
 }
 

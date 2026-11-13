@@ -118,6 +118,50 @@ describe('bundleFetcher limits', () => {
     const get = bundleFetcher(bridge, (async () => new Response(stalled)) as typeof fetch, { timeoutMs: 20 });
     await expect(get(URL_)).rejects.toThrow(/timed out after 20 ms/);
   });
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** A body that trickles one byte per pull, counting pulls and noting a cancel. */
+  const trickle = () => {
+    const s = { pulls: 0, cancelled: false };
+    const body = new ReadableStream<Uint8Array>({
+      async pull(c) {
+        await sleep(5);
+        s.pulls++;
+        c.enqueue(new Uint8Array(1));
+      },
+      cancel() {
+        s.cancelled = true;
+      },
+    });
+    return { s, body };
+  };
+
+  it('stops reading the body once the timeout fires, even when the fetch ignores the abort signal', async () => {
+    const { s, body } = trickle();
+    const get = bundleFetcher(bridge, (async () => new Response(body)) as typeof fetch, { timeoutMs: 50 });
+    await expect(get(URL_)).rejects.toThrow(/timed out after 50 ms/);
+    await sleep(10); // let the cancel land
+    const atTimeout = s.pulls;
+    await sleep(100);
+    expect(s.cancelled).toBe(true);
+    expect(s.pulls).toBe(atTimeout);
+  });
+
+  it('never starts reading a body whose response arrives after the timeout', async () => {
+    const { s, body } = trickle();
+    const get = bundleFetcher(
+      bridge,
+      (async () => {
+        await sleep(60);
+        return new Response(body);
+      }) as typeof fetch,
+      { timeoutMs: 20 },
+    );
+    await expect(get(URL_)).rejects.toThrow(/timed out after 20 ms/);
+    await sleep(120);
+    expect(s.cancelled).toBe(true);
+    expect(s.pulls).toBeLessThanOrEqual(1);
+  });
 });
 
 describe('createLiveContext', () => {

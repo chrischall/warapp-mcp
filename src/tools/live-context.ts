@@ -103,9 +103,18 @@ export interface BundleFetchLimits {
   maxBytes?: number;
 }
 
-/** Read a response body as UTF-8, cancelling it as soon as it passes `maxBytes`. */
-async function readCapped(res: Response, maxBytes: number, what: string): Promise<string> {
+/**
+ * Read a response body as UTF-8, cancelling it as soon as it passes `maxBytes` or `signal` aborts
+ * (the download timed out): nothing keeps pulling the body in the background after that, even when
+ * the fetch itself ignored the signal.
+ */
+async function readCapped(res: Response, maxBytes: number, what: string, signal: AbortSignal): Promise<string> {
   const tooLarge = () => new Error(`${what} is larger than ${maxBytes} bytes`);
+  const aborted = () => (signal.reason instanceof Error ? signal.reason : new Error(`${what} was aborted`));
+  if (signal.aborted) {
+    await res.body?.cancel().catch(() => {});
+    throw aborted();
+  }
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
     await res.body?.cancel().catch(() => {});
@@ -113,19 +122,28 @@ async function readCapped(res: Response, maxBytes: number, what: string): Promis
   }
   if (!res.body) return '';
   const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
-      throw tooLarge();
+  const onAbort = () => {
+    reader.cancel().catch(() => {});
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw aborted();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw tooLarge();
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+    return Buffer.concat(chunks).toString('utf8');
+  } finally {
+    signal.removeEventListener('abort', onAbort);
   }
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 /**
@@ -146,7 +164,8 @@ export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch 
     }
     const ac = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    // Raced as well as signalled, so a fetch that ignores the signal still cannot hang the load.
+    // Raced as well as signalled, so a fetch that ignores the signal still cannot hang the load; the
+    // body reader is cancelled on the same signal, so nothing keeps pulling after the timeout.
     const timedOut = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         const e = new Error(`${u.hostname} timed out after ${timeoutMs} ms fetching the client bundle`);
@@ -157,7 +176,7 @@ export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch 
     const download = (async () => {
       const res = await fetchImpl(u.href, { redirect: 'error', signal: ac.signal });
       if (!res.ok) throw new Error(`${u.hostname} answered HTTP ${res.status} for the client bundle`);
-      return readCapped(res, maxBytes, `the client bundle from ${u.hostname}`);
+      return readCapped(res, maxBytes, `the client bundle from ${u.hostname}`, ac.signal);
     })();
     try {
       return await Promise.race([download, timedOut]);

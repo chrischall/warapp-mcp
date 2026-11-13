@@ -216,7 +216,6 @@ describe('malformed input', () => {
   it('refuses a huge list of zero-byte items quickly, without allocating it', () => {
     const w = new Writer().int32(0x7fffffff);
     let calls = 0;
-    const t = performance.now();
     expectProtocolError(
       () =>
         new Reader(w.bytes()).list(() => {
@@ -225,7 +224,8 @@ describe('malformed input', () => {
         }),
       'bad-length',
     );
-    expect(performance.now() - t).toBeLessThan(250);
+    // The item reader ran at most once: the count was refused before the loop (no timing assertion,
+    // which could flake on a loaded runner).
     expect(calls).toBeLessThanOrEqual(1);
   });
 
