@@ -139,3 +139,22 @@ describe('#125 the army left on a capture is waived when idle armies take it', (
     expect(p.expected.bonusesCompleted).toEqual([100]);
   });
 });
+
+describe('#125 plain expansion (pass 3) has an economy test', () => {
+  // The same board with 4 in no bonus: taking it sends 16 and loses 7 for +0 a turn.
+  const V2: Scenario = {
+    edges: '1-2 2-3 1-4 3-5 5-6',
+    bonuses: [[100, 3, [1, 2, 3]]],
+    cells: { 1: 'M30', 2: 'M1', 3: 'M6', 4: 'n10', 5: 'E3', 6: 'E3' },
+    turn: 12,
+  };
+  it('does not throw 7 armies away on a 10-neutral worth +0', () => {
+    const p = plan(V2);
+    expect(attacks(p)).not.toContain('1->4');
+    expect(p.rationale.join('\n')).toMatch(/Do not expand into T4 \(#4\): it adds no income and loses ~7 armies/);
+  });
+  it('still takes a cheap neutral worth +0 (it loses at most PLAIN_EXPANSION_LOSS)', () => {
+    const p = plan({ ...V2, cells: { ...V2.cells, 4: 'n2' } });
+    expect(attacks(p)).toContain('1->4');
+  });
+});

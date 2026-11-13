@@ -210,6 +210,8 @@ describe('planTurn — Local Deployment (G2)', () => {
         [
           [21, 3, [1, 2]],
           [22, 2, [4, 5]],
+          // #125: T7 is a +1 bonus of its own, so plain expansion is not asked to lose 3 armies for +0.
+          [23, 1, [7]],
         ],
       ),
     );

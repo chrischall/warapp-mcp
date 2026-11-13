@@ -432,7 +432,12 @@
 //     Pass 1 completes bonuses that can be finished this turn (all or nothing);
 //     pass 2 advances bonuses one capture at a time, cheapest first; pass 3
 //     (not under `complete-bonus`) takes any other affordable target (never an
-//     enemy one under `balanced`).
+//     enemy one under `balanced`) that passes its own economy test (#125): a member of an
+//     economic bonus is judged by that bonus; any other capture's armies lost (the defenders'
+//     kills) must be repaid by the income it adds within PAYBACK_TURNS, and one that adds no
+//     income may lose at most PLAIN_EXPANSION_LOSS (a rationale line "Do not expand into …"
+//     names an affordable one refused). The leftover's expansion stack (rule 5) is a capture's
+//     finisher, never a combined capture's softener.
 //  4a. Balanced (the default goal). Instead of passes 1–2, every candidate is
 //     scored as income per army and taken greedily (focus first, then score, then
 //     cheaper, fewer bonus borders, id): a hold (protected value / hold cost),
@@ -664,6 +669,12 @@ import { BEHIND_RATIO, gameProfile, type GameProfile, type ProfilePlayer } from 
 export const PAYBACK_TURNS = 10;
 /** …or when one remaining territory alone costs more than this many times its value (a wasteland). */
 export const WASTELAND_FACTOR = 5;
+/**
+ * Plain expansion (pass 3, #125): a capture that adds no income and is in no bonus worth
+ * completing is made only when it loses at most this many armies (a 2- or 3-army neutral at the
+ * default rates): a cheap step still widens my reach, a 10-army one throws 7 armies away.
+ */
+export const PLAIN_EXPANSION_LOSS = 2;
 /** Floor of the default enemy deploy estimate (a player's base income). */
 export const MIN_ENEMY_DEPLOY = DEFAULT_BASE_INCOME;
 
@@ -1956,6 +1967,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     const now = heldNow();
     return incomeGain(new Set([...now, ...ts])) - incomeGain(now);
   };
+  /** Income a turn that capturing `t` adds on its own (#125; `gain`: {@link gainWith} of it). */
+  const plainWorth = (_t: number, gain: number): number => gain;
   /** `t` is in a bonus the caller focused: the negative-bonus rules never refuse it. */
   const inFocus = (t: number) => [...focus].some((id) => bonusTs.get(id)?.includes(t));
   /** Every capture planned, in the order it was made (a rolled-back one may repeat; filter by `captured`). */
@@ -4268,7 +4281,13 @@ export function planTurn(input: PlanInput): TurnPlan {
       return;
     }
     if (ok) {
-      anchor ??= moves[first]?.from;
+      // The leftover's expansion stack is a finisher, never a combined capture's softener: its extra
+      // armies would only come home (No-Split: leave with its failing attack).
+      const done = moves.slice(first);
+      const finisher = done.find(
+        (m, i) => m.kind === 'attack' && !done.slice(i + 1).some((o) => o.kind === 'attack' && o.to === m.to),
+      );
+      anchor ??= (finisher ?? moves[first])?.from;
       return;
     }
     restore();
@@ -5463,7 +5482,28 @@ export function planTurn(input: PlanInput): TurnPlan {
       )
       .sort((a, b) => targetScoreCost(a.id) - targetScoreCost(b.id) || a.cost - b.cost || a.id - b.id);
     // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
-    for (const t of rest) if (gainWith([t.id]) >= 0 || inFocus(t.id)) tryExpand(t.id, 'expands territory');
+    for (const t of rest) {
+      const gain = gainWith([t.id]);
+      if (gain < 0 && !inFocus(t.id)) continue;
+      // #125: its own economy test. A member of an economic bonus is judged by that bonus; any
+      // other capture pays for the armies it loses with the income it adds within PAYBACK_TURNS,
+      // and one that adds none may lose at most PLAIN_EXPANSION_LOSS.
+      if (!inFocus(t.id) && !economicMember.has(t.id)) {
+        const lost = straightKills(defenceAt(t.id), rates.defensiveKillRate);
+        const worth = plainWorth(t.id, gain);
+        if (worth > 0 ? lost > PAYBACK_TURNS * worth : lost > PLAIN_EXPANSION_LOSS) {
+          const reach = Math.max(...neighborsOf(g, t.id).filter((x) => avail.has(x)).map((x) => (avail.get(x) ?? 0) + roomAt(x)));
+          if (reach >= t.cost)
+            rationale.push(
+              worth > 0
+                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${PAYBACK_TURNS} turns of it pay back.`
+                : `Do not expand into ${label(t.id)}: it adds no income and loses ~${lost} armies (more than ${PLAIN_EXPANSION_LOSS}), in no bonus worth completing.`,
+            );
+          continue;
+        }
+      }
+      tryExpand(t.id, 'expands territory');
+    }
   }
 
   // ---- 4e. never stand still (#104, #107) ----

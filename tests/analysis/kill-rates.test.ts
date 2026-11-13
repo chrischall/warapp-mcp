@@ -183,6 +183,7 @@ describe('planTurn — kill rates (G1)', () => {
 
 describe('planTurn — multi-source captures at non-default rates (G1, R4)', () => {
   //   T1 ─ T3 ─ T2
+  // T3 is a +3 bonus of its own (#125: plain expansion does not throw armies at a neutral worth +0).
   const g = buildGraph(
     makeMap(
       [1, 2, 3],
@@ -190,6 +191,7 @@ describe('planTurn — multi-source captures at non-default rates (G1, R4)', () 
         [1, 3],
         [2, 3],
       ],
+      [[901, 3, [3]]],
     ),
   );
 

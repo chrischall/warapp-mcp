@@ -1593,6 +1593,8 @@ describe('planTurn — defensibility-aware bonus completion (R3)', () => {
 describe('planTurn — multi-source attacks (R4)', () => {
   // My stacks on T1, T2 (and T4) all border the neutral T3; nothing else is in reach.
   //   T1 ─ T3 ─ T2      T4 ─ T3
+  // T3 is a +3 bonus of its own: since #125 plain expansion does not throw ~11 armies at a
+  // 15-neutral worth +0, so the target must be worth taking.
   const g = buildGraph(
     makeMap(
       [1, 2, 3, 4],
@@ -1601,7 +1603,7 @@ describe('planTurn — multi-source attacks (R4)', () => {
         [2, 3],
         [4, 3],
       ],
-      [],
+      [[901, 3, [3]]],
     ),
   );
 
