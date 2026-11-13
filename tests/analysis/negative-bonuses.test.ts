@@ -348,3 +348,80 @@ describe('negative bonuses (#70): default maps plan as before', () => {
     }
   });
 });
+
+describe('negative bonuses (#70): reasons and warnings name the right cause', () => {
+  it("the guard's warning names a kept capture that completes a positive bonus as such", () => {
+    // SEA staging (T11, −4) plus land 3: a lone +4 bonus (Meadow) that is also a lone −2
+    // (Bog), net +2. Completing Meadow nets +2, so dropping 3 would not raise income; the
+    // guard keeps it, and the warning must say it completes Meadow, not "finishing off".
+    const g = buildGraph(
+      makeMap(
+        [1, 2, 3, 11, 12, 13, 14],
+        [
+          [1, 2],
+          [1, 3],
+          [1, 11],
+          [1, 12],
+          [1, 13],
+          [1, 14],
+          [11, 12],
+          [12, 13],
+          [13, 14],
+        ],
+        [
+          [600, '(hidden) Positive Sea Bonus', 22, [11, 12, 13, 14]],
+          [601, '(hidden) Negative Sea Tile', -4, [11]],
+          [602, '(hidden) Negative Sea Tile', -4, [12]],
+          [603, '(hidden) Negative Sea Tile', -4, [13]],
+          [604, '(hidden) Negative Sea Tile', -4, [14]],
+          [700, 'Land', 3, [2]],
+          [710, 'Meadow', 4, [3]],
+          [711, 'Bog', -2, [3]],
+        ],
+      ),
+    );
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 1), neutral(2, 40), neutral(3, 1), neutral(11, 4), neutral(12, 4), neutral(13, 4), neutral(14, 4)]),
+      me: ME,
+      income: 10,
+      settings: STD,
+    });
+    expect(attacks(p).map((m) => m.to).sort((a, b) => a - b)).toEqual([3, 11]);
+    expect(p.expected.nextIncome).toBe(8);
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/lowers next income from 10 to 8: .*T3 \(#3\) \(Bog \(#711\) -2; completes bonus Meadow \(#710\)\)/);
+    expect(w).toMatch(/T11 \(#11\) \(.*-4; stages bonus/);
+    expect(w).not.toMatch(/finishing off/);
+  });
+
+  it("pass 2's non-staging step shows the bonus's net worth", () => {
+    // +22 over 11–14 where only 13 and 14 are −4 tiles: net +14. 7 income takes one tile (6);
+    // 11 lowers nothing, so it is a plain advancing step, and its reason shows net +14.
+    const g = buildGraph(
+      makeMap(
+        [1, 11, 12, 13, 14],
+        [
+          [1, 11],
+          [1, 12],
+          [1, 13],
+          [1, 14],
+        ],
+        [
+          [600, 'Sea', 22, [11, 12, 13, 14]],
+          [603, 'Shoal', -4, [13]],
+          [604, 'Shoal', -4, [14]],
+        ],
+      ),
+    );
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 1), neutral(11, 4), neutral(12, 4), neutral(13, 4), neutral(14, 4)]),
+      me: ME,
+      income: 7,
+      settings: STD,
+    });
+    expect(attacks(p).map((m) => m.to)).toEqual([11]);
+    expect(attacks(p)[0]!.reason).toMatch(/^advances bonus Sea \(#600\) \(\+22, net \+14, \d+ to finish\)$/);
+  });
+});

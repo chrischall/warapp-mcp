@@ -2503,7 +2503,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     for (const t of todo) {
       const stepping = !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
       if (stepping === null) continue;
-      const reason = stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (+${p.value}, ${p.cost} to finish)`;
+      const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
+      const reason = stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${p.cost} to finish)`;
       if (tryCapture(t, reason)) {
         anchor ??= moves[moves.length - 1]!.from;
         if (stepping) {
@@ -3508,13 +3509,21 @@ export function planTurn(input: PlanInput): TurnPlan {
       const kept = order.flatMap((t) => {
         const negs = captured.has(t) ? negativesOf(t) : [];
         if (!negs.length) return [];
+        // Dropping it would not raise income: it also completes a positive bonus (rule 4c(a)).
+        const positives = completedBy(heldNow()).filter(
+          (id) => g.bonusById.get(id)!.value > 0 && bonusTs.get(id)!.includes(t),
+        );
         const why = inFocus(t)
           ? 'focused'
           : staged.has(t)
             ? `stages bonus ${bonusName(staged.get(t)!)}`
             : strikes.has(t)
               ? 'a commander strike'
-              : 'finishing off a player';
+              : worstCase.has(t)
+                ? 'finishing off a player'
+                : positives.length
+                  ? `completes bonus ${positives.map(bonusName).join(', ')}`
+                  : 'dropping it would not raise income';
         return [`${label(t)} (${negs.join(', ')}; ${why})`];
       });
       warnings.push(
