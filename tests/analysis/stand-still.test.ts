@@ -626,9 +626,9 @@ describe('#107: in contact, never stand still either', () => {
       expect(p.profile.phase).toBe('contact');
       expect(p.conceded).toEqual([]);
       // #112: 22 advances Delta but loses ~3 armies; 23 (1 to take) loses none, so it goes first —
-      // a bonus is only a tie-break. Sized at 1, then topped up from the stack's idle armies to the
-      // next kill breakpoint (3), as every attack on a player's is. 22 is no free capture.
-      expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 3, kind: 'attack' })]);
+      // a bonus is only a tie-break. Sized at 1, then (#120) sized from the stack's idle armies for
+      // its 0 defenders plus player 40's ~5 deploy landing there first: 8. 22 is no free capture.
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 8, kind: 'attack' })]);
       // #114: its 1 survivor cannot hold 23 against player 40's 3 on 25 (+ deploy): at risk.
       expect(attacks(p)[0]!.reason).toMatch(
         /^cheapest capture \(loses no armies, and its 1 survivor may fall next turn\): takes a territory of player 40/,
@@ -643,7 +643,8 @@ describe('#107: in contact, never stand still either', () => {
       );
       expect(r).not.toMatch(/Also take/);
       const w = p.warnings.join('\n');
-      expect(w).toMatch(/Attack on enemy T23 \(#23\) assumes its owner does not reinforce it first\./);
+      expect(w).not.toMatch(/Attack on enemy T23 \(#23\) assumes its owner does not reinforce it first/);
+      expect(r).toMatch(/Size the attack on T23 \(#23\) from T2 \(#2\) up from 1 to 8 with 7 idle armies there/);
       expect(w).not.toMatch(/standing still/i);
       expect(valid(p, b, 5, map)).toEqual([]);
     }
@@ -657,8 +658,8 @@ describe('#107: in contact, never stand still either', () => {
     );
     const b = contactBoard();
     const p = run(b, { map: plain });
-    // 1 to take, topped up to 3 from the idle stack.
-    expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 3, kind: 'attack' })]);
+    // 1 to take; sized for its owner's ~5 deploy from the idle stack (#120): 8.
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 8, kind: 'attack' })]);
     expect(valid(p, b, 5, plain)).toEqual([]);
   });
 
@@ -986,11 +987,26 @@ describe('never stand still, but never by emptying a border that holds (every ph
   });
 
   it('one army fewer and the deploys cannot make it hold: no attack', () => {
-    // 13 − 6 leaves 7; with all 5 deploys 12, which 20 take.
-    const b = shape(13, 1, 4);
+    // 13 − 6 leaves 7; with all 5 deploys 12, which 20 take. (T2 is empty: with 1 army there it
+    // softens the neutral to 3, and 5 from T1 take it while T1 keeps 13 — the next case.)
+    const b = shape(13, 0, 4);
     const p = plan(b);
     expect(attacks(p)).toEqual([]);
     expect(p.warnings.join('\n')).toMatch(/is not taken: attacking it would leave T1 \(#1\) unable to hold its border \(7 would stay, 12 with the 5 deploys left there, against a threat of 20\)/);
+    expect(ok(p, b)).toEqual([]);
+  });
+
+  it('#121: a safe border keeps what holds it, so a combined capture spares it', () => {
+    // T1 alone would send 6 and fall (as above). T1 keeps the 13 that hold it, so no single source
+    // affords the 4-neutral: T2's 1 army wears it to 3, and T1 takes it with 5, deploying 5 to keep 13.
+    const b = shape(13, 1, 4);
+    const p = plan(b);
+    expect(attacks(p)).toEqual([
+      expect.objectContaining({ from: 2, to: 3, armies: 1 }),
+      expect.objectContaining({ from: 1, to: 3, armies: 5 }),
+    ]);
+    expect(13 + deployedTo(p, 1) - 5).toBe(13);
+    expect(armiesToTake(13)!).toBeGreaterThan(20);
     expect(ok(p, b)).toEqual([]);
   });
 

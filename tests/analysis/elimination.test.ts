@@ -528,13 +528,24 @@ describe('pressure on a weak opponent next to the fog (#60)', () => {
         { id: 502, name: 'Wilds', value: 3, territoryIds: [7, 8], bonusIds: [] },
       ],
     );
+    // T1 holds 14: the 11 it can spare beyond its hold do not pay for 6's 15 (#120), so the gate
+    // still prices it against expansion.
     const live = [
-      t(1, ME, 20), t(2, ME, 2), t(5, THEM, 0), t(6, THEM, 3), t(7, OWNER_NEUTRAL, 2), t(8, OWNER_NEUTRAL, 2), fog(10),
+      t(1, ME, 14), t(2, ME, 2), t(5, THEM, 0), t(6, THEM, 3), t(7, OWNER_NEUTRAL, 2), t(8, OWNER_NEUTRAL, 2), fog(10),
     ];
     const p = plan(live, 12, { options: { enemyDeploy: 4 } }, map);
     expect(attacks(p).filter((m) => m.to === 5 || m.to === 6)).toEqual([]);
     expect(p.rationale.join('\n')).not.toMatch(/Pressure player|Finish off/);
     expect(() => validate(p, live, 12, map)).not.toThrow();
+    // With 20 on T1, its idle armies pay for 6 outright: no expansion is displaced, so the gate is
+    // waived for it (#120) and both fall.
+    const idle = [
+      t(1, ME, 20), t(2, ME, 2), t(5, THEM, 0), t(6, THEM, 3), t(7, OWNER_NEUTRAL, 2), t(8, OWNER_NEUTRAL, 2), fog(10),
+    ];
+    const q = plan(idle, 12, { options: { enemyDeploy: 4 } }, map);
+    expect(q.expected.captures).toEqual(expect.arrayContaining([5, 6]));
+    expect(q.rationale.join('\n')).toMatch(/T6 \(#6\) \(15\) is paid from idle armies on T1 \(#1\)/);
+    expect(() => validate(q, idle, 12, map)).not.toThrow();
   });
 
   it('full visibility still uses the elimination path, sized for the plain estimate (no pressure margin)', () => {

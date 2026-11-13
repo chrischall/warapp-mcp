@@ -293,7 +293,8 @@ describe('the strike stack never lowers income, even jointly', () => {
 
 // A stack that got no deploys still attacks. Under Local Deployment all 3 income is B700's pool
 // (+3, my interior T8), which can go nowhere else; the stack T1 (60) gets none and still takes the
-// adjacent T2 (5) with 8. Its own offence entry reports the attack at cost 0.
+// adjacent T2 (5): with 18, sized for its 5 defenders plus the opponent's ~6 deploy landing there
+// first (#120). Its own offence entry reports the attack at cost 0.
 describe('a strike stack with no deploys this turn is still spent', () => {
   const g = buildGraph(makeMap([1, 2, 8, 9], [[1, 2], [1, 8], [2, 9]], [[700, 3, [8]]]));
   const input: PlanInput = {
@@ -310,7 +311,7 @@ describe('a strike stack with no deploys this turn is still spent', () => {
   it('attacks from the stack and reports its entry with cost 0', () => {
     const p = planTurn(input);
     expect(p.deploys).toEqual([{ territoryId: 8, armies: 3 }]);
-    expect(attacks(p).filter((m) => m.from === 1).map((m) => [m.to, m.armies])).toEqual([[2, 8]]);
+    expect(attacks(p).filter((m) => m.from === 1).map((m) => [m.to, m.armies])).toEqual([[2, 18]]);
     expect(p.offence.find((o) => o.kind === 'strike' && o.target === 1)).toMatchObject({ taken: true, cost: 0 });
     valid(input, p);
   });
@@ -346,8 +347,9 @@ describe('strike effect labels do not overstate', () => {
 
 // Holds take all the income: the stack still attacks. My stack T1 (80) faces the opponent's T2 (9)
 // and T3 (5), two members of its B500 (+3: T2, T3, T4). My B700 (+5: T7, T9, 4 each) faces its T8 (4),
-// and the 8 income all go to holding T7 and T9 (4 each). The break step takes T3; T2 (15) still falls from the
-// stack with no leftover deployed on it, and the rationale says the stack got none.
+// and the 8 income all go to holding T7 and T9 (4 each). The break step takes T3; T2 still falls from the
+// stack with no leftover deployed on it, and the rationale says the stack got none. Both are sized
+// for the opponent's ~8 deploy landing there first (#120): T2 with 28 (9 + 8), not 15.
 describe('a strike stack is spent even when holds take all the income', () => {
   const g = buildGraph(
     makeMap(
@@ -387,7 +389,7 @@ describe('a strike stack is spent even when holds take all the income', () => {
     }
     const p = planTurn(input(8));
     expect(p.deploys.find((d) => d.territoryId === 1)).toBeUndefined();
-    expect(why(p)).toMatch(/Attack T2 \(#2\) from the strike stack T1 \(#1\) with 15/);
+    expect(why(p)).toMatch(/Attack T2 \(#2\) from the strike stack T1 \(#1\) with 28 \(win chance 100% — sized for its 9 defenders plus the ~8 player 20 may deploy there first \(15 would take it as it stands\)\)/);
     expect(why(p)).toMatch(/No leftover reaches the strike stack T1 \(#1\)/);
     expect(p.offence.find((o) => o.kind === 'strike' && o.target === 1)).toMatchObject({ taken: true, cost: 0 });
   });
@@ -396,7 +398,8 @@ describe('a strike stack is spent even when holds take all the income', () => {
 // A stack with no deploys whose strike leaves it interior keeps what it holds. Under Local
 // Deployment all 3 income is B700's pool (my T8); the stack T1 (60) takes the opponent's T2 (5),
 // after which T1 sits two steps from the front (T2 faces T9, my T5 faces T6). The transfer step
-// must not walk the 52 the rationale says "the stack keeps" over to T5.
+// must not walk the 44 the rationale says "the stack keeps" over to T5. The attack is sized for
+// T2's 5 defenders plus the opponent's ~5 deploy (#120): 16.
 describe('a strike stack the strike leaves interior keeps its armies', () => {
   const g = buildGraph(
     makeMap(
@@ -424,8 +427,8 @@ describe('a strike stack the strike leaves interior keeps its armies', () => {
 
   it('attacks from the stack and transfers nothing out of it', () => {
     const p = planTurn(input);
-    expect(attacks(p).filter((m) => m.from === 1).map((m) => [m.to, m.armies])).toEqual([[2, 8]]);
-    expect(why(p)).toMatch(/the stack keeps 52/);
+    expect(attacks(p).filter((m) => m.from === 1).map((m) => [m.to, m.armies])).toEqual([[2, 16]]);
+    expect(why(p)).toMatch(/the stack keeps 44/);
     expect(p.moves.filter((m) => m.from === 1 && m.kind === 'transfer')).toEqual([]);
     valid(input, p);
   });

@@ -324,7 +324,7 @@ export function validateTurn(args: {
         {
           hint:
             'This game uses No-Split: send at most one attack or transfer from each territory each turn; keep the ' +
-            'best one (with all the armies you want to move) and drop the others.',
+            'best one and drop the others — it moves the whole stack.',
         },
       );
     }
@@ -386,6 +386,19 @@ export function validateTurn(args: {
           `${args.guard ? ' (one army stands guard)' : ''}.`,
         { hint: 'A territory sends at most its armies plus what is deployed there this turn.' },
       );
+    }
+  }
+  // No-Split moves the whole stack (#124: the wiki, and a live turn that left every source at 0):
+  // an order for fewer armies still sends them all, so say what will actually move.
+  if (args.noSplit) {
+    for (const m of moves) {
+      const max = (standing.get(m.from.id)?.armies ?? 0) + (deployedOn.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
+      if (m.armies < max)
+        warnings.push(
+          `No-Split: ${label(m.from)} → ${label(m.to)} sends ${m.armies}, but this game moves the whole stack: war.app ` +
+            `sends all ${max} (its armies plus this turn's deploys there, less the guard), and nothing stays behind to hold ` +
+            `${label(m.from)}. Size the order for the whole stack, or move nothing from it.`,
+        );
     }
   }
   return { warnings };
@@ -623,7 +636,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'for that chance instead of a guarantee. An attack is topped up to its next efficient size (one more kill ' +
           'for sure) from armies that would sit idle when its target is a player\'s or it is not certain, and the ' +
           "reasoning names attacks whose extra armies add no kill. Under Local Deployment a held bonus's armies are deployed only " +
-          'inside that bonus; under No-Split each territory issues at most one attack or transfer. ' +
+          'inside that bonus; under No-Split each territory issues at most one attack or transfer, with its whole stack. ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -883,7 +896,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
             'Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
             'income uncertain); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
-            'No-Split, at most one attack or transfer per territory (warapp_plan_turn obeys these and the kill rates). ' +
+            'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
+            'stack, which war.app moves anyway; warapp_plan_turn obeys these and the kill rates). ' +
             'Always sent as ' +
             'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
             `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,

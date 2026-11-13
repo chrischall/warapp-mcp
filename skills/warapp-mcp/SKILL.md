@@ -133,11 +133,23 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   against what a pressure plan leaves the opponent, come first (no pressure when they cannot be
   funded). An opponent next to the fog is not attempted (warned only when its visible
   territories could all fall); fog anywhere else hedges the elimination. A border taken last turn from a
-  weak opponent (fewer territories, smaller deploy) is never conceded. A border in
+  weak opponent (fewer territories, smaller deploy) is never conceded. A member of a bonus the
+  user is building carries its share of that bonus ("protects +1.3"), and a member of a bonus
+  completed this turn that faces an enemy is garrisoned at once ("Garrison … completed this
+  turn"). A border in
   `conceded` costs more to hold than it is worth (or than the income left): nothing is
   deployed there (unless every territory the user holds is conceded) and no attack from it
   is funded — it attacks out only with the armies already on it — and its armies withdraw
-  toward a border that holds. A held bonus's border is not conceded on a near miss (the
+  toward a border that holds, unless it is a border of a bonus the user holds in full: then
+  they stay (they kill attackers there) unless they make another valued border hold. A held
+  bonus that fails the cost tests is held anyway when the captures leave enough. One the
+  enemy deploy must choose among is floored instead of conceded — each border first beats the
+  stack already next to it, the rest spread over them — with a warning that it "is not safe
+  against the whole enemy deploy … it falls only to armies deployed against it", and a line
+  per opponent "Player P's ~D deploy can still break … (N of it needed): +V at risk this
+  turn" — that line, not the per-bonus ones, says how many can fall at once: tell the user
+  which border is thinnest and what is at risk. A "could be taken next turn" warning on a
+  border the plan deploys to ends with what the deploy leaves there. A held bonus's border is not conceded on a near miss (the
   income left is short of a sure hold by at most 2 armies or 15%) or while it still holds
   against the expected attack (enemy movable + its deploy estimate): everything left goes
   there with a warning that it may fall, and its armies never withdraw. When `cardAdvice` is
@@ -212,7 +224,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 `warapp_plan_turn` is a single-turn, rule-based advisor. Review every plan before
 `warapp_submit_turn`, and override it when one of these shows up:
 
-1. **A held bonus's border is conceded** (rationale "protects +N … conceded"). This is
+1. **A held bonus's border is conceded** (rationale "protects +N … conceded"), or a held bonus
+   is only floored ("is not safe against the whole enemy deploy"). This is
    especially costly when an existing garrison is pulled out after falling just short. (Under
    Local Deployment the bonus's own pool already defends its most threatened border and its
    garrisons stay unless it truly cannot be held.) Check whether an adjacent stack can be
@@ -238,7 +251,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 5. **The overall shape.** The planner is single-turn: it charges each capture for the frontier
    it adds, commits to the bonus closest to completion until one is held (keeping last turn's
    unless another is strictly closer) and, in a 1v1, breaks probable enemy bonuses and builds a
-   strike stack that attacks every adjacent enemy territory it can take while keeping its hold, but it does not plan a campaign over several turns. In an FFA it never concentrates on one front and avoids
+   strike stack — on the border with the most to spare after the best strike it can make — that attacks every adjacent enemy territory it can take while keeping its hold, but it does not plan a campaign over several turns.
+   An attack on a player is sized for its owner's deploy landing there first when idle armies
+   cover it; when they do not, the warning "Attack on enemy … assumes its owner does not
+   reinforce it first: … (win chance N%)" gives its odds against that deploy — weigh it before
+   submitting. In an FFA it never concentrates on one front and avoids
    second fronts; judge yourself when a leader must be attacked.
 
 Every ~3 turns, step back and compare income trends (yours vs each opponent), frontier vs

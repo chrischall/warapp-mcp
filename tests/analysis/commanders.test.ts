@@ -578,7 +578,9 @@ describe('planner: commander rules after review (C2b, #61)', () => {
   it('a held bonus\'s payback test leaves out the stack my commander\'s hold already saves', () => {
     // Bonus {T1, T3} (+2). My commander's T1 (100) needs 4 against T2 (~184), held by rule 1k
     // anyway. T3 (5) needs 8 against T4 (~20): the bonus is worth 2 + 0.5 (T3's stack), so 8 is
-    // more than 3 × 2.5 and it is conceded. Counting T1's 100 armies (worth 12.5) would hold it.
+    // more than 3 × 2.5 and it fails the factor test. Counting T1's 100 armies (worth 12.5) would
+    // pass it. Since #118 the factor test concedes only when the armies have a better use: here
+    // nothing else uses them, so it is held after all — but as a unit that failed the test.
     const gf = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [1, 3], [3, 4]], [[501, 2, [1, 3]]]));
     const plan = planTurn({
       graph: gf,
@@ -591,9 +593,9 @@ describe('planner: commander rules after review (C2b, #61)', () => {
     });
     expect(plan.conceded).not.toContain(1);
     expect(deployedTo(plan, 1)).toBeGreaterThanOrEqual(4);
-    expect(plan.conceded).toContain(3);
-    expect(plan.warnings.some((w) => w.includes('conceding bonus B501'))).toBe(true);
-    expect(plan.rationale.some((r) => r.includes('Hold bonus B501'))).toBe(false);
+    expect(plan.conceded).not.toContain(3);
+    expect(plan.rationale.some((r) => /Hold bonus B501 \(#501\) \(\+2\) whole: .*\(more than 3 × its worth\), and nothing else this turn uses those armies/.test(r))).toBe(true);
+    expect(plan.rationale.some((r) => r.includes('pays back within'))).toBe(false);
   });
 });
 

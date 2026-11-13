@@ -173,11 +173,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   capture with the exact combat model (`armiesToTake`, `captureCost`). Its rules, learnt from
   a lost game (`tests/analysis/lessons.test.ts` replays each lesson in miniature):
   - **Triage by protected value.** A threatened border's protected value is my complete
-    bonuses containing it, plus bonuses I'd lose all access to, plus per-territory income; its
+    bonuses containing it, plus bonuses I'd lose all access to, plus its share (value × members
+    held ÷ size) of a bonus I am building — every missing member a visible neutral, finishing it
+    economic (#122) — plus per-territory income; its
     **worth** adds the armies a hold saves as income (armies / `PAYBACK_TURNS`), so a big stack
     is topped up rather than abandoned. Holds go in order of worth per army of hold cost. A
     border is **conceded** when holding costs more than `CONCEDE_FACTOR` (3) × its worth or than the income left
-    (a warning either way): it is never deployed to (unless every territory I hold is
+    (a warning either way; in the opening, never on worth when the hold costs no more than the
+    armies already there, #122): it is never deployed to (unless every territory I hold is
     conceded), it attacks out only with the armies already on it, and idle armies never move
     into it.
   - **Held bonuses first (#51)** (under `balanced`/`defend`): a bonus I hold in full is one
@@ -185,12 +188,23 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     paid once). A unit whose summed hold cost ≤ `PAYBACK_TURNS` × its value (and, like any
     border, ≤ `CONCEDE_FACTOR` × its worth) is funded before any capture that completes no bonus
     (advances, breaks, other expansion); completions still compete on score but never starve a
-    unit unless their bonus earns more, and finishing off keeps its place. One that does not
-    pay, or that the income left cannot cover, is conceded whole ("conceding bonus …") and its
-    borders are judged alone without that bonus.
+    unit unless their bonus earns more — and (#122) never one that would then be conceded
+    unless one turn of the completion beats `PAYBACK_TURNS` × what is lost, while one left only
+    a near miss yields to a completion that pays for itself within a turn — and finishing off
+    keeps its place. One that does not
+    pay is not conceded yet (#118): the captures go first, and it is held whole from what they
+    leave when that covers it. One a deploy must choose among (its every threatened border
+    faces a player with two or more of my threatened borders) is **floored** when it cannot be
+    held whole — every border first beats the armies already next to it — and kept: the rest
+    is spread over its borders against the one shared enemy deploy, never conceded or withdrawn
+    from; a warning per opponent says what its one deploy can still break at once ("+V at
+    risk"), which may be all of them. Otherwise, one that does not pay or that the income left cannot cover is conceded
+    whole ("conceding bonus …") and its borders are judged alone without that bonus.
     `expand` is unchanged but warns.
   - **Withdraw** (under `balanced`/`defend`): a conceded border's movable armies go first to
-    the neighbour nearest a border that holds, and the plan sets `cardAdvice:
+    the neighbour nearest a border that holds — except from a bonus I hold in full (#118),
+    whose garrison stays unless it makes that neighbour, a valued enemy-facing border, hold
+    this turn — and the plan sets `cardAdvice:
     'order-priority'` because a withdrawal only executes while the border is still mine. The
     planner never plays cards itself; `warapp_plan_turn` adds the Order Priority I hold to
     `orders` when `cardAdvice` asks for it.
@@ -216,8 +230,23 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     first (equally close ones by score); a bonus advanced last turn keeps priority unless another
     is strictly closer. "N armies to finish" counts fogged members at the bonus's costliest
     visible missing member.
+  - **One surplus per territory (#121).** A border that holds at the start of the turn keeps
+    what holds it, as my commander's territory does: a capture from it spends only the armies
+    above that (plus deploys), so a capture never leaves a safe border takeable. Idle armies
+    transfer toward the enemy front first (the nearest non-held territory only when no enemy is
+    reachable), a capture of a player's territory sized without a reserve does not make the
+    garrison beside it idle, and my commander's stack beside a conceded border stays.
+  - **Attacks on a player are sized for its owner's deploy (#120).** When the armies beyond what
+    holds the source cover it, an attack on a player's territory (break, counter-attack, strike,
+    rule 4e capture) is sized for its defenders plus the owner's deploy estimate (or its growth
+    there, when larger), and counts as landing; otherwise its "assumes its owner does not
+    reinforce" warning gives the win chance against the reinforced target. The 1v1 strike stack
+    goes to the border with the most to spare after its best such strike (most armies only when
+    none can strike), and fog pressure paid outright from idle armies is not priced against
+    expansion (`PRESSURE_FACTOR`).
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
-    margin, else the top expansion's stack — never to a conceded border (the old "most enemies
+    margin (with several, each is brought to its margin first, and a conceded border the leftover
+    can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border).
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
     the threat (see the threat model above), and warns "is building".
@@ -225,6 +254,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     - **Border value after captures (#18).** Triage runs before captures are known, so after
       the capture passes a conceded border in a bonus this turn's captures complete is kept —
       never withdrawn from, garrisoned from the leftover, warned when that still cannot hold.
+      Since #122 a member of a bonus completed this turn that faces an enemy is garrisoned right
+      after the completion, before later captures, when the hold pays as a held bonus's would.
     - **Defensibility (#19).** A capture that completes a bonus is checked against the frontier
       it leaves: when holding the members a visible enemy could take next turn needs more than
       the next income, `balanced`/`defend` refuse it ("… indefensible …: not completed") and
@@ -255,9 +286,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       A bonus's own pool defends it (#103): its hold cost is judged net of the pool, the pool
       goes to its most threatened border and stays there, and a conceded bonus's garrisons are
       withdrawn only when one of its borders needs more than its pools plus every free army.
-    - **No-Split (#31).** With `noSplit`, a territory issues at most one attack or transfer (its
-      best; the rest are dropped with a warning, planned amounts kept, not forced all-in);
-      `warapp_submit_turn` refuses a split.
+    - **No-Split (#31, #124).** With `noSplit`, a territory issues at most one attack or transfer
+      (its best; the rest are dropped with a warning), and it sends the whole stack — this turn's
+      deploys there included, less the guard (verified live with the guard off; whether the guard
+      stays is unverified). A territory that must hold issues no order; a strike stack's one order
+      goes to the strike before a small expansion. `warapp_submit_turn` refuses a split and warns
+      when an order sends less than the whole stack.
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it

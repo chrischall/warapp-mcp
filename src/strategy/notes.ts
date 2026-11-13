@@ -298,7 +298,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     source: S.noSplit,
     basis: 'source',
     encoded:
-      'one move per source (src/analysis/planner.ts, warapp_plan_turn); the planner still plans an amount per move — read it as the whole stack',
+      'one move per source, each sending the whole stack, and none from a territory that must hold (src/analysis/planner.ts, warapp_plan_turn; #124)',
   },
   // ---- cards ----
   {

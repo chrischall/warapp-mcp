@@ -179,8 +179,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `settings-local-deployments` — each bonus pays only inside itself. **Encoded:** deploy pools
   (`src/analysis/local-deploy.ts`). Derived. Source: General strategy guidelines.
 - `settings-no-split` — a territory that moves sends everything, once a turn; stage armies
-  ahead and do not move a territory that must hold. **Encoded in part:** one move per source in
-  the planner, which still plans an amount per move (read it as the whole stack). Source: No-Split mode.
+  ahead and do not move a territory that must hold. **Encoded:** one move per source, each sending
+  the whole stack, and no move from a territory that must hold (#124). Source: No-Split mode.
 
 ## Cards
 

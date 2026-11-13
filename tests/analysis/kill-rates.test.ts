@@ -136,8 +136,9 @@ describe('planTurn — kill rates (G1)', () => {
     expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 15 }));
     const std = planTurn({ graph: gb, board: s, me: ME, income: 5, settings: STD, options: { goal: 'complete-bonus' } });
     expect(std.rationale.join('\n')).toMatch(/Attack T3 \(#3\) from T1 \(#1\) with 6:/);
-    // 60%: 6 → 8 (round(4.8) = 5 kills instead of 4).
-    expect(attacks(std)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 8 }));
+    // 60% (#120): T1's idle armies size it for the 4 defenders plus the owner's ~5 deploy: 15.
+    // At 30/75 that would need 30, more than T1 has idle: the breakpoint top-up above stands.
+    expect(attacks(std)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 15 }));
   });
 
   it('under WeightedRandom rounding the plan sizes at straight arithmetic, computes the chance and warns', () => {
