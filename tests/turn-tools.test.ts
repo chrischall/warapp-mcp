@@ -726,7 +726,6 @@ describe('warapp_plan_turn — threat trend', () => {
   it('(h) counts its upstream reads: cold 4, warm 3, with the two earlier turns cached 2 — the board and history in parallel (#148)', async () => {
     const SIGNED_IN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
     let live: Harness | undefined;
-    let serial = false;
     const boardRead = () => live!.exchanges.some((e) => e.request.method === Method.GetLatestGameInfo);
     live = await liveHarness({
       // GameFeed, by call: turn 3's game, its history read; turn 4's game, its history read; turn 5's game.
@@ -736,12 +735,12 @@ describe('warapp_plan_turn — threat trend', () => {
       // state, so the signed-in account read in it is not cached (by design) and a second call re-reads it.
       env: { WARAPP_TRANSPORT: 'fetchproxy' },
       warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
-      // A history read is held until the board has been read: were the two in series, it would wait in vain.
+      // A history read is held until the board has been read, with no deadline: were the history read
+      // first and the board after it, the call would never finish and the test fails on its timeout.
+      // No wall-clock budget decides the outcome, so a loaded machine cannot report a parallel read serial.
       beforeFeed: async (url) => {
         if (!url.includes('GetHistory=true')) return;
-        const deadline = Date.now() + 2000;
-        while (!boardRead() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
-        if (!boardRead()) serial = true;
+        while (!boardRead()) await new Promise((r) => setImmediate(r));
       },
     });
     h = live;
@@ -757,7 +756,6 @@ describe('warapp_plan_turn — threat trend', () => {
     // Cold: the signed-in account, the game (with its map), the board, the history. Warm: the account and
     // the map are cached. Then turns 3 and 4 are cached on disk, so no history read at all.
     expect(counts).toEqual([4, 3, 2]);
-    expect(serial).toBe(false);
     expect(live.calls.map((c) => c.url.includes('GetMap=false'))).toEqual([false, true, true, true, true]);
     expect(live.calls.filter((c) => c.url.includes('GetHistory=true'))).toHaveLength(2);
   });

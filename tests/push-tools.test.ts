@@ -151,12 +151,12 @@ describe('warapp_wait_for_turn', () => {
     // The wait's timeout is a fake timer: it fires only when the test advances it, never under load.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const tick = () => new Promise((r) => setImmediate(r));
-    // The settling is bounded by wall-clock time, not a count of turns of the event loop: on a loaded
-    // machine the bridge round trips take more turns (#148). That makes it tolerant of load, not
-    // deterministic: a stall of more than 8 s would still fail it. Date.now is not faked here.
+    // Settling waits for the state itself, with no deadline of its own: neither a count of event-loop
+    // turns (a loaded machine takes more of them, #148) nor a wall-clock budget decides the outcome.
+    // The only timer that can end the wait is the fake one above, so the result is the same at any
+    // speed; a hang is cut off by the test timeout, as in any test.
     const settle = async (cond: () => boolean) => {
-      const deadline = Date.now() + 8000;
-      while (!cond() && Date.now() < deadline) {
+      while (!cond()) {
         await vi.advanceTimersByTimeAsync(0);
         await tick();
       }
