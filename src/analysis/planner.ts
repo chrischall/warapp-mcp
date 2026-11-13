@@ -716,7 +716,7 @@ export interface TurnPlan {
    * The offensive options this plan considered (#72): each bonus break (its cheapest visible
    * member, "probable" when the opponent tracker inferred the bonus), each counter-attack on a
    * stack that shrank fighting me, the strike stack the spare deploys built and each attack from it
-   * (#102). `cost` is the capture's armies (what the final orders send when made; the strike
+   * (#102). `kind` is `strike` for the stack itself and `strike-attack` for each attack from it. `cost` is the capture's armies (what the final orders send when made; the strike
    * stack itself: the armies deployed), `value` its worth in income terms (the strike stack: the
    * strongest opponent's income; a strike attack: the bonus it breaks or retakes, else 0), `taken`
    * whether the plan makes it (a break: whether any member of the bonus falls this turn, `target`
@@ -727,7 +727,7 @@ export interface TurnPlan {
 
 export interface OffenceEntry {
   target: number;
-  kind: 'break' | 'strike' | 'counter';
+  kind: 'break' | 'strike' | 'strike-attack' | 'counter';
   cost: number;
   value: number;
   taken: boolean;
@@ -4623,7 +4623,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       );
       offence.set(`strike:${c.id}`, {
         target: c.id,
-        kind: 'strike',
+        kind: 'strike-attack',
         cost: c.cost,
         value,
         taken: true,
@@ -4635,7 +4635,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const effect = effectOf(c);
       offence.set(`strike:${c.id}`, {
         target: c.id,
-        kind: 'strike',
+        kind: 'strike-attack',
         cost: c.cost,
         value: strikeValue(c),
         taken: false,
@@ -4857,7 +4857,9 @@ export function planTurn(input: PlanInput): TurnPlan {
   const sentAt = (t: number) => moves.reduce((n, m) => (m.kind === 'attack' && m.to === t ? n + m.armies : n), 0);
   const offenceList = [...offence.values()].map(({ bonusId, ...o }): OffenceEntry => {
     // A strike attack's cost is what the final orders send (a top-up can raise it).
-    if (o.kind === 'strike') return o.taken && captured.has(o.target) ? { ...o, cost: sentAt(o.target) || o.cost } : o;
+    // The strike stack's own entry is final as built.
+    if (o.kind === 'strike') return o;
+    if (o.kind === 'strike-attack') return o.taken && captured.has(o.target) ? { ...o, cost: sentAt(o.target) || o.cost } : o;
     // A bonus broken this turn is a break made, whichever member fell and whatever path took it.
     const via = captured.has(o.target)
       ? o.target

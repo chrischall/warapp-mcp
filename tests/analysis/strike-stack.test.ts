@@ -144,13 +144,13 @@ describe('the strike stack attacks what it can take (#102)', () => {
     expect(p.expected.captures).toEqual([2, 3]);
     expect(why(p)).toMatch(/Attack T2 \(#2\) from the strike stack T1 \(#1\) with 15 \(win chance 100%\): toward retaking bonus B500 \(#500\) \(\+5\), which I held last turn/);
     expect(why(p)).toMatch(/the stack keeps 79, enough to hold against the ~95 threat after the attacks \(needs 58\)/);
-    expect(p.offence).toContainEqual(expect.objectContaining({ target: 2, kind: 'strike', cost: 15, value: 5, taken: true }));
-    expect(p.offence).toContainEqual(expect.objectContaining({ target: 3, kind: 'strike', cost: 8, value: 5, taken: true }));
+    expect(p.offence).toContainEqual(expect.objectContaining({ target: 2, kind: 'strike-attack', cost: 15, value: 5, taken: true }));
+    expect(p.offence).toContainEqual(expect.objectContaining({ target: 3, kind: 'strike-attack', cost: 8, value: 5, taken: true }));
     // The stack entry reports a move this turn, not a bare `taken: true`.
     const entry = p.offence.find((o) => o.kind === 'strike' && o.target === 1)!;
     expect(entry).toMatchObject({ taken: true, cost: 22 });
     expect(entry.why).toMatch(/attacks T3 \(#3\), T2 \(#2\) this turn/);
-    const t5 = p.offence.find((o) => o.kind === 'strike' && o.target === 5)!;
+    const t5 = p.offence.find((o) => o.kind === 'strike-attack' && o.target === 5)!;
     expect(t5).toMatchObject({ cost: 66, taken: false });
     expect(t5.why).toMatch(/would leave the stack 13, below the 35 that hold it against the ~56 threat after the attacks/);
     valid(input(), p);
@@ -166,7 +166,7 @@ describe('the strike stack attacks what it can take (#102)', () => {
       [2, 15],
       [5, 6],
     ]);
-    expect(p.offence).toContainEqual(expect.objectContaining({ target: 5, kind: 'strike', value: 0, taken: true }));
+    expect(p.offence).toContainEqual(expect.objectContaining({ target: 5, kind: 'strike-attack', value: 0, taken: true }));
   });
 
   it('FFA: no strike stack, so nothing changes', () => {
@@ -180,7 +180,7 @@ describe('the strike stack attacks what it can take (#102)', () => {
   it('without adapting: no strike stack, so nothing changes', () => {
     const p = planTurn(input({ options: {} }));
     expect(attacks(p)).toEqual([]);
-    expect(p.offence.filter((o) => o.kind === 'strike')).toEqual([]);
+    expect(p.offence.filter((o) => o.kind.startsWith('strike'))).toEqual([]);
   });
 });
 
@@ -232,7 +232,7 @@ describe('the strike stack keeps its hold', () => {
     const p = planTurn(input);
     expect(p.deploys).toEqual([{ territoryId: 1, armies: 10 }]);
     expect(attacks(p)).toEqual([]);
-    const t2 = p.offence.find((o) => o.kind === 'strike' && o.target === 2)!;
+    const t2 = p.offence.find((o) => o.kind === 'strike-attack' && o.target === 2)!;
     expect(t2).toMatchObject({ taken: false, cost: 8 });
     expect(t2.why).toMatch(/would leave the stack 42, below the 43 that hold it against the ~70 threat after the attacks/);
     valid(input, p);
@@ -283,7 +283,7 @@ describe('the strike stack never lowers income, even jointly', () => {
     expect(p.expected.bonusesCompleted).not.toContain(900);
     expect(p.expected.nextIncome).toBe(10);
     expect(attacks(p).filter((m) => m.from === 1).map((m) => m.to)).toEqual([2]);
-    const t3 = p.offence.find((o) => o.kind === 'strike' && o.target === 3)!;
+    const t3 = p.offence.find((o) => o.kind === 'strike-attack' && o.target === 3)!;
     expect(t3.taken).toBe(false);
     expect(t3.why).toMatch(/lowers next income: it completes negative bonus B900 \(#900\) \(-3\) \(rule 4c\)/);
     valid(input, p);
@@ -336,7 +336,7 @@ describe('strike effect labels do not overstate', () => {
     const p = planTurn(input);
     expect(p.expected.captures).toEqual([2, 3]);
     expect(p.moves.filter((m) => /breaks .*B600/.test(m.reason))).toHaveLength(1);
-    const t3 = p.offence.find((o) => o.kind === 'strike' && o.target === 3)!;
+    const t3 = p.offence.find((o) => o.kind === 'strike-attack' && o.target === 3)!;
     expect(t3).toMatchObject({ taken: true, value: 0 });
     expect(t3.why).toMatch(/takes an adjacent enemy territory/);
     valid(input, p);
