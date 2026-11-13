@@ -161,6 +161,15 @@ describe('planPicks — the coverage-first alternative (#166)', () => {
     expect(why).toMatch(/compact primary by default/i);
   });
 
+  it('with commanders, the alternative lists first its pick with the fewest other pickables within reach', () => {
+    const p = plan({ graph: TWO_REGIONS, pickable: TWO_PICKABLE, settings: { ...STD, commanders: true } });
+    const ids = p.alternative!.group.territoryIds;
+    const exposure = (t: number) =>
+      TWO_PICKABLE.filter((o) => !ids.includes(o) && (distance(TWO_REGIONS, t, o) ?? 99) <= COMPACT_DISTANCE).length;
+    expect(exposure(ids[0]!)).toBe(Math.min(...ids.map(exposure)));
+    expect(p.alternative!.submitPicks[0]).toBe(ids[0]);
+  });
+
   it('is deterministic', () => {
     expect(plan({ graph: TWO_REGIONS, pickable: TWO_PICKABLE })).toEqual(plan({ graph: TWO_REGIONS, pickable: TWO_PICKABLE }));
   });

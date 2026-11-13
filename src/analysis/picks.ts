@@ -1352,15 +1352,17 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   // within COMPACT_DISTANCE hops, then the fewest neighbours outside the primary, then score.
   let commanderPick: number | null = null;
   let commanderExposure = 0;
-  if (s.commanders && primary.length) {
-    const inPrimary = new Set(primary);
-    const exposure = (t: number) => pickable.filter((o) => !inPrimary.has(o) && hops(t, o) <= COMPACT_DISTANCE).length;
-    const open = (t: number) => neighborsOf(g, t).filter((n) => !inPrimary.has(n)).length;
+  /** Of `ids`, the pick safest to carry the commander: fewest other pickables within reach, then fewest outside neighbours, then score. */
+  const safestOf = (ids: readonly number[]) => {
+    const inSet = new Set(ids);
+    const exposure = (t: number) => pickable.filter((o) => !inSet.has(o) && hops(t, o) <= COMPACT_DISTANCE).length;
+    const open = (t: number) => neighborsOf(g, t).filter((n) => !inSet.has(n)).length;
     const score = (t: number) => firstView.of.get(t)!.score;
-    commanderPick = [...primary].sort(
-      (a, b) => exposure(a) - exposure(b) || open(a) - open(b) || score(b) - score(a) || a - b,
-    )[0]!;
-    commanderExposure = exposure(commanderPick);
+    const pick = [...ids].sort((a, b) => exposure(a) - exposure(b) || open(a) - open(b) || score(b) - score(a) || a - b)[0]!;
+    return { pick, exposure: exposure(pick) };
+  };
+  if (s.commanders && primary.length) {
+    ({ pick: commanderPick, exposure: commanderExposure } = safestOf(primary));
     primary.splice(0, primary.length, commanderPick, ...primary.filter((t) => t !== commanderPick));
   }
 
@@ -1749,6 +1751,11 @@ export function planPicks(input: PlanPicksInput): PickPlan {
         }
         if (!best) break;
         alt.push(best.t);
+      }
+      // With commanders the first pick awarded carries the commander: the alternative's safest goes first too.
+      if (s.commanders) {
+        const safe = safestOf(alt).pick;
+        alt.splice(0, alt.length, safe, ...alt.filter((t) => t !== safe));
       }
       const altCoverage = coverageOf(alt);
       const same = alt.length === primary.length && alt.every((t) => primary.includes(t));
