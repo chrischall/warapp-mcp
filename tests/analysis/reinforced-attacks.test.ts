@@ -141,3 +141,48 @@ describe('an attack out of a big stack is sized for the owner deploying there fi
     valid(input, p);
   });
 });
+
+// Rule 0p.3c by feasibility. Front A: my 47 (T1) against the opponent's 44 (T2), which grew by 3.
+// Front B: my 23 (T3) against its 25 (T4), which grew by 5. Both border the fog (T5), so finishing
+// off (rule 1e) does not take T4 first. Income 40, its deploy ~5 (observed 8, capped at what it can
+// earn). A needs 44 + 5 = 49 → 81 of the 86 it could send; B needs 25 + 5 = 30 → 50 of 62, and
+// keeps 9 to spare once it holds: more than A. The most-armies rule picked A, a strike with almost
+// no margin.
+describe('the strike stack goes where it can strike (#120)', () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5],
+      [
+        [1, 2],
+        [3, 4],
+        [1, 3],
+        [2, 4],
+        [2, 5],
+        [4, 5],
+      ],
+    ),
+  );
+  const input: PlanInput = {
+    graph: g,
+    board: board([mine(1, 47), enemy(2, 44), mine(3, 23), enemy(4, 25), fogged(5)]),
+    previousBoard: board([mine(1, 47), enemy(2, 41), mine(3, 23), enemy(4, 20), fogged(5)]),
+    me: ME,
+    income: 40,
+    settings: STD,
+    game: { players: [{ id: ME }, { id: ENEMY }] },
+    options: { adapt: true },
+  };
+
+  it('deploys on B and attacks the 25-stack with at least 50', () => {
+    const p = planTurn(input);
+    expect(p.deploys).toEqual([{ territoryId: 3, armies: 40 }]);
+    const a = attacks(p).find((m) => m.to === 4)!;
+    expect(a.from).toBe(3);
+    expect(a.armies).toBeGreaterThanOrEqual(50);
+    expect(why(p)).toMatch(/strike stack on the border facing player 20/);
+    expect(why(p)).toMatch(
+      /Strike stack on T3 \(#3\): T3 \(#3\) can take T4 \(#4\) this turn \(50 of the 62 it could send with the leftover, sized for its 25 defenders plus the ~5 player 20 may deploy there first; 9 to spare once it holds\), rather than T1 \(#1\), which holds more armies but has less to spare after its best strike/,
+    );
+    valid(input, p);
+  });
+});

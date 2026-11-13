@@ -28,8 +28,14 @@
 //          Ahead in a 1v1: pressure is allowed up to AHEAD_PRESSURE_FACTOR typical
 //          expansions (instead of PRESSURE_FACTOR).
 //       3c. Concentrate (#72; adapting in a 1v1, facing the opponent): the leftover deploy (rule 5) goes
-//          to one strike stack — the open border holding the most armies next to the strongest
-//          opponent (highest income estimate, tracked when trusted) — before any comfort margin;
+//          to one strike stack — an open border next to the strongest opponent (highest income
+//          estimate, tracked when trusted), chosen by what it can take (#120): each border's best
+//          strike this turn with the whole leftover on it (an adjacent target of that opponent sized
+//          for its defenders plus what it may deploy there first, rule 3; never one that lowers
+//          income) and the armies it then has to spare once it still holds; the border with the most
+//          to spare wins (ties: more armies, then id), and a rationale line names it and the
+//          bigger border passed over. With no border able to strike (and always under No-Split), the
+//          border holding the most armies, as before — before any comfort margin;
 //          the rationale names it and `offence` reports it as a strike. Holds still come first:
 //          a border kept for a bonus this turn completes (rule 1c) is first topped up to a
 //          comfortable margin, and any other open border that would fall to just hold. Only in a
@@ -5729,18 +5735,64 @@ export function planTurn(input: PlanInput): TurnPlan {
     const player = [...facing]
       .map((p) => ({ p, e: estimates.get(p) }))
       .sort((a, b) => (b.e?.estimate ?? 0) - (a.e?.estimate ?? 0) || a.p - b.p)[0]!;
-    const id = mine
+    /** The opponent's territories next to `x` a strike could aim at. */
+    const aims = (x: number) =>
+      neighborsOf(g, x).filter((n) => {
+        const st = state.get(n);
+        return !captured.has(n) && st?.owner.kind === 'player' && st.owner.playerId === player.p && st.armies !== null;
+      });
+    const fronts = mine
       .filter(
         (x) =>
           open(x) &&
           // No-Split: a territory whose one order is not a small expansion has nothing left to strike with.
           (!orderOf(x) || smallExpansion(x) !== undefined) &&
-          neighborsOf(g, x).some((n) => {
-            const st = state.get(n);
-            return !captured.has(n) && st?.owner.kind === 'player' && st.owner.playerId === player.p && st.armies !== null;
-          }),
+          aims(x).length > 0,
       )
-      .sort((a, b) => stackAt(b) - stackAt(a) || a - b)[0];
+      .sort((a, b) => stackAt(b) - stackAt(a) || a - b);
+    /**
+     * #120: the best strike `x` could make this turn with every leftover army on it — an adjacent
+     * target sized for its defenders plus what its owner may deploy there first (rule 3) — and the
+     * armies it would have to spare, after what holds `x` once that target falls. `null` when none
+     * fits.
+     */
+    const bestStrike = (x: number) => {
+      const room = Math.max(0, Math.min(budget, roomAt(x)));
+      let best: { n: number; cost: number; extra: number; spare: number; can: number } | null = null;
+      for (const n of aims(x)) {
+        const extra = reinforcementAt(n);
+        const cost = costOf(defenceAt(n) + extra);
+        if (cost === null || gainWith([n]) < 0) continue;
+        const threat = Math.max(threatAt(x, (y) => captured.has(y) || y === n)?.threat ?? 0, deployOf(player.p));
+        const hold = Math.max(0, holdArmies(threat) - unitsAt(x));
+        const can = stackAt(x) + room - guard;
+        const spare = Math.min(can - cost, stackAt(x) + room - cost - hold);
+        if (spare < 0) continue;
+        if (!best || spare > best.spare || (spare === best.spare && n < best.n)) best = { n, cost, extra, spare, can };
+      }
+      return best;
+    };
+    // Rule 0p.3c (#120): the stack goes where it can strike — the border with the most to spare
+    // after its best strike — and only with no border able to strike, to the one holding the most
+    // armies (live, 180 armies fed the front facing the opponent's biggest stack while a strike on
+    // a 1-army territory elsewhere was affordable every turn).
+    const able = noSplit ? [] : fronts.flatMap((x) => {
+      const b = bestStrike(x);
+      return b ? [{ x, ...b }] : [];
+    });
+    able.sort((a, b) => b.spare - a.spare || stackAt(b.x) - stackAt(a.x) || a.x - b.x);
+    const pick = able[0];
+    const id = pick?.x ?? fronts[0];
+    if (pick) {
+      const most = fronts[0]!;
+      rationale.push(
+        `Strike stack on ${label(pick.x)}: ${label(pick.x)} can take ${label(pick.n)} this turn (${pick.cost} of the ${pick.can} it could send with the leftover, sized for its ${defenceAt(pick.n)} defenders plus the ~${pick.extra} player ${player.p} may deploy there first; ${pick.spare} to spare once it holds)${
+          most !== pick.x
+            ? `, rather than ${label(most)}, which holds more armies but ${able.some((a) => a.x === most) ? `has less to spare after its best strike` : 'can take nothing next to it so sized'}`
+            : ''
+        }.`,
+      );
+    }
     if (id !== undefined)
       stack = {
         id,
