@@ -326,4 +326,7 @@ public wiki page "Game ID feed API" (read 2026-11-12, not called live):
   number is the count of completed turns.
 - Throttle (ours, not war.app's): at most 50 new games per call (default 10), ≥ 1 s between
   requests, finished games cached forever at `<dataDir>/stats/<mapId>/<gameId>.json` as
-  name-free records. When the feed is called live, record its method, auth and reply here.
+  name-free records. A finished game whose history yields no starting board is counted
+  (`unreadable`) and **not** cached (#132): it would otherwise sit in every denominator forever.
+  A cached record of that kind from an older version is dropped on read and fetched again.
+  When the feed is called live, record its method, auth and reply here.

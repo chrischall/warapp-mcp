@@ -257,6 +257,32 @@ describe('StatsCollector', () => {
     expect((await collectors[0]!.records(777)).map((r) => r.gameId)).toEqual(ids);
   });
 
+  it('does not cache a finished game whose history did not parse, counts it, and skips it this process', async () => {
+    const garbled = (id: number): Game => ({ ...game(id), history: 'garbage' });
+    const { collector, requests, dir } = fake([8, 7], { 7: () => game(7), 8: () => garbled(8) });
+    expect(await collector.collect(0)).toMatchObject({ fetched: 2, newlyCached: 1, unreadable: 1, failed: 0 });
+    expect(existsSync(recordPath(dir, 777, 8))).toBe(false);
+    requests.length = 0;
+    expect(await collector.collect(0)).toMatchObject({ fetched: 0, cacheHits: 1, unreadable: 1 });
+    expect(requests.map((r) => r.what)).toEqual(['feed:0']);
+  });
+
+  it('drops a cached record whose history did not parse (an older cache), so it is fetched again', async () => {
+    const { collector, dir, requests } = fake([9], finished(9));
+    mkdirSync(join(dir, 'stats', '777'), { recursive: true });
+    const old = {
+      gameId: 9,
+      mapId: 777,
+      turnsSeen: 0,
+      players: [{ playerId: A, won: true, starts: [], anchorBonusId: null, firstBonusTurn: null }],
+    };
+    writeFileSync(join(dir, 'stats', '777', '9.json'), JSON.stringify(old));
+    expect(await collector.records(777)).toEqual([]);
+    expect(existsSync(recordPath(dir, 777, 9))).toBe(false);
+    expect(await collector.collect(0)).toMatchObject({ cacheHits: 0, newlyCached: 1 });
+    expect(requests.map((r) => r.what)).toEqual(['feed:0', 'game:9']);
+  });
+
   it('ignores an unreadable record when reading a map, and drops it so it is fetched again', async () => {
     const { collector, dir, requests } = fake([9], finished(9));
     mkdirSync(join(dir, 'stats', '777'), { recursive: true });

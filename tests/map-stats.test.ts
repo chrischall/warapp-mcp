@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapStats, MIN_SAMPLE, recordFromGame, type GameRecord } from '../src/map-stats.js';
+import { mapStats, MIN_RATE_SAMPLE, MIN_SAMPLE, recordFromGame, type GameRecord } from '../src/map-stats.js';
 import type { Game, GameMap } from '../src/normalize.js';
 
 // A made-up 6-territory map: bonus 1 = {1,2} (+2), bonus 2 = {3,4} (+2),
@@ -56,8 +56,8 @@ describe('recordFromGame', () => {
       mapId: 777,
       turnsSeen: 3,
       players: [
-        { playerId: A, won: true, starts: [1, 3], anchorBonusId: 1, firstBonusTurn: 2 },
-        { playerId: B, won: false, starts: [4, 5], anchorBonusId: 2, firstBonusTurn: null },
+        { playerId: A, won: true, starts: [1, 3], anchorBonusId: 1, startBonusIds: [1, 2], firstBonusTurn: 2 },
+        { playerId: B, won: false, starts: [4, 5], anchorBonusId: 2, startBonusIds: [2, 3], firstBonusTurn: null },
       ],
     });
   });
@@ -77,9 +77,9 @@ describe('recordFromGame', () => {
   it('a game with no usable history still records its winner, with no starts', () => {
     const r = recordFromGame(finishedGame(6, 'garbage'), MAP);
     expect(r.turnsSeen).toBe(0);
-    expect(r.players.map((p) => [p.won, p.starts, p.anchorBonusId, p.firstBonusTurn])).toEqual([
-      [true, [], null, null],
-      [false, [], null, null],
+    expect(r.players.map((p) => [p.won, p.starts, p.anchorBonusId, p.startBonusIds, p.firstBonusTurn])).toEqual([
+      [true, [], null, [], null],
+      [false, [], null, [], null],
     ]);
   });
 });
@@ -91,8 +91,8 @@ function sample(n: number, aWins: number, mapId = 777, idBase = 100): GameRecord
     mapId,
     turnsSeen: 3,
     players: [
-      { playerId: A, won: i < aWins, starts: [1, 3], anchorBonusId: 1, firstBonusTurn: 2 },
-      { playerId: B, won: i >= aWins, starts: [4, 5], anchorBonusId: 2, firstBonusTurn: i % 2 ? 4 : null },
+      { playerId: A, won: i < aWins, starts: [1, 3], anchorBonusId: 1, startBonusIds: [1], firstBonusTurn: 2 },
+      { playerId: B, won: i >= aWins, starts: [4, 5], anchorBonusId: 2, startBonusIds: [2], firstBonusTurn: i % 2 ? 4 : null },
     ],
   }));
 }
@@ -115,11 +115,77 @@ describe('mapStats', () => {
   });
 
   it('gives the win rate by starting bonus', () => {
-    const [m] = mapStats(sample(6, 4));
+    const [m] = mapStats(sample(MIN_RATE_SAMPLE, 6));
     expect(m!.winRateByStartingBonus).toEqual([
-      { bonusId: 1, players: 6, wins: 4, winRate: 0.67, lowSample: false },
-      { bonusId: 2, players: 6, wins: 2, winRate: 0.33, lowSample: false },
+      { bonusId: 1, players: MIN_RATE_SAMPLE, wins: 6, winRate: 0.6, lowSample: false },
+      { bonusId: 2, players: MIN_RATE_SAMPLE, wins: 4, winRate: 0.4, lowSample: false },
     ]);
+  });
+
+  it(`flags a bonus win rate on fewer than ${MIN_RATE_SAMPLE} players, even when the games are enough`, () => {
+    // 4 wins of 5 reads as 80%, but five players say almost nothing.
+    const [m] = mapStats(sample(MIN_SAMPLE, 4));
+    expect(m!.lowSample).toBe(false);
+    expect(m!.winRateByStartingBonus[0]).toEqual({ bonusId: 1, players: 5, wins: 4, winRate: 0.8, lowSample: true });
+  });
+
+  it('credits every bonus a player started in, not only the lowest id', () => {
+    // A starts in North, South and East (one pick each): every one of them is credited.
+    const recs: GameRecord[] = sample(6, 6).map((r) => ({
+      ...r,
+      players: [
+        { playerId: A, won: true, starts: [1, 3, 5], anchorBonusId: 1, startBonusIds: [1, 2, 3], firstBonusTurn: 2 },
+        { playerId: B, won: false, starts: [2], anchorBonusId: 1, startBonusIds: [1], firstBonusTurn: null },
+      ],
+    }));
+    const [m] = mapStats(recs);
+    expect(m!.winRateByStartingBonus.map((b) => [b.bonusId, b.players, b.wins])).toEqual([
+      [1, 12, 6],
+      [2, 6, 6],
+      [3, 6, 6],
+    ]);
+  });
+
+  it('a cached record from before startBonusIds credits its anchor bonus', () => {
+    const recs = sample(6, 4).map((r) => ({
+      ...r,
+      players: r.players.map(({ startBonusIds: _drop, ...p }) => p),
+    })) as GameRecord[];
+    expect(mapStats(recs)[0]!.winRateByStartingBonus.map((b) => [b.bonusId, b.players])).toEqual([
+      [1, 6],
+      [2, 6],
+    ]);
+  });
+
+  it('leaves games whose history did not parse out of every figure, and counts them', () => {
+    const unreadable = (gameId: number): GameRecord => ({
+      gameId,
+      mapId: 777,
+      turnsSeen: 0,
+      players: [
+        { playerId: A, won: true, starts: [], anchorBonusId: null, startBonusIds: [], firstBonusTurn: null },
+        { playerId: B, won: false, starts: [], anchorBonusId: null, startBonusIds: [], firstBonusTurn: null },
+      ],
+    });
+    const [m] = mapStats([...sample(3, 2), ...[50, 51, 52, 53, 54].map(unreadable)]);
+    expect(m!.sampleSize).toBe(3);
+    expect(m!.unreadableGames).toBe(5);
+    expect(m!.lowSample).toBe(true);
+    expect(m!.firstBonusTurn.players).toBe(6);
+    expect(m!.mostPicked[0]!.pickRate).toBe(1);
+    expect(m!.note).toMatch(/5 games whose history could not be read/);
+  });
+
+  it('only unreadable games: an empty sample that says why, not "nobody completed a bonus"', () => {
+    const recs: GameRecord[] = [1, 2, 3, 4, 5].map((gameId) => ({
+      gameId,
+      mapId: 777,
+      turnsSeen: 0,
+      players: [{ playerId: A, won: true, starts: [], anchorBonusId: null, startBonusIds: [], firstBonusTurn: null }],
+    }));
+    const [m] = mapStats(recs);
+    expect(m).toMatchObject({ sampleSize: 0, unreadableGames: 5, lowSample: true, mostPicked: [], winRateByStartingBonus: [] });
+    expect(m!.firstBonusTurn).toMatchObject({ players: 0, neverCompleted: 0 });
   });
 
   it('summarises the turn of each player’s first bonus completion', () => {
@@ -148,6 +214,7 @@ describe('mapStats', () => {
     const [m] = mapStats(sample(MIN_SAMPLE, 2));
     expect(m!.lowSample).toBe(false);
     expect(m!.note).toBeUndefined();
+    expect(m!.unreadableGames).toBe(0);
   });
 
   it('is deterministic whatever the input order', () => {

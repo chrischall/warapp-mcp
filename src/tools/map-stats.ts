@@ -6,7 +6,7 @@ import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { MapCache } from '../client.js';
-import { MIN_SAMPLE, mapStats, type MapStats } from '../map-stats.js';
+import { MIN_RATE_SAMPLE, MIN_SAMPLE, mapStats, type MapStats } from '../map-stats.js';
 import type { GameMap } from '../normalize.js';
 import { DEFAULT_NEW_GAMES, MAX_NEW_GAMES, STATS_ENV, statsGate, type CollectResult, type StatsCollector, type StatsGate } from '../stats.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
@@ -57,9 +57,10 @@ export function registerMapStatsTool(
       title: 'war.app map statistics',
       description: untrustedDescription(
         'Statistics for a war.app (Warzone) map learned from finished ladder games: the most-picked starting ' +
-          'territories (and how often their pickers won), the win rate by starting bonus (the bonus a player’s ' +
-          'picks anchored), the turn of each player’s first bonus completion, and the sample size — rates on ' +
-          `fewer than ${MIN_SAMPLE} games are flagged. Each call reads the ladder’s game-ID feed and fetches up to ` +
+          'territories (and how often their pickers won), the win rate by every bonus a player started in, the ' +
+          'turn of each player’s first bonus completion, and the sample size — a sample under ' +
+          `${MIN_SAMPLE} games and a bonus rate under ${MIN_RATE_SAMPLE} players are flagged, and games whose history ` +
+          'could not be read are counted apart, never cached. Each call reads the ladder’s game-ID feed and fetches up to ' +
           `max_new_games new games (default ${DEFAULT_NEW_GAMES}, max ${MAX_NEW_GAMES}, one request a second); ` +
           'finished games are cached forever, so stats grow across calls. OPT-IN: off unless the server runs ' +
           `locally with ${STATS_ENV}=1, and always off when hosted. Read-only.`,
@@ -120,7 +121,9 @@ export function registerMapStatsTool(
                 'collect more, or try the ladder this map is played on.',
             }),
         assumptions:
-          'Starting territories are read from the first history board where players hold land, and a bonus ' +
+          'Starting territories are read from the first history board where players hold land (a game with no ' +
+          'such board is left out and counted in unreadableGames), a player counts toward every bonus holding one ' +
+          'of its starts, and a bonus ' +
           'turn is the history entry (completed turns) on which a player first held a whole positive bonus. ' +
           'The game-ID feed and history shapes are unverified (docs/WARAPP-API.md).',
       }));

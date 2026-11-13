@@ -13,13 +13,15 @@
 // least {@link MIN_GAP_MS} between requests, and a finished game is cached
 // forever at `<dataDir>/stats/<mapId>/<gameId>.json` (its compact
 // {@link GameRecord}: ids, wins and turn numbers, no names), so a cache hit
-// costs no request. A failing game is skipped and counted, never fatal.
+// costs no request. A failing game is skipped and counted, never fatal. A finished
+// game whose history does not parse is counted and not cached (#132): cached, it
+// would sit in every denominator forever, and a later parser could read it.
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { GetGameOptions } from './client.js';
-import { recordFromGame, type GameRecord } from './map-stats.js';
+import { readableRecord, recordFromGame, type GameRecord } from './map-stats.js';
 import type { Game } from './normalize.js';
 
 /** The opt-in switch. */
@@ -86,6 +88,11 @@ export interface CollectResult {
   notFinished: number;
   /** Games whose request or parse failed — skipped, not cached. */
   failed: number;
+  /**
+   * Finished games whose history did not parse (no starts read): not cached, and not fetched
+   * again this process (counted again on each call, with no request).
+   */
+  unreadable: number;
   /** Feed games still uncollected after this call's budget. */
   remaining: number;
 }
@@ -131,7 +138,8 @@ async function readRecord(path: string): Promise<GameRecord | undefined> {
   } catch {
     r = undefined;
   }
-  if (isRecord(r)) return r;
+  // An unreadable game cached by an older version is dropped too, so it is fetched again (#132).
+  if (isRecord(r) && readableRecord(r)) return r;
   await unlink(path).catch(() => undefined);
   return undefined;
 }
@@ -176,6 +184,8 @@ export class StatsCollector {
   readonly #unfinished = new Map<number, number>();
   /** Games that failed this process: tried again only after every untried game. */
   readonly #failed = new Set<number>();
+  /** Finished games whose history did not parse this process: not fetched again. */
+  readonly #unreadable = new Set<number>();
   #last: number | undefined;
   /** The request queue: each throttle waits for the one before it, so overlapping calls never share a slot. */
   #queue: Promise<void> = Promise.resolve();
@@ -219,6 +229,7 @@ export class StatsCollector {
       newlyCached: 0,
       notFinished: 0,
       failed: 0,
+      unreadable: 0,
       remaining: 0,
     };
     // Newest first, but a game that already failed this process goes last, so a
@@ -227,6 +238,10 @@ export class StatsCollector {
     for (const id of ordered) {
       if (index.has(id)) {
         res.cacheHits++;
+        continue;
+      }
+      if (this.#unreadable.has(id)) {
+        res.unreadable++;
         continue;
       }
       const seen = this.#unfinished.get(id);
@@ -248,7 +263,14 @@ export class StatsCollector {
           continue;
         }
         if (!game.map) throw new Error('no map');
-        await writeRecord(dir, recordFromGame(game, game.map));
+        const record = recordFromGame(game, game.map);
+        if (!readableRecord(record)) {
+          this.#unreadable.add(id);
+          this.#failed.delete(id);
+          res.unreadable++;
+          continue;
+        }
+        await writeRecord(dir, record);
         this.#failed.delete(id);
         this.#unfinished.delete(id);
         res.newlyCached++;

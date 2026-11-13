@@ -50,7 +50,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"What wins on this map?"** → `warapp_map_stats` (`map_id`; opt-in, local only — off unless
   `WARAPP_STATS=1`; when it refuses, say how to enable it and fall back to `warapp_get_map`):
   most-picked starts, win rate by starting bonus and first-bonus turn from finished ladder games.
-  Always quote the sample size; a rate flagged `lowSample` is anecdote, not a trend.
+  Always quote the sample size (and `unreadableGames`, left out of every figure); a rate flagged
+  `lowSample` is anecdote, not a trend.
 - **"Which bonuses should I go for?"** → `warapp_get_map`: bonuses ranked easiest first
   (value per territory and per border, entry points, ease score) plus chokepoints. Narrow to
   one bonus with `bonus: "<part of its name>"`; `sort` is `easiest` / `value` / `name`;
