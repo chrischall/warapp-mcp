@@ -502,7 +502,9 @@
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border: it goes to the held border with the highest
 //     protected value still short of COMFORT_MARGIN × its threat (counting armies
-//     withdrawn into it), else the source of the top expansion (which then makes
+//     withdrawn into it) — with two or more such borders, each is first brought to that
+//     margin in the same order (#121: two symmetric borders at an exact hold ended as 16 and 7),
+//     the rest to the first — else the source of the top expansion (which then makes
 //     no transfer), else the border with the most fogged neighbours, else
 //     my biggest stack.
 //  6. Idle armies on interior territories transfer one step toward the front,
@@ -5779,9 +5781,31 @@ export function planTurn(input: PlanInput): TurnPlan {
       where = stack.id;
       why = `one strike stack on the border facing player ${stack.player}, the strongest opponent (~${stack.income} income, ${stack.source}), not spread`;
     } else if (short[0]) {
+      // #121: spread to each short border's comfortable margin, in order, before any border gets
+      // more (two symmetric borders at an exact hold ended as 16 and 7); the rest goes to the first.
+      let spread = false;
+      if (short.length > 1)
+        for (const b of short) {
+          const room = roomAt(b.id);
+          let d = 0;
+          while (d < room) {
+            const take = armiesToTake(stays(b.id) + d + unitsAt(b.id), rates);
+            if (take === null || take > COMFORT_MARGIN * b.threat) break;
+            d++;
+          }
+          if (d <= 0) continue;
+          rationale.push(
+            `Deploy ${d} of the leftover to ${label(b.id)}: it brings it to a comfortable margin over the ~${b.threat} threat (protects +${valueOf(b.id)}), before any border gets more.`,
+          );
+          deploy(b.id, d);
+          locked.add(b.id);
+          spread = true;
+        }
       lock = true;
       where = short[0].id;
-      why = `the held border with the most at stake (protects +${valueOf(where)}), still short of a comfortable margin over the ~${short[0].threat} threat`;
+      why = spread
+        ? `the rest, once every short border has its comfortable margin, to the one with the most at stake (protects +${valueOf(where)})`
+        : `the held border with the most at stake (protects +${valueOf(where)}), still short of a comfortable margin over the ~${short[0].threat} threat`;
     } else if (expansion !== undefined && open(expansion)) {
       where = expansion;
       why = 'the stack working on the top expansion';

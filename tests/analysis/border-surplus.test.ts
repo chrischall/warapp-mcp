@@ -183,3 +183,31 @@ describe('#121 transfers: what counts as held, and where the front is', () => {
     expect(transfersFrom(p, 2).map((m) => m.to)).toEqual([3]);
   });
 });
+
+describe('#121 the leftover deploy', () => {
+  it('is spread to each short border’s comfortable margin before any border gets more', () => {
+    // E6(1) – E4(6) – 3(7) – 2(1) – 1(7) – E5(6) – E7(1); bonus B60 (+3) = 1, 2, 3, held. Each
+    // border holds exactly (7 need 11 against 5 + 5 = 10; 6 need 10) and is comfortable at 8 (more
+    // than 1.25 × 10).
+    // Before, all 9 went to T1 (16 and 7).
+    const g = buildGraph(
+      makeMap([1, 2, 3, 4, 5, 6, 7], [[1, 2], [2, 3], [3, 4], [1, 5], [4, 6], [5, 7]], [[60, 3, [1, 2, 3]]]),
+    );
+    const input: PlanInput = {
+      graph: g,
+      board: board([mine(1, 7), mine(2, 1), mine(3, 7), enemy(4, 6), enemy(5, 6), enemy(6, 1), enemy(7, 1)]),
+      me: ME,
+      income: 9,
+      settings: STD,
+      options: { goal: 'defend' },
+    };
+    const p = plan(input);
+    expect(takes(7)).toBe(11);
+    expect(takes(6)).toBe(10);
+    expect(takes(8)).toBeGreaterThan(1.25 * 10);
+    expect(deployedOn(p, 1)).toBeGreaterThanOrEqual(1);
+    expect(deployedOn(p, 3)).toBeGreaterThanOrEqual(1);
+    expect(deployedOn(p, 1) + deployedOn(p, 3)).toBe(9);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 1 of the leftover to T3 \(#3\): it brings it to a comfortable margin/);
+  });
+});

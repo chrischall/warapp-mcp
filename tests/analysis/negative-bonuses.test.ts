@@ -256,14 +256,18 @@ describe('negative bonuses (#70): captures are scored by their net effect on inc
     // so the leftover goes to the weaker border, T3 (10 against T1's 12).
     expect(p.deploys).toEqual([{ territoryId: 3, armies: 3 }]);
     // Equal stacks (10 and 10, income 5): if the softener's armies stayed spent, T3 would look
-    // weaker and take the leftover; whole again, the tie goes to the lower id, T1.
+    // weaker and take the leftover first; whole again, the tie goes to the lower id, T1. (#121: the
+    // leftover is spread to each short border's comfortable margin, T1 first, the rest to T1.)
     const even = board([mine(1, 10), mine(3, 10), enemy(21, 10), enemy(22, 1)]);
     const fe = planTurn({ graph: cg, board: even, me: ME, income: 5, settings: STD, options: { focusBonusIds: [901] } });
     expect(fe.multiSourceCaptures.length).toBe(1);
     const e = planTurn({ graph: cg, board: even, me: ME, income: 5, settings: STD });
     expect(e.moves).toEqual([]);
     expect(e.expected.nextIncome).toBe(5);
-    expect(e.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
+    expect(e.deploys).toEqual([
+      { territoryId: 1, armies: 3 },
+      { territoryId: 3, armies: 2 },
+    ]);
   });
 
   it('the planner counts every bonus, "(hidden)" names and negative values included', () => {
