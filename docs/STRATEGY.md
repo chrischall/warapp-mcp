@@ -316,8 +316,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
   guidelines.
 - `settings-move-order-zigzag` — each round every player runs one order and the order of players
   reverses from round to round (two players: first, second, second, first, first, …), separately in
-  each phase, deployments included; cyclic and no-luck cycle reverse the players each turn. **Advice only**: the planner lists moves in decision
-  order and does not yet schedule them. Source: Move order.
+  each phase, deployments included; cyclic and no-luck cycle reverse the players each turn. The planner schedules its moves by it (#127), lists
+  deploys next to the enemy first, and reports where a move put last lands; it adds no fillers. Source: Move order.
 - `settings-attack-second` — against a comparable stack, attack second (a defender kills more
   per army): if you attack, list it last, and know that you lose the exchange if the stack has not
   attacked by then; attack first only as the first order on a turn you move first, and only if it

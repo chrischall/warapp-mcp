@@ -136,7 +136,7 @@ describe('trackOpponents', () => {
 
   it('a steady +5/turn opponent: observed 5 each turn, income 5, nothing unaccounted, no gap to explain', () => {
     const [t] = trackOpponents(g, history([3, at(10)], [4, at(15)], [5, at(20)]), ME, STD);
-    expect(t).toMatchObject({ playerId: ENEMY, firstSeen: 3, visibleIncome: 5, income: 5, unaccounted: 0, inferred: null });
+    expect(t).toMatchObject({ playerId: ENEMY, firstSeen: 3, visibleIncome: 5, income: 5, unexplained: 0, inferred: null });
     expect(t!.turns.map((x) => [x.from, x.to, x.observed])).toEqual([
       [3, 4, 5],
       [4, 5, 5],
@@ -170,16 +170,17 @@ describe('trackOpponents', () => {
 
   it('#86: a stack out of the fog is a move, not income — stock and flow leave it out too', () => {
     // Each turn a 10-army stack from the fogged T6 takes one of my 3-army territories: its
-    // visible armies grow by 10 and it lost 2 doing it, but those 10 arrived from the fog. The
-    // observed deploy is only the capture's cost, round(3 × 0.7) = 2, and so is its stock and
-    // flow once the fog arrivals are taken out: the visible base 5 stands, never 12.
+    // visible armies grow by 10, but those 10 arrived from the fog. The observed deploy is only
+    // the capture's cost — priced at the guard I may have left, round(1 × 0.7) = 1, as my orders
+    // are unknown (#123; my 3 standing there would be round(2.1) = 2, the high reading) — and so
+    // is its stock and flow once the fog arrivals are taken out: the visible base 5 stands, never 12.
     const [t] = trackOpponents(gFlow(10), flowHistory(), ME, STD);
-    expect(t!.turns.map((x) => [x.observed, x.net, x.losses, x.fogArmies])).toEqual([
-      [2, 10, 2, 10],
-      [2, 10, 2, 10],
-      [2, 10, 2, 10],
+    expect(t!.turns.map((x) => [x.observed, x.net, x.losses, x.fogArmies, x.low, x.high])).toEqual([
+      [1, 10, 1, 10, 1, 12],
+      [1, 10, 1, 10, 1, 12],
+      [1, 10, 1, 10, 1, 12],
     ]);
-    expect(t).toMatchObject({ income: 5, incomeMethod: 'visible', observedRange: { min: 2, max: 2 } });
+    expect(t).toMatchObject({ income: 5, incomeMethod: 'visible', observedRange: { min: 1, max: 1 } });
   });
 
   it('a fog-hidden bonus: an income gap of 4 is explained by the one +4 bonus it could hold', () => {
@@ -188,15 +189,15 @@ describe('trackOpponents', () => {
     expect(t!.income).toBe(9);
     expect(t!.inferred).toMatchObject({ gap: 4, exact: true, more: 0 });
     // 902 fits; 903 (+3) does not; 905 holds my T1, so it cannot be the enemy's.
-    expect(t!.inferred!.candidates).toEqual([{ bonusIds: [902], total: 4 }]);
+    expect(t!.inferred!.candidates).toEqual([{ bonusIds: [902], total: 4, hops: 1 }]);
   });
 
   it('lists every combination that fits rather than asserting one', () => {
     const g2 = makeGraph(true);
     const [t] = trackOpponents(g2, history([3, at(10)], [4, at(19)], [5, at(28)]), ME, STD);
     expect(t!.inferred!.candidates).toEqual([
-      { bonusIds: [902], total: 4 },
-      { bonusIds: [906], total: 4 },
+      { bonusIds: [902], total: 4, hops: 1 },
+      { bonusIds: [906], total: 4, hops: 3 },
     ]);
     expect(t!.notes.join(' ')).toMatch(/2 combinations fit/);
   });
@@ -227,33 +228,38 @@ describe('trackOpponents', () => {
       [0, 0, 0, 9],
       [0, -6, 0, 9],
     ]);
-    expect(t!.unaccounted).toBe(24);
+    expect(t!.unexplained).toBe(24);
     expect(t!.income).toBe(9);
   });
 
   it('counts captures and losses it was seen to make', () => {
     // Turn 3 → 4: T3 (12) takes my T2 (5 there) and leaves 8 on it, 3 behind. Net over the
-    // territories seen both turns (3 − 12) + 8 = −1. The capture cost what my 5 defenders kill
-    // at the 70% defensive rate, round(3.5) = 4 (#86's attrition rule, as observeDeploy):
-    // observed −1 + 4 = 3 (12 + 3 deployed, 12 attack, 4 die, 8 stand). It earned its base 5,
-    // so 5 − (−1) − 4 = 2 armies went unseen.
+    // territories seen both turns (3 − 12) + 8 = −1. With my orders known (none out of T2), the
+    // capture cost what my 5 defenders kill at the 70% defensive rate, round(3.5) = 4 (#86's
+    // attrition rule): observed −1 + 4 = 3 (12 + 3 deployed, 12 attack, 4 die, 8 stand). It
+    // earned its base 5, so 5 − (−1) − 4 = 2 armies are unexplained.
     const before = board([mine(1, 5), mine(2, 5), enemy(3, 12), enemy(4, 2), enemy(5, 2), ...FOG]);
     const after = board([mine(1, 5), enemy(2, 8), enemy(3, 3), enemy(4, 2), enemy(5, 2), ...FOG]);
-    const [t] = trackOpponents(g, history([3, before], [4, after]), ME, STD);
-    expect(t!.turns[0]).toMatchObject({ observed: 3, net: -1, losses: 4, earned: 5, captured: [2], fromFog: [], fogArmies: 0 });
-    expect(t!.unaccounted).toBe(2);
+    const known = [{ turn: 3, board: before, orders: { deploys: [], moves: [] } }, { turn: 4, board: after }];
+    const [t] = trackOpponents(g, known, ME, STD);
+    expect(t!.turns[0]).toMatchObject({ observed: 3, net: -1, losses: 4, earned: 5, captured: [2], fromFog: [], fogArmies: 0, low: 3, high: 3 });
+    expect(t!.unexplained).toBe(2);
+    // #123: without my orders, T2 may have been emptied: priced at the guard, round(0.7) = 1.
+    const [blind] = trackOpponents(g, history([3, before], [4, after]), ME, STD);
+    expect(blind!.turns[0]).toMatchObject({ observed: 0, losses: 1, low: 0, high: 3, emptied: [2] });
   });
 
   it('a capture out of the fog (#86) counts its attrition, not the stack, and the stack leaves the fog', () => {
     // Turn 3 → 4: a 14-army stack from fogged T11 takes my T1 (5 there) and stands 10 on it.
     // No visible territory of it shrank, so the 10 arrived from the fog: a move, not income.
-    // Observed = the capture's cost only, round(5 × 0.7) = 4 — never the 10 standing there.
-    // The 10 came into view, so they are no longer fog armies: 5 − 10 − 4 < 0 → 0 unaccounted.
+    // Observed = the capture's cost only — never the 10 standing there — priced at the guard I
+    // may have left, round(0.7) = 1 (#123: my orders are unknown; my 5 there would be 4).
+    // The 10 came into view, so they are no longer fog armies: 5 − 10 − 1 < 0 → 0 unexplained.
     const before = board([mine(1, 5), mine(2, 5), enemy(3, 10), enemy(4, 2), enemy(5, 2), ...FOG]);
     const after = board([enemy(1, 10), mine(2, 5), enemy(3, 10), enemy(4, 2), enemy(5, 2), ...FOG]);
     const [t] = trackOpponents(g, history([3, before], [4, after]), ME, STD);
-    expect(t!.turns[0]).toMatchObject({ observed: 4, net: 10, losses: 4, earned: 5, captured: [1], fromFog: [1], fogArmies: 10 });
-    expect(t!.unaccounted).toBe(0);
+    expect(t!.turns[0]).toMatchObject({ observed: 1, net: 10, losses: 1, earned: 5, captured: [1], fromFog: [1], fogArmies: 10 });
+    expect(t!.unexplained).toBe(0);
     expect(t!.notes.join(' ')).toMatch(/1 capture out of the fog on turn 3/);
   });
 
@@ -266,7 +272,7 @@ describe('trackOpponents', () => {
       [5, [6, 7]],
     ]);
     expect(t!.income).toBe(9); // now visibly holds 902 too: base 5 + 4
-    expect(t!.unaccounted).toBe(0);
+    expect(t!.unexplained).toBe(0);
   });
 
   it('only consecutive turns are compared; a missing turn is noted', () => {
@@ -291,7 +297,7 @@ describe('trackOpponents', () => {
   it('no opponents, or one board: nothing to observe', () => {
     expect(trackOpponents(g, [], ME, STD)).toEqual([]);
     const [t] = trackOpponents(g, history([3, at(10)]), ME, STD);
-    expect(t).toMatchObject({ turns: [], income: null, unaccounted: null, inferred: null, observedRange: null, incomeMethod: null });
+    expect(t).toMatchObject({ turns: [], income: null, unexplained: null, inferred: null, observedRange: null, incomeMethod: null });
   });
 });
 
@@ -338,7 +344,7 @@ describe('the planner uses the tracked income', () => {
     // only bonus within 1 of it.
     const rest = [neutral(6, 2), fogged(7), fogged(8), fogged(9), fogged(11)];
     const [t] = trackOpponents(g, history([3, at(10, 2, 2, rest)], [4, at(17, 2, 2, rest)], [5, at(24, 2, 2, rest)]), ME, STD);
-    expect(t!.inferred).toEqual({ gap: 2, exact: false, candidates: [{ bonusIds: [903], total: 3 }], more: 0 });
+    expect(t!.inferred).toEqual({ gap: 2, exact: false, candidates: [{ bonusIds: [903], total: 3, hops: 4 }], more: 0, implausible: 0 });
     expect(t!.notes.join(' ')).toMatch(/1 combination fits its income gap of 2 approximately/);
   });
 
@@ -390,6 +396,15 @@ describe('trackedIncome (#99)', () => {
     net: flow,
     losses: 0,
     fogArmies,
+    measured: 0,
+    low: Math.min(observed, cap),
+    high: Math.min(observed, cap),
+    reinforced: [],
+    grewFromFog: [],
+    emptied: [],
+    combat: 0,
+    broken: [],
+    brokenValue: 0,
   });
 
   it('stock and flow sets the income when it beats every capped observation', () => {

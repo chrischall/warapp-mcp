@@ -250,8 +250,10 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   since defenders never kill more attackers than they are.
 - **What the planner does with it** (`src/analysis/combat.ts`): `winChance` sums the binomial
   distributions exactly (no simulation); `guaranteedKills` is the luck-free share rounded (the
-  floor under weighted rounding); the guaranteed sizing `ceil(armiesToTake / (1 − L))` therefore
-  wins with chance 1 under straight rounding. `killBreakpoints` lists the efficient attack sizes
+  floor under weighted rounding). The planner's certain sizing (`captureCost` at chance 1, #126)
+  is the fewest attackers whose `winChance` is exactly 1 (3 v 2 at 16% luck, 4 v 2 under weighted
+  rounding at 0% luck); with luck on ordinary captures default to a 95% chance, and holds are
+  judged against the fewest attackers winning more than 5%. `killBreakpoints` lists the efficient attack sizes
   (60%: 1, 3, 5, 6, 8, 10, 11, 13).
 
 ## Map — verified
@@ -331,6 +333,16 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   planned turns kept so a turn planned twice still finds the one before it, used only when
   cached on exactly the previous turn). When a live in-progress history is seen, record its
   shape here and tighten the parser.
+- **My own past orders (#119).** The opponent tracker uses the player's own orders on a turn as
+  measurements (`TurnBoard.orders`, `measureOrders` in `src/analysis/opponents.ts`: the defenders a
+  failed attack killed, what a hold that fell really killed, and what an opponent's failed attack on
+  a hold lost — the loss the orders do not explain, ÷ the offensive kill rate). They come from this server, not from
+  war.app: `warapp_submit_turn` caches the deploys and moves it sent (once `SendOrders` returned
+  without an error) beside the boards in `<dataDir>/boards/<gameId>.json`, by turn, and
+  `boardHistory` attaches them. Orders sent from the web client are unknown, and the tracker reads
+  those turns from the boards alone, as before. Whether `GetHistory` carries the player's own
+  orders for a game in progress (a finished game's feed shows every side's) is UNVERIFIED and not
+  read.
 
 When an in-progress game is captured live, record its shape here, add an anonymized fixture,
 tighten `boardFromStanding`, and set `verified: true`.

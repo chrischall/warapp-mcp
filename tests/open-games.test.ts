@@ -225,7 +225,7 @@ describe('parseOpenGamesPage', () => {
   });
 
   it('flags a non-zero luck modifier or non-straight rounding as a planner gap', () => {
-    const gap = 'Luck or rounding — attack sizing assumes straight rounding and adds only a luck margin';
+    const gap = 'Luck or rounding — attacks are chances: sized for 95% with luck on (certain otherwise), holds for at most a 5% fall';
     const luck = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { luck: 0.75 } }])), bundle).games[0]!;
     expect(luck.plannerGaps).toEqual([gap]);
     const rounding = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { roundingMode: 0 } }])), bundle)

@@ -6,7 +6,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { enemyDeployEstimates, incomeFor, trackGame, trackOpponents } from '../analysis/index.js';
+import { incomeFor, planEnemyEstimates, symmetricStart, trackGame, trackOpponents } from '../analysis/index.js';
 import { stressPlan, type StressExposure, type StressReply } from '../analysis/stress.js';
 import type { SimEvent } from '../analysis/turn-sim.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
@@ -94,7 +94,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           .describe(
             'Armies every opponent is assumed to deploy this turn. Default, per opponent: the estimate ' +
               'warapp_plan_turn uses (base income plus the bonuses it visibly holds, or its observed or tracked ' +
-              'income when larger). Income in the fog is unseen, so raise it to test a stronger opponent.',
+              'income when larger; in a 1v1 that started even, an opponent bordering the fog at least your own income). ' +
+              'Income in the fog is unseen, so raise it to test a stronger opponent.',
           ),
         first_mover: z
           .enum(['me', 'opponent'])
@@ -157,7 +158,27 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         turn !== null
           ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
           : undefined;
-      const estimates = enemyDeployEstimates(graph, board, me.id, settings, history.previous?.board, tracks);
+      const income = incomeFor(graph, board, me.id, game.settings);
+      const { estimates } = planEnemyEstimates({
+        graph,
+        board,
+        me: me.id,
+        income,
+        settings,
+        ...(history.previous ? { previousBoard: history.previous.board } : {}),
+        ...(tracks ? { tracks } : {}),
+        // The fog prior in a 1v1 that started even (#119) and the turn (#128), as warapp_plan_turn has them.
+        game: {
+          players: game.players.map((p) => ({
+            id: p.id,
+            ...(p.team !== undefined ? { team: p.team } : {}),
+            ...(p.state !== undefined ? { state: p.state } : {}),
+          })),
+          turn,
+          symmetricStart: symmetricStart(game.settings, map),
+        },
+        turn,
+      });
       const myTeam = carriesTeam(me.team) ? me.team : undefined;
       const teamOf = new Map(game.players.map((p) => [p.id, p.team]));
       const friend = (id: number) => id === me.id || (myTeam !== undefined && teamOf.get(id) === myTeam);
@@ -290,7 +311,6 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           : report.safe
             ? `None of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried costs you a territory, a capture or a bonus.${blind}${inexact}${ahead}`
             : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${inexact}${ahead}`;
-      const income = incomeFor(graph, board, me.id, game.settings);
       const deployed = deploys.reduce((n, d) => n + d.armies, 0);
       const warnings = [
         ...(award ? assumedWarning(award) : []),

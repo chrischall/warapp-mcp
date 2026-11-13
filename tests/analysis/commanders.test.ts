@@ -483,6 +483,23 @@ describe('planner: commander rules after review (C2b, #61)', () => {
       }
     });
 
+    it('when I move first, neither advises nor mentions playing the card for the strike', () => {
+      for (const goal of ['balanced', 'defend', 'expand'] as const) {
+        const plan = planTurn({
+          graph: gd,
+          board: b,
+          me: ME,
+          income: 10,
+          settings: STD,
+          options: { goal, enemyDeploy: 5, holdsOrderPriority: true, movesFirst: true },
+        });
+        expect(attacks(plan)[0], goal).toMatchObject({ from: 5, to: 2 });
+        expect(plan.cardAdvice, goal).toBeNull();
+        expect(plan.rationale.some((r) => r.startsWith('Play Order Priority')), goal).toBe(false);
+        expect(plan.rationale.some((r) => r.startsWith('Order Priority is not needed for the strike')), goal).toBe(true);
+      }
+    });
+
     it('without the card, warns that the attacks interleave', () => {
       const plan = planTurn({ graph: gd, board: b, me: ME, income: 10, settings: STD, options: { goal: 'expand', enemyDeploy: 5 } });
       expect(attacks(plan)[0]).toMatchObject({ from: 5, to: 2 });
@@ -536,6 +553,39 @@ describe('planner: commander rules after review (C2b, #61)', () => {
       expect(attacks(plan)[0]).toMatchObject({ from: 1, to: 2 });
       expect(plan.cardAdvice).toBeNull();
       expect(plan.warnings.some((w) => w.includes('Order Priority'))).toBe(false);
+    });
+  });
+
+  describe('a strike planned, my commander not threatened, and a withdrawal (rule 7 gates the card)', () => {
+    // My commander on T1 (26) strikes player 20's commander on T2 (0); T7 (8) faces player 20's
+    // T8 (200), is conceded, and withdraws into T1. The strike moves out of T1, so it waits on
+    // the withdrawal: the withdrawal is my first order, and only rule 7 decides the card.
+    const gw = buildGraph(makeMap([1, 2, 3, 5, 7, 8], [[1, 2], [1, 3], [2, 5], [1, 7], [7, 8]]));
+    const bw = board(
+      [withCommander(mine(1, 26), ME), withCommander(enemy(2, 0), ENEMY), neutral(3, 1), enemy(5, 3), mine(7, 8), enemy(8, 200)],
+      true,
+    );
+    const plan = (holdsOrderPriority: boolean) =>
+      planTurn({ graph: gw, board: bw, me: ME, income: 5, settings: STD, options: { goal: 'balanced', holdsOrderPriority } });
+
+    it('advises no card I do not hold, and calls the withdrawal my first order', () => {
+      const p = plan(false);
+      expect(attacks(p).some((m) => m.from === 1 && m.to === 2)).toBe(true);
+      expect(p.moves[0]).toMatchObject({ from: 7, to: 1, kind: 'transfer' });
+      expect(p.cardAdvice).toBeNull();
+      expect(p.warnings).toContain(
+        'The withdrawal from T7 (#7) only executes if T7 (#7) is still mine when the order runs; it is my first order (Order Priority not advised: I hold no Order Priority card to play).',
+      );
+      expect(p.warnings.some((w) => w.includes('may come too late'))).toBe(false);
+    });
+
+    it('with the card, advises it for the withdrawal it protects', () => {
+      const p = plan(true);
+      expect(p.moves[0]).toMatchObject({ from: 7, to: 1, kind: 'transfer' });
+      expect(p.cardAdvice).toBe('order-priority');
+      expect(p.warnings).toContain(
+        "The withdrawal from T7 (#7) only executes if T7 (#7) is still mine when the order runs; play Order Priority: it is my first order, and the card runs it before the opponent's first.",
+      );
     });
   });
 

@@ -12,6 +12,7 @@ import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './help
 import { overlapRawMap } from './analysis/helpers.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import { boardIncome } from '../src/analysis/player.js';
+import { readCachedOrders } from '../src/trend.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
@@ -185,8 +186,9 @@ describe('warapp_plan_turn', () => {
     expect(p.goal).toBe('balanced');
     expect(p.expected.bonusesCompleted).toEqual([]);
     expect(p.moves.some((m) => m.kind === 'attack')).toBe(false);
+    // #128: R3 counts the income the plan keeps — 5, without the bonus its conceded border breaks (7 if it held).
     expect(p.warnings.join('\n')).toMatch(
-      /completing Broken Branch Riverlords \(#118\) leaves .* \(#\d+\) indefensible \(player \d+ can take it for \d+; next income 7\): not completed/,
+      /completing Broken Branch Riverlords \(#118\) leaves .* \(#\d+\) indefensible \(player \d+ can take it for \d+; next income 5\): not completed/,
     );
     expect(p.rationale.join('\n')).toMatch(/Do not complete bonus Broken Branch Riverlords \(#118\)/);
   });
@@ -244,7 +246,8 @@ describe('warapp_plan_turn', () => {
     // R3: the bonus could not be held next turn.)
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.conceded).toEqual([{ id: 161, name: mapName(161) }]);
-    expect(p.cardAdvice).toBe('order-priority');
+    // #127: no Order Priority card in hand (and a 2-army withdrawal is not worth one): no advice.
+    expect(p.cardAdvice).toBeNull();
     expect(p.moves[0]).toEqual({
       from: { id: 161, name: mapName(161) },
       to: { id: 159, name: mapName(159) },
@@ -252,7 +255,7 @@ describe('warapp_plan_turn', () => {
       kind: 'transfer',
     });
     expect(p.deploys.some((d) => d.territory.id === 161)).toBe(false);
-    expect(p.warnings.join('\n')).toContain(`play Order Priority so it goes first`);
+    expect(p.warnings.join('\n')).toContain('it is my first order (Order Priority not advised: I hold no Order Priority card to play)');
   });
 
   it('reports the next income if the conceded borders fall, and the bonuses at risk (#109)', async () => {
@@ -351,7 +354,7 @@ describe('warapp_plan_turn', () => {
 
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    // Bob shows 7 next to Ann and holds no visible bonus: clamp(5 + 0, 5, round(0.75 × 7)) = 5.
+    // Bob shows 7 next to Ann and holds no visible bonus: base 5 + 0 = 5 (its stack plays no part, #119).
     const def = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(def.enemyDeploy).toBe(5);
     expect(def.warnings.join('\n')).toMatch(
@@ -823,7 +826,8 @@ describe('warapp_plan_turn — never stand still (#107)', () => {
     expect(p.conceded.map((t) => t.id)).toEqual([158]);
     expect(p.moves.map((m) => [m.from.id, m.to.id, m.armies, m.kind])).toEqual([[158, 157, 6, 'attack']]);
     expect(p.deploys.find((d) => d.territory.id === 158)?.armies).toBe(1);
-    expect(p.cardAdvice).toBe('order-priority');
+    // #127: no Order Priority card in hand, so none is advised; the attack out is still the first order.
+    expect(p.cardAdvice).toBeNull();
     expect(p.rationale.join('\n')).toMatch(/Attack out of conceded .* \(#158\) rather than withdraw/);
     expect(p.warnings.join('\n')).not.toMatch(/standing still/i);
   });
@@ -1010,6 +1014,37 @@ describe('warapp_submit_turn', () => {
     expect(p.warning).toMatch(/may already have run/);
     expect(p.warning).toMatch(/Reload or focus a war\.app tab/);
     expect(p.warning).toMatch(/Do not resend/i);
+  });
+
+  it('caches the deploys and moves it sent for the turn, so opponent tracking can measure with them (#119)', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing'), game('Playing'), game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    expect(await readCachedOrders(h.dataDir, GAME, Number(ANN.feed))).toEqual(new Map());
+    await confirmed({ game_id: GAME, player: 'Ann', orders: GOOD });
+    expect(await readCachedOrders(h.dataDir, GAME, Number(ANN.feed))).toEqual(
+      new Map([
+        [
+          3,
+          {
+            deploys: [
+              { territoryId: 159, armies: 3 },
+              { territoryId: 161, armies: 2 },
+            ],
+            moves: [
+              { from: 161, to: 157, armies: 4 },
+              { from: 159, to: 158, armies: 8 },
+            ],
+          },
+        ],
+      ]),
+    );
+  });
+
+  it('a refused send caches no orders (#119)', async () => {
+    const s = ordersServer({ error: { code: 11, message: 'x' } });
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    expect((await confirmed({ game_id: GAME, orders: GOOD })).isError).toBe(true);
+    expect(await readCachedOrders(h.dataDir, GAME, Number(ANN.feed))).toEqual(new Map());
   });
 
   it('a server refusal is an error (error 11: deployments differ from income)', async () => {
@@ -1336,12 +1371,48 @@ describe('cards in the turn tools', () => {
     expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
   });
 
-  it('plan_turn plays the Order Priority card it holds when the plan advises it, so the orders carry it', async () => {
-    // As in "reports a conceded border": Sheepshead Hills is conceded and withdraws, so the
-    // plan advises Order Priority; holding one, the orders play it (not only the advice).
+  it('plan_turn does not spend Order Priority on a trivial withdrawal (#127)', async () => {
+    // As in "reports a conceded border": Sheepshead Hills is conceded and withdraws its 2 movable
+    // armies — under ORDER_PRIORITY_MIN_ARMIES, so the card stays in hand.
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: withHand([{ id: OP, type: 4 }]) }) });
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cardAdvice).toBeNull();
+    expect(p.cards.plays).toEqual([]);
+    expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
+    expect(p.warnings.join('\n')).toContain('Order Priority not advised: it saves only 2 armies');
+  });
+
+  it('plan_turn plays the Order Priority card it holds when the plan advises it, so the orders carry it', async () => {
+    // Ann's conceded 6-stack on 158 attacks out (6 armies, worth the card), and she holds one:
+    // the orders play it (not only the advice), and the attack out is the first move.
+    const opening: SyntheticTerritory[] = [
+      { id: 158, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 1 },
+      { id: 157, fogLevel: 1, owner: 0, armies: 4 },
+      { id: 161, fogLevel: 1, owner: 0, armies: 12 },
+      { id: 135, fogLevel: 1, owner: 0, armies: 12 },
+      { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 25 },
+    ];
+    h = await liveHarness({
+      feed: [game('Playing', { numberOfTurns: '1', settings: modelledSettings() })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () =>
+          ({
+            body: (w) => writeLatestGameInfo(w, opening, [ANN.inGame, BOB.inGame], { [ANN.inGame]: [{ id: OP, type: 4 }] }),
+          }) satisfies Partial<ReplyFrame>,
+      }),
+    });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.cardAdvice).toBe('order-priority');
+    expect(p.moves[0]).toEqual(expect.objectContaining({ from: { id: 158, name: mapName(158) }, kind: 'attack' }));
+    // Moving first this turn (#127), the card is not needed: it stays in hand.
+    // first_mover is named and shaped as warapp_check_plan's argument.
+    const first = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', first_mover: 'me' }));
+    expect(first.cardAdvice).toBeNull();
+    expect(first.orders.some((o) => o.kind === 'card')).toBe(false);
+    // Moving second, the card is advised as when unknown.
+    const second = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', first_mover: 'opponent' }));
+    expect(second.cardAdvice).toBe('order-priority');
     expect(p.cards.playRequired).toBe(false);
     expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
     expect(p.orders[0]).toEqual({ kind: 'card', card: OP });
@@ -1356,7 +1427,7 @@ describe('cards in the turn tools', () => {
     expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
   });
 
-  it('plan_turn over the hold limit (6/5) plays Order Priority, never Blockade or Order Delay', async () => {
+  it('plan_turn over the hold limit (6/5) discards Order Delay and keeps Order Priority (#127), never playing Blockade or Order Delay', async () => {
     h = await liveHarness({
       feed: [game('Playing')],
       warapp: routes({
@@ -1372,9 +1443,10 @@ describe('cards in the turn tools', () => {
     });
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.cards.playRequired).toBe(true);
-    expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
-    expect(p.cards.discards).toEqual([]);
-    expect(p.orders[0]).toEqual({ kind: 'card', card: OP });
+    expect(p.cards.plays).toEqual([]);
+    expect(p.cards.discards).toEqual([{ id: OD, name: 'Order Delay' }]);
+    expect(p.orders[0]).toEqual({ kind: 'discard', card: OD });
+    expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
     expect(p.income).toBe(5);
   });
 
@@ -1576,6 +1648,8 @@ describe('cards in the turn tools', () => {
     const text = JSON.stringify(preview);
     expect(text).toContain('Order Delay');
     expect(text).toContain('Order Priority');
+    // Written last (the only verified position), the card delays none of these orders: say so.
+    expect(text).toMatch(/Order Delay is written after every move.*delays none of this turn's orders/);
     await h.call('warapp_submit_turn', { ...args, confirmToken: preview.confirmToken });
     expect(Array.from(s.sent[0]!)).toEqual(
       expectedBytes(

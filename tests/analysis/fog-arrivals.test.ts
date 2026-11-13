@@ -65,7 +65,7 @@ const holdArmies = (threat: number) => {
 describe('armies arriving by an attack are a move, not income (#86)', () => {
   it('a capture from the fog counts only its attrition, never the stack standing on it', () => {
     const cost = straightKills(3, 70);
-    expect(observeDeploy(g, after, before, ENEMY, STD)).toEqual({
+    expect(observeDeploy(g, after, before, ENEMY, STD)).toMatchObject({
       deploy: cost,
       counted: [3],
       captured: [3],
@@ -106,7 +106,7 @@ describe('armies arriving by an attack are a move, not income (#86)', () => {
     // on T4 and 554 on T3: −556 on T4, +554 on T3, +2 lost = 0 deployed.
     const seen = board([mine(1, 5), mine(2, 5), neutral(3, 3), enemy(4, 600), fogged(5)]);
     const moved = board([mine(1, 5), mine(2, 5), enemy(3, 554), enemy(4, 44), fogged(5)]);
-    expect(observeDeploy(g, moved, seen, ENEMY, STD)).toEqual({ deploy: 0, counted: [3, 4], captured: [3], fromFog: [], fogArmies: 0, reveals: [] });
+    expect(observeDeploy(g, moved, seen, ENEMY, STD)).toMatchObject({ deploy: 0, counted: [3, 4], captured: [3], fromFog: [], fogArmies: 0, reveals: [] });
     // It deployed 5 on T4 first and sent all 561: still exactly its deploy.
     const deployed = board([mine(1, 5), mine(2, 5), enemy(3, 559), enemy(4, 44), fogged(5)]);
     expect(observeDeploy(g, deployed, seen, ENEMY, STD).deploy).toBe(5);
@@ -158,7 +158,7 @@ describe('armies arriving by an attack are a move, not income (#86)', () => {
     const was = board([mine(1, 5), mine(2, 5), neutral(3, 3), fogged(4), fogged(5), enemy(6, 5)]);
     const now = board([mine(1, 5), mine(2, 5), enemy(3, 556), fogged(4), fogged(5), enemy(6, 5)]);
     const cost = straightKills(3, 70);
-    expect(observeDeploy(g6, now, was, ENEMY, STD)).toEqual({ deploy: cost, counted: [3, 6], captured: [3], fromFog: [3], fogArmies: 556, reveals: [] });
+    expect(observeDeploy(g6, now, was, ENEMY, STD)).toMatchObject({ deploy: cost, counted: [3, 6], captured: [3], fromFog: [3], fogArmies: 556, reveals: [] });
     const [e] = enemyDeployEstimates(g6, now, ME, STD, was);
     expect(e.observedRaw).toBe(cost);
     expect(e.estimate).toBeLessThan(100);
@@ -183,6 +183,6 @@ describe('armies arriving by an attack are a move, not income (#86)', () => {
     const was = board([mine(1, 5), mine(2, 5), neutral(3, 3), fogged(4), fogged(5), enemy(6, 20)]);
     const now = board([mine(1, 5), mine(2, 5), enemy(3, 556), fogged(4), fogged(5), enemy(6, 10)]);
     const cost = straightKills(3, 70);
-    expect(observeDeploy(g6, now, was, ENEMY, STD)).toEqual({ deploy: cost, counted: [3, 6], captured: [3], fromFog: [3], fogArmies: 546, reveals: [] });
+    expect(observeDeploy(g6, now, was, ENEMY, STD)).toMatchObject({ deploy: cost, counted: [3, 6], captured: [3], fromFog: [3], fogArmies: 546, reveals: [] });
   });
 });

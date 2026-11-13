@@ -144,9 +144,10 @@ Builds on F1's fixed estimate. The planner sees one previous board; this keeps a
 - Per-game board history in the data dir (the existing board cache, one file per turn I planned
   or read; extend it if it keeps only one). Pure `trackOpponents(graph, boards[], me, settings)` →
   per opponent: per-turn observed deploy (F1's rules), its income estimate (median of the last
-  three observed turns, floored by the visible-bonus estimate), **unaccounted armies** (income
-  earned since first seen minus visible army change and visible losses: armies that must be in the
-  fog), and **inferred bonuses** — bonuses it could hold (no territory visibly held by another
+  three observed turns, floored by the visible-bonus estimate), **unexplained armies** (income
+  earned since first seen minus visible army change, visible losses and likely combat deaths:
+  armies in the fog, spent there, or a misread — `unexplainedArmies`, named `unaccountedArmies`
+  before #123), and **inferred bonuses** — bonuses it could hold (no territory visibly held by another
   player) whose values best explain the income gap; when several combinations fit, list them all
   as candidates, never assert one.
 - New read-only tool `warapp_track_opponents(game_id, view?)`: the per-opponent report with names,
@@ -155,7 +156,7 @@ Builds on F1's fixed estimate. The planner sees one previous board; this keeps a
 - Register the tool everywhere tools are listed (README, skill, manifest, CLAUDE.md, packaging /
   annotation / server-boot tests).
 - **Tests:** synthetic three-turn histories: a steady +5/turn opponent; a fog-hidden bonus (income
-  gap 4 explained by the one +4 bonus that fits; two candidates when two fit); unaccounted armies;
+  gap 4 explained by the one +4 bonus that fits; two candidates when two fit); unexplained armies;
   fog reveals not counted (F1); fewer than 2 turns → today's behaviour.
 
 ## S5 — strategy notes (track N, stacked on P)

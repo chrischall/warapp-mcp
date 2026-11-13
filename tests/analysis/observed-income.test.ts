@@ -71,15 +71,17 @@ const g = buildGraph(
   ),
 );
 const fog = [fogged(5), fogged(6), fogged(7), fogged(8)];
-// Visible enemy armies 5 + 10 + 21 = 36 → 10 + 25 + 38 = 73: +37 in one turn.
+// Visible enemy armies 5 + 10 + 21 = 36 → 10 + 42 + 21 = 73: +37 in one turn, on T2 and T3,
+// whose neighbours are all in view (#123: growth on T4, next to the fogged T5–T8, beyond what
+// it was expected to deploy would read as a stack walking in from the fog).
 const then = board([mine(1, 20), enemy(2, 5), enemy(3, 10), enemy(4, 21), ...fog]);
-const now = board([mine(1, 20), enemy(2, 10), enemy(3, 25), enemy(4, 38), ...fog]);
+const now = board([mine(1, 20), enemy(2, 10), enemy(3, 42), enemy(4, 21), ...fog]);
 
 describe('enemy deploy from observed growth (#57)', () => {
-  it('estimates at least the observed growth, past the stack cap', () => {
+  it('estimates at least the observed growth, past what its visible bonuses pay', () => {
     const [e] = enemyDeployEstimates(g, now, ME, STD, then);
-    // Visible: base 5 + bonuses 0, capped at round(0.75 × 10) = 8 → 5. Observed: +37.
-    expect(e).toMatchObject({ playerId: ENEMY, base: 5, bonusIncome: 0, stackCap: 8, observed: 37, source: 'observed' });
+    // Visible: base 5 + bonuses 0 = 5. Observed: +37.
+    expect(e).toMatchObject({ playerId: ENEMY, base: 5, bonusIncome: 0, largestStack: 10, observed: 37, source: 'observed' });
     expect(e!.estimate).toBeGreaterThanOrEqual(37);
     expect(e!.estimate).toBe(37);
     expect(defaultEnemyDeploy(g, now, ME, STD, then)).toBe(37);
@@ -117,11 +119,12 @@ describe('enemy deploy from observed growth (#57)', () => {
   });
 
   it('does not count growth on a territory that changed owner as deploy', () => {
-    // T6: player 30's 4 last turn; T7: my 7 last turn. The enemy took both from T4 (40 → 10),
+    // T6: player 30's 4 last turn; T7: its 7 too (a capture from me is priced at the guard,
+    // #123: one-off-movements.test.ts). The enemy took both from T4 (40 → 10),
     // leaving 20 on T6 and 8 on T7. Its visible total went 40 + 0 → 10 + 20 + 8 (−2), and it
     // lost what the defenders killed at 70% (round(2.8) + round(4.9) = 3 + 5, #86):
     // observed = −2 + 8 = 6, not T6's growth (+16).
-    const before = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 40), fogged(5), enemy(6, 4, OTHER), mine(7, 7), fogged(8)]);
+    const before = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 40), fogged(5), enemy(6, 4, OTHER), enemy(7, 7, OTHER), fogged(8)]);
     const after = board([mine(1, 30), enemy(2, 5), enemy(3, 10), enemy(4, 10), fogged(5), enemy(6, 20), enemy(7, 8), fogged(8)]);
     expect(enemyDeployEstimates(g, after, ME, STD, before)[0]!.observed).toBe(6);
     // However the armies split between T4 and the capture, the figure is the same:

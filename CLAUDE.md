@@ -167,15 +167,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the bundle's check is `remaining > MaxCardsHold` after removing every played and discarded
   card) war.app refuses a `SendOrders` (**error 51 `MustUseCard`**), so `cardsToShed` cards must
   be played or discarded and `warapp_submit_turn` refuses up front. The planner always plays
-  Reinforcement (its armies join the income) and, only when cards must go, one Order Priority,
-  then discards the lowest-value cards — never playing Blockade (it gives a territory away) or
+  Reinforcement (its armies join the income); when cards must go, the lowest-value cards leave
+  first (#127: Order Delay is discarded before Order Priority is spent; an Order Priority that
+  must go is played, not discarded, one at most) — never playing Blockade (it gives a territory away) or
   Order Delay (it holds back my attacks). A discard (`GameOrderDiscard`) is tag 9, the GUID, the
   base — from the bundle's writer, not yet live-verified. Card plays must come in war.app's
   turn-phase order or the server answers **error 10 `OrdersInIncorrectOrder`**, so
   `writeSendOrdersParams` sorts every order by `TurnPhase` (discards 10, Order Priority 12,
   Reinforcement 20, deploys 25, moves 50, Order Delay 50, Blockade 60). Order Delay (tag 11) runs
   in phase 50, verified live 2026-11-12 (sent in phase 12 it drew error 10). Within a phase,
-  card plays are written after the moves — that position is unverified. Order Delay may be combined with other card plays.
+  card plays are written after the other orders (an Order Delay after every move, wherever it
+  was listed: the live-verified shape); that war.app accepts it ahead of a move is unverified,
+  so an Order Delay play delays nothing and the submit preview warns so. Order Delay may be
+  combined with other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
 - **Turn notifications are a socket.io v0.9 client with two transports.** While the active
   transport is the direct leg, a **WebSocket** (`src/push/websocket.ts`): handshake GET with the
@@ -204,10 +208,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
   Tests drive a scripted fake bridge and a fake WebSocket, never a real socket.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
-  separately: base income + the bonuses it visibly holds in full, at most round(0.75 × its
-  largest stack next to me) but never below the game's base income (at least 5)
-  (`enemyDeploy` / `enemy_deploy` overrides all of them). On the opening board (every visible
-  territory holds the same count) every opponent gets that floor — live, the old 0.75 × 15 guess made every base-income opponent look like ~11. A warning
+  separately: base income + the bonuses it visibly holds in full, never below the game's base
+  income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
+  me is no part of the estimate: a stack says what can move, not what can be deployed (capping
+  the figure at 0.75 × a small stack read a visible +10 holder as 5; guessing 0.75 × a 15-stack
+  on the opening board read every base-income opponent as ~11). On the opening board (every visible
+  player territory holds the same count; neutrals aside, and only on the first turn: no previous
+  board and the turn unknown or 1, #128) every opponent gets that floor.
+  The threat at a border (#128, `forceAt`) is the larger of one attack of a player's stacks plus
+  its deploy and the single attack equal to its stacks attacking separately (each rounds on its
+  own); opponents on one team combine, FFA players do not (a warning when two together could take
+  a border); teammates are never a threat or a target; under Local Deployment an opponent's
+  visible bonus pools reach only their own territories (its free base income still lands anywhere,
+  even when its estimate leaves the pools out). A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also
   *observed* (`observedDeploy`, #57): the *net* change of its armies on territories visible
   both times (shrinks included — a transfer between its own territories is not deploy; counting
@@ -220,8 +233,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   over existing stacks read as +119 and conceded six held-bonus borders. The observed figure is
   capped at base + every bonus none of whose territories someone else visibly holds (a warning
   says when), and a rationale line names the turns compared and the reveals skipped. The
-  estimate is max(visible-bonus figure, observed) — the stack cap never cuts an observed figure —
-  and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). Each border
+  estimate is max(visible-bonus figure, observed)
+  and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). **The fog
+  prior (#119):** in a 1v1 that started even (two players in the game, no teams — not an FFA
+  down to two; `PlanGameContext.symmetricStart`, set by `warapp_plan_turn` from
+  `symmetricStart(settings, map)`: any distribution but a map scenario),
+  an opponent bordering the fog is estimated at least at my own income (card armies out), capped
+  at what it could earn on the board, and the warning calls it a prior — every observed figure is
+  a lower bound under fog, and without it a finished game's true deploys read 2–3× low. Each border
   is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to
   land), not a double count.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
@@ -233,10 +252,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   cached; it reports `trendSource`. A board the decoder refuses is never written there.
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
-  turn, income = median of the last three observed turns floored at base + visibly held bonuses,
-  unaccounted armies (earned since first seen − visible army change − visible losses) and
-  inferred bonuses (combinations of up to three bonuses it could hold that best fit the income
-  gap, all of them listed — candidates, never asserted). With 2+ observed turns the planner uses
+  turn, income = the most of the last three observed turns (or its stock and flow when more),
+  floored at base + visibly held bonuses — and never decaying (#119): an earlier figure is carried
+  until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it;
+  my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
+  deploys and moves it sent beside the boards, and `boardHistory` attaches them as
+  `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing;
+  `warapp_uncommit_turn` drops the turn's cached orders once the withdrawal is confirmed),
+  unexplained armies (earned since first seen − visible army change − visible losses − likely
+  combat deaths) and inferred bonuses (combinations of up to three bonuses it could hold that
+  best fit the income gap, within reach and affordable, none listed when too many fit — see the
+  #123 rules below; candidates, never asserted). With 2+ observed turns the planner uses
   the tracked income in place of the single-turn observed figure (`PlanInput.tracks`) and says so
   in its rationale; fewer, and the plan is exactly what it was without tracking.
 - **The turn planner (`src/analysis/planner.ts`) is pure and deterministic** (ties on
@@ -275,10 +301,25 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Withdraw** (under `balanced`/`defend`): a conceded border's movable armies go first to
     the neighbour nearest a border that holds — except from a bonus I hold in full (#118),
     whose garrison stays unless it makes that neighbour, a valued enemy-facing border, hold
-    this turn — and the plan sets `cardAdvice:
-    'order-priority'` because a withdrawal only executes while the border is still mine. The
-    planner never plays cards itself; `warapp_plan_turn` adds the Order Priority I hold to
-    `orders` when `cardAdvice` asks for it.
+    this turn — and is my first order, because a withdrawal only executes while the border is
+    still mine. Order Priority moves only that first order ahead of the opponent's first, so the
+    plan sets `cardAdvice: 'order-priority'` only when I hold one (`holdsOrderPriority`), I am
+    not known to move first (`movesFirst`), and the order it protects carries at least
+    `ORDER_PRIORITY_MIN_ARMIES` (#127; waived by `orderPriorityForced`, when the hand is over the
+    limit and the card is played anyway). The protected order is checked against the schedule:
+    if a move it depends on runs first, that move is my first order and the card is judged for
+    it; a strike is protected only when rule 1s advised the card for it (my commander
+    threatened), never because a withdrawal did. The planner never plays cards itself;
+    `warapp_plan_turn` adds the Order Priority I hold to `orders` when `cardAdvice` asks for it.
+  - **Move order (#127).** Orders zigzag (the first mover's 1st, the other's 1st and 2nd, …), so
+    the plan's `moves` are scheduled last (`src/analysis/schedule.ts`): the protected order, then
+    withdrawals and transfers into enemy-facing borders, attacks that land even if the owner
+    deploys there first, filler (uncontested neutrals, interior transfers), and last the attacks
+    into a stack that can fight back (attacking second fights survivors) and contested neutrals
+    whose survivors would not hold — softeners before finishers, moves into a territory before
+    moves out of it; early moves largest first. With one opponent in view a "Move position" line
+    gives each move put last its place in the zigzag (`opponentOrdersBefore` / `indexAfterAll`;
+    known, Order Priority, or both cases). Deploys are listed next to a visible enemy first.
   - **The game profile (`src/analysis/profile.ts`, S1)** is on every plan (`profile`): format
     (players' teams — the shared `carriesTeam` test in `src/teams.ts` — and who is still
     playing), phase, standing (my income vs the strongest opponent's estimate; the armies on
@@ -301,6 +342,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     first (equally close ones by score); a bonus advanced last turn keeps priority unless another
     is strictly closer. "N armies to finish" counts fogged members at the bonus's costliest
     visible missing member.
+  - **The economy test charges armies lost (#125).** A capture costs the economy the armies its
+    attackers lose plus the one left on it (waived when an idle stack beside it, facing no enemy,
+    takes it), not the armies sent; a bonus's worth adds its members' per-territory income; plain
+    expansion (pass 3) repays its losses with the income it adds within `PAYBACK_TURNS`, or loses
+    at most `PLAIN_EXPANSION_LOSS` (2) for +0. Turns to finish are never fewer than a bonus's depth.
+    A capture rule 4e/4f names but cannot afford gets the leftover on its source, and idle stacks
+    facing no enemy stage one step toward it.
   - **One surplus per territory (#121).** A border that holds at the start of the turn keeps
     what holds it, as my commander's territory does: a capture from it spends only the armies
     above that (plus deploys), so a capture never leaves a safe border takeable. Idle armies
@@ -320,7 +368,21 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border).
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
-    the threat (see the threat model above), and warns "is building".
+    the threat (see the threat model above), and warns "is building" — less what a visible
+    neighbour of the same owner sent (unless it shrank beside another player's shrinking stack:
+    a fight, not a transfer), and at most its observed deploy with every ambiguous army
+    read as deploy (`high`; #123: a transfer is a one-off, a stack walking in beside the fog is
+    still massing — lesson 5).
+  - **One-off movements are not income (#123, `observeDeploy`).** Growth on its territory next
+    to the fog and the surplus of a capture whose visible attacker shrank are ambiguous: both read
+    as deploy up to one bound, `HIDDEN_INCOME_FACTOR` (2) × what it was expected to deploy
+    (visible income, the fog prior in the planner, or tracked/carried income — so a steady hidden
+    bonus is still seen; a carry only bound-cut readings reached ends at a later turn read in full
+    that observed less) and at most what it could earn; beyond it, a stack out of the fog. A capture from me is
+    priced at the guard unless my cached orders say what stood there. Each observed turn has a low–high range for the ambiguity. The
+    tracker's `unexplained` armies leave out likely combat deaths (its stack and a neighbour of
+    another player both shrank), and inferred bonuses must lie within `INFER_REACH` hops and be
+    affordable — none listed when more than `MAX_LISTED_COMBINATIONS` fit.
   - **Lessons from three more lost games** (`tests/analysis/lessons-defensibility.test.ts`):
     - **Border value after captures (#18).** Triage runs before captures are known, so after
       the capture passes a conceded border in a bonus this turn's captures complete is kept —

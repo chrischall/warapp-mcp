@@ -44,8 +44,9 @@ const player = (territoryId: number, armies: number, playerId: number): Territor
 //   2 is mine too, next to 6 (12, Vale) and, in some boards, an enemy on 22.
 //   Ridge (+2): 3 7 8 9 — 6 + 3 × 20 = 66 to finish.
 //   Vale  (+2): 4 5 6   — 6 + 2 × 20 = 46 to finish: the cheapest bonus.
-//   Marsh (+3): 10 11 12 — 3 × 20 = 60 to finish.
-//   Every one is uneconomic (over 10 × its value, or one member over 5 × its value).
+//   Marsh (+2): 10 11 12 — 3 × 20 = 60 to finish.
+//   Every one is uneconomic: #125 charges the armies a capture loses plus the one left on it (a
+//   4-neutral 4, a 12-neutral 9), and each loses over 10 × its value (Vale 22, Ridge 31, Marsh 27).
 //   Other players sit far away on 20 and 21.
 const EDGES: [number, number][] = [
   [1, 2], [1, 3], [1, 4], [1, 5], [1, 10], [2, 6], [4, 5], [5, 6],
@@ -55,7 +56,7 @@ const IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 20, 21, 22];
 const BONUSES: [number, string, number, number[]][] = [
   [201, 'Ridge', 2, [3, 7, 8, 9]],
   [202, 'Vale', 2, [4, 5, 6]],
-  [203, 'Marsh', 3, [10, 11, 12]],
+  [203, 'Marsh', 2, [10, 11, 12]],
 ];
 const MAP = makeMap(IDS, EDGES, BONUSES);
 const g = buildGraph(MAP);
@@ -388,7 +389,7 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
   const at = (near: number): BoardState =>
     board([mine(1, 6), mine(2, 1), neutral(3, near), neutral(5, 12), neutral(6, 12), neutral(7, 12), player(22, 25, P2)]);
   const run = (b: BoardState, settings: PlannerSettings = CAP, adapt = false) =>
-    planTurn({ graph: mg, board: b, me: ME, income: 5, settings, game: SEVEN, options: { adapt } });
+    planTurn({ graph: mg, board: b, me: ME, income: 5, settings, game: SEVEN, options: { adapt, holdsOrderPriority: true } });
 
   it('takes the 4-neutral from the conceded stack (5 movable + 1 deploy) instead of withdrawing', () => {
     const b = at(4);
@@ -401,7 +402,9 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
       expect(p.deploys.find((d) => d.territoryId === 1)?.armies).toBe(1);
       expect(deploySum(p)).toBe(5);
       expect(p.cardAdvice).toBe('order-priority');
-      expect(p.warnings).toContain('The attack out of T1 (#1) only executes if T1 (#1) is still mine when the order runs; play Order Priority so it goes first.');
+      expect(p.warnings).toContain(
+        "The attack out of T1 (#1) only executes if T1 (#1) is still mine when the order runs; play Order Priority: it is my first order, and the card runs it before the opponent's first.",
+      );
       const r = p.rationale.join('\n');
       expect(r).toMatch(
         /Attack out of conceded T1 \(#1\) rather than withdraw: its 5 movable armies \(and 1 deployed there, which leave with the attack\) take T3 \(#3\)/,
@@ -507,7 +510,7 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
 
     it('opening: the waived capture goes ahead from 4 and 5, and the withdrawal stands', () => {
       for (const adapt of [false, true]) {
-        const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: CAP, game: SEVEN, options: { adapt } });
+        const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: CAP, game: SEVEN, options: { adapt, holdsOrderPriority: true } });
         expect(p.profile.phase).toBe('opening');
         expect(attacks(p).map((m) => m.to)).toEqual([3, 3]);
         expect(attacks(p).every((m) => m.from !== 1)).toBe(true);
@@ -519,7 +522,7 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
     it('later (contact, over the army cap): rule 4d is a cost, not a veto (#114); the capture goes ahead from 4 and 5, and the withdrawal stands', () => {
       // An army cap of 1× income: my 20 armies after deploy exceed 5, so 4e runs in contact. Every
       // candidate is tried and undone to rank it: the withdrawal survives those undos too.
-      const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: { ...STD, armyCap: 1 }, game: { ...SEVEN, turn: 5 } });
+      const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: { ...STD, armyCap: 1 }, game: { ...SEVEN, turn: 5 }, options: { holdsOrderPriority: true } });
       expect(p.profile.phase).toBe('contact');
       expect(p.rationale.join('\n')).not.toMatch(/Do not take T3 \(#3\)/);
       expect(attacks(p).map((m) => m.to)).toEqual([3, 3]);
@@ -1031,7 +1034,8 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
   const EIGHT: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80, 90].map((id) => ({ id })), turn: 3 };
   //   My 15-stacks on 1 and 2, a 25-stack on 8 behind them, and a 1-army 7 (conceded).
   //   1 borders 23 (player 40, 0) and 24 (player 30, 12); 2 borders 22 (player 30, 4) and 25
-  //   (player 40, 12). 23 then faces 25, 22 faces 24. Crown (+6) is the four 15-neutrals 3 4 5 6:
+  //   (player 40, 12). 23 then faces 25, 22 faces 24. Crown (+4) is the four 15-neutrals 3 4 5 6
+  //   (uneconomic: #125 charges ~11 lost + 1 left on each, 47 in all, over 10 × 4):
   //   8 alone reaches 3 (25 to take). 7 borders 25 (player 40 can attack me) and, when
   //   `bothFront`, 24 (so can player 30). 26 and 27 keep both players out of my reach.
   const shape = (bothFront: boolean) =>
@@ -1042,7 +1046,7 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
         [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27],
         ...(bothFront ? ([[7, 24]] as [number, number][]) : []),
       ],
-      [[701, 'Crown', 6, [3, 4, 5, 6]]],
+      [[701, 'Crown', 4, [3, 4, 5, 6]]],
     );
   const shapeBoard = (): BoardState =>
     board([
@@ -1124,7 +1128,7 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
         [1, 2], [8, 1], [8, 2], [8, 3], [1, 23], [1, 24], [2, 4], [2, 22], [2, 25],
         [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27], [7, 28], [28, 27],
       ],
-      [[701, 'Crown', 6, [3, 4, 5, 6]]],
+      [[701, 'Crown', 4, [3, 4, 5, 6]]],
     );
     const b = board([...shapeBoard().territories, player(28, 0, P3)]);
     const p = run(b, map);
@@ -1146,7 +1150,7 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
         [1, 2], [8, 1], [8, 2], [8, 3], [1, 23], [1, 24], [2, 4], [2, 22], [2, 25], [2, 7],
         [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27], [1, 28], [28, 25],
       ],
-      [[701, 'Crown', 6, [3, 4, 5, 6]]],
+      [[701, 'Crown', 4, [3, 4, 5, 6]]],
     );
     const b = board([...shapeBoard().territories, player(28, 0, P3)]);
     const p = run(b, map);
@@ -1173,7 +1177,7 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
         [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [7, 25], [24, 26], [25, 27], [8, 9], [1, 11], [11, 25],
       ],
       [
-        [701, 'Crown', 6, [3, 4, 5, 6]],
+        [701, 'Crown', 4, [3, 4, 5, 6]],
         [702, 'Nook', 2, [9]],
       ],
     );
@@ -1186,5 +1190,33 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
     expect(r).not.toMatch(/though no planned capture is economic/);
     expect(r).not.toMatch(/Other candidates not taken/);
     expect(valid(p, b, 5, map)).toEqual([]);
+  });
+});
+
+// #112 review: under luck a combined capture is never made (rule 3a), so the contact fallback ranks
+// a candidate no single source can afford by the single source's loss, not the combined capture's.
+describe('#112: under luck the contact ranking prices no combined capture', () => {
+  const EIGHT: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80, 90].map((id) => ({ id })), turn: 3 };
+  //   My 20-stacks on 1, 2 and 8, and a 1-army 9 that both players can take. 22 (player 30, 17)
+  //   borders 1 and 8; 23 (player 40, 17) borders 2. Each needs 29, and at most 24 reach it: both
+  //   fall 5 short. At 0% luck 8 would soften 22 for 1 (loses 16 in all, against 12 for one source).
+  const map = makeMap(
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 22, 23, 24, 25, 26, 27],
+    [
+      [9, 22], [9, 23], [1, 2], [1, 3], [1, 22], [8, 22], [1, 8], [2, 4], [2, 23], [2, 7], [3, 4], [4, 5], [5, 6],
+      [22, 24], [23, 25], [7, 24], [24, 26], [25, 27],
+    ],
+    [[601, 'Crown', 4, [3, 4, 5, 6]]],
+  );
+  const b = board([
+    mine(1, 20), mine(2, 20), mine(8, 20), mine(9, 1),
+    neutral(3, 15), neutral(4, 15), neutral(5, 15), neutral(6, 15), neutral(7, 15),
+    player(22, 17, P2), player(23, 17, P3), player(24, 6, P2), player(25, 6, P3), player(26, 3, P2), player(27, 3, P3),
+  ]);
+
+  it('ties on the single loss go by id: 22 is the cheapest capture named', () => {
+    const p = planTurn({ graph: buildGraph(map), board: b, me: ME, income: 5, settings: { ...STD, luckModifier: 0.16 }, game: EIGHT, options: { adapt: false } });
+    expect(p.profile.phase).toBe('contact');
+    expect(p.warnings.join('\n')).toMatch(/Standing still: no capture is planned, and the cheapest capture \(T22 \(#22\), 29 armies/);
   });
 });

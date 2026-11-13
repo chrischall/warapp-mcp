@@ -7,6 +7,7 @@ import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { writeOrdersCache } from '../src/trend.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -68,16 +69,23 @@ interface TrackPayload {
   opponents: Array<{
     player: { id: number; name: string };
     firstSeen: number;
-    observed: Array<{ turn: number; deploy: number; reveals?: unknown[] }>;
+    observed: Array<{
+      turn: number;
+      deploy: number;
+      measured?: number;
+      brokenBonuses?: Array<{ id: number; value: number }>;
+      reveals?: unknown[];
+    }>;
     income: {
       estimate: number | null;
       visible: number;
       usedByPlanner: boolean;
       turns: number[];
       method: string | null;
+      lowered?: number;
       observedRange: { min: number; max: number } | null;
     };
-    unaccountedArmies: number | null;
+    unexplainedArmies: number | null;
     inferredBonuses: unknown;
     notes: string[];
   }>;
@@ -134,10 +142,23 @@ describe('warapp_track_opponents', () => {
       method: 'visible',
       observedRange: { min: 5, max: 5 },
     });
-    expect(bob.unaccountedArmies).toBe(0);
+    expect(bob.unexplainedArmies).toBe(0);
     expect(bob.notes.join(' ')).toMatch(/its visible base \+ bonuses, observed 5–5 over turns 3–4/);
     const cached = JSON.parse(readFileSync(join(dir, 'boards', `${GAME}.json`), 'utf8')) as { turns: object };
     expect(Object.keys(cached.turns)).toEqual(['3', '4', '5']);
+  });
+
+  it('#123: a stack that may have walked in from the fog reads as a move, with the range', async () => {
+    // Bob's 158 (next to the fogged 135) goes 7 → 27: beyond twice his visible 5, the 10 more may
+    // be a stack out of the fog. The deploy reads 10; the range says 0–20.
+    const { last } = await playTurns('warapp_track_opponents', [7, 27]);
+    const bob = (last as TrackPayload).opponents.find((o) => o.player.name === 'Bob')! as TrackPayload['opponents'][number] & {
+      observed: Array<{ range?: { low: number; high: number } }>;
+    };
+    expect(bob.observed[0]).toMatchObject({ turn: 3, deploy: 10, range: { low: 0, high: 20 } });
+    expect(bob.notes.join(' ')).toMatch(/walked in from the fog/);
+    const full = payload<TrackPayload>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann', view: 'full' }));
+    expect(full.opponents.find((o) => o.player.name === 'Bob')!.observed[0]).toMatchObject({ grewFromFog: [{ id: 158 }] });
   });
 
   it('with one board only, says there is nothing to observe yet', async () => {
@@ -183,6 +204,61 @@ describe('warapp_track_opponents', () => {
     expect(p.warnings).toEqual([]);
   });
 
+  it('counts my own cached orders as measurements: a failed attack of mine adds back the defenders it killed (#119)', async () => {
+    // Bob 7 → 9 on 158 while Ann's 5 from 159 failed there: 5 × 0.6 = 3 defenders killed, so
+    // Bob deployed 2 + 3 = 5, not the 2 the board alone shows.
+    const track = async (dir: string | undefined, turnsDone: string, bob: number) => {
+      h = await liveHarness({ ...(dir ? { dataDir: dir } : {}), feed: [game('Playing', turnsDone)], warapp: live(boardAt(bob)) });
+      return payload<TrackPayload>(await h.call('warapp_track_opponents', { game_id: GAME, player: 'Ann' }));
+    };
+    await track(undefined, '2', 7);
+    const dir = h!.dataDir;
+    await h!.harness.close();
+    h = undefined;
+    const without = await track(dir, '3', 9);
+    expect(without.opponents.find((o) => o.player.name === 'Bob')!.observed[0]).toMatchObject({ turn: 3, deploy: 2 });
+    await h!.harness.close();
+    h = undefined;
+    expect(
+      await writeOrdersCache(dir, GAME, Number(ANN.feed), 3, { deploys: [{ territoryId: 159, armies: 5 }], moves: [{ from: 159, to: 158, armies: 5 }] }),
+    ).toBe(true);
+    const p = await track(dir, '3', 9);
+    const bob = p.opponents.find((o) => o.player.name === 'Bob')!;
+    expect(bob.observed[0]).toMatchObject({ turn: 3, deploy: 5, measured: 3 });
+    expect(bob.notes.join(' ')).toMatch(/My own orders on turn 3 \(\+3\) count as measurements/);
+  });
+
+  it('reports a visibly broken bonus on its turn and how far the carried income was lowered (#119)', async () => {
+    // Bob visibly holds bonus 116 (+2: 133, 134, 135, 158), deploys 20 on turn 3, then nothing;
+    // on turn 7 Ann holds 135. The 20 is carried (no decay) and lowered by the broken +2 to 18.
+    const at = (bob: number, broken = false): SyntheticTerritory[] => [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 157, fogLevel: 2, owner: 0, armies: 2 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: bob },
+      { id: 133, fogLevel: 1, owner: BOB.inGame, armies: 1 },
+      { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 1 },
+      { id: 135, fogLevel: 1, owner: broken ? ANN.inGame : BOB.inGame, armies: broken ? 3 : 1 },
+    ];
+    const seq = [at(7), at(27), at(27), at(27), at(27, true)];
+    let dir: string | undefined;
+    let p: TrackPayload | undefined;
+    for (const [i, territories] of seq.entries()) {
+      if (h) {
+        await h.harness.close();
+        h = undefined;
+      }
+      h = await liveHarness({ ...(dir ? { dataDir: dir } : {}), feed: [game('Playing', String(i + 2))], warapp: live(territories) });
+      dir = h.dataDir;
+      p = payload<TrackPayload>(await h.call('warapp_track_opponents', { game_id: GAME, player: 'Ann' }));
+    }
+    const bob = p!.opponents.find((o) => o.player.name === 'Bob')!;
+    expect(bob.observed.map((o) => o.deploy)).toEqual([20, 0, 0, expect.any(Number)]);
+    expect(bob.observed.slice(0, 3).every((o) => o.brokenBonuses === undefined)).toBe(true);
+    expect(bob.observed[3]!.brokenBonuses).toEqual([expect.objectContaining({ id: 116, value: 2 })]);
+    expect(bob.income).toMatchObject({ estimate: 18, method: 'carried', lowered: 2 });
+  });
+
   it('refuses outside a turn phase', async () => {
     h = await liveHarness({ feed: [game('WaitingForPlayers', '-1')] });
     const res = await h.call('warapp_track_opponents', { game_id: GAME });
@@ -206,6 +282,31 @@ describe('warapp_plan_turn with a tracked history', () => {
     expect(p.warnings).toEqual(expect.arrayContaining(BOB_WARNINGS));
     expect(p.profile.standing).toBe('unknown');
     expect(p.profile.notes.join(' ')).toMatch(/has been out of sight for at least 1 turn and has received at least 39 armies/);
+  });
+
+  it('in an even-start 1v1, an opponent bordering the fog is assumed to earn my income: a prior, not an observation (#119)', async () => {
+    // Ann holds bonus 118 (+2: 157, 159, 161): income 7. Bob's 158 shows only its base 5 and
+    // borders the fogged 135. The fixture's DistributionMode is a normal map distribution.
+    const territories: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 7 },
+      { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+    ];
+    const plan = async (only1v1: boolean) => {
+      h = await liveHarness({ feed: [game('Playing', '2', only1v1)], warapp: live(territories) });
+      const p = payload<{ warnings: string[]; enemyDeploy: number }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+      await h.harness.close();
+      h = undefined;
+      return p;
+    };
+    const duel = await plan(true);
+    expect(duel.enemyDeploy).toBe(7);
+    expect(duel.warnings.join('\n')).toMatch(/Enemy deploy estimate for player \d+: ~7 \(a prior, not an observation/);
+    // The fixture's full lobby is an FFA: no prior.
+    const ffa = await plan(false);
+    expect(ffa.warnings.join('\n')).not.toMatch(/a prior/);
   });
 
   it('one observed turn: no tracked line (today\'s behaviour)', async () => {

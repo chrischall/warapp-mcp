@@ -63,9 +63,10 @@ export interface ProfileInput {
   /**
    * Each visible opponent's estimated income (the planner's per-opponent deploy estimate);
    * `tracked` is its income tracked over several turns (`trackOpponents`), `null` / absent when
-   * its track is too short to trust.
+   * its track is too short to trust; `source` `'prior'` when the fog prior (#119) set it — a
+   * floor of my own income, not a reading, which the standing note says.
    */
-  estimates: ReadonlyArray<{ playerId: number; estimate: number; tracked?: number | null }>;
+  estimates: ReadonlyArray<{ playerId: number; estimate: number; tracked?: number | null; source?: string }>;
   /**
    * Opponents with no territory in view (#94, `trackOpponents`): for how many turns, and the
    * armies they must have received since the game started (a lower bound). The 'unknown'
@@ -209,6 +210,9 @@ export function gameProfile(input: ProfileInput): GameProfile {
     )
     .join('');
   let standingSource: GameProfile['standingSource'] = null;
+  /** How the strongest estimate is described: the fog prior is a floor of my own income (#119). */
+  const priorNote = `, a fog prior: assumed to earn at least my own income, so "ahead" is out of reach unless what it could earn on this board caps it`;
+  const fromPrior = strongest?.source === 'prior';
   // #97: under fog, a standing from tracked income needs every opponent still playing to be in
   // sight with a trusted track (an unseen one could be anything).
   const unseenEnemies = (input.unseen ?? []).filter((u) => !ally(u.playerId));
@@ -224,7 +228,7 @@ export function gameProfile(input: ProfileInput): GameProfile {
     standing = ratio >= AHEAD_RATIO ? 'ahead' : ratio <= BEHIND_RATIO ? 'behind' : 'even';
     standingSource = 'tracked';
     notes.push(
-      `Standing ${standing} (tracked): my income ${input.income} against the strongest opponent, player ${strongest.playerId} (~${strongest.estimate} tracked over several turns)${
+      `Standing ${standing} (tracked): my income ${input.income} against the strongest opponent, player ${strongest.playerId} (~${strongest.estimate}${fromPrior ? priorNote : ' tracked over several turns'})${
         standing === 'ahead' ? `, at least ${AHEAD_RATIO}×` : standing === 'behind' ? `, at most ${BEHIND_RATIO}×` : ''
       }. ${foggedCount} of the ${notMine.length} territories I do not hold are in the fog, so income it hides from its observed deploys is not counted.`,
     );
@@ -238,7 +242,7 @@ export function gameProfile(input: ProfileInput): GameProfile {
     standing = ratio >= AHEAD_RATIO ? 'ahead' : ratio <= BEHIND_RATIO ? 'behind' : 'even';
     standingSource = 'visible';
     notes.push(
-      `Standing ${standing}: my income ${input.income} against the strongest opponent, player ${strongest.playerId} (~${strongest.estimate} estimated)${
+      `Standing ${standing}: my income ${input.income} against the strongest opponent, player ${strongest.playerId} (~${strongest.estimate}${fromPrior ? priorNote : ' estimated'})${
         standing === 'ahead' ? `, at least ${AHEAD_RATIO}×` : standing === 'behind' ? `, at most ${BEHIND_RATIO}×` : ''
       }.`,
     );

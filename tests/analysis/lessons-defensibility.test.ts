@@ -113,7 +113,7 @@ describe('lessons from the free-for-all and the two 1v1s', () => {
     expect(deploySum(p)).toBe(5);
 
     // A turn later each opponent is judged on its own visible income: base 5 + Wilds +3 = 8
-    // for the first (under its cap of round(0.75 × 16) = 12), the floor for the second.
+    // for the first, the floor for the second.
     const q = plan(laterBoard, 5);
     const v = q.warnings.join('\n');
     expect(v).toMatch(/for player 20: ~8 \(base 5 \+ visible bonuses \+3 = 8/);
@@ -131,7 +131,9 @@ describe('lessons from the free-for-all and the two 1v1s', () => {
     expect(p.conceded).toEqual([]);
     expect(p.moves.some((m) => m.from === 1)).toBe(false);
     expect(deployedTo(p, 1)).toBeGreaterThanOrEqual(3);
-    expect(p.rationale.join('\n')).toMatch(/Deploy 3 to T1 \(#1\) so it holds \(protects \+\d/);
+    // The opponent visibly holds a bonus (#119: all of it is deployable, whatever its stack), so
+    // T1 is garrisoned for the completed Vale against that whole threat.
+    expect(p.rationale.join('\n')).toMatch(/Garrison T1 \(#1\) for bonus Vale \(#301\) \(\+5\), completed this turn: deploy \d+/);
   });
 
   it('3. a big bonus is not completed when its new member falls next turn: the income garrisons instead', () => {

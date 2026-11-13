@@ -12,14 +12,34 @@
 //    that arrived from the fog, per turn),
 //    capped at the most it could earn in that window and floored at what it visibly earns on
 //    the newest board (base income + the bonuses it visibly holds in full) — see
-//    {@link trackedIncome} (#99);
-//  - unaccounted armies: the income it earned since first seen (each turn: what it visibly
-//    earned, or what it was seen to deploy when more) minus the change of its visible armies
-//    and what it visibly lost — armies that must be somewhere in the fog;
+//    {@link trackedIncome} (#99). It never decays (#119): walking the observed turns, a window's
+//    figure replaces the carried one only when larger; otherwise the carried figure stays, less
+//    the value of each bonus it visibly held in full that the next board shows broken, and never
+//    above that turn's could-earn cap (`incomeMethod` 'carried'). Given my own orders on a turn
+//    (`TurnBoard.orders`), they are measurements ({@link measureOrders}): the defenders my failed
+//    attacks killed, what a hold of mine that fell really killed, and what its failed attack on a
+//    hold of mine cost it;
+//  - unexplained armies (#123): the income it earned since first seen (each turn: what it
+//    visibly earned, or what it was seen to deploy when more) minus the change of its visible
+//    armies, what it visibly lost, and what it may have lost fighting where its stack and a
+//    neighbour of another player both shrank — armies in the fog, spent there, or a misread;
 //  - inferred bonuses: when the income beats the visible income, the combinations of bonuses
 //    it could hold (none of their territories visibly held by anyone else, neutral included)
-//    whose values come closest to the gap. Every combination that fits equally well is listed:
-//    they are candidates, never an assertion.
+//    whose values come closest to the gap — only bonuses within {@link INFER_REACH} hops of a
+//    territory it visibly holds, and that it could have paid for (#123: a member not visibly its
+//    costs at least {@link NEUTRAL_CAPTURE_LOSS}, against its starting armies plus what it was
+//    seen to earn on the observed turns and the base income on the others), nearest first. They are candidates, never an assertion; when more than
+//    {@link MAX_LISTED_COMBINATIONS} fit, none is listed.
+//
+// One-off movements (#123): each observed turn carries a low and a high reading of its deploy
+// (`observeDeploy`): growth next to the fog and the surplus of a capture whose visible attacking
+// stack shrank are read as deploy up to twice what it was expected to deploy (its visible income,
+// or the income carried so far — so a steady hidden income is learnt over a few turns; the
+// tracker does not apply the planner's fog prior, so in a 1v1 a turn the planner reads with the
+// prior can read lower here) and at most what it could earn, the rest as a move out of the fog; a
+// carry that only bound-cut readings reached ends at a later turn read in full that observed less
+// ({@link carryIncome}); a capture from me is priced at the guard unless my orders say what stood
+// there.
 //
 // Given the game's players (#94), every opponent still playing is listed — teammates and
 // players out of the game are not — even with no territory in view: `visible` counts its
@@ -38,23 +58,38 @@ import type { BoardState } from '../board.js';
 import type { GameMap, GameSettings } from '../normalize.js';
 import { carriesTeam } from '../teams.js';
 import { bonusTerritories } from './bonuses.js';
-import { DEFAULT_DEFENSIVE_KILL_RATE, straightKills } from './combat.js';
-import type { MapGraph } from './graph.js';
-import { enemyDeployEstimates, ownerShown, visibleState, type PlannerSettings } from './planner.js';
+import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
+import { neighborsOf, type MapGraph } from './graph.js';
+import { enemyDeployEstimates, observeSigned, ownerShown, visibleState, type PlannerSettings } from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 
 /** One of my boards and the turn it was seen on (the turn being played on it). */
 export interface TurnBoard {
   turn: number;
   board: BoardState;
+  /**
+   * My own orders on that turn, when known (#119): measurements of what the opponents deployed
+   * ({@link measureOrders}). Unknown orders change nothing.
+   */
+  orders?: MyOrders;
+}
+
+/** My orders on one turn (#119): my deploys and the moves I sent (attacks and transfers alike). */
+export interface MyOrders {
+  deploys: readonly { territoryId: number; armies: number }[];
+  moves: readonly { from: number; to: number; armies: number }[];
 }
 
 /** Observed turns (the latest) feeding the income estimate (#99: {@link trackedIncome}). */
 export const INCOME_TURNS = 3;
 /** Most bonuses in one inferred combination. */
 export const MAX_COMBINATION = 3;
-/** Inferred combinations listed before "and N more". */
+/** Inferred combinations listed; when more fit, none is (#123: too many to name any). */
 export const MAX_LISTED_COMBINATIONS = 8;
+/** #123: an inferred bonus has a member within this many hops of a territory it visibly holds. */
+export const INFER_REACH = 4;
+/** #123: the least a territory it is not seen holding cost it to take (a 2-army neutral at 70%). */
+export const NEUTRAL_CAPTURE_LOSS = 1;
 
 /** What one turn (board `from` → board `to`) showed of one opponent. */
 export interface ObservedTurn {
@@ -64,8 +99,22 @@ export interface ObservedTurn {
   to: number;
   /** Its observed deploy, capped at what it could earn ({@link ObservedTurn.cap}). */
   observed: number;
-  /** The observed deploy before the cap. */
+  /** The observed deploy before the cap ({@link ObservedTurn.measured} included). */
   raw: number;
+  /**
+   * What my own orders on the earlier turn measured (#119, {@link measureOrders}), added to the
+   * board's reading before the floor at 0 and to `losses`: the defenders my failed attacks killed,
+   * on a hold of mine that fell, what its defenders really killed, and the attackers it lost on a
+   * hold of mine that held. 0 without my orders.
+   */
+  measured: number;
+  /**
+   * Bonuses it visibly held in full on the earlier board of which the later one shows a member
+   * held by someone else: visibly broken (#119: only that lowers a carried income).
+   */
+  broken: number[];
+  /** Their total value. */
+  brokenValue: number;
   /** Base income plus every bonus it could still hold, on the later board. */
   cap: number;
   /** Territories visible on both boards and its on the later one, by id. */
@@ -81,6 +130,27 @@ export interface ObservedTurn {
   fogArmies: number;
   /** Its territories on the later board that the earlier one did not show: fog reveals. */
   reveals: number[];
+  /**
+   * #123: the deploy that turn with every ambiguous army read the low way (a stack out of the
+   * fog, a capture from me priced at the guard) and the high way (deployed, my stack standing),
+   * my orders' measurement included; `raw` lies between them.
+   */
+  low: number;
+  high: number;
+  /** Captures whose surplus over what a visible stack sent counted as deploy-then-capture (#123). */
+  reinforced: number[];
+  /** Its territories whose growth next to the fog was read as a move out of it (#123). */
+  grewFromFog: number[];
+  /** Captures from me priced at the guard I may have left (#123; my orders, when known, measure them). */
+  emptied: number[];
+  /**
+   * #123: armies it may have lost fighting where its stack and a neighbour of another player both
+   * shrank (the neighbour's losses at the kill rates: round(shrink × offensive ÷ defensive)), each
+   * neighbour counted once; with my orders known, mine count only where an attack on a hold of mine
+   * is pinned on no one (the loss my orders do not explain). Only the unexplained
+   * armies use it: the board cannot tell a fight from a transfer.
+   */
+  combat: number;
   /** Base income + visibly held bonuses on the earlier board: what it surely earned that turn. */
   visibleIncome: number;
   /** What it earned, as far as can be told: max(visibleIncome, observed). */
@@ -98,6 +168,8 @@ export interface ObservedTurn {
 export interface BonusCombination {
   bonusIds: number[];
   total: number;
+  /** Hops from a territory it visibly holds to the nearest member, summed over its bonuses (#123). */
+  hops: number;
 }
 
 export interface InferredBonuses {
@@ -105,10 +177,15 @@ export interface InferredBonuses {
   gap: number;
   /** Some combination's values sum to exactly the gap. */
   exact: boolean;
-  /** The best-fitting combinations (fewest bonuses first, then ids), at most {@link MAX_LISTED_COMBINATIONS}. */
+  /**
+   * The best-fitting combinations (fewest bonuses first, then nearest, then ids); none when more
+   * than {@link MAX_LISTED_COMBINATIONS} fit (#123).
+   */
   candidates: BonusCombination[];
-  /** Further combinations that fit equally well, not listed. */
+  /** Combinations that fit equally well, not listed (all of them when none is). */
   more: number;
+  /** Bonuses left out as beyond reach or more than it could have paid for (#123). */
+  implausible: number;
 }
 
 /** One player of the game (GameFeed ids, like the board's). */
@@ -176,8 +253,17 @@ export interface OpponentTrack {
   observedRange: { min: number; max: number } | null;
   /** Which term set `income` ({@link IncomeMethod}); `null` before any observed turn. */
   incomeMethod: IncomeMethod | null;
-  /** Armies that must be in the fog (≥ 0); `null` before any observed turn. */
-  unaccounted: number | null;
+  /**
+   * With `incomeMethod` `'carried'`: what the window it came from gave less what it is now
+   * (the bonuses visibly broken since, or a lower could-earn cap); else 0.
+   */
+  incomeLowered: number;
+  /**
+   * Unexplained armies (#123): the income it earned since first seen minus its visible army
+   * change, its visible losses and what it may have lost fighting (`combat`) — armies that are
+   * in the fog, or were spent there, or a misread (≥ 0); `null` before any observed turn.
+   */
+  unexplained: number | null;
   /** Bonuses that could explain `income − visibleIncome`; `null` when there is no gap. */
   inferred: InferredBonuses | null;
   /** Its territories in view on the newest board. */
@@ -242,6 +328,22 @@ export function trackGame(
 /** GameFeed's DistributionMode for full distribution (unverified, docs/WARAPP-API.md). */
 export const FULL_DISTRIBUTION = -1;
 
+/**
+ * Every player started with the same territories and armies (#119: the planner's fog prior
+ * needs it): any distribution but one of the map's own that is not `normal` (a scenario sets its
+ * own starts). Picks, random and full distribution give each player the same share. Unknown
+ * (no settings, no DistributionMode) is not symmetric: the prior stays off.
+ */
+export function symmetricStart(
+  settings: Pick<GameSettings, 'distributionMode'> | undefined,
+  map?: Pick<GameMap, 'distributionModes'>,
+): boolean {
+  const mode = settings?.distributionMode;
+  if (mode === undefined) return false;
+  const custom = map?.distributionModes.find((d) => d.id === mode);
+  return custom?.type === undefined || custom.type === 'normal';
+}
+
 /** Player states still in the game (absent counts as playing), as the profile counts them. */
 const playing = (p: TrackPlayer) => (p.state ?? 'Playing') === 'Playing';
 
@@ -250,9 +352,11 @@ const byNum = (a: number, b: number) => a - b;
 /**
  * Which term set a tracked income: `max-observed` the most it was observed to deploy,
  * `stock-flow` its visible army change plus visible losses (less fog arrivals) per turn, `visible` what it visibly
- * earns on the newest board (base + bonuses it visibly holds in full).
+ * earns on the newest board (base + bonuses it visibly holds in full), `carried` an earlier
+ * window's figure kept (#119: an income never decays unless a bonus it visibly held is visibly
+ * broken, or the most it could earn falls below it).
  */
-export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible';
+export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried';
 
 /** A tracked income and how it was reached ({@link trackedIncome}). */
 export interface TrackedIncome {
@@ -305,17 +409,26 @@ const turnSpan = (turns: readonly number[]) =>
  * How a track's income was reached, for a rationale line or a note, e.g. "max observed over
  * turns 9–11, observed 3–31"; `null` before any observed turn.
  */
-export function incomeBasis(t: Pick<OpponentTrack, 'incomeMethod' | 'incomeTurns' | 'observedRange'>): string | null {
+export function incomeBasis(
+  t: Pick<OpponentTrack, 'incomeMethod' | 'incomeTurns' | 'observedRange'> & Partial<Pick<OpponentTrack, 'incomeLowered'>>,
+): string | null {
   if (!t.incomeMethod || !t.observedRange || !t.incomeTurns.length) return null;
   const span = turnSpan(t.incomeTurns);
   const range = `observed ${t.observedRange.min}–${t.observedRange.max}`;
+  if (t.incomeMethod === 'carried')
+    return t.incomeLowered
+      ? `carried from ${span}, ${range}, less ${t.incomeLowered} for what it has visibly lost since`
+      : `carried from ${span}, ${range}: no bonus it visibly held has been visibly broken since`;
   if (t.incomeMethod === 'max-observed') return `max observed over ${span}, ${range}`;
   if (t.incomeMethod === 'stock-flow') return `visible army growth plus losses (fog arrivals left out) over ${span}, ${range}`;
   return `its visible base + bonuses, ${range} over ${span}`;
 }
 
-/** Its army change over territories visible on both boards, and what it visibly lost. */
-function armyChange(g: MapGraph, before: BoardState, after: BoardState, playerId: number, defensive: number) {
+/**
+ * Its army change over territories visible on both boards, and what it visibly lost. A capture
+ * from me is priced at the guard, as observeDeploy prices it (#123); my orders correct both.
+ */
+function armyChange(g: MapGraph, before: BoardState, after: BoardState, playerId: number, defensive: number, me: number, guard: number) {
   const was = new Map(before.territories.map((t) => [t.territoryId, t]));
   const ids = [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum);
   let net = 0;
@@ -333,7 +446,8 @@ function armyChange(g: MapGraph, before: BoardState, after: BoardState, playerId
       // The stack now standing there came into view (from a visible source or the fog): it
       // counts in `net`; the capture cost what the defenders killed, as in observeDeploy (#86).
       net += a.armies!;
-      losses += straightKills(b.armies!, defensive);
+      const fromMe = b.owner.kind === 'player' && b.owner.playerId === me;
+      losses += straightKills(fromMe ? Math.min(b.armies!, guard) : b.armies!, defensive);
     } else if (mineThen) {
       net -= b.armies!;
       losses += b.armies!; // destroyed defending
@@ -348,10 +462,40 @@ function seesPlayer(board: BoardState, g: MapGraph, playerId: number): boolean {
   );
 }
 
+/** A bonus `playerId` could hold, how far it lies from what it visibly holds, and what taking it cost at least. */
+interface PossibleBonus {
+  id: number;
+  value: number;
+  /** Hops from a territory it visibly holds to the nearest member (Infinity when unreachable). */
+  hops: number;
+  /** Members not shown as its × {@link NEUTRAL_CAPTURE_LOSS}: the least they cost it to take. */
+  cost: number;
+}
+
 /** Bonuses `playerId` could hold but does not visibly hold in full, on `board`. */
-function possibleBonuses(g: MapGraph, board: BoardState, playerId: number): { id: number; value: number }[] {
+function possibleBonuses(g: MapGraph, board: BoardState, playerId: number): PossibleBonus[] {
   const seen = new Map(board.territories.map((t) => [t.territoryId, t]));
-  const out: { id: number; value: number }[] = [];
+  // Hops from its visible territories (breadth first, over the whole map).
+  const hops = new Map<number, number>();
+  let frontier: number[] = [];
+  for (const t of board.territories) {
+    const st = ownerShown(t);
+    if (g.territoryById.has(t.territoryId) && st?.owner.kind === 'player' && st.owner.playerId === playerId) {
+      hops.set(t.territoryId, 0);
+      frontier.push(t.territoryId);
+    }
+  }
+  for (let d = 1; frontier.length; d++) {
+    const next: number[] = [];
+    for (const t of frontier)
+      for (const n of g.neighbors.get(t) ?? [])
+        if (!hops.has(n)) {
+          hops.set(n, d);
+          next.push(n);
+        }
+    frontier = next;
+  }
+  const out: PossibleBonus[] = [];
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     const ts = bonusTerritories(g, b.id);
     if (b.value <= 0 || !ts.length) continue;
@@ -363,22 +507,233 @@ function possibleBonuses(g: MapGraph, board: BoardState, playerId: number): { id
       if (st.owner.kind === 'player' && st.owner.playerId === playerId) held++;
       else taken = true;
     }
-    if (!taken && held < ts.length) out.push({ id: b.id, value: b.value });
+    if (!taken && held < ts.length)
+      out.push({
+        id: b.id,
+        value: b.value,
+        hops: Math.min(...ts.map((t) => hops.get(t) ?? Infinity)),
+        cost: (ts.length - held) * NEUTRAL_CAPTURE_LOSS,
+      });
+  }
+  return out;
+}
+
+/** Positive bonuses `playerId` visibly holds in full on `board`: every member shown as its. */
+function visiblyHeld(g: MapGraph, board: BoardState, playerId: number): { id: number; value: number }[] {
+  const seen = new Map(board.territories.map((t) => [t.territoryId, t]));
+  return [...g.map.bonuses]
+    .sort((x, y) => x.id - y.id)
+    .filter((b) => {
+      const ts = bonusTerritories(g, b.id);
+      if (b.value <= 0 || !ts.length) return false;
+      return ts.every((t) => {
+        const st = ownerShown(seen.get(t));
+        return st?.owner.kind === 'player' && st.owner.playerId === playerId;
+      });
+    })
+    .map((b) => ({ id: b.id, value: b.value }));
+}
+
+/** Of the bonuses it visibly held in full on `before`, those `after` shows a member of held by someone else. */
+function visiblyBroken(g: MapGraph, before: BoardState, after: BoardState, playerId: number): { id: number; value: number }[] {
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  return visiblyHeld(g, before, playerId).filter((b) =>
+    bonusTerritories(g, b.id).some((t) => {
+      const st = ownerShown(now.get(t));
+      return st !== undefined && !(st.owner.kind === 'player' && st.owner.playerId === playerId);
+    }),
+  );
+}
+
+/**
+ * What my own orders on the turn `before` → `after` measure of `playerId`'s deploy (#119), to add
+ * to the board's reading ({@link observeSigned}) — which leaves both out, as
+ * {@link observeDeploy}'s comment says:
+ * - a failed attack of mine (a move onto a territory it shows on both boards): its defenders lost
+ *   what my attackers killed, round(armies × the offensive kill rate) — the board reads that loss
+ *   as a shrink, so it counts back. Not when its source fell this turn: it may have been taken
+ *   before my attack ran;
+ * - a hold of mine that fell to it: its defenders were my armies there plus what I deployed there
+ *   less what I sent out of it; the board reading priced the capture at the guard (#123, the
+ *   least I may have left), so the difference in what they killed (at the defensive kill rate)
+ *   is the correction;
+ * - its failed attack on a hold of mine ({@link attacksOnMyHolds}): what it lost there — the board
+ *   reads that loss as a shrink, so it counts back.
+ * Kill counts are straight-rounded expectations: luck can move them.
+ */
+export function measureOrders(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  me: number,
+  playerId: number,
+  orders: MyOrders,
+  settings: PlannerSettings = {},
+): number {
+  const offensive = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const defensive = settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
+  const guard = (settings.oneArmyStandsGuard ?? true) ? 1 : 0;
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  const owns = (t: ReturnType<typeof visibleState>, p: number) => t?.owner.kind === 'player' && t.owner.playerId === p;
+  const deployed = new Map<number, number>();
+  for (const d of orders.deploys) deployed.set(d.territoryId, (deployed.get(d.territoryId) ?? 0) + Math.max(0, d.armies));
+  const sent = new Map<number, number>();
+  for (const m of orders.moves) sent.set(m.from, (sent.get(m.from) ?? 0) + Math.max(0, m.armies));
+  let measured = 0;
+  for (const m of orders.moves) {
+    // A source that fell this turn may have been taken before my attack ran: not measured.
+    if (!g.territoryById.has(m.to) || !owns(visibleState(was.get(m.from)), me) || !owns(visibleState(now.get(m.from)), me)) continue;
+    if (owns(visibleState(was.get(m.to)), playerId) && owns(visibleState(now.get(m.to)), playerId))
+      measured += straightKills(Math.max(0, m.armies), offensive);
+  }
+  const ids = [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum);
+  for (const id of ids) {
+    if (!g.territoryById.has(id)) continue;
+    const b = visibleState(was.get(id));
+    if (!owns(b, me) || !owns(visibleState(now.get(id)), playerId)) continue;
+    const defenders = Math.max(0, b!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0));
+    measured += straightKills(defenders, defensive) - straightKills(Math.min(b!.armies!, guard), defensive);
+  }
+  for (const a of attacksOnMyHolds(g, before, after, me, orders, settings)) if (a.attacker === playerId) measured += a.attackerLoss;
+  return measured;
+}
+
+/** A hold of mine that lost armies my orders do not explain: an attack on it that failed (#123 review). */
+interface AttackOnMyHold {
+  territoryId: number;
+  /** What it lost beyond what my orders explain. */
+  loss: number;
+  /** The only other player with a territory in view beside it, else null (not pinned on anyone). */
+  attacker: number | null;
+  /** The attacker's loss: the attackers that killed `loss` (÷ the offensive kill rate), at most what the defenders killed. */
+  attackerLoss: number;
+}
+
+/**
+ * My holds (mine, with armies, on both boards) that lost armies my orders do not explain: the
+ * defenders were my armies there plus what I deployed there and moved in, less what I sent out;
+ * what the later board shows less is what an attack that failed killed. Its attackers were that
+ * loss ÷ the offensive kill rate, and it lost them all, up to what the defenders killed (at the
+ * defensive kill rate). A hold I attacked out of and failed is skipped: the survivors of my own
+ * attack came back to it, so its loss is not known. Straight-rounded expectations: luck can move them.
+ */
+function attacksOnMyHolds(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  me: number,
+  orders: MyOrders,
+  settings: PlannerSettings,
+): AttackOnMyHold[] {
+  const offensive = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const defensive = settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  const owns = (t: ReturnType<typeof visibleState>, p: number) => t?.owner.kind === 'player' && t.owner.playerId === p;
+  const held = (id: number) => owns(visibleState(was.get(id)), me) && owns(visibleState(now.get(id)), me);
+  const deployed = new Map<number, number>();
+  for (const d of orders.deploys) deployed.set(d.territoryId, (deployed.get(d.territoryId) ?? 0) + Math.max(0, d.armies));
+  const sent = new Map<number, number>();
+  const came = new Map<number, number>();
+  const failedFrom = new Set<number>();
+  for (const m of orders.moves) {
+    const armies = Math.max(0, m.armies);
+    sent.set(m.from, (sent.get(m.from) ?? 0) + armies);
+    if (held(m.to) && owns(visibleState(was.get(m.from)), me)) came.set(m.to, (came.get(m.to) ?? 0) + armies);
+    if (!owns(visibleState(was.get(m.to)), me) && !owns(visibleState(now.get(m.to)), me)) failedFrom.add(m.from);
+  }
+  const out: AttackOnMyHold[] = [];
+  for (const id of [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum)) {
+    if (!g.territoryById.has(id) || !held(id) || failedFrom.has(id)) continue;
+    const defenders = Math.max(0, visibleState(was.get(id))!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0));
+    const loss = defenders + (came.get(id) ?? 0) - visibleState(now.get(id))!.armies!;
+    if (loss <= 0) continue;
+    const others = new Set<number>();
+    for (const n of neighborsOf(g, id)) {
+      const st = visibleState(was.get(n));
+      if (st?.owner.kind === 'player' && st.owner.playerId !== me) others.add(st.owner.playerId);
+    }
+    const attackers = Math.round((loss * 100) / offensive);
+    out.push({
+      territoryId: id,
+      loss,
+      attacker: others.size === 1 ? [...others][0]! : null,
+      attackerLoss: Math.min(attackers, straightKills(defenders, defensive)),
+    });
   }
   return out;
 }
 
 /**
- * The combinations of up to {@link MAX_COMBINATION} bonuses whose total comes closest to `gap`
- * (within max(1, a quarter of the gap)), fewest bonuses first, then by ids.
+ * What `playerId` may have lost fighting on the turn `before` → `after` (#123): on each of its
+ * territories shown with armies on both boards that shrank, each neighbour of another player
+ * shown with armies on both boards that shrank too (claimed once, ascending ids) counts
+ * round(its shrink × offensive ÷ defensive kill rate) — the armies a failed attack that cost the
+ * neighbour that many killed. When my orders measured the turn (`measured`), a hold of mine counts
+ * only where an attack on it is pinned on no one ({@link attacksOnMyHolds}: more than one other
+ * player beside it), with the loss my orders do not explain as its shrink; the rest of mine are
+ * left out (my orders explain them, or {@link measureOrders} counted them).
+ * The board cannot tell a fight from a transfer, nor whom the neighbour fought (a third player)
+ * or where its armies went: it can overcount, so only the unexplained armies use it.
+ * The ratio is a heuristic: a failed attack's real loss runs from about 0.6x to 1.43x the
+ * attacker's shrink, depending on how many attacked; offensive ÷ defensive (about 0.86x at the
+ * defaults) sits inside that range and needs only the two shrinks the boards show.
  */
-function inferBonuses(options: { id: number; value: number }[], gap: number): InferredBonuses {
+function combatLosses(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  playerId: number,
+  measured: { me: number; unpinned: ReadonlyMap<number, number> } | null,
+  settings: PlannerSettings,
+): number {
+  const offensive = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const defensive = settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  /** Its shrink when one player shows it with armies on both boards; else null. */
+  const shrinkOf = (id: number): { player: number; shrink: number } | null => {
+    const a = visibleState(now.get(id));
+    const b = visibleState(was.get(id));
+    if (a?.owner.kind !== 'player' || b?.owner.kind !== 'player' || a.owner.playerId !== b.owner.playerId) return null;
+    return { player: a.owner.playerId, shrink: b.armies! - a.armies! };
+  };
+  const claimed = new Set<number>();
+  let lost = 0;
+  for (const id of [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum)) {
+    if (!g.territoryById.has(id)) continue;
+    const own = shrinkOf(id);
+    if (own?.player !== playerId || own.shrink <= 0) continue;
+    for (const n of [...neighborsOf(g, id)].sort(byNum)) {
+      if (claimed.has(n)) continue;
+      const seen = shrinkOf(n);
+      const other = seen && measured && seen.player === measured.me ? { ...seen, shrink: measured.unpinned.get(n) ?? 0 } : seen;
+      if (!other || other.player === playerId || other.shrink <= 0) continue;
+      claimed.add(n);
+      lost += Math.round((other.shrink * offensive) / defensive);
+    }
+  }
+  return lost;
+}
+
+/**
+ * The combinations of up to {@link MAX_COMBINATION} bonuses whose total comes closest to `gap`
+ * (within max(1, a quarter of the gap)), fewest bonuses first, then nearest (summed hops), then
+ * by ids. Only plausible bonuses take part (#123): a member within {@link INFER_REACH} hops of a
+ * territory it visibly holds, and a combination costing no more than `budget` (what it could
+ * have received). When more than {@link MAX_LISTED_COMBINATIONS} fit, none is listed.
+ * The cost binds mostly early and on large bonuses: one army per member against what it earned
+ * (seen, or the base income on the turns not seen). The reach filter does most of the work.
+ */
+function inferBonuses(all: readonly PossibleBonus[], gap: number, budget: number): InferredBonuses {
   const tolerance = Math.max(1, Math.round(gap / 4));
+  const options = all.filter((b) => b.hops <= INFER_REACH && b.cost <= budget);
   const sorted = [...options].sort((a, b) => a.value - b.value || a.id - b.id);
   let best = Infinity;
   let found: BonusCombination[] = [];
-  const pick: { id: number; value: number }[] = [];
-  const visit = (start: number, sum: number) => {
+  const pick: PossibleBonus[] = [];
+  const visit = (start: number, sum: number, cost: number) => {
     if (pick.length) {
       const diff = Math.abs(sum - gap);
       if (diff <= tolerance && diff <= best) {
@@ -386,7 +741,7 @@ function inferBonuses(options: { id: number; value: number }[], gap: number): In
           best = diff;
           found = [];
         }
-        found.push({ bonusIds: pick.map((p) => p.id).sort(byNum), total: sum });
+        found.push({ bonusIds: pick.map((p) => p.id).sort(byNum), total: sum, hops: pick.reduce((h, p) => h + p.hops, 0) });
       }
     }
     if (pick.length === MAX_COMBINATION) return;
@@ -394,23 +749,75 @@ function inferBonuses(options: { id: number; value: number }[], gap: number): In
       const b = sorted[i]!;
       // Values only grow from here: past the gap plus the tolerance nothing fits.
       if (sum + b.value > gap + tolerance) break;
+      if (cost + b.cost > budget) continue;
       pick.push(b);
-      visit(i + 1, sum + b.value);
+      visit(i + 1, sum + b.value, cost + b.cost);
       pick.pop();
     }
   };
-  visit(0, 0);
+  visit(0, 0, 0);
   found.sort((a, b) => {
     if (a.bonusIds.length !== b.bonusIds.length) return a.bonusIds.length - b.bonusIds.length;
+    if (a.hops !== b.hops) return a.hops - b.hops;
     for (let i = 0; i < a.bonusIds.length; i++) if (a.bonusIds[i] !== b.bonusIds[i]) return a.bonusIds[i]! - b.bonusIds[i]!;
     return 0;
   });
+  const tooMany = found.length > MAX_LISTED_COMBINATIONS;
   return {
     gap,
     exact: best === 0,
-    candidates: found.slice(0, MAX_LISTED_COMBINATIONS),
-    more: Math.max(0, found.length - MAX_LISTED_COMBINATIONS),
+    candidates: tooMany ? [] : found,
+    more: tooMany ? found.length : 0,
+    implausible: all.length - options.length,
   };
+}
+
+/**
+ * The income carried over the observed turns (#119): see the walk in {@link trackOpponents}.
+ * `confirmed` when a turn of its window read in full (no army read as a move out of the fog) at
+ * least that figure ({@link confirmedBy}).
+ */
+type Carry = { income: number; set: number; window: ObservedTurn[]; est: TrackedIncome; confirmed: boolean };
+
+/**
+ * #123 review: a turn read in full — no ambiguous army was read as a move out of the fog (the
+ * bound cut nothing) — whose observed deploy reaches `income` confirms it. A figure only bound-cut
+ * readings reached (each up to twice the income carried so far) is a guess, however often it
+ * compounded.
+ */
+const confirmedBy = (window: readonly ObservedTurn[], income: number) =>
+  window.some((x) => x.fogArmies === 0 && x.observed >= income);
+
+/**
+ * #119: no decay. Walk the observed turns: each window's figure (as `trackedIncome` reads it)
+ * replaces the carried one only when larger; otherwise the carried figure stays, less the
+ * bonuses it visibly held that were visibly broken that turn, and never above that turn's
+ * could-earn cap. Null with no observed turn.
+ *
+ * #123 review: a carry no turn read in full ever confirmed does not outlive a later turn read in
+ * full that observed less: the window's figure takes over (so walk-ins over several turns, each
+ * read up to twice the carry before it, age out of the window as a one-off does, rather than
+ * staying pinned). The trade-off: a hidden income beyond twice the visible one, learnt only from
+ * bound-cut readings (section 7's +20 read 10, 20, …), is dropped the first time it deploys into
+ * the fog and shows less in full — unless a turn read in full had already confirmed it.
+ */
+function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
+  let carry = null as Carry | null;
+  for (let i = 0; i < observed.length; i++) {
+    const x = observed[i]!;
+    const window = observed.slice(Math.max(0, i - INCOME_TURNS + 1), i + 1);
+    const est = trackedIncome(window, 0);
+    const fresh: Carry = { income: est.income, set: est.income, window, est, confirmed: confirmedBy(window, est.income) };
+    const prev: Carry | null = carry;
+    if (!prev) {
+      carry = fresh;
+      continue;
+    }
+    const disproved = !prev.confirmed && x.fogArmies === 0 && x.observed < prev.income;
+    const kept: number = Math.min(x.cap, prev.income - x.brokenValue);
+    carry = disproved || est.income >= kept ? fresh : { ...prev, income: kept };
+  }
+  return carry;
 }
 
 /**
@@ -429,7 +836,11 @@ export function trackOpponents(
 ): OpponentTrack[] {
   // One board per turn (the last given wins), oldest first.
   const byTurn = new Map<number, BoardState>();
-  for (const b of boards) byTurn.set(b.turn, b.board);
+  const ordersOn = new Map<number, MyOrders | undefined>();
+  for (const b of boards) {
+    byTurn.set(b.turn, b.board);
+    ordersOn.set(b.turn, b.orders);
+  }
   const turns = [...byTurn.keys()].sort(byNum);
   if (!turns.length) return [];
   const lastTurn = turns.at(-1)!;
@@ -438,7 +849,7 @@ export function trackOpponents(
   const visibleAt = (turn: number) => {
     let m = visibleOn.get(turn);
     if (!m) {
-      m = new Map(enemyDeployEstimates(g, byTurn.get(turn)!, me, settings).map((e) => [e.playerId, e]));
+      m = new Map(enemyDeployEstimates(g, byTurn.get(turn)!, me, settings, undefined, undefined, undefined, { turn }).map((e) => [e.playerId, e]));
       visibleOn.set(turn, m);
     }
     return m;
@@ -466,6 +877,7 @@ export function trackOpponents(
     visibleArmies += t.armies;
   }
   const rules = { base: Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME)), per: settings.bonusArmyPer ?? 0 };
+  const guard = (settings.oneArmyStandsGuard ?? true) ? 1 : 0;
   // The one income rule over no territory: the base income floor, never a bonus. With nothing in
   // view it may hold as little as one territory, and floor(1 / BonusArmyPer) never beats the base.
   const baseIncome = boardIncome(g, new Set(), rules).total;
@@ -500,29 +912,75 @@ export function trackOpponents(
         unseen.push(seesPlayer(before, g, playerId) ? to : from);
         continue;
       }
-      const o = e.observation;
+      // #123: what it was expected to deploy includes the income carried so far, so a hidden
+      // income beyond twice the visible one (`ambiguousBound`) is learnt over a few turns. No fog
+      // prior here (enemyDeployEstimates is called without one): visible or carried income only.
+      const carriedSoFar = carryIncome(observed)?.income ?? 0;
       const v = visibleAt(from).get(playerId);
       const visibleIncome = v ? v.base + v.bonusIncome : 0;
-      const { net, losses } = armyChange(
-        g,
-        before,
-        after,
-        playerId,
-        settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
-      );
+      const change = armyChange(g, before, after, playerId, settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE, me, guard);
+      const net = change.net;
+      // My own orders that turn, when known, are measurements (#119).
+      const orders = ordersOn.get(from);
+      const measured = orders ? measureOrders(g, before, after, me, playerId, orders, settings) : 0;
+      // The same context the board-only reading used (#123): without `most`, the surplus on a
+      // reinforced capture would be read as a move out of the fog again.
+      const expected = e.observation.expected;
+      const context = {
+        me,
+        guard,
+        most: e.observedCap!,
+        ...(expected !== null ? { expected: Math.max(expected, carriedSoFar) } : {}),
+      };
+      const { signed, ...o } =
+        expected !== null && carriedSoFar > expected
+          ? observeSigned(g, after, before, playerId, settings, context)
+          : { ...e.observation, signed: e.observedRaw! };
+      const raw = measured ? Math.max(0, observeSigned(g, after, before, playerId, settings, context).signed + measured) : Math.max(0, signed);
+      const losses = Math.max(0, change.losses + measured);
+      // #123: with my orders known, what stood on an emptied capture is measured: no high reading.
+      const low = Math.max(0, o.low + measured);
+      const high = Math.max(raw, o.high + measured - (orders ? o.emptiedHigh : 0));
+      const seenObserved = Math.min(raw, e.observedCap!);
+      const broken = visiblyBroken(g, before, after, playerId);
       observed.push({
         from,
         to,
-        observed: e.observed!,
-        raw: e.observedRaw!,
+        observed: seenObserved,
+        raw,
+        measured,
+        broken: broken.map((b) => b.id),
+        brokenValue: broken.reduce((sum, b) => sum + b.value, 0),
         cap: e.observedCap!,
         counted: o.counted,
         captured: o.captured,
         fromFog: o.fromFog,
         fogArmies: o.fogArmies,
         reveals: o.reveals,
+        low: Math.min(low, raw),
+        high,
+        reinforced: o.reinforced,
+        grewFromFog: o.grewFromFog,
+        emptied: o.emptied,
+        combat: combatLosses(
+          g,
+          before,
+          after,
+          playerId,
+          orders
+            ? {
+                me,
+                unpinned: new Map(
+                  attacksOnMyHolds(g, before, after, me, orders, settings)
+                    .filter((a) => a.attacker === null)
+                    .map((a) => [a.territoryId, a.loss]),
+                ),
+              }
+            : null,
+          settings,
+        ),
         visibleIncome,
-        earned: Math.max(visibleIncome, e.observed!),
+        earned: Math.max(visibleIncome, seenObserved),
         net,
         losses,
       });
@@ -540,13 +998,29 @@ export function trackOpponents(
     const turnsUnseen = visible ? 0 : lastTurn - back;
     const turnsUnseenAtLeast = turnsUnseen > 0 && back >= 1 && !byTurn.has(back);
     const recent = observed.slice(-INCOME_TURNS);
-    const estimate = recent.length ? trackedIncome(recent, visibleIncome) : null;
+    const lastWindow = recent.length ? trackedIncome(recent, visibleIncome) : null;
+    // #119: no decay ({@link carryIncome}). The last three turns alone read a real 31 as 12 once
+    // it aged out.
+    const carry = carryIncome(observed);
+    const carried = carry !== null && lastWindow !== null && carry.income > lastWindow.income ? carry : null;
+    const estimate = carried
+      ? { ...carried.est, income: carried.income, method: 'carried' as IncomeMethod }
+      : lastWindow;
+    const incomeWindow = carried ? carried.window : recent;
     const income = estimate?.income ?? null;
-    const unaccounted = observed.length
-      ? Math.max(0, observed.reduce((s, x) => s + x.earned - x.net - x.losses, 0))
+    const unexplained = observed.length
+      ? Math.max(0, observed.reduce((s, x) => s + x.earned - x.net - x.losses - x.combat, 0))
       : null;
     const gap = income !== null ? income - visibleIncome : 0;
-    const inferred = gap > 0 ? inferBonuses(possibleBonuses(g, latest, playerId), gap) : null;
+    // #123: what it could have spent taking bonuses out of sight: its starting armies (when the
+    // settings give them) plus what it earned — on each observed turn, what it was seen to earn
+    // (`earned`); on every other turn of the game so far, the base income (not its income now,
+    // which overstates the early game).
+    const budget =
+      (game?.start ? game.start.territories * game.start.armiesPerTerritory : 0) +
+      observed.reduce((sum, x) => sum + x.earned, 0) +
+      baseIncome * Math.max(0, Math.max(1, lastTurn) - observed.length);
+    const inferred = gap > 0 ? inferBonuses(possibleBonuses(g, latest, playerId), gap, budget) : null;
 
     const notes: string[] = [];
     const warnings: string[] = [];
@@ -591,8 +1065,17 @@ export function trackOpponents(
         `Only ${observed.length} observed turn${observed.length === 1 ? '' : 's'} (fewer than 2 observed turns): the planner keeps its single-turn estimate.`,
       );
     else {
-      const basis = incomeBasis({ incomeMethod: estimate!.method, incomeTurns: recent.map((x) => x.from), observedRange: estimate!.observedRange });
-      notes.push(
+      const basis = incomeBasis({
+        incomeMethod: estimate!.method,
+        incomeTurns: incomeWindow.map((x) => x.from),
+        observedRange: estimate!.observedRange,
+        incomeLowered: carried ? carried.set - carried.income : 0,
+      });
+      if (carried)
+        notes.push(
+          `Income ~${income} (${basis}): an income does not decay — it is kept until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it; its last ${recent.length} observed turns alone give ~${lastWindow!.income}. Each observed deploy is a lower bound under fog.`,
+        );
+      else notes.push(
         `Income ~${income} (${basis}): the larger of the most it was observed to deploy (each observation is a lower bound under fog, so the largest is the tightest) and its visible army growth plus losses per turn, fog arrivals left out (${estimate!.stockFlow}), capped at the most it could earn (${estimate!.cap}), at least its visible income ${visibleIncome}.`,
       );
     }
@@ -609,25 +1092,63 @@ export function trackOpponents(
       notes.push(
         `Capped at what it could earn on turn ${capped.map((x) => `${x.from} (+${x.raw} → ${x.cap})`).join(', ')}: armies from the fog or a Reinforcement card may explain the rest.`,
       );
+    const measuredTurns = observed.filter((x) => x.measured);
+    if (measuredTurns.length)
+      notes.push(
+        `My own orders on turn ${measuredTurns.map((x) => `${x.from} (${x.measured > 0 ? '+' : ''}${x.measured})`).join(', ')} count as measurements: the defenders my failed attacks killed, and what a hold of mine that fell really killed.`,
+      );
     const reveals = observed.reduce((s, x) => s + x.reveals.length, 0);
     if (reveals) notes.push(`${reveals} fog reveal${reveals === 1 ? '' : 's'} skipped: stacks that only came into view are not income.`);
-    const fogCaptures = observed.filter((x) => x.fromFog.length);
+    // A reinforced capture whose surplus passed the bound is in `fromFog` too: its note is below.
+    const outOfFog = (x: ObservedTurn) => x.fromFog.filter((id) => !x.reinforced.includes(id));
+    const fogCaptures = observed.filter((x) => outOfFog(x).length);
     if (fogCaptures.length) {
-      const n = fogCaptures.reduce((s, x) => s + x.fromFog.length, 0);
+      const n = fogCaptures.reduce((s, x) => s + outOfFog(x).length, 0);
       notes.push(
-        `${n} capture${n === 1 ? '' : 's'} out of the fog on turn ${fogCaptures.map((x) => x.from).join(', ')}: only what ${n === 1 ? 'it' : 'they'} cost counts as deploy; the stack moved in from the fog.`,
+        `${n} capture${n === 1 ? '' : 's'} out of the fog on turn ${fogCaptures.map((x) => x.from).join(', ')}: only what ${n === 1 ? 'it' : 'they'} cost counts as deploy; no visible stack of it shrank into ${n === 1 ? 'it' : 'them'}, so the stack most likely moved in from the fog.`,
       );
     }
+    // #123: the ambiguous readings, each with the other way it could read.
+    const span = (xs: readonly ObservedTurn[]) => xs.map((x) => `${x.from} (${x.low}–${x.high})`).join(', ');
+    const reinforcedTurns = observed.filter((x) => x.reinforced.length);
+    if (reinforcedTurns.length)
+      notes.push(
+        `Captures with more armies than its visible stack next to them sent, on turn ${span(reinforcedTurns)}: read as armies deployed on the visible stack that attacked (deploy-then-capture), up to twice what it was expected to deploy and the rest as a stack out of the fog; a stack out of the fog may have joined instead, the low figure.`,
+      );
+    const fogGrowthTurns = observed.filter((x) => x.grewFromFog.length);
+    if (fogGrowthTurns.length)
+      notes.push(
+        `Growth next to the fog beyond twice what it was expected to deploy, on turn ${span(fogGrowthTurns)}: read as stacks that walked in from the fog, not income; it may be income the fog hides, the high figure.`,
+      );
+    const emptiedTurns = observed.filter((x) => x.emptied.length && !x.measured);
+    if (emptiedTurns.length)
+      notes.push(
+        `Captures from me on turn ${span(emptiedTurns)} priced at the guard I may have left (my orders that turn are unknown); had my stack stood there, the high figure.`,
+      );
+    const fought = observed.filter((x) => x.combat);
+    if (fought.length)
+      notes.push(
+        `It may have lost ${fought.reduce((s, x) => s + x.combat, 0)} fighting on turn ${fought.map((x) => x.from).join(', ')} (its stack and a neighbour of another player both shrank): left out of the unexplained armies.`,
+      );
+    if (unexplained)
+      notes.push(
+        `${unexplained} unexplained armies: what it earned since first seen beyond its visible army change and losses — in the fog, spent there, or a misread (a transfer or a fight the boards cannot tell apart).`,
+      );
     if (observed.length)
       notes.push(
         'Observed deploys are lower bounds: armies moved into the fog and losses in failed attacks are unseen, and the fog may hide territories and bonuses.',
       );
     if (inferred) {
       const n = inferred.candidates.length + inferred.more;
-      if (!n) notes.push(`No combination of bonuses it could hold explains its income gap of ${gap}.`);
+      const left = inferred.implausible
+        ? ` (${inferred.implausible} bonus${inferred.implausible === 1 ? '' : 'es'} left out: more than ${INFER_REACH} hops from its territories, or more than it could have paid for)`
+        : '';
+      if (!n) notes.push(`No combination of bonuses it could hold explains its income gap of ${gap}${left}.`);
+      else if (!inferred.candidates.length)
+        notes.push(`${n} combinations fit its income gap of ${gap}${inferred.exact ? '' : ' approximately'}: too many to name any${left}.`);
       else
         notes.push(
-          `${n} combination${n === 1 ? '' : 's'} fit${n === 1 ? 's' : ''} its income gap of ${gap}${inferred.exact ? '' : ' approximately'}: candidates, not facts.`,
+          `${n} combination${n === 1 ? '' : 's'} fit${n === 1 ? 's' : ''} its income gap of ${gap}${inferred.exact ? '' : ' approximately'}, nearest first: candidates, not facts${left}.`,
         );
     }
     notes.push(...warnings);
@@ -640,10 +1161,11 @@ export function trackOpponents(
       bonusIncome: v.bonusIncome,
       visibleIncome,
       income,
-      incomeTurns: recent.map((x) => x.from),
+      incomeTurns: incomeWindow.map((x) => x.from),
       observedRange: estimate?.observedRange ?? null,
       incomeMethod: estimate?.method ?? null,
-      unaccounted,
+      incomeLowered: carried ? carried.set - carried.income : 0,
+      unexplained,
       inferred,
       visible,
       turnsUnseen,

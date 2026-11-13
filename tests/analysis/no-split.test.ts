@@ -142,7 +142,7 @@ describe('planTurn — No-Split (G3)', () => {
   });
 
   it('(d) a combined (R4) capture is still planned: each source issues one order, with its whole stack (#124)', () => {
-    //   T1 ─ T3 ─ T2
+    //   T1 ─ T3 ─ T2   (T3 a +3 bonus of its own: #125, plain expansion does not throw ~11 armies at +0)
     const g4 = buildGraph(
       makeMap(
         [1, 2, 3],
@@ -150,6 +150,7 @@ describe('planTurn — No-Split (G3)', () => {
           [1, 3],
           [2, 3],
         ],
+        [[901, 3, [3]]],
       ),
     );
     const s4 = board([mine(1, 15), mine(2, 15), neutral(3, 15)]);

@@ -238,7 +238,7 @@ function readSettings(v: unknown): SettingsRead | undefined {
   const oddRounding = isInt(rounding) && rounding !== DEFAULT_ROUNDING;
   if (oddRounding) rules.push(`Non-default rounding mode (${rounding})`);
   if (lucky || oddRounding) {
-    gaps.push('Luck or rounding — attack sizing assumes straight rounding and adds only a luck margin');
+    gaps.push('Luck or rounding — attacks are chances: sized for 95% with luck on (certain otherwise), holds for at most a 5% fall');
   }
   if (f[GS.ranked] === false) rules.push('Practice game');
   const minArmies = f[GS.minArmies];

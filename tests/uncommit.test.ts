@@ -1,6 +1,10 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
+import { readCachedOrders, writeOrdersCache } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 
 let h: Harness | undefined;
@@ -99,6 +103,22 @@ describe('warapp_uncommit_turn', () => {
     expect(s.sent).toEqual([{ gameId: GAME_ID, left: 0 }]);
     expect(p).toMatchObject({ status: 'uncommitted', game: { id: GAME_ID, name: 'Synthetic Skirmish' }, turn: 6 });
     expect(String(p.detail)).toMatch(/warapp_submit_turn/);
+  });
+
+  it('drops the orders cached for this turn once they are withdrawn (they no longer measure it), and only then', async () => {
+    const mine = Number(ME.feed);
+    const sent = (armies: number) => ({ deploys: [{ territoryId: 1, armies }], moves: [] });
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-uncommit-'));
+    await writeOrdersCache(dir, GAME_ID, mine, 5, sent(5));
+    await writeOrdersCache(dir, GAME_ID, mine, 6, sent(6));
+    const s = uncommitServer();
+    h = await liveHarness({ pages: SIGNED_IN, feed: [COMMITTED], warapp: s.warapp, dataDir: dir });
+    expect((payload(await confirmed({ game_id: GAME_ID }))).status).toBe('unconfirmed');
+    expect([...(await readCachedOrders(dir, GAME_ID, mine)).keys()]).toEqual([5, 6]);
+    await h.harness.close();
+    h = await liveHarness({ pages: SIGNED_IN, feed: [COMMITTED, COMMITTED, UNCOMMITTED], warapp: s.warapp, dataDir: dir });
+    expect((payload(await confirmed({ game_id: GAME_ID }))).status).toBe('uncommitted');
+    expect([...(await readCachedOrders(dir, GAME_ID, mine)).keys()]).toEqual([5]);
   });
 
   it('reports unconfirmed when GameFeed still shows the orders committed', async () => {

@@ -403,9 +403,12 @@ export function turnPhaseOf(o: TurnOrder): number {
 }
 
 /**
- * Turn-phase order, and within one phase the card plays after the other
- * orders (so an Order Delay, phase 50, follows every AttackTransfer). The
- * within-phase position is UNVERIFIED; the phase itself is.
+ * Turn-phase order, and within one phase the card plays after the other orders (so an Order
+ * Delay, phase 50, follows every AttackTransfer: the shape of the 2026-11-12 live commit that
+ * verified phase 50). The phase is VERIFIED; whether war.app accepts an Order Delay ahead of a
+ * move in phase 50 is UNVERIFIED live (the client bundle lets a player raise it among the moves and
+ * its validator refuses only a phase that goes down, but no such commit has been sent), so it is
+ * never written there (docs/WEB-PROTOCOL.md).
  */
 function compareTurnOrders(a: TurnOrder, b: TurnOrder): number {
   return turnPhaseOf(a) - turnPhaseOf(b) || Number(a.kind === 'card') - Number(b.kind === 'card');

@@ -241,10 +241,11 @@ export interface CardChoice {
 
 /**
  * The cards the planner plays: every Reinforcement card (it only adds armies). Over
- * the hold limit, with plays still short of what must leave the hand, one Order
- * Priority (my moves go first), then discards of the lowest-value cards. Order Delay
- * (it holds back my own attacks) and Blockade (it gives a territory away) are never
- * auto-played — discarding one costs nothing this turn.
+ * the hold limit, with plays still short of what must leave the hand, the lowest-value
+ * cards leave it (#127): discarded, except an Order Priority, which is played (my first
+ * order goes first; one at most, a second is discarded) — so Order Delay is discarded before
+ * Order Priority is spent. Order Delay (it holds back my own attacks) and Blockade (it gives a
+ * territory away) are never auto-played — discarding one costs nothing this turn.
  */
 export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardChoice {
   const shed = cardsToShed(hand, rules);
@@ -263,15 +264,26 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
     extraArmies += armies;
   }
   if (plays.length < shed) {
-    const op = hand.find((c) => c.type === CARD_ORDER_PRIORITY);
-    if (op) plays.push(op);
-  }
-  if (plays.length < shed) {
     const used = new Set(plays.map((c) => c.id));
     const rest = hand.filter((c) => !used.has(c.id));
-    // A stable sort: equal-value cards are discarded in hand order.
+    // A stable sort: equal-value cards go in hand order. The lowest-value cards leave the hand
+    // (#127: Order Delay goes before Order Priority, which is kept for a turn that needs it); an
+    // Order Priority that must go anyway is played rather than discarded.
     const byValue = rest.map((c, i) => ({ c, i })).sort((a, b) => keepValue(a.c) - keepValue(b.c) || a.i - b.i);
-    for (const { c } of byValue.slice(0, shed - plays.length)) discards.push(c);
+    // At most one Order Priority is played: a second adds nothing over the first, and whether
+    // war.app takes two plays of it in one turn is unverified, so the rest are discarded.
+    const playOne = (c: Card): boolean => c.type === CARD_ORDER_PRIORITY && !plays.some((p) => p.type === CARD_ORDER_PRIORITY);
+    for (const { c } of byValue.slice(0, shed - plays.length)) (playOne(c) ? plays : discards).push(c);
+  }
+  const forced = plays.filter((c) => c.type === CARD_ORDER_PRIORITY);
+  if (forced.length) {
+    warnings.push(
+      `You hold ${hand.length} cards (the limit is ${rules.maxCardsHold}), so ${shed} must be played or discarded this ` +
+        `turn. Playing Order Priority because it is the card that must go (a play costs nothing a discard would keep), ` +
+        'whatever the plan advises for it.',
+    );
+  }
+  if (discards.length) {
     warnings.push(
       `You hold ${hand.length} cards (the limit is ${rules.maxCardsHold}), so ${shed} must be played or discarded this ` +
         `turn. Discarding ${discards.map((c) => c.name).join(', ')} — no play of ${discards.length === 1 ? 'it' : 'them'} ` +
@@ -279,6 +291,11 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
     );
   }
   return { required: shed > 0, plays, discards, extraArmies, warnings };
+}
+
+/** Whether the chosen plays spend an Order Priority card anyway (the hand is over the limit and it must go). */
+export function playsOrderPriority(choice: CardChoice): boolean {
+  return choice.plays.some((c) => c.type === CARD_ORDER_PRIORITY);
 }
 
 /**

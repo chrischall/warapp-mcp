@@ -9,6 +9,7 @@ import {
   CARD_ORDER_DELAY,
   CARD_ORDER_PRIORITY,
   holdsOrderPriority,
+  playsOrderPriority,
   advisedOrderPriority,
   CARD_REINFORCEMENT,
   cardRules,
@@ -37,8 +38,10 @@ import {
   planTurn,
   AHEAD_PRESSURE_FACTOR,
   PRESSURE_FACTOR,
+  symmetricStart,
   trackGame,
   trackOpponents,
+  type MyOrders,
   type TurnBoard,
   type PlanGoal,
   type PlannerSettings,
@@ -66,7 +69,15 @@ import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type L
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
-import { boardFromHistory, CACHED_TURNS, readBoardHistory, writeBoardCache, type TrendSource } from '../trend.js';
+import {
+  boardFromHistory,
+  CACHED_TURNS,
+  readBoardHistory,
+  readCachedOrders,
+  writeBoardCache,
+  writeOrdersCache,
+  type TrendSource,
+} from '../trend.js';
 import type { BoardState } from '../board.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -703,6 +714,14 @@ function mustPlayCard(hand: readonly Card[], rules: CardRules, shed: number, giv
 
 const cardView = (c: Card) => ({ id: c.id, name: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}) });
 
+/** The deploys and moves of a sent turn, as opponent tracking reads my orders (#119); card plays left out. */
+export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
+  return {
+    deploys: orders.flatMap((o) => (o.kind === 'deploy' ? [{ territoryId: o.territoryId, armies: o.armies }] : [])),
+    moves: orders.flatMap((o) => (o.kind === 'move' ? [{ from: o.from, to: o.to, armies: o.armies }] : [])),
+  };
+}
+
 /** Earlier turns that, when all cached, make the GameFeed history read unnecessary. */
 const TREND_TURNS = 2;
 
@@ -719,7 +738,8 @@ export interface BoardHistory {
  * before `turn`, the board this server cached when it planned or tracked that turn (a verified
  * live board), else GameFeed's `GetHistory` standing when the feed sends one (unverified for
  * games in progress). History is read only for turns the cache lacks, and not at all when the
- * last {@link TREND_TURNS} turns are cached. Empty otherwise; never throws.
+ * last {@link TREND_TURNS} turns are cached. Each carries the deploys and moves
+ * `warapp_submit_turn` sent that turn, when it sent them (#119). Empty otherwise; never throws.
  */
 export async function boardHistory(ctx: LiveContext, game: Game, me: Player, turn: number | null): Promise<BoardHistory> {
   if (turn === null || turn < 2) return { boards: [] };
@@ -745,7 +765,14 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
       // History is optional: the cache stands.
     }
   }
-  const boards = [...byTurn].sort(([a], [b]) => a - b).map(([t, b]) => ({ turn: t, board: b.board }));
+  // The orders this server sent on those turns (#119): measurements of what an opponent deployed.
+  const orders = ctx.dataDir ? await readCachedOrders(ctx.dataDir, game.id, me.id) : new Map<number, MyOrders>();
+  const boards = [...byTurn]
+    .sort(([a], [b]) => a - b)
+    .map(([t, b]): TurnBoard => {
+      const o = orders.get(t);
+      return { turn: t, board: b.board, ...(o ? { orders: o } : {}) };
+    });
   const previous = byTurn.get(turn - 1);
   return { boards, ...(previous ? { previous } : {}) };
 }
@@ -771,10 +798,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           '"complete-bonus" — also attacks players to finish bonuses; "defend" — threatened borders worth holding ' +
           'first. An opponent next to the fog may be pressured: each of its visible territories attacked, sized for ' +
           `its full deploy plus a margin, at most ${PRESSURE_FACTOR}× a typical neutral capture each — one visible ` +
-          'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent from its visible bonuses, or ' +
-          'its observed deploy since the previous turn when larger). Obeys the kill rates, luck, rounding, Local ' +
-          'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement and (when cards must go) Order Priority, never ' +
-          "Blockade or Order Delay. The full rule list is in the planner's header and the warapp-mcp skill. " +
+          'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent: ' +
+          'base income plus its visible bonuses, or its observed deploy when larger — its tracked income, carried across turns, once ' +
+          'warapp_track_opponents has 2+ turns of it — and in an even-start 1v1 at least your income when it borders the fog; ' +
+          'growth beside the fog beyond twice what it was expected to deploy reads as a move out of the fog, not a deploy). Obeys the kill rates, luck, rounding, Local ' +
+          'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement, and Order ' +
+          'Priority only when the plan advises it (a withdrawal worth a card, a commander strike) or it is the card that must ' +
+          'go (over the hold limit the lowest-value cards leave first); never Blockade or Order Delay. Moves are listed in the ' +
+          "order to send them (both players' orders interleave). The full rule list is in the planner's header and the warapp-mcp skill. " +
           'When this server kept your pick list (warapp_submit_picks or warapp_get_my_picks during distribution), ' +
           '`award` says what the award of picks showed: the territories of your list that are another player\'s ' +
           'start for certain (in a two-player game they are planned as the opponent\'s while still fogged, with the ' +
@@ -815,9 +846,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .optional()
           .describe(
             'Armies every enemy is assumed to deploy next turn when judging threats. Default, per opponent: base ' +
-              'income plus the bonuses it visibly holds (at most 75% of its largest stack next to you, never below ' +
-              'the base income), or what it was observed to deploy since the previous turn when larger. Income in ' +
-              'the fog is unseen, so raise it if you know they earn more.',
+              'income plus every bonus it visibly holds, whatever its stack next to you (never below the base income), ' +
+              'or what it was observed to deploy when larger, carried across turns (growth beside the fog beyond twice ' +
+              'what it was expected to deploy reads as a move out of the fog, not a deploy). In an even-start 1v1 an opponent ' +
+              'bordering the fog is assumed to earn at least your income. Income in the fog is unseen, so raise it if ' +
+              'you know they earn more.',
           ),
         min_win_chance: z.coerce
           .number()
@@ -825,10 +858,19 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           .max(1)
           .optional()
           .describe(
-            'The least win chance each ordinary capture is sized for, 0.5–1. Default 1: the guaranteed sizing (the ' +
-              'luck-free share alone takes it). Below 1, each capture gets the fewest armies whose exact win chance ' +
-              '(game kill rates, luck, rounding) reaches it — cheaper, but it can fail. Attacks sized for a worst case ' +
-              '(finishing a player off, fog pressure, commander strikes) stay guaranteed.',
+            'The least win chance each ordinary capture is sized for, 0.5–1. Default: 1 (certain: every roll and ' +
+              'rounding takes it) with no luck, 0.95 with luck on. Below 1, each capture gets the fewest armies whose ' +
+              'exact win chance (game kill rates, luck, rounding) reaches it — cheaper, but it can fail — and the ' +
+              'captures a bonus still needs reach it together. Attacks sized for a worst case (finishing a player off, ' +
+              'fog pressure, commander strikes) stay certain.',
+          ),
+        first_mover: z
+          .enum(['me', 'opponent'])
+          .optional()
+          .describe(
+            'Who moves first this turn, when you know (as warapp_check_plan takes it; Cycle and No-Luck Cycle move ' +
+              'orders swap the first mover every turn: whoever moved second last turn moves first now). When you move ' +
+              "first, your first order already runs before the opponent's, so Order Priority is not advised. Default unknown.",
           ),
         view: viewArg(
           VIEWS,
@@ -837,7 +879,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ),
       }),
     },
-    async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, view }) => {
+    async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, first_mover, view }) => {
       const game = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(game);
       const map = mapOf(game);
@@ -896,6 +938,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
           ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
           cards: rules.inPlay.length > 0,
+          // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
+          symmetricStart: symmetricStart(game.settings, map),
         },
         ...(tracks ? { tracks } : {}),
         options: {
@@ -905,9 +949,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           focusBonusIds,
           ...(opponents > 0 ? { opponents } : {}),
           holdsOrderPriority: holdsOrderPriority(hand, cards),
+          ...(playsOrderPriority(cards) ? { orderPriorityForced: true } : {}),
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
+          ...(first_mover !== undefined ? { movesFirst: first_mover === 'me' } : {}),
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);
@@ -964,10 +1010,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         frontier:
           rung === 'full'
             ? plan.frontier
-            : `${plan.frontier.borders} borders (${plan.frontier.enemyBorders} facing an enemy): holding them next turn needs ${plan.frontier.holdCost}, next income ${plan.frontier.income}${
+            : `${plan.frontier.borders} borders (${plan.frontier.enemyBorders} facing an enemy): holding them next turn needs ${plan.frontier.holdCost}, next income ${plan.expected.nextIncome}${
                 plan.expected.nextIncomeIfConcededFall !== undefined &&
-                plan.expected.nextIncomeIfConcededFall < plan.frontier.income
+                plan.expected.nextIncomeIfConcededFall < plan.expected.nextIncome
                   ? `, ${plan.expected.nextIncomeIfConcededFall} if the conceded borders fall`
+                  : ''
+              }${
+                // #128: the figure the frontier is judged against, when it leaves out more (contested bonuses).
+                plan.frontier.income < (plan.expected.nextIncomeIfConcededFall ?? plan.expected.nextIncome)
+                  ? `; the plan counts on ${plan.frontier.income}`
                   : ''
               }`,
         // #72: the offensive options considered, full view only.
@@ -1180,6 +1231,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             });
             if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
             if (handUnknown) warnings.push(UNREADABLE_HAND);
+            if (plays.some((p) => p.kind === 'OrderDelay')) {
+              // Phase 50, after every move, is the only live-verified position for the card.
+              warnings.push(
+                "Order Delay is written after every move (its only verified position), so it delays none of this turn's " +
+                  'orders: playing it only spends the card, as a discard would.',
+              );
+            }
             // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
             const teammates = new Set(
               me.team !== undefined && me.team >= 0
@@ -1261,6 +1319,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               await ctx.rpc.call('SendOrders', Method.SendOrders, (w) =>
                 writeSendOrdersParams(w, st.gameId, st.playerId, st.orders, st.turnNumber),
               );
+              // Sent: keep my deploys and moves for opponent tracking (#119). Best effort, never throws.
+              if (ctx.dataDir) await writeOrdersCache(ctx.dataDir, st.gameId, st.feedPlayerId, st.turnNumber, myOrdersOf(st.orders));
             } catch (e) {
               // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.
               if (e instanceof WarappServerError && e.code === 11) throw incomeRefused(e, st.income, st.incomeGiven);

@@ -239,6 +239,33 @@ describe('SendOrders params', () => {
     );
   });
 
+  it('writes an Order Delay listed between moves after them all: the live-verified shape (#127 review)', () => {
+    // warapp_submit_turn sends card plays ahead of the moves, so a position "among the moves" is
+    // never one the user chose; until a live commit verifies another position, card plays close
+    // their phase, as in the 2026-11-12 commit.
+    const od = 'ffeeddccbbaa99887766554433221100';
+    const playOd = '0B' + 'CCDDEEFF' + 'AABB' + '8899' + '7766554433221100' + '090300000000';
+    const attack = '01000300090000000003000000000A000000090300000000';
+    const transfer = '010003000600000000010000000004000000090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'move', from: 9, to: 10, armies: 3 },
+            { kind: 'card', card: 'OrderDelay', cardId: od },
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '04000000' + '01' + deploy + '01' + attack + '01' + transfer + '01' + playOd + '02000000' + '0000');
+  });
+
   it('writes discards (phase 10) before everything else, Order Priority next', () => {
     // Bundle: GameOrderDiscard.Vd() is TurnPhase 10 (Discards), ahead of Order Priority (12).
     const d = '00112233445566778899aabbccddeeff';

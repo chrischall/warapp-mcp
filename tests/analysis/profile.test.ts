@@ -279,6 +279,17 @@ describe('gameProfile: standing', () => {
 
   // Lost games: "ahead (tracked): 23 against ~12" while holding 65 armies against 138 in view.
   // An opponent's visible armies are a lower bound on what it has; mine are exact.
+  it('says so when the fog prior set the strongest estimate (#119): a floor of my own income, not a reading', () => {
+    // Even-start 1v1 under fog: the opponent is assumed to earn at least my 10.
+    const p = gameProfile(base({ income: 10, estimates: [{ playerId: 20, estimate: 10, source: 'prior' }] }));
+    expect(p.standing).toBe('even');
+    expect(p.notes.join('\n')).toMatch(
+      /Standing even: my income 10 against the strongest opponent, player 20 \(~10, a fog prior: assumed to earn at least my own income, so "ahead" is out of reach unless what it could earn on this board caps it\)/,
+    );
+    // Any other source keeps the plain wording.
+    expect(gameProfile(base({ income: 10, estimates: [{ playerId: 20, estimate: 10, source: 'visible' }] })).notes.join('\n')).toMatch(/\(~10 estimated\)/);
+  });
+
   describe('the armies on the board overrule an income comparison', () => {
     const outnumbered = (theirs: number) =>
       board([mine(1, 5), mine(2, 5), mine(3, 5), enemy(4, theirs, 20), enemy(5, 1, 20), enemy(6, 1, 20), neutral(7, 2), neutral(8, 2)]);

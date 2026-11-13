@@ -163,17 +163,19 @@ describe('a near miss on a held bonus is funded, never withdrawn (#59)', () => {
   });
 
   describe('a garrison that holds against the expected attack', () => {
-    // The enemy moved 20 from 3 to 4 last turn: its net deploy is 0 (so ~5), but 4 "grew"
-    // +20, so the worst-case threat on 1 is 68 + 20 + 20 = 108; the expected one is
-    // movable + deploy = 88 + 5 = 93.
-    const then = boardWith(45, 89, 1);
-    const now = boardWith(45, 69, 21);
+    // The enemy deployed 20 on 4 last turn (5 is in view on both boards, so they cannot have
+    // walked in from the fog), while my estimate says ~5: 4 grows +20/turn, so the worst-case
+    // threat on 1 is 68 + 20 + 20 = 108; the expected one is movable + deploy = 88 + 5 = 93.
+    // (#123: a transfer from 3 to 4 is no trend, so it no longer makes such a gap.)
+    const seen = (b: BoardState): BoardState => board([...b.territories.filter((t) => t.territoryId !== 5), enemy(5, 2)]);
+    const then = seen(boardWith(45, 69, 1));
+    const now = seen(boardWith(45, 69, 21));
 
     it('is funded with everything available, though short of the worst case by far', () => {
       // Holding 108 needs 66 (21 more); 45 + 12 = 57 need 95 to take, above the expected 93.
       expect(armiesToTake(65)).toBe(108);
       expect(armiesToTake(66)).toBe(110);
-      const p = plan(now, 12, { previousBoard: then });
+      const p = plan(now, 12, { previousBoard: then, options: { enemyDeploy: 5 } });
       expect(p.conceded).toEqual([]);
       expect(deployedTo(p, 1)).toBe(12);
       expect(p.moves.some((m) => m.from === 1)).toBe(false);
@@ -191,10 +193,10 @@ describe('a near miss on a held bonus is funded, never withdrawn (#59)', () => {
         [[1, 2], [1, 3], [1, 4], [3, 5], [4, 5], [2, 6], [6, 7]],
         [[801, 'Mill', 1, [1, 2]]],
       ));
-      const before = boardWith(87, 139, 1);
-      const after = boardWith(87, 69, 71);
+      const before = seen(boardWith(87, 69, 1));
+      const after = seen(boardWith(87, 69, 71));
       expect(armiesToTake(87)).toBe(145);
-      const p = planTurn({ graph: cheap, board: after, me: ME, income: 6, settings: STD, previousBoard: before });
+      const p = planTurn({ graph: cheap, board: after, me: ME, income: 6, settings: STD, previousBoard: before, options: { enemyDeploy: 5 } });
       expect(p.conceded).toEqual([1]);
       expect(withdrawals(p, 1)).toEqual([]);
       expect(p.moves.some((m) => m.from === 1)).toBe(false);

@@ -113,7 +113,7 @@ describe('fog reveals are not enemy income (#69)', () => {
     it(`observes the true small deploy when fog lifts over existing stacks (${shape})`, () => {
       const before = previous(hide);
       const o = observeDeploy(g, now, before, ENEMY);
-      expect(o).toEqual({ deploy: 5, counted: [4, 5], captured: [], fromFog: [], fogArmies: 0, reveals: [6, 7, 8] });
+      expect(o).toMatchObject({ deploy: 5, counted: [4, 5], captured: [], fromFog: [], fogArmies: 0, reveals: [6, 7, 8] });
       expect(observedDeploy(g, now, before, ENEMY)).toBe(5);
       const [e] = enemyDeployEstimates(g, now, ME, STD, before);
       expect(e).toMatchObject({ playerId: ENEMY, observed: 5, estimate: 5 });
@@ -170,7 +170,7 @@ describe('fog reveals are not enemy income (#69)', () => {
       fogged(11),
     ]);
     // Net −6 on T6, +5 on T9 and what my 4 killed taking it (round(4 × 70%) = 3, #86): 2.
-    expect(observeDeploy(g, after, before, ENEMY, STD)).toEqual({ deploy: 2, counted: [4, 5, 6, 9], captured: [9], fromFog: [], fogArmies: 0, reveals: [] });
+    expect(observeDeploy(g, after, before, ENEMY, STD)).toMatchObject({ deploy: 2, counted: [4, 5, 6, 9], captured: [9], fromFog: [], fogArmies: 0, reveals: [] });
   });
 
   it('a territory fogged last turn and owned by it now is a reveal, not a capture', () => {
@@ -179,25 +179,27 @@ describe('fog reveals are not enemy income (#69)', () => {
     // T9 was visibly mine: a capture. T6 was fogged: a reveal, whatever it holds. No territory
     // of its own next to T9 was visible both times, so the 7 arrived from the fog (#86): a move,
     // not income. Only what my 4 killed taking it counts (round(4 × 70%) = 3).
-    expect(observeDeploy(g, after, before, ENEMY, STD)).toEqual({ deploy: 3, counted: [4, 5, 9], captured: [9], fromFog: [9], fogArmies: 7, reveals: [6] });
+    expect(observeDeploy(g, after, before, ENEMY, STD)).toMatchObject({ deploy: 3, counted: [4, 5, 9], captured: [9], fromFog: [9], fogArmies: 7, reveals: [6] });
   });
 
   it('caps the observed figure at what the opponent could earn, with a warning', () => {
     // Its 5 visible territories earn base 5; the +30 bonus {10, 11} lies in the fog, so it
-    // could hold it: at most 35. Its visible armies grew by +100 on territories seen both times.
+    // could hold it: at most 35. Its visible armies grew by +100 on territories seen both times;
+    // the 60 on T4, T5 and T6, next to the fogged T10, beyond its expected 5 read as stacks that
+    // walked in from the fog (#123): +40 observed.
     const before = board([mine(1, 6), mine(2, 5), mine(3, 5), enemy(4, 3), enemy(5, 3), enemy(6, 3), enemy(7, 3), enemy(8, 3), mine(9, 4), fogged(10), fogged(11)]);
     const after = board([mine(1, 6), mine(2, 5), mine(3, 5), enemy(4, 23), enemy(5, 23), enemy(6, 23), enemy(7, 23), enemy(8, 23), mine(9, 4), fogged(10), fogged(11)]);
     const [e] = enemyDeployEstimates(g, after, ME, STD, before);
-    expect(e).toMatchObject({ observedRaw: 100, observedCap: 35, observed: 35, estimate: 35, source: 'observed' });
+    expect(e).toMatchObject({ observedRaw: 40, observedCap: 35, observed: 35, estimate: 35, source: 'observed' });
     const p = planTurn({ graph: g, board: after, previousBoard: before, me: ME, income: 11, settings: STD });
     expect(p.enemyDeploy).toBe(35);
     expect(p.warnings.join('\n')).toMatch(
-      /player 20 was observed to deploy \+100\/turn, more than it could earn on this board \(base 5 for its 5 visible territories \+ bonuses it could still hold \+30 = 35\): capped at 35\. Armies moved in from the fog, a Reinforcement card, or a bonus it has lost since may explain the rest\./,
+      /player 20 was observed to deploy \+40\/turn, more than it could earn on this board \(base 5 for its 5 visible territories \+ bonuses it could still hold \+30 = 35\): capped at 35\. Armies moved in from the fog, a Reinforcement card, or a bonus it has lost since may explain the rest\./,
     );
     // A bonus with a territory visibly held by someone else (here: neutral T11) is out of reach.
     const neutralEleven = board([...after.territories.filter((t) => t.territoryId !== 11), neutral(11, 2)]);
     const [f] = enemyDeployEstimates(g, neutralEleven, ME, STD, before);
-    expect(f).toMatchObject({ observedRaw: 100, observedCap: 5, observed: 5 });
+    expect(f).toMatchObject({ observedRaw: 40, observedCap: 5, observed: 5 });
     // Under the cap nothing is cut and nothing is said.
     const q = planTurn({ graph: g, board: now, previousBoard: previous(fogged), me: ME, income: 11, settings: STD });
     expect(q.warnings.join('\n')).not.toMatch(/capped at/);
@@ -212,7 +214,7 @@ describe('fog reveals are not enemy income (#69)', () => {
       { territoryId: 11, owner: { kind: 'player', playerId: 30 }, armies: null, fogLevel: 'OwnerOnly' },
     ]);
     const e = enemyDeployEstimates(g, after, ME, STD, before).find((x) => x.playerId === ENEMY);
-    expect(e).toMatchObject({ observedRaw: 100, observedCap: 5, observed: 5 });
+    expect(e).toMatchObject({ observedRaw: 40, observedCap: 5, observed: 5 });
     // A placeholder owner under full fog is not a holder: the bonus stays within reach.
     const placeholder = board([
       ...after.territories.filter((t) => t.territoryId !== 11),
@@ -247,7 +249,7 @@ describe('fog reveals are not enemy income (#69)', () => {
     // An opponent seen only owner-only still gets an estimate, with no stack to size by.
     const onlyOwnerOnly = board([mine(1, 6), mine(2, 5), mine(3, 5), fogged(4), fogged(5), fogged(6), fogged(7), fogged(8), neutral(9, 2), ownerOnly(10), ownerOnly(11)]);
     const [f] = enemyDeployEstimates(g, onlyOwnerOnly, ME, STD);
-    expect(f).toMatchObject({ playerId: ENEMY, held: 2, bonusIncome: 30, largestStack: 0, stackCap: 0 });
+    expect(f).toMatchObject({ playerId: ENEMY, held: 2, bonusIncome: 30, largestStack: 0, estimate: 35 });
     expect(Number.isFinite(f!.estimate)).toBe(true);
   });
 

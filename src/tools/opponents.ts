@@ -4,7 +4,7 @@
 // the board it read, like warapp_plan_turn, so the history grows on either tool.
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { TRACKED_MIN_TURNS, trackGame, trackOpponents, type ObservedTurn } from '../analysis/index.js';
+import { INFER_REACH, MAX_LISTED_COMBINATIONS, TRACKED_MIN_TURNS, trackGame, trackOpponents, type ObservedTurn } from '../analysis/index.js';
 import { boardStateFromLive } from '../live.js';
 import type { GameMap } from '../normalize.js';
 import { CACHED_TURNS, writeBoardCache } from '../trend.js';
@@ -34,11 +34,15 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           'both turns plus what its captures cost; a stack that only came out of the fog is not income, and no turn ' +
           'exceeds what it could earn), its income estimate (each observed deploy is a lower bound under fog, so: the ' +
           'largest of its last three observed turns, or its visible army growth plus losses per turn (stacks out of the fog left out) when more, capped ' +
-          'at what it could earn and at least its base income plus the bonuses it visibly holds; with the method used ' +
-          'and the observed range), its unaccounted armies (income earned since first ' +
-          'seen minus its visible army change and losses: armies that must be in the fog) and inferred bonuses (the ' +
+          'at what it could earn and at least its base income plus the bonuses it visibly holds; it never decays: an ' +
+          'earlier figure is carried until a bonus it visibly held is visibly broken; orders you sent through warapp_submit_turn count as measurements; with the method used ' +
+          'and the observed range; a turn whose armies could read two ways — a stack walking in from the fog or a deploy, ' +
+          'a capture reinforced on its visible attacker or a stack out of the fog, my emptied territory taken — gives its ' +
+          'low–high range), its unexplainedArmies (income earned since first seen minus its visible army change, losses ' +
+          'and likely combat deaths: in the fog, spent there, or a misread) and inferred bonuses (the ' +
           'combinations of bonuses it could hold whose values best explain the gap between that income and what it ' +
-          `visibly earns — every combination that fits is listed, as candidates). Once an opponent has ${TRACKED_MIN_TURNS}+ ` +
+          `visibly earns, only those within ${INFER_REACH} hops of its territories that it could have paid for, nearest first — ` +
+          `as candidates, none listed when more than ${MAX_LISTED_COMBINATIONS} fit). Once an opponent has ${TRACKED_MIN_TURNS}+ ` +
           "observed turns, warapp_plan_turn uses this income in place of the single-turn observed figure. Every opponent " +
           'still playing is listed, even with no territory in view (visible, turnsUnseen); one with nothing in view gets ' +
           'earnedAtLeast (its starting armies plus the base income every turn so far: a lower bound on armies received, ' +
@@ -53,7 +57,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
         player: playerArg,
         view: viewArg(
           VIEWS,
-          'compact (default) gives each opponent\'s per-turn deploys, income, unaccounted armies, inferred bonuses and notes; "full" adds the territories each turn counted, captured (and which captures came out of the fog) and skipped as fog reveals, and its army change and losses.',
+          'compact (default) gives each opponent\'s per-turn deploys (with a low–high range when ambiguous), income, unexplained armies, inferred bonuses and notes; "full" adds the territories each turn counted, captured (and which captures came out of the fog, were reinforced, or were mine emptied), grew next to the fog, and skipped as fog reveals, and its army change, losses and likely combat deaths.',
         ),
       }),
     },
@@ -84,15 +88,24 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           deploy: x.observed,
           ...(x.raw !== x.observed ? { uncapped: x.raw, cap: x.cap } : {}),
           visibleIncome: x.visibleIncome,
+          // #119: what my own orders that turn measured (defenders my failed attacks killed, …).
+          ...(x.measured ? { measured: x.measured } : {}),
+          ...(x.broken.length ? { brokenBonuses: x.broken.map(bonusOf) } : {}),
+          // #123: an ambiguous turn reads between these (fog moves vs deploys, my emptied stacks).
+          ...(x.low !== x.high ? { range: { low: x.low, high: x.high } } : {}),
           ...(rung === 'full'
             ? {
                 counted: x.counted.map(name),
                 captured: x.captured.map(name),
                 fromFog: x.fromFog.map(name),
+                ...(x.reinforced.length ? { reinforced: x.reinforced.map(name) } : {}),
+                ...(x.grewFromFog.length ? { grewFromFog: x.grewFromFog.map(name) } : {}),
+                ...(x.emptied.length ? { emptied: x.emptied.map(name) } : {}),
                 reveals: x.reveals.map(name),
                 armyChange: x.net,
                 losses: x.losses,
                 earned: x.earned,
+                ...(x.combat ? { combat: x.combat } : {}),
               }
             : {}),
         });
@@ -119,16 +132,18 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
               turns: t.incomeTurns,
               // #99: which term set the estimate, and the spread of what it was observed to deploy.
               method: t.incomeMethod,
+              ...(t.incomeLowered ? { lowered: t.incomeLowered } : {}),
               observedRange: t.observedRange,
               usedByPlanner: t.income !== null && t.turns.length >= TRACKED_MIN_TURNS,
             },
-            unaccountedArmies: t.unaccounted,
+            unexplainedArmies: t.unexplained,
             inferredBonuses: t.inferred
               ? {
                   gap: t.inferred.gap,
                   exact: t.inferred.exact,
-                  candidates: t.inferred.candidates.map((c) => ({ bonuses: c.bonusIds.map(bonusOf), total: c.total })),
+                  candidates: t.inferred.candidates.map((c) => ({ bonuses: c.bonusIds.map(bonusOf), total: c.total, hops: c.hops })),
                   ...(t.inferred.more ? { more: t.inferred.more } : {}),
+                  ...(t.inferred.implausible ? { implausible: t.inferred.implausible } : {}),
                 }
               : null,
             notes: t.notes,
