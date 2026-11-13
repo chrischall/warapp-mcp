@@ -38,7 +38,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
-  is read-only, `warapp_plan_turn` included.
+  is read-only, `warapp_plan_turn` and `warapp_track_opponents` included.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words with a source link from the researched war.app pages, marked
   `source` or `derived`; never paste guide text. `docs/STRATEGY.md` names every note id (a test checks it). With a
@@ -158,8 +158,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
   border's threat to movable + max(that opponent's deploy, growth). `warapp_plan_turn` gets it from
   GameFeed `GetHistory` (unverified in progress, parsed loosely in `src/trend.ts`), else from
-  `<dataDir>/boards/<gameId>.json`, written after each plan (newest two turns kept, so re-planning a
-  turn keeps the trend); it reports `trendSource`.
+  `<dataDir>/boards/<gameId>.json`, written after each plan or track (newest ten turns kept, so
+  re-planning a turn keeps the trend and opponent tracking has a history); it reports `trendSource`.
+- **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
+  history** with the same rules, consecutive turns only: per opponent the observed deploy each
+  turn, income = median of the last three observed turns floored at base + visibly held bonuses,
+  unaccounted armies (earned since first seen − visible army change − visible losses) and
+  inferred bonuses (combinations of up to three bonuses it could hold that best fit the income
+  gap, all of them listed — candidates, never asserted). With 2+ observed turns the planner uses
+  the tracked income in place of the single-turn observed figure (`PlanInput.tracks`) and says so
+  in its rationale; fewer, and the plan is exactly what it was without tracking.
 - **The turn planner (`src/analysis/planner.ts`) is pure and deterministic** (ties on
   ascending id, no I/O; its header comment is the full rule list) and judges every hold and
   capture with the exact combat model (`armiesToTake`, `captureCost`). Its rules, learnt from

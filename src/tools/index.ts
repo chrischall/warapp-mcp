@@ -15,6 +15,7 @@ import { registerMapTool } from './map.js';
 import { registerMapStatsTool } from './map-stats.js';
 import { registerMyGamesTool } from './my-games.js';
 import { registerOpenGamesTool } from './open-games.js';
+import { registerOpponentsTool } from './opponents.js';
 import { registerPickTools } from './picks.js';
 import { registerPushTools } from './push.js';
 import { registerRouteTool } from './route.js';
@@ -95,6 +96,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerBeginTurnTool(server, live);
   registerScoutTool(server, live);
   registerTurnTools(server, live);
+  registerOpponentsTool(server, live);
   registerUncommitTool(server, live);
   registerChatTools(server, live);
   // One push socket per process: keyed on the shared fetchproxy bridge so

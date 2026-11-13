@@ -1,0 +1,124 @@
+// Opponent tracking tool (docs/PLAN-STRATEGY.md S3): what my board history says about each
+// opponent — observed deploys turn by turn, an income estimate, the armies that must be in
+// the fog and the bonuses that could explain an income gap. Read-only on war.app; it caches
+// the board it read, like warapp_plan_turn, so the history grows on either tool.
+import type { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
+import { TRACKED_MIN_TURNS, trackOpponents, type ObservedTurn } from '../analysis/index.js';
+import { boardStateFromLive } from '../live.js';
+import type { GameMap } from '../normalize.js';
+import { CACHED_TURNS, writeBoardCache } from '../trend.js';
+import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
+import { lookupMeta } from './hints.js';
+import { loadLiveGame, type LiveContext } from './live-context.js';
+import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
+import { mapOf } from './map.js';
+import { boardHistory, currentTurn, plannerSettings, requireTurnPhase } from './turn.js';
+
+const VIEWS = ['compact', 'full'] as const;
+
+const namer = (map: GameMap) => {
+  const names = new Map(map.territories.map((t) => [t.id, t.name]));
+  return (id: number) => ({ id, name: names.get(id) ?? String(id) });
+};
+
+export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void {
+  server.registerTool(
+    'warapp_track_opponents',
+    {
+      title: 'Track my opponents in a war.app game',
+      description: untrustedDescription(
+        'Track each opponent of an in-progress war.app (Warzone) game over your own board history (the boards ' +
+          `warapp_plan_turn and this tool have read, the last ${CACHED_TURNS} turns, or the game history when war.app sends it): ` +
+          'per opponent, by name, its observed deploy each turn (the net change of its armies on territories visible ' +
+          'both turns plus what its captures cost; a stack that only came out of the fog is not income, and no turn ' +
+          'exceeds what it could earn), its income estimate (the median of its last three observed turns, at least ' +
+          'its base income plus the bonuses it visibly holds), its unaccounted armies (income earned since first ' +
+          'seen minus its visible army change and losses: armies that must be in the fog) and inferred bonuses (the ' +
+          'combinations of bonuses it could hold whose values best explain the gap between that income and what it ' +
+          `visibly earns — every combination that fits is listed, as candidates). Once an opponent has ${TRACKED_MIN_TURNS}+ ` +
+          "observed turns, warapp_plan_turn uses this income in place of the single-turn observed figure. Notes say how " +
+          'confident each figure is (turns used, missing turns, caps, fog reveals). Only consecutive turns are ' +
+          `compared. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read.`,
+      ),
+      _meta: lookupMeta(['track opponents', 'enemy income', 'what is my opponent earning', 'hidden bonuses']),
+      annotations: readAnnotations('Track war.app opponents'),
+      inputSchema: z.object({
+        game_id: gameIdArg,
+        player: playerArg,
+        view: viewArg(
+          VIEWS,
+          'compact (default) gives each opponent\'s per-turn deploys, income, unaccounted armies, inferred bonuses and notes; "full" adds the territories each turn counted, captured and skipped as fog reveals, and its army change and losses.',
+        ),
+      }),
+    },
+    async ({ game_id, player, view }) => {
+      const game = await ctx.client.getGame(game_id, { settings: true });
+      requireTurnPhase(game);
+      const map = mapOf(game);
+      const me = await resolveMe(ctx, game.players, player);
+      const { territories } = await loadLiveGame(ctx, game);
+      const graph = graphOf(map);
+      const board = boardStateFromLive(territories, me, game.players);
+      const settings = plannerSettings(game.settings);
+      const turn = currentTurn(game);
+      const history = await boardHistory(ctx, game, me, turn);
+      const boards = turn !== null ? [...history.boards, { turn, board }] : [{ turn: 0, board }];
+      const tracks = trackOpponents(graph, boards, me.id, settings);
+      if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+      const name = namer(map);
+      const players = new Map(game.players.map((p) => [p.id, p.name]));
+      const bonusOf = (id: number) => {
+        const b = map.bonuses.find((x) => x.id === id);
+        return { id, name: b?.name ?? String(id), value: b?.value ?? 0 };
+      };
+
+      return respond(view, VIEWS, (rung) => {
+        const turnView = (x: ObservedTurn) => ({
+          turn: x.from,
+          deploy: x.observed,
+          ...(x.raw !== x.observed ? { uncapped: x.raw, cap: x.cap } : {}),
+          visibleIncome: x.visibleIncome,
+          ...(rung === 'full'
+            ? {
+                counted: x.counted.map(name),
+                captured: x.captured.map(name),
+                reveals: x.reveals.map(name),
+                armyChange: x.net,
+                losses: x.losses,
+                earned: x.earned,
+              }
+            : {}),
+        });
+        return {
+          game: { id: game.id, name: game.name ?? null, turn },
+          player: { id: me.id, name: me.name },
+          turns: boards.map((b) => b.turn).sort((a, b) => a - b),
+          opponents: tracks.map((t) => ({
+            player: { id: t.playerId, name: players.get(t.playerId) ?? String(t.playerId) },
+            firstSeen: t.firstSeen,
+            observed: t.turns.map(turnView),
+            income: {
+              estimate: t.income,
+              visible: t.visibleIncome,
+              base: t.base,
+              visibleBonuses: t.bonusIncome,
+              turns: t.incomeTurns,
+              usedByPlanner: t.income !== null && t.turns.length >= TRACKED_MIN_TURNS,
+            },
+            unaccountedArmies: t.unaccounted,
+            inferredBonuses: t.inferred
+              ? {
+                  gap: t.inferred.gap,
+                  exact: t.inferred.exact,
+                  candidates: t.inferred.candidates.map((c) => ({ bonuses: c.bonusIds.map(bonusOf), total: c.total })),
+                  ...(t.inferred.more ? { more: t.inferred.more } : {}),
+                }
+              : null,
+            notes: t.notes,
+          })),
+        };
+      });
+    },
+  );
+}
