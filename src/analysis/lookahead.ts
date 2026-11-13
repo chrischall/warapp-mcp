@@ -8,7 +8,8 @@
 //
 // The one computation behind `warapp_check_plan`'s `exposedNextTurn` (stress.ts, which keeps
 // only the reaches that take the territory) and the planner's two-step hold (planner.ts rule 6,
-// which keeps what the territory needs against them).
+// which keeps what the territory needs against them). `needs` is luck-free (check_plan's measure);
+// the planner measures its hold from `power` as its one-step holds are, never below `needs`.
 
 import type { BoardState } from '../board.js';
 import { COMMANDER_STRENGTH, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
@@ -47,7 +48,9 @@ export interface TwoStepReach {
   via: number;
   /** Armies that would attack it next turn: the survivors and the next deploy, less the guard. */
   attackers: number;
-  /** Armies it would need to hold against them: one more than that attack can kill. */
+  /** That attack's strength: {@link attackers} and the opponent's commander when it comes along. */
+  power: number;
+  /** Armies it would need to hold against them: one more than that attack can kill (luck-free). */
   needs: number;
   /** That attack takes it as it stands. */
   falls: boolean;
@@ -132,6 +135,7 @@ export function twoStepReaches(input: TwoStepInput): TwoStepReach[] {
             from,
             via,
             attackers,
+            power,
             needs: straightKills(power, off) + 1,
             falls: second.territories.get(territory)?.owner !== me,
           });

@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { twoStepReaches } from '../../src/analysis/lookahead.js';
-import { planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import { winChance } from '../../src/analysis/combat.js';
+import { HOLD_FALL_CHANCE, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import { stressPlan } from '../../src/analysis/stress.js';
 import { OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap } from '../../src/normalize.js';
@@ -154,6 +155,31 @@ describe('a held bonus a stack two steps away can reach keeps its hold (#172)', 
     expect(valid(reportedMap, p, b, 17)).toEqual([]);
   });
 
+  it('under Local Deployment a hold only its own pool and the free income could make is hopeless', () => {
+    // T4 is a +25 bonus of its own: of next turn's 40, only T1's pool (12) and the 3 free can land
+    // on T1. 28 + 15 fall short of what T1 needs against ~100; 28 + 40 would not.
+    const map = makeMap(IDS, EDGES, [...KEEP, [102, 25, [4]]]);
+    const b = reported(98);
+    const g = buildGraph(map);
+    const r = twoStepReaches({ graph: g, board: b, me: ME, opponents: [{ id: ENEMY, deploy: 5 }], settings: STD }).find((x) => x.territory === 1)!;
+    expect(28 + 15).toBeLessThan(r.needs);
+    expect(28 + 40).toBeGreaterThanOrEqual(r.needs);
+    const run = (localDeployments: boolean) =>
+      planTurn({
+        graph: g,
+        board: b,
+        me: ME,
+        income: 40,
+        settings: { ...STD, localDeployments },
+        game: { players: [{ id: ME }, { id: ENEMY }], turn: 7 },
+        options: { goal: 'balanced', enemyDeploy: 5 },
+      });
+    expect(leaving(run(false), 1)).toBe(0);
+    const p = run(true);
+    expect(leaving(p, 1)).toBe(27 + deployedTo(p, 1));
+    expect(p.rationale.join('\n')).not.toMatch(/can reach it next turn/);
+  });
+
   it('an attack out of it keeps the hold too', () => {
     // T6, a 2-neutral worth +3 on its own, lies beside T1 only: T1 attacks it with deploys, never
     // with the armies that hold it against the reach.
@@ -167,6 +193,107 @@ describe('a held bonus a stack two steps away can reach keeps its hold (#172)', 
     expect(p.rationale.join('\n')).toMatch(/Attack T6 \(#6\) from T1 \(#1\) with 3 \(deploy 3 there\)/);
     expect(p.rationale.join('\n')).toMatch(/The attack on T6 \(#6\) leaves T1 \(#1\) its hold \(kept \d+ on T1 \(#1\): player 20 can reach it next turn from T3 \(#3\) via T2 \(#2\)/);
     expect(valid(map, p, b, 40)).toEqual([]);
+  });
+
+  // Review of #172: a reach whose stack, or whose territory in between, a LATER order of the same
+  // plan takes is no reach at all; the attacks sized before that order must not keep against it.
+  // Two randomized boards (made-up ids) where it did.
+  const fogged = (territoryId: number): TerritoryState => ({ territoryId, owner: { kind: 'unknown' }, armies: null });
+  const sweep = (ids: number[], edges: [number, number][], bonuses: [number, number, number[]][], b: BoardState, income: number, enemyDeploy: number, goal?: 'defend') => {
+    const map = makeMap(ids, edges, bonuses);
+    const p = planTurn({
+      graph: buildGraph(map),
+      board: b,
+      me: ME,
+      income,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: ENEMY }], turn: 5 },
+      options: { ...(goal ? { goal } : {}), enemyDeploy },
+    });
+    return { map, p };
+  };
+
+  it('a plan that also takes the stack and the territory in between is not cut short by the hold', () => {
+    // T1, a one-territory +5 bonus on 8, faces a reach from the stack on T13 via the neutral T3. The
+    // plan presses T7, T10 and T13 (taking the stack) and takes T3 from T1: neither is a reach then.
+    const b = board([
+      mine(1, 8), mine(2, 11), neutral(3, 1), fogged(4), mine(5, 15), fogged(6), player(7, 5, ENEMY), mine(8, 7),
+      fogged(9), player(10, 3, ENEMY), mine(11, 8), mine(12, 13), player(13, 10, ENEMY),
+    ]);
+    const { map, p } = sweep(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+      [[1, 2], [1, 3], [1, 5], [1, 7], [2, 10], [2, 13], [3, 4], [3, 6], [3, 13], [3, 9], [4, 12], [5, 13], [5, 12], [6, 9], [7, 8], [7, 11], [11, 12]],
+      [[100, 5, [1]], [101, 1, [2, 3, 4]], [102, 0, [5, 6, 7, 8]], [103, 2, [9, 10, 11]], [104, 4, [12, 13]]],
+      b, 6, 5, 'defend',
+    );
+    expect(p.expected.captures).toEqual(expect.arrayContaining([3, 7, 13]));
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 1, to: 3, kind: 'attack' }));
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 1, to: 7, kind: 'attack' }));
+    expect(p.rationale.join('\n')).not.toMatch(/Do not take T3/);
+    expect(p.rationale.join('\n')).not.toMatch(/can reach it next turn/);
+    expect(valid(map, p, b, 6)).toEqual([]);
+  });
+
+  it('an attack out of a guarded territory is sized in full when the plan takes the territory in between later', () => {
+    // T3 (in B100, held) faces a reach from T9 via the neutral T6; the plan takes T9 too.
+    const b = board([
+      mine(1, 23), mine(2, 12), mine(3, 13), player(4, 2, ENEMY), mine(5, 10), neutral(6, 6), neutral(7, 5),
+      neutral(8, 6), player(9, 2, ENEMY), player(10, 2, ENEMY), neutral(11, 1), neutral(12, 2), player(13, 1, ENEMY), mine(14, 8),
+    ]);
+    const { map, p } = sweep(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+      [[1, 2], [1, 9], [2, 3], [2, 5], [2, 9], [2, 10], [2, 11], [3, 4], [3, 6], [3, 7], [3, 8], [5, 7], [5, 8], [5, 13], [5, 6], [6, 12], [6, 9], [7, 14], [7, 11]],
+      [[100, 2, [1, 2, 3]], [101, 2, [4, 5, 6]], [102, 3, [7, 8]], [103, 4, [9, 10]], [104, 0, [11, 12, 13, 14]]],
+      b, 25, 9,
+    );
+    const onT4 = p.moves.find((m) => m.from === 3 && m.to === 4)!;
+    expect(onT4.reason).toMatch(/sized for its full ~9 deploy/);
+    expect(p.rationale.join('\n')).not.toMatch(/can reach it next turn/);
+    expect(valid(map, p, b, 25)).toEqual([]);
+  });
+
+  it('a hold that rules out an order says why, even when no order of its own keeps it', () => {
+    // T11, a one-territory +1 bonus on 11 (2 more arrive from the conceded T10), can be reached from
+    // the stack on T12 via T10. Its hold rules out the attack on T3 that would advance B100: the
+    // plan has no order out of T11 to say so, so it says it at the end.
+    const b = board([
+      neutral(1, 6), fogged(2), neutral(3, 3), mine(4, 8), mine(5, 4), fogged(6), mine(7, 28), neutral(8, 5), fogged(9),
+      mine(10, 3), mine(11, 11), player(12, 5, ENEMY), player(13, 4, ENEMY),
+    ]);
+    const map = makeMap(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+      [[1, 2], [1, 4], [1, 8], [1, 10], [1, 6], [2, 3], [2, 6], [2, 7], [3, 11], [4, 5], [4, 8], [7, 9], [7, 11], [9, 13], [9, 11], [10, 11], [10, 12]],
+      [[100, 4, [1, 2, 3, 4]], [101, 2, [5, 6]], [102, 4, [7, 8]], [103, 3, [9, 10]], [104, 1, [11]], [105, 4, [12, 13]]],
+    );
+    const p = planTurn({ graph: buildGraph(map), board: b, me: ME, income: 4, settings: STD, game: { players: [{ id: ME }, { id: ENEMY }], turn: 1 } });
+    expect(p.moves.filter((m) => m.from === 11)).toEqual([]);
+    expect(p.rationale.join('\n')).toMatch(
+      /Orders out of T11 \(#11\) leave it its hold \(kept 13 on T11 \(#11\): player 20 can reach it next turn from T12 \(#12\) via T10 \(#10\) \(~\d+ attacking; it needs \d+ to hold\)\)\./,
+    );
+    expect(valid(map, p, b, 4)).toEqual([]);
+  });
+
+  it('under luck the hold is measured as a one-step hold is: it falls at most HOLD_FALL_CHANCE of the time', () => {
+    const LUCK: PlannerSettings = { ...STD, luckModifier: 0.16 };
+    const b = reported(12);
+    const g = buildGraph(reportedMap);
+    const r = twoStepReaches({ graph: g, board: b, me: ME, opponents: [{ id: ENEMY, deploy: 5 }], settings: LUCK }).find((x) => x.territory === 1)!;
+    // The luck-free need (check_plan's) against the luck-aware one the one-step holds use.
+    let held = 0;
+    while (winChance(r.attackers, held, { offensiveKillRate: 60, defensiveKillRate: 70, luck: 0.16 }) > HOLD_FALL_CHANCE) held++;
+    expect(held).toBeGreaterThan(r.needs);
+    const p = planTurn({
+      graph: g,
+      board: b,
+      me: ME,
+      income: 40,
+      settings: LUCK,
+      game: { players: [{ id: ME }, { id: ENEMY }], turn: 7 },
+      options: { goal: 'balanced', enemyDeploy: 5 },
+    });
+    expect(p.rationale.join('\n')).toContain(`it needs ${held} to hold`);
+    expect(28 + deployedTo(p, 1) - leaving(p, 1)).toBeGreaterThanOrEqual(held);
+    expect(valid(reportedMap, p, b, 40)).toEqual([]);
   });
 
   it('every plan passes validateTurn', () => {

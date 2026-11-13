@@ -645,11 +645,19 @@
 //     a territory of mine that protects something — a member of a bonus I hold in full, or my
 //     commander's — it keeps what it needs against the strongest such reach: these transfers,
 //     staging, an attack from it (rule 3b's keep, softeners included) and rule 3's top-ups. Never
-//     added to a one-step hold or the hold above (the larger binds), never through a territory
-//     this turn takes or a territory of mine the plan holds (its own hold covers that), and never
-//     when even what is there now and next turn's whole income could not make it hold (keeping
-//     them home saves nothing). A territory protecting nothing is not held so: its armies serve
-//     the front. The rationale says "kept N on X: player P can reach it next turn from Y via Z".
+//     added to a one-step hold or the hold above (the larger binds), never against a reach whose
+//     stack or territory in between this plan takes — by any order, a later one included: when a
+//     two-step hold binds, the plan is made again with those reaches cut (the captures of the plan
+//     and of one whose attacks ignore the hold, narrowed to those the re-made plan still takes,
+//     at most TWO_STEP_PASSES times; else the plan that cuts nothing) — nor through a territory of
+//     mine the plan holds (its own hold covers that), and never when even what is there now and
+//     what next turn can deploy there (the whole income; under Local Deployment its bonuses' pools
+//     and the free rest) could not make it hold (keeping them home saves nothing). What it needs
+//     is measured as a one-step hold is (holdArmies: under luck or weighted-random rounding, it
+//     falls at most HOLD_FALL_CHANCE of the time), never below check_plan's luck-free `needs`. A
+//     territory protecting nothing is not held so: its armies serve the front. The rationale says
+//     "kept N on X: player P can reach it next turn from Y via Z" — on the order that keeps it, or
+//     at the end ("Orders out of X leave it its hold") when it only shrank or ruled out an order.
 //     Under No-Split a transfer that must keep some is not made.
 //     Staging (#125): when the leftover saved toward a step (rule 5), idle armies on my other
 //     territories facing no visible enemy (a border beside neutrals included; never one that
@@ -1921,7 +1929,55 @@ export function planEnemyEstimates(input: {
   return { estimates, prior };
 }
 
+/**
+ * #172: how one planning pass treats the two-step hold. Attacks are sized greedily, so an early
+ * attack out of a guarded territory cannot know that a later order of the same plan takes the
+ * reach's stack or the territory in between; {@link planTurn} learns that from earlier passes.
+ */
+interface TwoStepPass {
+  /** Reaches from, or through, these territories are cut: the plan takes them (a later order included). */
+  readonly cut: ReadonlySet<number>;
+  /** Attacks are sized without the two-step hold (to learn what the plan would take without it). */
+  readonly relaxAttacks: boolean;
+  /** Set by the pass when some two-step hold was found to bind. */
+  used: boolean;
+}
+/** A two-step hold on one territory of mine (#172): what stays, what it needs, and the reach. */
+interface TwoStepHoldAt {
+  /** Armies (in `stayAt` terms) that stay to hold. */
+  stay: number;
+  /** Armies it needs to hold against the reach (as a one-step hold is measured). */
+  needs: number;
+  reach: TwoStepReach;
+}
+/** Passes that refine the cut set (#172) before falling back to the plan that cuts nothing. */
+const TWO_STEP_PASSES = 3;
+
+/**
+ * Plan one turn (see the header). #172: when a two-step hold binds anywhere, the plan is made
+ * again with the reaches cut whose stack or territory in between the plan takes, wherever in the
+ * plan that order lands: first the captures of the plan as made and of one sized without the
+ * hold, then only those the re-made plan still takes, until it takes every territory it cut
+ * (a fixed point, so no cut reach is still there); without one, the plan that cuts nothing.
+ */
 export function planTurn(input: PlanInput): TurnPlan {
+  const first: TwoStepPass = { cut: new Set(), relaxAttacks: false, used: false };
+  const plan = planPass(input, first);
+  if (!first.used) return plan;
+  const free = planPass(input, { cut: new Set(), relaxAttacks: true, used: false });
+  let cut = new Set([...plan.expected.captures, ...free.expected.captures]);
+  for (let i = 0; i < TWO_STEP_PASSES && cut.size > 0; i++) {
+    const pass: TwoStepPass = { cut, relaxAttacks: false, used: false };
+    const p = planPass(input, pass);
+    const taken = new Set(p.expected.captures);
+    const still = new Set([...cut].filter((t) => taken.has(t)));
+    if (still.size === cut.size) return p;
+    cut = still;
+  }
+  return plan;
+}
+
+function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const { graph: g, board, me } = input;
   const s = input.settings ?? {};
   const baseIncome = Math.max(0, Math.floor(s.baseIncome ?? DEFAULT_BASE_INCOME));
@@ -2892,6 +2948,14 @@ export function planTurn(input: PlanInput): TurnPlan {
   const guardsTwoStep = (t: number) => myCommanders.has(t) || heldBonusValue(t) > 0;
   /** Every two-step reach to a territory of mine worth guarding (lookahead.ts, as check_plan), by territory. */
   let twoStepMemo: Map<number, TwoStepReach[]> | undefined;
+  /** Territories whose two-step hold the rationale has explained (see {@link twoStepNote}). */
+  const twoStepNoted = new Set<number>();
+  /**
+   * Territories whose two-step hold kept back armies some order could otherwise have used (an
+   * attack's size, a softener, a finisher, a top-up): each is explained at the end, unless an
+   * order already said so.
+   */
+  const twoStepBound = new Set<number>();
   const twoStepAt = (t: number): readonly TwoStepReach[] => {
     if (!twoStepMemo) {
       twoStepMemo = new Map();
@@ -2931,20 +2995,37 @@ export function planTurn(input: PlanInput): TurnPlan {
    * (its own one-step hold covers it), and so is one it cannot hold even with next turn's whole
    * income deployed there. One-step holds are separate: callers take the larger, never both.
    */
-  const twoStepHold = (t: number, gone: (n: number) => boolean = () => false): { stay: number; reach: TwoStepReach } | null => {
+  const twoStepHold = (t: number, gone: (n: number) => boolean = () => false): TwoStepHoldAt | null => {
     if (!mineSet.has(t) || conceded.has(t) || !guardsTwoStep(t)) return null;
-    let best: { stay: number; reach: TwoStepReach } | null = null;
+    let best: TwoStepHoldAt | null = null;
     for (const r of twoStepAt(t)) {
       if (captured.has(r.via) || captured.has(r.from) || gone(r.via) || gone(r.from)) continue;
+      // Taken by an order of this plan that lands later (planTurn's refining passes).
+      if (pass.cut.has(r.via) || pass.cut.has(r.from)) continue;
       // Through a territory of mine the plan holds: that is its border's one-step hold, not this.
       if (mineSet.has(r.via) && !conceded.has(r.via)) continue;
-      const stay = Math.max(0, r.needs - unitsAt(t));
-      // Hopeless — not even what is there now and next turn's whole income make it hold: keeping
-      // its armies home saves nothing (as {@link keepFor} judges a one-step hold).
-      if (stayAt(t) + Math.max(0, income - cardArmies) < stay) continue;
-      if (!best || stay > best.stay) best = { stay, reach: r };
+      // Measured as a one-step hold is (holdArmies: under luck or weighted-random rounding, it
+      // falls at most HOLD_FALL_CHANCE of the time), never below check_plan's luck-free `needs`.
+      const needs = Math.max(r.needs, holdArmies(r.power));
+      const stay = Math.max(0, needs - unitsAt(t));
+      // Hopeless — not even what is there now and what next turn can deploy there make it hold:
+      // keeping its armies home saves nothing (as {@link keepFor} judges a one-step hold).
+      if (stayAt(t) + nextRoomAt(t) < stay) continue;
+      if (!best || stay > best.stay) best = { stay, needs, reach: r };
     }
-    return best && best.stay > 0 ? best : null;
+    if (!best || best.stay <= 0) return null;
+    pass.used = true;
+    return best;
+  };
+  /**
+   * What next turn could deploy on my `t`, card armies aside: the whole income, or under Local
+   * Deployment only what may land there — the pools of the bonuses holding it and the free rest.
+   */
+  const nextRoomAt = (t: number): number => {
+    const whole = Math.max(0, income - cardArmies);
+    if (!local) return whole;
+    const own = pools.bonuses.filter((b) => b.territoryIds.includes(t)).reduce((n, b) => n + b.value, 0);
+    return Math.min(whole, Math.max(0, pools.anywhere - cardArmies) + own);
   };
   /** {@link twoStepHold} in `avail` terms: what of `t`'s movable armies stays (0 with none). */
   const twoStepKeep = (t: number, gone?: (n: number) => boolean): number => {
@@ -2954,8 +3035,11 @@ export function planTurn(input: PlanInput): TurnPlan {
     return a - Math.max(0, Math.min(a, stayAt(t) - h.stay));
   };
   /** The rationale clause for a two-step hold (#172). */
-  const twoStepNote = (t: number, kept: number, r: TwoStepReach) =>
-    `kept ${kept} on ${label(t)}: player ${r.opponent} can reach it next turn from ${label(r.from)} via ${label(r.via)} (~${r.attackers} attacking; it needs ${r.needs} to hold)`;
+  const twoStepNote = (t: number, kept: number, h: TwoStepHoldAt) => {
+    twoStepNoted.add(t);
+    const r = h.reach;
+    return `kept ${kept} on ${label(t)}: player ${r.opponent} can reach it next turn from ${label(r.from)} via ${label(r.via)} (~${r.attackers} attacking; it needs ${h.needs} to hold)`;
+  };
   /**
    * Fill `threatened` from `borders`, judging each by the armies that stay on it (its
    * armies at the start of the turn unless a finishing-off attack already left).
@@ -4522,11 +4606,12 @@ export function planTurn(input: PlanInput): TurnPlan {
    * steps away needs it to keep — the larger, never both; an attack on the territory in between
    * cuts that reach.
    */
-  const keepOf = (x: number, t: number) =>
-    Math.max(
-      myCommanders.has(x) || (!spendKeeps && safeAtStart.has(x) && !conceded.has(x)) ? keepFor(x, (n) => n === t) : 0,
-      spendKeeps ? 0 : twoStepKeep(x, (n) => n === t),
-    );
+  const keepOf = (x: number, t: number) => {
+    const near = myCommanders.has(x) || (!spendKeeps && safeAtStart.has(x) && !conceded.has(x)) ? keepFor(x, (n) => n === t) : 0;
+    const far = spendKeeps || pass.relaxAttacks ? 0 : twoStepKeep(x, (n) => n === t);
+    if (far > near) twoStepBound.add(x);
+    return Math.max(near, far);
+  };
   /**
    * A conceded border attacks out only with the armies already on it (it is never deployed to),
    * unless every territory I hold is conceded, when there is nowhere better, or (#122) the capture
@@ -4614,7 +4699,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     // #121: the deploys beyond what the attack alone needs keep a safe border holding.
     const forHold = noSplit || force ? 0 : Math.min(need, keepOf(src, t));
     // #172: the source keeps what a stack two steps away needs (when that binds, not its border's hold).
-    const far = noSplit || force || spendKeeps ? null : twoStepHold(src, (n) => n === t);
+    const far = noSplit || force || spendKeeps || pass.relaxAttacks ? null : twoStepHold(src, (n) => n === t);
     const farKeep = far ? twoStepKeep(src, (n) => n === t) : 0;
     const farBinds = far !== null && farKeep > 0 && farKeep >= keepOf(src, t);
     deploy(src, need);
@@ -4646,7 +4731,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         sent > tg.cost ? `, the whole stack (No-Split; ${tg.cost} would take it)` : ''
       }: ${reason}.`,
     );
-    if (farBinds) rationale.push(`The attack on ${label(t)} leaves ${label(src)} its hold (${twoStepNote(src, stayAt(src), far!.reach)}).`);
+    if (farBinds) rationale.push(`The attack on ${label(t)} leaves ${label(src)} its hold (${twoStepNote(src, stayAt(src), far!)}).`);
     else if (forHold > 0) {
       const th = borderAt(src, (n) => captured.has(n));
       if (th)
@@ -7697,7 +7782,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (!mineSet.has(src) || holdLocked.has(src) || conceded.has(src) || myCommanders.has(src)) return 0;
     if (borderAt(src, (x) => captured.has(x))) return 0;
     // #172: nor what a stack two steps away needs it to keep.
-    return Math.max(0, avail.get(src)! - twoStepKeep(src));
+    const far = twoStepKeep(src);
+    if (far > 0) twoStepBound.add(src);
+    return Math.max(0, avail.get(src)! - far);
   };
   /**
    * #120: armies on `src` beyond what holds it once this turn's captures land — none on a hold, a
@@ -7707,7 +7794,10 @@ export function planTurn(input: PlanInput): TurnPlan {
   const spareBeyondHold = (src: number): number => {
     if (!mineSet.has(src) || holdLocked.has(src) || conceded.has(src)) return 0;
     // #172: the larger of its one-step hold and what a stack two steps away needs it to keep.
-    return Math.max(0, avail.get(src)! - Math.max(keepFor(src, () => false), twoStepKeep(src)));
+    const near = keepFor(src, () => false);
+    const far = twoStepKeep(src);
+    if (far > near) twoStepBound.add(src);
+    return Math.max(0, avail.get(src)! - Math.max(near, far));
   };
   /** The plain "assumes its owner does not reinforce" warning on an attack on `t`. */
   const assumes = (t: number) => `Attack on enemy ${label(t)} assumes its owner does not reinforce it first.`;
@@ -7848,7 +7938,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         moves.push({ from: t, to: step, armies: k, kind: 'transfer', reason });
         rationale.push(
           `Move ${k} from ${label(t)} to ${label(step)}: ${reason} (${st.cost} to take from ${label(st.from)}, not affordable this turn)${
-            k < n && far ? `; ${twoStepNote(t, stayAt(t), far.reach)}` : ''
+            k < n && far ? `; ${twoStepNote(t, stayAt(t), far)}` : ''
           }.`,
         );
       }
@@ -7889,7 +7979,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       const k = noSplit && part < n ? 0 : part;
       if (k <= 0) {
         if (twoStep)
-          rationale.push(`Keep the ${n} idle armies on ${label(t)} (${twoStepNote(t, stayAt(t), twoStep.reach)}).`);
+          rationale.push(`Keep the ${n} idle armies on ${label(t)} (${twoStepNote(t, stayAt(t), twoStep)}).`);
         else if (pending.length)
           rationale.push(
             `Keep the ${n} idle armies on ${label(t)}: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat}.`,
@@ -7906,7 +7996,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       rationale.push(
         `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${
           k < n && twoStep
-            ? ` (${twoStepNote(t, stayAt(t), twoStep.reach)})`
+            ? ` (${twoStepNote(t, stayAt(t), twoStep)})`
             : k < n
             ? ` (${stayAt(t)} stay: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat})`
             : ''
@@ -8011,6 +8101,13 @@ export function planTurn(input: PlanInput): TurnPlan {
           } (${startCost} at the start of the turn).${stop}`
         : `Frontier grows faster than income.${stop}`,
     );
+  }
+  // #172: a two-step hold that shrank or ruled out an order (a pressure attack's size, a softener,
+  // a finisher, a top-up) says why, as the orders that keep it do.
+  for (const t of [...twoStepBound].sort(byNum)) {
+    if (twoStepNoted.has(t)) continue;
+    const h = twoStepHold(t);
+    if (h) rationale.push(`Orders out of ${label(t)} leave it its hold (${twoStepNote(t, stayAt(t), h)}).`);
   }
   if (frontier.enemyBorders)
     rationale.push(
