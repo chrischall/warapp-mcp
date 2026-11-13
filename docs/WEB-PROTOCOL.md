@@ -241,9 +241,18 @@ advanced).
 
 Within one phase the encoder writes card plays after the other orders (an Order Delay after
 every AttackTransfer, whatever position it was given): the shape of the 2026-11-12 commit that
-verified phase 50. **Unverified:** whether war.app accepts an Order Delay ahead of an AttackTransfer
-in phase 50 (one live commit with `[deploy, OrderDelay, attack]` settles it; an error 10 would
-mean card plays must close the phase). Until then the encoder never writes it there.
+verified phase 50. **Unverified live:** whether war.app accepts an Order Delay ahead of an
+AttackTransfer in phase 50 (one live commit with `[deploy, OrderDelay, attack]` settles it; an
+error 10 would mean card plays must close the phase). Until then the encoder never writes it there.
+
+What the client bundle says (read 2026-11-13, not live): a new order is inserted after the last
+order of its phase or an earlier one, so a freshly played Order Delay lands after every move; the
+order list's move-up / move-down buttons swap an order only with a neighbour of the **same** phase,
+so a player can raise an Order Delay among the moves but never above the deploys; and
+`GameValidateOrders` answers error 10 only when an order's phase is lower than an earlier order's
+(orders of one phase may come in any order). So the bundle expects `[deploy, OrderDelay, attack]`
+to be accepted — consistent with the 2026-11-12 refusal, which put the card in phase 12 ahead of
+the deploys — but no such commit has been sent, so the position stays unverified on the wire.
 
 **The hold limit (#20).** A play or discard is required only when the hand holds **more** whole
 cards than `MaxCardsHold`: live, a commit with no card was accepted at 4/4 and refused with error
