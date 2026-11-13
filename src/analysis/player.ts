@@ -88,7 +88,9 @@ export function incomeUncertainties(settings: GameSettings | undefined): string[
   if (settings?.minimumArmyBonus === undefined)
     out.push(`The game's base income is missing from its settings; the model assumes ${DEFAULT_BASE_INCOME}.`);
   if (settings?.armyCap !== undefined && settings.armyCap !== null)
-    out.push(`This game has an army cap (${settings.armyCap}× income), which can cut income; the model does not apply it.`);
+    out.push(
+      `This game has an army cap (${settings.armyCap}× income), which can cut income; the income model does not apply it (the planner only spends armies above the cap).`,
+    );
   // Overrides that were read are applied to the map (applyBonusOverrides), so only unreadable ones make income uncertain.
   if (settings?.overriddenBonusesUnparsed) out.push(OVERRIDES_UNPARSED);
   if (settings?.cards.includes('Sanctions')) {

@@ -190,9 +190,12 @@ describe('planTurn — bonus focus', () => {
     expect(attacks(p).map((m) => m.to)).toEqual([2]);
     expect(p.expected.bonusesCompleted).toEqual([201]);
     expect(p.expected.nextIncome).toBe(4);
-    // Balanced scores by income per army: +10 for 6 beats +1 for 3, so it advances Q instead.
+    // Balanced with no bonus held commits to the closest bonus (#101): P finishes this turn
+    // (3 armies, 1 turn at income 3), Q in 2 (6 armies), so P is completed although Q earns more
+    // per army.
     const b = planTurn({ graph: g, board: state, me: ME, income: 3, settings: STD });
-    expect(attacks(b).map((m) => m.to)).toEqual([4]);
+    expect(attacks(b).map((m) => m.to)).toEqual([2]);
+    expect(b.expected.bonusesCompleted).toEqual([201]);
   });
 
   it('expands toward the better bonus when nothing can be completed', () => {

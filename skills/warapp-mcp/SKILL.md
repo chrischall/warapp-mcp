@@ -77,7 +77,7 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   picks it (`goalSource: "profile"` — defend when behind on income in an FFA or team game; in a 1v1
   behind on income it strikes instead: breaks the opponent's bonuses, also ones the tracker infers
   behind the fog) and the first rationale line says why. `view: "full"` lists the offensive
-  options considered (breaks, counter-attacks, and in a 1v1 the strike stack) in `offence`.
+  options considered (breaks, counter-attacks, and in a 1v1 the strike stack and each attack from it) in `offence`.
   Pass a `goal` only when the user asks for one: it overrides the profile. In a Commanders game it counts each
   commander as 7 armies, never concedes the territory holding the user's commander, and
   attacks an adjacent enemy commander first (killing it eliminates that player) once the user's
@@ -206,8 +206,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 `warapp_submit_turn`, and override it when one of these shows up:
 
 1. **A held bonus's border is conceded** (rationale "protects +N … conceded"). This is
-   especially costly when an existing garrison is pulled out after falling just short, or when a
-   Local Deployment pool is parked on interior territories. Check whether an adjacent stack can be
+   especially costly when an existing garrison is pulled out after falling just short. (Under
+   Local Deployment the bonus's own pool already defends its most threatened border and its
+   garrisons stay unless it truly cannot be held.) Check whether an adjacent stack can be
    moved in to hold. At default kill rates defenders kill 70% and attackers 60%, so a border is
    cheaper to hold than to take back.
 2. **The enemy income estimate looks wrong.** Check the "Enemy deploy estimate" line against
@@ -226,8 +227,9 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
    plan's warnings for assumed settings: luck, rounding, Local Deployment, No-Split, overridden
    bonuses and commanders.
 5. **The overall shape.** The planner is single-turn: it charges each capture for the frontier
-   it adds and, in a 1v1, breaks probable enemy bonuses and builds a strike stack, but it does not
-   plan a campaign over several turns. In an FFA it never concentrates on one front and avoids
+   it adds, commits to the bonus closest to completion until one is held (keeping last turn's
+   unless another is strictly closer) and, in a 1v1, breaks probable enemy bonuses and builds a
+   strike stack that attacks every adjacent enemy territory it can take while keeping its hold, but it does not plan a campaign over several turns. In an FFA it never concentrates on one front and avoids
    second fronts; judge yourself when a leader must be attacked.
 
 Every ~3 turns, step back and compare income trends (yours vs each opponent), frontier vs

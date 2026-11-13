@@ -600,6 +600,9 @@ describe('plannerSettings', () => {
     // No-Split (G3): passed through when on.
     expect(plannerSettings({ cards: [], raw: {}, noSplit: true })).toEqual({ noSplit: true });
     expect(plannerSettings({ cards: [], raw: {}, noSplit: false })).toEqual({});
+    // Army cap (#104): armies above it are free to spend; null means no cap.
+    expect(plannerSettings({ cards: [], raw: {}, armyCap: 8 })).toEqual({ armyCap: 8 });
+    expect(plannerSettings({ cards: [], raw: {}, armyCap: null })).toEqual({});
   });
 });
 
