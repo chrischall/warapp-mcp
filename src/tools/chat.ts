@@ -130,7 +130,8 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
           description:
             'Post a chat message in a war.app (Warzone) game — to the whole game, or privately to one named player. ' +
             'The message reaches other players and cannot be unsent. Sent through your signed-in war.app tab ' +
-            `(ContextMint Bridge). ${CONFIRM_INJECTION_RULE}`,
+            '(ContextMint Bridge); the game is read from GameFeed first, so the GameFeed credentials are needed too. ' +
+            `${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
             title: 'Send a war.app chat message',
             readOnly: false,

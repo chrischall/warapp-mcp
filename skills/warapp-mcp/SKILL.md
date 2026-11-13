@@ -219,7 +219,7 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   granted is warned about in the preview, not refused). It is confirm-gated and reports `verified` only when war.app reads back exactly the
   submitted list.
 - **Chat** → `warapp_get_chat` reads it (GameFeed); `warapp_send_chat` posts publicly or
-  privately to one player. Confirm-gated — a message reaches other players and cannot be unsent.
+  privately to one player (through the bridge, after reading the game from GameFeed — both are needed). Confirm-gated — a message reaches other players and cannot be unsent.
 - **"Tell me when it's my turn"** → `warapp_wait_for_turn` with the game ids to watch (1–20; omit
   them to watch every game of the user's being played or picked; `timeout_seconds` default 300, max 1800): it returns as soon as one is waiting on the user
   (or at the timeout; at once with `game_over` when every game finished or the user's seat is out —
