@@ -241,7 +241,8 @@ it as `award`):
   first pick was refused), that is where it started. Reported, not acted on.
 - **Their opening income.** When every start of the opponent's is known, the pick advisor's own
   opening simulation is run from them (my starts never its captures), and on turns 1–4 its income
-  there is the fog prior for that opponent's deploy in place of my own income (`openingIncome`).
+  there raises the fog prior for that opponent's deploy when it is above my own income
+  (`openingIncome`); a lower figure never lowers it, since the simulation is a simple player.
 
 In a two-player game the proven starts that are still fogged are planned on as the opponent's
 territory: with the starting armies on turn 1, when nobody has deployed, and with unknown armies

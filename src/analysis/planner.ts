@@ -126,8 +126,8 @@
 //     least at my own income (card armies out), capped at what it could earn on this board —
 //     every observed figure is a lower bound under fog, and the estimates read 2–3× low
 //     against a finished game's true deploys without it. When the award of picks proved all its
-//     starts (`game.opening`, #166), the prior is instead the income the pick advisor's opening
-//     simulation (`openingIncome`) gives it this turn from those starts. It only raises an
+//     starts (`game.opening`, #166), the prior is the larger of my income and the income the pick
+//     advisor's opening simulation (`openingIncome`) gives it this turn from those starts. It only raises an
 //     estimate; the warning calls it a prior, not an observation, and says which.
 //     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
@@ -953,7 +953,7 @@ export interface PlanGameContext {
   symmetricStart?: boolean;
   /**
    * #166: per opponent, its income this turn simulated from the starts the award of picks proved
-   * (`openingIncome`); with the fog prior on, it replaces my income as that opponent's prior.
+   * (`openingIncome`); with the fog prior on, that opponent's prior is the larger of it and my income.
    */
   opening?: ReadonlyMap<number, number>;
 }
@@ -1273,7 +1273,7 @@ export interface EnemyDeployEstimate {
   couldEarn: number;
   /**
    * The fog prior (#119), when asked for ({@link EnemyIncomePrior}: a symmetric-start 1v1) and
-   * it borders the fog: my own income — or its simulated opening income, when given (#166) — capped
+   * it borders the fog: my own income, or its simulated opening income when given and larger (#166), capped
    * at `couldEarn`; else `null`.
    */
   prior: number | null;
@@ -1296,8 +1296,8 @@ export interface EnemyIncomePrior {
   myIncome: number;
   /**
    * #166: per player, its income this turn from the pick advisor's opening simulation run from
-   * the starts the award of picks proved (`openingIncome`); for that player it replaces
-   * `myIncome` as the prior figure (still capped, still only beside the fog, still only raising).
+   * the starts the award of picks proved (`openingIncome`); for that player the prior figure is the
+   * larger of it and `myIncome` (still capped, still only beside the fog, still only raising).
    */
   opening?: ReadonlyMap<number, number>;
 }
@@ -1749,7 +1749,9 @@ export function enemyDeployEstimates(
     // #119: the fog prior. In a symmetric-start 1v1 an opponent bordering the fog earns at least
     // what I earn, capped at what it could earn on this board. It only ever raises the figure.
     const fogBeside = [...theirs].some((t) => neighborsOf(g, t).some((n) => !ownerShown(seenNow.get(n))));
-    const priorBase = prior?.opening?.get(playerId) ?? prior?.myIncome;
+    // #166: with its starts proven, its opening simulated from them raises the prior when it earns
+    // more than I do; never lowers it (the simulation is a simple player, and #119's evidence read low).
+    const priorBase = Math.max(prior?.myIncome ?? 0, prior?.opening?.get(playerId) ?? 0);
     const priorFigure = prior && fogBeside ? Math.min(Math.max(0, Math.floor(priorBase!)), couldEarn) : null;
     // A track over enough turns replaces the single-turn observed figure (S3).
     const track = tracks?.find((t) => t.playerId === playerId);
@@ -2802,8 +2804,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (e.source === 'prior') {
           warnings.push(
             `Enemy deploy estimate for player ${p}: ~${e.estimate} (a prior, not an observation: ${
-              incomePrior!.opening?.has(p)
-                ? `its opening simulated from the starts the award of picks proved earns ${incomePrior!.opening.get(p)} this turn`
+              (incomePrior!.opening?.get(p) ?? -1) > incomePrior!.myIncome
+                ? `its opening simulated from the starts the award of picks proved earns ${incomePrior!.opening!.get(p)} this turn`
                 : `in a 1v1 that started even, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
             }, capped at the most it could earn on this board, ${e.couldEarn}; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''}); observed deploys are lower bounds under fog, and it could deploy more.`,
           );

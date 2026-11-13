@@ -152,12 +152,14 @@ describe('the opening prior (#166): the opponent simulated from the starts the a
     );
   });
 
-  it('a lower simulated income is the prior too, not my income (the starts are known)', () => {
-    expect(planTurn(input(new Map([[ENEMY, 12]]))).enemyDeploy).toBe(12);
+  it('a lower simulated income never lowers the my-income prior (the simulation is a simple player)', () => {
+    expect(planTurn(input(new Map([[ENEMY, 12]]))).enemyDeploy).toBe(50);
+    const [e] = enemyDeployEstimates(g, s, ME, STD, undefined, undefined, { myIncome: 50, opening: new Map([[ENEMY, 12]]) });
+    expect(e!.prior).toBe(50);
   });
 
   it('never lowers an estimate: below what it visibly earns, the visible figure stands', () => {
-    const [e] = enemyDeployEstimates(g, s, ME, STD, undefined, undefined, { myIncome: 50, opening: new Map([[ENEMY, 2]]) });
+    const [e] = enemyDeployEstimates(g, s, ME, STD, undefined, undefined, { myIncome: 3, opening: new Map([[ENEMY, 2]]) });
     expect(e).toMatchObject({ estimate: 5, source: 'visible' });
   });
 
