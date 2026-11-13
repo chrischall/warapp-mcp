@@ -282,3 +282,23 @@ describe('planPicks — a list is judged by the sets the award order can give (#
     expect(p.rationale.join(' ')).toMatch(/ordered to raise that worst outcome/);
   });
 });
+
+describe('planPicks — commanders (#129)', () => {
+  // Big (+5) = {1} borders three worthless pickables (10, 11, 12): where others may start.
+  // Calm (+3) = {2}, two hops from 1 through 3, with no other pickable near it.
+  const g = () =>
+    mkGraph([[1, 3], [3, 2], [1, 10], [1, 11], [1, 12], [2, 20]], [
+      { id: 100, name: 'Big', value: 5, territoryIds: [1] },
+      { id: 101, name: 'Calm', value: 3, territoryIds: [2] },
+    ]);
+  const input = { pickable: [1, 2, 10, 11, 12], territoryLimit: 2, maxPicks: 2, players: 3 };
+  it('without commanders the primary is in score order', () => {
+    expect(plan({ graph: g(), ...input }).groups.primary.territoryIds).toEqual([1, 2]);
+  });
+  it('with commanders the safest primary pick comes first: it carries the commander', () => {
+    const p = plan({ graph: g(), ...input, settings: { ...STD, commanders: true } });
+    expect(p.groups.primary.territoryIds).toEqual([2, 1]);
+    expect(reasonsOf(p, 2)).toMatch(/[Cc]ommander/);
+    expect(p.rationale.join(' ')).toMatch(/commander/i);
+  });
+});

@@ -80,6 +80,9 @@
 //     outcome is scored with the other players on the starts it implies
 //     (`impliedOpponentStarts`) and reported; the primary is reordered (up to MAX_REORDER
 //     picks) only when another order raises that worst outcome.
+//  5c. Commanders (#129): the first pick awarded carries the commander, so the primary's
+//     safest pick (fewest other pickables within COMPACT_DISTANCE hops, then fewest
+//     neighbours outside the primary, then score) is listed first; the award reorder keeps it.
 //  6. Reasons. reasons[0] is the bonus the pick anchors (worth most to it alone) and its
 //     completion turn and the income it adds, or how much of it is held by the horizon;
 //     then the other bonuses it completes or advances; negatives (shortfalls,
@@ -136,6 +139,7 @@ export type PickSettings = Partial<
     | 'initialPlayerArmiesPerTerritory'
     | 'initialNonDistributionArmies'
     | 'initialNeutralsInDistribution'
+    | 'commanders'
   >
 >;
 
@@ -922,13 +926,31 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   };
   const outcomeSets =
     primary.length > 0 ? pickOutcomes({ listLength: primary.length + fallback.length, perPlayer: primary.length, players }) : null;
+  // Commanders (#129): the first pick awarded carries the commander, so the primary's safest
+  // pick goes first — the fewest other pickable territories (where other players may start)
+  // within COMPACT_DISTANCE hops, then the fewest neighbours outside the primary, then score.
+  let commanderPick: number | null = null;
+  let commanderExposure = 0;
+  if (s.commanders && primary.length) {
+    const inPrimary = new Set(primary);
+    const exposure = (t: number) => pickable.filter((o) => !inPrimary.has(o) && hops(t, o) <= COMPACT_DISTANCE).length;
+    const open = (t: number) => neighborsOf(g, t).filter((n) => !inPrimary.has(n)).length;
+    const score = (t: number) => firstView.of.get(t)!.score;
+    commanderPick = [...primary].sort(
+      (a, b) => exposure(a) - exposure(b) || open(a) - open(b) || score(b) - score(a) || a - b,
+    )[0]!;
+    commanderExposure = exposure(commanderPick);
+    primary.splice(0, primary.length, commanderPick, ...primary.filter((t) => t !== commanderPick));
+  }
   let award: AwardReport | undefined;
   if (outcomeSets) {
     const base = [...primary];
     let bestOrder = base;
     let bestWorst = worstOf([...base, ...fallback], outcomeSets);
     if (primary.length <= MAX_REORDER) {
-      for (const order of permutations(base)) {
+      const orders =
+        commanderPick === null ? permutations(base) : permutations(base.slice(1)).map((rest) => [commanderPick!, ...rest]);
+      for (const order of orders) {
         const w = worstOf([...order, ...fallback], outcomeSets);
         if (w.score > bestWorst.score) {
           bestOrder = order;
@@ -948,7 +970,14 @@ export function planPicks(input: PlanPicksInput): PickPlan {
 
   const pickOf = (t: number) => {
     const a = viewFor(t).of.get(t)!;
-    return { score: a.score, reasons: a.reasons };
+    const commander =
+      t === commanderPick
+        ? [
+            `Commander: listed first, so the commander most likely starts here — the primary's safest pick ` +
+              `(${commanderExposure} other pickable territor${commanderExposure === 1 ? 'y' : 'ies'} within ${COMPACT_DISTANCE} hops)`,
+          ]
+        : [];
+    return { score: a.score, reasons: [...a.reasons, ...commander] };
   };
   const picks: PickChoice[] = [
     ...primary.map((t) => ({ territoryId: t, group: 'primary' as const, ...pickOf(t) })),
@@ -1011,6 +1040,11 @@ export function planPicks(input: PlanPicksInput): PickPlan {
             ? `within ${SPREAD_DISTANCE} hops unless spreading scores ${SPREAD_RELAX_GAIN}× as much.`
             : 'one compact cluster, so the start has one front; the fallback covers a counter-pick.') +
         ' Weigh the trade before submitting.',
+    );
+  if (commanderPick !== null)
+    rationale.push(
+      `Commanders are on: the first pick awarded carries the commander, so the primary's safest pick (${terrName(commanderPick)}: ` +
+        `fewest other pickable territories within ${COMPACT_DISTANCE} hops) is listed first; if another player takes it, the next pick awarded carries it.`,
     );
   if (award) {
     const names = (ids: number[]) => ids.map(terrName).join(', ') || 'none of this list';

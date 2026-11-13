@@ -60,7 +60,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `clientPickLimits`, docs/WARAPP-API.md) runs in tiers of the primary's size. The list is judged by the award
   order (rounds in a reversing move order, each player getting their best free pick: `pickOutcomes`), reporting
   the worst set it can yield and the other players' starts that implies; the primary is reordered only when that
-  raises the worst outcome (#129).
+  raises the worst outcome. With commanders on, the primary's safest pick (fewest other pickables within 2 hops)
+  is listed first, since the first pick awarded carries the commander (#129).
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes. `docs/STRATEGY.md` states the community
   heuristics in our own words with source links (cite, never copy) and marks which are encoded.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a

@@ -198,7 +198,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   per player; past twice the limit in tiers) — with each pick's reasons and `submitPicks` (pass its
   `territories` to `warapp_submit_picks` after review). Its `award` says how many sets the award order
   can grant from the list and the worst of them, with the other players' starts it implies — tell the
-  user. Pass its warnings on (assumed settings); the
+  user. With commanders on, the first pick is the primary's safest: it carries the commander. Pass its
+  warnings on (assumed settings); the
   heuristics and their sources are in docs/STRATEGY.md.
 - **Territory picks** → `warapp_get_my_picks` reads the user's picks; `warapp_submit_picks`
   replaces them (priority order, pickable territories only; a list longer than war.app's client

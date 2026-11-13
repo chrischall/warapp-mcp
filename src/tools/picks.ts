@@ -34,6 +34,7 @@ export function pickSettings(s: GameSettings | undefined): PickSettings {
     'initialPlayerArmiesPerTerritory',
     'initialNonDistributionArmies',
     'initialNeutralsInDistribution',
+    'commanders',
   ] as const satisfies ReadonlyArray<keyof PickSettings>;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (s[k] !== undefined) out[k] = s[k];
