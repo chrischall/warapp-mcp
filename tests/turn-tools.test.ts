@@ -89,6 +89,7 @@ interface PlanPayload {
   cardAdvice: 'order-priority' | null;
   multiSourceCaptures: Named[];
   frontier: string | { borders: number; enemyBorders: number; holdCost: number; income: number };
+  offence?: { target: { id: number; name: string } | string; kind: string; cost: number; value: number; taken: boolean; why: string }[];
   untrusted_content?: boolean;
 }
 
@@ -289,6 +290,18 @@ describe('warapp_plan_turn', () => {
     expect(f.income).toBe(full.expected.nextIncome);
     // Bob's stack sits next to my territories on this board.
     expect(f.enemyBorders).toBeGreaterThan(0);
+  });
+
+  it('reports the offensive options (#72) on full only', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const compact = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(compact.offence).toBeUndefined();
+    const full = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+    expect(Array.isArray(full.offence)).toBe(true);
+    for (const o of full.offence!) {
+      expect(['break', 'strike', 'counter']).toContain(o.kind);
+      expect(typeof o.why).toBe('string');
+    }
   });
 
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {

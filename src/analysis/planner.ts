@@ -17,9 +17,22 @@
 //          turn and loses nothing to this turn's strike / finishing off is skipped when a
 //          neutral bonus capture scores at least SECOND_FRONT_SIMILAR × its score per army.
 //          Finishing off (rule 1e) and strikes (rule 1s) are untouched.
-//       3. Behind: the goal is `defend`, and pressure (rule 1e) is sized with no margin.
+//       3. Behind on income: pressure (rule 1e) is sized with no margin. Outside a 1v1 the goal
+//          is `defend`; in a 1v1 (#72) it stays `balanced` — strike: rule 1's ordering puts
+//          breaks before expansion that completes nothing, and held-bonus units that pay for
+//          themselves still come first (rule 1h). Behind on armies in a 1v1 (my visible armies
+//          and special units below BEHIND_RATIO × the strongest opponent's): no trade below even —
+//          a combined capture of a player's territory whose attacks lose more armies than they
+//          kill (its softeners each attack a stack larger than they can take) is not made.
 //          Ahead in a 1v1: pressure is allowed up to AHEAD_PRESSURE_FACTOR typical
 //          expansions (instead of PRESSURE_FACTOR).
+//       3c. Concentrate (#72; adapting in a 1v1, facing the opponent): the leftover deploy (rule 5) goes
+//          to one strike stack — the open border holding the most armies next to the strongest
+//          opponent (highest income estimate, tracked when trusted) — before any comfort margin;
+//          the rationale names it and `offence` reports it as a strike. Holds still come first:
+//          a border kept for a bonus this turn completes (rule 1c) is first topped up to a
+//          comfortable margin, and any other open border that would fall to just hold. Only in a
+//          1v1: in an FFA or team game (several fronts) the comfort margins keep the leftover.
 //       4. An explicit `goal` always wins: none of the above, and the rationale says the
 //          profile was overridden.
 //  1. Defence. A visible enemy next to my territory T threatens it when
@@ -216,8 +229,15 @@
 //  2. Targets: visible neutrals adjacent to a territory I held at the start of
 //     the turn (plus visible enemy territories under `goal: 'complete-bonus'`, and
 //     under `balanced` only enemy territories in a breakable bonus — one whose
-//     every territory is visible and held by a single enemy; never under
-//     `expand`/`defend`). Fogged or unknown neighbours are never attacked — they
+//     every territory is visible and held by a single enemy, or (#72) a probable one: the
+//     opponent's track over at least TRACKED_MIN_TURNS turns lists it in every combination
+//     fitting its income gap (none unlisted) or in its single best fit (fewer bonuses than the
+//     next), and every member is that opponent's or
+//     hidden — and counter-attack targets: an enemy stack next to me visible on both boards
+//     that shrank fighting me (every neighbour visible on both, one of them mine on both, every
+//     neighbour neither mine nor its owner's unchanged in owner and armies, the shrink not
+//     absorbed by its own neighbours' growth) and is now cheaper to take than it
+//     was; never under `expand`/`defend`). Fogged or unknown neighbours are never attacked — they
 //     produce a warning.
 //  3. Capture cost: `armiesToTake` (0% luck, straight round). With luck L > 0
 //     the cost becomes `ceil(cost / (1 − L))`, i.e. the luck-free share of the
@@ -275,9 +295,13 @@
 //     scored as income per army and taken greedily (focus first, then score, then
 //     cheaper, fewer bonus borders, id): a hold (protected value / hold cost),
 //     completing or advancing a bonus (value / remaining cost), breaking an enemy
-//     bonus (BREAK_WEIGHT / opponents × value / capture cost, aimed at the member
-//     whose survivors would hold against the counter-attack if any, else the
-//     cheapest, warning when it can be retaken). A threatened border whose only
+//     bonus (#72: sized to land, not to survive — aimed at its cheapest visible member, worth
+//     BREAK_WEIGHT / opponents × (its value + the armies retaking it costs, at least
+//     armiesToTake(my survivors), / PAYBACK_TURNS) over its capture cost plus the frontier it
+//     changes without its own hold need, warning when it can be retaken), or a counter-attack
+//     (scored like a break worth no bonus). Every break and counter-attack considered is
+//     reported in `offence` with whether it was made and why (a bonus broken through another
+//     member, by any path, counts as made). A threatened border whose only
 //     visible threat is a member of a breakable bonus also attacks it, once per
 //     bonus: it deploys its hold plus the capture, so what stays still holds if
 //     the enemy reinforces that member first and the attack fails; when it cannot
@@ -302,7 +326,9 @@
 //     A capture that closes a gap lowers it, one that opens fronts raises it. A bonus's score
 //     is net / (cost + DEFENSE_DISCOUNT × defence cost + frontier) — its missing members' own
 //     hold need left out when R3 judged it, never counted twice — at least 1 army; advances,
-//     plain expansion (pass 3) and breaks order by capture cost + frontier. Budget: the plan
+//     plain expansion (pass 3) order by capture cost + frontier; breaks and counter-attacks by
+//     capture cost + frontier without the captured territory's own hold need (#72: a break
+//     only has to land; the frontier change of my borders around it stays). Budget: the plan
 //     reports `frontier` (borders, enemy-facing borders, their hold cost — conceded borders
 //     excluded — and the next income). Under a guarded goal, a capture that adds an enemy-
 //     facing border without completing a bonus (not focused) is undone when the hold cost
@@ -370,7 +396,7 @@ import {
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { chargeDeploys, deployPools } from './local-deploy.js';
 import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from './player.js';
-import { gameProfile, type GameProfile, type ProfilePlayer } from './profile.js';
+import { BEHIND_RATIO, gameProfile, type GameProfile, type ProfilePlayer } from './profile.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
@@ -630,6 +656,25 @@ export interface TurnPlan {
    * expected enemy deploy, and the next income that pays for them.
    */
   frontier: FrontierBudget;
+  /**
+   * The offensive options this plan considered (#72): each bonus break (its cheapest visible
+   * member, "probable" when the opponent tracker inferred the bonus), each counter-attack on a
+   * stack that shrank fighting me, and the strike stack the spare deploys built. `cost` is the
+   * capture's armies (what the final orders send when made; a strike: the armies deployed),
+   * `value` its worth in income terms (a strike: the strongest opponent's income), `taken`
+   * whether the plan makes it (a break: whether any member of the bonus falls this turn, `target`
+   * then being that member), `why` the reason.
+   */
+  offence: OffenceEntry[];
+}
+
+export interface OffenceEntry {
+  target: number;
+  kind: 'break' | 'strike' | 'counter';
+  cost: number;
+  value: number;
+  taken: boolean;
+  why: string;
 }
 
 export interface FrontierBudget {
@@ -1111,10 +1156,14 @@ export function planTurn(input: PlanInput): TurnPlan {
   });
   /** The profile picks the goal and tunes the scoring (rule 0p): adapting, with no explicit goal. */
   const auto = opts.adapt === true && opts.goal === undefined;
-  const goal: PlanGoal = opts.goal ?? (auto && profile.standing === 'behind' ? 'defend' : 'balanced');
+  /** Rule 0p.3: behind on income. */
+  const behind = auto && profile.standing === 'behind';
+  /** Rule 0p.3 (#72): behind on income in a 1v1 — strike (stay balanced, break first), never defend. */
+  const strike = behind && profile.format === '1v1';
+  const goal: PlanGoal = opts.goal ?? (behind && !strike ? 'defend' : 'balanced');
   const balanced = goal === 'balanced';
-  /** Rule 0p.3: behind — defend first and size attacks at the minimum (no pressure margin). */
-  const minimal = auto && profile.standing === 'behind';
+  /** Rule 0p.3: behind — size attacks at the minimum (no pressure margin). */
+  const minimal = behind;
   /** Rule 0p.3: ahead in a 1v1 — pressure allowed at {@link AHEAD_PRESSURE_FACTOR}. */
   const pressureFactor = auto && profile.format === '1v1' && profile.standing === 'ahead' ? AHEAD_PRESSURE_FACTOR : PRESSURE_FACTOR;
   /** The pressure margin over an estimated deploy: none when sizing at the minimum. */
@@ -1154,9 +1203,11 @@ export function planTurn(input: PlanInput): TurnPlan {
   else if (auto) {
     const strongest = estimateList.reduce((m, e) => Math.max(m, e.estimate), 0);
     rationale.push(
-      minimal
-        ? `Goal defend from the game profile (${profileText}): behind on income (${income} against ~${strongest}), so defend first and size attacks at the minimum (no extra margin beyond what the rules require).`
-        : `Goal balanced from the game profile (${profileText}): the base goal.`,
+      strike
+        ? `Goal balanced from the game profile (${profileText}): behind on income (${income} against ~${strongest}) in a 1v1 — strike: break the opponent's bonuses with minimal attacks before expansion that completes nothing (holds of my own bonuses that pay for themselves still come first), sized at the minimum (no extra margin beyond what the rules require).`
+        : minimal
+          ? `Goal defend from the game profile (${profileText}): behind on income (${income} against ~${strongest}), so defend first and size attacks at the minimum (no extra margin beyond what the rules require).`
+          : `Goal balanced from the game profile (${profileText}): the base goal.`,
     );
     if (pressureFactor !== PRESSURE_FACTOR)
       rationale.push(
@@ -1199,6 +1250,35 @@ export function planTurn(input: PlanInput): TurnPlan {
   const myCommanders = new Set(
     mine.filter((id) => (state.get(id)?.specialUnits ?? []).some((u) => u.kind === 'commander' && u.playerId === me)),
   );
+
+  // ---- rule 0p.3 (#72): behind on armies ----
+  // Adapting in a 1v1: my visible armies against the strongest opponent's visible armies, each
+  // with the special units standing on them (a commander fights as COMMANDER_STRENGTH). Behind
+  // (below BEHIND_RATIO×, strictly, as the plan states) means no trade below even: a combined
+  // capture of a player's territory whose attacks lose more armies than they kill is not made.
+  // A single capture needs no check: it kills every defender and loses at most
+  // round(defenders × defensive rate) ≤ defenders, so it never trades below even (pinned by
+  // tests at unusual kill rates) — revisit this if single-capture sizing ever changes.
+  let armiesBehind = false;
+  if (auto && profile.format === '1v1') {
+    const totals = new Map<number, number>();
+    for (const st of state.values())
+      if (st.owner.kind === 'player' && st.armies !== null)
+        totals.set(
+          st.owner.playerId,
+          (totals.get(st.owner.playerId) ?? 0) + st.armies + specialUnitStrength(st.specialUnits),
+        );
+    const myArmies = totals.get(me) ?? 0;
+    const [rival, theirs] = [...totals]
+      .filter(([p]) => p !== me)
+      .sort((a, b) => b[1] - a[1] || a[0] - b[0])[0] ?? [undefined, 0];
+    if (rival !== undefined && theirs > 0 && myArmies < BEHIND_RATIO * theirs) {
+      armiesBehind = true;
+      rationale.push(
+        `Behind on armies (${myArmies} visible against player ${rival}'s ${theirs}): no trade below even — a capture of a player's territory whose attacks lose more armies than they kill is not made.`,
+      );
+    }
+  }
 
   if (!board.verified)
     warnings.push('Board state comes from an unverified parser of the GameFeed standing; check it against the game.');
@@ -1246,6 +1326,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       cardAdvice: null,
       multiSourceCaptures: [],
       frontier: { borders: 0, enemyBorders: 0, holdCost: 0, income },
+      offence: [],
     };
   }
 
@@ -2076,11 +2157,18 @@ export function planTurn(input: PlanInput): TurnPlan {
   // kept any border this turn's captures make valuable; it still goes first in the orders.)
 
   // ---- enemy bonuses I could break (under `balanced`) ----
-  // A bonus is breakable when every territory in it is visible and held by one enemy.
+  // A bonus is breakable when every territory in it is visible and held by one enemy, or (#72)
+  // when the opponent tracker infers it behind the fog: its track (over at least
+  // TRACKED_MIN_TURNS observed turns) lists it in every combination of bonuses that fits the
+  // opponent's income gap (all of them listed), or in its single best fit (the first listed, with
+  // fewer bonuses than the next), and on this board every member
+  // is that opponent's or hidden. Such a break is "probable".
   interface Breakable {
     bonusId: number;
     value: number;
     player: number;
+    /** Why an inferred bonus is probably held (absent when every member is visible). */
+    probable?: string;
   }
   const breakable: Breakable[] = [];
   const breakMember = new Set<number>();
@@ -2095,9 +2183,91 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) visible = false;
         else owners.add(st.owner.playerId);
       }
-      if (!visible || owners.size !== 1) continue;
-      breakable.push({ bonusId: b.id, value: b.value, player: [...owners][0]! });
+      if (visible && owners.size === 1) {
+        breakable.push({ bonusId: b.id, value: b.value, player: [...owners][0]! });
+        for (const t of ts) breakMember.add(t);
+        continue;
+      }
+      // Inferred (#72): one opponent's visible members, the rest hidden, and its track fits it.
+      if (owners.size !== 1) continue;
+      const player = [...owners][0]!;
+      const hiddenOrTheirs = ts.every((t) => {
+        const st = ownerShown(state.get(t));
+        return st === undefined || (st.owner.kind === 'player' && st.owner.playerId === player);
+      });
+      if (!hiddenOrTheirs) continue;
+      const tr = input.tracks?.find((x) => x.playerId === player);
+      const fits = tr && tr.income !== null && tr.turns.length >= TRACKED_MIN_TURNS ? tr.inferred?.candidates : undefined;
+      if (!fits?.length) continue;
+      // "Every" only when the tracker listed every fit (no "and N more"). The best fit must be
+      // strictly smaller than the next: equal-sized fits are ordered only by bonus id.
+      const more = tr!.inferred!.more;
+      const inEvery = more === 0 && fits.every((c) => c.bonusIds.includes(b.id));
+      const single = fits.length === 1 && more === 0;
+      const inBest =
+        fits[0]!.bonusIds.includes(b.id) && (single || (fits[1] !== undefined && fits[0]!.bonusIds.length < fits[1].bonusIds.length));
+      if (!inEvery && !inBest) continue;
+      breakable.push({
+        bonusId: b.id,
+        value: b.value,
+        player,
+        probable: inEvery
+          ? 'in every combination of bonuses that fits its income gap'
+          : 'in the best fit of its income gap',
+      });
       for (const t of ts) breakMember.add(t);
+    }
+  }
+
+  // ---- counter-attacks (under `balanced`, #72) ----
+  // An enemy stack next to me that shrank since the previous board by attacking me: visible on
+  // both boards under the same owner (F1, #69), every neighbour visible on both, one of them a
+  // territory I held on both, every neighbour that was neither mine nor its owner's unchanged in
+  // owner and armies (else it may have expanded or hit a third player), and the shrink not
+  // absorbed by its own neighbours' growth (a transfer). The boards cannot tell its attack on me
+  // from my failed attack on it (both shrink it next to me), so the rationale says "fighting me":
+  // either way it is cheaper to take now. When it is now cheaper to take than it was, it is a strike candidate scored like
+  // a break (rule 4a). A member of a breakable bonus is a break instead.
+  interface Counter {
+    player: number;
+    from: number;
+    to: number;
+    costNow: number;
+    costThen: number;
+  }
+  const counterAt = new Map<number, Counter>();
+  if (balanced && input.previousBoard) {
+    const before = new Map(input.previousBoard.territories.map((t) => [t.territoryId, t]));
+    const heldBy = (st: TerritoryState | undefined, p: number) => st?.owner.kind === 'player' && st.owner.playerId === p;
+    for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
+      if (st.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null || breakMember.has(id)) continue;
+      const p = st.owner.playerId;
+      const ns = neighborsOf(g, id);
+      if (!ns.some((n) => mineSet.has(n))) continue;
+      const was = visibleState(before.get(id));
+      if (!heldBy(was, p) || was!.armies! <= st.armies) continue;
+      if (!ns.every((n) => visibleState(state.get(n)) && visibleState(before.get(n)))) continue;
+      if (!ns.some((n) => mineSet.has(n) && heldBy(before.get(n), me))) continue;
+      // Pinned on me: every neighbour that was neither mine nor theirs keeps its owner and armies.
+      // A neutral it took (an expansion) or a third player it hit could have spent the shrink.
+      const elsewhere = ns.some((n) => {
+        const a = state.get(n)!;
+        const b = before.get(n)!;
+        if (heldBy(b, me) || heldBy(b, p)) return false;
+        const owner = (x: TerritoryState) => (x.owner.kind === 'player' ? x.owner.playerId : x.owner.kind);
+        return owner(a) !== owner(b) || a.armies !== b.armies;
+      });
+      if (elsewhere) continue;
+      const absorbed = ns.reduce((sum, n) => {
+        const a = state.get(n)!;
+        const b = before.get(n)!;
+        return heldBy(a, p) && heldBy(b, p) ? sum + Math.max(0, a.armies! - b.armies!) : sum;
+      }, 0);
+      if (was!.armies! - st.armies <= absorbed) continue;
+      const costNow = costOf(defenceAt(id));
+      const costThen = costOf(was!.armies! + unitsAt(id));
+      if (costNow === null || costThen === null || costNow >= costThen) continue;
+      counterAt.set(id, { player: p, from: was!.armies!, to: st.armies, costNow, costThen });
     }
   }
 
@@ -2116,7 +2286,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     if (st.owner.kind === 'available') continue;
     const enemy = st.owner.kind === 'player';
-    if (enemy && goal !== 'complete-bonus' && !(balanced && breakMember.has(t))) continue;
+    if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t)))) continue;
     const cost = costOf(defenceAt(t));
     if (cost === null) continue;
     targets.set(t, { id: t, cost, enemy, sources });
@@ -2183,6 +2353,27 @@ export function planTurn(input: PlanInput): TurnPlan {
   const scoreCost = (cost: number, frontier: number) => (cost > 0 ? Math.max(1, cost + frontier) : 0);
   /** A target's cost in a score: its capture cost plus the frontier it adds alone. */
   const targetScoreCost = (t: number) => scoreCost(targets.get(t)!.cost, edgeCost.get(t)!);
+  /**
+   * A break's or counter-attack's cost in a score (#72): it only has to land, not survive the
+   * counter-attack, so the captured territory's own hold need is left out. The rest of the
+   * frontier change stays: its border weight, and my borders around it (the threat it removes).
+   */
+  const landScoreCost = (t: number) =>
+    scoreCost(
+      targets.get(t)!.cost,
+      frontierDelta(mineSet, [t], (x) => (x === t ? survivorsOf(t) : armiesOf(x)), false).armies,
+    );
+
+  // ---- offence report (#72) ----
+  /** The offensive options considered, by kind and target, in the order they were found. */
+  const offence = new Map<string, OffenceEntry & { bonusId?: number }>();
+  /** Why an offensive capture was not made, by target (the first reason wins). */
+  const offenceSkip = new Map<number, string>();
+  const skipOffence = (t: number, why: string) => {
+    if (!offenceSkip.has(t)) offenceSkip.set(t, why);
+  };
+  /** Captures of a player's territory refused as a trade below even (rule 0p.3), by target. */
+  const badTrades = new Map<number, { lost: number; killed: number }>();
   /**
    * The frontier when I hold `held`: borders, those facing an enemy, and the deploys they need next
    * turn to hold. A conceded border counts as a border but not in the hold cost: the plan gives it
@@ -2510,6 +2701,19 @@ export function planTurn(input: PlanInput): TurnPlan {
       const w = `Multi-source capture of ${label(t)} skipped: no single source can afford its ${tg.cost}, and ${n} sources together could only at 0% luck under straight rounding, but ${why}.`;
       if (!warnings.includes(w)) warnings.push(w);
       return false;
+    }
+    // Rule 0p.3 (#72): behind on armies, no trade below even. The softeners lose more than
+    // they kill by design (each attacks a stack larger than it can take), so a combined capture
+    // of a player's territory can lose more than the whole stack it destroys.
+    if (armiesBehind && tg.enemy) {
+      const lost =
+        plan.softeners.reduce((n, x) => n + x.armies - x.survivors, 0) + plan.armies - plan.survivors;
+      const killed = plan.softeners.reduce((n, x) => n + x.kills, 0) + plan.left;
+      if (lost > killed) {
+        if (!badTrades.has(t)) badTrades.set(t, { lost, killed });
+        skipOffence(t, `a trade below even while behind on armies (loses ${lost} for ${killed})`);
+        return false;
+      }
     }
     const before = { avail: new Map(avail), incoming: new Map(incoming), deployed: new Map(deployed), budget };
     deploy(plan.finisher, plan.need);
@@ -3369,7 +3573,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       return Math.max(...[...byPlayer].map(([p, movable]) => movable + deployOf(p)));
     };
     interface Candidate {
-      kind: 'hold' | 'unit' | 'complete' | 'advance' | 'break';
+      kind: 'hold' | 'unit' | 'complete' | 'advance' | 'break' | 'counter';
       score: number;
       cost: number;
       id: number;
@@ -3379,7 +3583,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       borders: number;
       run: () => void;
     }
-    const rank = { unit: 0, hold: 0, complete: 1, advance: 2, break: 3 } as const;
+    const rank = { unit: 0, hold: 0, complete: 1, advance: 2, break: 3, counter: 3 } as const;
     const candidates: Candidate[] = [];
     const deferred: Threatened[] = [];
     let expansionLeft = 0;
@@ -3403,14 +3607,22 @@ export function planTurn(input: PlanInput): TurnPlan {
       candidates.push({ kind: 'advance', score, cost: p.cost, id: p.bonusId, value: p.net, focus: p.focus, borders: p.borders, run: spend(() => advance(p)) });
     }
     // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
+    // A break is sized to land (#72): its score leaves out what holding it would need.
     const breakOption = (t: number) => {
       const cost = targets.get(t)!.cost;
       const survivors = cost - straightKills(defenceAt(t), rates.defensiveKillRate);
       const counter = counterThreat(t);
       const take = armiesToTake(survivors, rates);
-      return { t, cost, survivors, counter, take, survives: take === null || take > counter };
+      return { t, cost, survivors, counter, take, survives: take === null || take > counter, scoreCost: landScoreCost(t) };
     };
     type BreakOption = ReturnType<typeof breakOption>;
+    /**
+     * What a strike is worth (#72), in income terms like a hold's worth: the income the opponent
+     * loses this turn plus the armies it must spend to retake the territory (at least what my
+     * survivors need to be taken) over PAYBACK_TURNS, weighted as breaks are.
+     */
+    const strikeWorth = (lost: number, o: BreakOption) => weight * (lost + (o.take ?? o.survivors) / PAYBACK_TURNS);
+    const round2 = (v: number) => Math.round(v * 100) / 100;
     /**
      * At most what a capture of `t` could draw on now: every source free to attack plus the
      * deployable budget. Below its cost the capture cannot be planned this turn.
@@ -3422,7 +3634,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     };
     const broken = (b: Breakable) => bonusTerritories(g, b.bonusId).some((x) => captured.has(x));
     const breakReason = (b: Breakable) =>
-      `breaks enemy bonus ${bonusName(b.bonusId)} (+${b.value} from player ${b.player})`;
+      b.probable
+        ? `breaks probable enemy bonus ${bonusName(b.bonusId)} (+${b.value} from player ${b.player}; ${b.probable})`
+        : `breaks enemy bonus ${bonusName(b.bonusId)} (+${b.value} from player ${b.player})`;
     const warnRetake = (b: Breakable, o: BreakOption) => {
       const warning = retakeWarning(o.t, b.bonusId, o.survivors, o.counter);
       retakeChecks.set(o.t, { bonusId: b.bonusId, survivors: o.survivors, counter: o.counter, warning });
@@ -3447,8 +3661,8 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (!b || !targets.has(n) || broken(b) || orderOf(t.id)) return false;
       const o = breakOption(n);
       if (t.holdCost + o.cost > spareAt(t.id) - rest) return false;
-      // Scored as the break candidates are: its armies plus the frontier it adds (#71).
-      if (secondFront(b, (weight * b.value) / Math.max(1, targetScoreCost(o.t)))) return false;
+      // Scored as the break candidates are: landing armies plus the frontier it adds (#71, #72).
+      if (secondFront(b, strikeWorth(b.value, o) / Math.max(1, o.scoreCost))) return false;
       const before = budget;
       noteRecent(t);
       deploy(t.id, t.holdCost);
@@ -3466,20 +3680,47 @@ export function planTurn(input: PlanInput): TurnPlan {
         `Deploy ${t.holdCost} to ${label(t.id)} so it still holds (protects +${t.value}) after attacking ${label(n)}: ${heldStack(t)} stay, needing ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat if the attack fails.`,
       );
       warnRetake(b, o);
+      // Its own offence entry (#72): the break option may be another member, which never runs.
+      offence.set(`break:${b.bonusId}`, {
+        bonusId: b.bonusId,
+        target: n,
+        kind: 'break',
+        cost: o.cost,
+        value: round2(strikeWorth(b.value, o)),
+        taken: true,
+        why: `${breakReason(b)}, removing the only visible threat to ${label(t.id)}`,
+      });
       return true;
     };
     for (const b of breakable) {
+      // Its cheapest visible member (#72: a break only has to land), then the least frontier, then id.
       const options = bonusTerritories(g, b.bonusId)
         .filter((t) => targets.has(t))
         .map(breakOption)
-        .sort((a, b) => Number(b.survives) - Number(a.survives) || a.cost - b.cost || a.t - b.t);
+        .sort((a, b) => a.cost - b.cost || a.scoreCost - b.scoreCost || a.t - b.t);
       const o = options[0];
       if (!o) continue;
-      const score = (weight * b.value) / Math.max(1, targetScoreCost(o.t));
+      const worth = strikeWorth(b.value, o);
+      const score = worth / Math.max(1, o.scoreCost);
+      offence.set(`break:${b.bonusId}`, {
+        bonusId: b.bonusId,
+        target: o.t,
+        kind: 'break',
+        cost: o.cost,
+        value: round2(worth),
+        taken: false,
+        why: breakReason(b),
+      });
       // An FFA skips a second-front break, but only one the plan could pay for is named as
       // skipped: an unaffordable one is dropped quietly (it could not run either way).
-      if (opensSecondFront(b, score) && !affordable(o.t)) continue;
-      if (secondFront(b, score)) continue;
+      if (opensSecondFront(b, score) && !affordable(o.t)) {
+        skipOffence(o.t, 'not affordable this turn');
+        continue;
+      }
+      if (secondFront(b, score)) {
+        skipOffence(o.t, `no second front in an FFA: player ${b.player} threatens no bonus of mine`);
+        continue;
+      }
       candidates.push({
         kind: 'break',
         score,
@@ -3494,6 +3735,30 @@ export function planTurn(input: PlanInput): TurnPlan {
           if (!tryCapture(o.t, breakReason(b))) return;
           anchor ??= moves[moves.length - 1]!.from;
           warnRetake(b, o);
+        }),
+      });
+    }
+    // Counter-attacks (#72): a stack that shrank fighting me, scored like a break that breaks no
+    // bonus (the armies its owner must spend to retake it). It is already fighting me (it
+    // attacked me, or held off my attack), so it is never a second front.
+    for (const [t, c] of counterAt) {
+      if (!targets.has(t)) continue;
+      const o = breakOption(t);
+      const worth = strikeWorth(0, o);
+      const reason = `counter-attacks player ${c.player}'s ${label(t)}, which shrank from ${c.from} to ${c.to} fighting me last turn (attacking me, or holding off an attack of mine) (${c.costNow} to take now, ${c.costThen} before)`;
+      offence.set(`counter:${t}`, { target: t, kind: 'counter', cost: o.cost, value: round2(worth), taken: false, why: reason });
+      candidates.push({
+        kind: 'counter',
+        score: worth / Math.max(1, o.scoreCost),
+        cost: o.cost,
+        id: t,
+        value: worth,
+        focus: false,
+        borders: 0,
+        run: spend(() => {
+          if (captured.has(t)) return;
+          if (!tryCapture(t, reason)) return;
+          anchor ??= moves[moves.length - 1]!.from;
         }),
       });
     }
@@ -3640,7 +3905,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     };
     candidates.forEach((c, i) => {
       if (done.has(c)) return;
-      if ((c.kind === 'advance' || c.kind === 'break') && !c.focus && !unitsDue) {
+      if ((c.kind === 'advance' || c.kind === 'break' || c.kind === 'counter') && !c.focus && !unitsDue) {
         unitsDue = true;
         // Those waiting for the expansion share outscore everything still to run.
         for (const u of waiting.splice(0)) fundOrConcede(u);
@@ -3774,16 +4039,72 @@ export function planTurn(input: PlanInput): TurnPlan {
     const fogged = [...mine].filter(open).sort((a, b) => foggedNext(b) - foggedNext(a) || a - b).find((id) => foggedNext(id) > 0);
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
+    // Concentrate (#72, adapting in a 1v1 facing the opponent): the spare deploys go to one strike stack
+    // on the border facing the strongest opponent (the highest income estimate, tracked when its
+    // track is trusted), the stack that keeps the most there, rather than to comfort margins.
+    // A 1v1 rule: in an FFA or a team game the comfort margins keep the leftover (several fronts).
+    let stack: { id: number; player: number; income: number; source: string } | undefined;
+    if (auto && profile.format === '1v1' && goal !== 'defend' && facing.size) {
+      const player = [...facing]
+        .map((p) => ({ p, e: estimates.get(p) }))
+        .sort((a, b) => (b.e?.estimate ?? 0) - (a.e?.estimate ?? 0) || a.p - b.p)[0]!;
+      const id = mine
+        .filter(
+          (x) =>
+            open(x) &&
+            neighborsOf(g, x).some((n) => {
+              const st = state.get(n);
+              return !captured.has(n) && st?.owner.kind === 'player' && st.owner.playerId === player.p && st.armies !== null;
+            }),
+        )
+        .sort((a, b) => stays(b) - stays(a) || a - b)[0];
+      if (id !== undefined)
+        stack = {
+          id,
+          player: player.p,
+          income: player.e?.estimate ?? MIN_ENEMY_DEPLOY,
+          source: player.e?.source === 'tracked' ? 'tracked' : player.e?.source === 'observed' ? 'observed' : 'estimated',
+        };
+    }
+    // Holds before the strike stack: a border kept for the bonus this turn completes (rule 1c:
+    // the leftover is its only garrison) is topped up to a comfortable margin, and any other
+    // open border that would fall (its take at or below the threat) to just hold. The stack
+    // gets the rest.
+    if (stack)
+      for (const b of short) {
+        const kept1c = kept.has(b.id);
+        const bar = kept1c ? COMFORT_MARGIN * b.threat : b.threat;
+        const room = roomAt(b.id);
+        let d = 0;
+        for (;;) {
+          const take = armiesToTake(stays(b.id) + d + unitsAt(b.id), rates);
+          if (take === null || take > bar || d >= room) break;
+          d++;
+        }
+        if (d <= 0) continue;
+        rationale.push(
+          `Deploy ${d} to ${label(b.id)} before the strike stack: ${
+            kept1c
+              ? `it is kept for the bonus this turn completes, and the leftover is its only garrison`
+              : `it would fall to the ~${b.threat} threat`
+          } (protects +${valueOf(b.id)}).`,
+        );
+        deploy(b.id, d);
+      }
     let where: number;
     let why: string;
-    if (short[0]) {
+    let lock = false;
+    if (stack) {
+      lock = true;
+      where = stack.id;
+      why = `one strike stack on the border facing player ${stack.player}, the strongest opponent (~${stack.income} income, ${stack.source}), not spread`;
+    } else if (short[0]) {
       where = short[0].id;
       why = `the held border with the most at stake (protects +${valueOf(where)}), still short of a comfortable margin over the ~${short[0].threat} threat`;
     } else if (expansion !== undefined && open(expansion)) {
       where = expansion;
       why = 'the stack working on the top expansion';
-      // Keep it there: the transfer step must not walk it back as "idle interior" armies.
-      locked.add(where);
+      lock = true;
     } else if (fogged !== undefined) {
       where = fogged;
       why = 'the border with the most fogged neighbours';
@@ -3802,6 +4123,18 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (n > 0) {
       rationale.push(`Deploy the leftover ${n} to ${label(where)}: ${why}.`);
       deploy(where, n);
+      // Keep a strike or expansion stack there: the transfer step must not walk it back as "idle
+      // interior" armies. Only when it got deploys (under Local Deployment it may get none).
+      if (lock) locked.add(where);
+      if (stack)
+        offence.set(`strike:${where}`, {
+          target: where,
+          kind: 'strike',
+          cost: n,
+          value: stack.income,
+          taken: true,
+          why: `the spare deploys build one strike stack facing player ${stack.player}, the strongest opponent (~${stack.income} income, ${stack.source})`,
+        });
     }
     // Local Deployment: what is left of each bonus pool stays inside its bonus, on its
     // most threatened member (not conceded first; ties by id). One charge, taken before
@@ -4023,6 +4356,38 @@ export function planTurn(input: PlanInput): TurnPlan {
     warnings.push(
       'No-Split is on: each order sends the planned armies, not every movable army; whether war.app also requires sending all movable armies from a territory is unverified.',
     );
+
+  // ---- offence report (#72) ----
+  for (const [t, { lost, killed }] of [...badTrades].sort((a, b) => a[0] - b[0]))
+    if (!captured.has(t))
+      rationale.push(
+        `Not attacking ${label(t)}: the combined capture loses ${lost} armies for the ${killed} it kills, a trade below even while behind on armies.`,
+      );
+  /** What the final orders send at `t` (a top-up of idle armies can raise a capture's size). */
+  const sentAt = (t: number) => moves.reduce((n, m) => (m.kind === 'attack' && m.to === t ? n + m.armies : n), 0);
+  const offenceList = [...offence.values()].map(({ bonusId, ...o }): OffenceEntry => {
+    if (o.kind === 'strike') return o;
+    // A bonus broken this turn is a break made, whichever member fell and whatever path took it.
+    const via = captured.has(o.target)
+      ? o.target
+      : bonusId !== undefined
+        ? bonusTerritories(g, bonusId).filter((x) => captured.has(x)).sort(byNum)[0]
+        : undefined;
+    if (via !== undefined)
+      return {
+        ...o,
+        target: via,
+        cost: sentAt(via) || o.cost,
+        taken: true,
+        why: via === o.target ? o.why : `already broken by the capture of ${label(via)}: ${o.why}`,
+      };
+    return {
+      ...o,
+      taken: false,
+      why: `not made — ${offenceSkip.get(o.target) ?? 'other uses of the income scored higher per army, or it could not be afforded'}: ${o.why}`,
+    };
+  });
+
   return {
     goal,
     profile,
@@ -4039,5 +4404,6 @@ export function planTurn(input: PlanInput): TurnPlan {
     cardAdvice,
     multiSourceCaptures: [...combined].sort(byNum),
     frontier,
+    offence: offenceList,
   };
 }

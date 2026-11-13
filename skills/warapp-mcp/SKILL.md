@@ -73,7 +73,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   `orders` array. It is read-only and refuses outside a turn phase. Review the plan and its
   warnings with the user before anything is submitted. Every plan carries the game `profile`
   (format 1v1/ffa/teams, phase, standing ahead/even/behind/unknown); with no `goal` the profile
-  picks it (`goalSource: "profile"` — defend when behind) and the first rationale line says why.
+  picks it (`goalSource: "profile"` — defend when behind on income in an FFA or team game; in a 1v1
+  behind on income it strikes instead: breaks the opponent's bonuses, also ones the tracker infers
+  behind the fog) and the first rationale line says why. `view: "full"` lists the offensive
+  options considered (breaks, counter-attacks, and in a 1v1 the strike stack) in `offence`.
   Pass a `goal` only when the user asks for one: it overrides the profile. In a Commanders game it counts each
   commander as 7 armies, never concedes the territory holding the user's commander, and
   attacks an adjacent enemy commander first (killing it eliminates that player) once the user's

@@ -835,9 +835,10 @@ describe('planTurn — balanced', () => {
     }
   });
 
-  it('prefers a break target whose capture survives the counter-attack', () => {
+  it('aims a break at its cheapest member: a break only has to land (#72)', () => {
     // Bonus {T5, T6}: T5 (2) is cheap but next to a 20-army T7; T6 (10) costs 16 and its
-    // 9 survivors need 15 to take against T5's 1 movable + 5 deploy.
+    // 9 survivors need 15 to take against T5's 1 movable + 5 deploy. Before #72 the survivable
+    // T6 was preferred; the opponent loses the +2 this turn either way, so T5 (3) is taken.
     const g = buildGraph(
       makeMap(
         [1, 5, 6, 7],
@@ -852,8 +853,8 @@ describe('planTurn — balanced', () => {
     );
     const s = board([mine(1, 20), enemy(5, 2), enemy(6, 10), enemy(7, 20)]);
     const p = planTurn({ graph: g, board: s, me: ME, income: 0, settings: STD, options: { enemyDeploy: 5 } });
-    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 6, 16]]);
-    expect(p.warnings.join('\n')).not.toMatch(/retaken/);
+    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 3]]);
+    expect(p.warnings.join('\n')).toMatch(/T5 \(#5\) can be retaken after it breaks B812/);
   });
 
   it('weighs a break by the number of opponents', () => {

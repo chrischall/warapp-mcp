@@ -236,11 +236,13 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
   });
 
   it('a threatened border attacking its only threat judges the break on the same cost (frontier included)', () => {
-    // T1 (4) is threatened only by T5, all of B822 (+14). Scored on its armies plus the
-    // enemy-facing border T5 adds (#71), the break earns 1.33 per army, under twice the
-    // neutral's 1.00: a second front. The border's own attack on its threat must use that same
-    // cost, not the armies alone (7 / 3 per army clears the bar), so it holds instead of breaking.
-    const g14 = buildGraph(
+    // T1 (4) is threatened only by T5, all of B822 (+10). A break is scored to land (#72): worth
+    // 0.5 × (10 + armiesToTake(2 survivors) / 10) = 5.15 over 3 armies plus the frontier it
+    // changes without T5's own hold need (T5 opens a border, +0.25; T1's enemy-facing need of 1
+    // and weight close, −1.25): 2.25, so 2.29 per army — over twice the neutral's 1.00, not a
+    // second front. The border's own attack on its threat must use that same cost: on the
+    // armies alone (5.15 / 3 = 1.72) it would be skipped as a second front.
+    const g10 = buildGraph(
       makeMap(
         [1, 2, 5, 6, 9],
         [
@@ -250,15 +252,21 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
         ],
         [
           [821, 3, [2]],
-          [822, 14, [5]],
+          [822, 10, [5]],
         ],
       ),
     );
     const thin = board([mine(1, 4), neutral(2, 2), enemy(5, 2), enemy(6, 2), enemy(9, 2, THIRD)]);
-    const p = planTurn({ ...input({ adapt: true }, thin), graph: g14 });
-    expect(why(p)).toMatch(/Not breaking B822 \(#822\) \(\+14 from player 20\): no second front in an FFA/);
-    expect(attacks(p).map((m) => m.to)).not.toContain(5);
-    expect(why(p)).not.toMatch(/only visible threat/);
+    const p = planTurn({ ...input({ adapt: true }, thin), graph: g10 });
+    expect(why(p)).not.toMatch(/Not breaking/);
+    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[1, 5, 3]]);
+    expect(why(p)).toMatch(/T5 \(#5\) is the only visible threat to T1 \(#1\)/);
+    // At +8 the same cost gives 4.15 / 2.25 = 1.84 per army: a second front, so it only holds.
+    const g8 = buildGraph(makeMap([1, 2, 5, 6, 9], [[1, 2], [1, 5], [5, 6]], [[821, 3, [2]], [822, 8, [5]]]));
+    const held = planTurn({ ...input({ adapt: true }, thin), graph: g8 });
+    expect(why(held)).toMatch(/Not breaking B822 \(#822\) \(\+8 from player 20\): no second front in an FFA/);
+    expect(attacks(held).map((m) => m.to)).not.toContain(5);
+    expect(why(held)).not.toMatch(/only visible threat/);
   });
 
   it('does not fire in a 1v1', () => {
@@ -269,8 +277,9 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
 });
 
 // Rule 0p.3, behind. The (d)-like board: two thin borders each a held +1 next to an enemy,
-// and a cheap +3 next door. Income 3 against the enemy's ~5: behind, so the goal is defend.
-describe('rule 0p.3: behind defends first', () => {
+// and a cheap +3 next door. Income 3 against the enemy's ~5: behind. In an FFA the goal is
+// defend; in a 1v1 (#72) behind on income means strike, so the goal stays balanced.
+describe('rule 0p.3: behind defends first in an FFA', () => {
   const g = buildGraph(
     makeMap(
       [1, 2, 3, 4, 5, 6, 8, 9],
@@ -297,7 +306,8 @@ describe('rule 0p.3: behind defends first', () => {
     me: ME,
     income: 3,
     settings: STD,
-    game: { players: [{ id: ME }, { id: ENEMY }] },
+    // #72: a third player (out of sight) makes it an FFA; a 1v1 behind on income strikes instead.
+    game: { players: [{ id: ME }, { id: ENEMY }, { id: THIRD }] },
     options,
   });
 
@@ -308,7 +318,14 @@ describe('rule 0p.3: behind defends first', () => {
     const d = planTurn(input({ goal: 'defend' }));
     expect(p.deploys).toEqual(d.deploys);
     expect(p.moves).toEqual(d.moves);
-    expect(why(p)).toMatch(/Goal defend from the game profile \(1v1, contact, behind\): behind on income \(3 against ~5\)/);
+    expect(why(p)).toMatch(/Goal defend from the game profile \(ffa, contact, behind\): behind on income \(3 against ~5\)/);
+  });
+
+  it('in a 1v1 the same board keeps the goal balanced (#72: behind on income means strike)', () => {
+    const p = planTurn({ ...input({ adapt: true }), game: { players: [{ id: ME }, { id: ENEMY }] } });
+    expect(p.profile).toMatchObject({ format: '1v1', standing: 'behind' });
+    expect(p.goal).toBe('balanced');
+    expect(why(p)).toMatch(/behind on income \(3 against ~5\) in a 1v1 — strike/);
   });
 
   it('an explicit goal still wins when behind', () => {
@@ -371,10 +388,11 @@ describe('rule 0p.3: pressure when ahead in a 1v1, and the minimum when behind',
     expect(why(p)).toMatch(/Pressure player 20/);
   });
 
-  it('behind (4 against ~6): defend, and pressure is sized with no margin', () => {
+  it('behind (4 against ~6): pressure is sized with no margin', () => {
     // At ~6 with no margin the capture costs 10 (within 4 × 3): attacked at exactly that.
+    // #72: behind on income in a 1v1 strikes, so the goal is balanced (it was defend).
     const p = planTurn(input(4, { adapt: true }));
-    expect(p.goal).toBe('defend');
+    expect(p.goal).toBe('balanced');
     expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 5, armies: captureCost(6, STD)! }));
     expect(p.warnings.join('\n')).toMatch(/its ~6 estimate with no margin: behind, attacks are sized at the minimum/);
   });
