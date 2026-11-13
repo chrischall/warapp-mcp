@@ -85,6 +85,8 @@ export interface SimOrder {
 export interface SimInput {
   graph: MapGraph;
   board: BoardState;
+  /** Start from these territories in place of the board: the end of an earlier simulated turn. */
+  start?: ReadonlyMap<number, SimTerritory>;
   deploys: readonly SimDeploy[];
   /** Each player's attack and transfer orders, in the order that player listed them. */
   orders: readonly { player: number; orders: readonly SimOrder[] }[];
@@ -183,7 +185,7 @@ export function simulateTurn(input: SimInput): SimResult {
 
   const cells = new Map<number, Cell>();
   const ownerAtStart = new Map<number, SimOwner>();
-  for (const [id, t] of simTerritories(input.board)) {
+  for (const [id, t] of input.start ?? simTerritories(input.board)) {
     cells.set(id, { ...t, moved: 0 });
     ownerAtStart.set(id, t.owner);
   }

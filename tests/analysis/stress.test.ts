@@ -228,6 +228,83 @@ describe('stressPlan', () => {
     expect(r.atRisk.bonuses).toEqual([]);
   });
 
+  describe('one turn ahead (#156)', () => {
+    // 1 ─ 2 ─ 3 ─ 4: territory 1 is a one-territory +12 bonus two steps from the stack on 3.
+    const KEEP = makeMap(4, [[1, 2], [2, 3], [3, 4]], [[100, 12, [1]]]);
+
+    it('lists a territory left thin behind one the enemy can take this turn', () => {
+      // The bonus holds 1 army. This turn the 20 (+5) take territory 2 and 23 hold it; next turn
+      // 23 + 5 less the guard, 27, reach that 1 army.
+      const r = stress(KEEP, [mine(1, 1), mine(2, 1), foe(3, 20), foe(4, 1)]);
+      expect(r.exposedNextTurn).toEqual([
+        { territory: 1, armies: 1, opponent: FOE, from: 3, via: 2, attackers: 27, needs: 17, bonusesLost: [{ id: 100, value: 12 }], incomeLost: 12 },
+      ]);
+    });
+
+    it('reads the territory as my own orders leave it', () => {
+      // The plan walks 15 of the 16 out, toward the stack. Struck first, territory 2 is already the
+      // enemy's when they arrive: they attack its 23, kill 9 and die. 14 + 5 less the guard reach the 1 left.
+      const r = stress(KEEP, [mine(1, 16), mine(2, 1), foe(3, 20), foe(4, 1)], { moves: [{ from: 1, to: 2, armies: 15 }], firstMover: 'opponent' });
+      expect(r.exposedNextTurn).toEqual([expect.objectContaining({ territory: 1, armies: 1, via: 2, attackers: 18, needs: 12 })]);
+    });
+
+    it('says how much would hold it, and drops it once that much is there', () => {
+      // 16 kept: 27 attackers kill 16, so it still falls — it needs 17.
+      const kept = stress(KEEP, [mine(1, 16), mine(2, 1), foe(3, 20), foe(4, 1)]);
+      expect(kept.exposedNextTurn).toEqual([expect.objectContaining({ territory: 1, armies: 16, attackers: 27, needs: 17 })]);
+      const held = stress(KEEP, [mine(1, 17), mine(2, 1), foe(3, 20), foe(4, 1)]);
+      expect(held.exposedNextTurn).toEqual([]);
+    });
+
+    it('looks through a neutral in between as well as a territory of mine', () => {
+      const r = stress(KEEP, [mine(1, 3), neutral(2, 2), foe(3, 20), foe(4, 1)]);
+      expect(r.exposedNextTurn).toEqual([expect.objectContaining({ territory: 1, via: 2, from: 3 })]);
+      // This turn nothing of mine is in reach, so this turn's verdict is not "unsafe".
+      expect(r.safe).toBeNull();
+    });
+
+    it('does not list what the stack cannot reach: the territory in between holds, or the next blow falls short', () => {
+      expect(stress(KEEP, [mine(1, 1), mine(2, 30), foe(3, 20), foe(4, 1)]).exposedNextTurn).toEqual([]);
+      expect(stress(KEEP, [mine(1, 30), mine(2, 1), foe(3, 20), foe(4, 1)]).exposedNextTurn).toEqual([]);
+    });
+
+    it('leaves territories the stack already touches to this turn\'s replies', () => {
+      // Territory 2 is next to the stack now: it is in the replies, not in the look-ahead.
+      const r = stress(KEEP, [mine(1, 30), mine(2, 1), foe(3, 20), foe(4, 1)]);
+      expect(r.replies.some((x) => x.lost.includes(2))).toBe(true);
+      expect(r.exposedNextTurn.map((e) => e.territory)).not.toContain(2);
+    });
+
+    it('cannot look through fog, and never from a teammate\'s stack', () => {
+      expect(stress(KEEP, [mine(1, 1), fogged(2), foe(3, 20), foe(4, 1)]).exposedNextTurn).toEqual([]);
+      const allied = stress(KEEP, [mine(1, 1), mine(2, 1), foe(3, 20, 40), neutral(4, 1)], {
+        opponents: [{ id: FOE, deploy: 5 }],
+        teams: new Map([
+          [ME, 1],
+          [40, 1],
+          [FOE, 2],
+        ]),
+      });
+      expect(allied.exposedNextTurn).toEqual([]);
+    });
+
+    it('lists the costliest exposure first, one line per territory', () => {
+      // Two stacks can each come through: territory 1 (+12) and territory 6 (no bonus).
+      const map = makeMap(7, [[1, 2], [2, 3], [3, 4], [5, 6], [6, 7], [5, 3]], [[100, 12, [1]]]);
+      // 3 (foe) touches 2 (mine, →1) and 5 (mine, →6).
+      const r = stress(map, [mine(1, 2), mine(2, 1), foe(3, 20), foe(4, 1), mine(5, 1), mine(6, 2), neutral(7, 2)]);
+      expect(r.exposedNextTurn.map((e) => [e.territory, e.via, e.incomeLost])).toEqual([
+        [1, 2, 12],
+        [6, 5, 0],
+      ]);
+    });
+
+    it('can be switched off', () => {
+      const r = stress(KEEP, [mine(1, 1), mine(2, 1), foe(3, 20), foe(4, 1)], { lookAhead: false });
+      expect(r.exposedNextTurn).toEqual([]);
+    });
+  });
+
   it('is deterministic, orders replies worst first, and caps the list', () => {
     const map = makeMap(7, [[1, 2], [1, 3], [1, 4], [2, 5], [3, 6], [4, 7]], [[100, 5, [1, 2]], [101, 2, [1, 3]]]);
     const entries = [mine(1, 1), mine(2, 1), mine(3, 1), mine(4, 1), foe(5, 4), foe(6, 4), foe(7, 4)];

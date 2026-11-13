@@ -17,6 +17,13 @@
 // Each is run with me moving first and with the opponent moving first, unless the first mover
 // is known; two runs that end the same are reported once.
 //
+// One turn ahead (`exposedNextTurn`): a territory of mine that no enemy stack touches today can
+// be a border tomorrow. For each stack, each territory beside it that it can take this turn (mine
+// or neutral), and each territory of mine beyond that one, the two turns are carried out: the
+// stack takes the one in between with its deploy, then attacks on with the survivors and its next
+// deploy. A territory that falls is listed with the armies it would need to hold. I am taken to
+// add nothing next turn: it shows what the orders leave exposed, not what will happen.
+//
 // What this does NOT cover, so "safe" is only ever "safe against these": stacks hidden by fog,
 // armies included (`blindBorders` lists my territories next to them), a deploy split over
 // several stacks, two opponents acting together, a chain of attacks under Multi-Attack, cards,
@@ -25,6 +32,7 @@
 
 import type { BoardState } from '../board.js';
 import { bonusTerritories } from './bonuses.js';
+import { COMMANDER_STRENGTH, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import type { MapGraph } from './graph.js';
 import { neighborsOf } from './graph.js';
 import { simTerritories, simulateTurn, type SimDeploy, type SimEvent, type SimOrder, type SimResult, type SimSettings } from './turn-sim.js';
@@ -51,6 +59,8 @@ export interface StressInput {
   orderPriority?: boolean;
   /** Most replies listed (default {@link DEFAULT_MAX_REPLIES}); `harmful` counts them all. */
   maxReplies?: number;
+  /** Also look one turn ahead (`exposedNextTurn`); default `true`. */
+  lookAhead?: boolean;
 }
 
 export const DEFAULT_MAX_REPLIES = 8;
@@ -84,6 +94,24 @@ export interface StressReply {
   theirArmies: number;
 }
 
+/** A territory of mine that a stack two steps away could take next turn (see the header). */
+export interface StressExposure {
+  territory: number;
+  /** Armies on it after my orders and this turn's reply. */
+  armies: number;
+  opponent: number;
+  /** The stack today, and the territory in between that it takes this turn. */
+  from: number;
+  via: number;
+  /** Armies that would attack it next turn: the survivors and the next deploy, less the guard. */
+  attackers: number;
+  /** Armies it would need to hold against them. */
+  needs: number;
+  /** Bonuses I would hold after my plan that go with it. */
+  bonusesLost: { id: number; value: number }[];
+  incomeLost: number;
+}
+
 export interface StressReport {
   /** `false` under luck or weighted rounding: battles were resolved at their expectation. */
   exact: boolean;
@@ -112,6 +140,12 @@ export interface StressReport {
   };
   /** Territories I hold, or take this turn, next to one whose owner or armies are hidden: nothing there was tested. */
   blindBorders: number[];
+  /**
+   * One turn ahead: territories no enemy stack touches now that one could take next turn by
+   * first taking the territory in between, if I add nothing. Costliest first. This turn's
+   * `safe` does not count them.
+   */
+  exposedNextTurn: StressExposure[];
   /**
    * `true`: no reply tried costs anything (it says nothing about `blindBorders`). `false`: one
    * does. `null`: no reply could be tried, so nothing is known.
@@ -316,6 +350,81 @@ export function stressPlan(input: StressInput): StressReport {
     return [...n].sort((a, b) => a[0] - b[0]).map(([id, replies]) => ({ id, replies }));
   };
   const replies = order.slice(0, Math.max(0, input.maxReplies ?? DEFAULT_MAX_REPLIES));
+
+  // ---- one turn ahead ----
+  const off = input.settings?.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const exposed = new Map<number, StressExposure>();
+  if (input.lookAhead !== false) {
+    const firsts: ('me' | 'opponent')[] = input.firstMover !== undefined ? [input.firstMover] : ['me', 'opponent'];
+    for (const opp of [...input.opponents].sort((a, b) => a.id - b.id)) {
+      if (opp.id === me || friendly(opp.id)) continue;
+      const deploy = Math.max(0, Math.floor(opp.deploy));
+      const theirDeploy = (territoryId: number): SimDeploy[] => (deploy > 0 ? [{ player: opp.id, territoryId, armies: deploy }] : []);
+      const stacks = [...start].filter(([, t]) => t.owner === opp.id).map(([id]) => id).sort(byNum);
+      for (const from of stacks) {
+        const beside = new Set(neighborsOf(graph, from));
+        for (const via of beside) {
+          const between = start.get(via);
+          // The territory in between must be one it can attack and whose defenders are known.
+          if (!between || between.owner === 'unknown' || between.owner === opp.id) continue;
+          if (typeof between.owner === 'number' && between.owner !== me && teams?.get(between.owner) !== undefined && teams.get(between.owner) === teams.get(opp.id)) continue;
+          // Beyond it: territories I hold after my plan that this stack does not touch today.
+          const beyond = neighborsOf(graph, via).filter((t) => t !== from && baseMine.has(t) && !beside.has(t));
+          if (!beyond.length) continue;
+          // This turn: the stack takes it, under whichever move order leaves it strongest there.
+          let first: SimResult | undefined;
+          for (const order1 of firsts) {
+            const r = simulate(
+              theirDeploy(from),
+              { player: opp.id, orders: [{ from, to: via, armies: (start.get(from)?.armies ?? 0) + deploy, withCommander: true }] },
+              order1 === 'me' ? [me, opp.id] : [opp.id, me],
+            );
+            const held = r.territories.get(via);
+            if (held?.owner !== opp.id) continue;
+            if (!first || held.armies > (first.territories.get(via)?.armies ?? 0)) first = r;
+          }
+          if (!first) continue;
+          for (const territory of beyond) {
+            const there = first.territories.get(territory);
+            if (!there || there.owner !== me) continue;
+            // Next turn: it deploys there again and attacks on; I add nothing.
+            const second = simulateTurn({
+              graph,
+              board,
+              start: first.territories,
+              deploys: theirDeploy(via),
+              orders: [{ player: opp.id, orders: [{ from: via, to: territory, armies: (first.territories.get(via)?.armies ?? 0) + deploy, withCommander: true }] }],
+              moveOrder: [opp.id],
+              ...(input.settings ? { settings: input.settings } : {}),
+              ...(teams ? { teams } : {}),
+            });
+            const blow = second.log[0];
+            if (!blow || second.territories.get(territory)?.owner === me) continue;
+            const attackers = blow.sent;
+            const power = attackers + (first.territories.get(via)?.commander === opp.id ? COMMANDER_STRENGTH : 0);
+            const bonusesLost = baseBonuses.filter((b) => bonusTerritories(graph, b).includes(territory)).map((id) => ({ id, value: bonusValue(id) }));
+            const found: StressExposure = {
+              territory,
+              armies: there.armies,
+              opponent: opp.id,
+              from,
+              via,
+              attackers,
+              // One more than that attack can kill.
+              needs: straightKills(power, off) + 1,
+              bonusesLost,
+              incomeLost: bonusesLost.reduce((n, b) => n + b.value, 0),
+            };
+            const known = exposed.get(territory);
+            if (!known || found.attackers > known.attackers) exposed.set(territory, found);
+          }
+        }
+      }
+    }
+  }
+  const exposedNextTurn = [...exposed.values()].sort(
+    (a, b) => Math.max(0, b.incomeLost) - Math.max(0, a.incomeLost) || b.needs - b.armies - (a.needs - a.armies) || a.territory - b.territory,
+  );
   return {
     exact: baseline.exact,
     assumptions: [...assumptions],
@@ -340,6 +449,7 @@ export function stressPlan(input: StressInput): StressReport {
       bonuses: tally((r) => r.bonusesLost.map((b) => b.id)).map((x) => ({ id: x.id, value: bonusValue(x.id), replies: x.replies })),
     },
     blindBorders,
+    exposedNextTurn,
     safe: candidates.length === 0 ? null : harmful.length === 0,
   };
 }
