@@ -137,7 +137,13 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   `conceded` costs more to hold than it is worth (or than the income left): nothing is
   deployed there (unless every territory the user holds is conceded) and no attack from it
   is funded — it attacks out only with the armies already on it — and its armies withdraw
-  toward a border that holds. A held bonus's border is not conceded on a near miss (the
+  toward a border that holds, unless it is a border of a bonus the user holds in full: then
+  they stay (they kill attackers there) unless they make another valued border hold. A held
+  bonus that fails the cost tests is held anyway when the captures leave enough. One the
+  enemy deploy must choose among is floored instead of conceded — each border first beats the
+  stack already next to it, the rest spread over them — with a warning that it "is not safe
+  against the whole enemy deploy … one deploy can break it only where it lands": tell the
+  user which border is thinnest. A held bonus's border is not conceded on a near miss (the
   income left is short of a sure hold by at most 2 armies or 15%) or while it still holds
   against the expected attack (enemy movable + its deploy estimate): everything left goes
   there with a warning that it may fall, and its armies never withdraw. When `cardAdvice` is
@@ -212,7 +218,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 `warapp_plan_turn` is a single-turn, rule-based advisor. Review every plan before
 `warapp_submit_turn`, and override it when one of these shows up:
 
-1. **A held bonus's border is conceded** (rationale "protects +N … conceded"). This is
+1. **A held bonus's border is conceded** (rationale "protects +N … conceded"), or a held bonus
+   is only floored ("is not safe against the whole enemy deploy"). This is
    especially costly when an existing garrison is pulled out after falling just short. (Under
    Local Deployment the bonus's own pool already defends its most threatened border and its
    garrisons stay unless it truly cannot be held.) Check whether an adjacent stack can be

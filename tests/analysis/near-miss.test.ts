@@ -133,14 +133,16 @@ describe('a near miss on a held bonus is funded, never withdrawn (#59)', () => {
     expect(valid(p, B59, 12, true)).toEqual([]);
   });
 
-  it('a hopeless border (short by far) is still conceded and withdrawn', () => {
-    // 68 + 49 movable + ~5 = 122: holding needs 74 armies, 30 more; 12 is 18 short.
+  it('a hopeless border (short by far) is still conceded, but its garrison stays (#118)', () => {
+    // 68 + 49 movable + ~5 = 122: holding needs 74 armies, 30 more; 12 is 18 short. Its 43
+    // movable armies stay: Mill is held in full, and moving them to T2 makes nothing hold.
     const b = boardWith(44, 69, 50);
     for (const goal of ['balanced', 'defend'] as const) {
       const p = plan(b, 12, { options: { goal } });
       expect(p.conceded).toEqual([1]);
       expect(deployedTo(p, 1)).toBe(0);
-      expect(withdrawals(p, 1)).toEqual([expect.objectContaining({ from: 1, to: 2, armies: 43 })]);
+      expect(withdrawals(p, 1)).toEqual([]);
+      expect(p.rationale.join('\n')).toMatch(/Keep the 43 movable armies on T1 \(#1\) \(not withdrawn\): it is a border of held bonus Mill/);
       expect(p.warnings.join('\n')).toMatch(/T1 \(#1\) cannot be held with the 12 armies left to deploy \(needs 30, protects \+7\): conceded/);
       expect(p.warnings.join('\n')).not.toMatch(/held though short/);
       expect(valid(p, b, 12)).toEqual([]);

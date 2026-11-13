@@ -174,35 +174,43 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
   });
 
   it('(b) still completes a bonus worth more than the unit it starves', () => {
-    // Plain at +5 earns more than Keep's +4: completing it is worth conceding Keep.
+    // Plain at +5 earns more than Keep's +4: completing it goes first. Since #118 Keep is not
+    // conceded for it: the 8 left floor every border (each beats the 3 next to it) and are
+    // spread against the one ~5 deploy, rather than abandoning all three.
     const map = keepMap(true);
     map.bonuses = map.bonuses.map((b) => (b.id === 602 ? { ...b, value: 5 } : b));
     const p = planTurn({ graph: buildGraph(map), board: BOARD_B, me: ME, income: 12, settings: STD });
     expect(p.expected.bonusesCompleted).toEqual([602]);
-    expect(p.conceded).toEqual([1, 2, 3]);
-    expect(p.warnings.join('\n')).toMatch(/conceding bonus Keep \(#601\) \(\+4\)/);
+    expect(p.conceded).toEqual([]);
+    for (const t of [1, 2, 3]) expect(armiesToTake(2 + deployedTo(p, t), STD)!).toBeGreaterThan(3);
+    expect(p.warnings.join('\n')).toMatch(/Bonus Keep \(#601\) \(\+4\) is not safe against the whole enemy deploy .* only where it lands/);
   });
 
-  it('(b) concedes the +4 bonus as a unit when its three borders are unaffordable: none is held, the income goes elsewhere', () => {
+  it('(b) floors the +4 bonus when its three borders cannot all be held: nothing is conceded or withdrawn (#118)', () => {
+    // Before #118 Keep was conceded whole and the 5 left after Plain went nowhere near it; one
+    // ~5 deploy can land on only one of its borders, so each first beats the 3 next to it.
     const p = planB(9);
-    expect(p.conceded).toEqual([1, 2, 3]);
-    for (const t of [1, 2, 3]) expect(deployedTo(p, t)).toBe(0);
+    expect(p.conceded).toEqual([]);
+    for (const t of [1, 2, 3]) expect(deployedTo(p, t)).toBeGreaterThanOrEqual(1);
+    expect(p.moves.filter((m) => [1, 2, 3].includes(m.from))).toEqual([]);
     expect(deploySum(p)).toBe(9);
-    // Completing Plain (+3 for 4) outscores the unit, and the 5 left cannot hold all three.
+    // Completing Plain (+3 for 4) outscores the unit; the 5 left go to Keep's borders.
     expect(p.expected.bonusesCompleted).toEqual([602]);
-    expect(p.warnings.join('\n')).toMatch(
-      /conceding bonus Keep \(#601\) \(\+4\): holding all 3 threatened borders \(T1 \(#1\), T2 \(#2\), T3 \(#3\)\) needs 12, more than the 5 armies left to deploy/,
-    );
+    expect(p.rationale.join('\n')).toMatch(/Floor for bonus Keep \(#601\) \(\+4\): deploy 1 to T1 \(#1\)/);
   });
 
-  it('(b) under defend: all three or none, never two', () => {
-    expect(planB(9, { goal: 'defend' }).conceded).toEqual([1, 2, 3]);
+  it('(b) under defend: all three or none in full, never two — short of all three, every border is floored', () => {
+    const short = planB(9, { goal: 'defend' });
+    expect(short.conceded).toEqual([]);
+    // Spread evenly, never two whole holds (4 each) and a third left bare.
+    const ds = [1, 2, 3].map((t) => deployedTo(short, t));
+    expect(Math.max(...ds) - Math.min(...ds)).toBeLessThanOrEqual(1);
     const held = planB(12, { goal: 'defend' });
     expect(held.conceded).toEqual([]);
     for (const t of [1, 2, 3]) expect(deployedTo(held, t)).toBe(4);
   });
 
-  it('concedes a unit that does not pay for itself (hold cost > PAYBACK_TURNS × value), even when each border alone would be held', () => {
+  it('holds a unit that does not pay for itself (hold cost > PAYBACK_TURNS × value) only with armies nothing else uses (#118)', () => {
     // Tiny (+1): 1 2 3 4, each 2 armies (5 is mine, in no bonus, next to a neutral) against an enemy 2-stack (1 movable + ~5 = 6):
     // each needs 3 (5 armies need 8 to take), and 3 ≤ 3 × (1 + 0.2) per border, but the
     // four together need 12 > 10 × 1.
@@ -220,11 +228,12 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
       enemy(11, 2), enemy(12, 2), enemy(13, 2), enemy(14, 2), fogged(15),
     ]);
     const p = planTurn({ graph: buildGraph(map), board: b, me: ME, income: 20, settings: STD });
-    expect(p.conceded).toEqual([1, 2, 3, 4]);
-    for (const t of [1, 2, 3, 4]) expect(deployedTo(p, t)).toBe(0);
-    expect(deployedTo(p, 5)).toBe(20);
-    expect(p.warnings.join('\n')).toMatch(
-      /conceding bonus Tiny \(#701\) \(\+1\): holding all 4 threatened borders .* needs 12, more than it pays back in 10 turns \(10 × \+1 = 10\)/,
+    // The capture of T20 goes first; the 18 left would only be parked, so they hold Tiny.
+    expect(p.conceded).toEqual([]);
+    expect(attacks(p).map((m) => m.to)).toEqual([20]);
+    for (const t of [1, 2, 3, 4]) expect(deployedTo(p, t)).toBeGreaterThanOrEqual(3);
+    expect(p.rationale.join('\n')).toMatch(
+      /Hold bonus Tiny \(#701\) \(\+1\) whole: its 4 threatened borders need 12 \(more than it pays back in 10 turns\), and nothing else this turn uses those armies/,
     );
   });
 
@@ -250,10 +259,15 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
     expect(p.rationale.join('\n')).toMatch(/Hold bonus Tiny \(#701\) \(\+4\) whole: its 4 threatened borders need 12 in all/);
   });
 
-  it('concedes a held bonus whose borders fail rule 1a\'s CONCEDE_FACTOR × worth test, even when it pays back', () => {
+  it('concedes a held bonus whose borders fail rule 1a\'s CONCEDE_FACTOR × worth test only when the captures leave too little (#118)', () => {
     // Reef (+5) of case (a), its border facing ~38 more: 31 ≤ PAYBACK_TURNS × 5, but
-    // 31 > CONCEDE_FACTOR × (5 + 1 / PAYBACK_TURNS). The income covers it; it is not poured in.
-    const p = planA(40, { enemyDeploy: 38 });
+    // 31 > CONCEDE_FACTOR × (5 + 1 / PAYBACK_TURNS). The captures go first (with income 40 the
+    // advances leave T1 needing 28); what they leave holds it when it covers that (there is only one border, so a floor alone saves nothing).
+    const rich = planA(40, { enemyDeploy: 38 });
+    expect(rich.conceded).toEqual([]);
+    expect(deployedTo(rich, 1)).toBeGreaterThanOrEqual(28);
+    expect(rich.rationale.join('\n')).toMatch(/Hold bonus Reef \(#501\) \(\+5\) whole: its 1 threatened border needs 28 \(more than 3 × its worth\), and nothing else this turn uses those armies/);
+    const p = planA(30, { enemyDeploy: 38 });
     expect(p.conceded).toEqual([1]);
     expect(deployedTo(p, 1)).toBe(0);
     expect(p.warnings.join('\n')).toMatch(/T1 \(#1\) cannot be held economically \(needs \d+, protects \+5\): conceded/);
@@ -336,14 +350,14 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
       expect(plain.conceded).toEqual([]);
       for (const t of [1, 2, 3]) expect(deployedTo(plain, t)).toBe(4);
       const p = run(true);
-      expect(p.conceded).toEqual([1, 2, 3]);
-      // #103: each border could still be held with Keep's 4 and the 3 free armies, so Keep
-      // might hold: its garrisons stay, and the leftover (Keep's 2 left + 3 free) goes to its
-      // border with the most at stake — not a rolled-back hold deploy.
-      expect(deployedTo(p, 1)).toBe(5);
-      for (const t of [2, 3]) expect(deployedTo(p, t)).toBe(0);
+      // #118: the rolled-back hold is not conceded either — every border is floored (each beats
+      // the 3 next to it) and what is left spread over them, not T1's rolled-back 4 kept.
+      expect(p.conceded).toEqual([]);
+      const ds = [1, 2, 3].map((t) => deployedTo(p, t));
+      expect(Math.min(...ds)).toBeGreaterThanOrEqual(1);
+      expect(Math.max(...ds) - Math.min(...ds)).toBeLessThanOrEqual(1);
       expect(p.moves.filter((m) => [1, 2, 3].includes(m.from))).toEqual([]);
-      expect(p.warnings.join('\n')).toMatch(/Bonus Keep \(#601\) \(\+4\) is conceded but might still hold/);
+      expect(p.warnings.join('\n')).toMatch(/Bonus Keep \(#601\) \(\+4\) is not safe against the whole enemy deploy/);
       expect(deploySum(p)).toBe(12);
     });
   });

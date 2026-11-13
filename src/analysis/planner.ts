@@ -149,7 +149,8 @@
 //     opponent is sized for that opponent's whole deploy (#69): it picks where to land
 //     after I commit, so that is each border's worst case, and a sure hold of several
 //     needs each sized for it (a rationale line says so when two or more are held
-//     against one player). Borders are taken in
+//     against one player); a held bonus whose borders cannot all be sized so is floored and
+//     kept rather than conceded (rule 1h's floor tier, #118). Borders are taken in
 //     order of worth per army of hold cost (ties: lower hold cost, then id); a
 //     border is conceded when its hold cost exceeds the budget left or
 //     CONCEDE_FACTOR × its worth (so a thin border protecting nothing is
@@ -174,7 +175,11 @@
 //     units' feasibility, and is paid for once). A unit pays for itself when that cost
 //     ≤ PAYBACK_TURNS × its value and, as rule 1a asks of every border, ≤ CONCEDE_FACTOR
 //     × its worth (waived when a member was just taken from a weak opponent); one that
-//     does not is conceded whole. Under Local Deployment (#103) those tests (and its score)
+//     does not is not conceded yet (#118): those tests concede only when the armies have a
+//     better use. It is floored (below) and waits for the captures; once they are planned
+//     (before rule 1c, and under `defend` after passes 1–2), it is held whole if what is left
+//     covers it (rationale "… (more than …), and nothing else this turn uses those armies"),
+//     else spread (below) when floored, else conceded whole as before. Under Local Deployment (#103) those tests (and its score)
 //     use the cost net of the bonus's own pool, max(0, cost − pool): the pool can be
 //     deployed nowhere else. A unit that pays is funded before any capture that
 //     completes no bonus (advances, breaks, other expansion, unless focused): under `defend` with the
@@ -192,9 +197,33 @@
 //     a warning "… is held though short …; X may fall" — when the total is short by at
 //     most nearMissMargin(need) = max(NEAR_MISS_ARMIES, NEAR_MISS × need), or when every
 //     short border still holds against the expected attack (movable + deploy estimate,
-//     no trend projection). Otherwise it is conceded whole ("conceding bonus …:
+//     no trend projection). Otherwise it is floored (below) and kept, or, when no floor is
+//     funded, conceded whole ("conceding bonus …:
 //     holding all N threatened borders needs X, more than …"; a one-border unit keeps
-//     rule 1a's warnings). Each border of a conceded unit is then judged alone by rule
+//     rule 1a's warnings).
+//     Floor tier and one shared deploy (#118). One enemy deploy lands on one target, and
+//     sizing each border for all of it (rule 1a) conceded every bonus once the deploy outgrew
+//     them though the stacks next to them could take none. So a unit about to be conceded
+//     (either test above, or the armies left cannot cover it) whose every threatened border
+//     faces a player with two or more threatened borders of mine to aim at gets its floor
+//     first: the deploys making each border beat the armies already next to it (the most
+//     movable armies one player has there, its commander included; at most its hold cost),
+//     all of the unit's floor or none, by value per army. Against a player with one target
+//     its whole deploy lands there, so a floor alone saves nothing and the unit goes the old
+//     way. A floored unit is kept ("contested"): never conceded or withdrawn from, its borders
+//     make no attacks. After the captures, what is left first holds contested units whole (best
+//     worth per army first) — unless spreading it over the floored units instead loses less
+//     bonus value to the opponents' best response (each player's one deploy split to break the
+//     most value, a knapsack over its cheapest break per unit; both simulated, Local Deployment
+//     off; a rationale line says so) — then is spread over the borders still short one army at a time, to
+//     the one the opponent's deploy breaks most cheaply (armies to take it less the armies next
+//     to it; ties: the higher bonus value, then id), each up to its full hold — the way
+//     `guaranteedFalls` sizes the opponent's single budget on offence (rule 1e). A warning names
+//     a bonus left short ("… is not safe against the whole enemy deploy …, but it is not
+//     conceded: … one deploy can break it only where it lands"). Idle armies next to a border
+//     are not counted as hold funding: a transfer runs in move order, interleaved with the
+//     opponent's attacks, so it may arrive after the attack it was meant to stop.
+//     Each border of a conceded unit is then judged alone by rule
 //     1a with its protected value less that bonus (other bonuses, per-territory income,
 //     the stack it saves), and held only when that justifies it. Under `expand`
 //     nothing changes, but a warning names each held bonus whose holds would pay back;
@@ -250,7 +279,11 @@
 //     A conceded border of a bonus I hold in full whose armies staying still hold
 //     against the expected attack (movable + deploy estimate) is never withdrawn from
 //     (issue #59): its garrison stays, and under Local Deployment its bonus's leftover
-//     pool may go there as if it were not conceded. Under Local Deployment (#103) a border
+//     pool may go there as if it were not conceded. Nor is any other conceded border of a bonus
+//     I hold in full (#118; Local Deployment off) unless its armies make the territory they
+//     would go to — a border facing an enemy, protecting value, not conceded — hold this turn
+//     when it would not without them: where they stand they kill attackers ("Keep the N
+//     movable armies on … (not withdrawn): it is a border of held bonus …"). Under Local Deployment (#103) a border
 //     of a conceded held bonus also keeps its garrison unless the bonus truly cannot be held
 //     (one of its threatened borders needs more than the pools containing it plus every free
 //     army): withdrawing turns "might lose it" into "certainly loses it". A warning says which
@@ -1889,6 +1922,11 @@ export function planTurn(input: PlanInput): TurnPlan {
     units: number;
     /** My commander stands here: must-hold (rule 1k), never conceded. */
     critical?: true;
+    /**
+     * Deploys already given toward its hold (#118: rule 1h's floor tier, then the shared-deploy
+     * split); `have` includes them and `holdCost` is what is still needed.
+     */
+    given?: number;
   }
   const threatened: Threatened[] = [];
   /** Armies that stay on my `id` after this turn's deploys, outgoing moves and incoming withdrawals so far. */
@@ -1976,7 +2014,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const by = borders.get(t.id)?.player;
     if (by !== undefined) heldAgainst.set(by, (heldAgainst.get(by) ?? new Set()).add(t.id));
     rationale.push(
-      `Deploy ${t.holdCost} to ${label(t.id)} so it holds (protects +${t.value}): ${heldStack(t)} need ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat.`,
+      `Deploy ${t.holdCost + (t.given ?? 0)} to ${label(t.id)} so it holds (protects +${t.value}): ${heldStack(t)} need ${armiesToTake(t.have + t.units + t.holdCost, rates)} to take, above the ~${t.threat} threat.`,
     );
   };
   // ---- 1h. held-bonus units (#51) ----
@@ -1997,6 +2035,13 @@ export function planTurn(input: PlanInput): TurnPlan {
     /** Why it does not pay for itself, if it does not (see {@link UnitLoss}). */
     loss: 'payback' | 'factor' | null;
     conceded: boolean;
+    /** Rule 1h's floor tier (#118): every threatened border beats the armies already next to it. */
+    floored: boolean;
+    /**
+     * Not held in full and not conceded (#118): floored, then upgraded to a whole hold or given
+     * a share of what is left against the one deploy its opponent has ({@link settleContested}).
+     */
+    contested: boolean;
   }
   const units: Unit[] = [];
   /** Borders a funded unit (or an individual hold) already holds. */
@@ -2034,6 +2079,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         worth,
         loss: net > PAYBACK_TURNS * b.value ? 'payback' : !recent && net > CONCEDE_FACTOR * worth ? 'factor' : null,
         conceded: false,
+        floored: false,
+        contested: false,
       });
     }
   };
@@ -2097,7 +2144,7 @@ export function planTurn(input: PlanInput): TurnPlan {
    * `each` may take over one member's hold (attacking on top of it), given the deploys
    * the members after it still need; it returns false to leave it a plain hold.
    */
-  const fundUnit = (u: Unit, each?: (m: Threatened, rest: number) => boolean): boolean => {
+  const fundUnit = (u: Unit, each?: (m: Threatened, rest: number) => boolean, line?: string): boolean => {
     // A commander border rule 1k could not fully hold is still owed (it cannot be deployed to further).
     const todo = u.members.filter((m) => !heldBorders.has(m.id) || (m.critical && !commanderHeld.has(m.id)));
     const cost = todo.reduce((n, m) => n + m.holdCost, 0);
@@ -2116,16 +2163,19 @@ export function planTurn(input: PlanInput): TurnPlan {
       for (const d of done) undeploy(d.id, d.holdCost);
     }
     const one = u.members.length === 1;
-    // What this unit deploys itself: a border another unit already holds costs it nothing.
+    // What this unit deploys itself: a border another unit already holds costs it nothing (its
+    // own floor, #118, counts as its own).
+    const own = cost + todo.reduce((n, m) => n + (m.given ?? 0), 0);
     const needs = !todo.length
       ? u.members.every((m) => commanderHeld.has(m.id))
         ? `${one ? 'is' : 'are'} already held for my commander`
         : `${one ? 'is' : 'are'} already held for another bonus`
-      : cost < u.cost
-        ? `need${one ? 's' : ''} ${cost} more (${u.cost - cost} already deployed for another bonus)`
-        : `need${one ? 's' : ''} ${cost} in all`;
+      : own < u.cost
+        ? `need${one ? 's' : ''} ${own} more (${u.cost - own} already deployed for another bonus)`
+        : `need${one ? 's' : ''} ${own} in all`;
     rationale.push(
-      `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: its ${unitBorders(u)} ${needs} (it pays back within ${PAYBACK_TURNS} turns), before any capture that completes no bonus.`,
+      line ??
+        `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: its ${unitBorders(u)} ${needs} (it pays back within ${PAYBACK_TURNS} turns), before any capture that completes no bonus.`,
     );
     let rest = cost;
     for (const m of todo) {
@@ -2151,8 +2201,9 @@ export function planTurn(input: PlanInput): TurnPlan {
       deploy(m.id, n);
       return { m, n };
     });
-    const need = todo.reduce((n, m) => n + m.holdCost, 0);
-    const total = given.reduce((n, x) => n + x.n, 0);
+    // A floor already deployed (#118) counts toward both, as if deployed here.
+    const need = todo.reduce((n, m) => n + m.holdCost + (m.given ?? 0), 0);
+    const total = given.reduce((n, x) => n + x.n + (x.m.given ?? 0), 0);
     const short = need - total;
     const margin = nearMissMargin(need);
     const shortOnes = given.filter((x) => x.n < x.m.holdCost);
@@ -2177,12 +2228,277 @@ export function planTurn(input: PlanInput): TurnPlan {
       locked.add(m.id);
       heldBorders.add(m.id);
       rationale.push(
-        n > 0
-          ? `Deploy ${n} to ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have + n} armies need ${armiesToTake(m.have + n, rates)} to take, against the ~${m.threat} threat (its armies stay: withdrawing them would guarantee the loss).`
+        n + (m.given ?? 0) > 0
+          ? `Deploy ${n + (m.given ?? 0)} to ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have + n} armies need ${armiesToTake(m.have + n, rates)} to take, against the ~${m.threat} threat (its armies stay: withdrawing them would guarantee the loss).`
           : `Keep the armies on ${label(m.id)} so bonus ${bonusName(u.bonusId)} (+${u.value}) is not conceded: ${m.have} armies need ${armiesToTake(m.have, rates)} to take, against the ~${m.threat} threat.`,
       );
     }
     return true;
+  };
+
+  // ---- 1h. floor tier and one shared deploy (#118) ----
+  // One enemy deploy lands on one target. Sizing every border of a held bonus for the whole of
+  // it conceded every bonus once the deploy outgrew them, though the stacks already next to the
+  // borders could take none. So a held bonus first gets its floor — every threatened border beats
+  // the armies already next to it — and, when it is not then held whole, what is left is spread
+  // over its borders so the deploy breaks it only where it lands.
+  /** The most movable armies (special units included) one visible enemy player has next to my `t`. */
+  const adjacentMovable = (t: number) => {
+    const byPlayer = new Map<number, number>();
+    for (const n of neighborsOf(g, t)) {
+      const st = state.get(n);
+      if (captured.has(n) || st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard) + unitsAt(n));
+    }
+    return Math.max(0, ...byPlayer.values());
+  };
+  /** The deploys `m` needs to beat the armies already next to it (never more than its hold cost). */
+  const floorOf = (m: Threatened) => {
+    const movable = adjacentMovable(m.id);
+    let d = 0;
+    while (d < m.holdCost && (armiesToTake(m.have + m.units + d, rates) ?? Infinity) <= movable) d++;
+    return d;
+  };
+  /** Deploy `n` to `m` as part of its hold: what it has grows and what its hold still needs shrinks. */
+  const give = (m: Threatened, n: number) => {
+    deploy(m.id, n);
+    m.have += n;
+    m.holdCost -= n;
+    m.given = (m.given ?? 0) + n;
+  };
+  /**
+   * Fund the floors of `us` — units about to be conceded — best value per army first (ties:
+   * cheaper, then its first border's id), all of a unit's floor or none; a unit whose floor is
+   * funded is `floored`.
+   */
+  const floorUnits = (us: readonly Unit[]) => {
+    const need = (u: Unit) => u.members.filter((m) => !commanderHeld.has(m.id)).map((m) => ({ m, f: floorOf(m) }));
+    // A floor only helps where the deploy must choose: against a player with one threatened
+    // border of mine to aim at, all of its deploy lands there, and a floor alone saves nothing.
+    const targetsOf = new Map<number, number>();
+    for (const t of threatened) {
+      const p = borders.get(t.id)?.player;
+      if (p !== undefined) targetsOf.set(p, (targetsOf.get(p) ?? 0) + 1);
+    }
+    const spread = (u: Unit) => u.members.every((m) => (targetsOf.get(borders.get(m.id)?.player ?? -1) ?? 0) >= 2);
+    const order = us
+      .filter(spread)
+      .map((u) => ({ u, cost: need(u).reduce((n, x) => n + x.f, 0) }))
+      .sort((a, b) => (b.cost ? b.u.value / b.cost : Infinity) - (a.cost ? a.u.value / a.cost : Infinity) || a.cost - b.cost || a.u.members[0]!.id - b.u.members[0]!.id);
+    for (const { u } of order) {
+      // Recomputed: a border shared with a unit floored before it already has its floor.
+      const todo = need(u).filter((x) => x.f > 0);
+      if (todo.reduce((n, x) => n + x.f, 0) > budget) continue;
+      const done: { m: Threatened; f: number }[] = [];
+      let fits = true;
+      for (const x of todo) {
+        if (x.f > roomAt(x.m.id)) {
+          fits = false;
+          break;
+        }
+        give(x.m, x.f);
+        done.push(x);
+      }
+      if (!fits) {
+        for (const x of done) {
+          undeploy(x.m.id, x.f);
+          x.m.have -= x.f;
+          x.m.holdCost += x.f;
+          x.m.given = (x.m.given ?? 0) - x.f;
+        }
+        continue;
+      }
+      u.floored = true;
+      rationale.push(
+        ...done.map(
+          (x) =>
+            `Floor for bonus ${bonusName(u.bonusId)} (+${u.value}): deploy ${x.f} to ${label(x.m.id)} so its ${x.m.have} armies beat the ${adjacentMovable(x.m.id)} already next to it (${armiesToTake(x.m.have + x.m.units, rates)} to take): one enemy deploy lands on one target, so every border first holds against what is already there.`,
+        ),
+      );
+    }
+  };
+  /** Keep a floored unit that is not held whole (#118): its borders stay, nothing is withdrawn. */
+  const contest = (u: Unit) => {
+    u.contested = true;
+    for (const m of u.members) locked.add(m.id);
+  };
+  /** A unit that cannot be held whole now: floored and kept when it can be (#118), else conceded whole. */
+  const floorOrConcede = (u: Unit, left: number, single: (t: Threatened, quiet: boolean) => void) => {
+    floorUnits([u]);
+    if (u.floored) contest(u);
+    else concedeUnit(u, { economic: false, left }, single);
+  };
+  /** Its borders' threat beyond the armies already next to them: the opponent's deploy (or growth). */
+  const deployShare = (m: Threatened) => m.threat - adjacentMovable(m.id);
+  /**
+   * After the captures (the better use of the armies): hold each contested unit whole when what
+   * is left covers it (best worth per army first), else spread what is left over the borders
+   * still short, one army at a time to the one the opponent's deploy breaks most cheaply (ties:
+   * the higher bonus value, then id), each up to its full hold.
+   */
+  /** A member of a unit conceded after the captures, judged on its own (rule 1a, against what is left). */
+  const singleLate = (t: Threatened, quiet: boolean) => {
+    if (t.critical) return;
+    if (t.recentFrom === undefined && t.holdCost > CONCEDE_FACTOR * t.worth) {
+      conceded.add(t.id);
+      if (!quiet) warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
+      return;
+    }
+    const room = roomAt(t.id);
+    if (t.holdCost > room) {
+      if (quiet) conceded.add(t.id);
+      else concedeUnaffordable(t, room);
+      return;
+    }
+    hold(t);
+    heldBorders.add(t.id);
+  };
+  /** Armies the opponent's deploy needs on my `m` to take it, with `have` armies there. */
+  const breakCostWith = (m: Threatened, have: number) => (armiesToTake(have + m.units, rates) ?? Infinity) - adjacentMovable(m.id);
+  /**
+   * The bonus value the opponents' best response takes from the floored units in `us`, given
+   * the armies on each border: per player, its one deploy split to break the most value (each
+   * unit broken through its cheapest short border facing that player; a 0/1 knapsack), as
+   * `guaranteedFalls` sizes a single budget on offence.
+   */
+  const bestResponseLoss = (us: readonly Unit[], have: ReadonlyMap<Threatened, number>, short: (m: Threatened) => boolean) => {
+    const players = new Map<number, { deploy: number; items: Map<Unit, number> }>();
+    for (const u of us)
+      for (const m of u.members) {
+        if (!short(m)) continue;
+        const p = borders.get(m.id)?.player;
+        if (p === undefined) continue;
+        const e = players.get(p) ?? { deploy: 0, items: new Map<Unit, number>() };
+        e.deploy = Math.max(e.deploy, deployShare(m));
+        const c = Math.max(0, breakCostWith(m, have.get(m) ?? m.have));
+        e.items.set(u, Math.min(e.items.get(u) ?? Infinity, c));
+        players.set(p, e);
+      }
+    let loss = 0;
+    for (const { deploy, items } of players.values()) {
+      const d = Math.max(0, Math.floor(deploy));
+      const best = new Array<number>(d + 1).fill(0);
+      for (const [u, c] of items) {
+        if (c > d) continue;
+        for (let x = d; x >= c; x--) best[x] = Math.max(best[x]!, best[x - c]! + u.value);
+      }
+      loss += best[d]!;
+    }
+    return loss;
+  };
+  const settleContested = () => {
+    const open = units.filter((u) => u.contested && !u.conceded);
+    if (!open.length) return;
+    const need = (u: Unit) => u.members.filter((m) => !heldBorders.has(m.id)).reduce((n, m) => n + m.holdCost, 0);
+    const ratio = (u: Unit) => u.worth / Math.max(1, need(u));
+    const order = [...open].sort((a, b) => ratio(b) - ratio(a) || a.members[0]!.id - b.members[0]!.id);
+    // Holding one floored unit whole can leave the others thinner than spreading the same
+    // armies over all of them: simulate both and keep whole holds unless spreading loses less
+    // to the opponents' best response (Local Deployment: whole holds, pools decide the room).
+    const simulate = (wholeFirst: boolean) => {
+      let b = budget;
+      const have = new Map<Threatened, number>();
+      const left = new Map<Threatened, number>();
+      for (const u of open)
+        for (const m of u.members)
+          if (!heldBorders.has(m.id)) {
+            have.set(m, m.have);
+            left.set(m, m.holdCost);
+          }
+      let lost = 0;
+      for (const u of order) {
+        if (u.floored && !wholeFirst) continue;
+        const ms = u.members.filter((m) => (left.get(m) ?? 0) > 0);
+        const more = ms.reduce((n, m) => n + left.get(m)!, 0);
+        if (more <= b) {
+          b -= more;
+          for (const m of ms) {
+            have.set(m, have.get(m)! + left.get(m)!);
+            left.set(m, 0);
+          }
+        } else if (!u.floored) lost += u.value;
+      }
+      const floored = open.filter((u) => u.floored);
+      const valueAt = (m: Threatened) => Math.max(0, ...floored.filter((u) => u.members.includes(m)).map((u) => u.value));
+      const fill = [...new Set(floored.flatMap((u) => u.members))].filter((m) => left.has(m));
+      while (b > 0) {
+        const next = fill
+          .filter((m) => left.get(m)! > 0)
+          .sort((x, y) => breakCostWith(x, have.get(x)!) - breakCostWith(y, have.get(y)!) || valueAt(y) - valueAt(x) || x.id - y.id)[0];
+        if (!next) break;
+        have.set(next, have.get(next)! + 1);
+        left.set(next, left.get(next)! - 1);
+        b--;
+      }
+      return lost + bestResponseLoss(floored, have, (m) => (left.get(m) ?? 0) > 0);
+    };
+    const spreadFloored = !local && open.some((u) => u.floored) && simulate(false) < simulate(true);
+    for (const u of order) {
+      if (u.floored && spreadFloored) continue;
+      const more = need(u);
+      const floored = u.members.some((m) => (m.given ?? 0) > 0);
+      const why =
+        u.loss === 'payback'
+          ? `more than it pays back in ${PAYBACK_TURNS} turns`
+          : u.loss === 'factor'
+            ? `more than ${CONCEDE_FACTOR} × its worth`
+            : null;
+      if (
+        more <= budget &&
+        fundUnit(
+          u,
+          undefined,
+          `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: ${floored ? 'past its floor ' : ''}its ${unitBorders(u)} need${u.members.length === 1 ? 's' : ''} ${more}${floored ? ' more' : ''}${why ? ` (${why})` : ''}, and nothing else this turn uses those armies.`,
+        )
+      ) {
+        u.contested = false;
+        continue;
+      }
+      // Not floored (one target for the deploy): the old concession, now that the captures had their turn.
+      if (!u.floored) {
+        u.contested = false;
+        concedeUnit(u, u.loss ? { economic: u.loss } : { economic: false, left: leftFor(u) }, singleLate);
+        // As a conceded border always could: it may still attack out (rule 1a).
+        for (const m of u.members) if (conceded.has(m.id)) locked.delete(m.id);
+      }
+    }
+    const short = units
+      .filter((u) => u.contested && !u.conceded)
+      .flatMap((u) => u.members.filter((m) => !heldBorders.has(m.id)).map((m) => ({ m, u })));
+    const value = (m: Threatened) => Math.max(...short.filter((x) => x.m === m).map((x) => x.u.value));
+    const members = [...new Set(short.map((x) => x.m))];
+    const given = new Map<Threatened, number>();
+    const breakCost = (m: Threatened) => breakCostWith(m, m.have);
+    if (spreadFloored)
+      rationale.push(
+        `Spread what is left over the floored bonuses' borders rather than hold one whole: against the opponent's best use of its deploy that loses less.`,
+      );
+    while (budget > 0) {
+      const next = members
+        .filter((m) => m.holdCost > 0 && roomAt(m.id) > 0)
+        .sort((a, b) => breakCost(a) - breakCost(b) || value(b) - value(a) || a.id - b.id)[0];
+      if (!next) break;
+      give(next, 1);
+      given.set(next, (given.get(next) ?? 0) + 1);
+    }
+    for (const [m, n] of [...given].sort((a, b) => a[0].id - b[0].id))
+      rationale.push(
+        m.holdCost <= 0
+          ? `Deploy ${n} more to ${label(m.id)} so it holds (${m.have} armies, ${armiesToTake(m.have + m.units, rates)} to take, above the ~${m.threat} threat).`
+          : `Deploy ${n} more to ${label(m.id)} against the one shared deploy: ${m.have} armies, so player ${borders.get(m.id)?.player}'s deploy needs ${breakCost(m)} of its ~${deployShare(m)} there to take it.`,
+      );
+    for (const m of members) if (m.holdCost <= 0) heldBorders.add(m.id);
+    for (const u of units) {
+      if (!u.contested || u.conceded) continue;
+      const left = u.members.filter((m) => !heldBorders.has(m.id));
+      if (!left.length) {
+        u.contested = false;
+        continue;
+      }
+      warnings.push(
+        `Bonus ${bonusName(u.bonusId)} (+${u.value}) is not safe against the whole enemy deploy (its ${unitBorders(u)} would need ${left.reduce((n, m) => n + m.holdCost, 0)} more), but it is not conceded: every border beats the armies already next to it, so one deploy can break it only where it lands — ${left.map((m) => `${label(m.id)} (${m.have} armies; ${breakCost(m)} of the ~${deployShare(m)} deploy take it)`).join(', ')}.`,
+      );
+    }
   };
 
   // Under `balanced`, holds worth paying for compete with expansion in the greedy step below.
@@ -2247,15 +2563,19 @@ export function planTurn(input: PlanInput): TurnPlan {
         heldBorders.add(t.id);
       }
     };
-    for (const u of units) if (u.loss) concedeUnit(u, { economic: u.loss }, single);
+    // #118: CONCEDE_FACTOR and the payback test concede a floored unit only when the armies have
+    // a better use: it is kept, and held whole after the captures if what is left covers it.
+    const losing = units.filter((u) => u.loss);
+    floorUnits(losing);
+    for (const u of losing) contest(u);
     type Item = { unit: Unit } | { border: Threatened };
     const items: Item[] = [
-      ...units.filter((u) => !u.conceded).map((unit) => ({ unit })),
+      ...units.filter((u) => !u.conceded && !u.contested).map((unit) => ({ unit })),
       ...threatened.filter((t) => !units.some((u) => u.members.some((m) => m.id === t.id))).map((border) => ({ border })),
     ];
     if (!acting) {
       // Under `balanced` the units compete in the greedy step; their members stay put.
-      for (const u of units) if (!u.conceded) for (const m of u.members) locked.add(m.id);
+      for (const u of units) if (!u.conceded && !u.contested) for (const m of u.members) locked.add(m.id);
       for (const it of items) if ('border' in it) single(it.border);
       return;
     }
@@ -2274,8 +2594,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (!heldBorders.has(it.border.id) && !conceded.has(it.border.id)) single(it.border);
         continue;
       }
-      if (!fundUnit(it.unit) && !fundNearMiss(it.unit))
-        concedeUnit(it.unit, { economic: false, left: leftFor(it.unit) }, single);
+      if (!fundUnit(it.unit) && !fundNearMiss(it.unit)) floorOrConcede(it.unit, leftFor(it.unit), single);
     }
   };
 
@@ -2373,6 +2692,27 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (!to) {
         warnings.push(`${label(t)} is conceded and has nowhere to withdraw to: its ${n} movable armies stay.`);
         continue;
+      }
+      // #118: a border of a bonus I hold in full keeps its garrison — those armies kill attackers
+      // where they stand — unless withdrawing them makes another valued border hold this turn.
+      // (Under Local Deployment rule 1b's pool test above decides instead.)
+      if (held.length && !local) {
+        const dest = borders.get(to.id);
+        const at = stayAt(to.id) + unitsAt(to.id);
+        const makesHold =
+          dest !== undefined &&
+          !conceded.has(to.id) &&
+          valueOf(to.id) > 0 &&
+          (armiesToTake(at, rates) ?? Infinity) <= dest.threat &&
+          (armiesToTake(at + n, rates) ?? Infinity) > dest.threat;
+        if (!makesHold) {
+          locked.add(t);
+          stood.add(t);
+          rationale.push(
+            `Keep the ${n} movable armies on ${label(t)} (not withdrawn): it is a border of held bonus ${held.map((b) => bonusName(b.id)).join(', ')}, and withdrawing them would make no other valued border hold this turn, while there they kill attackers.`,
+          );
+          continue;
+        }
       }
       if (orderOf(t)) {
         warnSplit(t, `its ${n} remaining armies are not withdrawn to ${label(to.id)}`);
@@ -4304,13 +4644,12 @@ export function planTurn(input: PlanInput): TurnPlan {
     const waiting: Unit[] = [];
     const fundOrConcede = (u: Unit) => {
       if (u.conceded) return;
-      if (!fundUnit(u, holdAndBreak) && !fundNearMiss(u))
-        concedeUnit(u, { economic: false, left: leftFor(u) }, singleNow);
+      if (!fundUnit(u, holdAndBreak) && !fundNearMiss(u)) floorOrConcede(u, leftFor(u), singleNow);
     };
     let unitsDue = false;
     const unitOf = new Map<Candidate, Unit>();
     for (const u of units) {
-      if (u.conceded) continue;
+      if (u.conceded || u.contested) continue;
       const c: Candidate = {
         kind: 'unit',
         score: u.members.some((m) => m.recentFrom !== undefined) ? Infinity : u.worth / u.net,
@@ -4427,11 +4766,13 @@ export function planTurn(input: PlanInput): TurnPlan {
       if (t.holdCost > room) concedeUnaffordable(t, room);
       else hold(t);
     }
+    settleContested();
     reconsider();
     withdraw();
   } else {
     for (const p of byCloseness) complete(p);
     for (const p of byCloseness) advance(p);
+    settleContested();
     reconsider();
     if (acting) withdraw();
   }

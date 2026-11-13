@@ -122,9 +122,12 @@ const QUIET = [
 const growingNow = board([...QUIET, mine(4, 58), theirs(15, 76)]);
 const growingThen = board([...QUIET, mine(4, 58), theirs(15, 51)]);
 
-/** Lesson 6: a doomed 15-army border at 3, and the Lowlands to take this turn. */
+/**
+ * Lesson 6: a doomed 15-army border at 3, and the Lowlands to take this turn. T4 is out of sight,
+ * so Homeland is not a bonus I visibly hold: #118 keeps a held bonus's garrisons in place.
+ */
 const withdrawBoard = board([
-  mine(1, 2), mine(2, 6), mine(3, 15), mine(4, 3),
+  mine(1, 2), mine(2, 6), mine(3, 15), fogged(4),
   neutral(5, 2), neutral(6, 2), neutral(7, 2), theirs(8, 51), theirs(9, 5), theirs(10, 5),
   neutral(15, 2), neutral(18, 2), ...FAR,
 ]);
@@ -186,31 +189,44 @@ describe('lessons from a lost game', () => {
     expect(p.warnings).toContain('T4 (#4) cannot be held economically (needs 39, protects +5): conceded');
     expect(deployedTo(p, 4)).toBe(0);
     expect(deploySum(p)).toBe(20);
-    // Its armies are withdrawn behind it rather than lost.
-    expect(p.moves[0]).toEqual(expect.objectContaining({ from: 4, to: 3, armies: 14, kind: 'transfer' }));
-    expect(p.cardAdvice).toBe('order-priority');
+    // #118: its 14 stay rather than withdraw — it is a border of Homeland, which I hold in full,
+    // and moving them makes no other border hold this turn; where they are, they kill attackers.
+    expect(p.moves.some((m) => m.from === 4)).toBe(false);
+    expect(p.cardAdvice).toBeNull();
+    expect(p.rationale.join('\n')).toMatch(/Keep the 14 movable armies on T4 \(#4\) \(not withdrawn\): it is a border of held bonus Homeland/);
     expect(p.rationale.join('\n')).toMatch(/Deploy the leftover \d+ to T3 \(#3\)/);
-    // Not for want of income: even when the income covers the 39, it is not poured in.
-    // (#51: Homeland's hold pays back within PAYBACK_TURNS, but a held bonus's borders
-    // still pass rule 1a's CONCEDE_FACTOR × worth test.)
+    // #118: rule 1a's CONCEDE_FACTOR × worth test concedes a held bonus only when the armies
+    // have a better use. Once the captures have had their turn and what is left covers the 39,
+    // nothing else would use those armies (they would only be parked on T3), so Homeland is held.
     for (const income of [39, 40, 45, 60]) {
       const rich = plan(hopelessBoard, income, { enemyDeploy: 38 });
-      expect(rich.conceded, `income ${income}`).toEqual([4]);
-      expect(rich.warnings, `income ${income}`).toContain('T4 (#4) cannot be held economically (needs 39, protects +5): conceded');
-      expect(deployedTo(rich, 4), `income ${income}`).toBe(0);
+      expect(rich.conceded, `income ${income}`).toEqual([]);
+      expect(deployedTo(rich, 4), `income ${income}`).toBeGreaterThanOrEqual(39);
+      expect(rich.rationale.join('\n'), `income ${income}`).toMatch(
+        /Hold bonus Homeland \(#201\) \(\+5\) whole: its 1 threatened border needs 39 \(more than 3 × its worth\), and nothing else this turn uses those armies/,
+      );
       expect(deploySum(rich), `income ${income}`).toBe(income);
     }
 
-    // Nor does a conceded border become the source of a break: T3 faces 19 + ~15 = 34 and is
-    // conceded; it withdraws rather than taking 30 deploys to attack the 20 on T8. (R1: the
-    // ~15 — the old stack rule's round(0.75 × 20) — is passed explicitly, as above.)
+    // Nor does a border failing the factor test become the source of a break: T3 faces
+    // 19 + ~15 = 34 and needs 17 (more than 3 × its worth). It never takes 30 deploys to attack
+    // the 20 on T8: since #118 it waits for the captures and is then held from what they leave
+    // (40 covers it), and a held border attacks nothing. (R1: the ~15 — the old stack rule's
+    // round(0.75 × 20) — is passed explicitly, as above.)
     const b = plan(hopelessBreakBoard, 40, { enemyDeploy: 15 });
-    expect(b.conceded).toContain(3);
-    expect(b.warnings).toContain('T3 (#3) cannot be held economically (needs 17, protects +5): conceded');
-    expect(deployedTo(b, 3)).toBe(0);
+    expect(b.conceded).toEqual([]);
+    expect(deployedTo(b, 3)).toBeGreaterThanOrEqual(17);
     expect(attacks(b).some((m) => m.from === 3)).toBe(false);
-    expect(b.moves[0]).toEqual(expect.objectContaining({ from: 3, kind: 'transfer', reason: 'withdraws from a conceded border' }));
     expect(deploySum(b)).toBe(40);
+    // When what the captures leave cannot cover it (~30 deploy: it needs 26 of 20), it is
+    // conceded, still without attacking; its garrison stays (#118: Homeland is held in full).
+    const poor = plan(hopelessBreakBoard, 20, { enemyDeploy: 30 });
+    expect(poor.conceded).toContain(3);
+    expect(poor.warnings).toContain('T3 (#3) cannot be held economically (needs 26, protects +5): conceded');
+    expect(deployedTo(poor, 3)).toBe(0);
+    expect(attacks(poor).some((m) => m.from === 3)).toBe(false);
+    expect(poor.moves.some((m) => m.from === 3)).toBe(false);
+    expect(deploySum(poor)).toBe(20);
 
     // Under expand (no withdrawal) a conceded border may still attack out, but only with the
     // armies already on it: T2 (15) faces 51 at T5, and takes the 2-army T6 and T7 itself
@@ -222,12 +238,13 @@ describe('lessons from a lost game', () => {
   });
 
   it('4. idle armies concentrate on the front that holds, never on the conceded one', () => {
-    // T3 faces 51 and is conceded; T4 faces 6 and holds. The 19 idle armies at home and
-    // the 14 withdrawn from T3 all end up on T4 (T3 is the lower id, and as close).
+    // T3 faces 51 and is conceded; T4 faces 6 and holds. The 19 idle armies at home move
+    // toward a front, never into T3. (#118: T3's own 14 stay — it is a border of Homeland, which
+    // I hold in full, and moving them would make no other border hold this turn.)
     const p = plan(spreadBoard, 10, { enemyDeploy: 10 });
     expect(p.conceded).toEqual([3]);
-    expect(p.moves).toContainEqual(expect.objectContaining({ from: 3, to: 4, armies: 14, kind: 'transfer' }));
-    expect(p.moves).toContainEqual(expect.objectContaining({ from: 1, to: 4, armies: 19, kind: 'transfer' }));
+    expect(p.moves.some((m) => m.from === 3)).toBe(false);
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 1, armies: 19, kind: 'transfer' }));
     expect(p.moves.some((m) => m.to === 3)).toBe(false);
     expect(deployedTo(p, 3)).toBe(0);
   });
@@ -252,7 +269,8 @@ describe('lessons from a lost game', () => {
   it('6. a withdrawal goes first in the turn, with Order Priority advised', () => {
     const p = plan(withdrawBoard, 9);
     expect(p.conceded).toEqual([3]);
-    expect(p.moves[0]).toEqual(expect.objectContaining({ from: 3, to: 2, armies: 14, kind: 'transfer' }));
+    // To T1, a border itself (it faces the fogged T4).
+    expect(p.moves[0]).toEqual(expect.objectContaining({ from: 3, to: 1, armies: 14, kind: 'transfer' }));
     expect(attacks(p).length).toBeGreaterThan(0);
     expect(p.moves.findIndex((m) => m.kind === 'attack')).toBeGreaterThan(0);
     expect(p.cardAdvice).toBe('order-priority');

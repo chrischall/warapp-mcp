@@ -186,11 +186,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     border, ≤ `CONCEDE_FACTOR` × its worth) is funded before any capture that completes no bonus
     (advances, breaks, other expansion); completions still compete on score but never starve a
     unit unless their bonus earns more, and finishing off keeps its place. One that does not
-    pay, or that the income left cannot cover, is conceded whole ("conceding bonus …") and its
-    borders are judged alone without that bonus.
+    pay is not conceded yet (#118): the captures go first, and it is held whole from what they
+    leave when that covers it. One a deploy must choose among (its every threatened border
+    faces a player with two or more of my threatened borders) is **floored** when it cannot be
+    held whole — every border first beats the armies already next to it — and kept: the rest
+    is spread over its borders against the one shared enemy deploy, never conceded or withdrawn
+    from. Otherwise, one that does not pay or that the income left cannot cover is conceded
+    whole ("conceding bonus …") and its borders are judged alone without that bonus.
     `expand` is unchanged but warns.
   - **Withdraw** (under `balanced`/`defend`): a conceded border's movable armies go first to
-    the neighbour nearest a border that holds, and the plan sets `cardAdvice:
+    the neighbour nearest a border that holds — except from a bonus I hold in full (#118),
+    whose garrison stays unless it makes that neighbour, a valued enemy-facing border, hold
+    this turn — and the plan sets `cardAdvice:
     'order-priority'` because a withdrawal only executes while the border is still mine. The
     planner never plays cards itself; `warapp_plan_turn` adds the Order Priority I hold to
     `orders` when `cardAdvice` asks for it.
