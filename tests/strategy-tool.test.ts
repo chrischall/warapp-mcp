@@ -101,7 +101,8 @@ describe('warapp_strategy', () => {
     expect(p.topics.reduce((n, t) => n + t.notes, 0)).toBe(STRATEGY_NOTES.length);
     expect(p.topics.every((t) => t.title.length > 0 && t.notes > 0)).toBe(true);
     expect(p.next).toMatch(/topic/);
-    expect(JSON.stringify(p).length).toBeLessThan(8000);
+    // An index of ids and topics, never the notes' text: about 50 characters a note (157 notes: ~9,000).
+    expect(JSON.stringify(p).length).toBeLessThan(10000);
     expect(p.map).toBeUndefined();
     expect(h.calls).toHaveLength(0);
   });
