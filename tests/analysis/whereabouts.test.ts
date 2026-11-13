@@ -710,3 +710,15 @@ describe('above the enumeration limit', () => {
     expect(o.starts.likely[0]!.territoryId).toBe(40);
   });
 });
+
+describe('combinePresence', () => {
+  it('counts the sources that rest on the start likelihoods once, and the independent ones by noisy-OR', async () => {
+    const { combinePresence, PRESENCE_CAP } = await import('../../src/analysis/whereabouts.js');
+    // Start 0.6 with its own growth (0.36) and corridor: still 0.6, not 0.74.
+    expect(combinePresence(new Map([['start', 0.6], ['growth', 0.36], ['corridor', 0.3]]))).toBeCloseTo(0.6);
+    // An independent sighting and an income fit combine with it: 1 − 0.4 × 0.5 × 0.8.
+    expect(combinePresence(new Map([['start', 0.6], ['last-seen', 0.5], ['income', 0.2]]))).toBeCloseTo(0.84);
+    expect(combinePresence(new Map([['last-seen', 0.95], ['income', 0.7]]))).toBe(PRESENCE_CAP);
+    expect(combinePresence(new Map())).toBe(0);
+  });
+});

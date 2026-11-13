@@ -24,9 +24,10 @@
 //  - GROWTH: what a player could plausibly hold n turns after starting somewhere, spending pooled
 //    armies on the bonus with the best value per remaining capture cost ({@link growth}).
 //    Deliberately generous.
-//  - PRESENCE on a territory hidden now: the noisy-OR of last-seen, start, corridor (the shortest
-//    ways between a likely start and a sighting), growth and income (bonuses that would explain a
-//    tracked income), capped at {@link PRESENCE_CAP}.
+//  - PRESENCE on a territory hidden now: the noisy-OR of last-seen, income (bonuses that would
+//    explain a tracked income) and the strongest of start, corridor (the shortest ways between a
+//    likely start and a sighting) and growth, which all rest on the same start likelihoods and so
+//    are not counted as independent; capped at {@link PRESENCE_CAP} ({@link combinePresence}).
 //  - From those: the bonuses it probably holds, the earliest turn it could attack each border
 //    territory of mine (`approaches`), what it is doing in plain sentences (`doing`), and what to
 //    prepare for (`prepare`: hold — the soonest attack a seen stack can make, contested — a bonus I
@@ -130,6 +131,24 @@ export interface WhereInput {
 /** What a guess of presence rests on, in this order. */
 export type PresenceSource = 'last-seen' | 'start' | 'corridor' | 'growth' | 'income';
 const PRESENCE_ORDER: readonly PresenceSource[] = ['last-seen', 'start', 'corridor', 'growth', 'income'];
+/** Sources that all come from one start likelihood: never added up as if independent. */
+const FROM_STARTS: ReadonlySet<PresenceSource> = new Set(['start', 'corridor', 'growth']);
+
+/**
+ * A territory's presence from its sources. Start, corridor and growth all rest on the same start
+ * likelihoods, so they count once (the strongest of them); that and the independent sources
+ * (last-seen, income) are combined by noisy-OR, capped at {@link PRESENCE_CAP}.
+ */
+export function combinePresence(parts: ReadonlyMap<PresenceSource, number>): number {
+  let fromStarts = 0;
+  let p = 0;
+  for (const s of PRESENCE_ORDER) {
+    const v = parts.get(s) ?? 0;
+    if (FROM_STARTS.has(s)) fromStarts = Math.max(fromStarts, v);
+    else p = either(p, v);
+  }
+  return Math.min(PRESENCE_CAP, either(p, fromStarts));
+}
 
 export interface SeenTerritory {
   territoryId: number;
@@ -995,7 +1014,7 @@ export function locateOpponents(input: WhereInput): Whereabouts {
     const presence = new Map<number, number>();
     const basisOf = new Map<number, PresenceSource[]>();
     for (const [id, m] of parts) {
-      presence.set(id, Math.min(PRESENCE_CAP, PRESENCE_ORDER.reduce((x, s) => either(x, m.get(s) ?? 0), 0)));
+      presence.set(id, combinePresence(m));
       basisOf.set(id, PRESENCE_ORDER.filter((s) => m.has(s)));
     }
     const presenceList: Presence[] = [...presence]

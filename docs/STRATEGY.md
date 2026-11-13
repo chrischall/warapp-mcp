@@ -214,10 +214,11 @@ not use it yet). Our own model, built on what a player reads from the opening an
   of the armies it has plus its income. Growth, what a start could hold by now, spends pooled
   armies on the bonus with the best value per remaining cost: generous on purpose, "could
   plausibly hold", not "holds".
-- **Presence** on a hidden territory combines, as independent hints, the last sighting (fading per
-  turn when a third player could have taken it), a likely start, the shortest ways between a likely
-  start and a sighting (the corridor), growth from a likely start, and the bonuses that would
-  explain its tracked income. Each guess names its sources (`basis`). A territory shown as someone
+- **Presence** on a hidden territory combines the last sighting (fading per turn when a third
+  player could have taken it), the bonuses that would explain its tracked income, and what the
+  likely starts suggest: the start itself, the shortest ways between a likely start and a
+  sighting (the corridor), or growth from it. Those three rest on the same start guess, so only
+  the strongest of them counts. Each guess names its sources (`basis`). A territory shown as someone
   else's or as a neutral is never presence.
 - **From those:** the bonuses it probably holds in full (its least likely member), the earliest
   turn it could attack each of my border territories (from a stack in view, with the armies that
