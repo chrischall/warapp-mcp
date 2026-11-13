@@ -261,6 +261,36 @@ describe('simulateTurn: attack or transfer is decided when the order runs', () =
     expect(at(r, 1).armies).toBe(5);
   });
 
+  it('a percentage order sends that share of what can still move, worked out when it runs (#165)', () => {
+    // 11 armies, guard 1: 10 can move. 50% → 5; then 33% of the 5 left → 1.65, rounded to 2.
+    const r = run(3, [own(1, 11, A), own(2, 1, A), neutral(3, 0)], {
+      [A]: [
+        { from: 1, to: 2, armies: 50, byPercent: true },
+        { from: 1, to: 2, armies: 33, byPercent: true },
+      ],
+    });
+    expect(r.log.map((e) => e.sent)).toEqual([5, 2]);
+    expect(at(r, 1).armies).toBe(4);
+    // 100% is everything movable; a half rounds down (the client's rounding, from the bundle).
+    const all = run(2, [own(1, 6, A), own(2, 1, A)], { [A]: [{ from: 1, to: 2, armies: 100, byPercent: true }] });
+    expect(all.log[0]!.sent).toBe(5);
+    const half = run(2, [own(1, 6, A), own(2, 1, A)], { [A]: [{ from: 1, to: 2, armies: 50, byPercent: true }] });
+    expect(half.log[0]!.sent).toBe(2);
+  });
+
+  it("attack teammates: an order flagged so attacks a teammate's territory instead of transferring (#165)", () => {
+    const r = run(2, [own(1, 10, A), own(2, 1, C)], { [A]: [{ from: 1, to: 2, armies: 9, attackTeammates: true }] }, {
+      moveOrder: [A, B, C],
+      teams: new Map([
+        [A, 1],
+        [C, 1],
+        [B, 2],
+      ]),
+    });
+    expect(r.log[0]).toMatchObject({ kind: 'attack', result: 'captured' });
+    expect(at(r, 2).owner).toBe(A);
+  });
+
   it("treats a teammate's territory as my own", () => {
     const r = run(2, [own(1, 5, A), own(2, 1, C)], { [A]: [{ from: 1, to: 2, armies: 4 }] }, {
       moveOrder: [A, B, C],

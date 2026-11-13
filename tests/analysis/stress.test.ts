@@ -74,6 +74,15 @@ describe('stressPlan', () => {
     expect(r.atRisk.bonuses).toEqual([{ id: 100, value: 4, replies: 1 }]);
   });
 
+  it('carries each order\'s options to the resolver: mode, percentage, commander (#165)', () => {
+    // A Transfer Only order onto the enemy does nothing: the 10 stay home.
+    const t = stress(LINE4, [mine(1, 2), mine(2, 10), foe(3, 3), foe(4, 1)], { moves: [{ from: 2, to: 3, armies: 9, mode: 'transfer-only' }] });
+    expect(t.baseline.log[0]).toMatchObject({ result: 'skipped', reason: 'transfer-only' });
+    // 50% of the 9 that can move is 4 (a half rounds down).
+    const p = stress(LINE4, [mine(1, 2), mine(2, 10), foe(3, 3), foe(4, 1)], { moves: [{ from: 2, to: 1, armies: 50, byPercent: true }] });
+    expect(p.baseline.log[0]).toMatchObject({ sent: 4, result: 'transferred' });
+  });
+
   it('simulates only the known move order when the first mover is given', () => {
     const entries = [mine(1, 2), mine(2, 10), foe(3, 3), foe(4, 1)];
     const moves = [{ from: 2, to: 1, armies: 9 }];

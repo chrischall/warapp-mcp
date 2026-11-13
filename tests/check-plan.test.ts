@@ -249,6 +249,18 @@ describe('warapp_check_plan', () => {
     expect(p.plan.shortOrders).toEqual([expect.objectContaining({ order: 1, ordered: 9, sent: 3, result: 'transferred' })]);
   });
 
+  it('carries order options to the resolver, and warns when the game would refuse one (#165)', async () => {
+    h = await live(at(10, 20, 3), 'Playing', {}, { AllowTransferOnly: true });
+    // Transfer Only onto Bob's stack does nothing: the order is skipped, not an attack.
+    const p = await check({ orders: [{ kind: 'move', from: 159, to: 158, armies: 9, mode: 'transfer-only' }] });
+    expect(p.plan.shortOrders).toEqual([expect.objectContaining({ order: 1, ordered: 9, sent: 0, reason: 'transfer-only' })]);
+    expect(p.warnings.join('\n')).not.toMatch(/would refuse/);
+    await h.harness.close();
+    h = await live(at(10, 20, 3));
+    const off = await check({ orders: [{ kind: 'move', from: 159, to: 161, armies: 50, percent: true }] });
+    expect(off.warnings.join('\n')).toMatch(/percentage.*war\.app would refuse/is);
+  });
+
   it('tests every stack on the board, whoever holds it: a booted player\'s armies still attack', async () => {
     // GameFeed says Bob is no longer playing; his 60 are on the board all the same.
     h = await live(at(2, 2, 60), 'Playing', { state: 'Booted' });

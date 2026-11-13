@@ -47,9 +47,12 @@ import {
   type PlannerSettings,
 } from '../analysis/index.js';
 import { parseGameId } from '../client.js';
+import { COMMANDER_STRENGTH } from '../analysis/combat.js';
+import { guardOffExposure } from '../analysis/guard-off.js';
 import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
+import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
 import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
-import { Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
+import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, loadAward } from './award.js';
 import { adviseCards, cardGame, handOwners, TEAM_HAND } from './card-advice.js';
@@ -103,7 +106,32 @@ export const turnOrderArg = z.discriminatedUnion('kind', [
     kind: z.literal('move'),
     from: territoryRef.describe('Territory the armies leave: id or name.'),
     to: territoryRef.describe('Adjacent territory to attack or transfer into: id or name.'),
-    armies: armiesArg.describe('Armies to send.'),
+    armies: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .describe('Armies to send (0 only with `commander`: the commander alone). With `percent`, the percentage 1–100.'),
+    mode: z
+      .enum(MOVE_MODES)
+      .optional()
+      .describe(
+        'Default "attack-transfer": attacks or transfers by who holds the target when the order runs. "transfer-only" ' +
+          '(game setting AllowTransferOnly): does nothing if the target is not yours then — a reinforcement that ' +
+          'stays home when the target fell. "attack-only" (AllowAttackOnly): does nothing if the target is yours — e.g. a ' +
+          'late order onto your own threatened territory that fires only if it fell.',
+      ),
+    percent: z
+      .boolean()
+      .optional()
+      .describe(
+        '(AllowPercentageAttacks) `armies` is a percentage of what `from` can move when the order runs, so what stays ' +
+          'behind scales with the damage taken.',
+      ),
+    commander: z.boolean().optional().describe('(Commanders games) Take your commander on `from` along.'),
+    attack_teammates: z
+      .boolean()
+      .optional()
+      .describe("(Team games) Attack the target even if it is a teammate's, instead of transferring into it."),
   }),
   z.object({
     kind: z.literal('card'),
@@ -147,11 +175,17 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.armyCap !== undefined && s.armyCap !== null && s.armyCap > 0) out.armyCap = s.armyCap;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
-  // (mode 3), which transfers between my own territories in any game.
+  // (mode 3), which transfers between my own territories in any game. The
+  // per-order options (#165) are the caller's to set on warapp_submit_turn.
   return out;
 }
 
 export { currentTurn, turnsCompleted } from './common.js';
+
+/** My teammates' GameFeed ids (empty outside a team game; GameFeed's team field is unverified). */
+export function friendsOf(players: readonly Player[], me: Player): Set<number> {
+  return new Set(me.team !== undefined && me.team >= 0 ? players.filter((p) => p.id !== me.id && p.team === me.team).map((p) => p.id) : []);
+}
 
 /** Throw unless the game is in a turn phase. */
 export function requireTurnPhase(game: Game): void {
@@ -226,6 +260,11 @@ interface NamedOrder {
   from?: { id: number; name: string };
   to?: { id: number; name: string };
   armies?: number;
+  /** Move options (#165), only when set. */
+  mode?: 'attack-only' | 'transfer-only';
+  percent?: true;
+  commander?: true;
+  attackTeammates?: true;
 }
 
 /** A territory as a preview shows it: its map-maker name delimited. */
@@ -278,6 +317,52 @@ function incomeRefused(e: WarappServerError, income: number, given = false): Mcp
 /** A territory in an error: its map-maker name delimited (errors are outside the untrusted envelope). */
 const label = (t: { id: number; name: string }) => `${untrustedText(t.name)} (${t.id})`;
 
+/** #165: with mods on, every plan says the rules it assumes may not hold. */
+export function modsWarning(s: GameSettings | undefined): string[] {
+  if (!s?.mods) return [];
+  const what = s.mods > 0 ? `${s.mods} mod${s.mods === 1 ? '' : 's'}` : 'mods';
+  return [
+    `This game runs ${what}: a mod can change the rules (combat, income, orders, cards, special units), so the rules ` +
+      'this plan assumes may not hold. Check the mods in the game settings.',
+  ];
+}
+
+/**
+ * #165: One Army Must Stand Guard off. My territories the orders leave at 0 beside an enemy or the
+ * fog fall to any single army; an enemy territory at 0 beside me breaks its owner's bonus to a
+ * one-army attack. Empty unless the guard is off.
+ */
+export function guardOffWarnings(
+  graph: ReturnType<typeof graphOf>,
+  map: GameMap,
+  board: BoardState,
+  me: number,
+  friends: ReadonlySet<number>,
+  settings: GameSettings | undefined,
+  deploys: readonly { territoryId: number; armies: number }[],
+  moves: readonly { from: number; to: number; armies: number }[],
+): string[] {
+  if (settings?.oneArmyStandsGuard !== false) return [];
+  const r = guardOffExposure({ graph, board, me, friends, deploys, moves });
+  const name = namer(map);
+  const out: string[] = [];
+  if (r.emptied.length) {
+    out.push(
+      `One Army Must Stand Guard is off: these orders leave ${r.emptied.map((id) => label(name(id))).join(', ')} at 0 armies ` +
+        'beside an enemy or the fog, and any single army takes an empty territory. Keep an army there if it matters.',
+    );
+  }
+  for (const b of r.breaks) {
+    const bonus = map.bonuses.find((x) => x.id === b.bonusId);
+    out.push(
+      `One Army Must Stand Guard is off: ${label(name(b.territoryId))} stands at 0, so a one-army attack from ` +
+        `${label(name(b.from))} takes it and breaks player ${b.playerId}'s bonus ${untrustedText(bonus?.name ?? String(b.bonusId))} ` +
+        `(${b.bonusId}, +${b.value}). These orders do not attack it.`,
+    );
+  }
+  return out;
+}
+
 /** plan_turn's note when its income counts Reinforcement plays: the deploys need the card orders (#85). */
 function cardIncomeNote(income: number, cardArmies: number): string {
   return (
@@ -321,7 +406,8 @@ export function validateTurn(args: {
   income: number;
   guard: boolean;
   deploys: Array<{ territory: { id: number; name: string }; armies: number }>;
-  moves: Array<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }>;
+  /** `percent`: `armies` is a percentage of what can move when it runs (#165), never more than there is. */
+  moves: Array<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number; percent?: boolean }>;
   /** Local Deployment: each held bonus's armies must be deployed inside that bonus. */
   localDeployments?: boolean;
   /** No-Split: each territory issues at most one attack or transfer. */
@@ -468,12 +554,17 @@ export function validateTurn(args: {
   const inflow = new Map<number, number>();
   let over: { from: { id: number; name: string }; armies: number; max: number } | undefined;
   for (const m of moves) {
-    const armies = (sent.get(m.from.id) ?? 0) + m.armies;
-    sent.set(m.from.id, armies);
     const start = chained.has(m.from.id) ? 0 : (standing.get(m.from.id)?.armies ?? 0) + (deployedOn.get(m.from.id) ?? 0);
     const max = start + (inflow.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
-    if (armies > max && !over) over = { from: m.from, armies, max };
-    if (args.multiAttack) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + m.armies);
+    // A percentage order takes a share of what is left when it runs: it never over-sends, and what
+    // it moves on is at most what the source could move (#165).
+    const moved = m.percent ? Math.max(0, max - (sent.get(m.from.id) ?? 0)) : m.armies;
+    if (!m.percent) {
+      const armies = (sent.get(m.from.id) ?? 0) + m.armies;
+      sent.set(m.from.id, armies);
+      if (armies > max && !over) over = { from: m.from, armies, max };
+    }
+    if (args.multiAttack) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + moved);
   }
   if (over) {
     const { from, armies, max } = over;
@@ -492,9 +583,9 @@ export function validateTurn(args: {
     for (const m of moves) {
       if (chained.has(m.from.id)) continue;
       const max = (standing.get(m.from.id)?.armies ?? 0) + (deployedOn.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
-      if (m.armies < max)
+      if (m.percent ? m.armies < 100 : m.armies < max)
         warnings.push(
-          `No-Split: ${label(m.from)} → ${label(m.to)} sends ${m.armies}, but this game moves the whole stack: war.app ` +
+          `No-Split: ${label(m.from)} → ${label(m.to)} sends ${m.percent ? `${m.armies}%` : m.armies}, but this game moves the whole stack: war.app ` +
             `sends all ${max} (its armies plus this turn's deploys there, less the guard), and nothing stays behind to hold ` +
             `${label(m.from)}. Size the order for the whole stack, or move nothing from it.`,
         );
@@ -524,6 +615,23 @@ export interface AttackSize {
   /** Set when several moves attack this target this turn: how many, and their armies together. */
   combined?: { attacks: number; armies: number };
   cannotCapture?: true;
+  /** A percentage order (#165): its percentage; `armies` is then what it would send on the board as it stands. */
+  percent?: number;
+  /** My commander goes along (#165): sized as {@link COMMANDER_STRENGTH} more attackers, an approximation. */
+  commander?: true;
+}
+
+/** A move as {@link attackSizes} reads it, with its options (#165). */
+export interface SizedMove {
+  from: { id: number; name: string };
+  to: { id: number; name: string };
+  armies: number;
+  mode?: MoveMode;
+  /** `armies` is a percentage; {@link estimate} is what it would send now. */
+  percent?: boolean;
+  estimate?: number;
+  commander?: boolean;
+  attackTeammates?: boolean;
 }
 
 /**
@@ -535,27 +643,36 @@ export interface AttackSize {
 export function attackSizes(
   board: readonly LiveTerritory[],
   myInGameId: number,
-  moves: ReadonlyArray<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }>,
+  moves: ReadonlyArray<SizedMove>,
   settings: PlannerSettings,
   teammates: ReadonlySet<number> = new Set(),
 ): AttackSize[] {
   const standing = new Map(board.map((t) => [t.territoryId, t]));
   const off = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  // A Transfer Only order never attacks; one that attacks teammates attacks a teammate's territory (#165).
   const attacks = moves.filter((m) => {
     const t = standing.get(m.to.id);
-    return t !== undefined && !t.fogged && t.owner !== myInGameId && !teammates.has(t.owner);
+    return (
+      m.mode !== 'transfer-only' &&
+      t !== undefined &&
+      !t.fogged &&
+      t.owner !== myInGameId &&
+      (m.attackTeammates === true || !teammates.has(t.owner))
+    );
   });
+  /** Its attackers as they fight: a percentage order's estimate, my commander as 7 more. */
+  const power = (m: SizedMove) => (m.percent ? (m.estimate ?? 0) : m.armies) + (m.commander ? COMMANDER_STRENGTH : 0);
   const together = new Map<number, { attacks: number; armies: number }>();
   for (const m of attacks) {
     const g = together.get(m.to.id) ?? { attacks: 0, armies: 0 };
     g.attacks += 1;
-    g.armies += m.armies;
+    g.armies += power(m);
     together.set(m.to.id, g);
   }
   return attacks.map((m) => {
     const t = standing.get(m.to.id)!;
     const group = together.get(m.to.id)!;
-    const armies = group.attacks > 1 ? group.armies : m.armies;
+    const armies = group.attacks > 1 ? group.armies : power(m);
     const defenders = (t.armies ?? 0) + specialUnitStrength(t.specialUnits);
     const chance = winChance(armies, defenders, {
       ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
@@ -566,7 +683,9 @@ export function attackSizes(
     return {
       from: m.from,
       to: m.to,
-      armies: m.armies,
+      armies: m.percent ? (m.estimate ?? 0) : m.armies,
+      ...(m.percent ? { percent: m.armies } : {}),
+      ...(m.commander ? { commander: true as const } : {}),
       defenders,
       expectedKills: Math.round(expectedKills(armies, off) * 10) / 10,
       winChance: Math.round(chance * 1000) / 1000,
@@ -732,7 +851,13 @@ const cardView = (c: Card) => ({ id: c.id, name: c.name, ...(c.armies !== undefi
 export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
   return {
     deploys: orders.flatMap((o) => (o.kind === 'deploy' ? [{ territoryId: o.territoryId, armies: o.armies }] : [])),
-    moves: orders.flatMap((o) => (o.kind === 'move' ? [{ from: o.from, to: o.to, armies: o.armies }] : [])),
+    // Left out (#165): a percentage order's count is a percentage, not armies, and a Transfer Only
+    // or Attack Only order may not happen at all (it runs only if the target's owner suits it).
+    moves: orders.flatMap((o) =>
+      o.kind === 'move' && !o.byPercent && (o.mode === undefined || o.mode === AttackTransferMode.AttackTransfer)
+        ? [{ from: o.from, to: o.to, armies: o.armies }]
+        : [],
+    ),
   };
 }
 
@@ -999,6 +1124,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
         ...(tracks ?? []).flatMap((t) => t.warnings),
         ...plan.warnings,
+        ...modsWarning(game.settings),
+        ...guardOffWarnings(graph, map, board, me.id, friendsOf(game.players, me), game.settings, plan.deploys, plan.moves),
       ];
       // The plan advises Order Priority (a withdrawal, a commander strike): play the one I
       // hold, so the orders as returned carry it rather than only the advice.
@@ -1152,6 +1279,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
             'stack, which war.app moves anyway); under Multi-Attack, a move (not a deploy) may go on from a ' +
             'territory an earlier move in the list captures (warapp_plan_turn obeys these and the kill rates). ' +
+            'A move may carry options, each refused unless the game allows it: `mode` "transfer-only" (AllowTransferOnly) ' +
+            'or "attack-only" (AllowAttackOnly), `percent` (AllowPercentageAttacks: `armies` is a percentage of what can ' +
+            'move when it runs), `commander` (take your commander along; `armies` 0 sends it alone) and ' +
+            '`attack_teammates` (team games); these are encoded as the client does but not yet verified live. ' +
+            'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ. ' +
             'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
             'several attacks on one target together) ' +
             'and warns about one that cannot capture. Always sent as ' +
@@ -1185,7 +1317,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             }
             const map = mapOf(game);
             const deploys: Array<{ territory: { id: number; name: string }; armies: number }> = [];
-            const moves: Array<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }> = [];
+            const moves: Array<{
+              from: { id: number; name: string };
+              to: { id: number; name: string };
+              armies: number;
+              mode?: MoveMode;
+              percent?: boolean;
+              commander?: boolean;
+              attackTeammates?: boolean;
+            }> = [];
             const cardInputs: Array<{ card: string; target?: string | number | undefined }> = [];
             const discardInputs: Array<{ card: string }> = [];
             for (const o of orders) {
@@ -1199,7 +1339,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               } else {
                 const f = resolveTerritory(map, o.from);
                 const t = resolveTerritory(map, o.to);
-                moves.push({ from: { id: f.id, name: f.name }, to: { id: t.id, name: t.name }, armies: o.armies });
+                moves.push({
+                  from: { id: f.id, name: f.name },
+                  to: { id: t.id, name: t.name },
+                  armies: o.armies,
+                  ...(o.mode !== undefined && o.mode !== 'attack-transfer' ? { mode: o.mode } : {}),
+                  ...(o.percent ? { percent: true } : {}),
+                  ...(o.commander ? { commander: true } : {}),
+                  ...(o.attack_teammates ? { attackTeammates: true } : {}),
+                });
               }
             }
             const { territories, info } = await loadLiveGame(ctx, game);
@@ -1235,6 +1383,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 });
               }
             }
+            // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
+            const teammates = new Set(
+              me.team !== undefined && me.team >= 0
+                ? game.players.filter((p) => p !== me && p.team === me.team).map((p) => inGameId(p))
+                : [],
+            );
+            // #165: each move's options, refused unless the game allows them.
+            const deployedOn = new Map<number, number>();
+            for (const d of deploys) deployedOn.set(d.territory.id, (deployedOn.get(d.territory.id) ?? 0) + d.armies);
+            const options = checkMoveOptions({ moves, board: territories, myInGameId: playerId, settings: game.settings, teammates, deployedOn });
             const modelled = incomeFor(graphOf(map), board, me.id, game.settings);
             const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
             // #130: war.app's own number, given after an error 11, replaces the model for the check.
@@ -1266,6 +1424,20 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               ],
             });
             if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
+            warnings.push(...options.warnings);
+            warnings.push(
+              ...modsWarning(game.settings),
+              ...guardOffWarnings(
+                graphOf(map),
+                map,
+                board,
+                me.id,
+                friendsOf(game.players, me),
+                game.settings,
+                deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies })),
+                moves.map((m, i) => ({ from: m.from.id, to: m.to.id, armies: m.percent ? (options.estimates.get(i) ?? 0) : m.armies })),
+              ),
+            );
             if (handUnknown) warnings.push(UNREADABLE_HAND);
             if (used < teamShed) warnings.push(teamHandOver(hand.length, rules, teamShed, used));
             if (plays.some((p) => p.kind === 'OrderDelay')) {
@@ -1275,13 +1447,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                   'orders: playing it only spends the card, as a discard would.',
               );
             }
-            // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
-            const teammates = new Set(
-              me.team !== undefined && me.team >= 0
-                ? game.players.filter((p) => p !== me && p.team === me.team).map((p) => inGameId(p))
-                : [],
+            const attacks = attackSizes(
+              territories,
+              playerId,
+              moves.map((m, i) => ({ ...m, ...(options.estimates.has(i) ? { estimate: options.estimates.get(i)! } : {}) })),
+              plannerSettings(game.settings),
+              teammates,
             );
-            const attacks = attackSizes(territories, playerId, moves, plannerSettings(game.settings), teammates);
             const hopeless = attacks.filter((a) => a.cannotCapture);
             if (hopeless.length) {
               warnings.push(
@@ -1305,13 +1477,34 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 ...(p.target ? { target: p.target.id } : {}),
               })),
               ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territoryId: d.territory.id, armies: d.armies })),
-              ...moves.map((m) => ({ kind: 'move' as const, from: m.from.id, to: m.to.id, armies: m.armies })),
+              ...moves.map((m, i) => {
+                const commander = options.commanders.get(i);
+                return {
+                  kind: 'move' as const,
+                  from: m.from.id,
+                  to: m.to.id,
+                  armies: m.armies,
+                  ...(m.mode === 'attack-only' ? { mode: AttackTransferMode.Attack } : m.mode === 'transfer-only' ? { mode: AttackTransferMode.Transfer } : {}),
+                  ...(m.percent ? { byPercent: true } : {}),
+                  ...(m.attackTeammates ? { attackTeammates: true } : {}),
+                  ...(commander ? { commander } : {}),
+                };
+              }),
             ];
             const named: NamedOrder[] = [
               ...discards.map((c) => ({ kind: 'discard' as const, card: cardView(c) })),
               ...plays.map((p) => ({ kind: 'card' as const, card: cardView(p.card), ...(p.target ? { target: p.target } : {}) })),
               ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territory: d.territory, armies: d.armies })),
-              ...moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
+              ...moves.map((m) => ({
+                kind: 'move' as const,
+                from: m.from,
+                to: m.to,
+                armies: m.armies,
+                ...(m.mode === 'attack-only' || m.mode === 'transfer-only' ? { mode: m.mode } : {}),
+                ...(m.percent ? { percent: true as const } : {}),
+                ...(m.commander ? { commander: true as const } : {}),
+                ...(m.attackTeammates ? { attackTeammates: true as const } : {}),
+              })),
             ];
             return {
               gate: {

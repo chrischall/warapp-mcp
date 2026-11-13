@@ -920,9 +920,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     when: on({ cardsInPlay: ['Gift'], format: ['teams'] }),
     text:
       "In a team game a territory about to fall can be gifted to the attacker's teammate: by default the " +
-      'attack becomes a transfer and the bonus is not completed that turn. If the other team may hold a ' +
-      'Gift card, a bonus-completing capture needs the option to treat teammates as enemies (set in the ' +
-      'game client; this server cannot).',
+      'attack becomes a transfer and the bonus stays incomplete that turn. If the other team may hold a ' +
+      'Gift card, a bonus-completing capture must treat teammates as enemies ' +
+      '(`attack_teammates` in warapp_submit_turn, not yet verified live).',
     source: S.clanGuide,
     basis: 'source',
   },
@@ -945,11 +945,11 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     text:
       'Losing your Commander eliminates you and turns everything you hold neutral. Each turn, first check ' +
       'that no stack beside it could kill every army with it and deal 7 more in one attack; if one could, ' +
-      'deploy on its territory. Orders sent here never carry the Commander, so do not move its armies away. ' +
+      'deploy on its territory. It moves only when an order sets `commander`, so do not strip its guard. ' +
       'Never Blockade its territory.',
     source: S.commanders,
     basis: 'source',
-    encoded: "the planner holds its commander's territory before anything else and never carries the commander",
+    encoded: "the planner holds its commander's territory before anything else and never carries the commander (warapp_submit_turn does when a move sets `commander`)",
   },
   {
     id: 'settings-commander-strike',
@@ -969,9 +969,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     when: on({ commanders: true, phase: ['opening', 'expansion'] }),
     text:
       'A Commander attacking alone fights as 7 armies and is unharmed by less than 7 damage, so it can take ' +
-      'small neutrals at no cost. Orders sent through this server never include the Commander: an order ' +
-      'from its territory sends only armies and thins its guard. Do this only when playing in the war.app ' +
-      'client.',
+      'small neutrals at no cost. To send it, set `commander` on the move in warapp_submit_turn (with ' +
+      '`armies` 0 it goes alone; not yet verified live); without it, an order from its territory sends only armies and thins its guard.',
     source: S.forumCommanderTemplate,
     basis: 'source',
   },
@@ -1248,8 +1247,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     text:
       'When you move armies into a territory of yours that the enemy could take first this turn, make the ' +
       'order Transfer Only: if it has fallen, the armies stay put instead of attacking the stack that took ' +
-      'it. Set this in the game client: warapp_submit_turn sends plain attack/transfer orders, which would ' +
-      'attack.',
+      'it. In warapp_submit_turn, set the move\'s mode "transfer-only" (not yet verified live); a plain order would attack.',
     source: S.attackTransferOnly,
     basis: 'source',
   },
@@ -1260,8 +1258,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     text:
       'To answer an attack you only suspect, give a late Attack Only order onto your own threatened ' +
       'territory from a neighbouring stack big enough to beat what would survive taking it: it strikes only ' +
-      'if the territory fell. Enter it in the game client: sent by warapp_submit_turn it is a plain ' +
-      'transfer.',
+      'if the territory fell. In warapp_submit_turn, set the move\'s mode "attack-only" (not yet verified live); a plain order would ' +
+      'be a transfer.',
     source: S.forumAttackTransferOrders,
     basis: 'source',
   },
@@ -1272,7 +1270,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     text:
       'A percentage order is worked out when it runs, from the armies still able to move, so an enemy ' +
       'attack that lands first shrinks what it sends, not the share that stays. Use one when the armies ' +
-      'left behind matter more. Enter it in the game client: warapp_submit_turn sends fixed army counts.',
+      'left behind matter more. In warapp_submit_turn, set `percent` on the move and give the percentage as `armies` ' +
+      '(not yet verified live).',
     source: S.percentageAttacks,
     basis: 'source',
   },
@@ -1560,8 +1559,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     text:
       'A bonus pays only when one player holds every territory in it. Settle who owns each bonus; the other ' +
       'teammate moves out all but one army, then the owner takes the territory with an order set to treat ' +
-      'teammates as enemies (no card piece). Enter it in the game client: a plain order there is a ' +
-      'transfer.',
+      'teammates as enemies (no card piece): `attack_teammates` in warapp_submit_turn (not yet ' +
+      'verified live); a ' +
+      'plain order there is a transfer.',
     source: S.teamGames,
     basis: 'source',
   },
@@ -1595,7 +1595,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     text:
       "To strengthen a teammate's capture in the same turn, it captures with its first order and you " +
       'transfer in at least one order later, marked Transfer Only so a failed capture leaves your armies ' +
-      'home. Enter it in the game client: warapp_submit_turn sends plain orders, which would attack and ' +
+      'home. In warapp_submit_turn, set the move\'s mode "transfer-only" (not yet verified live); a plain order would attack and ' +
       'take the territory.',
     source: S.forumTeamStrategy,
     basis: 'source',

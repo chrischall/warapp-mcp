@@ -150,6 +150,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   from the reply:** its bool is the "vacation ended" flag. After sending, GameFeed is re-read:
   `numberOfTurns` advanced → `resolved`; my `hasCommittedOrders` true → `committed`; neither,
   or a transport failure after sending → `unknown` (never suggest resending blindly).
+  A move's options (#165: `mode` transfer-only/attack-only, `percent`, `commander`,
+  `attack_teammates`, checked in `src/tools/order-options.ts`) are each refused unless the game
+  allows it (`AllowTransferOnly`, `AllowAttackOnly`, `AllowPercentageAttacks`, `Commanders`, a
+  teammate); their encoding follows the client bundle, golden-pinned but UNVERIFIED live.
 - **Special units (`src/live.ts`, #61).** An `Armies` record ends with its special units
   (Commander, Boss1–4, CustomSpecialUnit), each dispatched on a byte tag; every unit class
   ends with the shared fields GUID, owner (in-game id), so the owner is the LAST field and the

@@ -202,6 +202,16 @@ describe('normalizeSettings', () => {
     });
   });
 
+  it('reads the order options the game allows and its mods (#165)', () => {
+    expect(s).toMatchObject({ allowTransferOnly: false, allowAttackOnly: false, allowPercentageAttacks: false, mods: 0 });
+    const t = normalizeSettings({ AllowTransferOnly: 'True', AllowAttackOnly: true, AllowPercentageAttacks: 'true', Mods: [{ ID: 1 }, { ID: 2 }] });
+    expect(t).toMatchObject({ allowTransferOnly: true, allowAttackOnly: true, allowPercentageAttacks: true, mods: 2 });
+    // No Mods key: unknown, not "none".
+    expect(normalizeSettings({}).mods).toBeUndefined();
+    // A Mods value that is not a list still says mods are on, count unknown.
+    expect(normalizeSettings({ Mods: 'something' }).mods).toBe(-1);
+  });
+
   it('lists enabled cards only', () => {
     expect(s.cards).toEqual(['Reinforcement', 'Blockade', 'Airlift', 'Diplomacy', 'Sanctions', 'Reconnaissance']);
   });

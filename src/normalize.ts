@@ -211,6 +211,18 @@ export interface GameSettings {
   /** No-Split: a territory issues at most one attack or transfer per turn. */
   noSplit?: boolean;
   commanders?: boolean;
+  /** Orders may be Transfer Only (`AllowTransferOnly`; war.app refuses one otherwise, error 361). */
+  allowTransferOnly?: boolean;
+  /** Orders may be Attack Only (`AllowAttackOnly`; error 362 otherwise). */
+  allowAttackOnly?: boolean;
+  /** Orders may send a percentage of the armies (`AllowPercentageAttacks`; error 360 otherwise). */
+  allowPercentageAttacks?: boolean;
+  /**
+   * How many mods the game runs (`Mods`): 0 for none, -1 when the feed sends something that is
+   * not a list (mods present, count unknown); absent when the feed does not send the key. The
+   * entries' shape is unverified, so only the count is kept.
+   */
+  mods?: number;
   distributionMode?: number;
   territoryLimit?: number;
   initialPlayerArmiesPerTerritory?: number;
@@ -246,6 +258,9 @@ const BOOL_SETTINGS = {
   localDeployments: 'LocalDeployments',
   noSplit: 'NoSplit',
   commanders: 'Commanders',
+  allowTransferOnly: 'AllowTransferOnly',
+  allowAttackOnly: 'AllowAttackOnly',
+  allowPercentageAttacks: 'AllowPercentageAttacks',
 } as const;
 const STR_SETTINGS = { pace: 'Pace', fog: 'Fog', roundingMode: 'RoundingMode', moveOrder: 'MoveOrder' } as const;
 
@@ -276,6 +291,10 @@ export function normalizeSettings(raw: unknown): GameSettings {
   if ('ArmyCap' in r) s.armyCap = asNum(r.ArmyCap) ?? null;
   for (const [k, v] of Object.entries(r)) {
     if (k.endsWith('Card') && isRec(v)) s.cards.push(k.slice(0, -'Card'.length));
+  }
+  if (r.Mods !== undefined && r.Mods !== null) {
+    const empty = r.Mods === '' || (isRec(r.Mods) && Object.keys(r.Mods).length === 0);
+    s.mods = Array.isArray(r.Mods) ? r.Mods.length : empty ? 0 : -1;
   }
   if (r.OverriddenBonuses !== undefined && r.OverriddenBonuses !== null) {
     const o = parseOverriddenBonuses(r.OverriddenBonuses);

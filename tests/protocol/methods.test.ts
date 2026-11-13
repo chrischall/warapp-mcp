@@ -103,6 +103,64 @@ describe('order encoders match the live-verified layout', () => {
   });
 });
 
+// #165: the order options. The layout is the live-verified one above; the option bytes are the
+// client bundle's writer (GameOrderAttackTransfer: tag, attackTeammates, mode, byPercent, from,
+// Armies, to; Armies: fogged, count, unit count, units; Commander: tag 1, GUID, owner). UNVERIFIED
+// against a live commit that sets them.
+describe('AttackTransfer order options (#165)', () => {
+  it('Transfer Only is mode 2', () => {
+    expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 6, to: 4, armies: 1, mode: 2 }))).toBe(
+      '01' + '00' + '02' + '00' + '06000000' + '00' + '01000000' + '00' + '04000000' + '090300000000',
+    );
+  });
+  it('Attack Only is mode 1', () => {
+    expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 9, to: 10, armies: 3, mode: 1 }))).toBe(
+      '01' + '00' + '01' + '00' + '09000000' + '00' + '03000000' + '00' + '0A000000' + '090300000000',
+    );
+  });
+  it('a percentage order sets byPercent and carries the percentage as its count', () => {
+    expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 9, to: 10, armies: 50, byPercent: true }))).toBe(
+      '01' + '00' + '03' + '01' + '09000000' + '00' + '32000000' + '00' + '0A000000' + '090300000000',
+    );
+  });
+  it('attack teammates sets the first flag', () => {
+    expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 9, to: 10, armies: 3, attackTeammates: true }))).toBe(
+      '01' + '01' + '03' + '00' + '09000000' + '00' + '03000000' + '00' + '0A000000' + '090300000000',
+    );
+  });
+  it('a commander goes in the armies as one special unit: tag 1, its GUID (.NET order), its owner', () => {
+    const cmdr = { id: '00112233445566778899aabbccddeeff', owner: 777 };
+    expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 9, to: 10, armies: 2, commander: cmdr }))).toBe(
+      '01' + '00' + '03' + '00' + '09000000' +
+        '00' + '02000000' + '01' + '01' + '33221100554477668899AABBCCDDEEFF' + '09030000' +
+        '0A000000' + '090300000000',
+    );
+    // A commander alone: no armies.
+    expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 9, to: 10, armies: 0, commander: cmdr }))).toBe(
+      '01' + '00' + '03' + '00' + '09000000' +
+        '00' + '00000000' + '01' + '01' + '33221100554477668899AABBCCDDEEFF' + '09030000' +
+        '0A000000' + '090300000000',
+    );
+  });
+  it('SendOrders passes every option of a move through', () => {
+    const cmdr = { id: '00112233445566778899aabbccddeeff', owner: 777 };
+    const w1 = new Writer();
+    writeSendOrdersParams(
+      w1,
+      12345,
+      777,
+      [{ kind: 'move', from: 9, to: 10, armies: 50, mode: 1, byPercent: true, attackTeammates: true, commander: cmdr }],
+      2,
+    );
+    const w2 = new Writer();
+    writeAttackTransferOrder(w2, { playerId: 777, from: 9, to: 10, armies: 50, mode: 1, byPercent: true, attackTeammates: true, commander: cmdr });
+    expect(toHex(w1.bytes())).toBe('39300000' + '01' + '01000000' + '01' + toHex(w2.bytes()) + '02000000' + '0000');
+    expect(toHex(w2.bytes())).toBe(
+      '01' + '01' + '01' + '01' + '09000000' + '00' + '32000000' + '01' + '01' + '33221100554477668899AABBCCDDEEFF' + '09030000' + '0A000000' + '090300000000',
+    );
+  });
+});
+
 describe('SendOrders params', () => {
   // Golden bytes from the encoder that matched a live client turn commit byte for byte.
   // Synthetic: game 12345, player 777, turn 2.
