@@ -305,3 +305,78 @@ describe('a held bonus a stack two steps away can reach keeps its hold (#172)', 
       }
   });
 });
+
+// The cut "through a territory of mine the plan holds" is decided against the plan's final
+// concession, and only when that border's stay holds it: triage concedes a border that this
+// turn's captures later make worth keeping ("Keep X (not conceded)"), so a hold judged while
+// attacks were sized could be dropped by rule 6 at the end — the rationale said "kept N on X"
+// and the transfers then emptied X. Both boards are synthetic (a randomized sweep's).
+describe('the two-step hold is judged against the plan\'s final concession (#172)', () => {
+  const OTHER = 30;
+  const finalAt = (b: BoardState, p: TurnPlan, id: number) =>
+    (b.territories.find((t) => t.territoryId === id)?.armies ?? 0) +
+    deployedTo(p, id) -
+    leaving(p, id) +
+    p.moves.filter((m) => m.kind === 'transfer' && m.to === id).reduce((n, m) => n + m.armies, 0);
+  /** Every "kept N on X … it needs M to hold" the rationale states is kept by the final orders. */
+  const notedHoldsKept = (b: BoardState, p: TurnPlan) => {
+    const broken: string[] = [];
+    for (const line of p.rationale)
+      for (const m of line.matchAll(/kept (\d+) on T(\d+) \(#\d+\): .*? it needs (\d+) to hold\)/g)) {
+        const [kept, t, needs] = [Number(m[1]), Number(m[2]), Number(m[3])];
+        if (finalAt(b, p, t) < Math.min(kept, needs)) broken.push(`T${t} ends ${finalAt(b, p, t)}: ${line}`);
+      }
+    return broken;
+  };
+  const sweepPlan = (map: GameMap, b: BoardState, income: number, settings: PlannerSettings, options = {}) =>
+    planTurn({
+      graph: buildGraph(map),
+      board: b,
+      me: ME,
+      income,
+      settings,
+      options,
+      game: { players: [{ id: ME }, { id: ENEMY }, { id: OTHER }], turn: 1 },
+    });
+
+  // T2 (1 army) is conceded at triage beside an enemy 65 on T4; taking T3 completes B100, so T2
+  // is kept after the captures and the rest of the front pours into it. T6 (+11 bonus) reaches
+  // T4's stack only via T2: once T2 is kept and holds, no hold binds on T6.
+  const flipMap = makeMap(
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    [[1, 2], [1, 3], [2, 4], [2, 5], [2, 6], [5, 7], [1, 8], [8, 9], [9, 10], [7, 11], [6, 8], [3, 6]],
+    [[100, 10, [1, 2, 3]], [101, 0, [4]], [102, 11, [5, 6, 7]], [103, 5, [8, 9, 10]], [104, 13, [11]]],
+  );
+  const flipBoard = board([
+    mine(1, 36), mine(2, 1), neutral(3, 5), player(4, 65, ENEMY), mine(5, 15), mine(6, 37),
+    mine(7, 28), mine(8, 35), mine(9, 10), neutral(10, 1), neutral(11, 3),
+  ]);
+  const flipSettings: PlannerSettings = { ...STD, luckModifier: 0.16, multiAttack: true };
+
+  it('a border conceded at triage and kept after the captures: no phantom hold behind it', () => {
+    const p = sweepPlan(flipMap, flipBoard, 16, flipSettings);
+    expect(p.rationale.join('\n')).toMatch(/Keep T2 \(#2\) \(not conceded\)/);
+    expect(notedHoldsKept(flipBoard, p)).toEqual([]);
+    // T6's 37 idle armies pay the attack on T3: no income is deployed there to pay it.
+    expect(p.moves.some((m) => m.kind === 'attack' && m.from === 6 && m.to === 3)).toBe(true);
+    expect(deployedTo(p, 6)).toBe(0);
+    expect(valid(flipMap, p, flipBoard, 16)).toEqual([]);
+  });
+
+  // T6 (2 armies) is kept after the captures (they complete B101) but still short of its threat;
+  // T7 (+3) behind it is reached only via T6, so its hold still binds: T6 kept is not T6 held.
+  const shortMap = makeMap(
+    [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [[1, 2], [2, 3], [1, 4], [4, 5], [3, 6], [6, 7], [5, 8], [4, 9], [1, 6], [6, 2], [7, 3]],
+    [[100, 13, [1, 2, 3, 4]], [101, 8, [5, 6]], [102, 3, [7]], [103, 5, [8]], [104, 3, [9]]],
+  );
+  const shortBoard = board([
+    neutral(1, 5), player(2, 23, ENEMY), neutral(3, 6), mine(4, 32), neutral(5, 5), mine(6, 2), mine(7, 7), player(8, 3, ENEMY), mine(9, 17),
+  ]);
+
+  it('a kept border short of its hold does not cut the reach through it', () => {
+    const p = sweepPlan(shortMap, shortBoard, 20, { ...STD, luckModifier: 0.16 }, { goal: 'expand', minWinChance: 0.75, movesFirst: true, adapt: true });
+    expect(notedHoldsKept(shortBoard, p)).toEqual([]);
+    expect(valid(shortMap, p, shortBoard, 20)).toEqual([]);
+  });
+});

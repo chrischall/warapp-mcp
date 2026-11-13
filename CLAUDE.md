@@ -68,7 +68,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the assumption that I add nothing next turn; this never changes `safe`. Both modules are pure and
   deterministic like the planner, and neither is called by it. The look-ahead itself lives in
   `src/analysis/lookahead.ts` (`twoStepReaches`), one computation shared with the planner's two-step
-  hold (#172, rule 6): change it there, and `exposedNextTurn` and the planner move together.
+  hold (#172, applied wherever armies leave a guarded territory: attacks and their softeners,
+  transfers, staging, top-ups): change it there, and `exposedNextTurn` and the planner move together.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
   researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or

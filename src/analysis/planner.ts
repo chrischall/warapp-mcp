@@ -650,15 +650,22 @@
 //     two-step hold binds, the plan is made again with those reaches cut (the captures of the plan
 //     and of one whose attacks ignore the hold, narrowed to those the re-made plan still takes,
 //     at most TWO_STEP_PASSES times; else the plan that cuts nothing) — nor through a territory of
-//     mine the plan holds (its own hold covers that), and never when even what is there now and
-//     what next turn can deploy there (the whole income; under Local Deployment its bonuses' pools
-//     and the free rest) could not make it hold (keeping them home saves nothing). What it needs
+//     mine the plan holds (its own hold covers that): one the plan ends keeping (not conceded)
+//     with enough on it after the final orders to hold its border. That is judged against how the
+//     plan ends, never mid-way (triage concedes a border this turn's captures then keep, rule 1c):
+//     a plan that decided a territory otherwise than it ends is made again with the end's answer,
+//     at most VIA_PASSES times, else with no territory in between counted held — one answer every
+//     order shares, so no "kept N" is stated and then transferred away. And never when even what
+//     is there now and what next turn can deploy there (the whole income; under Local Deployment
+//     its bonuses' pools and the free rest) could not make it hold (keeping them home saves
+//     nothing). What it needs
 //     is measured as a one-step hold is (holdArmies: under luck or weighted-random rounding, it
 //     falls at most HOLD_FALL_CHANCE of the time), never below check_plan's luck-free `needs`. A
 //     territory protecting nothing is not held so: its armies serve the front. The rationale says
 //     "kept N on X: player P can reach it next turn from Y via Z" — on the order that keeps it, or
 //     at the end ("Orders out of X leave it its hold") when it only shrank or ruled out an order.
-//     Under No-Split a transfer that must keep some is not made.
+//     Under No-Split a transfer that must keep some (this hold, or #128's) is not made: it would
+//     send the whole stack.
 //     Staging (#125): when the leftover saved toward a step (rule 5), idle armies on my other
 //     territories facing no visible enemy (a border beside neutrals included; never one that
 //     attacks, a conceded border, my commander's, or one beside the step itself) walk one step
@@ -1941,6 +1948,20 @@ interface TwoStepPass {
   readonly relaxAttacks: boolean;
   /** Set by the pass when some two-step hold was found to bind. */
   used: boolean;
+  /**
+   * Whether a territory of mine in between a reach and its target is held (so its own one-step
+   * hold covers the reach, which is cut), as learned from the end of an earlier pass; a territory
+   * absent here is judged by the concession as the pass goes.
+   */
+  readonly viaHeld: ReadonlyMap<number, boolean>;
+  /** No territory of mine in between is held: the fallback that is the same at every order. */
+  readonly viaNever: boolean;
+  /** Filled by the pass: each "held in between" decision it made, by territory. */
+  readonly viaSeen: Map<number, boolean>;
+  /** Set by the pass when one territory was judged both ways. */
+  viaMixed: boolean;
+  /** Filled at the end of the pass: whether each territory in `viaSeen` ends kept and holding. */
+  readonly viaFinal: Map<number, boolean>;
 }
 /** A two-step hold on one territory of mine (#172): what stays, what it needs, and the reach. */
 interface TwoStepHoldAt {
@@ -1952,6 +1973,35 @@ interface TwoStepHoldAt {
 }
 /** Passes that refine the cut set (#172) before falling back to the plan that cuts nothing. */
 const TWO_STEP_PASSES = 3;
+/** Passes that learn which territories in between end held (#172) before none is counted held. */
+const VIA_PASSES = 3;
+
+const twoStepPass = (
+  cut: ReadonlySet<number>,
+  relaxAttacks: boolean,
+  viaHeld: ReadonlyMap<number, boolean> = new Map(),
+  viaNever = false,
+): TwoStepPass => ({ cut, relaxAttacks, used: false, viaHeld, viaNever, viaSeen: new Map(), viaMixed: false, viaFinal: new Map() });
+
+/**
+ * One plan whose "through a territory of mine the plan holds" cut (#172) agrees with how the plan
+ * ends: triage can concede a border that this turn's captures make worth keeping (rule 1c), or
+ * keep one its stay does not hold, so a decision taken while attacks are sized may not stand at
+ * the end. A pass that decided some territory otherwise than it ends is made again with the
+ * end's answer (at most VIA_PASSES times), else with none counted held — a decision every order
+ * shares, so no rationale states a hold the orders then drop.
+ */
+function settledPass(input: PlanInput, cut: ReadonlySet<number>, relaxAttacks: boolean): { plan: TurnPlan; used: boolean } {
+  let learned = new Map<number, boolean>();
+  for (let i = 0; i < VIA_PASSES; i++) {
+    const pass = twoStepPass(cut, relaxAttacks, learned);
+    const plan = planPass(input, pass);
+    if (!pass.viaMixed && [...pass.viaSeen].every(([v, d]) => pass.viaFinal.get(v) === d)) return { plan, used: pass.used };
+    learned = new Map([...learned, ...pass.viaFinal]);
+  }
+  const pass = twoStepPass(cut, relaxAttacks, learned, true);
+  return { plan: planPass(input, pass), used: pass.used };
+}
 
 /**
  * Plan one turn (see the header). #172: when a two-step hold binds anywhere, the plan is made
@@ -1961,14 +2011,12 @@ const TWO_STEP_PASSES = 3;
  * (a fixed point, so no cut reach is still there); without one, the plan that cuts nothing.
  */
 export function planTurn(input: PlanInput): TurnPlan {
-  const first: TwoStepPass = { cut: new Set(), relaxAttacks: false, used: false };
-  const plan = planPass(input, first);
-  if (!first.used) return plan;
-  const free = planPass(input, { cut: new Set(), relaxAttacks: true, used: false });
+  const { plan, used } = settledPass(input, new Set(), false);
+  if (!used) return plan;
+  const free = settledPass(input, new Set(), true).plan;
   let cut = new Set([...plan.expected.captures, ...free.expected.captures]);
   for (let i = 0; i < TWO_STEP_PASSES && cut.size > 0; i++) {
-    const pass: TwoStepPass = { cut, relaxAttacks: false, used: false };
-    const p = planPass(input, pass);
+    const p = settledPass(input, cut, false).plan;
     const taken = new Set(p.expected.captures);
     const still = new Set([...cut].filter((t) => taken.has(t)));
     if (still.size === cut.size) return p;
@@ -2995,6 +3043,18 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    * (its own one-step hold covers it), and so is one it cannot hold even with next turn's whole
    * income deployed there. One-step holds are separate: callers take the larger, never both.
    */
+  /**
+   * Whether my `v`, in between a reach and its target, is held — kept and holding its own border —
+   * as the plan's end decides it (see {@link settledPass}): learned from an earlier pass, else
+   * judged by the concession so far and checked at the end.
+   */
+  const viaHeld = (v: number): boolean => {
+    const d = pass.viaNever ? false : (pass.viaHeld.get(v) ?? !conceded.has(v));
+    const seen = pass.viaSeen.get(v);
+    if (seen !== undefined && seen !== d) pass.viaMixed = true;
+    pass.viaSeen.set(v, d);
+    return d;
+  };
   const twoStepHold = (t: number, gone: (n: number) => boolean = () => false): TwoStepHoldAt | null => {
     if (!mineSet.has(t) || conceded.has(t) || !guardsTwoStep(t)) return null;
     let best: TwoStepHoldAt | null = null;
@@ -3003,7 +3063,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // Taken by an order of this plan that lands later (planTurn's refining passes).
       if (pass.cut.has(r.via) || pass.cut.has(r.from)) continue;
       // Through a territory of mine the plan holds: that is its border's one-step hold, not this.
-      if (mineSet.has(r.via) && !conceded.has(r.via)) continue;
+      if (mineSet.has(r.via) && viaHeld(r.via)) continue;
       // Measured as a one-step hold is (holdArmies: under luck or weighted-random rounding, it
       // falls at most HOLD_FALL_CHANCE of the time), never below check_plan's luck-free `needs`.
       const needs = Math.max(r.needs, holdArmies(r.power));
@@ -8348,6 +8408,15 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       why: `not made — ${offenceSkip.get(o.target) ?? 'other uses of the income scored higher per army, or it could not be afforded'}: ${o.why}`,
     };
   });
+
+  // #172: how each territory in between that a two-step hold judged ends — kept (not conceded)
+  // and holding its own border with what the final orders leave there (its armies, deploys and
+  // every transfer in, less every order out) — for settledPass to check the pass against.
+  for (const v of pass.viaSeen.keys()) {
+    const b = borders.get(v);
+    const ends = moves.reduce((n, m) => n - (m.from === v ? m.armies : 0) + (m.kind === 'transfer' && m.to === v ? m.armies : 0), armiesOf(v) + (deployed.get(v) ?? 0));
+    pass.viaFinal.set(v, !conceded.has(v) && b !== undefined && (toTake(ends + unitsAt(v)) ?? Infinity) > b.threat);
+  }
 
   return {
     goal,
