@@ -270,11 +270,24 @@ export const READER_HELPERS = 'P';
 export interface DialectCheck {
   /** The bundle's definition read the same as the built-in on the probes. */
   verified: string[];
-  /** Defined in the bundle, but not in a form the interpreter can evaluate. */
+  /**
+   * Defined in the bundle, but not shown to read alike: a definition the interpreter cannot evaluate,
+   * one in a form the check cannot follow (an alias to something other than a static function), or
+   * a builder whose reads were never seen in full (#148).
+   */
   unverified: string[];
   /** The bundle's definition reads differently: the built-in would mis-read. */
   mismatched: string[];
+  /** Why each unverified helper is unverified; absent when none is. */
+  reasons?: Record<string, string>;
 }
+
+/**
+ * The helpers every board count, flag and unit count is read through (int32, bool, byte). A bundle
+ * whose own definition of one of these cannot be verified is refused at load: an unverified one could
+ * be a swapped same-width read, which decodes a wrong board without an error (#148).
+ */
+export const REQUIRED_HELPERS: readonly string[] = ['Ya', 'Yc', 'uq'];
 
 /** Byte strings each helper is run on: small counts, a -1 count, ascending bytes, zeros. */
 const DIALECT_PROBES: readonly Uint8Array[] = [
@@ -285,37 +298,73 @@ const DIALECT_PROBES: readonly Uint8Array[] = [
   new Uint8Array(32),
 ];
 
+/**
+ * Which item reader a helper called, and where the reader stood: `[parameter index, position]`. Two
+ * helpers that call their item readers in the same order at the same positions read alike, even
+ * when the bundle's builds a client collection the built-in's array cannot be compared with.
+ */
+type Trace = Array<readonly [number, number]>;
+
 type ProbeOutcome =
-  | { kind: 'value'; value: unknown; position: number }
-  | { kind: 'read-error' }
-  | { kind: 'unevaluable' };
+  | { kind: 'value'; value: unknown; position: number; trace: Trace }
+  | { kind: 'read-error'; trace: Trace }
+  | { kind: 'unevaluable'; trace: Trace };
 
 /** Run a helper on a probe: the reader, then one item reader (a byte) per extra parameter. */
 function runProbe(probe: Uint8Array, arity: number, call: (args: unknown[]) => unknown): ProbeOutcome {
   const r = new Reader(probe);
   const args: unknown[] = [r];
+  const trace: Trace = [];
   for (let i = 1; i < arity; i++) {
     // An item reader the host made: registered as a callback, so a native list helper (and the
-    // bundle's own definition, through `call`) may call it like an interpreter closure.
-    const item = () => r.u8();
+    // bundle's own definition, through `call`) may call it like an interpreter closure. Each call
+    // is recorded, so the order of key and value reads is compared, not just the bytes consumed.
+    const item = () => {
+      trace.push([i, r.position]);
+      return r.u8();
+    };
     CALLBACKS.add(item);
     args.push(item);
   }
   try {
     const value = call(args);
-    return { kind: 'value', value, position: r.position };
+    return { kind: 'value', value, position: r.position, trace };
   } catch (e) {
-    return e instanceof InterpError && e.kind !== 'reader-threw' ? { kind: 'unevaluable' } : { kind: 'read-error' };
+    return e instanceof InterpError && e.kind !== 'reader-threw' ? { kind: 'unevaluable', trace } : { kind: 'read-error', trace };
   }
 }
 
 const isClientObject = (v: unknown): boolean =>
   isObject(v) && !Array.isArray(v) && !(v instanceof Date) && !(v instanceof Uint8Array) && typeof v.$type === 'string';
 
-function sameOutcome(a: ProbeOutcome, b: ProbeOutcome): boolean {
-  if (a.kind !== b.kind) return false;
-  if (a.kind !== 'value' || b.kind !== 'value') return true;
-  return a.position === b.position && sameValue(a.value, b.value);
+const sameTrace = (a: Trace, b: Trace): boolean => a.length === b.length && a.every(([i, p], k) => i === b[k]![0] && p === b[k]![1]);
+const tracePrefix = (a: Trace, of: Trace): boolean => a.length <= of.length && a.every(([i, p], k) => i === of[k]![0] && p === of[k]![1]);
+
+/**
+ * How the bundle's run of a helper on one probe compares with the built-in's: `agree` (with
+ * `informative` when it showed the helper's reads, not just a null for a -1 count), `differ`, or
+ * `unknown` when the run says nothing either way.
+ */
+function compareProbe(mine: ProbeOutcome, theirs: ProbeOutcome, arity: number): 'agree' | 'informative' | 'differ' | 'unknown' {
+  if (theirs.kind === 'unevaluable') {
+    // It stopped where the interpreter could not follow; the item reads it made before that still
+    // count: a dictionary that reads the value before the key differs on its first read.
+    // (Only against a built-in that read the probe through: one that refused the count up front made no reads to compare.)
+    return mine.kind !== 'value' || tracePrefix(theirs.trace, mine.trace) ? 'unknown' : 'differ';
+  }
+  if (mine.kind !== theirs.kind) return 'differ';
+  // Both failed on the bytes: the codec refuses a count past the bytes left before reading an item,
+  // a hand-written loop after reading some, so where they stopped says nothing.
+  if (mine.kind === 'read-error') return 'agree';
+  if (!sameTrace(mine.trace, theirs.trace)) return 'differ';
+  if (mine.kind === 'value' && theirs.kind === 'value') {
+    if (mine.position !== theirs.position) return 'differ';
+    // A client collection (`new Je`, a dictionary) is not comparable with the built-in's JS array:
+    // the item reads (trace) and the bytes consumed say whether the two read alike.
+    if (!isClientObject(theirs.value) && !sameValue(mine.value, theirs.value)) return 'differ';
+  }
+  // A helper that takes item readers is shown to read alike only by a probe on which it read items.
+  return arity <= 1 || theirs.trace.length > 0 ? 'informative' : 'agree';
 }
 
 function sameValue(a: unknown, b: unknown): boolean {
@@ -325,6 +374,9 @@ function sameValue(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => sameValue(x, b[i]));
   return false;
 }
+
+/** One way the bundle defines a reader helper: a function to evaluate, or a form the check cannot follow. */
+type HelperForm = { node: FunctionExpression; where: string } | { unseen: string };
 
 export interface InterpOptions {
   /** The protocol version handed to every `Ha` (default {@link PROTOCOL_VERSION}). */
@@ -620,61 +672,142 @@ export class BundleInterpreter {
   /**
    * Check the built-in reader helpers (the dialect's statics on {@link READER_HELPERS}) against
    * the bundle's own definitions of the same names: each definition is evaluated on a few probe
-   * byte strings and must read the same value and the same number of bytes as the built-in. The
-   * built-ins shadow the bundle's definitions, so a new client that gives a name to another helper
-   * would otherwise decode every field through the wrong read without an error (#131). A
-   * definition the interpreter cannot evaluate is unverified, not a mismatch.
+   * byte strings and must read the same value, call its item readers in the same order and read
+   * the same number of bytes as the built-in. The built-ins shadow the bundle's definitions, so a
+   * new client that gives a name to another helper would otherwise decode every field through the
+   * wrong read without an error (#131). Every definition counts: `P.x=function`, an alias
+   * (`P.x=Q.y`, followed to Q.y's definition) and a property of an object literal assigned to P
+   * (`P={x:function…}`); a definition the interpreter cannot evaluate, or in a form it cannot
+   * follow, is unverified, not a mismatch, and so is a helper that takes item readers but was never
+   * seen reading an item (#148).
    */
   verifyDialect(): DialectCheck {
     const out: DialectCheck = { verified: [], unverified: [], mismatched: [] };
+    const reasons: Record<string, string> = {};
     const natives = Object.hasOwn(this.dialect.statics, READER_HELPERS) ? this.dialect.statics[READER_HELPERS]! : {};
     // The bundle's definitions run like any interpreted code: contained, and under one step budget
     // shared by the whole check, so a hostile bundle cannot spend more than one read's worth here.
     // Past the budget, a probe is unevaluable (the helper unverified), never a mismatch.
     const budget: ReadBudget = { spent: 0 };
-    const defined = this.indexDefinitions(READER_HELPERS, Object.keys(natives), budget);
-    for (const name of [...defined].sort()) {
+    const forms = this.helperForms(READER_HELPERS, Object.keys(natives), budget);
+    // The required helpers first: a runaway definition of another cannot spend the budget they need.
+    const order = [...forms.keys()].sort((a, b) => Number(REQUIRED_HELPERS.includes(b)) - Number(REQUIRED_HELPERS.includes(a)) || (a < b ? -1 : 1));
+    for (const name of order) {
       const native = natives[name]!;
       const key = `${READER_HELPERS}.${name}`;
-      let agreed = 0;
       let mismatch = false;
-      for (const probe of DIALECT_PROBES) {
-        const mine = runProbe(probe, native.length, (args) => native(...args));
-        const theirs = runProbe(probe, native.length, (args) =>
-          this.budgeted(budget, () => {
-            const { node, where } = this.resolveStatic(READER_HELPERS, name);
-            return this.invoke(node, args, new Scope(), where);
-          }),
-        );
-        // A client collection (`new Je`, a dictionary) is not comparable with the built-in's
-        // JS array: only plain values say whether the two read alike.
-        if (theirs.kind === 'unevaluable' || (theirs.kind === 'value' && isClientObject(theirs.value))) continue;
-        if (sameOutcome(mine, theirs)) agreed++;
-        else mismatch = true;
+      let why: string | undefined;
+      for (const form of forms.get(name)!) {
+        if ('unseen' in form) {
+          why ??= form.unseen;
+          continue;
+        }
+        let informative = 0;
+        let ran = false;
+        for (const probe of DIALECT_PROBES) {
+          const mine = runProbe(probe, native.length, (args) => native(...args));
+          const theirs = runProbe(probe, native.length, (args) =>
+            this.budgeted(budget, () => this.invoke(form.node, args, new Scope(), form.where)),
+          );
+          if (theirs.kind !== 'unevaluable') ran = true;
+          const verdict = compareProbe(mine, theirs, native.length);
+          if (verdict === 'differ') mismatch = true;
+          else if (verdict === 'informative') informative++;
+        }
+        if (!informative) {
+          why ??= !ran
+            ? 'its definition cannot be evaluated here'
+            : native.length > 1
+              ? 'its definition was never seen reading an item (it builds a client collection this check cannot evaluate)'
+              : 'no probe showed it reading alike';
+        }
       }
       if (mismatch) out.mismatched.push(key);
-      else if (agreed) out.verified.push(key);
-      else out.unverified.push(key);
+      else if (why === undefined) out.verified.push(key);
+      else {
+        out.unverified.push(key);
+        reasons[key] = why;
+      }
     }
+    for (const list of [out.verified, out.unverified, out.mismatched]) list.sort();
+    if (Object.keys(reasons).length) out.reasons = reasons;
     return out;
   }
 
   /**
-   * Which of `names` the bundle defines as `<cls>.<name>=function` in a form that parses: looked up
-   * in the one-pass definition index (never a rescan), parsed and cached, the parsing charged to `budget`.
+   * Every definition of each of `names` on `cls` in the bundle, found in one pass over the source:
+   * `cls.name=function` sites (parsed, the parsing charged to `budget`), aliases `cls.name=X.y`
+   * (followed to X.y's definition) and properties of object literals assigned to `cls`
+   * (`cls={name:function…}`). Anything else assigned to one of the names (a variable, an
+   * expression, a getter) is a form the check cannot follow. A name with no definition is absent.
    */
-  private indexDefinitions(cls: string, names: readonly string[], budget: ReadBudget): Set<string> {
-    const found = new Set<string>();
-    for (const name of names) {
-      if (!this.definitions().statics.has(`${cls}.${name}`)) continue;
+  private helperForms(cls: string, names: readonly string[], budget: ReadBudget): Map<string, HelperForm[]> {
+    const wanted = new Set(names);
+    const out = new Map<string, HelperForm[]>();
+    const add = (name: string, form: HelperForm) => {
+      const list = out.get(name);
+      if (list) list.push(form);
+      else out.set(name, [form]);
+    };
+    const parseFn = (at: number, where: string): HelperForm => {
       try {
-        this.budgeted(budget, () => this.resolveStatic(cls, name));
-        found.add(name);
+        return { node: this.budgeted(budget, () => this.parseFunctionAt(at, where)), where };
       } catch {
-        // Unparsable (or past the budget): not checked.
+        return { unseen: 'its definition does not parse within the budget' };
+      }
+    };
+    const src = this.bundle.src;
+    const esc = cls.replace(/\$/g, '\\$');
+    // `P.name = <rhs>`: not `==`, not a member of something else (`x.P.name`).
+    for (const m of src.matchAll(new RegExp(`(?<![\\w$.])${esc}\\.([\\w$]+)\\s*=(?!=)\\s*`, 'g'))) {
+      const name = m[1]!;
+      if (!wanted.has(name)) continue;
+      const at = m.index + m[0].length;
+      const where = `${cls}.${name}`;
+      if (/^function\b/.test(src.slice(at, at + 9))) {
+        add(name, parseFn(at, where));
+        continue;
+      }
+      // An alias to another class's static: verified as that definition.
+      const alias = /^([\w$]+)\.([\w$]+)\s*(?=[;,})\n]|$)/.exec(src.slice(at, at + 200));
+      const sites = alias ? this.definitions().statics.get(`${alias[1]}.${alias[2]}`) : undefined;
+      if (alias && sites?.length) {
+        add(name, parseFn(sites[0]!, `${alias[1]}.${alias[2]}`));
+        continue;
+      }
+      // The assigned text is never quoted: it is the bundle's, not ours.
+      add(name, { unseen: 'it is assigned in a form this check cannot follow (not a function or an alias of one)' });
+    }
+    // `P = { name: function… }` (with `var`, or in a sequence).
+    for (const m of src.matchAll(new RegExp(`(?<![\\w$.])${esc}\\s*=\\s*(?=\\{)`, 'g'))) {
+      const at = m.index + m[0].length;
+      let obj: AnyNode;
+      try {
+        obj = this.budgeted(budget, () => {
+          const node = parseExpressionAt(src, at, { ecmaVersion: 'latest' }) as AnyNode;
+          this.spend(Math.max(1, node.end - at), `${cls}={…}`, at);
+          return node;
+        });
+      } catch {
+        continue;
+      }
+      if (obj.type !== 'ObjectExpression') continue;
+      for (const prop of obj.properties) {
+        if (prop.type !== 'Property' || prop.computed) continue;
+        const name = prop.key.type === 'Identifier' ? prop.key.name : prop.key.type === 'Literal' ? String(prop.key.value) : undefined;
+        if (name === undefined || !wanted.has(name)) continue;
+        const where = `${cls}.${name}`;
+        if (prop.kind === 'init' && !prop.method && prop.value.type === 'FunctionExpression') add(name, { node: prop.value, where });
+        else if (prop.kind === 'init' && prop.value.type === 'MemberExpression' && !prop.value.computed &&
+          prop.value.object.type === 'Identifier' && prop.value.property.type === 'Identifier') {
+          const sites = this.definitions().statics.get(`${prop.value.object.name}.${prop.value.property.name}`);
+          add(name, sites?.length
+            ? parseFn(sites[0]!, `${prop.value.object.name}.${prop.value.property.name}`)
+            : { unseen: 'it is an object-literal property this check cannot follow' });
+        } else add(name, { unseen: 'it is an object-literal property this check cannot follow' });
       }
     }
-    return found;
+    return out;
   }
 
   /**
