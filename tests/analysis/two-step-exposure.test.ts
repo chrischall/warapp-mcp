@@ -444,6 +444,27 @@ describe('a two-step hold is stated once, with the final stay (#172)', () => {
     expect(s!.kept).toBeGreaterThan(28);
   });
 
+  it('arrivals leave the hold decision alone: a hold its own stay cannot make still sends its idle armies on', () => {
+    // At income 17, T1's 28 + 17 fall short of what it needs (see above): its hold is hopeless, so
+    // its idle armies move to the front. T7's 30 moving into T1 would make up the difference, but
+    // they are not T1's to keep: T1 keeps nothing back for them, whichever order runs first.
+    // Both orders: the feeder behind (T7) runs after T1, and (renumbered) before it.
+    const p = plan(behindMap, behindBoard, 17);
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 7, to: 1, kind: 'transfer' }));
+    expect(leaving(p, 1)).toBe(27 + deployedTo(p, 1));
+    expect(p.rationale.join('\n')).not.toMatch(/Keep the \d+ idle armies on T1 /);
+    expect(valid(behindMap, p, behindBoard, 17)).toEqual([]);
+    // T8 (+12, 28) is the held territory and T1 (mine, 30) the feeder behind it, so T1's order runs first.
+    //   T3 (enemy 98) ─ T2 (neutral 8) ─ T8 (+12, 28) ─ T4 (mine 50) ─ T5 (enemy 60); T1 ─ T8
+    const firstMap = makeMap([1, 2, 3, 4, 5, 8], [[8, 2], [2, 3], [8, 4], [4, 5], [1, 8]], [[101, 12, [8]]]);
+    const firstBoard = board([mine(1, 30), neutral(2, 8), player(3, 98, ENEMY), mine(4, 50), player(5, 60, ENEMY), mine(8, 28)]);
+    const q = plan(firstMap, firstBoard, 17);
+    expect(q.moves).toContainEqual(expect.objectContaining({ from: 1, to: 8, kind: 'transfer' }));
+    expect(leaving(q, 8)).toBe(27 + deployedTo(q, 8));
+    expect(q.rationale.join('\n')).not.toMatch(/Keep the \d+ idle armies on T8 /);
+    expect(valid(firstMap, q, firstBoard, 17)).toEqual([]);
+  });
+
   it('an order that keeps the hold names it without restating its numbers', () => {
     const p = plan(attackMap, attackBoard, 40);
     const text = p.rationale.join('\n');
