@@ -239,10 +239,12 @@ describe('second-pass notes: each is offered only where it applies', () => {
             for (const distribution of ['manual', 'automatic'] as const) {
               for (const flip of [false, true]) {
                 const p = profile({ format, phase, standing }, { fog, cards: true, commanders: !flip, luck: flip ? 16 : 0, rounding: flip ? 'WeightedRandom' : 'StraightRound', localDeployments: flip, noSplit: flip });
+                // Each cyclic order too: a note can be for Cycle only (the award settles the first mover there).
+                for (const moveOrder of flip ? ['Random'] : ['NoLuckCycle', 'Cycle']) {
                 const x: NoteContext = {
                   cardsInPlay: cardNames,
                   distribution,
-                  moveOrder: flip ? 'Random' : 'NoLuckCycle',
+                  moveOrder,
                   oneArmyStandsGuard: !flip,
                   multiAttack: flip,
                   armyCap: flip ? 3 : null,
@@ -255,6 +257,7 @@ describe('second-pass notes: each is offered only where it applies', () => {
                   negativeBonus: true,
                 };
                 for (const id of ids(p, x)) reached.add(id);
+                }
               }
             }
           }

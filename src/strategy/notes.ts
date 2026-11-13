@@ -1466,9 +1466,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
   {
     id: 'reading-pick-move-order',
     topic: 'reading',
-    when: on({ format: ['1v1'], distribution: 'manual', moveOrder: ['Cycle', 'NoLuckCycle'], phase: ['opening', 'expansion'] }),
+    when: on({ format: ['1v1'], distribution: 'manual', moveOrder: ['Cycle'], phase: ['opening', 'expansion'] }),
     text:
-      'Under a cyclic move order the pick award is turn 0: whoever was awarded first moves second on turn 1 ' +
+      'Under a Cycle move order the pick award is turn 0: whoever was awarded first moves second on turn 1 ' +
       'and first on turn 2. If your k-th granted pick was number 2k on your list you know which: k odd, you ' +
       'were awarded second and move first on turn 1; k even, the reverse.',
     source: S.forumIntelBeforeTurn1,

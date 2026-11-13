@@ -688,7 +688,7 @@ delays the orders listed after it; under No-Split the whole stack moves).
   an opponent's first visible deployment than the move order allows, it has deployed somewhere
   out of your sight first, so its income is larger than what arrives at your border. **Advice
   only.** Source: <https://warlight.nghood.com/>
-- `reading-pick-move-order` — Under a cyclic move order the pick award is turn 0: whoever was
+- `reading-pick-move-order` — Under a Cycle move order (not NoLuckCycle, where play speed sets the first mover) the pick award is turn 0: whoever was
   awarded first moves second on turn 1 and first on turn 2. If your k-th granted pick was number
   2k on your list you know which: k odd, you were awarded second and move first on turn 1; k
   even, the reverse. **Advice only.** Source:
