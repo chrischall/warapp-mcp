@@ -550,6 +550,21 @@ describe('waitForTurn', () => {
     expect(fp.released).toEqual([[2]]);
   });
 
+  it('does not watch a game where my seat is out, beside one still live (#130, #131)', async () => {
+    const fp = fakePush();
+    const pending = waitForTurn({
+      gameIds: [1, 2],
+      timeoutMs: 20,
+      push: fp.push,
+      check: async (id) => (id === 1 ? { ...notReady(id), ended: 'You are out of this game (your state: Eliminated).' } : notReady(id)),
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    const out = await pending;
+    expect(out.status).toBe('timed_out');
+    expect(fp.watched).toEqual([[2]]);
+    expect(fp.released).toEqual([[2]]);
+  });
+
   it('rejects at once for an already-aborted signal', async () => {
     const fp = fakePush();
     const ac = new AbortController();

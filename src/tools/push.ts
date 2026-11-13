@@ -108,7 +108,7 @@ export interface WaitOutcome {
  * every game after the push socket reconnects (pushes sent during the gap are
  * lost) — or when `timeoutMs` passes. A cancelled `signal` rejects with its
  * reason. The games are checked before they are watched, so a game the check
- * refuses (not mine) is never subscribed; a finished game is not watched. Re-reads
+ * refuses (not mine) is never subscribed; a finished game, or one where my seat is out, is not watched. Re-reads
  * are debounced per game: at most one in flight and one queued (#131).
  */
 export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
@@ -176,7 +176,8 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
     // Every game ended (finished, or my seat out): no turn can come, so return before watching (#130).
     if (allEnded()) return outcome('game_over');
     opts.signal?.throwIfAborted();
-    const live = [...ids].filter((id) => !TERMINAL_STATES.has(latest.get(id)!.state));
+    // Watch only a game that can still need me: not a finished one (#131), nor one where my seat is out (#130).
+    const live = [...ids].filter((id) => !TERMINAL_STATES.has(latest.get(id)!.state) && latest.get(id)!.ended === undefined);
     if (live.length) {
       const subscribedNow = await opts.push.watch(live);
       watched = live;
