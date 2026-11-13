@@ -454,8 +454,9 @@ describe('warapp_submit_picks', () => {
 
   it('a read-back that fails after the send still reports sent: true (#130)', async () => {
     const s = picksServer();
-    const warapp = (req: DecodedRequest, n: number) =>
-      req.method === Method.GetTerritoryPicks ? { status: 500, body: '', url: 'https://war.app/Services' } : s.warapp(req, n);
+    // An HTTP 500 instead of a frame (fakeWarapp passes a raw response through).
+    const http500 = { status: 500, body: '', url: 'https://war.app/Services' } as unknown as Partial<ReplyFrame>;
+    const warapp = (req: DecodedRequest, n: number) => (req.method === Method.GetTerritoryPicks ? http500 : s.warapp(req, n));
     h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp });
     const res = await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159] });
     expect(res.isError).toBeFalsy();
