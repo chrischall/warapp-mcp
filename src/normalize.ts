@@ -415,6 +415,8 @@ export interface Game {
   history?: unknown;
   /** Raw `GetChat` messages, when asked for and sent. Third-party text. */
   chat?: unknown;
+  /** #178: the end-of-game, boot and AI settings, read from `settings` ({@link parseEndRules}). */
+  endRules?: EndRules;
 }
 
 /** Normalize a GameFeed game body (the map is left to the client). */
@@ -430,10 +432,144 @@ export function normalizeGame(raw: unknown): Game {
   if (created !== undefined) game.created = created;
   const last = asStr(g.lastTurnTime);
   if (last !== undefined) game.lastTurnTime = last;
-  if (isRec(g.settings)) game.settings = normalizeSettings(g.settings);
+  if (isRec(g.settings)) {
+    game.settings = normalizeSettings(g.settings);
+    game.endRules = parseEndRules(g.settings);
+  }
   const standing = boardFromStanding(g.standing ?? g.standings ?? g.latestStanding);
   if (standing) game.standing = standing;
   if (g.history !== undefined) game.history = g.history;
   if (g.chat !== undefined) game.chat = g.chat;
   return game;
+}
+
+// ---------- end of game: surrender, boot, AI seats (#178) ----------
+
+/**
+ * The settings that decide how a game ends and what a leaver's seat becomes (#178). Each is absent
+ * when the feed does not send it. Key names are verified on a lobby (docs/WARAPP-API.md); what each
+ * does is from the war.app wiki and the client, UNVERIFIED live.
+ */
+export interface EndRules {
+  /**
+   * `InstantSurrender`: a surrender takes effect at once, without the others accepting it. The feed
+   * sent the string `Instant` on a lobby; the client reads the setting as a boolean. A string it
+   * does not recognize leaves this absent and is kept in {@link EndRules.instantSurrenderRaw}.
+   */
+  instantSurrender?: boolean;
+  /** The `InstantSurrender` value when it could not be read as a yes or no. */
+  instantSurrenderRaw?: string;
+  /** `SurrenderedPlayersTurnIntoAIs`: a surrendered seat is played by an AI (else its land turns neutral). */
+  surrenderedTurnIntoAI?: boolean;
+  /** `BootedPlayersTurnIntoAIs`: a booted seat is played by an AI (else its land turns neutral). */
+  bootedTurnIntoAI?: boolean;
+  /** `TimesCanComeBackFromAI`: how often a player turned into an AI may take its seat back. */
+  timesCanComeBackFromAI?: number;
+  /** `AIsSurrenderWhenOneHumanRemains`: the AIs give up once one human is left, so that human wins. */
+  aisSurrenderWhenOneHumanRemains?: boolean;
+  /** `DirectBoot`: minutes after which the others may boot a player who has not committed. */
+  directBootMinutes?: number;
+  /** `AutoBoot`: minutes after which a player who has not committed is booted automatically. */
+  autoBootMinutes?: number;
+  /** `BankingBootTimes`: banked boot time (minutes), when the game uses it. */
+  bankingBoot?: { bankMinutes: number; initialBankMinutes: number };
+  /** `AllowVacations`: a player on vacation is not booted. */
+  allowVacations?: boolean;
+}
+
+const INSTANT_WORDS = new Set(['instant', 'instantly', 'immediate', 'yes']);
+const NOT_INSTANT_WORDS = new Set(['notinstant', 'noninstant', 'notimmediate', 'requireacceptance', 'requiresacceptance', 'vote', 'no', 'never']);
+
+/** {@link EndRules} from a raw settings object; never throws. */
+export function parseEndRules(raw: unknown): EndRules {
+  const r: Rec = isRec(raw) ? raw : {};
+  const out: EndRules = {};
+  const instant = r.InstantSurrender;
+  if (instant !== undefined && instant !== null) {
+    const b = asBool(instant);
+    const word = typeof instant === 'string' ? instant.trim().toLowerCase().replace(/[\s_-]/g, '') : '';
+    if (b !== undefined) out.instantSurrender = b;
+    else if (INSTANT_WORDS.has(word)) out.instantSurrender = true;
+    else if (NOT_INSTANT_WORDS.has(word)) out.instantSurrender = false;
+    else out.instantSurrenderRaw = String(instant);
+  }
+  const bools = [
+    ['surrenderedTurnIntoAI', 'SurrenderedPlayersTurnIntoAIs'],
+    ['bootedTurnIntoAI', 'BootedPlayersTurnIntoAIs'],
+    ['aisSurrenderWhenOneHumanRemains', 'AIsSurrenderWhenOneHumanRemains'],
+    ['allowVacations', 'AllowVacations'],
+  ] as const;
+  for (const [k, src] of bools) {
+    const v = asBool(r[src]);
+    if (v !== undefined) out[k] = v;
+  }
+  const comeBack = asInt(r.TimesCanComeBackFromAI);
+  if (comeBack !== undefined) out.timesCanComeBackFromAI = comeBack;
+  const direct = asNum(r.DirectBoot);
+  if (direct !== undefined) out.directBootMinutes = direct;
+  const auto = asNum(r.AutoBoot);
+  if (auto !== undefined) out.autoBootMinutes = auto;
+  if (isRec(r.BankingBootTimes)) {
+    const bank = asNum(r.BankingBootTimes.BankAmount);
+    const initial = asNum(r.BankingBootTimes.InitialBankInMinutes);
+    if (bank !== undefined && initial !== undefined) out.bankingBoot = { bankMinutes: bank, initialBankMinutes: initial };
+  }
+  return out;
+}
+
+/** A feed time (`M/D/YYYY HH:MM:SS`, UTC assumed, docs/WARAPP-API.md) as epoch ms; `undefined` when unreadable. */
+export function parseFeedTime(s: string | undefined): number | undefined {
+  if (s === undefined) return undefined;
+  const m = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*$/.exec(s);
+  if (!m) return undefined;
+  const [, mo, d, y, h, mi, se] = m.map(Number) as number[];
+  const t = Date.UTC(y!, mo! - 1, d!, h!, mi!, se!);
+  return Number.isFinite(t) ? t : undefined;
+}
+
+/** One player who may be booted soon (#178). */
+export interface Leaver {
+  playerId: number;
+  /** Minutes since the feed's `lastTurnTime` (read as the turn's start: UNVERIFIED). */
+  waitingMinutes: number;
+  /** Minutes until the automatic boot (`AutoBoot`), 0 when it is due; absent when the game has none. */
+  autoBootInMinutes?: number;
+  /** Minutes until the others may boot it (`DirectBoot`), 0 when they already may; absent when the game has none. */
+  directBootInMinutes?: number;
+  /** What its seat becomes when booted: an AI (`BootedPlayersTurnIntoAIs`) or neutral land. */
+  becomes: 'AI' | 'neutral';
+}
+
+export const LEAVERS_UNVERIFIED =
+  "Read from the game's lastTurnTime, taken as the moment this turn began (UNVERIFIED: it may mean something else), " +
+  'against the AutoBoot and DirectBoot minutes. Banked boot time and vacations can delay a boot, and are not counted.';
+
+/**
+ * Humans still playing who have not committed this turn, with the time left before each boot and
+ * what their seat becomes (#178). `withinMinutes` keeps only those whose nearest boot is that close.
+ * Empty unless the game is being played and `lastTurnTime` reads. Never throws.
+ */
+export function leavers(game: Game, now: number, opts: { withinMinutes?: number } = {}): { players: Leaver[]; unverified: string } {
+  const out = { players: [] as Leaver[], unverified: LEAVERS_UNVERIFIED };
+  if (game.state !== 'Playing') return out;
+  const start = parseFeedTime(game.lastTurnTime);
+  if (start === undefined) return out;
+  const rules = game.endRules ?? {};
+  const waiting = Math.max(0, Math.floor((now - start) / 60_000));
+  const left = (m: number | undefined) => (m !== undefined && m > 0 ? Math.max(0, Math.ceil(m - waiting)) : undefined);
+  for (const p of game.players) {
+    if ((p.state ?? 'Playing') !== 'Playing' || p.isAI || p.humanTurnedIntoAI || p.hasCommittedOrders) continue;
+    const auto = left(rules.autoBootMinutes);
+    const direct = left(rules.directBootMinutes);
+    const nearest = Math.min(auto ?? Infinity, direct ?? Infinity);
+    if (opts.withinMinutes !== undefined && !(nearest <= opts.withinMinutes)) continue;
+    out.players.push({
+      playerId: p.id,
+      waitingMinutes: waiting,
+      ...(auto !== undefined ? { autoBootInMinutes: auto } : {}),
+      ...(direct !== undefined ? { directBootInMinutes: direct } : {}),
+      becomes: rules.bootedTurnIntoAI ? 'AI' : 'neutral',
+    });
+  }
+  return out;
 }
