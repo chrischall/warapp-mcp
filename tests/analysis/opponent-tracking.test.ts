@@ -72,6 +72,14 @@ const at = (t3: number, t4 = 2, t5 = 2, rest: TerritoryState[] = FOG): BoardStat
 const history = (...boards: [number, BoardState][]): TurnBoard[] => boards.map(([turn, b]) => ({ turn, board: b }));
 
 describe('trackOpponents', () => {
+  it('an opponent fully fogged for a turn and seen again: that pair is skipped with a note, never a throw (#83)', () => {
+    const hidden = board([mine(1, 5), mine(2, 5), fogged(3), fogged(4), fogged(5), ...FOG]);
+    const tracks = trackOpponents(g, history([3, at(10)], [4, hidden], [5, at(20)], [6, at(25)]), ME, STD);
+    const t = tracks.find((x) => x.playerId === ENEMY)!;
+    expect(t.turns.map((x) => [x.from, x.to])).toEqual([[5, 6]]);
+    expect(t.notes.join(' ')).toMatch(/No territory of it in view on turn 4/);
+  });
+
   it('a steady +5/turn opponent: observed 5 each turn, income 5, nothing unaccounted, no gap to explain', () => {
     const [t] = trackOpponents(g, history([3, at(10)], [4, at(15)], [5, at(20)]), ME, STD);
     expect(t).toMatchObject({ playerId: ENEMY, firstSeen: 3, visibleIncome: 5, income: 5, unaccounted: 0, inferred: null });

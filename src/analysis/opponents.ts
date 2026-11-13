@@ -240,6 +240,7 @@ export function trackOpponents(
     const firstSeen = turns.find((t) => seesPlayer(byTurn.get(t)!, g, playerId)) ?? lastTurn;
     const observed: ObservedTurn[] = [];
     const missing: number[] = [];
+    const unseen: number[] = [];
     for (let i = 1; i < turns.length; i++) {
       const from = turns[i - 1]!;
       const to = turns[i]!;
@@ -248,8 +249,17 @@ export function trackOpponents(
       if (to !== from + 1) continue;
       const before = byTurn.get(from)!;
       const after = byTurn.get(to)!;
-      const e = enemyDeployEstimates(g, after, me, settings, before).find((x) => x.playerId === playerId)!;
-      const o = e.observation!;
+      // A turn pair where the opponent has no territory in view on either board says nothing
+      // about its deploy (every stack would read as a reveal, or there is no estimate at all):
+      // skip it with a note rather than observe 0 or throw (#83).
+      const e = seesPlayer(before, g, playerId)
+        ? enemyDeployEstimates(g, after, me, settings, before).find((x) => x.playerId === playerId)
+        : undefined;
+      if (!e?.observation) {
+        unseen.push(seesPlayer(before, g, playerId) ? to : from);
+        continue;
+      }
+      const o = e.observation;
       const v = visibleAt(from).get(playerId);
       const visibleIncome = v ? v.base + v.bonusIncome : 0;
       const { net, losses } = armyChange(g, before, after, playerId);
@@ -289,6 +299,12 @@ export function trackOpponents(
       );
     if (missing.length)
       notes.push(`No board for turn ${missing.join(', ')}: only consecutive turns are compared, so those turns are not observed.`);
+    if (unseen.length) {
+      const ts = [...new Set(unseen)].sort(byNum);
+      notes.push(
+        `No territory of it in view on turn ${ts.join(', ')}: the turn pairs around ${ts.length === 1 ? 'it are' : 'them are'} not observed.`,
+      );
+    }
     const capped = observed.filter((x) => x.raw > x.cap);
     if (capped.length)
       notes.push(
