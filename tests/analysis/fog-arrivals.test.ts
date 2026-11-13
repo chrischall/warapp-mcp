@@ -93,9 +93,10 @@ describe('armies arriving by an attack are a move, not income (#86)', () => {
     const p = planTurn({ graph: g, board: after, previousBoard: before, me: ME, income: 400, settings: STD, turn: 12 });
     const r = p.rationale.join('\n');
     expect(r).toMatch(/Observed deploy for player 20, turn 11 → turn 12: \+2\/turn over 1 territories visible on both boards \(1 captured, 1 from the fog\)/);
-    expect(r).toMatch(
-      /Player 20's stack next to you: 556 on T3 \(#3\) \(threat\), arrived from the fog by a capture: a move, not income\. Its estimated income: ~5\/turn\./,
-    );
+    expect(r).toMatch(/Player 20's stack next to you: 556 on T3 \(#3\) \(threat\), arrived from the fog by a capture: a move, not income\./);
+    expect(r).toMatch(/Player 20's estimated income: ~5\/turn \(1 stack that arrived from the fog not counted in it\)\./);
+    // One income line per player, however many stacks arrived from the fog.
+    expect(r.match(/estimated income/g)).toHaveLength(1);
     expect(p.warnings.join('\n')).not.toMatch(/~5\d\d/);
   });
 
@@ -108,5 +109,79 @@ describe('armies arriving by an attack are a move, not income (#86)', () => {
     // It deployed 5 on T4 first and sent all 561: still exactly its deploy.
     const deployed = board([mine(1, 5), mine(2, 5), enemy(3, 559), enemy(4, 44), fogged(5)]);
     expect(observeDeploy(g, deployed, seen, ENEMY, STD).deploy).toBe(5);
+  });
+
+  it('several stacks from the fog in one turn share one income line', () => {
+    // T6 – T3 – T2 and T7 – T1: two visible neutrals next to me, both taken from the fog.
+    const g7 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 6, 7, 8],
+        [
+          [1, 2],
+          [2, 3],
+          [3, 4],
+          [1, 7],
+          [7, 8],
+        ],
+        [[901, 400, [1, 2]]],
+      ),
+    );
+    const was = board([mine(1, 5), mine(2, 5), neutral(3, 3), fogged(4), neutral(7, 3), fogged(8)]);
+    const now = board([mine(1, 5), mine(2, 5), enemy(3, 300), fogged(4), enemy(7, 200), fogged(8)]);
+    const p = planTurn({ graph: g7, board: now, previousBoard: was, me: ME, income: 400, settings: STD });
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/stack next to you: 300 on T3 \(#3\) \(threat\)/);
+    expect(r).toMatch(/stack next to you: 200 on T7 \(#7\) \(threat\)/);
+    expect(r).toMatch(/Player 20's estimated income: ~\d+\/turn \(2 stacks that arrived from the fog not counted in it\)\./);
+    expect(r.match(/estimated income/g)).toHaveLength(1);
+  });
+
+  it('an unchanged visible neighbour of its own is no source: the stack still came from the fog', () => {
+    // T6, the opponent's visible 5 both turns, also touches T3; the 556 came from fogged T4.
+    const g6 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 6],
+        [
+          [1, 2],
+          [2, 3],
+          [3, 4],
+          [4, 5],
+          [3, 6],
+        ],
+        [
+          [901, 400, [1, 2]],
+          [902, 50, [5, 6]],
+        ],
+      ),
+    );
+    const was = board([mine(1, 5), mine(2, 5), neutral(3, 3), fogged(4), fogged(5), enemy(6, 5)]);
+    const now = board([mine(1, 5), mine(2, 5), enemy(3, 556), fogged(4), fogged(5), enemy(6, 5)]);
+    const cost = straightKills(3, 70);
+    expect(observeDeploy(g6, now, was, ENEMY, STD)).toEqual({ deploy: cost, counted: [3, 6], captured: [3], fromFog: [3], reveals: [] });
+    const [e] = enemyDeployEstimates(g6, now, ME, STD, was);
+    expect(e.observedRaw).toBe(cost);
+    expect(e.estimate).toBeLessThan(100);
+  });
+
+  it('only the armies that left a visible neighbour count as moved; the rest came from the fog', () => {
+    // T6 visibly shrank 20 -> 10, but 556 stand on T3 and fogged T4 also touches it: 10 of them
+    // moved from T6 (nets to zero), the other 546 arrived from the fog.
+    const g6 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 6],
+        [
+          [1, 2],
+          [2, 3],
+          [3, 4],
+          [4, 5],
+          [3, 6],
+        ],
+        [[901, 400, [1, 2]]],
+      ),
+    );
+    const was = board([mine(1, 5), mine(2, 5), neutral(3, 3), fogged(4), fogged(5), enemy(6, 20)]);
+    const now = board([mine(1, 5), mine(2, 5), enemy(3, 556), fogged(4), fogged(5), enemy(6, 10)]);
+    const cost = straightKills(3, 70);
+    expect(observeDeploy(g6, now, was, ENEMY, STD)).toEqual({ deploy: cost, counted: [3, 6], captured: [3], fromFog: [3], reveals: [] });
   });
 });
