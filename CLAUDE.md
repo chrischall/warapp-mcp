@@ -85,11 +85,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   live board has nothing pickable. Its scorer (`src/analysis/picks.ts`) is pure and deterministic like the turn
   planner; neutral sizes come from the live board when shown (wastelands at their real size), else the settings.
   Its opening simulation keeps armies where they stand (an attack is funded by its bordering source plus that
-  turn's deploys, never by another pick's armies — pooling them made it promise first-turn bonuses `plan_turn`
-  could not deliver, #47). Each group is compact, a 1v1 included (one cluster linked in steps of at most 2 hops
+  turn's deploys, never by pooling another pick's armies — that made it promise first-turn bonuses `plan_turn`
+  could not deliver, #47; at 0% luck, straight rounding and No-Split off, a neutral one order cannot pay for
+  may be taken in two, the first only wearing it down, #166: `twoOrderCaptures`). A bonus's defensibility
+  counts an entry point once per member it borders (a double border twice), and a completed bonus is credited
+  by who can reach it (`THREAT_LOSS` × the chance an opponent starts on a pickable territory whose lone stack
+  stands in or next to it by its completion turn; a pick of mine is no threat, #166). A group is compact,
+  a 1v1 included (one cluster linked in steps of at most 2 hops
   on the route tool's graph), relaxed one hop at a time with a warning when no such group exists; a spread 1v1
-  primary meant a frontier on every bonus from turn 1 (#73). In a 1v1 the fallback (the counter-pick insurance)
-  goes to another area when one scores as much, and entry points weigh twice as much. The old bounded 1v1 spread
+  primary meant a frontier on every bonus from turn 1 (#73). In a two-player game with a primary of 2 to 4 picks
+  the fallback is not a group: each pick is chosen for the award outcomes that grant it (my opening there less
+  `OPPONENT_WEIGHT` × the opponent's from the picks lost, #166), and is chosen again when the award order
+  reorders the primary; any other 1v1 fallback goes to another area when one scores as much. In a 1v1 entry
+  points weigh twice as much. The old bounded 1v1 spread
   survives only behind `spread: true`. The rationale reports real hop
   distances and never calls a group compact unless it is one such cluster. The primary is the best-scoring
   group any of the best seeds grows, and the fallback is scored with the primary taken (it is granted only

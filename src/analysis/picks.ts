@@ -20,7 +20,17 @@
 //     member next to a territory held at the start of the turn, and attacks that bonus's
 //     cheapest such member from one bordering start-of-turn territory (the one with the
 //     most movable armies, i.e. above the guard), topped up by the turn's unspent income
-//     (deployed there). When that cannot afford it, the rest of the income is deployed on
+//     (deployed there). When that cannot afford it, the capture is tried in two orders
+//     (#166, only at 0% luck under straight rounding and with No-Split off, where the
+//     arithmetic is exact): a first attack of k armies that does not capture — it kills
+//     round(k × offence) of the d defenders, leaving at least one, and loses
+//     min(k, round(d × defence)) — then one sized for the defenders left; both from one
+//     bordering start-of-turn territory, or the first from one (its own movable armies only)
+//     and the second from another. The plan committing the fewest armies wins, then one source
+//     over two, then the lower ids, then the smaller first attack; the first attack's armies
+//     are spent for the turn (its survivors stay on their source), and such captures are
+//     reported (`twoOrderCaptures`). At 60/70 a 3-army neutral costs 5 in one order and 4 in
+//     two (1, then 3). When that cannot be paid either, the rest of the income is deployed on
 //     that source and saved for the next turn, and the next-best bonuses are still tried
 //     with the movable armies of other sources alone. A capture's survivors stay on the captured
 //     territory and attack from there next turn (captured armies never attack the turn
@@ -33,11 +43,28 @@
 //  3. Score of a pick set: Σ completed value × (PICK_HORIZON + 1 − turn) — the bonus
 //     armies earned through turn PICK_HORIZON + 1 — plus PROGRESS_WEIGHT × value ×
 //     share held for bonuses still incomplete, each bonus scaled by its
-//     defensibility 1 / (1 + weight × entry points × hardness), where weight is
+//     defensibility 1 / (1 + weight × exposure × hardness), where weight is
 //     ENTRY_WEIGHT, or ENTRY_WEIGHT_1V1 (twice as much) in a 1v1 — one opponent finds
-//     every entry point, so a narrow bonus wins ties against a wide one (#73) — and
-//     hardness is how much dearer an attack is than at the standard 60/70 (at 30/75
-//     a bonus with few entry points is worth more). A negative bonus held in full costs
+//     every entry point, so a narrow bonus wins ties against a wide one (#73) —,
+//     exposure counts each entry point once per member of the bonus it borders (#166: a
+//     double border, one outside territory next to two members, counts twice; with none it
+//     is the number of entry points), and hardness is how much dearer an attack is than at
+//     the standard 60/70 (at 30/75 a bonus with few entry points is worth more).
+//     A completed bonus is also credited by who can reach it (#166): × (1 − THREAT_LOSS × P).
+//     A pickable territory q that is not one of the picks threatens a bonus completed on
+//     turn T when a lone stack starting on q holds one of the bonus's territories, or a
+//     territory next to one, by the end of turn T (it denies the bonus, or attacks it on
+//     turn T + 1). The stack: the starting armies on q, the base income deployed on it each
+//     turn, and each turn everything but the guard may go into one neighbour whose capture
+//     cost it covers, arriving less the armies lost; every other territory is a neutral at
+//     its size, so a wasteland in the way delays it. For T = 0 the threats are the pickables
+//     next to the bonus. P is the chance an opponent stands on a threat: 1 when a known
+//     opponent start (`taken`) is one; otherwise 1 − C(N − k, L) / C(N, L), with N the
+//     pickables neither mine nor known, k the threats among them and L the opponent starts
+//     still unknown ((players − 1) × the territory limit, less the known ones) — their starts
+//     taken as drawn uniformly from the pickables left, a simplification. A pick of mine is
+//     never a threat, so also holding the threatening neighbour restores the credit.
+//     A negative bonus held in full costs
 //     its value × (PICK_HORIZON + 1 − turn), unscaled, and is listed among the pick's
 //     negatives; the simulation never steers for a bonus whose completion would also
 //     complete negative bonuses worth as much (its value is counted net of them, #129).
@@ -58,19 +85,36 @@
 //     by the fallback. The fallback group is built the same way from the remaining
 //     pickables, up to maxPicks in total, but scored — its picks' scores and reasons too —
 //     with the primary picks held by someone else, since only then is it granted: a bonus
-//     shared with the primary never completes for it (#129). In a 1v1, among the equally
+//     shared with the primary never completes for it (#129).
+//     In a two-player game whose primary has 2 to 4 picks (and without `spread`, and with
+//     room on the list for as many again), the first fallback tier is not a group (#166):
+//     a pick ranked below the primary is granted only when the opponent holds picks above
+//     it, so each is chosen for exactly those outcomes. Positions primary + 1 … 2 × primary
+//     are filled one at a time. For position p, each outcome of `pickOutcomes` whose last
+//     granted position is p is settled by the list so far plus the candidate: I hold the
+//     granted set G and the opponent the picks above p that I was not granted, K
+//     (`impliedOpponentStarts`). The candidate's value there is
+//     simulate(G, K).score − OPPONENT_WEIGHT × simulate(K, G).score: my opening, less a share
+//     of the opponent's from the starts the award reveals, in which my picks are known
+//     threats to their bonuses — so a pick that reaches the bonus of the pick I lost scores
+//     higher, and its own bonus still counts. The best mean over those outcomes wins; ties:
+//     its own score with the primary taken, then id. (The opponent's opening is simulated
+//     once per outcome for every candidate standing nowhere it looks.) The picks' scores and
+//     reasons are still those with the primary taken, plus what each answers.
+//     Otherwise in a 1v1 (a primary of one pick, or of five or more), among the equally
 //     scored compact fallbacks found at its hop limit, the one farthest from the primary
 //     (fewest hops between the two groups, maximised) wins, so one counter-pick cannot reach
 //     both. A fallback that still outscores the primary is warned about. A list longer than
 //     twice the limit (war.app's client allows players × territories per player,
-//     `clientPickLimits`) runs in fallback tiers of the primary's size, each built the same
-//     way with the primary and the earlier tiers taken; the fallback group's score, bonuses
+//     `clientPickLimits`) runs in fallback tiers of the primary's size, each built as a group
+//     with the primary and the earlier tiers taken; the fallback group's score, bonuses
 //     and spread are its first tier's.
 //     Only with `spread: true` in a 1v1 does the old rule apply: a pick may also join
 //     when it anchors a bonus no group pick anchors and lies within SPREAD_DISTANCE hops,
 //     and the bound gives way, with a warning, at the smallest hop limit where a group
 //     scores SPREAD_RELAX_GAIN times the bounded one. Usually worse on large maps.
-//     Each group is listed by score; its maxHops and the rationale state its real
+//     Each group built as a group is listed by score (an answering tier in the order its
+//     picks were chosen); its maxHops and the rationale state its real
 //     spread (farthest pair, and the longest step linking its picks into one cluster) and
 //     call it compact only when that step is at most COMPACT_DISTANCE: one cluster, not
 //     merely each pick with a group-mate nearby.
@@ -79,15 +123,23 @@
 //     enumerates the sets a list can yield, other players' lists unknown). The list's worst
 //     outcome is scored with the other players on the starts it implies
 //     (`impliedOpponentStarts`) and reported; the primary is reordered (up to MAX_REORDER
-//     picks) only when another order raises that worst outcome.
+//     picks) only when another order raises that worst outcome. An answering fallback
+//     (item 5) depends on that order: it is chosen for the score order first, and when the
+//     award order prefers another, chosen again for it — the new order standing only if the
+//     list as it then reads still has a better worst outcome than the list it replaces.
 //  5c. Commanders (#129): the first pick awarded carries the commander, so the primary's
 //     safest pick (fewest other pickables within COMPACT_DISTANCE hops, then fewest
 //     neighbours outside the primary, then score) is listed first; the award reorder keeps it.
 //  6. Reasons. reasons[0] is the bonus the pick anchors (worth most to it alone) and its
 //     completion turn and the income it adds, or how much of it is held by the horizon;
-//     then the other bonuses it completes or advances; negatives (shortfalls,
+//     then the other bonuses it completes or advances. Each such line gives the bonus's entry
+//     points and which are double borders, and for a completed bonus who can reach it: no
+//     other pickable territory, or the threats by name (three at most) with the score cost,
+//     and "safe only if you also hold …" when there are one or two. Then the captures that
+//     took two orders; negatives (shortfalls,
 //     wastelands — a member other than the pick larger than an ordinary neutral —, contest,
-//     negative bonuses held) come last.
+//     negative bonuses held) come last, and after them what a pick of an answering fallback
+//     answers: the lost picks whose bonus it reaches by the turn they complete it alone.
 
 import type { GameSettings } from '../normalize.js';
 import { analyzeBonus, bonusTerritories, entryTouches } from './bonuses.js';
@@ -113,7 +165,7 @@ export const THREAT_LOSS = 0.5;
  * opponent's, from the starts the award then reveals (#166).
  */
 export const OPPONENT_WEIGHT = 0.5;
-/** Defensibility penalty per entry point (scaled by attack hardness)… */
+/** Defensibility penalty per unit of exposure — an entry point, once per member it borders — scaled by attack hardness… */
 export const ENTRY_WEIGHT = 0.05;
 /** …and in a 1v1 (twice ENTRY_WEIGHT: the one opponent finds every entry point, #73). */
 export const ENTRY_WEIGHT_1V1 = 0.1;
@@ -184,7 +236,11 @@ export type PickGroupName = 'primary' | 'fallback';
 export interface PickChoice {
   territoryId: number;
   group: PickGroupName;
-  /** The pick's own score (bonus armies earned in the opening, defensibility- and contest-weighted). */
+  /**
+   * The pick's own score: the bonus armies its opening alone earns, weighted by each bonus's
+   * defensibility and by who can reach it, and by the pick's contestedness (a fallback pick's:
+   * with the primary taken).
+   */
   score: number;
   reasons: string[];
 }
@@ -222,7 +278,11 @@ export interface TwoOrderCapture {
 }
 
 export interface PickGroup {
-  /** In pick order (score desc, then id). */
+  /**
+   * In list order: by score (then id) for a group built as a group, unless the award order or the
+   * commander reorders the primary; a two-player fallback that answers losses, in the order its
+   * picks were chosen.
+   */
   territoryIds: number[];
   /** The group's joint simulation score (the fallback's: its first tier's, with the primary taken). */
   score: number;
@@ -388,11 +448,13 @@ function simulate(
   // Armies on each held territory: armies attack only from where they stand.
   const armiesOn = new Map<number, number>(start.map((t) => [t, ctx.pickArmies]));
   const completions = new Map<number, number>();
-  const relevant = (from: Iterable<number>) => relevantBonuses(ctx, from);
+  // The bonuses the territories held can touch, worked out again only when more are held.
+  let touching: number[] | null = null;
+  const relevant = () => (touching ??= relevantBonuses(ctx, held));
   const penalties = new Map<number, number>();
   const twoOrders: TwoOrderCapture[] = [];
   const checkComplete = (turn: number) => {
-    for (const id of relevant(held)) {
+    for (const id of relevant()) {
       if (completions.has(id)) continue;
       if (ctx.bonuses.get(id)!.members.every((m) => held.has(m))) completions.set(id, turn);
     }
@@ -499,7 +561,7 @@ function simulate(
     }
     const open: Open[] = [];
     const openById = new Map<number, Open>();
-    for (const id of relevant(startHeld)) {
+    for (const id of relevant()) {
       if (completions.has(id)) continue;
       const b = ctx.bonuses.get(id)!;
       let rem = 0;
@@ -629,6 +691,7 @@ function simulate(
       armiesOn.set(to, armiesOn.get(to)! + avail.get(src)! + (carry.get(src) ?? 0));
     }
     for (const t of captured) held.add(t);
+    if (captured.size) touching = null;
     checkComplete(turn);
   }
   const progress = new Map<number, number>();
@@ -636,7 +699,7 @@ function simulate(
   const risk = new Map<number, number>();
   const mine = new Set(start);
   let score = 0;
-  for (const id of relevant(held)) {
+  for (const id of relevant()) {
     const b = ctx.bonuses.get(id)!;
     const turn = completions.get(id);
     if (turn !== undefined) {
@@ -1500,7 +1563,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
           (relaxed ? `; a group spreads farther only when no bounded group exists or spreading scores ${SPREAD_RELAX_GAIN}× as much (see the warnings).` : '.')
         : `In a 1v1 centrality is not penalised and entry points weigh twice as much; ` +
           (answerSets
-            ? (relaxed
+            ? (relaxedTo.has('primary')
                 ? `the primary group is kept as compact as the map allows (the hop limit was relaxed; see the warnings), `
                 : `the primary group is compact (one cluster, each pick within ${COMPACT_DISTANCE} hops of another), `) +
               `so the start has one front, not several; each fallback pick is chosen for the outcomes that grant it, in which the picks lost above it ` +

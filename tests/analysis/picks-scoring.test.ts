@@ -197,6 +197,15 @@ describe('planPicks — a completed bonus is credited by who can reach it (#166)
     expect(reasonsOf(two, 1)).toContain('T11 and T12 can reach it by turn 2 (score −50%), safe only if you also hold T11 and T12');
   });
 
+  it('a chance too small to show as a percentage is said in words', () => {
+    // One threat among 121 pickables not mine, one opponent start: 1/121, half of it under 1%.
+    const crowd = Array.from({ length: 120 }, (_, i) => 100 + i);
+    const wide = mkGraph([[1, 2], [1, 10], [10, 11]], [{ id: 201, name: 'Duo', value: 3, territoryIds: [1, 2] }], crowd);
+    const p = plan({ graph: wide, pickable: [1, 11, ...crowd], maxPicks: 1 });
+    expect(reasonsOf(p, 1)).toContain('T11 can reach it by turn 2 (score down by less than 1%), safe only if you also hold T11');
+    expect(scoreOf(p, 1)).toBe(8.15); // 9 / 1.1 × (1 − 0.5 / 121)
+  });
+
   it('a bonus still incomplete at the horizon is not discounted', () => {
     // Long (+10) is far from done after three turns: only its progress counts, as before.
     const long = mkGraph(
@@ -269,6 +278,26 @@ describe('planPicks — two orders for one capture (#166)', () => {
     expect(split.groups.primary.bonuses).toEqual([]);
   });
 
+  it('a pick’s reasons name both sources when its own opening needs them', () => {
+    // Tri (+4) = {1,2,10}, every pair adjacent; 2 holds 2 armies and 10 holds 3. Pick 1 (7 armies,
+    // 6 movable, no income) takes 2 with 3 on turn 1 and has 3 left: not the 4 that 10 needs even
+    // in two orders. On turn 2 the army that can leave 2 kills one of the three, and 3 from the
+    // pick take the rest.
+    const g = mkGraph([[1, 2], [1, 10], [2, 10]], [{ id: 504, name: 'Tri', value: 4, territoryIds: [1, 2, 10] }]);
+    const p = plan({
+      graph: g,
+      pickable: [1],
+      maxPicks: 1,
+      neutralArmies: new Map([[2, 2], [10, 3]]),
+      settings: { ...BARE, initialPlayerArmiesPerTerritory: 7 },
+    });
+    expect(p.groups.primary.bonuses.map((b) => [b.name, b.turn])).toEqual([['Tri', 2]]);
+    expect(p.groups.primary.twoOrderCaptures).toEqual([
+      { turn: 2, territoryId: 10, orders: [{ from: 2, armies: 1 }, { from: 1, armies: 3 }] },
+    ]);
+    expect(pick(p, 1).reasons).toContain('Tri (+4) needs two orders on T10: 1 army from T2 first, then 3 from T1');
+  });
+
   it('prefers the fewest armies, then one source over two, then the lower ids', () => {
     // Picks 1 and 2 (4 movable each) border 10 with 3 armies: 1 + 3 from one pick, or 1 from one
     // and 3 from the other, both commit 4. One source wins, and the lower id.
@@ -283,6 +312,32 @@ describe('planPicks — two orders for one capture (#166)', () => {
     });
     expect(p.groups.primary.twoOrderCaptures).toEqual([
       { turn: 1, territoryId: 10, orders: [{ from: 1, armies: 1 }, { from: 1, armies: 3 }] },
+    ]);
+  });
+
+  it('the first attack never captures, and is never one that kills nothing', () => {
+    const g = mkGraph([[1, 10], [2, 10]], [{ id: 502, name: 'Target', value: 5, territoryIds: [10] }]);
+    const input = { graph: g, pickable: [1, 2], territoryLimit: 2, maxPicks: 2 };
+    // At 100/100 a 3-army neutral costs 4 in one order (3 die, one must be left to move in). Two
+    // picks with 3 movable each: 1 army kills one, then 3 take the two left. A first attack of 3
+    // would kill all three and is not a first attack.
+    const even = plan({
+      ...input,
+      neutralArmies: new Map([[10, 3]]),
+      settings: { ...BARE, initialPlayerArmiesPerTerritory: 4, offensiveKillRate: 100, defensiveKillRate: 100 },
+    });
+    expect(even.groups.primary.twoOrderCaptures).toEqual([
+      { turn: 1, territoryId: 10, orders: [{ from: 1, armies: 1 }, { from: 2, armies: 3 }] },
+    ]);
+    // At 30/70 one army kills nobody: against 2 armies (5 in one order) the first attack is of 2
+    // (it kills one), then 2 take the one left, all from one pick with 4 movable.
+    const weak = plan({
+      ...input,
+      neutralArmies: new Map([[10, 2]]),
+      settings: { ...BARE, offensiveKillRate: 30 },
+    });
+    expect(weak.groups.primary.twoOrderCaptures).toEqual([
+      { turn: 1, territoryId: 10, orders: [{ from: 1, armies: 2 }, { from: 1, armies: 2 }] },
     ]);
   });
 
@@ -362,6 +417,8 @@ describe('planPicks — in a two-player game each fallback pick answers the loss
     expect(scoreOf(p, 3)).toBe(3.33); // 8 / 1.2 × 0.5
     expect(pick(p, 3).reasons[0]).toMatch(/^Anchors NearW \(\+2\): held at once/);
     expect(reasonsOf(p, 3)).toContain("T1 (another player's when this pick is granted) can reach it by turn 1 (score −50%)");
+    // With both of the opponent's starts known, nothing else pickable is a threat.
+    expect(reasonsOf(p, 21)).toContain("FarA (+2): held at once (single-territory bonus), +2 income from turn 1; 2 entry points; no other player's start can reach it by turn 1");
     // The fallback group is its first tier, scored with the primary taken: NearW halved, FarA
     // at once (8 / 1.2) and FarB on turn 1 (6 / 1.2).
     expect(p.groups.fallback.score).toBe(15);
@@ -397,6 +454,31 @@ describe('planPicks — in a two-player game each fallback pick answers the loss
     expect(ids(p)).toEqual([2, 1, 3, 21]);
     expect(p.award!.worst.opponentStarts).toEqual(impliedOpponentStarts(ids(p), p.award!.worst.territoryIds));
     expect(p.rationale.join(' ')).toMatch(/ordered to raise that worst outcome/);
+  });
+
+  it('a new order is kept only if the list with its own fallback is better at worst', () => {
+    // Singles Hub (+1) = {2}, Four (+2) = {4}, Six (+4) = {6}, Eight (+3) = {8}; Pair (+3) = {10,12}.
+    // Score order is 2, 4, with the fallback 6, 8: at worst 2 and 8 (11.43). With that fallback
+    // left in place, 4 before 2 would be better at worst (12.27). But the fallback chosen for the
+    // order 4, 2 is 6, 10, and that list's worst outcome is 11.02: the order stays as it was.
+    const g = mkGraph(
+      [[1, 2], [2, 3], [3, 4], [3, 5], [2, 6], [5, 7], [2, 8], [6, 9], [6, 10], [8, 11], [10, 12], [10, 11]],
+      [
+        { id: 100, name: 'Four', value: 2, territoryIds: [4] },
+        { id: 101, name: 'Six', value: 4, territoryIds: [6] },
+        { id: 102, name: 'Pair', value: 3, territoryIds: [10, 12] },
+        { id: 103, name: 'Eight', value: 3, territoryIds: [8] },
+        { id: 104, name: 'Hub', value: 1, territoryIds: [2] },
+      ],
+    );
+    const p = plan({ graph: g, pickable: [2, 4, 6, 8, 9, 10, 11], territoryLimit: 2, maxPicks: 4 });
+    expect(ids(p)).toEqual([2, 4, 6, 8]);
+    expect(p.award).toEqual({
+      outcomes: 4,
+      worst: { territoryIds: [2, 8], score: 11.43, opponentStarts: [4, 6] },
+      reordered: false,
+    });
+    expect(pick(p, 8).reasons).toContain('Answers the loss of T6: reaches Pair by turn 2 (and 2 more of its bonuses)');
   });
 
   it('is deterministic, whatever order the pickables come in', () => {

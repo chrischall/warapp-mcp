@@ -187,7 +187,12 @@ describe('warapp_plan_picks', () => {
     for (const t of [...p.award!.worst.territories, ...p.award!.worst.opponentStarts]) expect(t.name).toBe(mapName(t.id));
     // In a two-player game the fallback picks answer the loss that grants them (#166), and say so.
     expect(p.picks.slice(0, 3).some((x) => x.reasons.some((r) => r.startsWith('Answers the loss of ')))).toBe(false);
-    expect(p.picks.slice(3).some((x) => x.reasons.some((r) => r.startsWith('Answers the loss of ')))).toBe(true);
+    const answers = p.picks.slice(3).flatMap((x) => x.reasons.filter((r) => r.startsWith('Answers the loss of ')));
+    expect(answers.length).toBeGreaterThan(0);
+    // One bonus named per lost pick (the rest counted), the lost picks joined by "; of".
+    const part = String.raw`[^;:]+: reaches [^;]+ by turn \d( \(and \d+ more of its bonuses\))?`;
+    for (const a of answers) expect(a).toMatch(new RegExp(`^Answers the loss of ${part}(; of ${part})*$`));
+    expect(answers.some((a) => a.includes('; of '))).toBe(true);
     expect(p.rationale.join(' ')).toMatch(/each fallback pick is chosen for the outcomes that grant it/);
   });
 
