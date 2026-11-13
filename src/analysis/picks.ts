@@ -303,11 +303,32 @@ export interface AwardReport {
   reordered: boolean;
 }
 
+/**
+ * The coverage-first alternative (#166): as many picks as the primary — a pair within
+ * COMPACT_DISTANCE hops chosen as the primary's best pair would be, then the picks that most raise
+ * coverage (ties: their own score, then id) — scored by the same opening simulation.
+ */
+export interface AlternativePicks {
+  group: PickGroup;
+  coverage: CoverageReport;
+  /** Its fallback, built for it by the rule the primary's fallback uses. */
+  fallback: number[];
+  /** What warapp_submit_picks takes for this list: its picks, then its fallback. */
+  submitPicks: number[];
+}
+
 export interface PickPlan {
   picks: PickChoice[];
   groups: { primary: PickGroup; fallback: PickGroup };
   /** The list judged by what the award order can give; absent when too many outcomes to enumerate (#129). */
   award?: AwardReport;
+  /** The primary group's coverage ({@link coverageModel}, #166). */
+  coverage: CoverageReport;
+  /**
+   * A coverage-first list beside the compact primary (#166): only in a two-player game without
+   * `spread`, and only when it covers more reasonable bonuses than the primary does.
+   */
+  alternative?: AlternativePicks;
   warnings: string[];
   rationale: string[];
 }
@@ -1372,7 +1393,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   // OPPONENT_WEIGHT × the opponent's from K with G mine — so standing where a lost pick's bonus
   // can be reached counts (a known threat halves its credit), and so does its own bonus. The
   // best mean over those outcomes wins; ties: its own score with the primary taken, then id.
-  const answerTier = (order: readonly number[], view: View): number[] => {
+  const answerTier = (order: readonly number[], view: View, others: readonly number[] = rest): number[] => {
     const n = order.length;
     const list = [...order];
     for (let p = n; p < 2 * n; p++) {
@@ -1387,7 +1408,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
           return { kept, lost, apart: apart.score, read: territoriesRead(ctx, apart) };
         });
       let best: { t: number; value: number; own: number } | null = null;
-      for (const c of rest) {
+      for (const c of others) {
         if (list.includes(c)) continue;
         const own = view.of.get(c)!.score;
         // No outcome ends at p: the candidate's own score with the primary taken decides.
@@ -1415,7 +1436,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     /** The first tier's view: the primary taken. */
     firstView: View;
   }
-  const buildFallback = (order: readonly number[]): Fallback => {
+  const buildFallback = (order: readonly number[], others: readonly number[] = rest): Fallback => {
     const out: Fallback = {
       tiers: [],
       views: new Map<number, View>(order.map((t) => [t, firstView])),
@@ -1423,7 +1444,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       warnings: [],
       relaxedTo: new Map(),
     };
-    let pool = rest;
+    let pool = [...others];
     let done = 0;
     const add = (tier: number[], view: View) => {
       for (const t of tier) out.views.set(t, view);
@@ -1433,7 +1454,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     };
     if (answerSets) {
       out.firstView = viewOf(pool, new Set(order));
-      add(answerTier(order, out.firstView), out.firstView);
+      add(answerTier(order, out.firstView, others), out.firstView);
     }
     while (done < fallbackSize && pool.length) {
       const view = viewOf(pool, new Set([...order, ...out.tiers.flat()]));
@@ -1708,7 +1729,56 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     );
   } else if (primary.length)
     rationale.push('Picks are awarded round by round in a reversing move order; this list has too many possible outcomes to enumerate.');
-  return { picks, groups, ...(award ? { award } : {}), warnings, rationale };
+
+  // The coverage-first alternative (#166): the primary is kept; this is offered beside it.
+  const coverageOf = coverageModel({ graph: g, pickable, settings: s, neutralArmies: input.neutralArmies });
+  const primaryCoverage = coverageOf(primary);
+  let alternative: AlternativePicks | undefined;
+  if (players === 2 && !spread && primary.length >= 2) {
+    const score = (t: number) => firstView.of.get(t)!.score;
+    const seeds = [...pickable].sort((a, b) => score(b) - score(a) || a - b);
+    const pair = bestGroup(firstView, pickable, 2, seeds, COMPACT_DISTANCE);
+    if (pair) {
+      const alt = [...pair].sort((a, b) => score(b) - score(a) || a - b);
+      while (alt.length < primary.length) {
+        let best: { t: number; covered: number } | null = null;
+        for (const c of pickable) {
+          if (alt.includes(c)) continue;
+          const covered = coverageOf([...alt, c]).covered;
+          if (!best || covered > best.covered || (covered === best.covered && score(c) > score(best.t))) best = { t: c, covered };
+        }
+        if (!best) break;
+        alt.push(best.t);
+      }
+      const altCoverage = coverageOf(alt);
+      const same = alt.length === primary.length && alt.every((t) => primary.includes(t));
+      if (!same && altCoverage.covered > primaryCoverage.covered) {
+        const altFallback = buildFallback(alt, pickable.filter((t) => !alt.includes(t))).tiers.flat();
+        alternative = {
+          group: groupOf(alt, NO_TAKEN),
+          coverage: altCoverage,
+          fallback: altFallback,
+          submitPicks: [...alt, ...altFallback],
+        };
+        const of = (c: CoverageReport) => `${c.covered} of ${c.reasonable}`;
+        rationale.push(
+          `A coverage-first alternative (${alt.map(terrName).join(', ')}: a pair within ${COMPACT_DISTANCE} hops, then the picks that most widen ` +
+            `the reach) can stand next to ${of(altCoverage)} reasonable bonuses within ${COVERAGE_DISTANCE} moves, against ${of(primaryCoverage)} ` +
+            `for the primary, and scores ${alternative.group.score} against ${groups.primary.score}. Prefer the compact primary by default; ` +
+            'prefer the alternative on a small board when knowing where the opponent is and keeping a way into every region matter more than the fastest start.',
+        );
+      }
+    }
+  }
+  return {
+    picks,
+    groups,
+    ...(award ? { award } : {}),
+    coverage: primaryCoverage,
+    ...(alternative ? { alternative } : {}),
+    warnings,
+    rationale,
+  };
 }
 
 export interface PickLimits {
@@ -1820,4 +1890,102 @@ function permutations<T>(xs: readonly T[]): T[][] {
     for (const rest of permutations([...xs.slice(0, i), ...xs.slice(i + 1)])) out.push([x, ...rest]);
   });
   return out;
+}
+
+/** Moves within which a pick covers a bonus: it can stand in or next to the bonus (#166). */
+export const COVERAGE_DISTANCE = 2;
+
+export interface CoverageInput {
+  graph: MapGraph;
+  pickable: readonly number[];
+  settings?: PickSettings;
+  /** Neutral armies as the live board shows them (wastelands included), by territory id. */
+  neutralArmies?: ReadonlyMap<number, number>;
+}
+
+export interface CoverageReport {
+  /** covered ÷ reasonable, to two places; 1 when no bonus is reasonable. */
+  share: number;
+  covered: number;
+  /** Reasonable bonuses on the map (see {@link coverage}). */
+  reasonable: number;
+  /** The reasonable bonuses no pick covers, ascending by id. */
+  uncovered: { bonusId: number; name: string }[];
+}
+
+/**
+ * The coverage of every pick set on one board (#166), set up once. A wasteland is a territory
+ * whose neutral is larger than an ordinary one (the distribution size on a pickable territory,
+ * the non-distribution size elsewhere), as the advisor's reasons define it. A bonus is
+ * reasonable — one an opponent would reasonably start in — when its value is positive, it is not
+ * a superbonus, no member is a wasteland, a member is pickable, every member can be taken, and
+ * its value per capture cost (every member at `captureCost`, as in the opening simulation) is at
+ * least the median over such bonuses. A pick covers a bonus when a territory of the bonus, or
+ * one next to it, lies within COVERAGE_DISTANCE hops of the pick, walking only through
+ * territories that are not wastelands.
+ */
+export function coverageModel(input: CoverageInput): (picks: readonly number[]) => CoverageReport {
+  const g = input.graph;
+  const s = input.settings ?? {};
+  const pickSet = new Set(input.pickable.filter((t) => g.territoryById.has(t)));
+  const known = input.neutralArmies ?? new Map<number, number>();
+  const neutralsIn = s.initialNeutralsInDistribution ?? DEFAULT_NEUTRALS_IN_DISTRIBUTION;
+  const neutralsOut = s.initialNonDistributionArmies ?? DEFAULT_NON_DISTRIBUTION_ARMIES;
+  const rates = {
+    offensiveKillRate: s.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
+    defensiveKillRate: s.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
+    luckModifier: s.luckModifier,
+  };
+  const ordinary = (t: number) => (pickSet.has(t) ? neutralsIn : neutralsOut);
+  const waste = new Set<number>();
+  const cost = new Map<number, number | null>();
+  for (const t of g.map.territories) {
+    const n = Math.max(0, known.get(t.id) ?? ordinary(t.id));
+    if (n > ordinary(t.id)) waste.add(t.id);
+    cost.set(t.id, captureCost(n, rates));
+  }
+  const candidates: { id: number; name: string; ratio: number; zone: Set<number> }[] = [];
+  for (const b of g.map.bonuses) {
+    if (b.value <= 0 || b.bonusIds.length > 0) continue;
+    const members = (analyzeBonus(g, b.id)?.territoryIds ?? []).filter((t) => g.territoryById.has(t));
+    if (!members.length || members.some((m) => waste.has(m)) || !members.some((m) => pickSet.has(m))) continue;
+    const costs = members.map((m) => cost.get(m));
+    if (costs.some((c) => c === null || c === undefined)) continue;
+    const total = (costs as number[]).reduce((a, c) => a + c, 0);
+    const zone = new Set(members);
+    for (const m of members) for (const n of neighborsOf(g, m)) zone.add(n);
+    candidates.push({ id: b.id, name: b.name, ratio: total > 0 ? b.value / total : Infinity, zone });
+  }
+  const ratios = candidates.map((c) => c.ratio).sort(byNum);
+  const mid = ratios.length >> 1;
+  const median = !ratios.length ? 0 : ratios.length % 2 ? ratios[mid]! : (ratios[mid - 1]! + ratios[mid]!) / 2;
+  const reasonable = candidates.filter((c) => c.ratio >= median).sort((a, b) => a.id - b.id);
+  return (picks) => {
+    // Breadth-first from every pick at once, never entering a wasteland.
+    const seen = new Set(picks.filter((t) => g.territoryById.has(t) && !waste.has(t)));
+    let frontier = [...seen];
+    for (let d = 0; d < COVERAGE_DISTANCE && frontier.length; d++) {
+      const next: number[] = [];
+      for (const t of frontier)
+        for (const n of neighborsOf(g, t))
+          if (!seen.has(n) && !waste.has(n)) {
+            seen.add(n);
+            next.push(n);
+          }
+      frontier = next;
+    }
+    const uncovered = reasonable.filter((b) => ![...b.zone].some((t) => seen.has(t)));
+    const covered = reasonable.length - uncovered.length;
+    return {
+      share: reasonable.length ? round2(covered / reasonable.length) : 1,
+      covered,
+      reasonable: reasonable.length,
+      uncovered: uncovered.map((b) => ({ bonusId: b.id, name: b.name })),
+    };
+  };
+}
+
+/** The coverage of one pick set (see {@link coverageModel}). */
+export function coverage(input: CoverageInput, picks: readonly number[]): CoverageReport {
+  return coverageModel(input)(picks);
 }

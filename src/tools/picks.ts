@@ -4,7 +4,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { clientPickLimits, planPicks, type PickGroup, type PickSettings } from '../analysis/picks.js';
+import { clientPickLimits, planPicks, type CoverageReport, type PickGroup, type PickSettings } from '../analysis/picks.js';
 import { OWNER_NEUTRAL, OWNER_PICKABLE } from '../live.js';
 import type { Game, GameMap, GameSettings } from '../normalize.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
@@ -78,7 +78,13 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           '`twoOrderCaptures` (neutrals its opening takes with two attacks because one cannot be paid for), ' +
           'the award (how many sets the round-by-round award order can grant from the list, and the worst of them with the ' +
           'other players\' starts it implies), ' +
-          'warnings (assumed settings) and the reasoning. Its `submitPicks` is exactly what warapp_submit_picks ' +
+          'warnings (assumed settings) and the reasoning. The primary group carries its `coverage`: the share of reasonable bonuses ' +
+          '(positive, with a pickable territory, no wasteland, value per army at least the median) a pick can stand next to within 2 moves, ' +
+          'and the ones it cannot, by name. In a two-player game without spread it may also return an `alternative`: a coverage-first list ' +
+          '(a pair, then the picks that most widen that reach) with its score, coverage and its own `submitPicks`, present only when it covers more. ' +
+          'Prefer the compact primary by default; offer the alternative on a small board, when knowing where the opponent is and keeping a ' +
+          'way into every region matter more than the fastest start — the user chooses per game. ' +
+          'Its `submitPicks` is exactly what warapp_submit_picks ' +
           'takes — review it with the user first. Refuses outside the picking stage or when nothing is pickable. ' +
           `${BRIDGE_NOTE} Read-only on war.app; it never submits picks.`,
       ),
@@ -160,6 +166,14 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         })),
       });
 
+      const coverageView = (c: CoverageReport) => ({
+        share: c.share,
+        covered: c.covered,
+        reasonable: c.reasonable,
+        uncovered: c.uncovered.map((b) => ({ id: b.bonusId, name: b.name })),
+      });
+      const alt = plan.alternative;
+
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, state: game.state },
         players,
@@ -172,7 +186,10 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           score: p.score,
           reasons: p.reasons,
         })),
-        groups: { primary: groupView(plan.groups.primary), fallback: groupView(plan.groups.fallback) },
+        groups: {
+          primary: { ...groupView(plan.groups.primary), coverage: coverageView(plan.coverage) },
+          fallback: groupView(plan.groups.fallback),
+        },
         award: plan.award
           ? {
               outcomes: plan.award.outcomes,
@@ -187,6 +204,16 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         warnings: [...warnings, ...plan.warnings],
         rationale: plan.rationale,
         submitPicks: { game_id: game.id, territories: plan.picks.map((p) => p.territoryId) },
+        ...(alt
+          ? {
+              alternative: {
+                ...groupView(alt.group),
+                coverage: coverageView(alt.coverage),
+                fallback: alt.fallback.map(name),
+                submitPicks: { game_id: game.id, territories: alt.submitPicks },
+              },
+            }
+          : {}),
         ...(rung === 'full' ? { settings } : {}),
       }));
     },
