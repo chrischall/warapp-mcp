@@ -123,7 +123,7 @@ export interface WhereInput {
   prior?: StartPrior;
   /** Starts known for certain (the award of picks), by opponent id. */
   proven?: ReadonlyMap<number, readonly number[]>;
-  /** The opponent tracks over the same boards (income, unaccounted armies, inferred bonuses). */
+  /** The opponent tracks over the same boards (income, unexplained armies, inferred bonuses). */
   tracks?: readonly OpponentTrack[];
 }
 
@@ -230,7 +230,7 @@ export interface OpponentWhereabouts {
   bonuses: BonusGuess[];
   /** Its tracked income and the term that set it; `null` without one. */
   income: { estimate: number; method: IncomeMethod | null } | null;
-  /** Armies the track cannot place on the board (`unaccounted`); `null` without a track. */
+  /** Armies the track cannot place on the board (`unexplained`); `null` without a track. */
   hiddenArmies: number | null;
   /** The earliest it could attack each border territory of mine, soonest first, at most {@link MAX_APPROACHES}. */
   approaches: Approach[];
@@ -985,10 +985,12 @@ export function locateOpponents(input: WhereInput): Whereabouts {
     }
     const combinations = track?.inferred?.candidates ?? [];
     if (combinations.length) {
+      // Combinations that fit as well but are not listed count too, as holding none of these.
+      const fits = combinations.length + (track?.inferred?.more ?? 0);
       const inHowMany = new Map<number, number>();
       for (const c of combinations) for (const b of new Set(c.bonusIds)) inHowMany.set(b, (inHowMany.get(b) ?? 0) + 1);
       for (const [b, n] of [...inHowMany].sort(([a], [x]) => a - x))
-        for (const t of bonusTerritories(g, b)) add(t, 'income', (n / combinations.length) * INCOME_WEIGHT);
+        for (const t of bonusTerritories(g, b)) add(t, 'income', (n / fits) * INCOME_WEIGHT);
     }
     const presence = new Map<number, number>();
     const basisOf = new Map<number, PresenceSource[]>();
@@ -1183,10 +1185,10 @@ export function locateOpponents(input: WhereInput): Whereabouts {
         bonusId: n.bonusId,
       });
     }
-    if (track?.unaccounted !== null && track?.unaccounted !== undefined && track.income !== null && track.unaccounted > track.income)
+    if (track?.unexplained !== null && track?.unexplained !== undefined && track.income !== null && track.unexplained > track.income)
       doing.push({
         rule: 'hidden-armies',
-        text: `About ${track.unaccounted} of player ${o}'s armies are out of sight (earned since it was first seen and not on the board), more than its income of ${track.income} a turn.`,
+        text: `About ${track.unexplained} of player ${o}'s armies are out of sight or were spent there (earned since it was first seen, and neither on the board nor lost in view), more than its income of ${track.income} a turn.`,
         territoryIds: [],
       });
 
@@ -1208,7 +1210,7 @@ export function locateOpponents(input: WhereInput): Whereabouts {
         presence: presenceList,
         bonuses: bonusGuesses,
         income: track && track.income !== null ? { estimate: track.income, method: track.incomeMethod } : null,
-        hiddenArmies: track?.unaccounted ?? null,
+        hiddenArmies: track?.unexplained ?? null,
         approaches,
         doing,
         summary: `Player ${o}: ${where}${lastSeen.length ? `, ${lastSeen.length} last seen` : ''}; ${startText}; ${next}.`,

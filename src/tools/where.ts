@@ -117,7 +117,7 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
           '`presence` (hidden territories it may hold, each with a `likelihood` and its `basis`: last-seen; start; ' +
           'corridor, the shortest ways between a likely start and a sighting; growth, what a player could plausibly ' +
           'have taken from that start by now; income, bonuses that would explain its tracked income), `bonuses` it ' +
-          'probably holds in full, its tracked `income` and `hiddenArmies` (as warapp_track_opponents), `approaches` ' +
+          'probably holds in full, its tracked `income` and `hiddenArmies` (`unexplainedArmies` in warapp_track_opponents), `approaches` ' +
           '(the earliest turn it could attack each border territory of yours: from a stack in view, with the armies ' +
           'that could arrive, or from a territory it only probably holds, marked `guessed`) and `doing` (plain ' +
           `sentences, each from a named rule), with a one-line \`summary\`. Then \`prepare\`, most urgent first (at most ${MAX_PREPARE}): ` +

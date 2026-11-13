@@ -98,7 +98,8 @@ function track(over: Partial<OpponentTrack>): OpponentTrack {
     incomeTurns: [],
     observedRange: null,
     incomeMethod: null,
-    unaccounted: null,
+    incomeLowered: 0,
+    unexplained: null,
     inferred: null,
     visible: 0,
     turnsUnseen: 0,
@@ -358,7 +359,7 @@ describe('presence', () => {
   it('raises the hidden members of bonuses the income could come from', () => {
     // 902 = {6, 7} is in both combinations that fit its income, 903 = {8} in one.
     const g = mkGraph(line(8), [[902, 4, [6, 7]], [903, 3, [8]]]);
-    const inferred = { gap: 4, exact: true, candidates: [{ bonusIds: [902], total: 4 }, { bonusIds: [902, 903], total: 7 }], more: 0 };
+    const inferred = { gap: 4, exact: true, candidates: [{ bonusIds: [902], total: 4, hops: 1 }, { bonusIds: [902, 903], total: 7, hops: 3 }], more: 0, implausible: 0 };
     const o = theFoe(
       locate({ graph: g, boards: [at(5, own(1, 5), own(2, 5), foe(3, 4))], tracks: [track({ firstSeen: 4, income: 9, inferred })] }),
     );
@@ -370,6 +371,14 @@ describe('presence', () => {
       [903, INCOME_WEIGHT / 2, ['income']],
     ]);
     expect(o.income).toEqual({ estimate: 9, method: null });
+  });
+
+  it('counts the combinations the track fits but does not list, as not containing a listed bonus', () => {
+    const g = mkGraph(line(8), [[902, 4, [6, 7]], [903, 3, [8]]]);
+    const inferred = { gap: 4, exact: true, candidates: [{ bonusIds: [902], total: 4, hops: 1 }, { bonusIds: [902, 903], total: 7, hops: 3 }], more: 2, implausible: 0 };
+    const o = theFoe(locate({ graph: g, boards: [at(5, own(1, 5), own(2, 5), foe(3, 4))], tracks: [track({ firstSeen: 4, income: 9, inferred })] }));
+    expect(presenceOf(o, 6)!.likelihood).toBeCloseTo(INCOME_WEIGHT / 2, 10);
+    expect(presenceOf(o, 8)!.likelihood).toBeCloseTo(INCOME_WEIGHT / 4, 10);
   });
 
   it('adds growth from a likely start, at a discount', () => {
@@ -464,7 +473,7 @@ describe('doing', () => {
   it('names hidden armies the track cannot place when they exceed its income', () => {
     const graph = mkGraph(line(4));
     const boards = [at(4, own(4, 6), foe(3, 2))];
-    const hidden = (unaccounted: number) => theFoe(locate({ graph, boards, tracks: [track({ firstSeen: 2, income: 8, unaccounted })] }));
+    const hidden = (unexplained: number) => theFoe(locate({ graph, boards, tracks: [track({ firstSeen: 2, income: 8, unexplained })] }));
     expect(hidden(20).doing.find((d) => d.rule === 'hidden-armies')!.text).toMatch(/About 20 of player 200's armies are out of sight.*income of 8/);
     expect(hidden(20).hiddenArmies).toBe(20);
     expect(hidden(8).doing.find((d) => d.rule === 'hidden-armies')).toBeUndefined();
