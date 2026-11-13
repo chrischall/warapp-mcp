@@ -8,7 +8,8 @@
 // there: that stack moved, it is not income. From the per-turn observations:
 //  - income (visible income is the one income rule, `boardIncome`, via enemyDeployEstimates):
 //    over the last {@link INCOME_TURNS} observed turns, the larger of the most it was observed
-//    to deploy and its stock and flow (visible army change plus visible losses, per turn),
+//    to deploy and its stock and flow (visible army change plus visible losses, less the armies
+//    that arrived from the fog, per turn),
 //    capped at the most it could earn in that window and floored at what it visibly earns on
 //    the newest board (base income + the bonuses it visibly holds in full) — see
 //    {@link trackedIncome} (#99);
@@ -73,6 +74,11 @@ export interface ObservedTurn {
   captured: number[];
   /** Of `captured`, those taken (at least partly) out of the fog (#86): only their cost is deploy. */
   fromFog: number[];
+  /**
+   * The armies that arrived out of the fog on `fromFog` (#86): in `net` (they came into view),
+   * but a move, never income — {@link trackedIncome}'s stock and flow takes them out.
+   */
+  fogArmies: number;
   /** Its territories on the later board that the earlier one did not show: fog reveals. */
   reveals: number[];
   /** Base income + visibly held bonuses on the earlier board: what it surely earned that turn. */
@@ -243,7 +249,7 @@ const byNum = (a: number, b: number) => a - b;
 
 /**
  * Which term set a tracked income: `max-observed` the most it was observed to deploy,
- * `stock-flow` its visible army change plus visible losses per turn, `visible` what it visibly
+ * `stock-flow` its visible army change plus visible losses (less fog arrivals) per turn, `visible` what it visibly
  * earns on the newest board (base + bonuses it visibly holds in full).
  */
 export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible';
@@ -264,18 +270,20 @@ export interface TrackedIncome {
  * turn's income: deploys onto fogged territories are unseen, and so are armies moved into the
  * fog or lost in failed attacks. The median of lower bounds is no bound at all — one quiet turn
  * (an opponent deploying into the fog) drags it to the floor — so the estimate is the largest:
- * the tightest lower bound the window gives. Its stock and flow (the change of its visible
- * armies over territories visible on both boards of each pair, plus what it visibly lost,
- * summed over the window and divided by its length, rounded up, at least 0) catches an opponent
- * whose armies grow faster than any one observation — stacks arriving out of the fog. The
- * larger of the two is capped at the highest per-turn could-earn cap in the window (each
- * observation already is), then floored at what it visibly earns, `visibleIncome`. Ties name
- * the floor first, then the observation.
+ * the tightest lower bound the window gives. Its stock and flow is the change of its visible
+ * armies over territories visible on both boards of each pair, plus what it visibly lost, less
+ * the armies that arrived out of the fog (#86: a stack out of the fog moved, it is not income),
+ * summed over the window and divided by its length — rounded up, erring high on an opponent as
+ * the planner does, and at least 0. With the fog arrivals out it is each turn's uncapped
+ * observed deploy averaged, so it sets the income only when a turn's observation was cut by a
+ * lower could-earn cap than the window's highest. The larger of the two is capped at the
+ * highest per-turn could-earn cap in the window (each observation already is), then floored at
+ * what it visibly earns, `visibleIncome`. Ties name the floor first, then the observation.
  */
 export function trackedIncome(window: readonly ObservedTurn[], visibleIncome: number): TrackedIncome {
   const observed = window.map((x) => x.observed);
   const maxObserved = Math.max(...observed);
-  const stockFlow = Math.max(0, Math.ceil(window.reduce((s, x) => s + x.net + x.losses, 0) / window.length));
+  const stockFlow = Math.max(0, Math.ceil(window.reduce((s, x) => s + x.net + x.losses - x.fogArmies, 0) / window.length));
   const cap = Math.max(...window.map((x) => x.cap));
   const flow = Math.min(cap, stockFlow);
   const fromWindow = Math.max(maxObserved, flow);
@@ -302,7 +310,7 @@ export function incomeBasis(t: Pick<OpponentTrack, 'incomeMethod' | 'incomeTurns
   const span = turnSpan(t.incomeTurns);
   const range = `observed ${t.observedRange.min}–${t.observedRange.max}`;
   if (t.incomeMethod === 'max-observed') return `max observed over ${span}, ${range}`;
-  if (t.incomeMethod === 'stock-flow') return `visible army growth plus losses over ${span}, ${range}`;
+  if (t.incomeMethod === 'stock-flow') return `visible army growth plus losses (fog arrivals left out) over ${span}, ${range}`;
   return `its visible base + bonuses, ${range} over ${span}`;
 }
 
@@ -511,6 +519,7 @@ export function trackOpponents(
         counted: o.counted,
         captured: o.captured,
         fromFog: o.fromFog,
+        fogArmies: o.fogArmies,
         reveals: o.reveals,
         visibleIncome,
         earned: Math.max(visibleIncome, e.observed!),
@@ -584,7 +593,7 @@ export function trackOpponents(
     else {
       const basis = incomeBasis({ incomeMethod: estimate!.method, incomeTurns: recent.map((x) => x.from), observedRange: estimate!.observedRange });
       notes.push(
-        `Income ~${income} (${basis}): the larger of the most it was observed to deploy (each observation is a lower bound under fog, so the largest is the tightest) and its visible army growth plus losses per turn (${estimate!.stockFlow}), capped at the most it could earn (${estimate!.cap}), at least its visible income ${visibleIncome}.`,
+        `Income ~${income} (${basis}): the larger of the most it was observed to deploy (each observation is a lower bound under fog, so the largest is the tightest) and its visible army growth plus losses per turn, fog arrivals left out (${estimate!.stockFlow}), capped at the most it could earn (${estimate!.cap}), at least its visible income ${visibleIncome}.`,
       );
     }
     if (missing.length)

@@ -160,7 +160,7 @@ The pages were read on 2026-11-13; nothing is quoted.
 
 - `reading-count-armies` — the armies an opponent gains beyond losses are its income.
   **Encoded:** per-opponent deploy estimates, the tracked income's stock-and-flow term (visible
-  army growth plus losses per turn, #99) and the profile's standing. Source: Good 1v1 strategies.
+  army growth plus losses per turn, stacks out of the fog left out, #99) and the profile's standing. Source: Good 1v1 strategies.
 - `reading-infer-bonuses` — deploys minus base income are the bonuses held. **Advice only**,
   derived. Source: Good 1v1 strategies.
 - `reading-border-neutrals` — hold off on neutrals next to an enemy. **Advice only.** Source:

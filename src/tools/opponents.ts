@@ -33,7 +33,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           'per opponent, by name, its observed deploy each turn (the net change of its armies on territories visible ' +
           'both turns plus what its captures cost; a stack that only came out of the fog is not income, and no turn ' +
           'exceeds what it could earn), its income estimate (each observed deploy is a lower bound under fog, so: the ' +
-          'largest of its last three observed turns, or its visible army growth plus losses per turn when more, capped ' +
+          'largest of its last three observed turns, or its visible army growth plus losses per turn (stacks out of the fog left out) when more, capped ' +
           'at what it could earn and at least its base income plus the bonuses it visibly holds; with the method used ' +
           'and the observed range), its unaccounted armies (income earned since first ' +
           'seen minus its visible army change and losses: armies that must be in the fog) and inferred bonuses (the ' +

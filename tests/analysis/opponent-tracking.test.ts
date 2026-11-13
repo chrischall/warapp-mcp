@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { trackOpponents, type TurnBoard } from '../../src/analysis/opponents.js';
+import { incomeBasis, trackedIncome, trackOpponents, type ObservedTurn, type TurnBoard } from '../../src/analysis/opponents.js';
 import { enemyDeployEstimates, planTurn, TRACKED_MIN_TURNS, type PlannerSettings } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
@@ -168,24 +168,18 @@ describe('trackOpponents', () => {
     expect(t!.notes.join(' ')).toMatch(/Income ~31 \(max observed over turns 4–6, observed 3–31\)/);
   });
 
-  it('stock and flow: visible armies growing faster than any one observation set the income', () => {
-    // Each turn a 10-army stack from the fogged T6 takes one of my 3-army territories: the
-    // observed deploy is only the capture's cost, round(3 × 0.7) = 2, but its visible armies
-    // grow by 10 and it lost 2 doing it — 12 a turn over the window.
+  it('#86: a stack out of the fog is a move, not income — stock and flow leave it out too', () => {
+    // Each turn a 10-army stack from the fogged T6 takes one of my 3-army territories: its
+    // visible armies grow by 10 and it lost 2 doing it, but those 10 arrived from the fog. The
+    // observed deploy is only the capture's cost, round(3 × 0.7) = 2, and so is its stock and
+    // flow once the fog arrivals are taken out: the visible base 5 stands, never 12.
     const [t] = trackOpponents(gFlow(10), flowHistory(), ME, STD);
-    expect(t!.turns.map((x) => [x.observed, x.net, x.losses])).toEqual([
-      [2, 10, 2],
-      [2, 10, 2],
-      [2, 10, 2],
+    expect(t!.turns.map((x) => [x.observed, x.net, x.losses, x.fogArmies])).toEqual([
+      [2, 10, 2, 10],
+      [2, 10, 2, 10],
+      [2, 10, 2, 10],
     ]);
-    expect(t).toMatchObject({ income: 12, incomeMethod: 'stock-flow', observedRange: { min: 2, max: 2 } });
-  });
-
-  it('the stock-and-flow figure is capped at the most it could earn in the window', () => {
-    // The fogged bonus is only +4: it could earn at most base 5 + 4 = 9.
-    const [t] = trackOpponents(gFlow(4), flowHistory(), ME, STD);
-    expect(t!.turns.map((x) => x.cap)).toEqual([9, 9, 9]);
-    expect(t).toMatchObject({ income: 9, incomeMethod: 'stock-flow' });
+    expect(t).toMatchObject({ income: 5, incomeMethod: 'visible', observedRange: { min: 2, max: 2 } });
   });
 
   it('a fog-hidden bonus: an income gap of 4 is explained by the one +4 bonus it could hold', () => {
@@ -246,7 +240,7 @@ describe('trackOpponents', () => {
     const before = board([mine(1, 5), mine(2, 5), enemy(3, 12), enemy(4, 2), enemy(5, 2), ...FOG]);
     const after = board([mine(1, 5), enemy(2, 8), enemy(3, 3), enemy(4, 2), enemy(5, 2), ...FOG]);
     const [t] = trackOpponents(g, history([3, before], [4, after]), ME, STD);
-    expect(t!.turns[0]).toMatchObject({ observed: 3, net: -1, losses: 4, earned: 5, captured: [2], fromFog: [] });
+    expect(t!.turns[0]).toMatchObject({ observed: 3, net: -1, losses: 4, earned: 5, captured: [2], fromFog: [], fogArmies: 0 });
     expect(t!.unaccounted).toBe(2);
   });
 
@@ -258,7 +252,7 @@ describe('trackOpponents', () => {
     const before = board([mine(1, 5), mine(2, 5), enemy(3, 10), enemy(4, 2), enemy(5, 2), ...FOG]);
     const after = board([enemy(1, 10), mine(2, 5), enemy(3, 10), enemy(4, 2), enemy(5, 2), ...FOG]);
     const [t] = trackOpponents(g, history([3, before], [4, after]), ME, STD);
-    expect(t!.turns[0]).toMatchObject({ observed: 4, net: 10, losses: 4, earned: 5, captured: [1], fromFog: [1] });
+    expect(t!.turns[0]).toMatchObject({ observed: 4, net: 10, losses: 4, earned: 5, captured: [1], fromFog: [1], fogArmies: 10 });
     expect(t!.unaccounted).toBe(0);
     expect(t!.notes.join(' ')).toMatch(/1 capture out of the fog on turn 3/);
   });
@@ -348,11 +342,11 @@ describe('the planner uses the tracked income', () => {
     expect(t!.notes.join(' ')).toMatch(/1 combination fits its income gap of 2 approximately/);
   });
 
-  it('#99: the rationale names the method and the observed range; a stock-and-flow income says so', () => {
-    const h = flowHistory();
-    const tracks = trackOpponents(gFlow(10), h, ME, STD);
-    const plan = planTurn({ graph: gFlow(10), board: h[3]!.board, previousBoard: h[2]!.board, me: ME, income: 5, settings: STD, turn: 6, tracks });
-    expect(plan.rationale.join('\n')).toMatch(/Tracked income for player 20: ~12\/turn \(visible army growth plus losses over turns 3–5, observed 2–2\)/);
+  it('#99: the rationale names the method and the observed range', () => {
+    const h = history([3, at(10)], [4, at(32)], [5, at(35)], [6, at(66)], [7, at(71)]);
+    const tracks = trackOpponents(gBig, h, ME, STD);
+    const plan = planTurn({ graph: gBig, board: h[4]!.board, previousBoard: h[3]!.board, me: ME, income: 25, settings: STD, turn: 7, tracks });
+    expect(plan.rationale.join('\n')).toMatch(/Tracked income for player 20: ~31\/turn \(max observed over turns 4–6, observed 3–31\)/);
   });
 
   it('#97 standing follows the new income: my 25 against a tracked 31 is not "ahead" (the median 5 said it was)', () => {
@@ -373,5 +367,59 @@ describe('the planner uses the tracked income', () => {
     expect(plan.profile).toMatchObject({ standingSource: 'tracked' });
     expect(plan.profile!.standing).not.toBe('ahead');
     expect(plan.profile!.standing).toBe('even');
+  });
+});
+
+describe('trackedIncome (#99)', () => {
+  /** One observed turn; `flow` is its visible army change plus losses (all in `net`). */
+  const turn = (from: number, observed: number, cap: number, flow: number, fogArmies = 0): ObservedTurn => ({
+    from,
+    to: from + 1,
+    observed: Math.min(observed, cap),
+    raw: observed,
+    cap,
+    counted: [],
+    captured: [],
+    fromFog: [],
+    reveals: [],
+    visibleIncome: 5,
+    earned: Math.max(5, Math.min(observed, cap)),
+    net: flow,
+    losses: 0,
+    fogArmies,
+  });
+
+  it('stock and flow sets the income when it beats every capped observation', () => {
+    // Its visible armies grew 20, 20 and 2 (no fog arrivals) while the cap was 8 the first two
+    // turns: observed 8, 8, 2. Over the window that is 42 / 3 = 14 a turn, under the window's
+    // highest cap 30.
+    const t = trackedIncome([turn(4, 20, 8, 20), turn(5, 20, 8, 20), turn(6, 2, 30, 2)], 5);
+    expect(t).toEqual({ income: 14, method: 'stock-flow', observedRange: { min: 2, max: 8 }, stockFlow: 14, cap: 30 });
+  });
+
+  it('a fractional stock and flow is rounded up (err high on an opponent)', () => {
+    // 20 + 20 + 1 = 41 over 3 turns = 13.67 → 14.
+    expect(trackedIncome([turn(4, 20, 8, 20), turn(5, 20, 8, 20), turn(6, 1, 30, 1)], 5)).toMatchObject({ income: 14, stockFlow: 14 });
+  });
+
+  it('the stock-and-flow figure is capped at the highest could-earn cap in the window', () => {
+    const t = trackedIncome([turn(4, 20, 8, 20), turn(5, 20, 8, 20), turn(6, 2, 10, 2)], 5);
+    expect(t).toMatchObject({ income: 10, method: 'stock-flow', stockFlow: 14, cap: 10 });
+  });
+
+  it('armies that arrived from the fog never count in the stock and flow (#86)', () => {
+    // A 556-stack out of the fog takes a visible territory: +556 visible, but all of it a move.
+    const t = trackedIncome([turn(4, 2, 400, 558, 556), turn(5, 2, 400, 2), turn(6, 2, 400, 2)], 5);
+    expect(t).toMatchObject({ income: 5, method: 'visible', stockFlow: 2 });
+  });
+
+  it('the visible income beats the cap', () => {
+    expect(trackedIncome([turn(4, 20, 3, 20)], 5)).toMatchObject({ income: 5, method: 'visible' });
+  });
+
+  it('names a stock-and-flow basis', () => {
+    expect(incomeBasis({ incomeMethod: 'stock-flow', incomeTurns: [4, 5, 6], observedRange: { min: 2, max: 8 } })).toBe(
+      'visible army growth plus losses (fog arrivals left out) over turns 4–6, observed 2–8',
+    );
   });
 });
