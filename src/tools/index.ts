@@ -6,6 +6,7 @@ import type { ClassReader } from '../live.js';
 import { registerBeginTurnTool } from './begin-turn.js';
 import { registerBoardTool } from './board.js';
 import { registerChatTools } from './chat.js';
+import { registerCheckPlanTool } from './check-plan.js';
 import { registerGameTool } from './game.js';
 import { registerHealthcheckTool } from './healthcheck.js';
 import { createLiveContext } from './live-context.js';
@@ -106,6 +107,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerBeginTurnTool(server, live);
   registerScoutTool(server, live);
   registerTurnTools(server, live);
+  registerCheckPlanTool(server, live);
   registerOpponentsTool(server, live);
   registerUncommitTool(server, live);
   registerChatTools(server, live);

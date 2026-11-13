@@ -45,6 +45,25 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   supplies the token) — so a write preview's sentences name things by id only, and every
   third-party name in a preview or a thrown error goes through `untrustedText` (`src/tools/common.ts`:
   delimited ⟦ ⟧, control characters, quotes and non-ASCII brackets neutralised, capped).
+- **The plan stress test is `warapp_check_plan`** (read-only; it writes nothing, not the board cache
+  either). `src/analysis/turn-sim.ts` resolves one turn from every player's orders by the wiki's rules
+  (`docs/STRATEGY.md` "Turn resolution" links each page: deploys first, then attacks and transfers
+  in the zigzag, an order that moves no armies taking no slot; attack or transfer decided when the
+  order runs; the guard army, which an arrived army can be and a commander cannot; each army
+  moving once; mutual destruction leaves one defender; Order Priority makes its player the first
+  mover for the turn; commanders as 7). What the wiki does not state is assumed and named in the
+  result (an order sends what is left; an order from a territory captured first does nothing;
+  losses fall on movable armies first; the mutual wipe with the guard off), and with luck or
+  weighted rounding battles are resolved at their expectation (`exact: false`). A territory whose
+  armies are hidden is unknown to it whoever holds it. `src/analysis/stress.ts` runs a list of
+  orders against each opponent's single-deploy replies (attack from one stack with its commander,
+  sit on a territory I attack, every stack at once, spread and concentrated), under both move
+  orders unless `first_mover` is given, with the same per-opponent deploy estimates as the
+  planner; the opponents are whoever holds a stack on the board, not only players GameFeed calls
+  `Playing`. "Safe" means safe against those replies only: fog-hidden stacks (`blindBorders`,
+  `unseenOpponents`), a deploy above the estimate, split deploys, Multi-Attack chains and cards
+  are not tried, and `safe` is `null` when nothing could be tried. Both modules are pure and
+  deterministic like the planner, and neither is called by it.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words with a source link from the researched war.app pages, marked
   `source` or `derived`; never paste guide text. `docs/STRATEGY.md` names every note id (a test checks it). With a
