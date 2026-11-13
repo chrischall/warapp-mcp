@@ -3,6 +3,8 @@ import { buildGraph } from '../../src/analysis/graph.js';
 import type { GameMap } from '../../src/normalize.js';
 import { mapNotes, mapNotesMarkdown } from '../../src/strategy/map-notes.js';
 import { OVERRIDES_UNPARSED } from '../../src/analysis/overrides.js';
+import { normalizeMap } from '../../src/normalize.js';
+import { lobbyFixture } from '../helpers.js';
 
 /**
  * A line 1 ─ 2 ─ … ─ 8 with three bonuses:
@@ -78,7 +80,11 @@ describe('mapNotes: income targets from the opening simulation', () => {
   });
 
   it('with an opening: income by turn, never falling, from the base income up', () => {
-    const n = mapNotes({ graph, settings: { minimumArmyBonus: 5 }, opening: { players: 2, territoryLimit: 2 } });
+    const n = mapNotes({
+      graph,
+      settings: { minimumArmyBonus: 5 },
+      opening: { players: 2, territoryLimit: 2, pickable: [1, 2, 3, 4, 5, 6, 7, 8] },
+    });
     const t = n.incomeTargets!;
     expect(t.map((x) => x.turn)).toEqual([1, 2, 3, 4]);
     expect(t[0]!.income).toBeGreaterThanOrEqual(5);
@@ -87,6 +93,43 @@ describe('mapNotes: income targets from the opening simulation', () => {
     const named = new Set(MAP.bonuses.map((b) => b.name));
     for (const x of t) for (const b of x.bonuses) expect(named.has(b)).toBe(true);
   });
+});
+
+describe('mapNotes: income targets come only from territories that can be picked (#132)', () => {
+  it('without the pickable territories there are no targets, and the assumptions say why', () => {
+    const n = mapNotes({ graph, settings: { minimumArmyBonus: 5 }, opening: { players: 2, territoryLimit: 2 } });
+    expect(n.incomeTargets).toBeUndefined();
+    expect(n.assumptions.join(' ')).toMatch(/pickable territories.*warapp_plan_picks/i);
+  });
+
+  it('a start nobody can pick does not set the pace: only the pickables are simulated', () => {
+    // Charlie (+5, 6-8) is the best start when everything is pickable; here only Alpha's side is.
+    const all = mapNotes({
+      graph,
+      settings: { minimumArmyBonus: 5 },
+      opening: { players: 2, territoryLimit: 2, pickable: [1, 2, 3, 4, 5, 6, 7, 8] },
+    });
+    expect(all.incomeTargets![1]!.bonuses).toContain('Charlie');
+    const live = mapNotes({
+      graph,
+      settings: { minimumArmyBonus: 5 },
+      opening: { players: 2, territoryLimit: 2, pickable: [1, 2] },
+    });
+    for (const t of live.incomeTargets!) expect(t.bonuses).not.toContain('Charlie');
+    expect(live.incomeTargets![1]!.bonuses).toEqual(['Alpha']);
+    expect(live.assumptions.join(' ')).toMatch(/2 territories the game lists as pickable/);
+  });
+
+  it('a 1v1 on a large map is quick: only the primary group is searched', () => {
+    const map = normalizeMap(lobbyFixture().map);
+    const big = buildGraph(map);
+    const pickable = map.territories.map((t) => t.id);
+    const start = performance.now();
+    const n = mapNotes({ graph: big, opening: { players: 2, territoryLimit: 3, pickable } });
+    // The fallback search behind it took ~6-10 s here; the primary alone takes well under one.
+    expect(performance.now() - start).toBeLessThan(3000);
+    expect(n.incomeTargets).toHaveLength(4);
+  }, 30_000);
 });
 
 describe('mapNotesMarkdown', () => {

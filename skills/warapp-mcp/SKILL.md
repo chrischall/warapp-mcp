@@ -36,8 +36,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"Join that game"** → `warapp_join_game` with `game_id` (confirm-gated): it re-reads the
   open games list and refuses team games and coin entry fees unless `allow_team` /
   `accept_entry_fee`, and custom-scenario and mod games always. Show the user the preview (pace,
-  seats, rules, `plannerGaps`) before confirming; it reports `joined` only once the account shows
-  in the game, else `unconfirmed`.
+  seats, rules, `plannerGaps`, and `screen`: whether the cheapest neutral costs at most one turn of
+  base income, read from the lobby's GameFeed settings) before confirming; a failed screen is a
+  slow game — say so. It reports `joined` only once the account shows in the game, else
+  `unconfirmed`.
 - **"Who am I up against?" / "scout this player"** → `warapp_scout_player` with `game_id` +
   `player` (a name), or just the player's id: level, games played, last seen, boot rate,
   ranked records per format and the user's head-to-head with them. It never returns the
@@ -50,7 +52,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"What wins on this map?"** → `warapp_map_stats` (`map_id`; opt-in, local only — off unless
   `WARAPP_STATS=1`; when it refuses, say how to enable it and fall back to `warapp_get_map`):
   most-picked starts, win rate by starting bonus and first-bonus turn from finished ladder games.
-  Always quote the sample size; a rate flagged `lowSample` is anecdote, not a trend.
+  Always quote the sample size (and `unreadableGames`, left out of every figure); a rate flagged
+  `lowSample` is anecdote, not a trend.
 - **"Which bonuses should I go for?"** → `warapp_get_map`: bonuses ranked easiest first
   (value per territory and per border, entry points, ease score) plus chokepoints. Narrow to
   one bonus with `bonus: "<part of its name>"`; `sort` is `easiest` / `value` / `name`;
@@ -60,7 +63,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 - **"How should I play this game / map?" / "any strategy tips?"** → `warapp_strategy` with
   `game_id`: short heuristics fitted to the game's format and settings, each with its source
   link (pass the link on), plus map notes — bonuses by value per army, entry points,
-  chokepoints, and income targets by turn while picks are open. `topic` narrows to format /
+  chokepoints, and income targets by turn while picks are open (only when GameFeed lists the
+  pickable territories; otherwise `warapp_plan_picks` is the opening advisor). `topic` narrows to format /
   settings / cards / reading / map; with no arguments it lists every note.
 - **"What should I do this turn?"** → `warapp_analyze_board` with `player` (the user's war.app
   name, or part of it; omit it to list the players). It gives income, the bonuses closest to

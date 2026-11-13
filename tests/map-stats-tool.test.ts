@@ -120,10 +120,12 @@ describe('warapp_map_stats', () => {
     expect(p.stats.sampleSize).toBe(6);
     expect(p.stats.lowSample).toBe(false);
     expect(p.stats.mostPicked[0]).toMatchObject({ territoryId: 1, name: 'Land 1', picks: 6, winnerPicks: 6 });
+    // Six players per bonus: enough games, too few players for a bonus win rate (#132).
     expect(p.stats.winRateByStartingBonus).toEqual([
-      { bonusId: 1, name: 'North', players: 6, wins: 6, winRate: 1, lowSample: false },
-      { bonusId: 2, name: 'South', players: 6, wins: 0, winRate: 0, lowSample: false },
+      { bonusId: 1, name: 'North', players: 6, wins: 6, winRate: 1, lowSample: true },
+      { bonusId: 2, name: 'South', players: 6, wins: 0, winRate: 0, lowSample: true },
     ]);
+    expect(p.stats.unreadableGames).toBe(0);
     expect(p.stats.firstBonusTurn).toMatchObject({ completed: 6, median: 1 });
 
     // A second call: every game is cached — only the feed is asked.

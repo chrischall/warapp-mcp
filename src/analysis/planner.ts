@@ -5,7 +5,8 @@
 // Rules, in decision order:
 //  0p. Game profile (`gameProfile`, src/analysis/profile.ts), computed on every plan and
 //     returned as `profile`: format (1v1 / ffa / teams), phase (opening / expansion /
-//     contact / late), standing (my income against the strongest opponent's estimate:
+//     contact / late; in an FFA, contact only when an enemy stack as it stands can take a
+//     territory of mine or most of my borders face enemies, #132), standing (my income against the strongest opponent's estimate:
 //     ahead ≥ AHEAD_RATIO×, behind ≤ BEHIND_RATIO×, unknown when fog hides most of the
 //     board) and the settings that shape strategy. Only with `options.adapt` and no `goal`
 //     does it change the plan (each rule a rationale line when it fires):
@@ -444,9 +445,11 @@
 //     the contact/late fallback (passes 1–3, the opening/expansion and army-cap fallback) rule 4d
 //     keeps its veto. An enemy capture carries the usual warning that it assumes the owner does
 //     not reinforce first.
-//  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, and
-//     in the opening and expansion phases, completions and advances keep the slots their scores
-//     give them (rules 4, 4a) but fill them closest to completion first: fewest turns to finish at
+//  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, in
+//     the opening and expansion phases, and in an FFA while a neutral borders a territory of mine
+//     (#132: one front leaves the rest of the map to expand into; the rationale says "neutrals in
+//     reach"), completions and advances keep the slots their scores give them (rules 4, 4a) but
+//     fill them closest to completion first: fewest turns to finish at
 //     this income (armies to finish, counting the members I hold, over the income), so a farther
 //     bonus gets only armies the closer ones cannot use; bonuses as close as each other keep the
 //     score order. Given `previousBoard`, a bonus advanced last turn (a member captured since) keeps
@@ -1327,6 +1330,9 @@ export function planTurn(input: PlanInput): TurnPlan {
       ...(s.noSplit !== undefined ? { noSplit: s.noSplit } : {}),
       ...(ctx.commanders !== undefined ? { commanders: ctx.commanders } : {}),
       ...(ctx.fog !== undefined ? { fog: ctx.fog } : {}),
+      ...(s.offensiveKillRate !== undefined ? { offensiveKillRate: s.offensiveKillRate } : {}),
+      ...(s.defensiveKillRate !== undefined ? { defensiveKillRate: s.defensiveKillRate } : {}),
+      ...(s.oneArmyStandsGuard !== undefined ? { oneArmyStandsGuard: s.oneArmyStandsGuard } : {}),
     },
     ...(ctx.turn !== undefined ? { turn: ctx.turn } : {}),
     ...(ctx.picking !== undefined ? { picking: ctx.picking } : {}),
@@ -2774,7 +2780,11 @@ export function planTurn(input: PlanInput): TurnPlan {
     const ts = bonusTs.get(b.id)!;
     return b.value > 0 && ts.length > 0 && ts.every((t) => mineSet.has(t));
   });
-  const committing = !holdsBonus || profile.phase === 'opening' || profile.phase === 'expansion';
+  // #132: in an FFA, contact with one front still leaves neutrals to expand into: keep committing
+  // while any neutral borders a territory of mine.
+  const neutralsInReach =
+    profile.format === 'ffa' && mine.some((t) => neighborsOf(g, t).some((n) => state.get(n)?.owner.kind === 'neutral'));
+  const committing = !holdsBonus || profile.phase === 'opening' || profile.phase === 'expansion' || neutralsInReach;
   const advancedLast = new Set<number>();
   if (input.previousBoard) {
     const before = new Map(input.previousBoard.territories.map((t) => [t.territoryId, t]));
@@ -2804,7 +2814,11 @@ export function planTurn(input: PlanInput): TurnPlan {
     return income > 0 ? `${n} turn${n === 1 ? '' : 's'}` : 'no income';
   };
   if (committing && byCloseness.length > 1) {
-    const why = holdsBonus ? `${profile.phase[0]!.toUpperCase()}${profile.phase.slice(1)} phase` : 'No bonus held';
+    const why = holdsBonus
+      ? `${profile.phase[0]!.toUpperCase()}${profile.phase.slice(1)} phase${
+          profile.phase === 'opening' || profile.phase === 'expansion' ? '' : ', neutrals in reach'
+        }`
+      : 'No bonus held';
     rationale.push(
       `${why}: expansion goes to the bonus closest to completion first — ${byCloseness
         .map(

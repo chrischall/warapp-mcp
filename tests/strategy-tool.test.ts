@@ -159,12 +159,26 @@ describe('warapp_strategy', () => {
     expect(ids).not.toContain('1v1-break-bonuses');
   });
 
-  it('in the picking stage the map notes carry income targets by turn', async () => {
-    h = await harnessFor(game({ state: 'DistributingTerritories' }));
+  it('in the picking stage the map notes carry income targets by turn, from the pickable territories', async () => {
+    // Only Alpha's side (1-3) is pickable; Charlie (6-8), the best start on the bare map, is not.
+    const standing = [1, 2, 3, 4, 5, 6, 7, 8].map((t) => ({
+      terrID: String(t),
+      ownedBy: t <= 3 ? 'AvailableForDistribution' : 'Neutral',
+      armies: '2',
+    }));
+    h = await harnessFor(game({ state: 'DistributingTerritories', standing }));
     const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
     expect(p.profile!.phase).toBe('opening');
     expect(p.map!.incomeTargets!.map((t) => t.turn)).toEqual([1, 2, 3, 4]);
     expect(p.map!.incomeTargets![0]!.income).toBeGreaterThanOrEqual(5);
+    expect(p.map!.incomeTargets!.some((t) => (t as { bonuses?: string[] }).bonuses?.includes('Charlie'))).toBe(false);
+  });
+
+  it('in the picking stage with no pickable territories in the feed: no income targets, and why (#132)', async () => {
+    h = await harnessFor(game({ state: 'DistributingTerritories' }));
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(p.map!.incomeTargets).toBeUndefined();
+    expect(p.map!.assumptions.join(' ')).toMatch(/warapp_plan_picks/);
   });
 
   it('a topic other than map leaves the map notes out', async () => {

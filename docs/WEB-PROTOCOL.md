@@ -311,8 +311,12 @@ map id, the mega-game player cap, name, the open seats, the players
 (`warlight.shared.GameInfoPlayer`: an optional `GameColor` first, the in-game player id 7th, the
 player state 8th and the team 9th), a real-time flag, and a
 `warlight.shared.GameInfoSettings` record (distribution — custom scenario included — commanders,
-commerce, kill rates, local deployments, luck, wastelands, army cap, ranked, and a settings string
-whose fields carry the card ids and a mods marker). The plan expected the open seats as
+commerce, kill rates, local deployments, luck, wastelands, army cap, ranked, the move order, and a
+settings string whose fields carry the card ids and a mods marker). The move order is the 17th field
+(a `MoveOrderEnum` byte: 0 Random, 1 Cycle, 2 NoLuckCycle — read from the bundle, where the record is
+built from the game settings' move order, not verified live, #132); `NoLuckCycle` is listed as a
+speed first turn in `rules` and `plannerGaps`. The record carries no fog level and no neutral
+sizes: `warapp_join_game` reads those from the lobby's GameFeed settings for its screen. The plan expected the open seats as
 `warlight.shared.GameOpenSeat` records; inside `GameInfo` they read as a plain int32 list with one
 **team per open seat** (`-1` = no team), and that team is what a join sends. Anything the reader
 cannot place is omitted, never guessed; a record that does not fit is skipped and a payload that

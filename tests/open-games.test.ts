@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Writer } from '../src/protocol/codec.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { filterOpenGames, OPEN_GAMES_URL, openGameOf, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
+import { feedScreen, filterOpenGames, OPEN_GAMES_URL, openGameOf, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
 import { liveHarness, payload, textOf, type Harness } from './helpers.js';
 import { MY_GAMES_BUNDLE, writeGameInfo, type SyntheticGame } from './protocol/my-games-bundle.js';
 
@@ -198,23 +198,29 @@ describe('parseOpenGamesPage', () => {
       ]),
     );
     expect(g.cards).toEqual(['Reinforcement', 'Order Delay']);
-    expect(g.plannerGaps).toEqual(
-      expect.arrayContaining([
-        'Non-default kill rates (#28)',
-        'Local deployments (#29)',
-        'Commerce',
-        'Custom scenario',
-        'Commanders',
-      ]),
-    );
+    expect(g.plannerGaps).toEqual(expect.arrayContaining(['Commerce', 'Custom scenario', 'Commanders']));
     expect(g.plannerGaps).not.toContain('Multi-attack');
   });
 
-  it('flags an extra army per N territories as a planner gap (income model unverified, #38)', () => {
-    const g = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { bonusArmiesPer: 3 } }])), bundle)
+  it('names no gap the planner has closed: kill rates (#28), Local Deployment (#29), per-territory income (#38)', () => {
+    const g = byId(parseOpenGamesPage(page(payloadHex(GAMES)), bundle).games, 2005);
+    expect(g.rules).toEqual(expect.arrayContaining(['Local deployments', 'Kill rates: offensive 50%, defensive 70%']));
+    expect(g.plannerGaps.join(' ')).not.toMatch(/kill rate|local deployment|#\d+/i);
+    const per = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { bonusArmiesPer: 3 } }])), bundle)
       .games[0]!;
-    expect(g.rules).toContain('Extra army for every 3 territories');
-    expect(g.plannerGaps).toEqual(['Extra army per 3 territories — income model unverified, see #38']);
+    expect(per.rules).toContain('Extra army for every 3 territories');
+    expect(per.plannerGaps).toEqual([]);
+  });
+
+  it('flags a speed first turn (No-luck cycle move order) as a rule and a gap (#132)', () => {
+    const speed = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { moveOrder: 2 } }])), bundle).games[0]!;
+    expect(speed.rules).toContain('Speed first turn (No-luck cycle move order)');
+    expect(speed.plannerGaps).toEqual([
+      'Speed first turn — the board stays hidden until Begin (warapp_begin_turn), and whoever orders fastest moves first',
+    ]);
+    const cycle = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { moveOrder: 1 } }])), bundle).games[0]!;
+    expect(cycle.rules.join(' ')).not.toMatch(/speed/i);
+    expect(cycle.plannerGaps).toEqual([]);
   });
 
   it('flags a non-zero luck modifier or non-straight rounding as a planner gap', () => {
@@ -390,5 +396,44 @@ describe('warapp_list_open_games', () => {
     const p = payload(await h.call('warapp_list_open_games'));
     expect(p.games).toEqual([]);
     expect(String(p.warning)).toMatch(/no open-games data/i);
+  });
+});
+
+describe('feedScreen: the join preview screen from GameFeed settings (#132)', () => {
+  const base = { cards: [], raw: {} };
+  it('passes when the cheapest neutral costs no more than one turn of base income', () => {
+    const r = feedScreen({ ...base, minimumArmyBonus: 5, initialNonDistributionArmies: 2, initialNeutralsInDistribution: 3 });
+    expect(r.screen).toEqual({ cheapestNeutral: 2, armiesToTake: 3, baseIncome: 5, turnsOfBaseIncome: 0.6, passes: true });
+    expect(r.gaps).toEqual([]);
+  });
+
+  it('fails, and names a gap, when the cheapest neutral costs several turns of income', () => {
+    const r = feedScreen({
+      ...base,
+      minimumArmyBonus: 5,
+      initialNonDistributionArmies: 10,
+      initialNeutralsInDistribution: 12,
+      offensiveKillRate: 60,
+      defensiveKillRate: 70,
+    });
+    expect(r.screen).toEqual({ cheapestNeutral: 10, armiesToTake: 16, baseIncome: 5, turnsOfBaseIncome: 3.2, passes: false });
+    expect(r.gaps).toEqual([
+      'Costly neutrals — the cheapest (10) takes 16 armies, 3.2 turns of base income (5): expansion is slow',
+    ]);
+  });
+
+  it('neutrals of 0 cost one army', () => {
+    expect(feedScreen({ ...base, initialNonDistributionArmies: 0 }).screen).toMatchObject({ armiesToTake: 1, baseIncome: 5, passes: true });
+  });
+
+  it('no neutral size in the settings: no screen', () => {
+    expect(feedScreen(base).screen).toBeUndefined();
+  });
+
+  it('flags Light Fog', () => {
+    expect(feedScreen({ ...base, fog: 'LightFog' }).gaps).toEqual([
+      'Light Fog — owners show everywhere but armies only near you; the planner counts every unseen stack as unknown',
+    ]);
+    expect(feedScreen({ ...base, fog: 'Foggy' }).gaps).toEqual([]);
   });
 });

@@ -211,4 +211,25 @@ describe('commit to the closest bonus while none is held (#101)', () => {
     expect(attacks(p).map((m) => m.to)).toEqual([41, 31, 21]);
     expect(valid(p, b, 7)).toEqual([]);
   });
+
+  it('(e) in an FFA in contact, it keeps committing while neutrals remain in reach (#132)', () => {
+    // As (d), but a free-for-all whose two other players face both my borders (contact), with
+    // neutrals still beside me (21, 41, 32): the closest bonus keeps priority.
+    const P3 = 40;
+    const b = board([
+      mine(1, 8),
+      mine(11, 1),
+      mine(12, 1),
+      mine(2, 8),
+      neutral(21, 2),
+      player(22, 1, P2),
+      player(31, 1, P3),
+      ...neutrals([32, 33, 34, 35, 36, 41, 42, 43, 44, 45, 46]),
+      player(90, 3, P2),
+    ]);
+    const p = plan(b, 7, { game: { players: [{ id: ME }, { id: P2 }, { id: P3 }], turn: 6 } });
+    expect(p.profile).toMatchObject({ format: 'ffa', phase: 'contact' });
+    expect(why(p)).toMatch(/Contact phase, neutrals in reach: expansion goes to the bonus closest to completion first/);
+    expect(valid(p, b, 7)).toEqual([]);
+  });
 });

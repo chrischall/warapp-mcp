@@ -6,18 +6,25 @@
 // {@link mapStats} aggregates records per map: the most-picked starting
 // territories, the win rate by starting bonus (the bonus a player's picks
 // anchored), the turn of each player's first bonus completion, and the sample
-// size. A rate on fewer than {@link MIN_SAMPLE} games is always flagged.
+// size. A sample of fewer than {@link MIN_SAMPLE} games, and a bonus win rate on
+// fewer than {@link MIN_RATE_SAMPLE} players, is always flagged.
 //
 // The history shape is UNVERIFIED (docs/WARAPP-API.md "Board state"): records
 // are read with the same loose parser as the planner's trend
 // (`historyBoards`), and a game whose history does not parse still records its
-// winner, with no starts.
+// winner, with no starts. Such a game says nothing about starts or bonuses, so
+// {@link mapStats} leaves it out of every figure and counts it apart (#132).
 import type { BoardState } from './board.js';
 import type { Game, GameMap } from './normalize.js';
 import { historyBoards } from './trend.js';
 
 /** Below this many games a rate is reported only with a warning. */
 export const MIN_SAMPLE = 5;
+/**
+ * Below this many players a bonus win rate is flagged as a small sample: at 5 players
+ * 4 wins (80%) is as consistent with a coin flip as with a strong start (#132).
+ */
+export const MIN_RATE_SAMPLE = 10;
 
 export interface PlayerRecord {
   /** GameFeed player id. */
@@ -27,6 +34,11 @@ export interface PlayerRecord {
   starts: number[];
   /** The positive bonus holding most of the starts (ties: ascending id); null with no starts. */
   anchorBonusId: number | null;
+  /**
+   * Every positive bonus holding at least one start, ascending (#132): the win rate by starting
+   * bonus credits each. Absent on a record cached before it existed (its anchor stands in).
+   */
+  startBonusIds?: number[];
   /**
    * The history entry number (completed turns) of the first board on which the
    * player held every territory of a positive bonus; null when never.
@@ -68,8 +80,10 @@ export function recordFromGame(game: Game, map: GameMap): GameRecord {
       const starts = start ? [...ownedBy(start.board, p.id)].sort(byId) : [];
       let anchorBonusId: number | null = null;
       let best = 0;
+      const startBonusIds: number[] = [];
       for (const b of bonuses) {
         const n = b.territoryIds.filter((t) => starts.includes(t)).length;
+        if (n > 0) startBonusIds.push(b.id);
         if (n > best) {
           best = n;
           anchorBonusId = b.id;
@@ -83,7 +97,7 @@ export function recordFromGame(game: Game, map: GameMap): GameRecord {
           break;
         }
       }
-      return { playerId: p.id, won: p.state === 'Won', starts, anchorBonusId, firstBonusTurn };
+      return { playerId: p.id, won: p.state === 'Won', starts, anchorBonusId, startBonusIds, firstBonusTurn };
     });
   return { gameId: game.id, mapId: map.id, turnsSeen: boards.length, players };
 }
@@ -104,7 +118,7 @@ export interface BonusWinRate {
   players: number;
   wins: number;
   winRate: number;
-  /** True when fewer than {@link MIN_SAMPLE} players anchored it. */
+  /** True when fewer than {@link MIN_RATE_SAMPLE} players started in it. */
   lowSample: boolean;
 }
 
@@ -121,11 +135,13 @@ export interface FirstBonusStat {
 
 export interface MapStats {
   mapId: number;
-  /** Finished games in the sample. */
+  /** Finished games in the sample (readable ones only). */
   sampleSize: number;
+  /** Finished games left out because their history did not parse (no starts read). */
+  unreadableGames: number;
   /** True when the sample is smaller than {@link MIN_SAMPLE} games. */
   lowSample: boolean;
-  /** Present exactly when `lowSample`. */
+  /** Present when `lowSample`, or when unreadable games were left out. */
   note?: string;
   mostPicked: PickStat[];
   winRateByStartingBonus: BonusWinRate[];
@@ -141,7 +157,12 @@ function median(xs: number[]): number | null {
   return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
-function statsFor(mapId: number, games: GameRecord[], top: number): MapStats {
+/** A record the stats can use: its history parsed and some player's starts were read. */
+export const readableRecord = (r: GameRecord): boolean => r.turnsSeen > 0 && r.players.some((p) => p.starts.length > 0);
+
+function statsFor(mapId: number, all: GameRecord[], top: number): MapStats {
+  const games = all.filter(readableRecord);
+  const unreadable = all.length - games.length;
   const picks = new Map<number, { picks: number; winnerPicks: number }>();
   const anchors = new Map<number, { players: number; wins: number }>();
   const turns: number[] = [];
@@ -156,11 +177,11 @@ function statsFor(mapId: number, games: GameRecord[], top: number): MapStats {
         if (p.won) s.winnerPicks++;
         picks.set(t, s);
       }
-      if (p.anchorBonusId !== null) {
-        const a = anchors.get(p.anchorBonusId) ?? { players: 0, wins: 0 };
+      for (const id of p.startBonusIds ?? (p.anchorBonusId !== null ? [p.anchorBonusId] : [])) {
+        const a = anchors.get(id) ?? { players: 0, wins: 0 };
         a.players++;
         if (p.won) a.wins++;
-        anchors.set(p.anchorBonusId, a);
+        anchors.set(id, a);
       }
       if (p.firstBonusTurn !== null) {
         turns.push(p.firstBonusTurn);
@@ -175,6 +196,7 @@ function statsFor(mapId: number, games: GameRecord[], top: number): MapStats {
   const out: MapStats = {
     mapId,
     sampleSize: n,
+    unreadableGames: unreadable,
     lowSample,
     mostPicked: [...picks.entries()]
       .sort(([ta, a], [tb, b]) => b.picks - a.picks || b.winnerPicks - a.winnerPicks || ta - tb)
@@ -187,7 +209,7 @@ function statsFor(mapId: number, games: GameRecord[], top: number): MapStats {
         players: a.players,
         wins: a.wins,
         winRate: round2(a.wins / a.players),
-        lowSample: a.players < MIN_SAMPLE,
+        lowSample: a.players < MIN_RATE_SAMPLE,
       })),
     firstBonusTurn: {
       players,
@@ -198,11 +220,15 @@ function statsFor(mapId: number, games: GameRecord[], top: number): MapStats {
       winnersMedian: median(winnerTurns),
     },
   };
+  const left =
+    unreadable > 0
+      ? ` ${unreadable} game${unreadable === 1 ? '' : 's'} whose history could not be read ${unreadable === 1 ? 'is' : 'are'} left out of every figure.`
+      : '';
   if (lowSample) {
     out.note =
       `Only ${n} finished game${n === 1 ? '' : 's'} — fewer than ${MIN_SAMPLE}, so every rate here is ` +
-      'anecdotal, not a trend.';
-  }
+      `anecdotal, not a trend.${left}`;
+  } else if (left) out.note = left.trim();
   return out;
 }
 

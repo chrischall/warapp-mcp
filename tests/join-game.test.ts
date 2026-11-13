@@ -125,6 +125,39 @@ describe('warapp_join_game', () => {
     expect(s.sent).toEqual([]);
   });
 
+  it('screens the lobby from its GameFeed settings: the cheapest neutral against base income, Light Fog (#132)', async () => {
+    const s = joinServer();
+    const lobby = feedGame(3001, false);
+    const costly = {
+      ...lobby,
+      settings: { ...(lobby.settings as object), InitialNonDistributionArmies: 10, InitialNeutralsInDistribution: 12, Fog: 'LightFog' },
+    };
+    h = await harness({ warapp: s.warapp, feed: [costly] });
+    const p = payload<{ preview: { game: { plannerGaps: string[] }; screen: Record<string, unknown> } }>(
+      await h.call('warapp_join_game', { game_id: 3001 }),
+    );
+    expect(p.preview.screen).toMatchObject({ cheapestNeutral: 10, armiesToTake: 16, baseIncome: 5, passes: false });
+    expect(p.preview.game.plannerGaps.join(' ')).toMatch(/Costly neutrals.*3\.2 turns/);
+    expect(p.preview.game.plannerGaps.join(' ')).toMatch(/Light Fog/);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a cheap-neutral lobby passes the screen', async () => {
+    h = await harness({ warapp: joinServer().warapp, feed: [feedGame(3001, false)] });
+    const p = payload<{ preview: { screen: Record<string, unknown> } }>(await h.call('warapp_join_game', { game_id: 3001 }));
+    expect(p.preview.screen).toMatchObject({ cheapestNeutral: 2, armiesToTake: 3, passes: true });
+  });
+
+  it('when GameFeed cannot read the lobby the preview says there is no screen, and still previews', async () => {
+    h = await harness({ warapp: joinServer().warapp, feed: [{ termsOfUse: 'x', error: 'Auth failed' }] });
+    const p = payload<{ preview: { screen: unknown; screenNote: string; game: { name: string } } }>(
+      await h.call('warapp_join_game', { game_id: 3001 }),
+    );
+    expect(p.preview.game.name).toBe('Plain FFA');
+    expect(p.preview.screen).toBeNull();
+    expect(p.preview.screenNote).toMatch(/GameFeed/);
+  });
+
   it('joins on confirm with AcceptOpenSeat and reports joined when GameFeed lists the account', async () => {
     const s = joinServer();
     h = await harness({ warapp: s.warapp, feed: [feedGame(3001, true)] });

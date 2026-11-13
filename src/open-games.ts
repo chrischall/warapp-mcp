@@ -12,9 +12,12 @@
 // missing or malformed payload is an empty list with a note — never a throw.
 // Whatever the record does not carry reliably is omitted, never guessed.
 
+import { armiesToTake } from './analysis/combat.js';
+import { DEFAULT_BASE_INCOME } from './analysis/player.js';
 import { cardTypeName } from './cards.js';
 import { colorIndexOf } from './join-color.js';
 import type { ClassReader } from './live.js';
+import type { GameSettings } from './normalize.js';
 import { Reader } from './protocol/codec.js';
 import { carriesTeam } from './teams.js';
 
@@ -62,6 +65,8 @@ const GS = {
   localDeployments: 13,
   luck: 14,
   minArmies: 15,
+  /** MoveOrderEnum (read from the bundle, #132): 0 Random, 1 Cycle, 2 NoLuckCycle. */
+  moveOrder: 16,
   multiAttack: 17,
   noSplit: 18,
   wastelands: 19,
@@ -77,6 +82,8 @@ const DEFAULT_MIN_ARMIES = 5;
 const DEFAULT_OFFENSIVE = 0.6;
 const DEFAULT_DEFENSIVE = 0.7;
 const DEFAULT_ROUNDING = 1;
+/** MoveOrderEnum's NoLuckCycle: the first turn is a speed race (docs/WEB-PROTOCOL.md "Begin first turn"). */
+const MOVE_ORDER_NO_LUCK_CYCLE = 2;
 /** TimeSpans at or beyond this many ms are war.app's "never". */
 const NEVER_MS = 922_336_666_814_565;
 
@@ -230,8 +237,8 @@ function readSettings(v: unknown): SettingsRead | undefined {
   if (isInt(minArmies) && minArmies !== DEFAULT_MIN_ARMIES) rules.push(`Minimum armies per turn is ${minArmies}`);
   const per = f[GS.bonusArmiesPer];
   if (isInt(per) && per > 0) {
+    // Modelled since #38 (docs/WARAPP-API.md "Income"): a rule, not a gap.
     rules.push(`Extra army for every ${per} ${per === 1 ? 'territory' : 'territories'}`);
-    gaps.push(`Extra army per ${per} ${per === 1 ? 'territory' : 'territories'} — income model unverified, see #38`);
   }
   if (bool('overriddenBonuses')) rules.push('Overridden bonuses');
   if (bool('attackOnly') || bool('transferOnly')) {
@@ -247,10 +254,8 @@ function readSettings(v: unknown): SettingsRead | undefined {
     rules.push('Mods');
     gaps.push('Mods');
   }
-  if (bool('localDeployments')) {
-    rules.push('Local deployments');
-    gaps.push('Local deployments (#29)');
-  }
+  // Modelled since #29 (the planner's Local Deployment pools): a rule, not a gap.
+  if (bool('localDeployments')) rules.push('Local deployments');
   if (bool('noSplit')) rules.push('No-split mode');
   const cap = f[GS.armyCap];
   if (isNum(cap)) {
@@ -260,10 +265,14 @@ function readSettings(v: unknown): SettingsRead | undefined {
   const off = f[GS.offensiveKillRate];
   const def = f[GS.defensiveKillRate];
   if (isNum(off) && isNum(def) && (pct(off) !== pct(DEFAULT_OFFENSIVE) || pct(def) !== pct(DEFAULT_DEFENSIVE))) {
+    // Modelled since #28 (every capture is sized at the game's rates): a rule, not a gap.
     rules.push(`Kill rates: offensive ${pct(off)}%, defensive ${pct(def)}%`);
-    gaps.push('Non-default kill rates (#28)');
   }
   if (bool('multiAttack')) rules.push('Multi-attack');
+  if (f[GS.moveOrder] === MOVE_ORDER_NO_LUCK_CYCLE) {
+    rules.push('Speed first turn (No-luck cycle move order)');
+    gaps.push('Speed first turn — the board stays hidden until Begin (warapp_begin_turn), and whoever orders fastest moves first');
+  }
   return { rules, gaps, ...(cards ? { cards } : {}) };
 }
 
@@ -442,4 +451,53 @@ export function filterOpenGames(games: readonly OpenGame[], filters: OpenGameFil
       (filters.max_players === undefined || (g.maxPlayers ?? g.seats) <= filters.max_players),
   );
   return filters.limit === undefined ? out : out.slice(0, filters.limit);
+}
+
+/** The join preview's neutral-cost screen (#132), from a lobby's GameFeed settings. */
+export interface JoinScreen {
+  /** The smaller of the two neutral sizes the settings name (outside and inside the distribution). */
+  cheapestNeutral: number;
+  /** Armies to take it at the game's kill rates (no luck margin); null when attackers cannot kill. */
+  armiesToTake: number | null;
+  baseIncome: number;
+  /** armiesToTake / baseIncome, one decimal; null when it cannot be taken. */
+  turnsOfBaseIncome: number | null;
+  /** The cheapest neutral costs no more than one turn of base income. */
+  passes: boolean;
+}
+
+/**
+ * What a lobby's GameFeed settings add to the join preview, which the open-games record does
+ * not carry (#132): the neutral-cost screen — a game whose cheapest neutral costs more than a
+ * turn of base income expands slowly, and live one cost five turns of income — and Light Fog.
+ * Pure; `screen` is absent when the settings name no neutral size.
+ */
+export function feedScreen(s: GameSettings): { screen?: JoinScreen; gaps: string[] } {
+  const gaps: string[] = [];
+  let screen: JoinScreen | undefined;
+  const sizes = [s.initialNonDistributionArmies, s.initialNeutralsInDistribution].filter(
+    (n): n is number => n !== undefined && Number.isFinite(n) && n >= 0,
+  );
+  if (sizes.length) {
+    const cheapest = Math.min(...sizes);
+    const base = s.minimumArmyBonus ?? DEFAULT_BASE_INCOME;
+    const armies = armiesToTake(cheapest, {
+      ...(s.offensiveKillRate !== undefined ? { offensiveKillRate: s.offensiveKillRate } : {}),
+      ...(s.defensiveKillRate !== undefined ? { defensiveKillRate: s.defensiveKillRate } : {}),
+    });
+    const turns = armies === null || base <= 0 ? null : Math.round((armies / base) * 10) / 10;
+    const passes = armies !== null && armies <= base;
+    screen = { cheapestNeutral: cheapest, armiesToTake: armies, baseIncome: base, turnsOfBaseIncome: turns, passes };
+    if (!passes) {
+      gaps.push(
+        armies === null
+          ? `Costly neutrals — at these kill rates the cheapest (${cheapest}) cannot be taken`
+          : `Costly neutrals — the cheapest (${cheapest}) takes ${armies} armies, ${turns ?? '∞'} turns of base income (${base}): expansion is slow`,
+      );
+    }
+  }
+  if (s.fog === 'LightFog') {
+    gaps.push('Light Fog — owners show everywhere but armies only near you; the planner counts every unseen stack as unknown');
+  }
+  return { ...(screen ? { screen } : {}), gaps };
 }

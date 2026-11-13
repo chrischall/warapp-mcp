@@ -307,6 +307,15 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
 When an in-progress game is captured live, record its shape here, add an anonymized fixture,
 tighten `boardFromStanding`, and set `verified: true`.
 
+## A lobby's settings for the join screen — UNVERIFIED (#132)
+
+`warapp_join_game`'s preview reads the lobby with `GetSettings=true` for what the open-games record
+lacks: `InitialNonDistributionArmies` / `InitialNeutralsInDistribution` (the cheapest neutral,
+costed with `armiesToTake` at the game's kill rates, no luck margin, against `MinimumArmyBonus`)
+and `Fog` (`LightFog` is flagged). The fixture lobby carries these settings, but GameFeed has not
+been seen answering for a lobby the account has **not** joined; a failed read leaves the preview
+with `screen: null` and a `screenNote`, never a refusal.
+
 ## Game-ID feed (`GameIDFeed`) — UNVERIFIED
 
 Used only by the opt-in `warapp_map_stats` (`WARAPP_STATS=1`, never hosted). From war.app's
@@ -326,4 +335,7 @@ public wiki page "Game ID feed API" (read 2026-11-12, not called live):
   number is the count of completed turns.
 - Throttle (ours, not war.app's): at most 50 new games per call (default 10), ≥ 1 s between
   requests, finished games cached forever at `<dataDir>/stats/<mapId>/<gameId>.json` as
-  name-free records. When the feed is called live, record its method, auth and reply here.
+  name-free records. A finished game whose history yields no starting board is counted
+  (`unreadable`) and **not** cached (#132): it would otherwise sit in every denominator forever.
+  A cached record of that kind from an older version is dropped on read and fetched again.
+  When the feed is called live, record its method, auth and reply here.

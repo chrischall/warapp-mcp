@@ -63,17 +63,32 @@ const mapView = (map: GameMap, n: MapNotes, full: boolean) => ({
   assumptions: n.assumptions,
 });
 
-/** The map notes of a game: its settings, and an opening simulation while picks are open. */
+/**
+ * The map notes of a game: its settings, and an opening simulation while picks are open — over
+ * the territories GameFeed's standing lists as pickable (#132; none listed, no income targets).
+ */
 function gameMapNotes(game: Game, map: GameMap): MapNotes {
   const picking = game.state === PICK_PHASE_STATE;
   const playing = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length;
   const limit = game.settings?.territoryLimit;
+  const board = game.standing?.territories ?? [];
+  const pickable = board.filter((t) => t.owner.kind === 'available').map((t) => t.territoryId);
+  const neutralArmies = new Map(
+    board.flatMap((t) => (t.owner.kind === 'neutral' && t.armies !== null ? [[t.territoryId, t.armies] as const] : [])),
+  );
   return mapNotes({
     graph: graphOf(map),
     settings: pickSettings(game.settings),
     ...(game.settings?.overriddenBonusesUnparsed ? { overridesUnparsed: true } : {}),
     ...(picking
-      ? { opening: { players: Math.max(2, playing || game.players.length), territoryLimit: limit && limit > 0 ? limit : DEFAULT_TERRITORY_LIMIT } }
+      ? {
+          opening: {
+            players: Math.max(2, playing || game.players.length),
+            territoryLimit: limit && limit > 0 ? limit : DEFAULT_TERRITORY_LIMIT,
+            pickable,
+            ...(neutralArmies.size ? { neutralArmies } : {}),
+          },
+        }
       : {}),
   });
 }
@@ -92,8 +107,8 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
           'With `game_id`: the notes that fit its profile (format, settings, phase, read from GameFeed — standing is ' +
           'left to warapp_plan_turn) plus map notes: bonuses ranked by value per army to take at its settings with ' +
           'their entry points, chokepoints, and in the picking stage income targets by turn from the pick ' +
-          "advisor's opening. With only `map_id` (a map already loaded with a game): the map notes. With neither: " +
-          'every general note. Read-only.',
+          "advisor's opening over the territories the game lists as pickable. With only `map_id` (a map already " +
+          'loaded with a game): the map notes. With neither: every general note. Read-only.',
       ),
       _meta: lookupMeta(['warzone strategy', 'strategy tips', 'how to play this map', 'warzone advice']),
       annotations: readAnnotations('war.app strategy notes'),
@@ -148,6 +163,9 @@ export function registerStrategyTool(server: McpServer, client: WarappClient): v
           ...(s?.noSplit !== undefined ? { noSplit: s.noSplit } : {}),
           ...(s?.commanders !== undefined ? { commanders: s.commanders } : {}),
           ...(s?.fog !== undefined ? { fog: s.fog } : {}),
+          ...(s?.offensiveKillRate !== undefined ? { offensiveKillRate: s.offensiveKillRate } : {}),
+          ...(s?.defensiveKillRate !== undefined ? { defensiveKillRate: s.defensiveKillRate } : {}),
+          ...(s?.oneArmyStandsGuard !== undefined ? { oneArmyStandsGuard: s.oneArmyStandsGuard } : {}),
         },
         turn: currentTurn(game),
         picking: game.state === PICK_PHASE_STATE,
