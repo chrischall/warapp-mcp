@@ -16,6 +16,7 @@ import {
 import { WarappRpc } from '../protocol/rpc.js';
 import type { ReadyFetchBridge } from '../direct/transport.js';
 import { BRIDGE_DOMAINS } from '../transport-bridge.js';
+import { isHosted } from '../hosted.js';
 
 export interface LiveContext {
   client: WarappClient;
@@ -23,19 +24,27 @@ export interface LiveContext {
   /** The loaded client bundle (cached per process). */
   bundle: () => Promise<ClassReader>;
   /**
-   * The signed-in account's invite token (= its GameFeed player id), read once from
+   * The signed-in account's invite token (= its GameFeed player id), read from
    * war.app's InviteToken page through the bridge; `undefined` when it cannot be read.
+   * A success is cached for at most {@link IDENTITY_TTL_MS} and only while the
+   * transport state (`identity`) is unchanged; `fresh: true` re-reads it — every
+   * write's plan step does, so its preview and checks are for the account that acts.
    */
-  myInviteToken: () => Promise<number | undefined>;
+  myInviteToken: (opts?: { fresh?: boolean }) => Promise<number | undefined>;
   /**
    * The signed-in account's in-game id, sliced from the token TEXT: a token whose first check
-   * digit is 0 loses it as a number, and the slice would then be wrong (#130).
+   * digit is 0 loses it as a number, and the slice would then be wrong (#130). Cached and
+   * re-read (`fresh`) exactly like {@link LiveContext.myInviteToken}.
    */
-  myInGameId: () => Promise<number | undefined>;
+  myInGameId: (opts?: { fresh?: boolean }) => Promise<number | undefined>;
+  /** Discard the cached signed-in account (a session was linked: it may be another account). */
+  forgetIdentity: () => void;
   /** GET a war.app page as text through the signed-in tab. */
   fetchPage: (url: string) => Promise<string>;
   /** Where state that survives a restart lives (bundle cache, last planned boards); none: nothing is cached. */
   dataDir?: string;
+  /** A hosted child (src/hosted.ts): no direct transport, so no hint suggests linking a session. */
+  hosted?: boolean;
 }
 
 /**
@@ -64,7 +73,21 @@ export interface LiveContextOptions {
   fetchImpl?: typeof fetch;
   /** Test seam: the bundle, instead of discovering and downloading it. */
   bundle?: () => Promise<ClassReader>;
+  /**
+   * A key for the state that decides which account answers (the active leg, the
+   * linked session's capture time, its stale flag — `WarappDirectBridge.identityState`).
+   * Any change discards the cached account. Absent: only the lifetime bounds it.
+   */
+  identity?: () => Promise<string>;
+  /** Test seam: the clock (ms) for the cache lifetime (default `Date.now`). */
+  now?: () => number;
 }
+
+/**
+ * How long a read may reuse the signed-in account. Short: on the browser bridge
+ * the tab can be signed in as someone else without any state this process sees.
+ */
+export const IDENTITY_TTL_MS = 60_000;
 
 const onBridge = (url: URL) => BRIDGE_DOMAINS.some((d) => url.hostname === d || url.hostname.endsWith(`.${d}`));
 
@@ -131,31 +154,58 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
   });
   const load = opts.bundle ?? (() => provider.get());
   const fetchText = bundleFetcher(opts.bridge, opts.fetchImpl);
-  let token: Promise<string | undefined> | undefined;
-  const tokenText = (): Promise<string | undefined> => {
-    // Cache a success; let a failure (bridge down, signed out) be retried next call.
-    token ??= fetchText(INVITE_TOKEN_URL)
+  const identity = opts.identity ?? (async () => '');
+  const now = opts.now ?? Date.now;
+  // The account behind the transport can change under a running process (a
+  // relink, or an expired direct session falling back to a tab signed in as
+  // someone else), so a success is kept only under the state key it was read
+  // in, and only for IDENTITY_TTL_MS. A failure (bridge down, signed out) is
+  // never kept: the next call retries. `generation` lets forgetIdentity win over
+  // a read already in flight. The token is kept as TEXT: its check digits,
+  // a leading 0 included, are part of it (#130).
+  let cached: { key: string; at: number; token: string } | undefined;
+  let generation = 0;
+  const tokenText = async (o: { fresh?: boolean } = {}): Promise<string | undefined> => {
+    if (!o.fresh && cached && now() - cached.at < IDENTITY_TTL_MS && cached.key === (await identity())) {
+      return cached.token;
+    }
+    const gen = generation;
+    const before = await identity();
+    const t = await fetchText(INVITE_TOKEN_URL)
       .then(parseInviteTokenText)
-      .catch(() => undefined)
-      .then((t) => {
-        if (t === undefined) token = undefined;
-        return t;
-      });
-    return token;
+      .catch(() => undefined);
+    if (gen !== generation) return t;
+    if (t === undefined) {
+      cached = undefined;
+      return t;
+    }
+    // Kept only when the state did not move during the read. If it did (the
+    // read itself fell back, or a concurrent call moved the router), the answer
+    // may come from either leg, so it is returned but not cached: the next
+    // resolve re-reads under the settled state.
+    const after = await identity();
+    if (gen !== generation) return t;
+    cached = before === after ? { key: after, at: now(), token: t } : undefined;
+    return t;
   };
-  const myInviteToken = async (): Promise<number | undefined> => {
-    const t = await tokenText();
+  const myInviteToken = async (o: { fresh?: boolean } = {}): Promise<number | undefined> => {
+    const t = await tokenText(o);
     return t === undefined ? undefined : Number(t);
   };
-  const myInGameId = async (): Promise<number | undefined> => {
-    const t = await tokenText();
+  const myInGameId = async (o: { fresh?: boolean } = {}): Promise<number | undefined> => {
+    const t = await tokenText(o);
     return t === undefined ? undefined : inGameId({ id: Number(t), feedId: t });
   };
   return {
     myInviteToken,
     myInGameId,
+    forgetIdentity: () => {
+      cached = undefined;
+      generation += 1;
+    },
     fetchPage: fetchText,
     dataDir: dir,
+    hosted: isHosted(opts.env ?? process.env),
     client: opts.client,
     rpc,
     bundle: async () => {
@@ -171,6 +221,46 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
       }
     },
   };
+}
+
+/**
+ * The account a write's gate binds (`gate.account`): the signed-in account's
+ * GameFeed id, read fresh in the plan step. Binding it makes the confirmToken
+ * and the elicitation approval commit to the account, so an approval given for
+ * one account never acts as another: the token minted for A's preview fails to
+ * validate once the plan resolves B. `undefined` (account unknown) binds as absent.
+ */
+export function writeAccount(token: number | string | undefined): string | undefined {
+  return token === undefined ? undefined : String(token);
+}
+
+/**
+ * Refuse a write's execute step unless the signed-in account is still the one
+ * its plan bound (`approved`, from {@link writeAccount}). Plan and execute are
+ * separated by the user's confirmation, and the account behind the transport
+ * can change in between (a relink, an expired direct session falling back to a
+ * tab signed in as someone else). The confirmToken rail is covered by the
+ * gate's binding; this covers elicitation, where plan and execute run in one
+ * call. Nothing is checked when the plan bound no account.
+ */
+export async function requireApprovedAccount(
+  ctx: Pick<LiveContext, 'myInviteToken'>,
+  approved: string | undefined,
+): Promise<void> {
+  if (approved === undefined) return;
+  const now = await ctx.myInviteToken({ fresh: true });
+  if (now === undefined) {
+    throw new McpToolError('Could not confirm which war.app account is signed in, so nothing was sent.', {
+      hint:
+        'Make sure a signed-in war.app tab is open and paired (or the linked session is current), then preview ' +
+        'the action again.',
+    });
+  }
+  if (String(now) !== approved) {
+    throw new McpToolError('The signed-in war.app account changed since this action was previewed, so nothing was sent.', {
+      hint: 'Preview the action again: it will be checked for the account that is signed in now.',
+    });
+  }
 }
 
 /**

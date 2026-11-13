@@ -4,7 +4,7 @@
 // hosted server makes requests on someone else's machine and quota, and its
 // dataDir is not the user's to fill. mcp-host gives this server no explicit
 // "hosted" flag, so a hosted child is recognised by the variables only the host
-// sets (see {@link HOSTED_MARKERS}); mint.yaml never sets WARAPP_STATS either
+// sets (`HOSTED_MARKERS`, src/hosted.ts); mint.yaml never sets WARAPP_STATS either
 // (pinned by tests/packaging.test.ts).
 //
 // Source: war.app's game-ID feed for a ladder (`WarappClient.getGameIds`), then
@@ -21,23 +21,15 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/pro
 import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { GetGameOptions } from './client.js';
+import { isHosted } from './hosted.js';
 import { readableRecord, recordFromGame, type GameRecord } from './map-stats.js';
 import type { Game } from './normalize.js';
 
+// The hosted check is shared (src/hosted.ts); re-exported for existing imports.
+export { HOSTED_MARKERS, isHosted } from './hosted.js';
+
 /** The opt-in switch. */
 export const STATS_ENV = 'WARAPP_STATS';
-
-/**
- * Variables only a hosted child sees: mcp-host's own (its child-env contract —
- * the byte-meter file, the confirm-token key, the blob store) and the
- * platform's machine id. Any one of them set means hosted.
- */
-export const HOSTED_MARKERS = [
-  'MCP_HOST_METER_FILE',
-  'MCP_HOST_CONFIRM_SECRET',
-  'MCP_BLOB_BASE_URL',
-  'FLY_MACHINE_ID',
-] as const;
 
 export const DEFAULT_NEW_GAMES = 10;
 export const MAX_NEW_GAMES = 50;
@@ -47,10 +39,6 @@ export const MIN_GAP_MS = 1000;
 export const UNFINISHED_RETRY_MS = 60 * 60 * 1000;
 
 const truthy = (v: string | undefined) => v !== undefined && /^(1|true|yes|on)$/i.test(v.trim());
-
-export function isHosted(env: EnvSource = process.env): boolean {
-  return HOSTED_MARKERS.some((k) => readEnvVar(k, { env }) !== undefined);
-}
 
 export type StatsGate = { enabled: true } | { enabled: false; reason: 'off' | 'hosted' };
 

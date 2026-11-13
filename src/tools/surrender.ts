@@ -17,9 +17,10 @@ import { parseGameId } from '../client.js';
 import type { Game, Player } from '../normalize.js';
 import { Method, writeSurrenderParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, respond, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
+import { gameIdArg, respond, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
+import { noBrowserNote, signedInHint } from './session.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import { failureText, type LiveContext } from './live-context.js';
+import { failureText, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 
 const PLAYING = 'Playing';
 const SURRENDERED = 'SurrenderAccepted';
@@ -106,8 +107,8 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
             'Surrender a war.app (Warzone) game as the signed-in account: you lose it and cannot rejoin. In a game ' +
             'of more than two players the surrender waits for the others to accept it (reported `pending`); ' +
             '`undo: true` takes back such a pending surrender. The game is read from GameFeed first (finished ' +
-            'games and games you are not playing are refused) and the outcome is read back from GameFeed. Works ' +
-            `without a browser once a session is linked (warapp_link_session). ${CONFIRM_INJECTION_RULE}`,
+            'games and games you are not playing are refused) and the outcome is read back from GameFeed.' +
+            `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
             title: 'Surrender a war.app game',
             readOnly: false,
@@ -125,15 +126,15 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
           async plan({ game_id, undo }) {
             const gameId = parseGameId(game_id);
             const takeBack = undo ?? false;
-            const me = await ctx.myInviteToken();
+            const me = await ctx.myInviteToken({ fresh: true });
             if (me === undefined) {
               refuse(
                 'Could not tell which war.app account is signed in, so nothing was sent.',
-                'Open a war.app tab signed in to your account (or link a session with warapp_link_session), then retry.',
+                signedInHint(ctx.hosted),
               );
             }
             const game = await ctx.client.getGame(gameId);
-            surrenderable(game, me, takeBack);
+            const seat = surrenderable(game, me, takeBack);
             const name = gameLabel(game);
             const players = activePlayers(game).length;
             // The sentences name the game by id only: its name is its creator's words and
@@ -145,7 +146,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
               gate: {
                 action: takeBack ? 'warapp.take_back_surrender' : 'warapp.surrender',
                 summary,
-                account: undefined,
+                account: writeAccount(me),
                 target: gameId,
                 payload: { method: 'Surrender', gameId, surrender: !takeBack },
                 willSend: { game: gameId, surrender: !takeBack },
@@ -153,6 +154,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                   warning: takeBack
                     ? `This will take back your pending surrender in game ${gameId}.`
                     : `This ENDS your game ${gameId} — you lose it and cannot rejoin.`,
+                  account: shownAccount(seat.name, me),
                   game: { id: gameId, name: game.name === undefined ? null : untrustedText(game.name), state: game.state, playersStillIn: players },
                   ...(takeBack || players <= 2
                     ? {}
@@ -164,6 +166,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
             };
           },
           async execute({ gameId, name, me, undo }: SurrenderState) {
+            await requireApprovedAccount(ctx, writeAccount(me));
             const game = { id: gameId, name };
             try {
               await ctx.rpc.call('Surrender', Method.Surrender, (w) =>

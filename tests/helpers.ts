@@ -1,9 +1,10 @@
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createTestHarness, parseToolResult, type TestHarness } from '@chrischall/mcp-utils/test';
+import { createTestHarness, parseToolResult, type TestHarness, type TestHarnessOptions } from '@chrischall/mcp-utils/test';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { MapCache } from '../src/client.js';
+import type { DirectFetch } from '../src/direct/transport.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { registerAllTools } from '../src/tools/index.js';
@@ -69,6 +70,12 @@ export async function liveHarness(
     socket?: FakeSocketIo;
     /** The server's data directory (`MCP_DATA_DIR`); default a fresh temporary one, never the real one. */
     dataDir?: string;
+    /** Extra env for the server (e.g. a hosted marker, `WARAPP_TRANSPORT`). */
+    env?: Record<string, string>;
+    /** The direct leg's HTTPS seam (default: none — the real one is never reached in tests). */
+    directFetch?: DirectFetch;
+    /** Answer form elicitation (the client then advertises it, so writes confirm by elicitation). */
+    elicitation?: TestHarnessOptions['elicitation'];
   } = {},
 ): Promise<Harness> {
   const dataDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'warapp-mcp-test-'));
@@ -79,13 +86,15 @@ export async function liveHarness(
   const bundle = new WarappBundle(`${LIVE_BUNDLE}\n${MY_GAMES_BUNDLE}`, 'test');
   const harness = await createTestHarness((s) =>
     registerAllTools(s, {
-      env: { ...CREDS, MCP_DATA_DIR: dataDir },
+      env: { ...CREDS, MCP_DATA_DIR: dataDir, ...opts.env },
       fetchImpl,
       sleep: async () => {},
       mapCache: new MapCache(),
       bridge,
       bundle: async () => bundle,
+      ...(opts.directFetch ? { directFetch: opts.directFetch } : {}),
     }),
+    opts.elicitation ? { elicitation: opts.elicitation } : undefined,
   );
   return {
     harness,

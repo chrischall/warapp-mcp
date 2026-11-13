@@ -10,7 +10,8 @@
 //
 // Config is deferred: credentials are read per call, so the server boots
 // without them. The email and token are scrubbed by value from every upstream
-// string this module surfaces.
+// string this module surfaces — raw, JSON-escaped, percent- and form-encoded,
+// the email in any letter case (src/redact.ts).
 //
 // Maps are immutable per map id and large (761 territories on map 39905), and
 // the feed's terms ask callers to cache — so a map is kept per process and a
@@ -18,6 +19,7 @@
 
 import {
   createApiClient,
+  ERROR_REDACTION_INPUT_MAX,
   McpToolError,
   truncateErrorMessage,
   type ApiClient,
@@ -25,6 +27,7 @@ import {
 } from '@chrischall/mcp-utils';
 import { readCredentials, TOKEN_URL, WarappConfigError, type WarappCredentials } from './config.js';
 import { feedErrorOf, normalizeGame, normalizeMap, type Game, type GameMap } from './normalize.js';
+import { scrubSecrets, type SecretValue } from './redact.js';
 import { asInt } from './scalars.js';
 
 const BASE_URL = 'https://war.app';
@@ -125,7 +128,7 @@ export class WarappClient {
   readonly #env: EnvSource | undefined;
   readonly #cache: MapCache;
   readonly #api: ApiClient;
-  #secrets: string[] = [];
+  #secrets: SecretValue[] = [];
 
   constructor(opts: WarappClientOptions = {}) {
     this.#env = opts.env;
@@ -154,13 +157,15 @@ export class WarappClient {
   }
 
   #redact(text: string): string {
-    return truncateErrorMessage(text, 300, { values: this.#secrets });
+    // Scrub by value before the shape redactor and the cut (as `values` would),
+    // over no more than truncateErrorMessage itself redacts.
+    return truncateErrorMessage(scrubSecrets(text.slice(0, ERROR_REDACTION_INPUT_MAX), this.#secrets), 300);
   }
 
   #credentials(): WarappCredentials {
     try {
       const creds = readCredentials(this.#env);
-      this.#secrets = [creds.token, creds.email];
+      this.#secrets = [creds.token, { value: creds.email, anyCase: true }];
       return creds;
     } catch (e) {
       if (e instanceof WarappConfigError) {

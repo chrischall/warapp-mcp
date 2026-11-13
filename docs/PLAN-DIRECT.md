@@ -53,8 +53,10 @@ capture (or re-capture) the token.
 ### M1 — the session token store (`src/direct/session.ts`)
 - Read / write / clear the AuthToken at `<dataDir>/session.json` (`MCP_DATA_DIR`, else
   `~/.config/warapp-mcp`; same `dataDir` the bundle cache uses), shape
-  `{ authToken: string, capturedAt: ISO string, host: 'war.app' }`. Dir `0700`, file `0600`,
-  atomic write (tmp + rename), same hygiene as `src/trend.ts`'s board cache.
+  `{ authToken: string, capturedAt: ISO string, host: 'war.app' }`. Dir `0700` (an existing
+  one of ours tightened, another user's refused, root's refused when others can write to it; on
+  macOS every ACL stripped from the directory and the file), file `0600`, atomic
+  write (a random tmp name created exclusively, then rename).
 - Deferred: the server boots without it; a missing or corrupt file reads as `null`, never throws.
 - A `scrubToken(s, token)` helper (reuse mcp-utils `stripBearer`; wire it into the existing
   config scrubber so the AuthToken is removed from every upstream error string, by value).

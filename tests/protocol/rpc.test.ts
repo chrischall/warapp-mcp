@@ -227,6 +227,16 @@ describe('WarappRpc server errors', () => {
     expect(err.message.length).toBeLessThan(320);
   });
 
+  it('scrubs the email from an unknown error in any letter case and when percent-encoded', async () => {
+    const encoded = encodeURIComponent(TEST_EMAIL);
+    const message = `Bad caller ${TEST_EMAIL.toUpperCase()} (body Email=${encoded})`;
+    const { rpc } = setup(() => ({ error: { code: 998, message } }));
+    const err = (await rejection(rpc.call('GetTerritoryPicks', Method.GetTerritoryPicks, picks))) as WarappServerError;
+    expect(err.message).toContain('Bad caller [email] (body Email=[email])');
+    expect(err.message.toLowerCase()).not.toContain(TEST_EMAIL);
+    expect(err.message).not.toContain(encoded);
+  });
+
   it('reports an unknown code with no server message', async () => {
     const { rpc } = setup(() => ({ error: { code: 1000, message: null } }));
     const err = (await rejection(rpc.call('GetTerritoryPicks', Method.GetTerritoryPicks, picks))) as WarappServerError;

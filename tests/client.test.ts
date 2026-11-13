@@ -166,6 +166,32 @@ describe('WarappClient.getGame', () => {
     expect(err.message).not.toContain(EMAIL);
   });
 
+  it('redacts the email and token from an upstream page echoing the form-encoded request body', async () => {
+    // Made-up credentials whose encoded spellings differ from the raw ones.
+    const email = 'first.last+wz@example.com';
+    const token = 'Ab$12*xyz#tok/3n+Z=';
+    const encToken = encodeURIComponent(token);
+    const echo = `<html>Bad request: Email=first.last%2Bwz%40example.com&APIToken=${encToken}</html>`;
+    const { fetchImpl } = stubFetch({ body: echo, status: 400 });
+    const err = await rejection(client(fetchImpl, new MapCache(), { WARAPP_EMAIL: email, WARAPP_API_TOKEN: token }).getGame(1));
+    expect(err.message).toContain('Bad request');
+    expect(err.message).not.toContain('first.last%2Bwz%40example.com');
+    expect(err.message).not.toContain(encToken);
+    expect(err.message).not.toContain('xyz');
+    expect(err.message).not.toContain('wz');
+  });
+
+  it('redacts a form-encoded token and an email in another letter case from an { error } body', async () => {
+    const token = 'tok en/with+plus';
+    const formToken = new URLSearchParams({ v: token }).toString().slice(2);
+    const { fetchImpl } = stubFetch({ body: { error: `Bad pair (${EMAIL.toUpperCase()} / ${formToken})` } });
+    const err = await rejection(client(fetchImpl, new MapCache(), { WARAPP_EMAIL: EMAIL, WARAPP_API_TOKEN: token }).getGame(1));
+    expect(err.message).toContain('Bad pair');
+    expect(err.message.toLowerCase()).not.toContain(EMAIL);
+    expect(err.message).not.toContain(formToken);
+    expect(err.message).not.toContain('with');
+  });
+
   it('reports missing credentials as no_credential without a request', async () => {
     const { calls, fetchImpl } = stubFetch({ body: FIXTURE });
     const err = await rejection(client(fetchImpl, new MapCache(), {}).getGame(1));

@@ -128,6 +128,27 @@ describe('warapp_link_session', () => {
     expect(sessionLinked).not.toHaveBeenCalled();
   });
 
+  it('discards the cached signed-in account after a successful link (it may be another account), not after a failed one', async () => {
+    const identityChanged = vi.fn();
+    h = await harnessWith({ identityChanged });
+    const preview = payload(await call('warapp_link_session'));
+    expect(identityChanged).not.toHaveBeenCalled();
+    await call('warapp_link_session', { confirmToken: preview.confirmToken as string });
+    expect(identityChanged).toHaveBeenCalledTimes(1);
+    await h.close();
+
+    const failed = vi.fn();
+    h = await harnessWith({
+      identityChanged: failed,
+      link: async () => {
+        throw new NoAuthTokenError();
+      },
+    });
+    const p2 = payload(await call('warapp_link_session'));
+    await call('warapp_link_session', { confirmToken: p2.confirmToken as string });
+    expect(failed).not.toHaveBeenCalled();
+  });
+
   it('surfaces a NoAuthTokenError from the capture without leaking anything', async () => {
     h = await harnessWith({
       link: async () => {
@@ -139,5 +160,29 @@ describe('warapp_link_session', () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toContain('AuthToken');
     expect(textOf(res)).not.toContain(FAKE_TOKEN);
+  });
+});
+
+describe('hosted (direct mode is local-only)', () => {
+  it('does not register warapp_link_session; status reports hosted + the bridge and never suggests linking', async () => {
+    const read = vi.fn(async () => session);
+    // Even a stub transport claiming the direct leg is reported as the bridge: hosted never rides direct.
+    h = await harnessWith({ hosted: true, read });
+    const names = (await h.client.listTools()).tools.map((t) => t.name);
+    expect(names).toEqual(['warapp_session_status']);
+    const tools = JSON.stringify((await h.client.listTools()).tools);
+    expect(tools).not.toContain('warapp_link_session');
+    const res = await call('warapp_session_status');
+    const p = payload(res);
+    expect(p).toMatchObject({ hosted: true, linked: false, activeTransport: 'fetchproxy' });
+    expect(JSON.stringify(res)).not.toContain('warapp_link_session');
+    expect(textOf(res)).not.toContain(FAKE_TOKEN);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('is decided from the env when not passed', async () => {
+    h = await harnessWith({ env: { FLY_MACHINE_ID: 'x' } as NodeJS.ProcessEnv });
+    expect((await h.client.listTools()).tools.map((t) => t.name)).not.toContain('warapp_link_session');
+    expect(payload(await call('warapp_session_status')).hosted).toBe(true);
   });
 });

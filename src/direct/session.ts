@@ -3,24 +3,36 @@
 // The AuthToken cookie is a FULL-ACCOUNT credential (live-verified 2026-11-12
 // to authenticate both the server-rendered pages and the binary /Services
 // protocol on its own). It is stored at `<dataDir>/session.json`
-// (`WARAPP_SESSION_FILE` overrides), with the same on-disk hygiene as the
-// board cache (src/trend.ts): directory `0700`, file `0600`, written
-// atomically (tmp + rename) so a crash never leaves a half-written token.
+// (`WARAPP_SESSION_FILE` overrides): directory `0700` (an existing directory
+// of ours is tightened to it; another user's is refused, and so is root's when
+// others can write to it; on macOS any ACL on our directory and on the file is
+// removed, since mode bits do not govern ACLs), file `0600`, written atomically through a randomly named tmp file
+// created exclusively (never an existing file, never through a symlink) and
+// renamed into place, so a crash never leaves a half-written token.
 //
 // SECURITY: treat the AuthToken exactly like WARAPP_API_TOKEN — never log it,
 // never put it in a tool result, never leave it in an error or hint string.
 // {@link scrubToken} removes it from any upstream string BY VALUE (reusing
-// mcp-utils `stripBearer`, so a `Cookie:`/`Bearer`-prefixed form is caught too).
+// mcp-utils `stripBearer`, so a `Cookie:`/`Bearer`-prefixed form is caught too,
+// and src/redact.ts, so its encoded spellings are too).
 //
 // Deferred, like every other credential in this server: nothing here runs at
 // import time, the server boots without a session, and a missing OR corrupt
 // file reads as `null` — never a throw.
+//
+// LOCAL-ONLY: on a hosted child (src/hosted.ts) the store reads as empty — a
+// session file already in the data dir is never read — and refuses to write.
+import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { chmod, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { McpToolError, readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import { stripBearer } from '@chrischall/mcp-utils/fetchproxy';
 import { dataDir } from '../config.js';
+import { isHosted } from '../hosted.js';
+import { scrubSecrets } from '../redact.js';
 
 /** The only host a session is ever stored for. */
 export const SESSION_HOST = 'war.app';
@@ -61,6 +73,7 @@ function parseSession(raw: unknown): Session | null {
  * unusable (wrong shape, wrong host, not JSON). Never throws.
  */
 export async function readSession(env: EnvSource = process.env): Promise<Session | null> {
+  if (isHosted(env)) return null;
   try {
     return parseSession(JSON.parse(await readFile(sessionFilePath(env), 'utf8')));
   } catch {
@@ -75,6 +88,7 @@ export async function readSession(env: EnvSource = process.env): Promise<Session
  * Same guarantees: a missing or corrupt file reads as `null`, never a throw.
  */
 export function readSessionSync(env: EnvSource = process.env): Session | null {
+  if (isHosted(env)) return null;
   try {
     return parseSession(JSON.parse(readFileSync(sessionFilePath(env), 'utf8')));
   } catch {
@@ -82,18 +96,114 @@ export function readSessionSync(env: EnvSource = process.env): Session | null {
   }
 }
 
+/** What {@link writeSession} does with the session file's directory. */
+export type SessionDirVerdict = 'ok' | 'tighten' | 'refuse';
+
 /**
- * Store a session, creating the directory `0700` and the file `0600`, written
- * atomically (write a per-pid tmp file, then rename over the target). Unlike
- * {@link readSession} this propagates I/O errors, so a deliberate link action
- * can report that it failed.
+ * Judge the session directory from its `stat` and this process's uid
+ * (`undefined` where there are no POSIX owners: nothing to check). Ours with
+ * any group/other bit → `tighten` (to `0700`). Root's and writable by group or
+ * others → `refuse` (someone else could plant or swap files in it). Another
+ * user's → `refuse` whatever its mode bits say: we could write into it only
+ * through an ACL its owner controls, and the owner could add an inheritable
+ * entry that reaches the session file.
+ */
+export function sessionDirVerdict(st: { mode: number; uid: number }, myUid: number | undefined): SessionDirVerdict {
+  if (myUid === undefined) return 'ok';
+  if (st.uid === myUid) return (st.mode & 0o077) !== 0 ? 'tighten' : 'ok';
+  if (st.uid !== 0) return 'refuse';
+  return (st.mode & 0o022) !== 0 ? 'refuse' : 'ok';
+}
+
+const run = promisify(execFile);
+
+/**
+ * macOS ACLs: the mode bits do not govern them, so `chmod 0700` leaves an
+ * "everyone allow read" entry in place, and an inheritable one on the
+ * directory is copied onto every file created in it — the session file
+ * included, whatever mode it was created with. On darwin these strip and
+ * detect an extended ACL with the system tools (Node has no ACL API). Linux
+ * POSIX ACLs need nothing here: their named entries are capped by the mask,
+ * which `0700`/`0600` set to nothing. Paths are absolute (never read as flags).
+ */
+const MACOS_ACLS = process.platform === 'darwin';
+
+async function hasAcl(path: string): Promise<boolean> {
+  // `ls -led`: the mode string is followed by '+' when an extended ACL is set.
+  const { stdout } = await run('/bin/ls', ['-led', path]);
+  return /^\S{10}\+/.test(stdout);
+}
+
+/** Remove every ACL entry from `path` (ours), then refuse unless none is left. */
+async function stripAcl(path: string, what: string): Promise<void> {
+  await run('/bin/chmod', ['-N', path]);
+  if (await hasAcl(path)) {
+    throw new McpToolError(`Refusing to store the war.app session: could not remove the access control list on ${what}.`, {
+      hint: 'Point WARAPP_SESSION_FILE (or MCP_DATA_DIR) at a directory only you can read, with no ACL (`ls -le`).',
+    });
+  }
+}
+
+/** A fresh, unpredictable tmp file name next to `path`. */
+export function sessionTmpPath(path: string): string {
+  return `${path}.${randomBytes(16).toString('hex')}.tmp`;
+}
+
+/**
+ * Store a session: the directory is created `0700` (an existing one of ours is
+ * tightened to `0700`; one others can write to that is not ours is refused),
+ * and the file is written `0600` atomically — a randomly named tmp file,
+ * created exclusively (it never opens an existing file or follows a symlink),
+ * then renamed over the target; the tmp file is removed if anything fails.
+ * Unlike {@link readSession} this propagates I/O errors, so a deliberate link
+ * action can report that it failed.
  */
 export async function writeSession(session: Session, env: EnvSource = process.env): Promise<void> {
-  const path = sessionFilePath(env);
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile(tmp, JSON.stringify(session), { mode: 0o600 });
-  await rename(tmp, path);
+  if (isHosted(env)) {
+    throw new McpToolError('The direct transport is local-only: a hosted server never stores a war.app session.', {
+      kind: 'unknown',
+    });
+  }
+  const path = resolve(sessionFilePath(env));
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  // mkdir's mode applies only to a directory it creates.
+  const st = await stat(dir);
+  const myUid = process.getuid?.();
+  const verdict = sessionDirVerdict(st, myUid);
+  if (verdict === 'refuse') {
+    throw new McpToolError(`Refusing to store the war.app session in ${dir}: it is not yours, and others could reach files in it.`, {
+      hint: 'Point WARAPP_SESSION_FILE (or MCP_DATA_DIR) at a directory of your own that only you can write to.',
+    });
+  }
+  if (verdict === 'tighten') await chmod(dir, 0o700);
+  if (MACOS_ACLS) {
+    // Before the file exists: an inheritable entry would be copied onto it at
+    // creation, and a reader that opened it then would keep that access.
+    if (st.uid === myUid) await stripAcl(dir, dir);
+    else if (await hasAcl(dir)) {
+      throw new McpToolError(`Refusing to store the war.app session in ${dir}: it carries an access control list and is not yours.`, {
+        hint: 'Point WARAPP_SESSION_FILE (or MCP_DATA_DIR) at a directory of your own that only you can read.',
+      });
+    }
+  }
+  const tmp = sessionTmpPath(path);
+  // 'wx' = O_CREAT | O_EXCL: fails on any existing entry, a symlink included.
+  const file = await open(tmp, 'wx', 0o600);
+  try {
+    try {
+      // Still empty: make sure it carries nothing but 0600 before the token goes in.
+      await file.chmod(0o600);
+      if (MACOS_ACLS) await stripAcl(tmp, 'the session file');
+      await file.writeFile(JSON.stringify(session));
+    } finally {
+      await file.close();
+    }
+    await rename(tmp, path);
+  } catch (e) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw e;
+  }
 }
 
 /** Remove the stored session. A no-op (never throws) when none is linked. */
@@ -105,23 +215,17 @@ export async function clearSession(env: EnvSource = process.env): Promise<void> 
 const SCRUBBED = '[warapp-session]';
 
 /**
- * Remove `token` from `s` by value — the raw value, its
+ * Remove `token` from `s` by value — the raw value and its
  * {@link stripBearer}-normalised form (so a `Cookie: AuthToken=…` or
- * `Bearer …` slice is caught) and its URL-encoded form (so a token echoed in
- * a URL or form body is caught). Wire this around any upstream string that
- * could carry the session, the way the GameFeed client scrubs the email and
- * API token. A falsy token leaves `s` unchanged.
+ * `Bearer …` slice is caught), each in every spelling src/redact.ts knows
+ * (JSON-escaped, percent-encoded, form-encoded), so a token echoed in a URL,
+ * a form body or a JSON string is caught. Wire this around any upstream string
+ * that could carry the session, the way the GameFeed client scrubs the email
+ * and API token. A falsy token leaves `s` unchanged.
  */
 export function scrubToken(s: string, token: string | null | undefined): string {
   if (!token) return s;
-  const bare = stripBearer(token);
-  // Longest first, so a longer form is never left half-scrubbed by a shorter one.
-  const values = [...new Set([token, bare, encodeURIComponent(token), encodeURIComponent(bare)])]
-    .filter((v) => v.length > 0)
-    .sort((a, b) => b.length - a.length);
-  let out = s;
-  for (const value of values) out = out.split(value).join(SCRUBBED);
-  return out;
+  return scrubSecrets(s, [token, stripBearer(token)], SCRUBBED);
 }
 
 /** Every string an error carries that could reach a caller: message, hint, stack, and its cause chain. */

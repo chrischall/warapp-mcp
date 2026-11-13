@@ -10,8 +10,9 @@
 // {@link DirectBridge} is that direct leg: it reads the AuthToken from the
 // session store (src/direct/session.ts) per call and issues an HTTPS request
 // through mcp-utils netguard `fetchPublic` (pinned to public addresses, so a
-// name that resolves or rebinds inward is refused, and credentials are dropped
-// across origins). It maps the reply into the same `FetchproxyFetchResult`
+// name that resolves or rebinds inward is refused). Every hop must be the exact
+// host war.app; a non-GET follows no redirect at all, so its body (the account
+// email, the orders) is never re-sent anywhere ({@link directFetchOptions}). It maps the reply into the same `FetchproxyFetchResult`
 // shape the browser bridge returns, so the ONE injection point every consumer
 // shares (WarappRpc, the page fetches, the healthcheck, the push socket) gains
 // direct mode at once.
@@ -28,9 +29,10 @@
 // never put in a tool result, never in an error or hint string — upstream
 // errors are scrubbed BY VALUE ({@link scrubError}: message, hint, stack and
 // cause chain). The direct leg
-// refuses to attach the cookie to any host but war.app, so the token can never
-// be sent elsewhere. Direct mode is LOCAL-ONLY — the hosted path keeps the
-// browser bridge and stores no token on the host.
+// refuses to attach the cookie to any host but war.app itself (no subdomain),
+// so the token can never be sent elsewhere. Direct mode is LOCAL-ONLY, enforced here: on a hosted
+// child (src/hosted.ts) {@link createDirectFirstBridge} pins the router to the browser bridge
+// whatever WARAPP_TRANSPORT says, and its session store reads as empty.
 import { detectEdgeBlock, EdgeBlockedError, McpToolError } from '@chrischall/mcp-utils';
 import {
   createDirectFirstTransport,
@@ -42,8 +44,9 @@ import {
   type FetchproxyFetchResult,
   type TransportMode,
 } from '@chrischall/mcp-utils/fetchproxy';
-import { fetchPublic } from '@chrischall/mcp-utils/netguard';
+import { fetchPublic, type PublicFetchResponse, type PublicFetchStopped } from '@chrischall/mcp-utils/netguard';
 import type { WarappBridge } from '../transport-bridge.js';
+import { isHosted } from '../hosted.js';
 import { SESSION_HOST, scrubError, type Session } from './session.js';
 
 /** The env var pinning the transport: `direct` | `fetchproxy` | `auto` (default). */
@@ -115,17 +118,80 @@ export type DirectFetch = (
 
 const decoder = new TextDecoder();
 
-/** Map a netguard `fetchPublic` final response to {@link DirectFetchResult}. */
-export function toDirectResult(res: {
-  status: number;
-  body: Uint8Array;
-  url: string;
-  headers?: { forEach(cb: (value: string, key: string) => void): void };
-}): DirectFetchResult {
-  const out: DirectFetchResult = { status: res.status, body: decoder.decode(res.body), url: res.url };
-  if (res.headers) {
+/** Whether a request may be re-sent (after it reached war.app, or by a redirect): only a read-only GET/HEAD. */
+const isSafeToReplay = (method: string): boolean => /^(?:GET|HEAD)$/i.test(method);
+
+/** Redirects a direct GET may follow (all within war.app). */
+export const MAX_DIRECT_GET_REDIRECTS = 5;
+
+/**
+ * The status reported for a redirect a non-GET did not follow. netguard's
+ * `stopBefore` result carries the target but not the 3xx code, so this stands
+ * in for it: not 200, so WarappRpc reports an `http` failure, unless the target
+ * is the sign-in page ({@link looksSignedOut} reads the path).
+ */
+export const UNFOLLOWED_REDIRECT_STATUS = 302;
+
+/** The netguard options the direct leg chooses per request (pure; a test seam). */
+export interface DirectFetchOptions {
+  requireHttps: true;
+  /** Every hop's host, the first included: exactly war.app. */
+  allowHosts: readonly string[];
+  maxRedirects: number;
+  /** Asked before each URL is requested (the first included); `true` stops without requesting it. */
+  stopBefore: (url: URL) => boolean;
+}
+
+/**
+ * How the direct leg may follow redirects. Every hop must be the exact host
+ * war.app (netguard `allowHosts`, checked on the first URL and on each target
+ * before it is requested). A GET follows at most
+ * {@link MAX_DIRECT_GET_REDIRECTS} redirects within war.app. A non-GET follows
+ * none: netguard would re-send the method and body on a 307/308, and that body
+ * holds the account email and the orders, so the first redirect target is
+ * stopped before it is requested (`stopBefore` lets the request itself through
+ * and stops everything after it; `maxRedirects: 1` only lets netguard reach
+ * that check — with 0 it throws first and the sign-in target is lost). Each
+ * call returns fresh state.
+ */
+export function directFetchOptions(method: string): DirectFetchOptions {
+  const base = { requireHttps: true as const, allowHosts: [SESSION_HOST] };
+  if (isSafeToReplay(method)) return { ...base, maxRedirects: MAX_DIRECT_GET_REDIRECTS, stopBefore: () => false };
+  let first = true;
+  return {
+    ...base,
+    maxRedirects: 1,
+    stopBefore: () => {
+      if (first) {
+        first = false;
+        return false;
+      }
+      return true;
+    },
+  };
+}
+
+/**
+ * Map a netguard `fetchPublic` result to {@link DirectFetchResult}. A stopped
+ * result (a non-GET's redirect, not followed) has no body and
+ * {@link UNFOLLOWED_REDIRECT_STATUS}, with the target as its URL.
+ */
+export function toDirectResult(
+  res:
+    | (Pick<PublicFetchResponse, 'status' | 'body' | 'url'> & {
+        headers?: { forEach(cb: (value: string, key: string) => void): void };
+      })
+    | PublicFetchStopped,
+): DirectFetchResult {
+  if ('stopped' in res && res.stopped) return { status: UNFOLLOWED_REDIRECT_STATUS, body: '', url: res.url };
+  const done = res as Pick<PublicFetchResponse, 'status' | 'body' | 'url'> & {
+    headers?: { forEach(cb: (value: string, key: string) => void): void };
+  };
+  const out: DirectFetchResult = { status: done.status, body: decoder.decode(done.body), url: done.url };
+  if (done.headers) {
+    // The headers are kept: an edge challenge is read from them (#131).
     const headers: Record<string, string> = {};
-    res.headers.forEach((v, k) => {
+    done.headers.forEach((v, k) => {
       headers[k.toLowerCase()] = v;
     });
     out.headers = headers;
@@ -133,12 +199,12 @@ export function toDirectResult(res: {
   return out;
 }
 
-/** The default direct leg: a real HTTPS request through netguard `fetchPublic` (public-only, https-only). */
+/** The default direct leg: a real HTTPS request through netguard `fetchPublic` (public-only, war.app-only). */
 const fetchViaPublic: DirectFetch = async (url, init) => {
   const res = await fetchPublic(url, {
+    ...directFetchOptions(init.method),
     method: init.method,
     headers: init.headers,
-    requireHttps: true,
     maxBytes: MAX_DIRECT_BODY_BYTES,
     timeoutMs: DIRECT_TIMEOUT_MS,
     ...(init.body !== undefined ? { body: init.body } : {}),
@@ -147,7 +213,11 @@ const fetchViaPublic: DirectFetch = async (url, init) => {
   return toDirectResult(res);
 };
 
-/** Resolve a bridge path to an absolute war.app https URL, refusing any other host. */
+/**
+ * Resolve a bridge path to an absolute https URL on the exact host war.app,
+ * refusing any other host (a subdomain or look-alike included), userinfo and a
+ * non-default port: the full-account cookie goes to war.app and nowhere else.
+ */
 export function warappUrl(path: string): string {
   const raw = /^https?:\/\//i.test(path) ? path : `https://${SESSION_HOST}${path.startsWith('/') ? '' : '/'}${path}`;
   let u: URL;
@@ -156,8 +226,8 @@ export function warappUrl(path: string): string {
   } catch {
     throw new McpToolError(`The direct transport could not parse the request path.`, { kind: 'unknown' });
   }
-  if (u.hostname !== SESSION_HOST && !u.hostname.endsWith(`.${SESSION_HOST}`)) {
-    // Never attach the full-account cookie to anything but war.app.
+  if (u.hostname !== SESSION_HOST || u.port !== '' || u.username !== '' || u.password !== '') {
+    // Never attach the full-account cookie to anything but war.app itself.
     throw new McpToolError(`The direct transport only talks to ${SESSION_HOST}.`, { kind: 'unknown' });
   }
   if (u.protocol !== 'https:') {
@@ -168,8 +238,31 @@ export function warappUrl(path: string): string {
 
 /** A sign-in page's URL (a login redirect landed here). */
 const SIGNIN_PATH = /\/(?:sign-?in|log-?in)\b/i;
-/** A sign-in page's body (a password field — game pages never carry one). */
-const SIGNIN_BODY = /(?:type|name)\s*=\s*["']?password\b/i;
+
+/** An `<input` tag's start. */
+const INPUT_TAG = /<input(?=[\s/>])/gi;
+/** One attribute (name, then an optional double-quoted, single-quoted or bare value), or the tag's end. */
+const TAG_ATTR = /\s*(?:(>)|([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`=]+)))?|\/)/y;
+
+/**
+ * Whether an HTML body holds a real password input: an `<input …>` element
+ * whose `type` or `name` ATTRIBUTE is `password`. Player-written text on a page
+ * (names, taglines) is HTML-escaped, which leaves `=` alone but never yields a
+ * tag, and a value such as `value="type=password"` is read as that value, not
+ * as an attribute — so nothing a player writes can match.
+ */
+export function hasPasswordInput(body: string): boolean {
+  INPUT_TAG.lastIndex = 0;
+  for (let m = INPUT_TAG.exec(body); m; m = INPUT_TAG.exec(body)) {
+    TAG_ATTR.lastIndex = INPUT_TAG.lastIndex;
+    for (let a = TAG_ATTR.exec(body); a && !a[1]; a = TAG_ATTR.exec(body)) {
+      const name = a[2]?.toLowerCase();
+      const value = (a[3] ?? a[4] ?? a[5] ?? '').trim().toLowerCase();
+      if ((name === 'type' || name === 'name') && value === 'password') return true;
+    }
+  }
+  return false;
+}
 
 /** Whether a `/Services?js=1` reply is a valid (even-length hex) reply frame. */
 export function looksLikeHexFrame(body: string): boolean {
@@ -179,8 +272,10 @@ export function looksLikeHexFrame(body: string): boolean {
 
 /**
  * Whether a direct reply shows the session is signed out: a login redirect
- * (whatever the final status), or a 200 reply that is a sign-in page body or a
- * `/Services` reply that is not a valid frame. Any other status — a 5xx error
+ * (whatever the final status), or a 200 reply that is a sign-in page (a real
+ * password `<input>`, {@link hasPasswordInput} — never a bare `type=password`
+ * in the text, which any player can put on a Profile page) or a `/Services`
+ * reply that is not a valid frame. Any other status — a 5xx error
  * page above all — is NOT a sign-out: it passes through, so WarappRpc reports
  * it as an `http` failure instead of the router replaying the call over the
  * bridge and marking a good session stale.
@@ -196,7 +291,7 @@ export function looksSignedOut(requestedUrl: string, res: DirectFetchResult): bo
   // The origin refused the credential (an edge challenge is told apart first, by the caller).
   if (res.status === 401 || res.status === 403) return true;
   if (res.status !== 200) return false;
-  if (SIGNIN_BODY.test(res.body)) return true;
+  if (hasPasswordInput(res.body)) return true;
   let reqPath = '';
   try {
     reqPath = new URL(requestedUrl).pathname;
@@ -275,6 +370,13 @@ export interface WarappDirectBridge {
    * OLD session. An edge-block wall is kept (it is about this client, not the token).
    */
   sessionLinked(): void;
+  /**
+   * A key for the state that decides which war.app account answers the next
+   * call: the active leg, the stale flag and the linked session's capture time.
+   * The cached signed-in account (src/tools/live-context.ts) is discarded when it
+   * changes. Never contains the token.
+   */
+  identityState(): Promise<string>;
 }
 
 /** Options for {@link createDirectFirstBridge}. */
@@ -283,9 +385,9 @@ export interface CreateDirectFirstBridgeOptions {
   store: SessionStore;
   /** Build the existing fetchproxy bridge leg, lazily. */
   makeBridge: () => WarappBridge;
-  /** The transport pin; defaults to {@link TRANSPORT_ENV} read from `env`. */
+  /** The transport pin; defaults to {@link TRANSPORT_ENV} read from `env`. Ignored when hosted. */
   mode?: TransportMode;
-  /** Env for the default `mode` read. */
+  /** Env for the default `mode` read and the hosted check (default `process.env`). */
   env?: NodeJS.ProcessEnv;
   /** Test seam: the direct leg's HTTPS primitive (default netguard `fetchPublic`). */
   directFetch?: DirectFetch;
@@ -304,8 +406,6 @@ export const RELINK_CHECK_MS = 5_000;
 /** Why the router left the direct leg: a session problem (lifted by a relink) or an edge block (sticky). */
 type Wall = { kind: 'session'; capturedAt: string | null } | { kind: 'edge' };
 
-/** Whether a request may be re-sent after it reached war.app (only a read-only GET/HEAD). */
-const isSafeToReplay = (method: string): boolean => /^(?:GET|HEAD)$/i.test(method);
 
 /**
  * Wire the direct leg and the fetchproxy bridge into a direct-first router,
@@ -316,8 +416,14 @@ const isSafeToReplay = (method: string): boolean => /^(?:GET|HEAD)$/i.test(metho
  * is lifted when a NEW session is linked, so the direct leg is retried.
  */
 export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): WarappDirectBridge {
-  const mode = opts.mode ?? readTransportMode(TRANSPORT_ENV, opts.env ? { env: opts.env } : {});
-  const direct = new DirectBridge(opts.store, opts.directFetch);
+  // LOCAL-ONLY: a hosted child never rides the direct leg nor reads a stored
+  // session, whatever WARAPP_TRANSPORT (or `mode`) says.
+  const hosted = isHosted(opts.env ?? process.env);
+  const mode: TransportMode = hosted
+    ? 'fetchproxy'
+    : (opts.mode ?? readTransportMode(TRANSPORT_ENV, opts.env ? { env: opts.env } : {}));
+  const store: SessionStore = hosted ? { read: async () => null } : opts.store;
+  const direct = new DirectBridge(store, opts.directFetch);
   const log = opts.log ?? ((m: string) => console.error(m));
   const now = opts.now ?? Date.now;
 
@@ -342,7 +448,7 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
     log(
       `[warapp-mcp] Direct transport unavailable (${why}) — switching to the ContextMint Bridge browser bridge. ` +
         `Keep a ${SESSION_HOST} tab open and approve the pairing prompt in the extension if one appears` +
-        (next.kind === 'session' ? '; run warapp_link_session to return to the direct transport.' : '.'),
+        (next.kind === 'session' && !hosted ? '; run warapp_link_session to return to the direct transport.' : '.'),
     );
   };
 
@@ -373,7 +479,7 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
     const t = now();
     if (t - lastRelinkCheck < RELINK_CHECK_MS) return false;
     lastRelinkCheck = t;
-    const sess = await opts.store.read();
+    const sess = await store.read();
     return sess !== null && sess.capturedAt !== wall.capturedAt;
   };
 
@@ -414,6 +520,10 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
     sessionLinked: () => {
       stale = false;
       if (mode === 'auto') liftSessionWall();
+    },
+    identityState: async () => {
+      const sess = await store.read();
+      return JSON.stringify([legs.status().transport, stale, sess?.capturedAt ?? null]);
     },
   };
 }

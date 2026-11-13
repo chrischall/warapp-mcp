@@ -20,9 +20,10 @@ import { readLatestGameInfo, standingFromInfo, type LiveTerritory } from '../liv
 import type { Game } from '../normalize.js';
 import { Method, writeBeginFirstTurnParams, writeGetLatestGameInfoParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, respond, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
+import { gameIdArg, respond, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
+import { signedInHint } from './session.js';
 import { mintMeta, withToolConfig } from './hints.js';
-import { failureText, SPEED_FIRST_TURN_MOVE_ORDER, type LiveContext } from './live-context.js';
+import { failureText, requireApprovedAccount, SPEED_FIRST_TURN_MOVE_ORDER, writeAccount, type LiveContext } from './live-context.js';
 
 const PLAYING = 'Playing';
 const DISTRIBUTING = 'DistributingTerritories';
@@ -37,6 +38,8 @@ interface BeginState {
   gameId: number;
   name: string;
   picking: boolean;
+  /** The account the plan checked and the gate bound (its GameFeed id). */
+  me: number;
 }
 
 function refuse(message: string, hint: string): never {
@@ -119,11 +122,11 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
           inputSchema: z.object({ game_id: gameIdArg }),
           async plan({ game_id }) {
             const gameId = parseGameId(game_id);
-            const me = await ctx.myInviteToken();
+            const me = await ctx.myInviteToken({ fresh: true });
             if (me === undefined) {
               refuse(
                 'Could not tell which war.app account is signed in, so nothing was sent.',
-                'Open a war.app tab signed in to your account (or link a session with warapp_link_session), then retry.',
+                signedInHint(ctx.hosted),
               );
             }
             const game = await ctx.client.getGame(gameId, { settings: true });
@@ -147,20 +150,22 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
               gate: {
                 action: 'warapp.begin_first_turn',
                 summary: `Press Begin in war.app game ${gameId} — this starts your turn timer`,
-                account: undefined,
+                account: writeAccount(me),
                 target: gameId,
                 payload: { method: 'BeginFirstTurn', gameId },
                 willSend: { game: gameId },
                 preview: {
                   warning,
+                  account: shownAccount(game.players.find((p) => p.id === me)?.name, me),
                   game: { id: gameId, name: game.name === undefined ? null : untrustedText(game.name), state: game.state, turn: 1 },
                   untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
-              state: { gameId, name, picking } satisfies BeginState,
+              state: { gameId, name, picking, me } satisfies BeginState,
             };
           },
-          async execute({ gameId, name, picking }: BeginState) {
+          async execute({ gameId, name, picking, me }: BeginState) {
+            await requireApprovedAccount(ctx, writeAccount(me));
             const game = { id: gameId, name };
             let ignored = false;
             try {

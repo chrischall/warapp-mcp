@@ -21,6 +21,7 @@ import {
   gameIdArg,
   readAnnotations,
   respond,
+  shownAccount,
   turnsCompleted,
   UNTRUSTED_PREVIEW_NOTE,
   untrustedDescription,
@@ -30,7 +31,7 @@ import {
   viewArg,
 } from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
-import { loadLiveTerritories, loadPicks, type LiveContext } from './live-context.js';
+import { loadLiveTerritories, loadPicks, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { mapOf } from './map.js';
 import { resolvePlayer, resolveTerritory } from './resolve.js';
 
@@ -46,9 +47,14 @@ export const playerArg = z
   .describe('You in this game: your war.app name (or part of it) or GameFeed player id. Omit to use the signed-in account.');
 
 /** `player` when given; else the signed-in account (its invite token is its GameFeed id). */
-export async function resolveMe(ctx: LiveContext, players: readonly Player[], input: string | number | undefined): Promise<Player> {
+export async function resolveMe(
+  ctx: LiveContext,
+  players: readonly Player[],
+  input: string | number | undefined,
+  opts: { fresh?: boolean } = {},
+): Promise<Player> {
   if (input === undefined || String(input).trim() === '') {
-    const token = await ctx.myInviteToken();
+    const token = await ctx.myInviteToken(opts);
     const me = token === undefined ? undefined : players.find((p) => p.id === token);
     if (me) return me;
   }
@@ -60,7 +66,7 @@ export async function resolveMe(ctx: LiveContext, players: readonly Player[], in
  * (issue #7) — so refuse a different player, and refuse when the account is unknown.
  */
 async function assertSignedInAccount(ctx: LiveContext, player: Player): Promise<void> {
-  const token = await ctx.myInviteToken();
+  const token = await ctx.myInviteToken({ fresh: true });
   if (token === undefined) {
     throw new McpToolError('Could not tell which account is signed in to war.app, so nothing was sent.', {
       hint: 'Writes always act as the signed-in account. Make sure a signed-in war.app tab is open and paired, then retry.',
@@ -309,6 +315,8 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
     gameId: number;
     playerId: number;
     picks: Array<{ id: number; name: string }>;
+    /** The account the plan checked and the gate bound (its GameFeed id). */
+    me: number;
   }
 
   withToolConfig(
@@ -339,7 +347,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
           async plan({ game_id, player, territories }) {
             const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
             const map = mapOf(game);
-            const me = await resolveMe(ctx, game.players, player);
+            const me = await resolveMe(ctx, game.players, player, { fresh: true });
             await assertSignedInAccount(ctx, me);
             const picks = territories.map((t) => resolveTerritory(map, t));
             const seen = new Set<number>();
@@ -393,7 +401,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
                 // By id only: player and territory names are other people's words and go,
                 // delimited, in labelled fields.
                 summary: `Submit ${picks.length} territory pick${picks.length === 1 ? '' : 's'} for player ${me.id} in game ${game.id}`,
-                account: undefined,
+                account: writeAccount(me.id),
                 target: game.id,
                 payload: { method: 'SendTerritoryPicks', gameId: game.id, playerId, territoryIds },
                 willSend: {
@@ -402,15 +410,17 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
                   picksInPriorityOrder: named.map((t) => ({ id: t.id, name: untrustedText(t.name) })),
                 },
                 preview: {
+                  account: shownAccount(me.name, me.id),
                   note: 'Replaces any picks already submitted for this game.',
                   untrusted: UNTRUSTED_PREVIEW_NOTE,
                   ...(lengthWarnings.length ? { warnings: lengthWarnings } : {}),
                 },
               },
-              state: { gameId: game.id, playerId, picks: named } satisfies PicksState,
+              state: { gameId: game.id, playerId, picks: named, me: me.id } satisfies PicksState,
             };
           },
-          async execute({ gameId, playerId, picks }: PicksState) {
+          async execute({ gameId, playerId, picks, me }: PicksState) {
+            await requireApprovedAccount(ctx, writeAccount(me));
             const ids = picks.map((p) => p.id);
             await ctx.rpc.call('SendTerritoryPicks', Method.SendTerritoryPicks, (w) =>
               writeSendTerritoryPicksParams(w, gameId, ids),

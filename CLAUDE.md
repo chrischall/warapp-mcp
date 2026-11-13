@@ -36,7 +36,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Seven tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
   `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn`, registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
-  `MCP_CONFIRM_MODE`). `warapp_submit_picks` validates against the live board and reports
+  `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
+  preview names it, and `execute` refuses if it changed (`requireApprovedAccount`, `src/tools/live-context.ts`),
+  so an approval for one account never acts as another. `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
   is read-only, `warapp_plan_turn` and `warapp_track_opponents` included. The two-step token
   confirmation verifies no person — on a client that cannot prompt it is advisory (the model itself
@@ -344,9 +346,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   socket, so they all get direct mode at once. `warapp_link_session` (write, confirm-gated,
   local-only) captures the cookie once through the bridge; `warapp_session_status` reports the
   linked state, age and active leg. **The `AuthToken` is a full-account credential:** file `0600`,
-  dir `0700`, atomic write; scrubbed by value from every upstream error string (mcp-utils
+  dir `0700` (macOS: no ACL on either), atomic write; scrubbed by value from every upstream error string (mcp-utils
   `stripBearer` + `scrubToken`); never logged, never in a tool result, never in an error/hint.
-  **Direct mode is local-only — `mint.yaml` keeps the browser bridge and stores no token on the host.**
+  **Direct mode is local-only, enforced in code:** on a hosted child (`isHosted`, `src/hosted.ts`)
+  `warapp_link_session` is not registered, the session store reads as empty and refuses writes
+  (`src/direct/session.ts`), the router is pinned to the browser bridge whatever `WARAPP_TRANSPORT`
+  says (`createDirectFirstBridge`), and no hint suggests linking; `mint.yaml` keeps the bridge.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared
@@ -390,7 +395,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   and bonus ids overlap, so a bonus member is a territory first and a superbonus only otherwise.
 - **Map statistics are opt-in and local-only** (`warapp_map_stats`, `src/stats.ts`): off unless
   `WARAPP_STATS=1`, always off when hosted (recognised by mcp-host's child-only variables —
-  `HOSTED_MARKERS`), and `mint.yaml` never sets `WARAPP_STATS`. GameIDFeed + GameFeed
+  `HOSTED_MARKERS` in `src/hosted.ts`), and `mint.yaml` never sets `WARAPP_STATS`. GameIDFeed + GameFeed
   `GetHistory=true` through `WarappClient`, ≥ 1 s apart, finished games cached forever as
   name-free records at `<dataDir>/stats/<mapId>/<gameId>.json`.
 - **All GameFeed traffic goes through `WarappClient` (`src/client.ts`)**, including the

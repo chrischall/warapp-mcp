@@ -1,4 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_HOST, writeSession } from '../../src/direct/session.js';
+import { HOSTED_MARKERS } from '../../src/hosted.js';
 import type { Writer } from '../../src/protocol/codec.js';
 import { Method } from '../../src/protocol/methods.js';
 import { liveHarness, payload, type Harness } from '../helpers.js';
@@ -57,5 +62,90 @@ describe('warapp_session_status is wired to the shared direct-first bridge', () 
     const p = payload<{ linked: boolean; activeTransport: string }>(await h.call('warapp_session_status'));
     expect(p.activeTransport).toBe('fetchproxy');
     expect(p.linked).toBe(false);
+  });
+});
+
+/**
+ * Direct mode is local-only, enforced in code (src/hosted.ts): on a hosted
+ * child (any HOSTED_MARKERS variable set) the link tool is not served, the
+ * session store reads as empty — a session file already in the data dir is
+ * never read — the router is pinned to the browser bridge whatever
+ * WARAPP_TRANSPORT says, and no hint points at linking a session.
+ */
+describe('hosted: the direct transport is never used', () => {
+  const FAKE_TOKEN = 'test-hosted-auth-token';
+  const LINK = 'warapp_link_session';
+
+  async function withSessionFile(): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-hosted-'));
+    // Written as a local process would (no marker), before the hosted child starts.
+    await writeSession({ authToken: FAKE_TOKEN, capturedAt: '2026-11-12T10:00:00.000Z', host: SESSION_HOST }, {
+      MCP_DATA_DIR: dir,
+    });
+    return dir;
+  }
+
+  for (const marker of HOSTED_MARKERS) {
+    describe(marker, () => {
+      it('does not list the link tool, and no tool description points at it', async () => {
+        h = await liveHarness({ env: { [marker]: 'x' } });
+        const tools = (await h.harness.client.listTools()).tools;
+        expect(tools.map((t) => t.name)).not.toContain(LINK);
+        expect(tools.map((t) => t.name)).toContain('warapp_session_status');
+        expect(JSON.stringify(tools)).not.toContain(LINK);
+      });
+
+      it('rides the bridge with a session file present and WARAPP_TRANSPORT=direct; nothing goes direct', async () => {
+        const dataDir = await withSessionFile();
+        const directFetch = vi.fn(async (url: string) => ({ status: 200, body: '', url }));
+        h = await liveHarness({
+          dataDir,
+          env: { [marker]: 'x', WARAPP_TRANSPORT: 'direct' },
+          directFetch,
+          pages: SIGNED_IN,
+          warapp: (req) => {
+            if (req.method !== Method.GetMyGames) throw new Error(`unexpected method ${req.method}`);
+            return { body: (w: Writer) => writeMyGamesReturn(w, GAMES) };
+          },
+        });
+        const games = await h.call('warapp_my_games');
+        expect(games.isError).toBeFalsy();
+        const res = await h.call('warapp_session_status');
+        const p = payload<Record<string, unknown>>(res);
+        expect(p).toMatchObject({ hosted: true, linked: false, activeTransport: 'fetchproxy' });
+        expect(JSON.stringify(res)).not.toContain(LINK);
+        expect(JSON.stringify(res)).not.toContain(FAKE_TOKEN);
+        const health = await h.call('warapp_healthcheck');
+        expect(JSON.stringify(health)).not.toContain(FAKE_TOKEN);
+        expect(directFetch).not.toHaveBeenCalled();
+        expect(h.bridge.requests.length).toBeGreaterThan(0);
+      });
+
+      it('leaves linking a session out of every failure hint', async () => {
+        h = await liveHarness({ env: { [marker]: 'x' } });
+        for (const [tool, args] of [
+          ['warapp_list_open_games', {}],
+          ['warapp_begin_turn', { game_id: 1001 }],
+          ['warapp_surrender', { game_id: 1001 }],
+          ['warapp_uncommit_turn', { game_id: 1001 }],
+        ] as const) {
+          const res = await h.call(tool, args);
+          expect(res.isError, tool).toBe(true);
+          expect(JSON.stringify(res), tool).not.toContain(LINK);
+        }
+      });
+    });
+  }
+
+  it('without a marker, the same session file and WARAPP_TRANSPORT=direct use the direct leg (control)', async () => {
+    const dataDir = await withSessionFile();
+    const directFetch = vi.fn(async (url: string) => ({ status: 200, body: '<p>open games</p>', url }));
+    h = await liveHarness({ dataDir, env: { WARAPP_TRANSPORT: 'direct' }, directFetch });
+    expect((await h.harness.client.listTools()).tools.map((t) => t.name)).toContain(LINK);
+    const p = payload<Record<string, unknown>>(await h.call('warapp_session_status'));
+    expect(p).toMatchObject({ linked: true, activeTransport: 'direct' });
+    expect(p.hosted).toBeUndefined();
+    await h.call('warapp_list_open_games');
+    expect(directFetch).toHaveBeenCalled();
   });
 });

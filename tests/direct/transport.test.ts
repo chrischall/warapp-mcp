@@ -5,6 +5,8 @@ import { SESSION_HOST, type Session } from '../../src/direct/session.js';
 import {
   createDirectFirstBridge,
   DirectBridge,
+  directFetchOptions,
+  hasPasswordInput,
   looksLikeHexFrame,
   looksSignedOut,
   RELINK_CHECK_MS,
@@ -12,6 +14,7 @@ import {
   SessionNotLinkedError,
   toDirectResult,
   TRANSPORT_ENV,
+  UNFOLLOWED_REDIRECT_STATUS,
   warappUrl,
   type DirectFetch,
   type DirectFetchResult,
@@ -197,14 +200,93 @@ describe('direct-transport helpers', () => {
     });
   });
 
-  it('warappUrl keeps war.app (and subdomains), refuses other hosts, http, and garbage', () => {
+  it('warappUrl keeps the exact host war.app, refuses other hosts, http, and garbage', () => {
     expect(warappUrl('https://war.app/InviteToken')).toBe('https://war.app/InviteToken');
     expect(warappUrl('/Services?m=x&js=1')).toBe('https://war.app/Services?m=x&js=1');
     expect(warappUrl('Services')).toBe('https://war.app/Services');
-    expect(warappUrl('https://api.war.app/x')).toBe('https://api.war.app/x');
     expect(() => warappUrl('https://evil.example.com/x')).toThrow(McpToolError);
     expect(() => warappUrl('http://war.app/x')).toThrow(/https/i);
     expect(() => warappUrl('https://[::bad')).toThrow(McpToolError);
+  });
+
+  it('warappUrl refuses a subdomain, a look-alike host, userinfo, a port and http (the cookie goes to war.app only)', () => {
+    // Previously any *.war.app host was accepted, so the full-account cookie
+    // reached hosts beyond the one the session belongs to.
+    for (const bad of [
+      'https://api.war.app/x',
+      'https://evil.war.app/x',
+      'https://war.app.example.com/x',
+      'https://notwar.app/x',
+      'https://war.apps/x',
+      'https://user:pw@war.app/x',
+      'https://user@war.app/x',
+      'https://war.app:8443/x',
+      'http://war.app/x',
+    ]) {
+      expect(() => warappUrl(bad), bad).toThrow(McpToolError);
+    }
+    // Case and the default port normalise to war.app.
+    expect(warappUrl('https://WAR.APP/x')).toBe('https://war.app/x');
+    expect(warappUrl('https://war.app:443/x')).toBe('https://war.app/x');
+  });
+
+  it('directFetchOptions: a non-GET follows no redirect; a GET follows redirects only within war.app', () => {
+    const post = directFetchOptions('POST');
+    expect(post.requireHttps).toBe(true);
+    expect(post.allowHosts).toEqual([SESSION_HOST]);
+    // The first URL is requested; every redirect target is stopped before it is requested.
+    expect(post.stopBefore(new URL('https://war.app/Services?m=x&js=1'))).toBe(false);
+    expect(post.stopBefore(new URL('https://war.app/Services?m=x&js=1'))).toBe(true);
+    expect(post.stopBefore(new URL('https://war.app/SignIn'))).toBe(true);
+    expect(post.maxRedirects).toBeLessThanOrEqual(1);
+    expect(directFetchOptions('put').stopBefore(new URL('https://war.app/'))).toBe(false);
+
+    const get = directFetchOptions('GET');
+    expect(get.requireHttps).toBe(true);
+    expect(get.allowHosts).toEqual([SESSION_HOST]);
+    expect(get.maxRedirects).toBeGreaterThan(0);
+    expect(get.stopBefore(new URL('https://war.app/InviteToken'))).toBe(false);
+    expect(get.stopBefore(new URL('https://war.app/SignIn'))).toBe(false);
+    // Fresh state per call: a second POST's first URL is requested too.
+    expect(directFetchOptions('POST').stopBefore(new URL('https://war.app/Services'))).toBe(false);
+  });
+
+  it('hasPasswordInput needs a real <input> whose type or name attribute is password', () => {
+    expect(hasPasswordInput('<form><input type="password" name="pw"></form>')).toBe(true);
+    expect(hasPasswordInput("<INPUT class='x' TYPE='Password'/>")).toBe(true);
+    expect(hasPasswordInput('<input id=p type=password>')).toBe(true);
+    expect(hasPasswordInput('<input\n  name="password"\n  type="text">')).toBe(true);
+    // Text a player can write: escaping leaves '=' alone, but never yields a tag.
+    expect(hasPasswordInput('<span>my tagline: type=password name=password</span>')).toBe(false);
+    expect(hasPasswordInput('&lt;input type=password&gt;')).toBe(false);
+    // The words inside another attribute's value are not the attribute.
+    expect(hasPasswordInput('<input type="text" value="type=password">')).toBe(false);
+    expect(hasPasswordInput('<input value=\'x" type="password\'>')).toBe(false);
+    expect(hasPasswordInput('<inputs type="password">')).toBe(false);
+    expect(hasPasswordInput('')).toBe(false);
+  });
+
+  it('looksSignedOut: a profile page whose player-written text says type=password is NOT signed out', () => {
+    const profile = 'https://war.app/Profile?p=1234567890';
+    const page =
+      '<html><body><h1>Player &quot;name=password&quot;</h1>' +
+      '<div class="tagline">type=password name = "password" type=\'password\'</div>' +
+      '<input type="hidden" name="p" value="type=password"></body></html>';
+    expect(looksSignedOut(profile, { status: 200, body: page, url: profile })).toBe(false);
+    // A real sign-in form still is.
+    expect(
+      looksSignedOut(profile, { status: 200, body: '<form><input name="pw" type="password"></form>', url: profile }),
+    ).toBe(true);
+  });
+
+  it('toDirectResult maps a stopped (unfollowed) redirect; a POST stopped at the sign-in page is signed out', () => {
+    const stopped = toDirectResult({ stopped: true, url: 'https://war.app/SignIn?r=%2F', hops: 1 });
+    expect(stopped).toEqual({ status: UNFOLLOWED_REDIRECT_STATUS, body: '', url: 'https://war.app/SignIn?r=%2F' });
+    expect(looksSignedOut('https://war.app/Services?m=x&js=1', stopped)).toBe(true);
+    // A redirect elsewhere on war.app is not a sign-out: it passes through as a non-200.
+    const other = toDirectResult({ stopped: true, url: 'https://war.app/Elsewhere', hops: 1 });
+    expect(looksSignedOut('https://war.app/Services?m=x&js=1', other)).toBe(false);
+    expect(other.status).not.toBe(200);
   });
 
   it('looksLikeHexFrame accepts even-length hex only', () => {
@@ -273,6 +355,26 @@ describe('createDirectFirstBridge router', () => {
     expect(bridge.sessionStale()).toBe(false);
   });
 
+  it('in auto mode, a page showing player text like name=password stays on the direct leg, not stale', async () => {
+    const body = '<html><div class="tagline">name=password type=password</div></html>';
+    const stub = stubFetch({ status: 200, body, url: 'https://war.app/CommonGames?p=1234567890' });
+    const fp = fakeFetchproxy();
+    const log = vi.fn();
+    const bridge = createDirectFirstBridge({
+      store: linkedStore(),
+      makeBridge: () => fp.bridge,
+      mode: 'auto',
+      directFetch: stub.fn,
+      log,
+    });
+    const res = await (await bridge.ready()).fetch({ method: 'GET', path: 'https://war.app/CommonGames?p=1234567890' });
+    expect(res.body).toBe(body);
+    expect(fp.calls).toHaveLength(0);
+    expect(log).not.toHaveBeenCalled();
+    expect(bridge.status().transport).toBe('direct');
+    expect(bridge.sessionStale()).toBe(false);
+  });
+
   it('in auto mode, a signed-out GET falls back to the bridge (re-sent there) and marks the token stale', async () => {
     // Direct answers a sign-in redirect; the bridge answers the page.
     const stub = stubFetch({ status: 200, body: '<html>sign in</html>', url: 'https://war.app/SignIn' });
@@ -328,6 +430,50 @@ describe('createDirectFirstBridge router', () => {
     expect(stub.calls).toHaveLength(1);
     expect(fp.calls).toHaveLength(1);
   });
+
+  // A POST that reached war.app is never re-sent over the bridge, whatever war.app answered:
+  // a 401, a non-edge 403 (#131's signed-out statuses) or a redirect the direct leg did not follow.
+  const reachedAnswers: Array<[string, DirectFetchResult, 'expired' | 'passes']> = [
+    ['a 401', { status: 401, body: 'Unauthorized', url: 'https://war.app/Services' }, 'expired'],
+    ['a non-edge 403', { status: 403, body: '<html>Forbidden</html>', url: 'https://war.app/Services' }, 'expired'],
+    [
+      'a redirect to the sign-in page (not followed)',
+      toDirectResult({ stopped: true, url: 'https://war.app/SignIn?r=%2F', hops: 1 }),
+      'expired',
+    ],
+    [
+      'a redirect elsewhere on war.app (not followed)',
+      toDirectResult({ stopped: true, url: 'https://war.app/Elsewhere', hops: 1 }),
+      'passes',
+    ],
+  ];
+  for (const [what, answer, outcome] of reachedAnswers) {
+    it(`in auto mode, a POST answered with ${what} reached war.app: it is NOT re-sent over the bridge`, async () => {
+      const stub = stubFetch(answer);
+      const fp = fakeFetchproxy();
+      const bridge = createDirectFirstBridge({
+        store: linkedStore(),
+        makeBridge: () => fp.bridge,
+        mode: 'auto',
+        directFetch: stub.fn,
+        log: () => {},
+      });
+
+      const got = await (await bridge.ready()).fetch(servicesPost).catch((e: unknown) => e);
+
+      expect(stub.calls).toHaveLength(1);
+      expect(fp.calls).toHaveLength(0);
+      if (outcome === 'expired') {
+        expect(got).toBeInstanceOf(SessionExpiredError);
+        expect((got as Error).message).toMatch(/not re-sent/i);
+        expect(bridge.sessionStale()).toBe(true);
+      } else {
+        // Not a sign-out: the unfollowed redirect reaches the caller as a non-200 reply.
+        expect((got as FetchproxyFetchResult).status).toBe(UNFOLLOWED_REDIRECT_STATUS);
+        expect(bridge.sessionStale()).toBe(false);
+      }
+    });
+  }
 
   it('in auto mode, a POST with no linked session (never sent) still falls back to the bridge', async () => {
     const stub = stubFetch({ status: 200, body: HEX_FRAME, url: 'https://war.app/Services' });
