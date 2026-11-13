@@ -61,20 +61,50 @@ export function boardFromHistory(
 ): BoardState | undefined {
   try {
     const raw = entriesOf(history).find(([n]) => n === completedTurns)?.[1];
-    const board = boardFromStanding(raw);
-    if (!board) return undefined;
-    const byInGame = playersByInGameId(players);
-    const feedIds = new Set(players.map((p) => p.id));
-    return {
-      ...board,
-      territories: board.territories.map((t): TerritoryState => {
-        if (t.owner.kind !== 'player' || feedIds.has(t.owner.playerId)) return t;
-        const p = byInGame.get(t.owner.playerId);
-        return p ? { ...t, owner: { kind: 'player', playerId: p.id } } : t;
-      }),
-    };
+    return feedOwners(boardFromStanding(raw), players);
   } catch {
     return undefined;
+  }
+}
+
+/** A parsed board with in-game owner ids mapped back to GameFeed player ids. */
+function feedOwners(board: BoardState | undefined, players: readonly Player[]): BoardState | undefined {
+  if (!board) return undefined;
+  const byInGame = playersByInGameId(players);
+  const feedIds = new Set(players.map((p) => p.id));
+  return {
+    ...board,
+    territories: board.territories.map((t): TerritoryState => {
+      if (t.owner.kind !== 'player' || feedIds.has(t.owner.playerId)) return t;
+      const p = byInGame.get(t.owner.playerId);
+      return p ? { ...t, owner: { kind: 'player', playerId: p.id } } : t;
+    }),
+  };
+}
+
+/**
+ * Every usable standing in a raw `GetHistory` payload, ascending by entry
+ * number (completed turns, as {@link boardFromHistory} reads it), owners keyed
+ * by GameFeed player id. Entries that do not parse are left out; the first of
+ * two entries with one number wins. Never throws.
+ */
+export function historyBoards(
+  history: unknown,
+  players: readonly Player[],
+): Array<{ turn: number; board: BoardState }> {
+  try {
+    const seen = new Set<number>();
+    const out: Array<{ turn: number; board: BoardState }> = [];
+    for (const [turn, raw] of entriesOf(history)) {
+      if (seen.has(turn)) continue;
+      const board = feedOwners(boardFromStanding(raw), players);
+      if (!board) continue;
+      seen.add(turn);
+      out.push({ turn, board });
+    }
+    return out.sort((a, b) => a.turn - b.turn);
+  } catch {
+    return [];
   }
 }
 

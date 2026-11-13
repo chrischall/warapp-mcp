@@ -118,6 +118,10 @@
       "description": "Rank a game map's bonuses (easiest first) and find its chokepoints"
     },
     {
+      "name": "warapp_map_stats",
+      "description": "Opt-in (local, WARAPP_STATS=1): a map's most-picked starts, win rate by starting bonus and first-bonus turn, from finished ladder games"
+    },
+    {
       "name": "warapp_analyze_board",
       "description": "Advise a player from the board (GameFeed or live): income, closest bonuses, armies needed, threats"
     },

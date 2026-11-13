@@ -47,6 +47,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   not are who the game waits on), a settings digest (fog, kill rates, luck, rounding, base
   income, army cap, cards) and the map. `include_history` / `include_chat` add past turns and
   chat; `view: "full"` adds every setting and the board, `"raw"` the whole map too.
+- **"What wins on this map?"** → `warapp_map_stats` (`map_id`; opt-in, local only — off unless
+  `WARAPP_STATS=1`; when it refuses, say how to enable it and fall back to `warapp_get_map`):
+  most-picked starts, win rate by starting bonus and first-bonus turn from finished ladder games.
+  Always quote the sample size; a rate flagged `lowSample` is anecdote, not a trend.
 - **"Which bonuses should I go for?"** → `warapp_get_map`: bonuses ranked easiest first
   (value per territory and per border, entry points, ease score) plus chokepoints. Narrow to
   one bonus with `bonus: "<part of its name>"`; `sort` is `easiest` / `value` / `name`;
@@ -209,7 +213,7 @@ with intent **lookup** (but `warapp_wait_for_turn`, intent **whats-new**), `wara
 `warapp_submit_turn`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn` with **change**, and
 `warapp_send_chat` with **send**:
 
-- `warapp_get_game`, `warapp_get_map`, `warapp_analyze_board`, `warapp_plan_route`,
+- `warapp_get_game`, `warapp_get_map`, `warapp_map_stats`, `warapp_analyze_board`, `warapp_plan_route`,
   `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_picks`, `warapp_plan_turn`, `warapp_get_chat` and
   `warapp_scout_player` and `warapp_recent_events` are lookups the group reaches by their
   aliases ("warzone game", "whose turn is it", "best bonuses", "chokepoints", "analyze my

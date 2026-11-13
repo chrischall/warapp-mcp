@@ -531,3 +531,28 @@ describe('packaging for uncommit (#61)', () => {
     expect(section).toMatch(/hasCommittedOrders/);
   });
 });
+
+describe('packaging for map statistics (S6)', () => {
+  const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+
+  it('mint.yaml never turns map statistics on (they stay off when hosted)', () => {
+    expect(doc('../mint.yaml')).not.toMatch(/WARAPP_STATS/);
+  });
+
+  it('README documents WARAPP_STATS as opt-in and local-only', () => {
+    const row = doc('../README.md').split('\n').find((l) => l.startsWith('| `WARAPP_STATS`'));
+    expect(row).toBeDefined();
+    expect(row).toMatch(/local/i);
+    expect(row).toMatch(/hosted/i);
+  });
+
+  it('WARAPP-API.md marks the game-ID feed unverified', () => {
+    const api = doc('../docs/WARAPP-API.md');
+    const start = api.indexOf('## Game-ID feed');
+    expect(start).toBeGreaterThan(-1);
+    const end = api.indexOf('\n## ', start + 1);
+    const section = api.slice(start, end === -1 ? undefined : end);
+    expect(section).toContain('/API/GameIDFeed');
+    expect(section).toMatch(/UNVERIFIED/);
+  });
+});

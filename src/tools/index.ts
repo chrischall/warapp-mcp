@@ -1,5 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
-import { WarappClient, type WarappClientOptions } from '../client.js';
+import { defaultMapCache, WarappClient, type WarappClientOptions } from '../client.js';
+import { dataDir } from '../config.js';
+import { StatsCollector } from '../stats.js';
 import type { ClassReader } from '../live.js';
 import { registerBeginTurnTool } from './begin-turn.js';
 import { registerBoardTool } from './board.js';
@@ -10,6 +12,7 @@ import { createLiveContext } from './live-context.js';
 import { registerJoinGameTool } from './join-game.js';
 import { registerLiveTools } from './live.js';
 import { registerMapTool } from './map.js';
+import { registerMapStatsTool } from './map-stats.js';
 import { registerMyGamesTool } from './my-games.js';
 import { registerOpenGamesTool } from './open-games.js';
 import { registerPickTools } from './picks.js';
@@ -68,6 +71,17 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerHealthcheckTool(server, fetchproxy, bridge, deps);
   registerGameTool(server, client);
   registerMapTool(server, client);
+  // Opt-in (WARAPP_STATS=1), never hosted: the tool refuses before any request
+  // when off. One collector per registration, so its 1 s throttle spans calls.
+  registerMapStatsTool(server, {
+    collector: new StatsCollector({
+      client,
+      dir: () => dataDir(deps.env),
+      ...(deps.sleep ? { sleep: deps.sleep } : {}),
+    }),
+    mapCache: deps.mapCache ?? defaultMapCache,
+    ...(deps.env ? { env: deps.env } : {}),
+  });
   registerBoardTool(server, client, live);
   registerRouteTool(server, client);
   registerLiveTools(server, live);
