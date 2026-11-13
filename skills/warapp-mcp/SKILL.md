@@ -72,7 +72,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   name and id, the expected captures, bonuses and next income, warnings and reasoning, plus an
   `orders` array. It is read-only and refuses outside a turn phase. Review the plan and its
   warnings with the user before anything is submitted. Every plan carries the game `profile`
-  (format 1v1/ffa/teams, phase, standing ahead/even/behind/unknown); with no `goal` the profile
+  (format 1v1/ffa/teams, phase, standing ahead/even/behind/unknown — under heavy fog it comes from
+  tracked income when every opponent has a trusted track, marked `standingSource: "tracked"`); with no `goal` the profile
   picks it (`goalSource: "profile"` — defend when behind on income in an FFA or team game; in a 1v1
   behind on income it strikes instead: breaks the opponent's bonuses, also ones the tracker infers
   behind the fog) and the first rationale line says why. `view: "full"` lists the offensive
