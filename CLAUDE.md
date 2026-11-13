@@ -101,6 +101,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   is listed first, since the first pick awarded carries the commander (#129).
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes. `docs/STRATEGY.md` states the community
   heuristics in our own words with source links (cite, never copy) and marks which are encoded.
+- **The award of picks is read once, from my own list (#166).** The list war.app read back
+  (`warapp_submit_picks`, or `warapp_get_my_picks` during distribution for the signed-in account) is kept at
+  `<dataDir>/picks/<gameId>.json` (`src/pick-list.ts`, territory ids only). On turn 1 `loadAward`
+  (`src/tools/award.ts`) reads it against the territories I hold (`readAward`, `src/analysis/award.ts`: with two
+  players every award that fits is enumerated and only what holds in all of them is kept) and stores the result;
+  later turns reuse it, and a list that cannot explain the start gives nothing. `warapp_plan_turn` and
+  `warapp_check_plan` report it as `award` and, in a two-player game, plan on the opponent's proven starts while
+  they are fogged (owner, plus the starting armies on turn 1); the board cache and opponent tracking keep the
+  board war.app showed. The move order (`award.firstMover`) and the commander start are the wiki's rules, not
+  verified live: reported, never used to narrow the stress test or to place a commander.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'

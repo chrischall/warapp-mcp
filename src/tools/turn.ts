@@ -48,6 +48,7 @@ import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
 import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
 import { Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
+import { assumedWarning, awardView, loadAward } from './award.js';
 import {
   currentTurn,
   gameIdArg,
@@ -774,6 +775,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'its observed deploy since the previous turn when larger). Obeys the kill rates, luck, rounding, Local ' +
           'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement and (when cards must go) Order Priority, never ' +
           "Blockade or Order Delay. The full rule list is in the planner's header and the warapp-mcp skill. " +
+          'When this server kept your pick list (warapp_submit_picks or warapp_get_my_picks during distribution), ' +
+          '`award` says what the award of picks showed: the territories of your list that are another player\'s ' +
+          'start for certain (in a two-player game they are planned as the opponent\'s while still fogged, with the ' +
+          'starting armies on turn 1), whether you were awarded first or second and who moves first this turn under ' +
+          "a cyclic move order, and with commanders the opponent's first award when the award pins it. " +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -850,7 +856,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         boardHistory(ctx, game, me, turn),
       ]);
       const graph = graphOf(map);
-      const board = boardStateFromLive(territories, me, game.players);
+      // The board as war.app shows it: what is tracked and cached. The plan is made on the board
+      // the award of picks completes (#166): in a two-player game, the opponent's starts my own
+      // pick list proves, where they are still fogged.
+      const seen = boardStateFromLive(territories, me, game.players);
+      const award = await loadAward(ctx.dataDir, game, me, seen, turn);
+      const board = award?.board ?? seen;
       const settings = plannerSettings(game.settings);
       const rules = cardRules(game.settings);
       const hand = readHand(info, inGameId(me));
@@ -862,7 +873,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       // one still playing with nothing in view gets a received lower bound and a warning (#94).
       const tracks =
         turn !== null
-          ? trackOpponents(graph, [...history.boards, { turn, board }], me.id, settings, trackGame(game.players, game.settings, map))
+          ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
           : undefined;
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
       const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
@@ -899,7 +910,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
         },
       });
-      if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+      if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);
       const name = namer(map);
       const warnings = [
         ...(me.hasCommittedOrders
@@ -908,6 +919,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 'with warapp_uncommit_turn (or modify orders in the game).',
             ]
           : []),
+        ...(award ? assumedWarning(award) : []),
         ...(handUnknown ? [UNREADABLE_HAND] : []),
         ...cards.warnings,
         ...(cards.extraArmies > 0 ? [cardIncomeNote(income, cards.extraArmies)] : []),
@@ -942,6 +954,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               },
         income,
         enemyDeploy: plan.enemyDeploy,
+        // #166: what the award of picks showed (absent when no pick list is kept for this game).
+        ...(award ? { award: awardView(award, game, turn, name) } : {}),
         trendSource: trend?.source ?? null,
         conceded: plan.conceded.map(name),
         cardAdvice: plan.cardAdvice,

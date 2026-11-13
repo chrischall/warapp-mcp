@@ -15,6 +15,7 @@ import {
   type LiveTerritory,
 } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
+import { writePickList } from '../pick-list.js';
 import { Method, writeSendTerritoryPicksParams } from '../protocol/methods.js';
 import {
   currentTurn,
@@ -306,6 +307,10 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
       const game = await ctx.client.getGame(game_id, { settings: true });
       const me = await resolveMe(ctx, game.players, player);
       const picks = await loadPicks(ctx, game.id, inGameId(me));
+      // Kept while territories are being distributed, so the award can be read from it later (#166):
+      // only for the signed-in account (no `player` given), the one war.app answers for.
+      if (ctx.dataDir && player === undefined && game.state === 'DistributingTerritories' && picks.length)
+        await writePickList(ctx.dataDir, game.id, me.id, picks);
       const name = nameIn(mapOf(game));
       return respond(undefined, ['compact'], () => ({
         game: { id: game.id, state: game.state },
@@ -451,6 +456,8 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
               readBackError = e instanceof Error ? e.message : String(e);
             }
             const verified = readBack !== null && readBack.length === ids.length && readBack.every((id, i) => id === ids[i]);
+            // What war.app holds is the list the award will use: kept to read the award from (#166).
+            if (ctx.dataDir && readBack?.length) await writePickList(ctx.dataDir, gameId, me, readBack);
             return { sent: true, verified, game: gameId, picks, readBack, ...(readBackError ? { readBackError } : {}) };
           },
           render: (r) =>

@@ -6,6 +6,7 @@ import { EMAIL, liveHarness, lobbyFixture, payload, textOf, type Harness } from 
 import { WarappBundle } from '../src/protocol/bundle.js';
 import { LIVE_BUNDLE, writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
 import { MY_GAMES_BUNDLE } from './protocol/my-games-bundle.js';
+import { readPickRecord } from '../src/pick-list.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -375,6 +376,25 @@ describe('warapp_get_my_picks', () => {
     expect(h.exchanges).toEqual([]);
   });
 
+  it('keeps the signed-in account\'s picks while territories are distributed, to read the award from later (#166)', async () => {
+    const warapp = routes({ [Method.GetTerritoryPicks]: picksReply([161, 159]) });
+    const me = Number(ANN.feed);
+    // The signed-in account, during distribution: kept.
+    h = await liveHarness({ feed: [game('DistributingTerritories')], pages: SIGNED_IN_ANN, warapp });
+    await h.call('warapp_get_my_picks', { game_id: GAME });
+    expect(await readPickRecord(h.dataDir, GAME, me)).toEqual({ gameId: GAME, playerId: me, list: [161, 159] });
+    await h.harness.close();
+    // A player named in the call may not be the account war.app answers for: nothing is kept.
+    h = await liveHarness({ feed: [game('DistributingTerritories')], pages: SIGNED_IN_ANN, warapp });
+    await h.call('warapp_get_my_picks', { game_id: GAME, player: 'Ann' });
+    expect(await readPickRecord(h.dataDir, GAME, me)).toBeUndefined();
+    await h.harness.close();
+    // After distribution whatever war.app answers is not the list to keep.
+    h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp });
+    await h.call('warapp_get_my_picks', { game_id: GAME });
+    expect(await readPickRecord(h.dataDir, GAME, me)).toBeUndefined();
+  });
+
   it('maxPicks is null when the settings give no territory limit', async () => {
     const f = game('DistributingTerritories');
     const settings = { ...(f.settings as Record<string, unknown>) };
@@ -478,6 +498,19 @@ describe('warapp_submit_picks', () => {
     expect(p.verified).toBe(false);
     expect(p.readBack).toEqual([159, 161]);
     expect(p.warning).toMatch(/did not read back exactly/);
+    // What war.app holds is what the award will use: that is the list kept (#166).
+    expect((await readPickRecord(h.dataDir, GAME, Number(ANN.feed)))!.list).toEqual([159, 161]);
+  });
+
+  it('keeps the list war.app read back, to read the award from later (#166)', async () => {
+    const s = picksServer();
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
+    expect(await readPickRecord(h.dataDir, GAME, Number(ANN.feed))).toBeUndefined();
+    await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159, 135] });
+    // A preview keeps nothing.
+    expect(await readPickRecord(h.dataDir, GAME, Number(ANN.feed))).toBeUndefined();
+    await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159, 135] });
+    expect(await readPickRecord(h.dataDir, GAME, Number(ANN.feed))).toEqual({ gameId: GAME, playerId: Number(ANN.feed), list: [161, 159, 135] });
   });
 
   it('a read-back that fails after the send still reports sent: true (#130)', async () => {

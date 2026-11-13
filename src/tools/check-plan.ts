@@ -13,6 +13,7 @@ import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.
 import { boardStateFromLive, inGameId } from '../live.js';
 import type { GameMap } from '../normalize.js';
 import { carriesTeam } from '../teams.js';
+import { assumedWarning, awardView, loadAward } from './award.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
@@ -67,7 +68,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'the armies it would need to hold, if you add nothing next turn. Decide on the fields (`safe`, ' +
           '`worst`, `exposedNextTurn`), not on the wording of `summary`, which may change. Exact with no luck and ' +
           'straight rounding; otherwise battles are resolved at their expectation and `exact` is false. It does not ' +
-          `try: ${CHECK_PLAN_NOT_COVERED.join('; ')}. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on ` +
+          `try: ${CHECK_PLAN_NOT_COVERED.join('; ')}. When this server kept your pick list, \`award\` says what the ` +
+          "award of picks showed (as in warapp_plan_turn): the opponent's proven starts stand on the board the " +
+          'orders are tried on even while fogged, and `award.firstMover` is who moves first this turn under a ' +
+          'cyclic move order — pass it as `first_mover` to judge by it; both orders are still tried by default. ' +
+          `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on ` +
           'war.app; it never submits orders.',
       ),
       _meta: lookupMeta(['check my plan', 'stress test my orders', 'what can my opponent do to this turn', 'is this plan safe']),
@@ -114,7 +119,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const turn = currentTurn(game);
       const [{ territories, info }, history] = await Promise.all([loadLiveGame(ctx, game), boardHistory(ctx, game, me, turn)]);
       const graph = graphOf(map);
-      const board = boardStateFromLive(territories, me, game.players);
+      // As warapp_plan_turn does (#166): the opponent's starts the award of picks proves stand on
+      // the board the orders are tried on; the history and tracks stay what war.app showed.
+      const seen = boardStateFromLive(territories, me, game.players);
+      const award = await loadAward(ctx.dataDir, game, me, seen, turn);
+      const board = award?.board ?? seen;
       const settings = plannerSettings(game.settings);
 
       const deploys: { territoryId: number; armies: number }[] = [];
@@ -146,7 +155,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // The same per-opponent estimates warapp_plan_turn works from.
       const tracks =
         turn !== null
-          ? trackOpponents(graph, [...history.boards, { turn, board }], me.id, settings, trackGame(game.players, game.settings, map))
+          ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
           : undefined;
       const estimates = enemyDeployEstimates(graph, board, me.id, settings, history.previous?.board, tracks);
       const myTeam = carriesTeam(me.team) ? me.team : undefined;
@@ -284,6 +293,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const income = incomeFor(graph, board, me.id, game.settings);
       const deployed = deploys.reduce((n, d) => n + d.armies, 0);
       const warnings = [
+        ...(award ? assumedWarning(award) : []),
         ...(deployed !== income
           ? [
               `The orders deploy ${deployed} and your income is ${income}: the test used the orders as given (a Reinforcement card adds to the income; otherwise war.app refuses a wrong total).`,
@@ -299,6 +309,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         summary,
         exact: report.exact,
         firstMover: first_mover ?? 'unknown',
+        // #166: what the award of picks showed, the move order it implies included (absent with no pick list kept).
+        ...(award ? { award: awardView(award, game, turn, name) } : {}),
         orderPriority,
         income,
         deployed,
