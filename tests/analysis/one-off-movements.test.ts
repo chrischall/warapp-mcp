@@ -175,6 +175,39 @@ describe('3. a visible transfer is not a trend (#123)', () => {
   });
 });
 
+describe('1b. deploy-then-capture with my orders measuring the turn (#123, #119)', () => {
+  // Section 1's board plus an edge T1 – T4: I attacked its T4 with 2 from T1 and failed, killing
+  // round(1.2) = 1 that the boards alone do not show. The measured reading must still count the
+  // surplus on T3 as deploy, not as a stack out of the fog.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5],
+      [
+        [1, 2],
+        [1, 4],
+        [2, 3],
+        [3, 4],
+        [3, 5],
+      ],
+      [[901, 5, [5]]],
+    ),
+  );
+  const before = board([mine(1, 5), mine(2, 5), neutral(3, 3), enemy(4, 6), fogged(5)]);
+  const after = board([mine(1, 5), mine(2, 5), enemy(3, 11), enemy(4, 1), fogged(5)]);
+
+  it('keeps the deploy on the reinforced capture and adds what my orders measured', () => {
+    const blind = trackOpponents(g, history([3, before], [4, after]), ME, STD);
+    expect(blind[0]!.turns[0]).toMatchObject({ raw: 8, low: 2, high: 8, reinforced: [3], fromFog: [] });
+    const [t] = trackOpponents(
+      g,
+      [{ turn: 3, board: before, orders: { deploys: [], moves: [{ from: 1, to: 4, armies: 2 }] } }, { turn: 4, board: after }],
+      ME,
+      STD,
+    );
+    expect(t!.turns[0]).toMatchObject({ measured: 1, raw: 9, observed: 9, low: 3, high: 9, reinforced: [3], fromFog: [] });
+  });
+});
+
 describe('4. taking a territory I emptied (#123)', () => {
   // T1 (neutral) – T2 (mine, 30) – T3 (enemy, 5) – T4 (enemy, 2) – T5 (fogged; +30 bonus {4, 5}
   // it could hold). I sent 29 from T2 into T1 and took it; it deployed 5 on T3 (10) and took T2
@@ -275,7 +308,12 @@ describe('6b. inferred bonuses on the 761-territory fixture (#123)', () => {
     const g = buildGraph(map);
     // Its one territory in view, every neighbour mine; the rest of the map fogged. It deploys 11
     // a turn there (base 5 + a gap of 6).
-    const t = map.territories[0]!.id;
+    // A territory in a positive bonus it does not hold alone, so there are bonuses within reach
+    // and its visible income stays the base (the map's first territory has no bonus within 4
+    // hops, which let this test pass with nothing listed).
+    const t = map.territories.find((x) =>
+      map.bonuses.some((b) => b.value > 0 && b.territoryIds.length > 1 && b.territoryIds.includes(x.id)),
+    )!.id;
     const ns = g.neighbors.get(t)!;
     const at = (armies: number) =>
       board(
@@ -297,6 +335,9 @@ describe('6b. inferred bonuses on the 761-territory fixture (#123)', () => {
     }
     const near = (bonusId: number) => map.bonuses.find((b) => b.id === bonusId)!.territoryIds.some((x) => hops.has(x));
     for (const c of track!.inferred!.candidates) for (const b of c.bonusIds) expect(near(b)).toBe(true);
+    // Something fits (the filter does not just exclude everything), but far from every bonus.
+    expect(track!.inferred!.candidates.length + track!.inferred!.more).toBeGreaterThan(0);
     expect(track!.inferred!.candidates.length + track!.inferred!.more).toBeLessThan(1000);
+    expect(track!.inferred!.implausible).toBeGreaterThan(0);
   });
 });

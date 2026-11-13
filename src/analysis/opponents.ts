@@ -593,6 +593,9 @@ export function measureOrders(
  * round(its shrink × offensive ÷ defensive kill rate) — the armies a failed attack that cost the
  * neighbour that many killed. Mine are left out when my orders measured the turn (`measuredMe`).
  * The board cannot tell a fight from a transfer: only the unexplained armies use it.
+ * The ratio is a heuristic: a failed attack's real loss runs from about 0.6x to 1.43x the
+ * attacker's shrink, depending on how many attacked; offensive ÷ defensive (about 0.86x at the
+ * defaults) sits inside that range and needs only the two shrinks the boards show.
  */
 function combatLosses(
   g: MapGraph,
@@ -636,6 +639,8 @@ function combatLosses(
  * by ids. Only plausible bonuses take part (#123): a member within {@link INFER_REACH} hops of a
  * territory it visibly holds, and a combination costing no more than `budget` (what it could
  * have received). When more than {@link MAX_LISTED_COMBINATIONS} fit, none is listed.
+ * The cost rarely binds: at one army per member against its income every turn so far, after a
+ * few turns only a very large bonus is ruled out. The reach filter does most of the work.
  */
 function inferBonuses(all: readonly PossibleBonus[], gap: number, budget: number): InferredBonuses {
   const tolerance = Math.max(1, Math.round(gap / 4));
@@ -783,7 +788,9 @@ export function trackOpponents(
       // My own orders that turn, when known, are measurements (#119).
       const orders = ordersOn.get(from);
       const measured = orders ? measureOrders(g, before, after, me, playerId, orders, settings) : 0;
-      const context = { me, guard, ...(o.expected !== null ? { expected: o.expected } : {}) };
+      // The same context the board-only reading used (#123): without `most`, the surplus on a
+      // reinforced capture would be read as a move out of the fog again.
+      const context = { me, guard, most: e.observedCap!, ...(o.expected !== null ? { expected: o.expected } : {}) };
       const raw = measured ? Math.max(0, observeSigned(g, after, before, playerId, settings, context).signed + measured) : e.observedRaw!;
       const losses = Math.max(0, change.losses + measured);
       // #123: with my orders known, what stood on an emptied capture is measured: no high reading.
