@@ -284,6 +284,26 @@ describe('a territory interior only once a capture lands keeps a hold until then
   });
 });
 
+describe('under No-Split a territory interior only once a capture lands sends nothing (#128, #124)', () => {
+  // 1 (mine, a +12 singleton, 8) beside 2 (player 20's last territory, 1); 7 (mine, 15) finishes
+  // player 20 off from the other side. 1 - 3 (mine, 15) - 4 (player 30, 10). Taking 2 makes 1
+  // interior, but until it lands 1 keeps 4 against player 20's ~5 deploy.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 6, 7], [[1, 2], [1, 3], [3, 4], [3, 6], [2, 7]], [[101, 12, [1]]]));
+  const b = board([mine(1, 8), player(2, 1, 20), mine(3, 15), player(4, 10, 30), neutral(6, 2), mine(7, 15)]);
+  const at = (noSplit: boolean) =>
+    planTurn({ graph: g, board: b, me: ME, income: 5, settings: { ...STD, noSplit }, game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 6 }, options: { adapt: true } });
+  it('without No-Split only the armies beyond the hold leave', () => {
+    const p = at(false);
+    expect(p.moves.filter((m) => m.from === 1)).toEqual([expect.objectContaining({ to: 3, armies: 4, kind: 'transfer' })]);
+  });
+  it('under No-Split a transfer sends the whole stack, so none is sent and the hold stays', () => {
+    const p = at(true);
+    expect(attacksOn(p, 2).length).toBe(1);
+    expect(p.moves.filter((m) => m.from === 1)).toEqual([]);
+    expect(p.rationale.join('\n')).toMatch(/Keep the 7 idle armies on T1 \(#1\): it is interior only once T2 \(#2\) falls, and until then they hold it against ~5/);
+  });
+});
+
 describe('R3 and the frontier count only the income the plan keeps (#128)', () => {
   // A (+5): 1 2, its border 1 facing an enemy 60-stack (conceded). B (+3): 5 mine, 6 a 2-army
   // neutral beside enemy 7 (14): completing B needs ~10 on 6 next turn.
