@@ -530,6 +530,9 @@ function mustPlayCard(hand: readonly Card[], rules: CardRules, shed: number, giv
 
 const cardView = (c: Card) => ({ id: c.id, name: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}) });
 
+/** Earlier turns that, when all cached, make the GameFeed history read unnecessary. */
+const TREND_TURNS = 2;
+
 /** My earlier boards of a game and the previous turn's board, as {@link boardHistory} reads them. */
 export interface BoardHistory {
   /** My views of turns before the one being played, oldest first (GameFeed history, else the cache). */
@@ -552,8 +555,10 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
       if (b.turn >= turn - CACHED_TURNS) byTurn.set(b.turn, { source: 'cache', board: b.board });
   // The cached boards are the live boards this server planned on (verified); GameFeed's history
   // standing for a game in progress is unverified. So history only fills turns the cache lacks,
-  // and is not fetched at all when the previous turn is cached (#131).
-  if (!byTurn.has(turn - 1)) {
+  // and is not fetched at all when the last {@link TREND_TURNS} turns are cached: the threat trend
+  // and tracked incomes (#94) need two earlier turns, not just the previous one (#131).
+  const recent = Array.from({ length: Math.min(TREND_TURNS, turn - 1) }, (_, i) => turn - 1 - i);
+  if (!recent.every((k) => byTurn.has(k))) {
     try {
       const withHistory = await ctx.client.getGame(game.id, { history: true });
       // Turn k is played on the board after k − 1 completed turns.

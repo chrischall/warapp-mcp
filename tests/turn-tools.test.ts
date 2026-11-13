@@ -568,7 +568,18 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(second.trendSource).toBe('cache');
     expect(second.warnings.join('\n')).toMatch(building(7, 12));
     expect(Object.keys((JSON.parse(readFileSync(cacheFile(dir), 'utf8')) as { turns: object }).turns)).toEqual(['3', '4']);
-    // The previous turn's verified board is cached: no history call (#131).
+    // Only one earlier turn is cached: history is still read for the turns the cache lacks (#131).
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(true);
+    await h.harness.close();
+
+    // Turn 5: turns 3 and 4 are both cached, so the trend has two verified turns — no history call.
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '4' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(grown) }),
+    });
+    const third = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(third.trendSource).toBe('cache');
     expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
   });
 
