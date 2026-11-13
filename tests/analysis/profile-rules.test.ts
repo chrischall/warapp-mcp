@@ -204,7 +204,8 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
   });
 
   it('still breaks when no neutral capture of similar value exists', () => {
-    // The neutral is worth +1 (1 / 3 per army, under half of the break's 1.33).
+    // The neutral is worth +1 (1 / 3 per army). The break is worth +12 so that, after paying
+    // for the enemy-facing border T5 adds (#71), it still earns more than twice that.
     const g1 = buildGraph(
       makeMap(
         [1, 2, 5, 6, 9],
@@ -215,7 +216,7 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
         ],
         [
           [821, 1, [2]],
-          [822, 8, [5]],
+          [822, 12, [5]],
         ],
       ),
     );

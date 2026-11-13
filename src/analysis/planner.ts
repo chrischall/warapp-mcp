@@ -2678,8 +2678,13 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     return null;
   };
-  /** Captures rule 4d's budget stopped, with the frontier they would have left (for the warning). */
+  /**
+   * Captures rule 4d's budget stopped, with the frontier they would have left (for the warning;
+   * dropped, with their rationale lines, if a later pass takes them after all).
+   */
   const stopped: { t: number; holdCost: number; income: number }[] = [];
+  /** The start of rule 4d's rationale line for a stopped `t` (one per attempt that differed). */
+  const stoppedLine = (t: number) => `Do not take ${label(t)}: it adds a border facing an enemy without completing a bonus,`;
   /**
    * Rule 4d's frontier budget, judged with `t` just captured: under a guarded goal, a capture
    * that adds a border facing an enemy without completing a bonus (and not focused) is stopped
@@ -2697,8 +2702,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     const next = income + incomeGain(held);
     const start = startHold();
     if (f.holdCost <= next || f.holdCost <= start) return null;
+    const why = `${stoppedLine(t)} and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.`;
     if (!stopped.some((x) => x.t === t)) stopped.push({ t, holdCost: f.holdCost, income: next });
-    return `Do not take ${label(t)}: it adds a border facing an enemy without completing a bonus, and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.`;
+    return why;
   };
   /** Capture `t` for expansion, unless rule 4d's frontier budget stops it (then everything is undone). */
   const tryExpand = (t: number, reason: string): boolean => {
@@ -3977,9 +3983,17 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
   const startCost = startHold();
   const outgrown = frontier.holdCost > frontier.income && frontier.holdCost > startCost;
-  if (outgrown || stopped.length) {
-    const stop = stopped.length
-      ? ` Expansion that adds enemy borders without completing a bonus is stopped: ${stopped.map((x) => `${label(x.t)} (the frontier would need ${x.holdCost}, next income ${x.income})`).join(', ')} not taken.`
+  // A capture stopped by one pass but taken by a later one (the next income grew in between) is
+  // in the orders: nothing may still say it was not taken.
+  const notTaken = stopped.filter((x) => !captured.has(x.t));
+  const takenAfterAll = stopped.filter((x) => captured.has(x.t)).map((x) => stoppedLine(x.t));
+  if (takenAfterAll.length) {
+    const kept = rationale.filter((r) => !takenAfterAll.some((line) => r.startsWith(line)));
+    rationale.splice(0, rationale.length, ...kept);
+  }
+  if (outgrown || notTaken.length) {
+    const stop = notTaken.length
+      ? ` Expansion that adds enemy borders without completing a bonus is stopped: ${notTaken.map((x) => `${label(x.t)} (the frontier would need ${x.holdCost}, next income ${x.income})`).join(', ')} not taken.`
       : '';
     warnings.push(
       outgrown

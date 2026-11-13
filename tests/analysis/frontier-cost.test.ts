@@ -145,6 +145,25 @@ describe('frontier cost (#71): every capture pays for the frontier it adds', () 
     ]);
   });
 
+  it('a capture stopped early but taken by a later pass is not reported as stopped', () => {
+    // Bonus Front (+6: T3 and T8) and bonus Big (+2: T7 alone). Advancing Front first tries T3,
+    // which opens a border onto 5 and 6 (4 each) needing 6 next turn against the next income of
+    // 5: stopped. Completing Big then lifts the next income to 7, so pass 3 takes T3 after all.
+    // The orders take T3, so neither the "Do not take" line nor the warning may say otherwise.
+    const FG = buildGraph(
+      makeMap([1, 2, 3, 4, 5, 6, 7, 8], EDGES, [
+        [900, 'Front', 6, [3, 8]],
+        [901, 'Big', 2, [7]],
+      ]),
+    );
+    const b = board([mine(1, 30), mine(2, 1), neutral(3, 2), mine(4, 1), enemy(5, 4), enemy(6, 4), neutral(7, 4), neutral(8, 2)]);
+    const p = planTurn({ graph: FG, board: b, me: ME, income: 5, settings: STD, options: { enemyDeploy: 5 } });
+    expect(attacks(p).map((m) => m.to).sort()).toEqual([3, 7]);
+    expect(p.frontier).toEqual({ borders: 2, enemyBorders: 1, holdCost: 6, income: 7 });
+    expect(p.rationale.join('\n')).not.toMatch(/Do not take T3/);
+    expect(p.warnings.join('\n')).not.toMatch(/Frontier grows faster than income|not taken/);
+  });
+
   it('a focused bonus is never stopped by the frontier budget', () => {
     const FG = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7, 8], EDGES, [[900, 'Front', 1, [3, 8]]]));
     const b = board([mine(1, 30), mine(2, 1), neutral(3, 2), mine(4, 1), enemy(5, 20), enemy(6, 20), neutral(7, 40), neutral(8, 40)]);
