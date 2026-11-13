@@ -71,8 +71,10 @@ const g = buildGraph(
 const hiddenShapes: Record<string, (id: number) => TerritoryState> = {
   // The live board and its cache: owner unknown, armies null.
   fogged,
-  // StandingFogLevel 3 (OwnerOnly): the owner shows, the army count is a placeholder.
-  'owner-only': (id) => ({ territoryId: id, owner: { kind: 'player', playerId: ENEMY }, armies: 0, fogLevel: 'OwnerOnly' }),
+  // StandingFogLevel 3 (OwnerOnly): the owner shows, the armies do not.
+  'owner-only': (id) => ({ territoryId: id, owner: { kind: 'player', playerId: ENEMY }, armies: null, fogLevel: 'OwnerOnly' }),
+  // A board cache written before #69 left level 3 unnamed, with its placeholder army count.
+  'old cache level 3': (id) => ({ territoryId: id, owner: { kind: 'player', playerId: ENEMY }, armies: 0, fogLevel: '3' }),
   // A raw numeric fog level (GameFeed scalars are strings) over a neutral-looking placeholder.
   'numeric fog level': (id) => ({ territoryId: id, owner: { kind: 'neutral' }, armies: 2, fogLevel: '4' }),
 };
@@ -188,7 +190,7 @@ describe('fog reveals are not enemy income (#69)', () => {
     const p = planTurn({ graph: g, board: after, previousBoard: before, me: ME, income: 11, settings: STD });
     expect(p.enemyDeploy).toBe(35);
     expect(p.warnings.join('\n')).toMatch(
-      /player 20 was observed to deploy \+100\/turn, more than it could earn \(base 5 for its 5 visible territories \+ bonuses it could hold \+30 = 35\): capped at 35/,
+      /player 20 was observed to deploy \+100\/turn, more than it could earn on this board \(base 5 for its 5 visible territories \+ bonuses it could still hold \+30 = 35\): capped at 35\. Armies moved in from the fog, a Reinforcement card, or a bonus it has lost since may explain the rest\./,
     );
     // A bonus with a territory visibly held by someone else (here: neutral T11) is out of reach.
     const neutralEleven = board([...after.territories.filter((t) => t.territoryId !== 11), neutral(11, 2)]);
@@ -197,6 +199,35 @@ describe('fog reveals are not enemy income (#69)', () => {
     // Under the cap nothing is cut and nothing is said.
     const q = planTurn({ graph: g, board: now, previousBoard: previous(fogged), me: ME, income: 11, settings: STD });
     expect(q.warnings.join('\n')).not.toMatch(/capped at/);
+  });
+
+  it('a bonus with an owner-only territory held by someone else is out of reach for the cap', () => {
+    // Light fog: T11 shows owner-only as a third player's (armies hidden), so the enemy cannot
+    // hold the +30 bonus {10, 11}: its cap is its base alone.
+    const before = board([mine(1, 6), mine(2, 5), mine(3, 5), enemy(4, 3), enemy(5, 3), enemy(6, 3), enemy(7, 3), enemy(8, 3), mine(9, 4), fogged(10), fogged(11)]);
+    const after = board([
+      mine(1, 6), mine(2, 5), mine(3, 5), enemy(4, 23), enemy(5, 23), enemy(6, 23), enemy(7, 23), enemy(8, 23), mine(9, 4), fogged(10),
+      { territoryId: 11, owner: { kind: 'player', playerId: 30 }, armies: null, fogLevel: 'OwnerOnly' },
+    ]);
+    const e = enemyDeployEstimates(g, after, ME, STD, before).find((x) => x.playerId === ENEMY);
+    expect(e).toMatchObject({ observedRaw: 100, observedCap: 5, observed: 5 });
+    // A placeholder owner under full fog is not a holder: the bonus stays within reach.
+    const placeholder = board([
+      ...after.territories.filter((t) => t.territoryId !== 11),
+      { territoryId: 11, owner: { kind: 'neutral' }, armies: 2, fogLevel: '4' },
+    ]);
+    const [f] = enemyDeployEstimates(g, placeholder, ME, STD, before);
+    expect(f).toMatchObject({ observedCap: 35 });
+  });
+
+  it('a pre-#69 cached "OwnerOnly" entry with armies is fog level 2 (Visible), not a reveal', () => {
+    // The old cache named fog level 2 "OwnerOnly" and kept its real armies; new boards null an
+    // owner-only territory's armies, so a count beside "OwnerOnly" marks the old naming.
+    const old = (t: TerritoryState): TerritoryState => ({ ...t, fogLevel: 'OwnerOnly' });
+    const before = board([mine(1, 6), mine(2, 5), mine(3, 5), old(enemy(4, 3)), old(enemy(5, 3)), fogged(6), fogged(7), fogged(8), neutral(9, 2), fogged(10), fogged(11)]);
+    expect(observeDeploy(g, now, before, ENEMY)).toMatchObject({ deploy: 5, counted: [4, 5] });
+    const p = planTurn({ graph: g, board: now, previousBoard: before, me: ME, income: 11, settings: STD });
+    expect(p.warnings.join('\n')).toMatch(/T5 \(#5\) is building|T4 \(#4\) is building/);
   });
 
   it('owner-only territories count toward its visible income, whatever their armies', () => {
@@ -228,14 +259,14 @@ describe('fog reveals are not enemy income (#69)', () => {
       fogged(11),
     ]);
     const p = planTurn({ graph: g, board: after, previousBoard: before, me: ME, income: 11, settings: STD });
-    expect(p.warnings.join('\n')).toMatch(/\(base 5 for its 6 visible territories \+ bonuses it could hold \+30 = 35\): capped at 35/);
+    expect(p.warnings.join('\n')).toMatch(/\(base 5 for its 6 visible territories \+ bonuses it could still hold \+30 = 35\): capped at 35/);
   });
 
   it('the rationale names the turns compared and the territories counted vs skipped as reveals', () => {
     const p = planTurn({ graph: g, board: now, previousBoard: previous(fogged), me: ME, income: 11, settings: STD, turn: 15 });
     const r = p.rationale.join('\n');
     expect(r).toMatch(
-      /Observed deploy for player 20, turn 14 → turn 15: \+5\/turn over 2 territories visible on both boards \(0 captured\); 3 skipped as fog reveals \(T6 \(#6\), T7 \(#7\), T8 \(#8\)\)/,
+      /Observed deploy for player 20, turn 14 → turn 15: \+5\/turn over 2 territories visible on both boards \(0 captured\); 3 skipped as fog reveals \(T6 \(#6\), T7 \(#7\), T8 \(#8\)\): not shown with an owner and armies last turn \(fogged, armies hidden, or not yet picked\), so what they hold is not income\./,
     );
     // Without a turn number the boards are named instead.
     const q = planTurn({ graph: g, board: now, previousBoard: previous(fogged), me: ME, income: 11, settings: STD });

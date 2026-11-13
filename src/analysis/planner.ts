@@ -22,8 +22,8 @@
 //     armies there and what the previous owner held there). A territory hidden last turn
 //     (fogged, or under a fog level that hid its armies) is a fog reveal, never growth or a
 //     capture (issue #69). The observed figure is never cut by the stack cap, but is capped
-//     at what the opponent could earn: its base income plus every bonus none of whose
-//     territories someone else visibly holds (a warning says when). A rationale line names
+//     at what the opponent could earn on this board: its base income plus every bonus none of
+//     whose territories someone else visibly holds, owner-only included (a warning says when). A rationale line names
 //     the turns compared and the territories counted vs skipped as reveals; the warning
 //     names which source won.
 //     `options.enemyDeploy` overrides all of them. Always a warning.
@@ -542,9 +542,9 @@ export interface EnemyDeployEstimate {
   /** The observed deploy before the plausibility cap; `null` without a previous board. */
   observedRaw: number | null;
   /**
-   * The most it could have earned (issue #69): `base` plus every positive bonus it could
-   * possibly hold (none of its territories visibly held by someone else); `null` without a
-   * previous board.
+   * The most it could earn on this board (issue #69): `base` plus every positive bonus it could
+   * possibly hold (none of its territories visibly held by someone else, owner-only included);
+   * `null` without a previous board.
    */
   observedCap: number | null;
   /** Which territories the observation counted and skipped; `null` without a previous board. */
@@ -560,16 +560,32 @@ export interface EnemyDeployEstimate {
  * string).
  */
 const HIDDEN_FOG = /fog|owneronly|^\s*[34]\s*$/i;
+/** Fog levels that hide a territory's owner too (StandingFogLevel 4, Fogged). */
+const OWNER_HIDDEN_FOG = /fog|^\s*4\s*$/i;
 
 /**
  * `t` when a board shows both its owner (a player or a neutral) and its armies, else
  * `undefined`: a fogged territory (owner unknown, armies `null`), or one whose fog level hides
  * its armies even if a placeholder owner or count came with it (issue #69).
+ *
+ * One exception: an entry named `"OwnerOnly"` that still carries a count is fog level 2
+ * (Visible) from a board cache written before #69, which misnamed it; every current board nulls
+ * an owner-only territory's armies, and the old cache left level 3 unnamed (`"3"`).
  */
 export function visibleState(t: TerritoryState | undefined): TerritoryState | undefined {
   if (!t || t.armies === null) return undefined;
   if (t.owner.kind !== 'player' && t.owner.kind !== 'neutral') return undefined;
-  if (t.fogLevel !== undefined && HIDDEN_FOG.test(t.fogLevel)) return undefined;
+  if (t.fogLevel !== undefined && HIDDEN_FOG.test(t.fogLevel) && !/^\s*owneronly\s*$/i.test(t.fogLevel)) return undefined;
+  return t;
+}
+
+/**
+ * `t` when a board shows its owner (a player or a neutral), whatever its armies: visible, or
+ * owner-only (light fog); `undefined` when fogged, even under a placeholder owner.
+ */
+function ownerShown(t: TerritoryState | undefined): TerritoryState | undefined {
+  if (!t || (t.owner.kind !== 'player' && t.owner.kind !== 'neutral')) return undefined;
+  if (t.fogLevel !== undefined && OWNER_HIDDEN_FOG.test(t.fogLevel)) return undefined;
   return t;
 }
 
@@ -696,7 +712,9 @@ export function enemyDeployEstimates(
     const floor = Math.max(MIN_ENEMY_DEPLOY, base);
     const visible = opening ? floor : Math.max(floor, Math.min(base + bonusIncome, stackCap));
     // What it was seen to deploy is never cut by the stack cap, only by what it could earn
-    // (#69): its base plus every bonus none of whose territories someone else visibly holds.
+    // (#69): its base plus every bonus none of whose territories someone else visibly holds
+    // (an owner-only territory is visibly held: its owner shows). Both come from this board,
+    // so a bonus it lost since last turn is out, though it may have paid for that deploy.
     const observation = previous ? observeDeploy(g, board, previous, playerId) : null;
     let observedCap: number | null = null;
     if (observation) {
@@ -705,7 +723,7 @@ export function enemyDeployEstimates(
         const ts = bonusTerritories(g, b.id);
         if (b.value <= 0 || !ts.length) continue;
         const taken = ts.some((t) => {
-          const st = visibleState(seenNow.get(t));
+          const st = ownerShown(seenNow.get(t));
           return st !== undefined && !(st.owner.kind === 'player' && st.owner.playerId === playerId);
         });
         if (!taken) possible += b.value;
@@ -1130,11 +1148,11 @@ export function planTurn(input: PlanInput): TurnPlan {
           const shown = o.reveals.slice(0, MAX_NAMED_REVEALS).map(label).join(', ');
           const more = o.reveals.length > MAX_NAMED_REVEALS ? ` and ${o.reveals.length - MAX_NAMED_REVEALS} more` : '';
           rationale.push(
-            `Observed deploy for player ${p}, ${turns}: +${e.observedRaw}/turn over ${o.counted.length} territories visible on both boards (${o.captured.length} captured); ${o.reveals.length} skipped as fog reveals${o.reveals.length ? ` (${shown}${more})` : ''}: hidden last turn, so what they hold is not income.`,
+            `Observed deploy for player ${p}, ${turns}: +${e.observedRaw}/turn over ${o.counted.length} territories visible on both boards (${o.captured.length} captured); ${o.reveals.length} skipped as fog reveals${o.reveals.length ? ` (${shown}${more}): not shown with an owner and armies last turn (fogged, armies hidden, or not yet picked), so what they hold is not income` : ''}.`,
           );
           if (e.observedRaw! > e.observedCap!)
             warnings.push(
-              `player ${p} was observed to deploy +${e.observedRaw}/turn, more than it could earn (base ${e.base} for its ${e.held} visible territories + bonuses it could hold +${e.observedCap! - e.base} = ${e.observedCap}): capped at ${e.observedCap}. Armies moved in from the fog or a Reinforcement card may explain the rest.`,
+              `player ${p} was observed to deploy +${e.observedRaw}/turn, more than it could earn on this board (base ${e.base} for its ${e.held} visible territories + bonuses it could still hold +${e.observedCap! - e.base} = ${e.observedCap}): capped at ${e.observedCap}. Armies moved in from the fog, a Reinforcement card, or a bonus it has lost since may explain the rest.`,
             );
         }
         if (e.source === 'observed') {
