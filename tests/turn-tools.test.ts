@@ -993,6 +993,20 @@ describe('warapp_submit_turn', () => {
     expect(p.status).toBeDefined();
   });
 
+  it('error 11 after an `income` override names the income given, not a modelled one', async () => {
+    const s = ordersServer({ error: { code: 11, message: 'x' } });
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });
+    const SEVEN = [
+      { kind: 'deploy', territory: 159, armies: 7 },
+      { kind: 'move', from: 159, to: 158, armies: 8 },
+    ];
+    const res = await confirmed({ game_id: GAME, orders: SEVEN, income: 7 });
+    expect(res.isError).toBe(true);
+    const all = JSON.stringify(res);
+    expect(all).toMatch(/income given was 7/);
+    expect(all).not.toMatch(/modelled income was/);
+  });
+
   it('when the income model is uncertain (army cap), a deploy total that differs warns instead of refusing (#38)', async () => {
     const s = ordersServer();
     const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 3 };
@@ -1757,6 +1771,26 @@ describe('the submit preview sizes each attack (#130)', () => {
     expect(preview.preview.warnings?.join('\n')).toMatch(/cannot capture/);
   });
 
+  it('in a team game a transfer to a teammate is not listed as an attack, nor warned as one that cannot capture', async () => {
+    const players = (game('Playing').players as Array<Record<string, string>>).map((p, i) => (i < 2 ? { ...p, team: '0' } : p));
+    h = await liveHarness({
+      feed: [game('Playing', { settings: modelledSettings(), players })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const preview = payload<{ preview: { attacks?: unknown[] } }>(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 159, armies: 5 },
+          { kind: 'move', from: 159, to: 158, armies: 1 },
+        ],
+      }),
+    );
+    expect(preview.preview.attacks ?? []).toEqual([]);
+    expect(JSON.stringify(preview)).not.toMatch(/cannot capture/);
+  });
+
   it('a sure capture carries no warning; a transfer and a fogged target are not listed', async () => {
     h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const preview = payload<{ preview: { attacks?: Array<Record<string, unknown>> } }>(
@@ -1822,6 +1856,12 @@ describe('attackSizes: several attacks on one target are sized together (#130)',
     expect(attacks.every((a) => a.cannotCapture === true)).toBe(true);
   });
 
+  it('a move into a teammate\'s territory is a transfer, not an attack sized against their armies', () => {
+    const moves = [{ from: T(159), to: T(158), armies: 1 }];
+    expect(attackSizes(live, ANN.inGame, moves, {})).toHaveLength(1);
+    expect(attackSizes(live, ANN.inGame, moves, {}, new Set([BOB.inGame]))).toEqual([]);
+  });
+
   it('a single attack carries no combined field', () => {
     const [a] = attackSizes(live, ANN.inGame, [{ from: T(161), to: T(157), armies: 7 }], {});
     expect(a).not.toHaveProperty('combined');
@@ -1877,6 +1917,15 @@ describe('Multi-Attack in the turn tools (#130)', () => {
         multiAttack: true,
       });
     expect(call).toThrow(/not yours at the start of this turn.*\(157\)/);
+  });
+
+  it('counts armies moved in between two moves out of the same territory (attack, transfer in, attack again)', () => {
+    // 161 holds 3 + 5 deployed: 7 attack 157, then 5 arrive from 159 and 5 attack 158.
+    expect(run([[161, 157, 7], [159, 161, 5], [161, 158, 5]], true).warnings).toEqual([]);
+    // Without Multi-Attack the armies moved in do not move on this turn.
+    expect(() => run([[161, 157, 7], [159, 161, 5], [161, 158, 5]])).toThrow(/send 12 armies from .*\(161\).* at most 7/);
+    // Still bounded: only what arrived before the later move counts.
+    expect(() => run([[161, 157, 7], [161, 158, 5], [159, 161, 5]], true)).toThrow(/send 12 armies from .*\(161\).* at most 7/);
   });
 
   it('says the most a captured territory can send on is an upper bound', () => {

@@ -215,8 +215,10 @@ interface TurnState {
   turnNumber: number;
   orders: TurnOrder[];
   named: NamedOrder[];
-  /** The modelled income the deploys were checked against. */
+  /** The income the deploys were checked against: modelled, or the caller's own `income`. */
   income: number;
+  /** True when that income is the caller's `income` override, not the model. */
+  incomeGiven?: boolean;
 }
 
 /**
@@ -224,12 +226,13 @@ interface TurnState {
  * number. The live board carries no income figure — war.app's client computes it
  * from the standing — so its own number is the "armies per turn" the game shows.
  */
-function incomeRefused(e: WarappServerError, income: number): McpToolError {
+function incomeRefused(e: WarappServerError, income: number, given = false): McpToolError {
   return new McpToolError(e.message, {
     kind: 'unknown',
     cause: e,
     hint:
-      `The modelled income was ${income}, and war.app counts differently this turn. Nothing was committed: read the ` +
+      `The ${given ? 'income given was' : 'modelled income was'} ${income}, and war.app counts differently this turn. ` +
+      'Nothing was committed: read the ' +
       '"armies per turn" the game shows (the deploy panel), deploy exactly that, and resend with it as `income` — ' +
       'the deploy-total check then uses that number instead of the model.',
   });
@@ -288,8 +291,10 @@ export function validateTurn(args: {
   /**
    * Multi-Attack: armies that move into a territory (a capture or a transfer) may move on from it
    * later in the same list (#130). A source not mine at the start of the turn is accepted when
-   * an earlier move targets it, and sends at most what moved in before it — an upper bound, since
-   * an attack's survivors are fewer than the armies sent. Deploys still need a territory held at
+   * an earlier move targets it. Each move out is checked, in list order, against the source's
+   * armies, its deploys and every army moved in earlier in the list (so an attack, a transfer in
+   * and another attack from one territory is fine) — an upper bound, since an attack's survivors
+   * are fewer than the armies sent. Deploys still need a territory held at
    * the start of the turn: they land before any attack.
    */
   multiAttack?: boolean;
@@ -312,15 +317,15 @@ export function validateTurn(args: {
     const t = standing.get(id);
     return t !== undefined && !t.fogged && t.owner === myInGameId;
   };
-  // Armies moved into each territory before its first move out (Multi-Attack chains on with them).
-  const inflow = new Map<number, number>();
+  // Under Multi-Attack a territory not mine at the start may move on once a move earlier in the list went in.
   const chained = new Set<number>();
   if (args.multiAttack) {
+    const reached = new Set<number>();
     const movedOut = new Set<number>();
     for (const m of moves) {
-      if (!mine(m.from.id) && inflow.has(m.from.id)) chained.add(m.from.id);
+      if (!mine(m.from.id) && !movedOut.has(m.from.id) && reached.has(m.from.id)) chained.add(m.from.id);
       movedOut.add(m.from.id);
-      if (!movedOut.has(m.to.id)) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + m.armies);
+      reached.add(m.to.id);
     }
   }
   // Deploys land before any attack, so only a move's source may be a territory captured earlier in the list.
@@ -412,23 +417,28 @@ export function validateTurn(args: {
       }
     }
   }
-  const out = new Map<number, { from: { id: number; name: string }; armies: number }>();
+  // Walk the moves in order: each source's total sent so far against its armies, its deploys and,
+  // under Multi-Attack, every army moved in earlier in the list (an attack, a transfer in, then
+  // another attack is fine). Without Multi-Attack, armies moved in do not move on this turn.
+  const sent = new Map<number, number>();
+  const inflow = new Map<number, number>();
+  let over: { from: { id: number; name: string }; armies: number; max: number } | undefined;
   for (const m of moves) {
-    const o = out.get(m.from.id) ?? { from: m.from, armies: 0 };
-    o.armies += m.armies;
-    out.set(m.from.id, o);
+    const armies = (sent.get(m.from.id) ?? 0) + m.armies;
+    sent.set(m.from.id, armies);
+    const start = chained.has(m.from.id) ? 0 : (standing.get(m.from.id)?.armies ?? 0) + (deployedOn.get(m.from.id) ?? 0);
+    const max = start + (inflow.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
+    if (armies > max && !over) over = { from: m.from, armies, max };
+    if (args.multiAttack) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + m.armies);
   }
-  for (const { from, armies } of out.values()) {
-    const start = chained.has(from.id) ? 0 : (standing.get(from.id)?.armies ?? 0) + (deployedOn.get(from.id) ?? 0);
-    const max = start + (inflow.get(from.id) ?? 0) - (args.guard ? 1 : 0);
-    if (armies > max) {
-      throw new McpToolError(
-        `These orders send ${armies} armies from ${label(from)}, which can send at most ${max} this turn` +
-          `${args.guard ? ' (one army stands guard)' : ''}` +
-          `${inflow.has(from.id) ? '; that counts every army moved in, an upper bound: an attack\'s survivors are fewer' : ''}.`,
-        { hint: 'A territory sends at most its armies plus what is deployed there this turn.' },
-      );
-    }
+  if (over) {
+    const { from, armies, max } = over;
+    throw new McpToolError(
+      `These orders send ${armies} armies from ${label(from)}, which can send at most ${max} this turn` +
+        `${args.guard ? ' (one army stands guard)' : ''}` +
+        `${inflow.has(from.id) ? '; that counts every army moved in earlier in the list, an upper bound: an attack\'s survivors are fewer' : ''}.`,
+      { hint: 'A territory sends at most its armies plus what is deployed there this turn.' },
+    );
   }
   // No-Split moves the whole stack (#124: the wiki, and a live turn that left every source at 0):
   // an order for fewer armies still sends them all, so say what will actually move.
@@ -471,7 +481,7 @@ export interface AttackSize {
 
 /**
  * Each move into a territory that is not mine and is visible, sized against what stands there
- * now: a transfer and a fogged target are left out. Several moves into one target (a
+ * now: a transfer (to my own or a teammate's territory) and a fogged target are left out. Several moves into one target (a
  * multi-source capture) are sized together, so a leg too small on its own is not flagged when
  * the legs capture together.
  */
@@ -480,12 +490,13 @@ export function attackSizes(
   myInGameId: number,
   moves: ReadonlyArray<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number }>,
   settings: PlannerSettings,
+  teammates: ReadonlySet<number> = new Set(),
 ): AttackSize[] {
   const standing = new Map(board.map((t) => [t.territoryId, t]));
   const off = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
   const attacks = moves.filter((m) => {
     const t = standing.get(m.to.id);
-    return t !== undefined && !t.fogged && t.owner !== myInGameId;
+    return t !== undefined && !t.fogged && t.owner !== myInGameId && !teammates.has(t.owner);
   });
   const together = new Map<number, { attacks: number; armies: number }>();
   for (const m of attacks) {
@@ -1116,7 +1127,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             });
             if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
             if (handUnknown) warnings.push(UNREADABLE_HAND);
-            const attacks = attackSizes(territories, playerId, moves, plannerSettings(game.settings));
+            // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
+            const teammates = new Set(
+              me.team !== undefined && me.team >= 0
+                ? game.players.filter((p) => p !== me && p.team === me.team).map((p) => inGameId(p))
+                : [],
+            );
+            const attacks = attackSizes(territories, playerId, moves, plannerSettings(game.settings), teammates);
             const hopeless = attacks.filter((a) => a.cannotCapture);
             if (hopeless.length) {
               warnings.push(
@@ -1171,6 +1188,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 orders: send,
                 named,
                 income,
+                ...(givenIncome !== undefined ? { incomeGiven: true } : {}),
               } satisfies TurnState,
             };
           },
@@ -1187,7 +1205,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               );
             } catch (e) {
               // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.
-              if (e instanceof WarappServerError && e.code === 11) throw incomeRefused(e, st.income);
+              if (e instanceof WarappServerError && e.code === 11) throw incomeRefused(e, st.income, st.incomeGiven);
               if (e instanceof WarappServerError) throw e;
               return {
                 status: 'unknown' as const,

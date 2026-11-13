@@ -85,7 +85,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   completed count is `turnsCompleted` (#130). It always acts as the signed-in account (refuses any other
   `player`, and refuses when that account cannot be determined), validates on the live board
   (own deploys and sources — under Multi-Attack a move, never a deploy, may also go from a territory an
-  earlier move in the list enters, sending at most what moved in − 1, an upper bound — adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
+  earlier move in the list enters; each move out counts the armies moved in earlier in the list, an upper
+  bound — adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
   the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a
   setting the income model does not compute, e.g. an army cap; after an error 11 the caller passes
   the game's own number as `income`, which replaces the model for the check), and refuses outside a turn phase or when my
