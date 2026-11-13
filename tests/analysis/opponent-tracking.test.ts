@@ -152,13 +152,28 @@ describe('trackOpponents', () => {
 
   it('counts captures and losses it was seen to make', () => {
     // Turn 3 → 4: T3 (12) takes my T2 (5 there) and leaves 8 on it, 3 behind. Net over the
-    // territories seen both turns (3 − 12) + 8 = −1; the capture cost about 5: observed 4.
-    // It earned its base 5, so 5 − (−1) − 5 = 1 army went unseen.
+    // territories seen both turns (3 − 12) + 8 = −1. The capture cost what my 5 defenders kill
+    // at the 70% defensive rate, round(3.5) = 4 (#86's attrition rule, as observeDeploy):
+    // observed −1 + 4 = 3 (12 + 3 deployed, 12 attack, 4 die, 8 stand). It earned its base 5,
+    // so 5 − (−1) − 4 = 2 armies went unseen.
     const before = board([mine(1, 5), mine(2, 5), enemy(3, 12), enemy(4, 2), enemy(5, 2), ...FOG]);
     const after = board([mine(1, 5), enemy(2, 8), enemy(3, 3), enemy(4, 2), enemy(5, 2), ...FOG]);
     const [t] = trackOpponents(g, history([3, before], [4, after]), ME, STD);
-    expect(t!.turns[0]).toMatchObject({ observed: 4, net: -1, losses: 5, earned: 5, captured: [2] });
-    expect(t!.unaccounted).toBe(1);
+    expect(t!.turns[0]).toMatchObject({ observed: 3, net: -1, losses: 4, earned: 5, captured: [2], fromFog: [] });
+    expect(t!.unaccounted).toBe(2);
+  });
+
+  it('a capture out of the fog (#86) counts its attrition, not the stack, and the stack leaves the fog', () => {
+    // Turn 3 → 4: a 14-army stack from fogged T11 takes my T1 (5 there) and stands 10 on it.
+    // No visible territory of it shrank, so the 10 arrived from the fog: a move, not income.
+    // Observed = the capture's cost only, round(5 × 0.7) = 4 — never the 10 standing there.
+    // The 10 came into view, so they are no longer fog armies: 5 − 10 − 4 < 0 → 0 unaccounted.
+    const before = board([mine(1, 5), mine(2, 5), enemy(3, 10), enemy(4, 2), enemy(5, 2), ...FOG]);
+    const after = board([enemy(1, 10), mine(2, 5), enemy(3, 10), enemy(4, 2), enemy(5, 2), ...FOG]);
+    const [t] = trackOpponents(g, history([3, before], [4, after]), ME, STD);
+    expect(t!.turns[0]).toMatchObject({ observed: 4, net: 10, losses: 4, earned: 5, captured: [1], fromFog: [1] });
+    expect(t!.unaccounted).toBe(0);
+    expect(t!.notes.join(' ')).toMatch(/1 capture out of the fog on turn 3/);
   });
 
   it('fog reveals are not counted (F1): stacks that come into view are neither deploy nor fog armies', () => {

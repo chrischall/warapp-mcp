@@ -48,7 +48,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
         player: playerArg,
         view: viewArg(
           VIEWS,
-          'compact (default) gives each opponent\'s per-turn deploys, income, unaccounted armies, inferred bonuses and notes; "full" adds the territories each turn counted, captured and skipped as fog reveals, and its army change and losses.',
+          'compact (default) gives each opponent\'s per-turn deploys, income, unaccounted armies, inferred bonuses and notes; "full" adds the territories each turn counted, captured (and which captures came out of the fog) and skipped as fog reveals, and its army change and losses.',
         ),
       }),
     },
@@ -83,6 +83,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
             ? {
                 counted: x.counted.map(name),
                 captured: x.captured.map(name),
+                fromFog: x.fromFog.map(name),
                 reveals: x.reveals.map(name),
                 armyChange: x.net,
                 losses: x.losses,

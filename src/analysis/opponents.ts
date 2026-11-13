@@ -3,8 +3,11 @@
 //
 // Every turn pair is read with F1's rules (#69, `observeDeploy`): only territories visible on
 // both boards count, so a stack that comes out of the fog is never deploy, never a capture and
-// never "armies that moved into the fog". From the per-turn observations:
-//  - income: the median of the last {@link MEDIAN_TURNS} observed deploys, floored at what it
+// never "armies that moved into the fog". A capture out of the fog (#86, `fromFog`) counts
+// what it cost (the defenders' kills at the defensive kill rate), never the stack standing
+// there: that stack moved, it is not income. From the per-turn observations:
+//  - income (visible income is the one income rule, `boardIncome`, via enemyDeployEstimates):
+//    the median of the last {@link MEDIAN_TURNS} observed deploys, floored at what it
 //    visibly earns on the newest board (base income + the bonuses it visibly holds in full);
 //  - unaccounted armies: the income it earned since first seen (each turn: what it visibly
 //    earned, or what it was seen to deploy when more) minus the change of its visible armies
@@ -15,6 +18,7 @@
 //    they are candidates, never an assertion.
 import type { BoardState } from '../board.js';
 import { bonusTerritories } from './bonuses.js';
+import { DEFAULT_DEFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import type { MapGraph } from './graph.js';
 import { enemyDeployEstimates, ownerShown, visibleState, type PlannerSettings } from './planner.js';
 
@@ -47,6 +51,8 @@ export interface ObservedTurn {
   counted: number[];
   /** Of `counted`, those it took from another visible owner. */
   captured: number[];
+  /** Of `captured`, those taken (at least partly) out of the fog (#86): only their cost is deploy. */
+  fromFog: number[];
   /** Its territories on the later board that the earlier one did not show: fog reveals. */
   reveals: number[];
   /** Base income + visibly held bonuses on the earlier board: what it surely earned that turn. */
@@ -55,7 +61,10 @@ export interface ObservedTurn {
   earned: number;
   /** Change of its armies over territories visible on both boards (held on either). */
   net: number;
-  /** Armies it visibly lost: on territories taken from it, and what its captures cost. */
+  /**
+   * Armies it visibly lost: whole stacks on territories taken from it, and what its captures
+   * cost (the defenders' kills at the defensive kill rate, as observeDeploy counts them).
+   */
   losses: number;
 }
 
@@ -112,7 +121,7 @@ function median(xs: number[]): number {
 }
 
 /** Its army change over territories visible on both boards, and what it visibly lost. */
-function armyChange(g: MapGraph, before: BoardState, after: BoardState, playerId: number) {
+function armyChange(g: MapGraph, before: BoardState, after: BoardState, playerId: number, defensive: number) {
   const was = new Map(before.territories.map((t) => [t.territoryId, t]));
   const ids = [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum);
   let net = 0;
@@ -127,8 +136,10 @@ function armyChange(g: MapGraph, before: BoardState, after: BoardState, playerId
     const mineThen = b.owner.kind === 'player' && b.owner.playerId === playerId;
     if (mineNow && mineThen) net += a.armies! - b.armies!;
     else if (mineNow) {
+      // The stack now standing there came into view (from a visible source or the fog): it
+      // counts in `net`; the capture cost what the defenders killed, as in observeDeploy (#86).
       net += a.armies!;
-      losses += b.armies!; // what the capture roughly cost it, as in observeDeploy
+      losses += straightKills(b.armies!, defensive);
     } else if (mineThen) {
       net -= b.armies!;
       losses += b.armies!; // destroyed defending
@@ -262,7 +273,13 @@ export function trackOpponents(
       const o = e.observation;
       const v = visibleAt(from).get(playerId);
       const visibleIncome = v ? v.base + v.bonusIncome : 0;
-      const { net, losses } = armyChange(g, before, after, playerId);
+      const { net, losses } = armyChange(
+        g,
+        before,
+        after,
+        playerId,
+        settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
+      );
       observed.push({
         from,
         to,
@@ -271,6 +288,7 @@ export function trackOpponents(
         cap: e.observedCap!,
         counted: o.counted,
         captured: o.captured,
+        fromFog: o.fromFog,
         reveals: o.reveals,
         visibleIncome,
         earned: Math.max(visibleIncome, e.observed!),
@@ -312,6 +330,13 @@ export function trackOpponents(
       );
     const reveals = observed.reduce((s, x) => s + x.reveals.length, 0);
     if (reveals) notes.push(`${reveals} fog reveal${reveals === 1 ? '' : 's'} skipped: stacks that only came into view are not income.`);
+    const fogCaptures = observed.filter((x) => x.fromFog.length);
+    if (fogCaptures.length) {
+      const n = fogCaptures.reduce((s, x) => s + x.fromFog.length, 0);
+      notes.push(
+        `${n} capture${n === 1 ? '' : 's'} out of the fog on turn ${fogCaptures.map((x) => x.from).join(', ')}: only what ${n === 1 ? 'it' : 'they'} cost counts as deploy; the stack moved in from the fog.`,
+      );
+    }
     if (observed.length)
       notes.push(
         'Observed deploys are lower bounds: armies moved into the fog and losses in failed attacks are unseen, and the fog may hide territories and bonuses.',

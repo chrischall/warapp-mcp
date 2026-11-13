@@ -125,6 +125,7 @@ describe('warapp_track_opponents', () => {
     const full = payload<TrackPayload>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann', view: 'full' }));
     const compact = payload<TrackPayload>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann' }));
     expect(full.opponents[0]!.observed[0]).toHaveProperty('reveals');
+    expect(full.opponents[0]!.observed[0]).toHaveProperty('fromFog');
     expect(compact.opponents[0]!.observed[0]).not.toHaveProperty('reveals');
   });
 
