@@ -153,7 +153,7 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
                 willSend: { game: gameId },
                 preview: {
                   warning,
-                  game: { id: gameId, name: untrustedText(name), state: game.state, turn: 1 },
+                  game: { id: gameId, name: game.name === undefined ? null : untrustedText(game.name), state: game.state, turn: 1 },
                   untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },

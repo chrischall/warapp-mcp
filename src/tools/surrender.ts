@@ -153,7 +153,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                   warning: takeBack
                     ? `This will take back your pending surrender in game ${gameId}.`
                     : `This ENDS your game ${gameId} — you lose it and cannot rejoin.`,
-                  game: { id: gameId, name: untrustedText(name), state: game.state, playersStillIn: players },
+                  game: { id: gameId, name: game.name === undefined ? null : untrustedText(game.name), state: game.state, playersStillIn: players },
                   ...(takeBack || players <= 2
                     ? {}
                     : { note: 'With more than two players, the others must accept the surrender before it ends your game.' }),

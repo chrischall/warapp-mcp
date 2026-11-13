@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { MAX_PAGE_CHARS, parseCommonGames, parseProfile } from '../src/scout.js';
+import { ANCHOR_CASES } from './scout-cases.js';
 
 /**
  * skills/warapp-api/references/scout.mjs — the dependency-free twin of
@@ -48,10 +49,17 @@ describe('scout.mjs profile', () => {
     ['an unrelated page (a sign-in form)', '<html><title>Sign in</title><body><form></form></body></html>'],
     ['a page whose owner-written text imitates the stat blocks', SPOOF],
     ['a page larger than the size cap', `${PROFILE}<!-- ${'x'.repeat(MAX_PAGE_CHARS)} -->`],
+    ...ANCHOR_CASES.map(([what, html]) => [what, html] as [string, string]),
   ])('matches the server parser on %s', (_what, html) => {
     const r = scout(['profile'], html);
     expect(r.code, r.stderr).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual(parseProfile(html));
+  });
+
+  it.each(ANCHOR_CASES)('anchors to the label rows: %s', (_what, html, expected) => {
+    const r = scout(['profile'], html);
+    expect(r.code, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject(expected);
   });
 
   it('never prints location, email or any other personal field', () => {

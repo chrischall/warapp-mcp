@@ -24,6 +24,7 @@ import {
   turnsCompleted,
   UNTRUSTED_PREVIEW_NOTE,
   untrustedDescription,
+  UNTRUSTED_LIST_MAX,
   untrustedList,
   untrustedText,
   viewArg,
@@ -356,7 +357,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
             });
             if (unpickable.length) {
               throw new McpToolError(
-                `Not pickable on the live board: ${untrustedList(unpickable, 10, (t) => `${untrustedText(t.name)} (${t.id})`)}.`,
+                `Not pickable on the live board: ${untrustedList(unpickable, UNTRUSTED_LIST_MAX, (t) => `${untrustedText(t.name)} (${t.id})`)}.`,
                 {
                   hint:
                     game.state === 'DistributingTerritories'

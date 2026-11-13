@@ -5,9 +5,7 @@
 
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { Bonus, GameMap, Player, Territory } from '../normalize.js';
-import { untrustedList, untrustedText } from './common.js';
-
-const SHOW = 10;
+import { UNTRUSTED_LIST_MAX, untrustedList, untrustedText } from './common.js';
 
 function pick<T extends { id: number; name: string }>(items: readonly T[], input: string | number, what: string): T {
   const raw = String(input).trim();
@@ -28,7 +26,7 @@ function pick<T extends { id: number; name: string }>(items: readonly T[], input
   }
   throw new McpToolError(
     `${JSON.stringify(raw)} matches ${hits.length} ${what === 'territory' ? 'territories' : `${what}${what.endsWith('s') ? 'es' : 's'}`}: ` +
-      `${untrustedList(hits, SHOW, label)}.`,
+      `${untrustedList(hits, UNTRUSTED_LIST_MAX, label)}.`,
     { hint: `Pass the id of the one you mean.` },
   );
 }
@@ -44,7 +42,7 @@ export function resolveBonus(map: GameMap, input: string | number): Bonus {
 /** A player by id or name; with no input, an error listing who to choose from. */
 export function resolvePlayer(players: readonly Player[], input: string | number | undefined): Player {
   if (input === undefined || String(input).trim() === '') {
-    const list = untrustedList(players, SHOW, (p) => `${untrustedText(p.name)} (${p.id})`);
+    const list = untrustedList(players, UNTRUSTED_LIST_MAX, (p) => `${untrustedText(p.name)} (${p.id})`);
     throw new McpToolError(`Say which player to analyze the board for: ${list || 'the game lists no players'}.`, {
       hint: 'Pass `player` as a name or id — usually your own war.app name.',
     });

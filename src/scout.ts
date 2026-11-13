@@ -12,6 +12,16 @@
 // parsing is linear in the page); and each stat is read only from its own block,
 // where the page lays it out, never from the first place its wording appears.
 // A value of the wrong shape is null.
+//
+// The anchor is war.app's own label markup (`<font class="text-muted">Joined:</font>
+// value<br>`), which a player cannot write: Played is the one whole `<div>` worded
+// "Played in …" straight after a run of label rows, Level the whole block straight
+// before them, Last seen and Booted the whole blocks straight after Played. No
+// such block, or two, reads as null for all four. What this still relies on (the
+// layout is not verified live): the page has at least one label row between the
+// Level and Played blocks, and no player-written block sits directly before that
+// run (in place of a missing Level block) or directly after Played (in place of
+// a missing Last seen or Booted block).
 
 import { McpToolError } from '@chrischall/mcp-utils';
 
@@ -73,6 +83,8 @@ const CELL_WINDOW = 2048;
 /** Label rows (Location, Joined, …) that may sit between the Level and Played blocks. */
 const MAX_LABEL_ROWS = 16;
 const MAX_FORMATS = 64;
+/** More common games than anyone plays against one player; the rest of a bigger page is dropped. */
+const MAX_GAMES = 1000;
 
 const ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 
@@ -110,11 +122,14 @@ const PLAYED = new RegExp(`^Played in ${INT} multi-player games \\(${PCT}% real-
 // war.app's own phrasing only, e.g. "less than 15 minutes ago", "3 days ago".
 const SEEN = /^Last seen ((?:less than )?\d{1,4} (?:second|minute|hour|day|week|month|year)s? ago)$/i;
 const SEEN_BLOCK = /^Last seen\b/i;
+const PLAYED_BLOCK = /^Played in\b/i;
 const BOOTED = new RegExp(`^Booted ${INT} times? \\(${PCT}% of their last 100\\)$`);
 const RANKED = new RegExp(`^${INT} ranked games \\(${INT} / ${INT}\\)$`);
 const FORMAT_LABEL = /^([^:]{1,60}):$/;
 const FORMAT_ROW = new RegExp(`^${INT} ?/ ?${INT} ?\\( ?${PCT} ?% ?\\)$`);
 const MUTED = /^<font\b[^>]*\bclass\s*=\s*["']?text-muted\b/i;
+const BLOCK_OPEN = /^<(div|p|li|td)\b/i;
+const BLOCK_CLOSE = /^<\/(div|p|li|td)\s*>/i;
 
 /** A run of text between two tags: `open` is the tag before it, `close` the tag after. */
 interface TextNode {
@@ -158,6 +173,15 @@ function textNodes(html: string, from: number): TextNode[] {
 const isMuted = (n: TextNode | undefined): boolean =>
   !!n && MUTED.test(n.open) && /^<\/font\s*>/i.test(n.close);
 const isLabel = (n: TextNode | undefined): boolean => isMuted(n) && n!.text.endsWith(':');
+/** A label's value: the text straight after the label's `</font>`, never a block of its own. */
+const isLabelValue = (label: TextNode | undefined, n: TextNode | undefined): boolean =>
+  isLabel(label) && !!n && /^<\/font\s*>/i.test(n.open);
+/** A whole block: all the text of a `<div>` (or p, li, td) with no tag inside it. */
+const isBlock = (n: TextNode | undefined): boolean => {
+  const o = n ? BLOCK_OPEN.exec(n.open) : null;
+  const c = o ? BLOCK_CLOSE.exec(n!.close) : null;
+  return !!c && c[1]!.toLowerCase() === o![1]!.toLowerCase();
+};
 
 /** The first match of `re` (anchored, not global) in the `window` characters from `from`, as offsets. */
 function near(html: string, from: number, re: RegExp, window = CELL_WINDOW): { start: number; end: number } | null {
@@ -200,41 +224,52 @@ export function parseProfile(html: string): ProfileStats {
 
   const nodes = textNodes(html, start);
   const at = (i: number): string => nodes[i]?.text ?? '';
-  const isValue = (i: number): boolean => isLabel(nodes[i - 1]);
-
-  // Played: a block of its own (never a label's value, such as a location); the
-  // player's free text comes before the real blocks, so the last one is the page's.
-  let p = -1;
-  let played: number[] | null = null;
-  for (let i = 0; i < nodes.length; i++) {
-    const m = PLAYED.exec(at(i));
-    const v = m && !isValue(i) ? values([int(m[1]!), pct(m[2]!)]) : null;
-    if (v) [p, played] = [i, v];
-  }
-
-  // Level: the block just before the label rows that precede Played.
-  let level: number | null = null;
-  if (p >= 0) {
-    let j = p - 1;
+  const isValue = (i: number): boolean => isLabelValue(nodes[i - 1], nodes[i]);
+  /** The node just before the run of label rows that ends right before node `i`; null when no label row is there. */
+  const beforeLabels = (i: number): number | null => {
+    let j = i - 1;
     for (let rows = 0; j >= 0 && rows < MAX_LABEL_ROWS; rows++) {
       if (isLabel(nodes[j])) j -= 1;
       else if (isValue(j)) j -= 2;
       else break;
     }
-    const m = j >= 0 && !isValue(j) ? LEVEL.exec(at(j)) : null;
+    return j < i - 1 ? j : null;
+  };
+
+  // Played: the one whole block worded "Played in …" that follows war.app's label rows
+  // (Location, Joined, …) — the player cannot write that markup, only the text in it.
+  // Two such blocks, or one of the wrong shape, read as null, and so does everything
+  // anchored to it: never an imitation from elsewhere on the page.
+  const candidates: number[] = [];
+  for (let i = 0; i < nodes.length && candidates.length < 2; i++) {
+    if (PLAYED_BLOCK.test(at(i)) && isBlock(nodes[i]) && beforeLabels(i) !== null) candidates.push(i);
+  }
+  let p = -1;
+  let played: number[] | null = null;
+  if (candidates.length === 1) {
+    const m = PLAYED.exec(at(candidates[0]!));
+    played = m ? values([int(m[1]!), pct(m[2]!)]) : null;
+    if (played) p = candidates[0]!;
+  }
+
+  // Level: the whole block just before those label rows.
+  let level: number | null = null;
+  if (p >= 0) {
+    const j = beforeLabels(p)!;
+    const m = j >= 0 && isBlock(nodes[j]) ? LEVEL.exec(at(j)) : null;
     level = m ? int(m[1]!) : null;
   }
 
-  // Last seen, then Booted: the blocks right after Played.
+  // Last seen, then Booted: the whole blocks right after Played.
   let lastSeen: string | null = null;
   let booted: number[] | null = null;
   if (p >= 0) {
     let k = p + 1;
-    if (SEEN_BLOCK.test(at(k))) {
+    if (SEEN_BLOCK.test(at(k)) && isBlock(nodes[k])) {
       lastSeen = SEEN.exec(at(k))?.[1] ?? null;
       k++;
     }
-    const m = BOOTED.exec(at(k));
+    const m = isBlock(nodes[k]) ? BOOTED.exec(at(k)) : null;
     booted = m ? values([int(m[1]!), pct(m[2]!)]) : null;
   }
 
@@ -328,7 +363,7 @@ export function parseCommonGames(html: string): HeadToHead {
       if (head) count = int(head[1]!);
     }
     const link = /<a\b[^<>]{0,500}>/gi;
-    for (let m = link.exec(html); m; m = link.exec(html)) {
+    for (let m = link.exec(html); m && games.length < MAX_GAMES; m = link.exec(html)) {
       const href = /\bhref\s*=\s*(?:"([^"]{0,300})"|'([^']{0,300})'|([^\s"'>]{1,300}))/i.exec(m[0]);
       const id = href ? GAME_LINK.exec(href[1] ?? href[2] ?? href[3]!) : null;
       const row = id ? rowAt(html, link.lastIndex) : null;

@@ -123,7 +123,7 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
                     `This withdraws your committed orders for ${turnLabel} of game ${game.id}. The game then waits on you ` +
                     'again: submit corrected orders with warapp_submit_turn before the boot timer runs out, or you ' +
                     'may be booted.',
-                  game: { id: game.id, name: untrustedText(name), turn },
+                  game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), turn },
                   untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },

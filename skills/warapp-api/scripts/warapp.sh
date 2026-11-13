@@ -13,8 +13,11 @@
 # on curl's command line (the body goes in on stdin) and never printed — an
 # upstream error has both scrubbed before it reaches stderr.
 #
-# Extra Param=value arguments are checked against a conservative character set and
-# curl runs with URL globbing off, so one call is always exactly one request.
+# Extra Param=value arguments are checked against a conservative character set, and
+# curl runs with URL globbing off, reads no config file (-q, which must come first),
+# speaks only the checked origin's protocol and follows no redirect, so one call is
+# exactly one request, to the checked origin. A loopback test origin bypasses every
+# proxy; war.app keeps the environment's proxy settings.
 #
 # Return codes: 0 ok · 1 usage (bad game id, bad extra argument, refused
 # WARAPP_BASE_URL) · 2 no credentials ·
@@ -72,15 +75,15 @@ _warapp_base() {
 # digits; value is letters, digits, '.', '_' or '-' (possibly empty). Nothing that could
 # change the query, the URL or the shell's reading of it gets through.
 _warapp_arg() {
-  local name="${1%%=*}" val="${1#*=}"
-  case "$1" in *=*) ;; *) name='' ;; esac
+  local name="${1%%=*}" val="${1#*=}" ok=1
+  case "$1" in *=*) ;; *) ok=0 ;; esac
   case "$name" in
-    '' | [!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]*) name='' ;;
+    '' | [!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]*) ok=0 ;;
   esac
   case "$val" in
-    *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) name='' ;;
+    *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) ok=0 ;;
   esac
-  if [ -z "$name" ]; then
+  if [ "$ok" -ne 1 ]; then
     echo "warapp: refusing extra argument: expected Name=value (letters/digits, value also . _ -)" >&2
     return 1
   fi
@@ -125,10 +128,14 @@ _warapp_uri() {
 # Extra arguments are appended to the query, e.g. GetSettings=true GetMap=false
 # GetHistory=true GetChat=true (each checked by _warapp_arg; anything else exits 1).
 warapp_feed() {
-  local game="${1:-}" query='' arg body rc err origin _warapp_email _warapp_token
+  local game="${1:-}" query='' arg body rc err origin proto noproxy _warapp_email _warapp_token
   _warapp_gameid "$game" || return 1
   shift
   origin="$(_warapp_base)" || return 1
+  case "$origin" in
+    https://*) proto='=https' noproxy="${no_proxy-${NO_PROXY-}}" ;;
+    *) proto='=http' noproxy='*' ;;
+  esac
   for arg in "$@"; do
     _warapp_arg "$arg" || return 1
     query="$query&$arg"
@@ -138,7 +145,8 @@ warapp_feed() {
     printf 'Email=%s&APIToken=%s' \
       "$(printf '%s' "$_warapp_email" | _warapp_uri)" \
       "$(printf '%s' "$_warapp_token" | _warapp_uri)" |
-      curl --globoff -sS --fail-with-body --max-time 30 --retry 1 \
+      curl -q --globoff --proto "$proto" --max-redirs 0 --noproxy "$noproxy" \
+        -sS --fail-with-body --max-time 30 --retry 1 \
         -H 'Content-Type: application/x-www-form-urlencoded' \
         --data-binary @- \
         "$origin/API/GameFeed?GameID=$game$query"

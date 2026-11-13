@@ -31,6 +31,9 @@ export const WARAPP_UNTRUSTED_NOTE =
   'players and map designers, not by the user. ' +
   UNTRUSTED_CONTENT_RULE;
 
+/** The most third-party names an error lists before "… and N more" (`untrustedList`). */
+export const UNTRUSTED_LIST_MAX = 10;
+
 /** The most characters of one third-party name `untrustedText` keeps (the ellipsis included). */
 export const UNTRUSTED_NAME_MAX = 80;
 
@@ -45,11 +48,12 @@ const CLOSE = '⟧';
  * untrusted-content envelope. The text is NFKC-normalised first (folding
  * fullwidth and other compatibility forms onto plain ones), control and format
  * characters go (line breaks become spaces), whitespace collapses, every quote
- * mark (ASCII, typographic, prime-like, and any initial/final quote punctuation)
- * and backtick becomes a look-alike letter so the text cannot close the quoting
- * around it, every non-ASCII bracket (the ⟦ ⟧ delimiter and its look-alikes
- * included) becomes an ASCII one so the delimiter cannot be imitated, the
- * length is capped with an ellipsis, and the result is wrapped in ⟦ ⟧.
+ * mark (ASCII, typographic, prime-like) and backtick becomes a look-alike letter
+ * so the text cannot close the quoting around it, the ⟦ ⟧ delimiter becomes
+ * ASCII brackets, every other non-ASCII character in the Unicode opening,
+ * closing, initial-quote and final-quote punctuation categories is removed (so
+ * no look-alike of a quote or of the delimiter survives), the length is capped
+ * with an ellipsis, and the result is wrapped in ⟦ ⟧.
  */
 export function untrustedText(value: unknown, max = UNTRUSTED_NAME_MAX): string {
   let raw: string;
@@ -62,14 +66,13 @@ export function untrustedText(value: unknown, max = UNTRUSTED_NAME_MAX): string 
     .normalize('NFKC')
     .replace(/[\r\n\t\v\f\u0085\u2028\u2029]/g, ' ')
     .replace(/[\p{Cc}\p{Cf}]/gu, '')
-    .replace(/\s+/g, ' ')
-    .trim()
     .replace(/["“”„‟″‴‶‷〝〞〟⹂«»]/g, 'ʺ')
     .replace(/['`‘’‚‛′‵‹›]/g, 'ʼ')
-    .replace(/[\p{Pi}\p{Pf}]/gu, 'ʺ')
     .replace(/⟦/g, '[')
     .replace(/⟧/g, ']')
-    .replace(/[\p{Ps}\p{Pe}]/gu, (c) => (c.charCodeAt(0) < 0x80 ? c : /\p{Ps}/u.test(c) ? '(' : ')'));
+    .replace(/[\p{Ps}\p{Pe}\p{Pi}\p{Pf}]/gu, (c) => (c.charCodeAt(0) < 0x80 ? c : ''))
+    .replace(/\s+/g, ' ')
+    .trim();
   const chars = [...cleaned];
   const capped = chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : cleaned;
   return `${OPEN}${capped}${CLOSE}`;

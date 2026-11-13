@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { MAX_PAGE_CHARS, parseCommonGames, parseProfile, profileUrl, commonGamesUrl } from '../src/scout.js';
+import { ANCHOR_CASES } from './scout-cases.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 
 let h: Harness | undefined;
@@ -117,6 +118,12 @@ const SPOOF_ABSENT_HTML = `<html><head><title>Last seen less than 1 minute ago -
 <div>Played in 3 multi-player games (0% real-time)</div>
 </body></html>`;
 
+describe('parseProfile anchors every stat to the label rows', () => {
+  it.each(ANCHOR_CASES)('%s', (_what, html, expected) => {
+    expect(parseProfile(html)).toMatchObject(expected);
+  });
+});
+
 describe('parseProfile against owner-written text', () => {
   it('reads the real blocks, never an imitation in the name, tagline or location', () => {
     expect(parseProfile(SPOOF_HTML)).toMatchObject({
@@ -142,7 +149,7 @@ describe('parseProfile against owner-written text', () => {
 
   it('a value of the wrong shape is null', () => {
     const page = (lines: string[]) => `<html><head><title>X - War.app</title></head><body><h1>X</h1>
-<div>${lines[0]}</div><div>Played in 5 multi-player games (${lines[1]}% real-time)</div>
+<div>${lines[0]}</div><font class="text-muted">Joined:</font> 1/2/2020<br><div>Played in 5 multi-player games (${lines[1]}% real-time)</div>
 <div>${lines[2]}</div><div>${lines[3]}</div></body></html>`;
     expect(
       parseProfile(page(['Level 5x', '40', 'Last seen visit my site', 'Booted 3 times (250% of their last 100)'])),
@@ -201,7 +208,8 @@ describe('page size and pathological input', () => {
     expect(quick(() => parseCommonGames(`${open}${'<td>'.repeat(200_000)}`))).toBeLessThan(200);
   });
 
-  it('a page of many tags without a close returns quickly', () => {
+  // Guards the parser's own script skipping and entity decoding (textNodes), not an older flaw.
+  it('the script skipping and entity decoding stay linear on a page of unclosed tags', () => {
     expect(quick(() => parseProfile(`<title>X - War.app</title>${'<script>'.repeat(100_000)}`))).toBeLessThan(200);
     expect(quick(() => parseProfile(`<title>X</title>${'&aaaaaaaaaaaaaaaaaaaa'.repeat(40_000)}`))).toBeLessThan(200);
   });
@@ -242,6 +250,13 @@ describe('parseCommonGames', () => {
       `<tr><td><a href="MultiPlayer?GameID=${id}">G</a></td><td>d</td><td>${teams}</td><td>${state}</td></tr>`;
     const html = row(1, '2v2', 'Won') + row(2, '3v3v3', 'Eliminated') + row(3, '1v1', 'Won') + row(4, 'FFA', 'Booted');
     expect(parseCommonGames(html)).toMatchObject({ count: 4, wins: 1, losses: 1, teamGames: 2 });
+  });
+
+  it('returns at most 1000 games from a page of minimal rows', () => {
+    const rows = Array.from({ length: 1500 }, (_, i) => `<a href="MultiPlayer?GameID=${i + 1}">G</a></td><td>d</td><td>1v1</td><td>Won</td>`);
+    const r = parseCommonGames(`<h1>1500 Common Games with X</h1>${rows.join('')}`);
+    expect(r.games).toHaveLength(1000);
+    expect(r.count).toBe(1500);
   });
 
   it('a state it cannot classify counts as none of the three', () => {
