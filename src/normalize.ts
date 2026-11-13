@@ -272,7 +272,8 @@ export function normalizeSettings(raw: unknown): GameSettings {
   if (def !== undefined) s.defensiveKillRate = def;
   const luck = asNum(r.LuckModifier);
   if (luck !== undefined) s.luckModifier = luck;
-  if ('ArmyCap' in r) s.armyCap = asInt(r.ArmyCap) ?? null;
+  // A number, not an integer: a cap of 1.5× income read as an integer would be "no cap" (#131).
+  if ('ArmyCap' in r) s.armyCap = asNum(r.ArmyCap) ?? null;
   for (const [k, v] of Object.entries(r)) {
     if (k.endsWith('Card') && isRec(v)) s.cards.push(k.slice(0, -'Card'.length));
   }

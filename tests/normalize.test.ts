@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { deployCheckUncertainties } from '../src/analysis/player.js';
 import {
   asBool,
   asInt,
@@ -216,6 +217,16 @@ describe('normalizeSettings', () => {
     expect(t.oneArmyStandsGuard).toBe(false);
     expect(t.armyCap).toBe(100);
   });
+  it('reads a fractional army cap, so its income uncertainty is flagged (#131)', () => {
+    for (const cap of [1.5, '1.5', '2.0']) {
+      const t = normalizeSettings({ ArmyCap: cap });
+      expect(t.armyCap).toBe(Number(cap));
+      expect(deployCheckUncertainties(t).join('\n')).toMatch(/army cap/i);
+    }
+    expect(normalizeSettings({ ArmyCap: null }).armyCap).toBeNull();
+    expect(normalizeSettings({ ArmyCap: 'null' }).armyCap).toBeNull();
+  });
+
 
   it('reads NoSplit as a boolean, string-typed or not (G3)', () => {
     expect(normalizeSettings({ NoSplit: 'True' }).noSplit).toBe(true);
