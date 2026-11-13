@@ -590,7 +590,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     if (size === 1) {
       if (!away.length) return [seeds[0]!];
       // In a 1v1, the farthest from the primary among the equally scored best.
-      const top = seeds.filter((t) => scores.get(t) === scores.get(seeds[0]!));
+      const top = seeds.filter((t) => round2(scores.get(t)!) === round2(scores.get(seeds[0]!)!));
       let pick = top[0]!;
       for (const t of top) if (gapTo([t], away) > gapTo([pick], away)) pick = t;
       return [pick];
