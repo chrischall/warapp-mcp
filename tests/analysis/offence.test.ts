@@ -613,9 +613,9 @@ describe("a border's break of its only threat has its own offence entry (#72)", 
 });
 
 // Holds before the strike stack. B907 (+4) is T1 and T2: T1 (2) is mine and faces player 20's
-// T4 (6); T3 (30) takes the neutral T2, completing B907, and faces player 20's T5 (2). Rule 1c
-// keeps T1 for the completed bonus and garrisons it from the leftover — its only funding — so
-// the strike stack gets only what is left after T1 would hold.
+// T4 (6); T3 (30) takes the neutral T2, completing B907, and faces player 20's T5 (2). T1 is
+// garrisoned for the completed bonus (#122: held right after the completion, then topped up to a
+// comfortable margin from the leftover), so the strike stack gets only what is left after it.
 describe('a kept or falling border is garrisoned before the strike stack', () => {
   const g = buildGraph(
     makeMap(
@@ -653,7 +653,8 @@ describe('a kept or falling border is garrisoned before the strike stack', () =>
       { territoryId: 3, armies: 2 },
     ]);
     expect(p.warnings.join('\n')).not.toMatch(/T1 \(#1\) is kept for the bonus this turn completes/);
-    expect(why(p)).toMatch(/Deploy 6 to T1 \(#1\) before the strike stack: it is kept for the bonus this turn completes/);
+    expect(why(p)).toMatch(/Garrison T1 \(#1\) for bonus B907 \(#907\) \(\+4\), completed this turn: deploy 5/);
+    expect(why(p)).toMatch(/Deploy 1 to T1 \(#1\) before the strike stack: it is garrisoned for the bonus this turn completes/);
     expect(why(p)).toMatch(/Deploy the leftover 2 to T3 \(#3\): one strike stack/);
   });
 });

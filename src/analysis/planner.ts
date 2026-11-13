@@ -152,7 +152,10 @@
 //     hold is deployed); under `balanced` its hold goes first.
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
 //     of my complete bonuses containing it, plus incomplete bonuses containing it
-//     that I would lose all access to without it, plus the per-territory
+//     that I would lose all access to without it, plus (#122) its share of every other
+//     incomplete bonus containing it that I am building — value × the members I hold ÷ its
+//     size, one decimal, when every missing member is a visible neutral and finishing it passes
+//     rule 4's economy tests (PAYBACK_TURNS, WASTELAND_FACTOR) — plus the per-territory
 //     income it carries (each bonus counted once). Its worth adds the armies a
 //     hold saves, in income terms (armies / PAYBACK_TURNS): a top-up that keeps a
 //     big stack is worth paying even for a small bonus (live, a 60-army border
@@ -166,15 +169,18 @@
 //     order of worth per army of hold cost (ties: lower hold cost, then id); a
 //     border is conceded when its hold cost exceeds the budget left or
 //     CONCEDE_FACTOR × its worth (so a thin border protecting nothing is
-//     conceded). Under `goal: 'defend'` the plan deploys each hold, and a held
+//     conceded) — but never on worth in the opening phase when the hold costs no more than
+//     the armies already there (#122: a start facing an enemy start was stripped for want of
+//     2 armies). Under `goal: 'defend'` the plan deploys each hold, and a held
 //     border then makes no moves.
 //     Scope of "protected value", deliberately narrow: only bonuses containing T
 //     count (not a bonus T merely borders), and an incomplete one counts in full
-//     when T is my only foothold, however much of it the enemy holds. So with no
-//     complete bonus and no per-territory income (`bonusArmyPer` off, or its
-//     armies still below the base income they replace), a threatened
-//     border protects +0 and is conceded: early in a game `defend` holds nothing
-//     and withdraws from every threatened border, keeping armies for expansion.
+//     when T is my only foothold, however much of it the enemy holds, else by its share
+//     while I am building it (above). So with no complete bonus, no bonus being built and
+//     no per-territory income (`bonusArmyPer` off, or its armies still below the base income
+//     they replace), a threatened border protects +0 and is conceded: early in a game
+//     `defend` holds nothing and withdraws from every threatened border, keeping armies for
+//     expansion.
 //     A conceded border is never deployed to (unless every territory I hold is
 //     conceded): it may still attack out with the armies already on it, since they
 //     are lost anyway if they stay, but no capture is funded there.
@@ -199,9 +205,14 @@
 //     PAYBACK_TURNS); under `balanced` it competes on that score with holds and
 //     completions, and at the first advance or break every pending unit runs first
 //     (with the completions outscoring the weakest of them). A completion that runs
-//     before a pending unit and would leave too little to fund it runs only when its
-//     bonus earns more than the units it starves; otherwise it waits until they are
-//     funded (concede a held bonus only for alternatives that earn more). It waits for
+//     before a pending unit and would leave too little to fund it (under Local Deployment,
+//     a unit counts as fundable only when its own pool and the free armies cover it) waits
+//     until they are funded unless (#122): when a starved unit would be conceded (not even
+//     kept as a near miss or floored on what is left), its one turn of value beats
+//     PAYBACK_TURNS × the bonuses conceded — waiting costs the completion one turn, losing a
+//     held bonus costs it every turn until retaken; when every starved unit is only left
+//     short, its bonus earns more than they do, or each stays a near miss and the completion
+//     pays for itself within a turn (cost ≤ value). It waits for
 //     rule 4a's expansion share only until then. Finishing off (rule 1e) keeps its place before
 //     it. A unit the armies left cannot cover is first tried as a near miss (issue #59):
 //     each border not yet held gets what may still be deployed there, up to its hold
@@ -279,13 +290,21 @@
 //     commander's territory thins it) — `cardAdvice` is Order Priority if I hold one
 //     (`holdsOrderPriority`: my attacks resolve first), with a rationale line; without one, a
 //     warning says the attacks interleave. Its owner is not also finished off (rule 1e).
-//  1c. Reconsider (every goal, after the capture passes). Triage runs before
-//     captures are known, so a border in a bonus this turn's captures complete
-//     protected +0 and was conceded. Protected value is then re-judged against my
-//     holdings plus this turn's captures: a conceded border in a bonus completed
-//     this turn is kept (its concession warning dropped, a rationale line added),
-//     never withdrawn from, and garrisoned from the leftover (rule 5); a warning
-//     says so when the leftover still cannot make it hold.
+//  1c. Reconsider (every goal, after the capture passes, and again before the leftover for
+//     captures made later, #122). Triage runs before captures are known, so a border in a
+//     bonus this turn's captures complete may have been conceded. Protected value is then
+//     re-judged against my holdings plus this turn's captures: a conceded border in a bonus
+//     completed this turn (not already withdrawn from) is kept (its concession warning
+//     dropped, a rationale line added), never withdrawn from, and garrisoned from the leftover
+//     (rule 5); a warning says so when the leftover still cannot make it hold. A conceded
+//     border may fund (be deployed to for) a capture that completes a bonus it is in.
+//  1g. Garrison a completion (under `balanced` and `defend`; #122). Once a capture completes a
+//     bonus, its members I held at the start that face an enemy and would fall are held whole
+//     right away, before any later capture — a held bonus's unit tests (cost ≤ PAYBACK_TURNS ×
+//     value and ≤ CONCEDE_FACTOR × worth), and it must fit what may still be deployed there;
+//     otherwise they get the leftover as in rule 1c. A rationale line "Garrison … completed this
+//     turn" names each; the leftover then tops them up to a comfortable margin as it does a
+//     border rule 1c keeps. Captured members are not garrisoned (next turn's deploys land first).
 //  1b. Withdraw (under `defend` and `balanced`, after 1c). A conceded border's movable armies move first
 //     to the adjacent territory of mine nearest a border that holds (then the
 //     one protecting the most value, then id); the plan advises Order Priority
@@ -1714,6 +1733,20 @@ export function planTurn(input: PlanInput): TurnPlan {
   // Judged against my holdings at the start of the turn until the capture passes
   // have run; then against those holdings plus this turn's captures (R2).
   let holdings: Set<number> = mineSet;
+  /** #122: bonus `ts` is being built — its missing members all visible neutrals, finishing it economic (rule 4). */
+  const building = (ts: readonly number[], value: number): boolean => {
+    let cost = 0;
+    let worst = 0;
+    for (const x of ts) {
+      if (holdings.has(x)) continue;
+      const st = state.get(x);
+      if (st?.owner.kind !== 'neutral' || st.armies === null) return false;
+      const c = costOf(defenceAt(x)) ?? Infinity;
+      cost += c;
+      worst = Math.max(worst, c);
+    }
+    return cost <= PAYBACK_TURNS * value && worst <= WASTELAND_FACTOR * value;
+  };
   const protectedValue = (t: number): number => {
     // Each bonus is visited once, so it counts once however many of its borders are threatened.
     let v = 0;
@@ -1728,7 +1761,19 @@ export function planTurn(input: PlanInput): TurnPlan {
       // An incomplete bonus I am working on (T is in it): lost access if T is my only way in.
       const access = (has: (x: number) => boolean) =>
         ts.some((x) => has(x) || neighborsOf(g, x).some(has));
-      if (!access(mineWithout)) v += b.value;
+      if (!access(mineWithout)) {
+        v += b.value;
+        continue;
+      }
+      // #122: a member of a bonus I am building carries its share of the bonus — value × the
+      // members I hold ÷ its size — so a second member is not worth +0 when the first (my only
+      // foothold) was worth the whole bonus. Being built: every missing member is a visible
+      // neutral, and finishing it passes rule 4's economy tests (a bonus behind an enemy, the
+      // fog or a wasteland is not being built).
+      if (building(ts, b.value)) {
+        const held = ts.filter((x) => holdings.has(x) || x === t).length;
+        v += Math.round(((b.value * held) / ts.length) * 10) / 10;
+      }
     }
     // Per-territory income replaces the base only when larger, so losing T
     // costs an army only above it.
@@ -1990,6 +2035,17 @@ export function planTurn(input: PlanInput): TurnPlan {
     given?: number;
   }
   const threatened: Threatened[] = [];
+  /**
+   * Rule 1a's economic test: its hold costs more than CONCEDE_FACTOR × its worth. Never for a
+   * border just taken from a weak opponent, nor (#122) in the opening when the hold costs no more
+   * than the armies already there — a start is the whole position then, and the top-up saves at
+   * least as many as it spends (live, three starts around an enemy start were each stripped for
+   * want of 2 armies, and neutrals attacked out of each).
+   */
+  const uneconomic = (t: Threatened) =>
+    t.recentFrom === undefined &&
+    t.holdCost > CONCEDE_FACTOR * t.worth &&
+    !(profile.phase === 'opening' && t.holdCost <= t.have);
   /** Armies that stay on my `id` after this turn's deploys, outgoing moves and incoming withdrawals so far. */
   const stayAt = (id: number) => avail.get(id)! + guard + (incoming.get(id) ?? 0);
   /**
@@ -2380,6 +2436,24 @@ export function planTurn(input: PlanInput): TurnPlan {
       );
     }
   };
+  /**
+   * #122: would `u` survive on `left` armies short of its whole hold — kept as a near miss (short
+   * by at most {@link nearMissMargin}) or floored (every border faces a player with two or more
+   * targets, and its floor fits)? An estimate for rule 1h.3's starve check (pools and the
+   * expected-attack test of the near miss are left out).
+   */
+  const keptShort = (u: Unit, left: number): 'near' | 'floor' | null => {
+    const todo = u.members.filter((m) => !heldBorders.has(m.id));
+    const need = todo.reduce((n, m) => n + m.holdCost, 0);
+    if (need - left <= nearMissMargin(need)) return 'near';
+    const targetsOf = new Map<number, number>();
+    for (const t of threatened) {
+      const p = borders.get(t.id)?.player;
+      if (p !== undefined) targetsOf.set(p, (targetsOf.get(p) ?? 0) + 1);
+    }
+    const spread = todo.every((m) => (targetsOf.get(borders.get(m.id)?.player ?? -1) ?? 0) >= 2);
+    return spread && todo.reduce((n, m) => n + floorOf(m), 0) <= left ? 'floor' : null;
+  };
   /** Keep a floored unit that is not held whole (#118): its borders stay, nothing is withdrawn. */
   const contest = (u: Unit) => {
     u.contested = true;
@@ -2402,7 +2476,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   /** A member of a unit conceded after the captures, judged on its own (rule 1a, against what is left). */
   const singleLate = (t: Threatened, quiet: boolean) => {
     if (t.critical) return;
-    if (t.recentFrom === undefined && t.holdCost > CONCEDE_FACTOR * t.worth) {
+    if (uneconomic(t)) {
       conceded.add(t.id);
       if (!quiet) warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
       return;
@@ -2628,7 +2702,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       // My commander's border is already held (rule 1k).
       if (t.critical) return;
       const left = Math.min(acting ? budget : triageBudget, local ? roomAt(t.id) : Infinity);
-      if (t.recentFrom === undefined && t.holdCost > CONCEDE_FACTOR * t.worth) {
+      if (uneconomic(t)) {
         conceded.add(t.id);
         if (!quiet)
           warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
@@ -2835,6 +2909,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     valueCache.clear();
     if (!conceded.size) return;
     for (const t of [...conceded].sort(byNum)) {
+      // Already withdrawn from (rule 1b ran first): its armies are gone, and it stays conceded.
+      if (moves.some((m) => m.from === t && m.reason === 'withdraws from a conceded border')) continue;
       const completes = g.map.bonuses
         .filter((b) => {
           const ts = bonusTerritories(g, b.id);
@@ -2856,6 +2932,59 @@ export function planTurn(input: PlanInput): TurnPlan {
   };
   // (Under `defend` the withdrawal runs after the capture passes, once `reconsider` has
   // kept any border this turn's captures make valuable; it still goes first in the orders.)
+
+  // ---- #122: a bonus completed this turn is garrisoned like a held one (rule 1h) ----
+  // Its members I held at the start of the turn that face an enemy would otherwise get only the
+  // leftover (rule 1c), after every advance had spent the income: live, completed bonuses stood
+  // beside enemies on 1-army borders and never paid a turn. So once a capture completes a bonus,
+  // its threatened members are held whole right away — before any later capture — when the holds
+  // pay for themselves as a held bonus's do (cost ≤ PAYBACK_TURNS × value and ≤ CONCEDE_FACTOR ×
+  // its worth) and fit what may still be deployed; otherwise they are left to the leftover as
+  // before. Captured members are not garrisoned: next turn's deploys land before any attack.
+  /** Bonuses whose garrison was judged (funded or not), so each is judged once. */
+  const garrisonJudged = new Set<number>();
+  /** Members garrisoned so: like a border rule 1c keeps, the leftover tops them up to a comfortable margin first. */
+  const garrisoned = new Set<number>();
+  const garrisonCompleted = () => {
+    if (!guarded || !captured.size) return;
+    const after = new Set([...mine, ...captured]);
+    for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
+      if (b.value <= 0 || garrisonJudged.has(b.id)) continue;
+      const ts = bonusTerritories(g, b.id);
+      if (!ts.length || !ts.every((x) => after.has(x)) || ts.every((x) => mineSet.has(x))) continue;
+      garrisonJudged.add(b.id);
+      const todo: { id: number; d: number; threat: number }[] = [];
+      let have = 0;
+      let split = false;
+      for (const t of ts) {
+        const border = borders.get(t);
+        if (!mineSet.has(t) || !border || heldBorders.has(t) || myCommanders.has(t)) continue;
+        const stays = stayAt(t) + unitsAt(t);
+        let d = 0;
+        while ((armiesToTake(stays + d, rates) ?? Infinity) <= border.threat) d++;
+        if (!d) continue;
+        // No-Split: a deploy on a territory that already issues an order leaves with it.
+        if (orderOf(t)) split = true;
+        todo.push({ id: t, d, threat: border.threat });
+        have += stays;
+      }
+      if (!todo.length || split) continue;
+      const cost = todo.reduce((n, x) => n + x.d, 0);
+      const worth = b.value + have / PAYBACK_TURNS;
+      if (cost > PAYBACK_TURNS * b.value || cost > CONCEDE_FACTOR * worth || cost > budget - reserve) continue;
+      if (todo.some((x) => x.d > roomAt(x.id))) continue;
+      for (const x of todo) {
+        deploy(x.id, x.d);
+        garrisoned.add(x.id);
+        heldBorders.add(x.id);
+        locked.add(x.id);
+        const stays = stayAt(x.id) + unitsAt(x.id);
+        rationale.push(
+          `Garrison ${label(x.id)} for bonus ${bonusName(b.id)} (+${b.value}), completed this turn: deploy ${x.d} so its ${stays} armies need ${armiesToTake(stays, rates)} to take, above the ~${x.threat} threat — held like a bonus held at the start, before any later capture, not left to the leftover.`,
+        );
+      }
+    }
+  };
 
   // ---- enemy bonuses I could break (under `balanced`) ----
   // A bonus is breakable when every territory in it is visible and held by one enemy, or (#72)
@@ -3418,10 +3547,16 @@ export function planTurn(input: PlanInput): TurnPlan {
     myCommanders.has(x) || (!spendKeeps && safeAtStart.has(x) && !conceded.has(x)) ? keepFor(x, (n) => n === t) : 0;
   /**
    * A conceded border attacks out only with the armies already on it (it is never deployed to),
-   * unless every territory I hold is conceded, when there is nowhere better.
+   * unless every territory I hold is conceded, when there is nowhere better, or (#122) the capture
+   * completes a bonus the border is in: rule 1c then keeps it, so it is not given up.
    */
   const concededSource = (x: number, t: number, cost: number) =>
-    movableFor(x, t) >= cost || mine.every((id) => conceded.has(id));
+    movableFor(x, t) >= cost ||
+    mine.every((id) => conceded.has(id)) ||
+    g.map.bonuses.some((b) => {
+      const ts = bonusTerritories(g, b.id);
+      return b.value > 0 && ts.includes(x) && ts.includes(t) && ts.every((y) => y === t || mineSet.has(y) || captured.has(y));
+    });
   /** Enemy commanders' territories attacked as a commander strike (rule 1s): exempt from R3. */
   const strikes = new Set<number>();
   /**
@@ -4744,6 +4879,8 @@ export function planTurn(input: PlanInput): TurnPlan {
         focus: false,
         borders: 0,
         run: () => {
+          // Already garrisoned for a bonus this turn completed (#122).
+          if (heldBorders.has(t.id)) return;
           if (holdAndBreak(t)) return;
           const pending =
             expansionLeft > 0 && t.worth < topValue && t.recentFrom === undefined ? Math.max(0, floor - expansionSpent) : 0;
@@ -4762,7 +4899,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     // A conceded unit's members, judged on their own now (rule 1a, against what is left).
     const singleNow = (t: Threatened, quiet: boolean) => {
       if (t.critical) return;
-      if (t.recentFrom === undefined && t.holdCost > CONCEDE_FACTOR * t.worth) {
+      if (uneconomic(t)) {
         conceded.add(t.id);
         if (!quiet)
           warnings.push(`${label(t.id)} cannot be held economically (needs ${t.holdCost}, protects +${t.value}): conceded`);
@@ -4846,7 +4983,9 @@ export function planTurn(input: PlanInput): TurnPlan {
     const fundable = (us: Unit[], b: number) =>
       us.filter((u) => {
         const need = unitNeed(u);
-        if (need > b) return false;
+        // Under Local Deployment (#122) only what may be deployed on its borders counts (its own
+        // pool and the free armies): a unit that is a near miss already is not starved by a capture.
+        if (need > b || (local && need > leftFor(u))) return false;
         b -= need;
         return true;
       });
@@ -4867,13 +5006,26 @@ export function planTurn(input: PlanInput): TurnPlan {
       const after = new Set(fundable(pending, budget));
       const starved = before.filter((u) => !after.has(u));
       const lost = starved.reduce((n, u) => n + u.value, 0);
-      if (!starved.length || c.value > lost) return;
+      // #122: a starved unit that cannot even be kept short (near miss, floor) is conceded. Waiting
+      // costs the completion one turn of its value; conceding a held bonus loses its value every
+      // turn until it is retaken — counted over PAYBACK_TURNS, the horizon every payback test
+      // uses. So the completion goes first only when its one turn earns more than that.
+      const kept = starved.map((u) => keptShort(u, budget));
+      const conceding = starved.filter((_, i) => !kept[i]).reduce((n, u) => n + u.value, 0);
+      // Units only left short (a near miss, a floor) still stand: the completion goes first when it
+      // earns more than they are worth, or — when each stays a near miss — pays for itself within a
+      // turn (#122: a +3 for 3 armies was deferred so a near miss could be topped up to sure).
+      const first =
+        conceding > 0
+          ? c.value > PAYBACK_TURNS * conceding
+          : c.value > lost || (kept.every((k) => k === 'near') && c.cost <= c.value);
+      if (!starved.length || first) return;
       restore();
       expansionSpent = spent;
       expansionLeft = left;
       postponed.push(c);
       rationale.push(
-        `Complete bonus ${bonusName(c.id)} (${worthOf.get(c.id) ?? `+${c.value}`}) only after holding ${starved.map((u) => `${bonusName(u.bonusId)} (+${u.value})`).join(', ')}: completing it first would leave too little to hold ${starved.length === 1 ? 'it' : 'them'}, and it earns no more.`,
+        `Complete bonus ${bonusName(c.id)} (${worthOf.get(c.id) ?? `+${c.value}`}) only after holding ${starved.map((u) => `${bonusName(u.bonusId)} (+${u.value})`).join(', ')}: completing it first would leave too little to hold ${starved.length === 1 ? 'it' : 'them'}, ${conceding > 0 ? `and waiting a turn costs +${c.value} once while losing ${starved.length === 1 ? 'it' : 'them'} costs +${conceding} every turn until retaken` : 'and it earns no more'}.`,
       );
     };
     const runPostponed = () => {
@@ -4892,13 +5044,17 @@ export function planTurn(input: PlanInput): TurnPlan {
             if (!done.has(d) && (d.kind === 'unit' || (d.kind === 'complete' && d.score > bar))) run(d);
         }
         runPostponed();
+        garrisonCompleted();
       }
       run(c);
+      garrisonCompleted();
     });
     unitsDue = true;
     for (const u of waiting.splice(0)) fundOrConcede(u);
     runPostponed();
+    garrisonCompleted();
     for (const t of deferred) {
+      if (heldBorders.has(t.id)) continue;
       const room = roomAt(t.id);
       if (t.holdCost > room) concedeUnaffordable(t, room);
       else hold(t);
@@ -4907,8 +5063,14 @@ export function planTurn(input: PlanInput): TurnPlan {
     reconsider();
     withdraw();
   } else {
-    for (const p of byCloseness) complete(p);
-    for (const p of byCloseness) advance(p);
+    for (const p of byCloseness) {
+      complete(p);
+      garrisonCompleted();
+    }
+    for (const p of byCloseness) {
+      advance(p);
+      garrisonCompleted();
+    }
     settleContested();
     reconsider();
     if (acting) withdraw();
@@ -5731,6 +5893,10 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
   }
 
+  // Rule 1c again (#122): a capture made after the first reconsideration (pass 3, rule 4e's
+  // fallback) may complete a bonus too, and its conceded borders are kept the same way.
+  reconsider();
+
   /** Territories locked before the leftover deploy: holds, kept and standing borders, withdrawals. */
   const holdLocked = new Set(locked);
   /** The strike stack rule 0p.3c built this turn (#72), and the leftover it got. */
@@ -5862,7 +6028,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     // gets the rest.
     if (stack)
       for (const b of short) {
-        const kept1c = kept.has(b.id);
+        const kept1c = kept.has(b.id) || garrisoned.has(b.id);
         const bar = kept1c ? COMFORT_MARGIN * b.threat : b.threat;
         const room = roomAt(b.id);
         let d = 0;
@@ -5874,9 +6040,11 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (d <= 0) continue;
         rationale.push(
           `Deploy ${d} to ${label(b.id)} before the strike stack: ${
-            kept1c
-              ? `it is kept for the bonus this turn completes, and the leftover is its only garrison`
-              : `it would fall to the ~${b.threat} threat`
+            garrisoned.has(b.id)
+              ? `it is garrisoned for the bonus this turn completes, topped up to a comfortable margin over the ~${b.threat} threat`
+              : kept1c
+                ? `it is kept for the bonus this turn completes, and the leftover is its only garrison`
+                : `it would fall to the ~${b.threat} threat`
           } (protects +${valueOf(b.id)}).`,
         );
         deploy(b.id, d);

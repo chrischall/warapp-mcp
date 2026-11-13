@@ -133,7 +133,10 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   against what a pressure plan leaves the opponent, come first (no pressure when they cannot be
   funded). An opponent next to the fog is not attempted (warned only when its visible
   territories could all fall); fog anywhere else hedges the elimination. A border taken last turn from a
-  weak opponent (fewer territories, smaller deploy) is never conceded. A border in
+  weak opponent (fewer territories, smaller deploy) is never conceded. A member of a bonus the
+  user is building carries its share of that bonus ("protects +1.3"), and a member of a bonus
+  completed this turn that faces an enemy is garrisoned at once ("Garrison … completed this
+  turn"). A border in
   `conceded` costs more to hold than it is worth (or than the income left): nothing is
   deployed there (unless every territory the user holds is conceded) and no attack from it
   is funded — it attacks out only with the armies already on it — and its armies withdraw

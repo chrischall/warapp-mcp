@@ -173,11 +173,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   capture with the exact combat model (`armiesToTake`, `captureCost`). Its rules, learnt from
   a lost game (`tests/analysis/lessons.test.ts` replays each lesson in miniature):
   - **Triage by protected value.** A threatened border's protected value is my complete
-    bonuses containing it, plus bonuses I'd lose all access to, plus per-territory income; its
+    bonuses containing it, plus bonuses I'd lose all access to, plus its share (value × members
+    held ÷ size) of a bonus I am building — every missing member a visible neutral, finishing it
+    economic (#122) — plus per-territory income; its
     **worth** adds the armies a hold saves as income (armies / `PAYBACK_TURNS`), so a big stack
     is topped up rather than abandoned. Holds go in order of worth per army of hold cost. A
     border is **conceded** when holding costs more than `CONCEDE_FACTOR` (3) × its worth or than the income left
-    (a warning either way): it is never deployed to (unless every territory I hold is
+    (a warning either way; in the opening, never on worth when the hold costs no more than the
+    armies already there, #122): it is never deployed to (unless every territory I hold is
     conceded), it attacks out only with the armies already on it, and idle armies never move
     into it.
   - **Held bonuses first (#51)** (under `balanced`/`defend`): a bonus I hold in full is one
@@ -185,7 +188,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     paid once). A unit whose summed hold cost ≤ `PAYBACK_TURNS` × its value (and, like any
     border, ≤ `CONCEDE_FACTOR` × its worth) is funded before any capture that completes no bonus
     (advances, breaks, other expansion); completions still compete on score but never starve a
-    unit unless their bonus earns more, and finishing off keeps its place. One that does not
+    unit unless their bonus earns more — and (#122) never one that would then be conceded
+    unless one turn of the completion beats `PAYBACK_TURNS` × what is lost, while one left only
+    a near miss yields to a completion that pays for itself within a turn — and finishing off
+    keeps its place. One that does not
     pay is not conceded yet (#118): the captures go first, and it is held whole from what they
     leave when that covers it. One a deploy must choose among (its every threatened border
     faces a player with two or more of my threatened borders) is **floored** when it cannot be
@@ -248,6 +254,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     - **Border value after captures (#18).** Triage runs before captures are known, so after
       the capture passes a conceded border in a bonus this turn's captures complete is kept —
       never withdrawn from, garrisoned from the leftover, warned when that still cannot hold.
+      Since #122 a member of a bonus completed this turn that faces an enemy is garrisoned right
+      after the completion, before later captures, when the hold pays as a held bonus's would.
     - **Defensibility (#19).** A capture that completes a bonus is checked against the frontier
       it leaves: when holding the members a visible enemy could take next turn needs more than
       the next income, `balanced`/`defend` refuse it ("… indefensible …: not completed") and

@@ -123,14 +123,15 @@ describe('lessons from the free-for-all and the two 1v1s', () => {
 
   it('2. a border in the bonus this turn completes is kept and garrisoned, not conceded and withdrawn', () => {
     // Judged on the start-of-turn holdings T1 protected +0 and was abandoned — defeating the
-    // capture of T4 that completes Vale this turn.
+    // capture of T4 that completes Vale this turn. Since #122 it carries its share of Vale, the
+    // bonus being built, so it is held from the start (rule 1c keeps one conceded before).
     const p = plan(valeBoard, 5);
     expect(p.expected.bonusesCompleted).toEqual([301]);
     expect(attacks(p)).toEqual([expect.objectContaining({ from: 3, to: 4, armies: 3 })]);
     expect(p.conceded).toEqual([]);
     expect(p.moves.some((m) => m.from === 1)).toBe(false);
     expect(deployedTo(p, 1)).toBeGreaterThanOrEqual(3);
-    expect(p.rationale.join('\n')).toMatch(/Keep T1 \(#1\) \(not conceded\): this turn's captures complete bonus Vale/);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 3 to T1 \(#1\) so it holds \(protects \+\d/);
   });
 
   it('3. a big bonus is not completed when its new member falls next turn: the income garrisons instead', () => {

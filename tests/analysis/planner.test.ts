@@ -1298,9 +1298,11 @@ describe('planTurn — border value after this turn\'s captures (R2)', () => {
   // next to T3 (3 to take, which T3's 4 armies fund with no deploy). T1 borders
   // a visible 6-army enemy T9: threat 5 movable + 5 deploy (floor) = 10, and T1's
   // 4 armies need only 6 to take, so holding needs 3 (7 armies need 11).
-  // Judged from the start-of-turn holdings T1 protects +0 (the bonus is incomplete
+  // Judged from the start-of-turn holdings T1 protected +0 (the bonus is incomplete
   // and T2/T3 keep me in it), so it was conceded and withdrawn — defeating the
-  // capture that completes the bonus this turn.
+  // capture that completes the bonus this turn. Since #122 a member of a bonus being
+  // built carries its share (+5 × 3/4 = +3.8), so T1 is held from the start; rule 1c
+  // still keeps a border conceded before the captures (the enemy 12-stack below).
   //   T9(enemy) ─ T1 ─ T2 ─ T3 ─ T4(neutral)
   const g = buildGraph(
     makeMap(
@@ -1331,9 +1333,8 @@ describe('planTurn — border value after this turn\'s captures (R2)', () => {
       expect(deployedTo(p, 1)).toBeGreaterThanOrEqual(3);
       expect(deploySum(p)).toBe(5);
       expect(p.warnings.join('\n')).not.toMatch(/T1 \(#1\).*conceded/);
-      expect(p.rationale.join('\n')).toMatch(
-        /Keep T1 \(#1\) \(not conceded\): this turn's captures complete bonus B801 \(#801\) \(\+5\), so it protects \+5/,
-      );
+      // #122: held from triage (its share of the bonus being built), not conceded and kept by 1c.
+      expect(p.rationale.join('\n')).toMatch(/Deploy 3 to T1 \(#1\) so it holds \(protects \+3\.8\)/);
       // The garrison makes it safe: no warning that the completed bonus can fall.
       expect(p.warnings.join('\n')).not.toMatch(/is kept for the bonus/);
     });
@@ -1347,16 +1348,36 @@ describe('planTurn — border value after this turn\'s captures (R2)', () => {
   });
 
   it('keeps the border but warns when the leftover cannot make it hold', () => {
-    // T3 has 1 army, so the 3-army capture needs 3 deployed: only 2 are left for T1,
-    // whose 6 armies need only 10 to take against the ~10 threat.
-    const p = planTurn({ graph: g, board: at(1, 2), me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    // A 12-stack on T9: threat 11 movable + 5 deploy = 16, so T1's hold needs 6, more than the
+    // 5 income: conceded at triage. T3's 4 armies complete the bonus with no deploy; rule 1c then
+    // keeps T1 and the leftover 5 make 9 armies, which need only 15 to take against the ~16.
+    const p = planTurn({
+      graph: g,
+      board: board([mine(1, 4), mine(2, 1), mine(3, 4), neutral(4, 2), enemy(9, 12)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      options: { goal: 'defend' },
+    });
     expect(p.expected.bonusesCompleted).toEqual([801]);
     expect(p.conceded).toEqual([]);
     expect(p.moves.some((m) => m.from === 1)).toBe(false);
-    expect(deployedTo(p, 1)).toBe(2);
-    expect(p.warnings).toContain(
-      'T1 (#1) is kept for the bonus this turn completes, but its 6 armies need only 10 to take against the ~10 threat: the bonus can fall next turn.',
+    expect(deployedTo(p, 1)).toBe(5);
+    expect(p.rationale.join('\n')).toMatch(
+      /Keep T1 \(#1\) \(not conceded\): this turn's captures complete bonus B801 \(#801\) \(\+5\), so it protects \+5/,
     );
+    expect(p.warnings).toContain(
+      'T1 (#1) is kept for the bonus this turn completes, but its 9 armies need only 15 to take against the ~16 threat: the bonus can fall next turn.',
+    );
+  });
+
+  it('#122: with T3 at 1 army, defend holds T1 first and completes the bonus next turn', () => {
+    // T1's hold (3) and the capture's deploys (3) do not both fit the 5 income. Completing it
+    // with T1 left on 6 armies (10 to take against the ~10 threat) lost the bonus anyway.
+    const p = planTurn({ graph: g, board: at(1, 2), me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
+    expect(p.conceded).toEqual([]);
+    expect(armiesToTake(4 + deployedTo(p, 1), STD)).toBeGreaterThan(10);
+    expect(p.expected.bonusesCompleted).toEqual([]);
   });
 
   it('keeps a conceded border only for a bonus completed this turn, not for any capture', () => {

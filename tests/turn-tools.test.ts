@@ -220,29 +220,27 @@ describe('warapp_plan_turn', () => {
     // still does, and R2's re-valuation keeps its borders under every goal.
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' }));
     expect(p.goal).toBe('expand');
-    // Both threatened borders protect +0 at the start of the turn, but capturing Widow's Watch
-    // completes bonus 118 around them: they are kept (not conceded, nothing withdrawn).
+    // Both threatened borders carry +1.3 at the start of the turn (#122: their share of bonus
+    // 118, being built): Hornwood's hold is cheap and it is not conceded; Sheepshead Hills' (5)
+    // is not worth it, but capturing Widow's Watch from it completes bonus 118 around it, so rule
+    // 1c keeps it (not conceded, nothing withdrawn).
     expect(p.expected.bonusesCompleted).toEqual([{ id: 118, name: 'Broken Branch Riverlords', value: 2 }]);
     expect(p.conceded).toEqual([]);
     expect(p.warnings.join('\n')).not.toMatch(/: conceded/);
     expect(p.moves.every((m) => m.kind === 'attack')).toBe(true);
     expect(p.cardAdvice).toBeNull();
-    for (const id of [159, 161]) {
-      expect(p.rationale.join('\n')).toContain(`Keep ${mapName(id)} (#${id}) (not conceded)`);
-      // The 5 income cannot make both safe against Bob's ~11: each says the bonus can fall.
-      expect(p.warnings.join('\n')).toContain(`${mapName(id)} (#${id}) is kept for the bonus this turn completes`);
-    }
+    expect(p.rationale.join('\n')).toContain(`Keep ${mapName(161)} (#161) (not conceded)`);
+    // The 5 income cannot make it safe against Bob's ~11: it says the bonus can fall.
+    expect(p.warnings.join('\n')).toContain(`${mapName(161)} (#161) is kept for the bonus this turn completes`);
   });
 
   it('reports a conceded border and the Order Priority advice its withdrawal needs', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    // With no enemy deploy, Bob's 6 movable threaten only Sheepshead Hills (3): it protects +0,
-    // so it is conceded, and its 2 movable armies withdraw to Hornwood (6), which holds.
-    // (Bob borders the fog; pressuring his 7 is sized for 0 + a margin of 2 = 9 defenders, 15
-    // armies — over PRESSURE_FACTOR × the 3 a neutral costs — so it is not attempted, #60.)
-    const p = payload<PlanPayload>(
-      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend', enemy_deploy: 0 }),
-    );
+    // Bob's 6 movable + ~5 deploy threaten Sheepshead Hills (3): holding it needs 5 for +1.3 (its
+    // share of bonus 118, #122), more than 3 × its worth, so it is conceded, and its 2 movable
+    // armies withdraw to Hornwood (6), which holds. (Completing bonus 118 from it is refused by
+    // R3: the bonus could not be held next turn.)
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.conceded).toEqual([{ id: 161, name: mapName(161) }]);
     expect(p.cardAdvice).toBe('order-priority');
     expect(p.moves[0]).toEqual({
@@ -1101,9 +1099,7 @@ describe('cards in the turn tools', () => {
     // As in "reports a conceded border": Sheepshead Hills is conceded and withdraws, so the
     // plan advises Order Priority; holding one, the orders play it (not only the advice).
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: withHand([{ id: OP, type: 4 }]) }) });
-    const p = payload<CardsPayload>(
-      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend', enemy_deploy: 0 }),
-    );
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.cardAdvice).toBe('order-priority');
     expect(p.cards.playRequired).toBe(false);
     expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
@@ -1154,7 +1150,12 @@ describe('cards in the turn tools', () => {
         ]),
       }),
     });
-    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    // A plan that advises no Order Priority (with no enemy deploy both borders hold): the hand at
+    // the limit forces nothing.
+    const p = payload<CardsPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend', enemy_deploy: 0 }),
+    );
+    expect(p.cardAdvice).toBeNull();
     expect(p.cards.playRequired).toBe(false);
     expect(p.cards.plays).toEqual([]);
     expect(p.cards.discards).toEqual([]);
