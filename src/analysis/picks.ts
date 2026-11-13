@@ -34,7 +34,10 @@
 //     ENTRY_WEIGHT, or ENTRY_WEIGHT_1V1 (twice as much) in a 1v1 — one opponent finds
 //     every entry point, so a narrow bonus wins ties against a wide one (#73) — and
 //     hardness is how much dearer an attack is than at the standard 60/70 (at 30/75
-//     a bonus with few entry points is worth more).
+//     a bonus with few entry points is worth more). A negative bonus held in full costs
+//     its value × (PICK_HORIZON + 1 − turn), unscaled, and is listed among the pick's
+//     negatives; the simulation never steers for a bonus whose completion would also
+//     complete negative bonuses worth as much (its value is counted net of them, #129).
 //  4. Contestedness. A pick's centrality is its mean hop distance to the other
 //     pickable territories, normalised over the pickables (1 = most central). Its
 //     score is scaled by 1 − contestWeight(players) × centrality: no penalty in a
@@ -197,6 +200,10 @@ interface Ctx {
   bonuses: Map<number, BonusInfo>;
   /** Territory → bonus ids (value > 0, not superbonuses). */
   bonusesOf: Map<number, number[]>;
+  /** Negative bonuses (value < 0, not superbonuses), by id (#129). */
+  penalties: Map<number, BonusInfo>;
+  /** Territory → negative bonus ids. */
+  penaltiesOf: Map<number, number[]>;
   pickArmies: number;
   guard: number;
   baseIncome: number;
@@ -205,6 +212,8 @@ interface Ctx {
 
 interface SimResult {
   completions: Map<number, number>;
+  /** Negative bonuses held in full, by the turn they complete (0: held by the picks). */
+  penalties: Map<number, number>;
   /** Share held at the horizon, for bonuses touched but not completed. */
   progress: Map<number, number>;
   score: number;
@@ -227,11 +236,27 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
     }
     return [...ids].sort(byNum);
   };
+  const penalties = new Map<number, number>();
   const checkComplete = (turn: number) => {
     for (const id of relevant(held)) {
       if (completions.has(id)) continue;
       if (ctx.bonuses.get(id)!.members.every((m) => held.has(m))) completions.set(id, turn);
     }
+    for (const t of held)
+      for (const id of ctx.penaltiesOf.get(t) ?? [])
+        if (!penalties.has(id) && ctx.penalties.get(id)!.members.every((m) => held.has(m))) penalties.set(id, turn);
+  };
+  // A bonus is worth its value less the negative bonuses that completing it would also
+  // complete (#129): one worth no more than that is not steered for.
+  const netValue = (b: BonusInfo) => {
+    let v = b.value;
+    const ids = new Set(b.members.flatMap((m) => ctx.penaltiesOf.get(m) ?? []));
+    for (const id of ids) {
+      if (penalties.has(id)) continue;
+      const n = ctx.penalties.get(id)!;
+      if (n.members.every((m) => held.has(m) || b.members.includes(m))) v += n.value;
+    }
+    return v;
   };
   checkComplete(0);
   for (let turn = 1; turn <= PICK_HORIZON; turn++) {
@@ -272,7 +297,9 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
           }
         }
         if (blocked || target === null || rem === 0) continue;
-        const ratio = b.value / rem;
+        const net = netValue(b);
+        if (net <= 0) continue;
+        const ratio = net / rem;
         if (!best || ratio > best.ratio || (ratio === best.ratio && (rem < best.rem || (rem === best.rem && id < best.id))))
           best = { id, ratio, rem, target, cost: targetCost };
       }
@@ -323,7 +350,8 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
       score += PROGRESS_WEIGHT * b.value * share * b.defense;
     }
   }
-  return { completions, progress, score };
+  for (const [id, turn] of penalties) score += ctx.penalties.get(id)!.value * (PICK_HORIZON + 1 - turn);
+  return { completions, penalties, progress, score };
 }
 
 function luckPercent(v: number | undefined): number {
@@ -422,6 +450,17 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     for (const t of members) bonusesOf.set(t, [...(bonusesOf.get(t) ?? []), b.id]);
   }
 
+  // Negative bonuses: never steered for, but charged when held in full (#129).
+  const penalties = new Map<number, BonusInfo>();
+  const penaltiesOf = new Map<number, number[]>();
+  for (const b of g.map.bonuses) {
+    if (b.value >= 0 || b.bonusIds.length > 0) continue;
+    const members = (analyzeBonus(g, b.id)?.territoryIds ?? []).filter((t) => g.territoryById.has(t));
+    if (!members.length) continue;
+    penalties.set(b.id, { id: b.id, name: b.name, value: b.value, members, entryPoints: 0, defense: 1 });
+    for (const t of members) penaltiesOf.set(t, [...(penaltiesOf.get(t) ?? []), b.id]);
+  }
+
   const ctx: Ctx = {
     g,
     cost,
@@ -429,6 +468,8 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     armies,
     bonuses,
     bonusesOf,
+    penalties,
+    penaltiesOf,
     pickArmies,
     guard,
     baseIncome,
@@ -510,6 +551,16 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       lines.push({ id, worth, point, negatives });
     }
     lines.sort((a, b) => b.worth - a.worth || a.id - b.id);
+    // Negative bonuses held in full: a cost, listed with the negatives (#129).
+    const charged = [...sim.penalties.entries()]
+      .sort((a, b) => a[1] - b[1] || a[0] - b[0])
+      .map(([id, turn]) => {
+        const n = penalties.get(id)!;
+        const head = `${n.name} (−${-n.value})`;
+        return turn === 0
+          ? `${head}: a negative bonus held at once, −${-n.value} income from turn 1`
+          : `${head}: a negative bonus completed on turn ${turn}, −${-n.value} income from turn ${turn + 1}`;
+      });
     const why: string[] = [];
     const anchor = lines[0];
     if (anchor) {
@@ -518,6 +569,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       for (const l of lines.slice(1)) why.push(`Also ${sim.completions.has(l.id) ? 'completes' : 'advances'} ${l.point}`);
       for (const l of lines) why.push(...l.negatives);
     } else why.push(`No bonus within reach in ${PICK_HORIZON} turns`);
+    why.push(...charged);
     if (contestWeight > 0 && 1 - factor >= 0.05)
       why.push(`Central: likely contested with ${players} players (score −${Math.round((1 - factor) * 100)}%)`);
     return { score: round2(sim.score * factor), reasons: why, anchor: anchor?.id ?? null };

@@ -90,3 +90,33 @@ describe('planPicks — the fallback is simulated with the primary taken by some
     expect(p.groups.fallback.territoryIds).toEqual([11]);
   });
 });
+
+describe('planPicks — negative bonuses (#129)', () => {
+  it('a pick that holds a negative bonus is charged for it and says so', () => {
+    // Plus (+3) = {1,2}; Minus (−5) = {1} alone. Picking 1 nets −2 a turn; 2 is the better pick
+    // (and does not capture 1 for Plus, since that also completes Minus).
+    const g = mkGraph([[1, 2], [2, 3]], [
+      { id: 100, name: 'Plus', value: 3, territoryIds: [1, 2] },
+      { id: 101, name: 'Minus', value: -5, territoryIds: [1] },
+    ]);
+    const p = plan({ graph: g, pickable: [1, 2], territoryLimit: 1, maxPicks: 2 });
+    expect(p.picks[0]!.territoryId).toBe(2);
+    expect(pick(p, 1).score).toBeLessThan(0);
+    expect(reasonsOf(p, 1)).toMatch(/Minus \(−5\)/);
+    expect(reasonsOf(p, 2)).not.toMatch(/Plus[^|]*(first-turn|complete on)/);
+  });
+
+  it('a bonus worth more than the negative one it completes is still taken, net of the penalty', () => {
+    // Big (+8) = {1,2}; Thorn (−2) = {2}. Taking 2 completes both: net +6 a turn.
+    const g = mkGraph([[1, 2], [2, 3]], [
+      { id: 100, name: 'Big', value: 8, territoryIds: [1, 2] },
+      { id: 101, name: 'Thorn', value: -2, territoryIds: [2] },
+    ]);
+    const withThorn = plan({ graph: g, pickable: [1], territoryLimit: 1, maxPicks: 1 });
+    expect(withThorn.groups.primary.bonuses.map((b) => b.name)).toContain('Big');
+    expect(reasonsOf(withThorn, 1)).toMatch(/Thorn \(−2\)/);
+    const g2 = mkGraph([[1, 2], [2, 3]], [{ id: 100, name: 'Big', value: 8, territoryIds: [1, 2] }]);
+    const without = plan({ graph: g2, pickable: [1], territoryLimit: 1, maxPicks: 1 });
+    expect(pick(withThorn, 1).score).toBeLessThan(pick(without, 1).score);
+  });
+});
