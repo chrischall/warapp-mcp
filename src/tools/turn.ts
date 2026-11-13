@@ -792,7 +792,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             ? plan.frontier
             : `${plan.frontier.borders} borders (${plan.frontier.enemyBorders} facing an enemy): holding them next turn needs ${plan.frontier.holdCost}, next income ${plan.frontier.income}${
                 plan.expected.nextIncomeIfConcededFall !== undefined &&
-                plan.expected.nextIncomeIfConcededFall !== plan.frontier.income
+                plan.expected.nextIncomeIfConcededFall < plan.frontier.income
                   ? `, ${plan.expected.nextIncomeIfConcededFall} if the conceded borders fall`
                   : ''
               }`,

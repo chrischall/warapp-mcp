@@ -4867,7 +4867,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       `This plan concedes ${what}: next income ${nextIncome} if they hold, ${ifFall} if the conceded borders fall.`,
     );
   }
-  const nextIncomeText = ifFall !== nextIncome ? `${nextIncome}, ${ifFall} if the conceded borders fall` : `${nextIncome}`;
+  const nextIncomeText = ifFall < nextIncome ? `${nextIncome}, ${ifFall} if the conceded borders fall` : `${nextIncome}`;
 
   // Rule 4d's frontier budget (#71): the frontier this plan leaves against the next income.
   const frontier: FrontierBudget = {
