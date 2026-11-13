@@ -146,6 +146,10 @@
       "description": "Plan your turn from the live board: deploys and moves by name, expected bonuses, and submit-ready orders"
     },
     {
+      "name": "warapp_check_plan",
+      "description": "Stress-test a list of orders before submitting: the replies one enemy deploy could make, and what each would cost you"
+    },
+    {
       "name": "warapp_track_opponents",
       "description": "Track each opponent over your board history: deploys per turn, income, armies hidden in the fog, and bonuses that could explain the gap"
     },
