@@ -15,7 +15,7 @@ import {
   type LiveTerritory,
 } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
-import { writePickList } from '../pick-list.js';
+import { writePickable, writePickList } from '../pick-list.js';
 import { Method, writeSendTerritoryPicksParams } from '../protocol/methods.js';
 import {
   currentTurn,
@@ -398,7 +398,10 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
             // The list's length is checked against the client's own bounds (#129) as a warning:
             // its picking UI stops at the maximum, and its validation rejects a list shorter
             // than the minimum, but neither is verified against the server.
-            const pickableCount = board.filter((t) => !t.fogged && t.owner === OWNER_PICKABLE).length;
+            const pickable = board.filter((t) => !t.fogged && t.owner === OWNER_PICKABLE).map((t) => t.territoryId);
+            const pickableCount = pickable.length;
+            // Kept for the turns to come: where a player could have started (warapp_locate_opponents).
+            if (ctx.dataDir) await writePickable(ctx.dataDir, game.id, me.id, pickable);
             const bounds = clientPickLimits({
               territoryLimit: game.settings?.territoryLimit,
               players: game.players.length,

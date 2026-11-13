@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { AwardReading } from '../src/analysis/award.js';
-import { PICK_LIST_MAX_AGE_MS, pickListPath, readPickRecord, writeAward, writePickList } from '../src/pick-list.js';
+import { PICK_LIST_MAX_AGE_MS, pickListPath, readPickRecord, writeAward, writePickable, writePickList } from '../src/pick-list.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'warapp-mcp-picks-'));
 const GAME = 4101;
@@ -93,5 +93,61 @@ describe('the stored pick list', () => {
     expect(existsSync(recent)).toBe(true);
     expect(existsSync(other)).toBe(true);
     expect(JSON.parse(readFileSync(pickListPath(d, GAME), 'utf8')).list).toEqual([11, 12, 13]);
+  });
+});
+
+describe('the pickable territories kept beside the list', () => {
+  it('are kept on their own, before any list: sorted, each once', async () => {
+    const d = dir();
+    expect(await writePickable(d, GAME, ME, [16, 11, 14, 11, 12])).toBe(true);
+    expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, pickable: [11, 12, 14, 16] });
+    expect(statSync(pickListPath(d, GAME)).mode & 0o777).toBe(0o600);
+    // Ids only.
+    expect(Object.keys(JSON.parse(readFileSync(pickListPath(d, GAME), 'utf8'))).sort()).toEqual(['gameId', 'pickable', 'playerId']);
+  });
+
+  it('with no list there is no award to keep', async () => {
+    const d = dir();
+    await writePickable(d, GAME, ME, [11, 12, 13]);
+    expect(await writeAward(d, GAME, ME, READING)).toBe(false);
+    expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, pickable: [11, 12, 13] });
+  });
+
+  it('stay when the list is written, changed or read for its award, and the list stays when they are written', async () => {
+    const d = dir();
+    await writePickable(d, GAME, ME, [11, 12, 13, 14]);
+    await writePickList(d, GAME, ME, [12, 11]);
+    expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, list: [12, 11], pickable: [11, 12, 13, 14] });
+    await writeAward(d, GAME, ME, READING);
+    expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, list: [12, 11], pickable: [11, 12, 13, 14], award: READING });
+    // The same pickables again change nothing; others replace them and keep the list and its award.
+    expect(await writePickable(d, GAME, ME, [14, 13, 12, 11])).toBe(true);
+    expect(await writePickable(d, GAME, ME, [11, 12, 15])).toBe(true);
+    expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, list: [12, 11], pickable: [11, 12, 15], award: READING });
+    await writePickList(d, GAME, ME, [11, 12]);
+    expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, list: [11, 12], pickable: [11, 12, 15] });
+  });
+
+  it('refuses none, or ids that are not positive integers, and replaces another player\'s record', async () => {
+    const d = dir();
+    expect(await writePickable(d, GAME, ME, [])).toBe(false);
+    expect(await writePickable(d, GAME, ME, [11, 0])).toBe(false);
+    expect(await writePickable(d, GAME, ME, [11, 2.5])).toBe(false);
+    expect(existsSync(pickListPath(d, GAME))).toBe(false);
+    await writePickList(d, GAME, ME + 1, [11, 12]);
+    await writePickable(d, GAME, ME, [11, 12, 13]);
+    expect(await readPickRecord(d, GAME, ME + 1)).toBeUndefined();
+    expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, pickable: [11, 12, 13] });
+  });
+
+  it('reads a file with neither a list nor pickables as nothing, and drops unusable pickables', async () => {
+    const d = dir();
+    mkdirSync(join(d, 'picks'), { recursive: true });
+    writeFileSync(pickListPath(d, GAME), JSON.stringify({ gameId: GAME, playerId: ME }));
+    expect(await readPickRecord(d, GAME, ME)).toBeUndefined();
+    writeFileSync(pickListPath(d, GAME), JSON.stringify({ gameId: GAME, playerId: ME, pickable: ['x'] }));
+    expect(await readPickRecord(d, GAME, ME)).toBeUndefined();
+    writeFileSync(pickListPath(d, GAME), JSON.stringify({ gameId: GAME, playerId: ME, list: [11, 12], pickable: 'x' }));
+    expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, list: [11, 12] });
   });
 });

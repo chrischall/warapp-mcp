@@ -26,6 +26,7 @@ import { registerStrategyTool } from './strategy.js';
 import { registerSurrenderTool } from './surrender.js';
 import { registerTurnTools } from './turn.js';
 import { registerUncommitTool } from './uncommit.js';
+import { registerWhereTool } from './where.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { pushWebSocketLeg } from '../push/websocket.js';
 import { readSession } from '../direct/session.js';
@@ -109,6 +110,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerTurnTools(server, live);
   registerCheckPlanTool(server, live);
   registerOpponentsTool(server, live);
+  // Reads the map statistics cache only when they are on (WARAPP_STATS=1, never hosted).
+  registerWhereTool(server, live, deps.env ? { env: deps.env } : {});
   registerUncommitTool(server, live);
   registerChatTools(server, live);
   // One push socket per process: keyed on the shared fetchproxy bridge so

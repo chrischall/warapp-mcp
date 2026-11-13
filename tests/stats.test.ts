@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { GetGameOptions } from '../src/client.js';
 import type { Game, GameMap } from '../src/normalize.js';
 import {
+  cachedRecords,
   isHosted,
   MAX_NEW_GAMES,
   MIN_GAP_MS,
@@ -311,5 +312,33 @@ describe('StatsCollector', () => {
     expect(await collector.collect(0)).toMatchObject({ cacheHits: 0, newlyCached: 1 });
     expect(requests.map((r) => r.what)).toEqual(['feed:0', 'game:9']);
     expect((await collector.records(777)).map((r) => r.gameId)).toEqual([9]);
+  });
+});
+
+describe('cachedRecords (the cache alone: no request, nothing deleted)', () => {
+  it('reads the records already cached for a map, ascending by game id', async () => {
+    const { collector, dir, requests } = fake([12, 11], finished(11, 12));
+    await collector.collect(0);
+    const made = requests.length;
+    const records = await cachedRecords(dir, 777);
+    expect(records.map((r) => r.gameId)).toEqual([11, 12]);
+    expect(records[0]!.players.map((p) => [p.playerId, p.starts])).toEqual([
+      [A, [1]],
+      [B, [3]],
+    ]);
+    expect(requests.length).toBe(made);
+    expect(await cachedRecords(dir, 778)).toEqual([]);
+    expect(await cachedRecords(join(dir, 'missing'), 777)).toEqual([]);
+  });
+
+  it('skips a file that is not a readable record, and leaves it where it is', async () => {
+    const { collector, dir } = fake([11], finished(11));
+    await collector.collect(0);
+    writeFileSync(join(dir, 'stats', '777', '9.json'), 'not json');
+    writeFileSync(join(dir, 'stats', '777', '10.json'), JSON.stringify({ gameId: 10, mapId: 777, turnsSeen: 0, players: [] }));
+    writeFileSync(join(dir, 'stats', '777', '13.json'), JSON.stringify({ ...JSON.parse(readFileSync(recordPath(dir, 777, 11), 'utf8')), gameId: 13, mapId: 778 }));
+    expect((await cachedRecords(dir, 777)).map((r) => r.gameId)).toEqual([11]);
+    expect(existsSync(recordPath(dir, 777, 9))).toBe(true);
+    expect(existsSync(recordPath(dir, 777, 10))).toBe(true);
   });
 });

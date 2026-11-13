@@ -4,9 +4,12 @@
 // afterwards is not verified, and the award can only be read against the list it used. So the
 // list is written here when this server reads it back from war.app (after warapp_submit_picks,
 // or by warapp_get_my_picks during distribution), at `<dataDir>/picks/<gameId>.json`, with the
-// award read from it on the first board after distribution. Territory ids only: no names, no
-// other player's data. Best effort and never throws; a game's file not written for 60 days is
-// deleted on the first write of a process.
+// award read from it on the first board after distribution. The same file keeps the territories
+// the live board showed as pickable during distribution (written by warapp_plan_picks and by
+// warapp_submit_picks' preview): once the game starts nothing says where a player could have
+// started, and warapp_locate_opponents needs it. A record may hold either or both. Territory ids
+// only: no names, no other player's data. Best effort and never throws; a game's file not
+// written for 60 days is deleted on the first write of a process.
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AwardReading } from './analysis/award.js';
@@ -15,8 +18,10 @@ export interface PickRecord {
   gameId: number;
   /** The player whose list this is (GameFeed id). */
   playerId: number;
-  /** The picks in priority order, as war.app read them back. */
-  list: number[];
+  /** The picks in priority order, as war.app read them back; absent while only the pickables are kept. */
+  list?: number[];
+  /** The territories the live board showed as pickable during distribution, ascending; absent when not kept. */
+  pickable?: number[];
   /**
    * The award read from the list on the first board after distribution: `null` when the list
    * could not explain that start; absent while it has not been read.
@@ -55,13 +60,20 @@ function awardOf(v: unknown): AwardReading | null | undefined {
   };
 }
 
-/** The pick list kept for `gameId` when it is `playerId`'s; `undefined` when absent or unusable. Never throws. */
+/**
+ * The record kept for `gameId` when it is `playerId`'s: the pick list, the pickable territories, or
+ * both; `undefined` when absent or when it holds neither. An award is read only beside a list.
+ * Never throws.
+ */
 export async function readPickRecord(dir: string, gameId: number, playerId: number): Promise<PickRecord | undefined> {
   try {
     const c: unknown = JSON.parse(await readFile(pickListPath(dir, gameId), 'utf8'));
-    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !isIds(c.list) || !c.list.length) return undefined;
-    const award = awardOf(c.award);
-    return { gameId, playerId, list: c.list, ...(award !== undefined ? { award } : {}) };
+    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId) return undefined;
+    const list = isIds(c.list) && c.list.length ? c.list : undefined;
+    const pickable = isIds(c.pickable) && c.pickable.length ? c.pickable : undefined;
+    if (!list && !pickable) return undefined;
+    const award = list ? awardOf(c.award) : undefined;
+    return { gameId, playerId, ...(list ? { list } : {}), ...(pickable ? { pickable } : {}), ...(award !== undefined ? { award } : {}) };
   } catch {
     return undefined;
   }
@@ -102,20 +114,42 @@ async function writeRecord(dir: string, record: PickRecord): Promise<boolean> {
   }
 }
 
+const sameIds = (a: readonly number[] | undefined, b: readonly number[]) => a !== undefined && a.length === b.length && a.every((t, i) => t === b[i]);
+
 /**
  * Keep `list` as `playerId`'s picks for `gameId`. The same list already kept stays as it is (its
- * award too); a different one replaces it and drops the award read from the old one. Never throws.
+ * award too); a different one replaces it and drops the award read from the old one. The pickable
+ * territories kept beside it stay. Never throws.
  */
 export async function writePickList(dir: string, gameId: number, playerId: number, list: readonly number[]): Promise<boolean> {
   if (!list.length || !isIds([...list])) return false;
   const kept = await readPickRecord(dir, gameId, playerId);
-  if (kept && kept.list.length === list.length && kept.list.every((t, i) => t === list[i])) return true;
-  return writeRecord(dir, { gameId, playerId, list: [...list] });
+  if (sameIds(kept?.list, list)) return true;
+  return writeRecord(dir, { gameId, playerId, list: [...list], ...(kept?.pickable ? { pickable: kept.pickable } : {}) });
 }
 
 /** Keep the award read from the stored list (`null`: nothing could be read). False when no list is kept for this player. */
 export async function writeAward(dir: string, gameId: number, playerId: number, award: AwardReading | null): Promise<boolean> {
   const kept = await readPickRecord(dir, gameId, playerId);
-  if (!kept) return false;
-  return writeRecord(dir, { gameId, playerId, list: kept.list, award });
+  if (!kept?.list) return false;
+  return writeRecord(dir, { gameId, playerId, list: kept.list, ...(kept.pickable ? { pickable: kept.pickable } : {}), award });
+}
+
+/**
+ * Keep the territories the live board showed as pickable for `gameId` (ascending, each once),
+ * beside `playerId`'s list and its award when those are kept. The same set already kept stays as
+ * it is. Never throws.
+ */
+export async function writePickable(dir: string, gameId: number, playerId: number, pickable: readonly number[]): Promise<boolean> {
+  if (!pickable.length || !isIds([...pickable])) return false;
+  const ids = [...new Set(pickable)].sort((a, b) => a - b);
+  const kept = await readPickRecord(dir, gameId, playerId);
+  if (sameIds(kept?.pickable, ids)) return true;
+  return writeRecord(dir, {
+    gameId,
+    playerId,
+    ...(kept?.list ? { list: kept.list } : {}),
+    pickable: ids,
+    ...(kept?.list && kept.award !== undefined ? { award: kept.award } : {}),
+  });
 }

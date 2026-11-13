@@ -109,12 +109,8 @@ const isRecord = (v: unknown): v is GameRecord => {
   );
 };
 
-/**
- * Read one cached record. A file that reads but is not a valid record is
- * deleted: its name alone counts as a cache hit, so left in place it would
- * never be fetched again and never be counted.
- */
-async function readRecord(path: string): Promise<GameRecord | undefined> {
+/** One cached record: `undefined` when the file is not there, `null` when it is not a usable record. */
+async function parseRecord(path: string): Promise<GameRecord | null | undefined> {
   let text: string;
   try {
     text = await readFile(path, 'utf8');
@@ -127,10 +123,44 @@ async function readRecord(path: string): Promise<GameRecord | undefined> {
   } catch {
     r = undefined;
   }
+  return isRecord(r) && readableRecord(r) ? r : null;
+}
+
+/**
+ * Read one cached record. A file that reads but is not a valid record is
+ * deleted: its name alone counts as a cache hit, so left in place it would
+ * never be fetched again and never be counted.
+ */
+async function readRecord(path: string): Promise<GameRecord | undefined> {
+  const r = await parseRecord(path);
+  if (r) return r;
   // An unreadable game cached by an older version is dropped too, so it is fetched again (#132).
-  if (isRecord(r) && readableRecord(r)) return r;
-  await unlink(path).catch(() => undefined);
+  if (r === null) await unlink(path).catch(() => undefined);
   return undefined;
+}
+
+/** The record files cached for `mapId` (`<dir>/stats/<mapId>/<gameId>.json`), by name. */
+async function recordFiles(dir: string, mapId: number): Promise<string[]> {
+  const folder = join(statsDir(dir), String(mapId));
+  return (await names(folder))
+    .filter((f) => /^\d+\.json$/.test(f))
+    .sort()
+    .map((f) => join(folder, f));
+}
+
+/**
+ * Every usable record already cached for `mapId` under `dir`, ascending by game id. The cache
+ * alone: no request is made, and nothing is written or deleted (a file that is not a usable
+ * record is skipped where it is — the collector drops it). For readers outside the collector
+ * (warapp_locate_opponents), which call it only when {@link statsGate} allows statistics.
+ */
+export async function cachedRecords(dir: string, mapId: number): Promise<GameRecord[]> {
+  const out: GameRecord[] = [];
+  for (const file of await recordFiles(dir, mapId)) {
+    const r = await parseRecord(file);
+    if (r && r.mapId === mapId) out.push(r);
+  }
+  return out.sort((a, b) => a.gameId - b.gameId);
 }
 
 async function names(path: string): Promise<string[]> {
@@ -281,11 +311,9 @@ export class StatsCollector {
 
   /** Every cached record of `mapId`, ascending by game id. No request. */
   async records(mapId: number): Promise<GameRecord[]> {
-    const dir = join(statsDir(this.#dir()), String(mapId));
     const out: GameRecord[] = [];
-    for (const f of (await names(dir)).sort()) {
-      if (!/^\d+\.json$/.test(f)) continue;
-      const r = await readRecord(join(dir, f));
+    for (const file of await recordFiles(this.#dir(), mapId)) {
+      const r = await readRecord(file);
       if (r && r.mapId === mapId) out.push(r);
     }
     return out.sort((a, b) => a.gameId - b.gameId);

@@ -239,6 +239,44 @@ afterwards. The list is the one war.app read back (`warapp_submit_picks`, or `wa
 during distribution), kept at `<dataDir>/picks/<gameId>.json`; the award is read once, on the first
 board, and nothing is inferred when the list cannot explain the start.
 
+# Where the opponents are — `warapp_locate_opponents`
+
+A guess, kept apart from what was seen (`src/analysis/whereabouts.ts`, pure; the turn planner does
+not use it yet). Our own model, built on what a player reads from the opening and from contact:
+
+- **Fact** is only what my boards showed: an opponent's territories in view now, and those my
+  earlier boards last showed as its own and that are hidden now ("last seen").
+- **Starts.** The candidates are the territories the live board showed as pickable (kept while
+  picking), or, locally with map statistics on, every territory a player started on in the cached
+  finished games of the map. A candidate a board showed as a neutral, or my first board as mine or
+  another player's, is ruled out; a start the award proves is certain. The rest are weighed by the
+  prior (uniform, or how often players started there in the cached games, plus one) and by how well
+  each set of starts explains every sighting: a start from which the growth model below holds a
+  sighted territory by the turn it was first seen explains it fully, one that could only just be
+  there explains it a little, one that could not be there in time not at all. With too many sets
+  the candidates are weighed one by one.
+- **Reach and growth.** A player moves one capture per turn along a path, paying each capture out
+  of the armies it has plus its income. Growth, what a start could hold by now, spends pooled
+  armies on the bonus with the best value per remaining cost: generous on purpose, "could
+  plausibly hold", not "holds".
+- **Presence** on a hidden territory combines the last sighting (fading per turn when a third
+  player could have taken it), the bonuses that would explain its tracked income, and what the
+  likely starts suggest: the start itself, the shortest ways between a likely start and a
+  sighting (the corridor), or growth from it. Those three rest on the same start guess, so only
+  the strongest of them counts. Each guess names its sources (`basis`). A territory shown as someone
+  else's or as a neutral is never presence.
+- **From those:** the bonuses it probably holds in full (its least likely member), the earliest
+  turn it could attack each of my border territories (from a stack in view, with the armies that
+  could arrive, or from a territory it only probably holds), what it is doing in plain sentences,
+  and what to prepare: a territory of a bonus I hold in full (or my commander's) that the soonest
+  attack from a stack in view would take, a bonus I hold part of (and that is worth finishing) whose
+  missing piece it holds, may hold or can take soon, and one territory whose capture would settle a
+  guess that could go either way.
+- **Assumed:** pooled armies when growing, one capture per turn, a start is never abandoned, a
+  captured territory never turns neutral again, cards (Blockade, Airlift and the rest) and
+  Multi-Attack ignored. Likelihoods are the model's estimates, never measured probabilities, and the
+  answer says what the prior was and on how many games it rests.
+
 # The rest of the game — `warapp_strategy`
 
 `warapp_strategy(game_id?, map_id?, topic?)` serves the notes below. With a game it picks the

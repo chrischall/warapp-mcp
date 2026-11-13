@@ -507,10 +507,17 @@ describe('warapp_submit_picks', () => {
     h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
     expect(await readPickRecord(h.dataDir, GAME, Number(ANN.feed))).toBeUndefined();
     await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159, 135] });
-    // A preview keeps nothing.
-    expect(await readPickRecord(h.dataDir, GAME, Number(ANN.feed))).toBeUndefined();
+    // A preview keeps no list, only the territories the board showed as pickable (warapp_locate_opponents).
+    const previewed = await readPickRecord(h.dataDir, GAME, Number(ANN.feed));
+    expect(previewed).not.toHaveProperty('list');
+    expect(previewed!.pickable).toEqual(expect.arrayContaining([135, 159, 161]));
     await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159, 135] });
-    expect(await readPickRecord(h.dataDir, GAME, Number(ANN.feed))).toEqual({ gameId: GAME, playerId: Number(ANN.feed), list: [161, 159, 135] });
+    expect(await readPickRecord(h.dataDir, GAME, Number(ANN.feed))).toEqual({
+      gameId: GAME,
+      playerId: Number(ANN.feed),
+      list: [161, 159, 135],
+      pickable: previewed!.pickable,
+    });
   });
 
   it('a read-back that fails after the send still reports sent: true (#130)', async () => {

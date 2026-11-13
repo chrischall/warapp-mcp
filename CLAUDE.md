@@ -273,6 +273,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   #123 rules below; candidates, never asserted). With 2+ observed turns the planner uses
   the tracked income in place of the single-turn observed figure (`PlanInput.tracks`) and says so
   in its rationale; fewer, and the plan is exactly what it was without tracking.
+- **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
+  `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
+  award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in
+  `src/pick-list.ts`, written by `warapp_plan_picks` and the `warapp_submit_picks` preview; a record
+  may now hold `pickable` without a `list`, which gives no award) and, only when `statsGate` is on
+  (`WARAPP_STATS=1`, never hosted), the finished games already cached for the map
+  (`cachedRecords` in `src/stats.ts`: the cache alone, never a request) as start candidates and
+  prior. `seen` is the only fact in its output; everything else is a `likelihood` from a simple
+  model, with its `basis`. The planner does not use it yet. It writes the board cache like
+  `warapp_track_opponents`.
 - **The turn planner (`src/analysis/planner.ts`) is pure and deterministic** (ties on
   ascending id, no I/O; its header comment is the full rule list) and judges every hold and
   capture with the exact combat model (`armiesToTake`, `captureCost`). Its rules, learnt from
