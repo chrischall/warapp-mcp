@@ -52,6 +52,7 @@ import { type Game, type GameMap, type GameSettings, type Player } from '../norm
 import { Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, loadAward } from './award.js';
+import { adviseCards, cardGame, handOwners, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
   gameIdArg,
@@ -802,9 +803,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'base income plus its visible bonuses, or its observed deploy when larger — its tracked income, carried across turns, once ' +
           'warapp_track_opponents has 2+ turns of it — and in an even-start 1v1 at least your income when it borders the fog; ' +
           'growth beside the fog beyond twice what it was expected to deploy reads as a move out of the fog, not a deploy). Obeys the kill rates, luck, rounding, Local ' +
-          'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement, and Order ' +
-          'Priority only when the plan advises it (a withdrawal worth a card, a commander strike) or it is the card that must ' +
-          'go (over the hold limit the lowest-value cards leave first); never Blockade or Order Delay. Moves are listed in the ' +
+          'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement (in a team ' +
+          "game only when cards must be shed: the hand is the team's), and Order Priority only when the plan advises it (a " +
+          'withdrawal worth a card, a commander strike) or it is the card that must go (over the hold limit the cards worth ' +
+          'least in this game leave first; the timing cards are kept longest); never Blockade, Order Delay, Bomb or Emergency ' +
+          'Blockade — `cards.advice` says where those pay (Order Delay above the calm orders, a Bomb target or hold it, an ' +
+          "Emergency Blockade wall), and the warnings flag an opponent's Bomb or Emergency Blockade and the cards in effect. Moves are listed in the " +
           "order to send them (both players' orders interleave). The full rule list is in the planner's header and the warapp-mcp skill. " +
           'When this server kept your pick list (warapp_submit_picks or warapp_get_my_picks during distribution), ' +
           '`award` says what the award of picks showed: the territories of your list that are another player\'s ' +
@@ -906,9 +910,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const board = award?.board ?? seen;
       const settings = plannerSettings(game.settings);
       const rules = cardRules(game.settings);
-      const hand = readHand(info, inGameId(me));
+      // A team shares one hand (#163): mine and my teammates' cards.
+      const hand = readHand(info, handOwners(game, me));
       const handUnknown = rules.inPlay.length > 0 && !handReadable(info, inGameId(me));
-      const cards = chooseCardPlays(hand, rules);
+      const inGame = cardGame(game);
+      const cards = chooseCardPlays(hand, rules, inGame);
       const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
       const trend = history.previous;
       // The opponents over my board history: one observed over 2+ turns gets its tracked income;
@@ -958,6 +964,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);
       const name = namer(map);
+      // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
+      // and the cards in effect. Advice only: the orders below are the plan's.
+      const advice = rules.inPlay.length
+        ? adviseCards({ game, me, turn, info, hand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})` })
+        : { view: {}, warnings: [] };
       const warnings = [
         ...(me.hasCommittedOrders
           ? [
@@ -967,7 +978,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           : []),
         ...(award ? assumedWarning(award) : []),
         ...(handUnknown ? [UNREADABLE_HAND] : []),
+        ...(inGame.team && rules.inPlay.length ? [TEAM_HAND] : []),
         ...cards.warnings,
+        ...advice.warnings,
         ...(cards.extraArmies > 0 ? [cardIncomeNote(income, cards.extraArmies)] : []),
         ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
         ...(tracks ?? []).flatMap((t) => t.warnings),
@@ -1004,7 +1017,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...(award ? { award: awardView(award, game, turn, name) } : {}),
         trendSource: trend?.source ?? null,
         conceded: plan.conceded.map(name),
-        cardAdvice: plan.cardAdvice,
+        // #163: Order Delay when it is the only card advised (it is then in cards.advice.orderDelay too).
+        cardAdvice: plan.cardAdvice ?? (advice.view.orderDelay ? ('order-delay' as const) : null),
         multiSourceCaptures: plan.multiSourceCaptures.map(name),
         // #71: the frontier budget, one line on compact.
         frontier:
@@ -1031,6 +1045,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           plays: plays.map(cardView),
           discards: cards.discards.map(cardView),
           armiesFromCards: cards.extraArmies,
+          ...(Object.keys(advice.view).length ? { advice: advice.view } : {}),
         },
         deploys: plan.deploys.map((d) => ({ territory: name(d.territoryId), armies: d.armies })),
         moves: plan.moves.map((m) => ({
@@ -1177,7 +1192,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             const board = boardStateFromLive(territories, me, game.players);
             const playerId = inGameId(me);
             const rules = cardRules(game.settings);
-            const hand = readHand(info, playerId);
+            const hand = readHand(info, handOwners(game, me));
             const handUnknown = rules.inPlay.length > 0 && !handReadable(info, playerId);
             const plays = resolveCardPlays(map, hand, rules, cardInputs);
             const discards = resolveDiscards(hand, plays, discardInputs);

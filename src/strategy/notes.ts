@@ -729,7 +729,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'or to make the opponent undercount what you can deploy next turn.',
     source: S.clanGuide,
     basis: 'source',
-    encoded: 'the planner plays every Reinforcement card it holds',
+    encoded:
+      'the planner plays every Reinforcement card it holds and says the play is a default (in a team game it holds them for the ' +
+      'team unless cards must be shed)',
   },
   {
     id: 'cards-delay-keep-threat',
@@ -741,6 +743,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'on the turn it decides a fight, not on the first turn you can.',
     source: S.forumKeepDelayCard,
     basis: 'source',
+    encoded: 'forced discards keep Order Delay longest; warapp_plan_turn advises it (cards.advice.orderDelay) only when an attack the opponent can answer first is planned',
   },
   {
     id: 'cards-delay-opponent-holds',
@@ -763,6 +766,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'it on the turn it wins a fight or saves a border.',
     source: S.forumBombStrategy,
     basis: 'source',
+    encoded: 'warapp_plan_turn (cards.advice.bomb) names a target only where halving a stack changes a hold, a capture or a commander kill, else says to hold it',
   },
   {
     id: 'cards-bomb-target',
@@ -786,6 +790,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'first, or you play Order Priority.',
     source: S.bomb,
     basis: 'source',
+    encoded: "warapp_plan_turn warns of borders that hold only while unbombed, once the card clock lets an opponent hold a Bomb (the plan's sizing does not yet halve them)",
   },
   {
     id: 'cards-bomb-commander',
@@ -808,6 +813,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'they do not attack, you have given away the armies and the territory for nothing.',
     source: S.blockade,
     basis: 'source',
+    encoded: 'warapp_plan_turn (cards.advice.emergencyBlockade) offers it on a conceded border where the wall kills more than it gives up, never on the commander or a held bonus',
   },
   {
     id: 'cards-emergency-blockade-opponent',
@@ -819,6 +825,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'cannot stop it.',
     source: S.forumStrategicTemplates,
     basis: 'derived',
+    encoded: 'warapp_plan_turn warns of a planned attack that wall would stop, once the card clock lets the opponent hold one',
   },
   {
     id: 'cards-blockade-spoil-bonus',

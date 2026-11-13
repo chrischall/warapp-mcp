@@ -9,8 +9,9 @@ import { z } from 'zod';
 import { incomeFor, planEnemyEstimates, symmetricStart, trackGame, trackOpponents } from '../analysis/index.js';
 import { stressPlan, type StressExposure, type StressReply } from '../analysis/stress.js';
 import type { SimEvent } from '../analysis/turn-sim.js';
+import { handOwners } from './card-advice.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
-import { boardStateFromLive, inGameId } from '../live.js';
+import { boardStateFromLive } from '../live.js';
 import type { GameMap } from '../normalize.js';
 import { carriesTeam } from '../teams.js';
 import { assumedWarning, awardView, loadAward } from './award.js';
@@ -129,7 +130,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
 
       const deploys: { territoryId: number; armies: number }[] = [];
       const moves: { from: number; to: number; armies: number }[] = [];
-      const hand = readHand(info, inGameId(me));
+      // A team shares one hand (#163): mine and my teammates' cards.
+      const hand = readHand(info, handOwners(game, me));
       let orderPriority = false;
       const ignored: string[] = [];
       const mine = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me.id ? [t.territoryId] : [])));

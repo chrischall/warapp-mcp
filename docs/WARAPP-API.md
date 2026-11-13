@@ -90,6 +90,23 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   deploy-total refusal even when nobody is sanctioned; the check is a preview warning and war.app's
   error 11 is the backstop. Decoding the active cards would let the warning (and the soft check)
   apply only when I am sanctioned this turn.
+- **Active cards (#163) — UNVERIFIED live.** The client bundle's `GameStanding` carries
+  `ActiveCards`, a list of `warlight.shared.ActiveCard { Card, ExpiresAfterTurn }` whose `Card` is
+  the `GameOrderPlayCard<X>` that started it (read-only, from the bundle's readers: Diplomacy reads
+  its two player ids, Sanctions its target, then the base reads the card GUID and the player who
+  played it; Emergency Blockade's order class is `GameOrderPlayCardAbandon`). `readActiveCards`
+  (`src/cards.ts`) reads them loosely from the current standing, and `warapp_plan_turn` warns of a
+  Diplomacy between the user and a player the plan attacks, and of Sanctions on the user. No live
+  board with an active card has been decoded, and whether fogged card plays hide them is unknown;
+  the income model still does not apply a Sanction (submit's soft deploy check stays).
+- **A team's hand (#163) — UNVERIFIED live.** The wiki says a team shares one hand and one card
+  limit. `warapp_plan_turn` and `warapp_submit_turn` read the hand as every card under the user's
+  and the teammates' in-game ids (each GUID once); how war.app keys a team's hand has not been
+  seen on a team board.
+- **Bomb and Emergency Blockade (#163) — rounding UNVERIFIED.** The advice reads a bombed stack
+  in its worst case for the user (an enemy keeps the larger half, the user the smaller) and the
+  wall as `round((armies + deploy) × MultiplyAmount)`; the commander is taken as unharmed by a
+  bomb (players' reports, not the wiki).
 - **Error 11 hint:** when war.app refuses a deploy total (error 11), the hint names the modelled
   number. The live board (`GetLatestGameInfo`) carries no income figure — the client computes it
   from the standing — so the authoritative number is the game's "armies per turn".

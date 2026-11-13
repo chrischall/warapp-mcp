@@ -1420,6 +1420,74 @@ describe('cards in the turn tools', () => {
     expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
   });
 
+  it('plan_turn advises Order Delay above the calm orders when an attack the opponent can answer is planned (#163)', async () => {
+    const attacking: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 30 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 157, fogLevel: 1, owner: 0, armies: 2 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 7 },
+      { id: 135, fogLevel: 1, owner: 0, armies: 2 },
+    ];
+    h = await liveHarness({
+      feed: [game('Playing', { settings: modelledSettings() })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () =>
+          ({
+            body: (w) => writeLatestGameInfo(w, attacking, [ANN.inGame, BOB.inGame], { [ANN.inGame]: [{ id: OD, type: 5 }] }),
+          }) satisfies Partial<ReplyFrame>,
+      }),
+    });
+    const p = payload<CardsPayload & { cards: { advice?: { orderDelay?: { card: string; before: number; attacks: number[] } } } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }),
+    );
+    // The contested neutral captures are put last (#127): the opponent can answer them first.
+    expect(p.moves.map((m) => [m.from.id, m.to.id, m.kind])).toEqual([
+      [159, 158, 'attack'],
+      [161, 157, 'attack'],
+      [159, 135, 'attack'],
+    ]);
+    expect(p.cardAdvice).toBe('order-delay');
+    expect(p.cards.advice?.orderDelay).toEqual({ card: OD, before: 1, attacks: [2, 3] });
+    expect(p.warnings.join('\n')).toMatch(/Play Order Delay above move 1 \(Hornwood \(#159\) → Bolton Moors \(#158\)\)/);
+    // Advice only: the card is neither played nor discarded by the plan (submit would write it after every move).
+    expect(p.orders.some((o) => o.kind === 'card' || o.kind === 'discard')).toBe(false);
+  });
+
+  it("plan_turn in a team game reads the team's hand and holds Reinforcement for the team (#163)", async () => {
+    const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+    h = await liveHarness({
+      feed: [game('Playing', { players: teams })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () =>
+          ({
+            body: (w) =>
+              writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], {
+                [ANN.inGame]: [{ id: R1, type: 1, armies: 5 }],
+                [BOB.inGame]: [{ id: OP, type: 4 }],
+              }),
+          }) satisfies Partial<ReplyFrame>,
+      }),
+    });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cards.hand.map((c) => c.id)).toEqual([R1, OP]);
+    expect(p.cards.plays).toEqual([]);
+    expect(p.cards.armiesFromCards).toBe(0);
+    expect(p.income).toBe(5);
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/team game: the hand and the card limit are the team's/);
+    expect(w).toMatch(/Holding a Reinforcement card: in a team game the team shares one hand/);
+  });
+
+  it('plan_turn with my Bomb says where it changes the turn, or to hold it (#163)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: withHand([{ id: GF, type: 13 }]) }) });
+    const p = payload<CardsPayload & { cards: { advice?: { bomb?: { target: number | null; why: string } } } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(p.cards.advice?.bomb).toEqual(expect.objectContaining({ why: expect.any(String) }));
+    expect(p.warnings.join('\n')).toMatch(/(Hold the Bomb|^Bomb .+: halving)/m);
+    expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
+  });
+
   it('plan_turn with no cards reports an empty hand and plays nothing', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
@@ -1427,7 +1495,7 @@ describe('cards in the turn tools', () => {
     expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
   });
 
-  it('plan_turn over the hold limit (6/5) discards Order Delay and keeps Order Priority (#127), never playing Blockade or Order Delay', async () => {
+  it('plan_turn over the hold limit (6/5) keeps Order Delay and Order Priority: the Spy goes (#163), never playing Blockade or Order Delay', async () => {
     h = await liveHarness({
       feed: [game('Playing')],
       warapp: routes({
@@ -1444,8 +1512,8 @@ describe('cards in the turn tools', () => {
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.cards.playRequired).toBe(true);
     expect(p.cards.plays).toEqual([]);
-    expect(p.cards.discards).toEqual([{ id: OD, name: 'Order Delay' }]);
-    expect(p.orders[0]).toEqual({ kind: 'discard', card: OD });
+    expect(p.cards.discards).toEqual([{ id: SP, name: 'Spy' }]);
+    expect(p.orders[0]).toEqual({ kind: 'discard', card: SP });
     expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
     expect(p.income).toBe(5);
   });
@@ -1475,7 +1543,7 @@ describe('cards in the turn tools', () => {
     expect(p.orders.some((o) => o.kind === 'card' || o.kind === 'discard')).toBe(false);
   });
 
-  it('plan_turn over the limit with no useful play discards the lowest-value card', async () => {
+  it('plan_turn over the limit with no useful play discards the lowest-value cards, keeping Order Delay (#163)', async () => {
     h = await liveHarness({
       feed: [game('Playing')],
       warapp: routes({
@@ -1493,15 +1561,16 @@ describe('cards in the turn tools', () => {
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.cards.playRequired).toBe(true);
     expect(p.cards.plays).toEqual([]);
+    // The fixture game has more than two players, so Gift and Diplomacy keep their worth.
     expect(p.cards.discards).toEqual([
-      { id: OD, name: 'Order Delay' },
       { id: SP, name: 'Spy' },
+      { id: GF, name: 'Gift' },
     ]);
     expect(p.orders.slice(0, 2)).toEqual([
-      { kind: 'discard', card: OD },
       { kind: 'discard', card: SP },
+      { kind: 'discard', card: GF },
     ]);
-    expect(p.warnings.join('\n')).toMatch(/Discarding Order Delay, Spy/);
+    expect(p.warnings.join('\n')).toMatch(/Discarding Spy, Gift/);
     expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
   });
 
