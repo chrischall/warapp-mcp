@@ -7,17 +7,17 @@
 import type { GameMap, GameSettings } from '../normalize.js';
 
 /**
- * Whether the `OverriddenBonuses` JSON shape has been verified against a live game.
- * While `false`, a game with overrides keeps the deploy-total and Local Deployment
- * pre-checks soft (warn, not refuse; war.app enforces both). Flip it to `true` once
- * the owner has seen a live game's overrides parsed and paid as the deploy panel
- * says (and mark the shape verified in docs/WARAPP-API.md).
+ * Whether the `OverriddenBonuses` JSON shape has been verified against a live game. It
+ * has (#62, 2026-11-12: an array of `{ bonusID, value }`; a Local Deployment game paid
+ * 2 + 12 + 7 = 21 exactly as modelled), so a game whose overrides read in full gets the
+ * hard deploy-total and Local Deployment pre-checks. Overrides that did not read in full
+ * keep both soft (warn, not refuse; war.app enforces both).
  */
-export const OVERRIDES_VERIFIED = false;
+export const OVERRIDES_VERIFIED = true;
 
 /** The reason given when `OverriddenBonuses` was sent in a shape that could not be read. */
 export const OVERRIDES_UNPARSED =
-  "This game has overridden bonus values that could not be read; the model uses the map's own values.";
+  "This game has overridden bonus values that could not all be read; the model uses the map's own values for those.";
 
 const applied = new WeakMap<GameMap, Map<string, GameMap>>();
 

@@ -88,7 +88,7 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   number. The live board (`GetLatestGameInfo`) carries no income figure — the client computes it
   from the standing — so the authoritative number is the game's "armies per turn".
 
-## Overridden bonus values (`OverriddenBonuses`) — meaning verified, JSON shape UNVERIFIED (#62)
+## Overridden bonus values (`OverriddenBonuses`) — verified (#62)
 
 - Meaning (live, 2026-11-12): a Local Deployment game, base 2, overrode two single-territory
   bonuses to 12 and 7; war.app's deploy panel said 21 = "2 anywhere, 12 in <bonus>, 7 in
@@ -99,20 +99,21 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   dictionary of bonus id → value (the summary shows "None" when it has no keys); the create-game
   check refuses a bonus id not on the map and a value below −1000 or above 1000
   (`OverriddenBonusesInvalid`).
-- **GameFeed's JSON shape is UNVERIFIED.** A lobby with none sent `[]`. `parseOverriddenBonuses`
-  (`src/normalize.ts`) accepts, without throwing: an array of objects with a bonus-id key
-  (`bonusID`/`BonusID`/`bonusId`/`id`/`ID`/`Key`/…) and a value key (`value`/`Value`/…), an array of
-  `[id, value]` pairs, an object keyed by bonus id, string scalars throughout, and any of these as
-  a JSON string. Anything else gives no values and `overriddenBonusesUnparsed`.
+- **GameFeed's JSON shape — verified live (2026-11-12):** an array of
+  `{ "bonusID": <int>, "value": <int> }` with JSON **numbers** (unlike most GameFeed scalars), one
+  entry per overridden bonus (a game on a large map sent 303), and `[]` when nothing is overridden.
+  `parseOverriddenBonuses` (`src/normalize.ts`) reads it loosely, never throwing: string numbers,
+  other key spellings, `[id, value]` pairs, an object keyed by bonus id, or any of those as a JSON
+  string. A malformed entry is skipped (the rest are kept) and the read flagged
+  `overriddenBonusesUnparsed`; an unknown shape gives no values and the same flag.
 - Applied at one choke point: `applyBonusOverrides` (`src/analysis/overrides.ts`), called by the
   tools' `mapOf`, returns the map with the game's values (superbonuses included) without touching
   the cached map. Unreadable overrides: the map's own values are used and `incomeUncertainties`
   says so.
-- **Fail soft until verified:** while `OVERRIDES_VERIFIED` is `false`, a game with overrides (read
-  or not) makes `warapp_submit_turn`'s deploy-total and Local Deployment pre-checks warn instead of
-  refuse (war.app enforces both), and `warapp_plan_turn` notes it. Once the owner has seen a live
-  game's overrides read and paid as its deploy panel says, record the shape here, mark it verified
-  and flip `OVERRIDES_VERIFIED` to `true`: the checks become hard again for read overrides.
+- **Pre-checks:** `OVERRIDES_VERIFIED` is `true`, so overrides that read in full keep
+  `warapp_submit_turn`'s deploy-total and Local Deployment pre-checks hard. Overrides that did not
+  read in full make both warn instead of refuse (war.app enforces both) and `warapp_plan_turn` notes
+  it.
 
 ## Local Deployment — key verified, pool rules UNVERIFIED
 

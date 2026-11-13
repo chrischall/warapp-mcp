@@ -1313,12 +1313,13 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
     LocalDeployments: true,
     OverriddenBonuses: overrides,
   });
+  // The verified live shape (#62): an array of { bonusID, value } with JSON numbers.
   const LIVE = [
-    { bonusID: '8', value: '12' },
-    { bonusID: '52', value: '7' },
+    { bonusID: 8, value: 12 },
+    { bonusID: 52, value: 7 },
   ];
 
-  it('warapp_plan_turn plans income 21 within the overridden pools, noting the unverified shape', async () => {
+  it('warapp_plan_turn plans income 21 within the overridden pools (verified shape: no uncertainty warning)', async () => {
     h = await liveHarness({
       feed: [game('Playing', { settings: overrideSettings(LIVE) })],
       warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
@@ -1329,10 +1330,10 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
     expect(on(9090) + on(3241)).toBe(21);
     expect(on(9090)).toBeGreaterThanOrEqual(12);
     expect(on(3241)).toBeGreaterThanOrEqual(7);
-    expect(p.warnings.join('\n')).toMatch(/overrides 2 bonus values.*unverified/);
+    expect(p.warnings.join('\n')).not.toMatch(/overrid/i);
   });
 
-  it("warapp_submit_turn accepts the deploy panel's split, and only warns on a split outside the pools", async () => {
+  it("warapp_submit_turn accepts the deploy panel's split and refuses one outside the pools", async () => {
     h = await liveHarness({
       feed: [game('Playing', { settings: overrideSettings(LIVE) })],
       pages: ME_PAGE,
@@ -1349,13 +1350,13 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
     );
     expect(ok.confirmToken).toEqual(expect.any(String));
     expect(JSON.stringify(ok)).not.toMatch(/Local Deployment/);
-    // Everything on Storm's End: the model would refuse it, but while the shape is unverified it warns.
-    const soft = await h.call('warapp_submit_turn', {
+    // Everything on one bonus breaks the other bonus's 7-army pool: the shape is verified, so it is refused.
+    const bad = await h.call('warapp_submit_turn', {
       game_id: GAME,
       orders: [{ kind: 'deploy', territory: 9090, armies: 21 }],
     });
-    expect(soft.isError).toBeFalsy();
-    expect(textOf(soft)).toMatch(/Local Deployment.*not refused here/);
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toMatch(/Local Deployment/);
   });
 
   it('an unreadable OverriddenBonuses: map values, a warning, and soft checks for the panel’s 21', async () => {
@@ -1373,7 +1374,7 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
     });
     expect(res.isError).toBeFalsy();
     expect(textOf(res)).toMatch(/deploy 21 armies.*modelled income is 13/);
-    expect(textOf(res)).toMatch(/could not be read/);
+    expect(textOf(res)).toMatch(/could not all be read/);
   });
 });
 

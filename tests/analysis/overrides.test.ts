@@ -66,6 +66,30 @@ describe('parseOverriddenBonuses', () => {
     expect(parseOverriddenBonuses(raw)).toEqual({ values: want, unparsed: false });
   });
 
+  it('reads the verified live shape: an array of { bonusID, value } with JSON numbers', () => {
+    // GameFeed GetSettings=true, verified live 2026-11-12 (#62).
+    const live = [{ bonusID: 1, value: 12 }, { bonusID: 2, value: 12 }, { bonusID: 5, value: 4 }];
+    expect(parseOverriddenBonuses(live)).toEqual({
+      values: new Map([
+        [1, 12],
+        [2, 12],
+        [5, 4],
+      ]),
+      unparsed: false,
+    });
+  });
+
+  it('skips a malformed entry, keeps the rest, and flags the read as incomplete', () => {
+    expect(parseOverriddenBonuses([{ bonusID: 50, value: 12 }, { bonusID: 52 }, 'junk', { bonusID: 53, value: '7' }])).toEqual({
+      values: new Map([
+        [50, 12],
+        [53, 7],
+      ]),
+      unparsed: true,
+    });
+    expect(parseOverriddenBonuses({ '50': 12, House: 3 })).toEqual({ values: new Map([[50, 12]]), unparsed: true });
+  });
+
   it('reads a negative override and an empty value as no overrides', () => {
     expect(parseOverriddenBonuses({ '3': '-2' })).toEqual({ values: new Map([[3, -2]]), unparsed: false });
     expect(parseOverriddenBonuses([])).toEqual({ values: new Map(), unparsed: false });
@@ -76,7 +100,6 @@ describe('parseOverriddenBonuses', () => {
   it.each([
     ['a bare number', 12],
     ['an array of unknown objects', [{ foo: 1, bar: 2 }]],
-    ['an array with one bad entry', [{ bonusID: 50, value: 12 }, { bonusID: 52 }]],
     ['an object with a non-numeric key', { House: 12 }],
     ['an object with a non-integer value', { '50': 'twelve' }],
     ['a string that is not JSON', 'House Stark=12'],
@@ -224,7 +247,7 @@ describe('fail soft while the shape is unverified', () => {
     const map = applyBonusOverrides(westeros(), s);
     expect(map).toEqual(westeros());
     expect(incomeFor(buildGraph(map), liveBoard(), ME, s)).toBe(13);
-    expect(incomeUncertainties(s).join('\n')).toMatch(/overridden bonus values.*could not be read/i);
+    expect(incomeUncertainties(s).join('\n')).toMatch(/overridden bonus values.*could not all be read/i);
     // The panel's 21, split 14 / 7: the model says 13, with pools 6 and 5 and 2 anywhere.
     const r = validateTurn({
       ...args(map, 13, [[1, 14], [4, 7]]),
@@ -238,22 +261,20 @@ describe('fail soft while the shape is unverified', () => {
     expect(() => validateTurn(args(map, 13, [[1, 14], [4, 7]]))).toThrow(/deploy 21 armies, but your income is 13/);
   });
 
-  it('a cleanly parsed shape is applied (not listed as an income uncertainty) but the checks stay soft until verified', () => {
+  it('a cleanly parsed shape is applied, is not an uncertainty, and keeps the checks hard (verified live)', () => {
     const s = liveSettings(LIVE_OVERRIDES);
     expect(incomeUncertainties({ ...s, minimumArmyBonus: 2 })).toEqual([]);
-    expect(overrideUncertainties(s).join('\n')).toMatch(/unverified/i);
-    expect(deployCheckUncertainties(s).join('\n')).toMatch(/unverified/i);
-    expect(overrideUncertainties(s, true)).toEqual([]);
+    expect(overrideUncertainties(s)).toEqual([]);
+    expect(overrideUncertainties(s, false).join('\n')).toMatch(/unverified/i);
     const map = applyBonusOverrides(westeros(), s);
-    // Everything in one bonus pool: refused hard without the soft reasons, warned with them.
-    expect(() => validateTurn(args(map, 21, [[1, 21]]))).toThrow(/Local Deployment/);
-    const r = validateTurn({
-      ...args(map, 21, [[1, 21]]),
-      incomeUncertain: deployCheckUncertainties(s),
-      poolsUncertain: overrideUncertainties(s),
-    });
-    expect(r.warnings).toHaveLength(1);
-    expect(r.warnings[0]).toMatch(/Local Deployment.*not refused here/i);
+    // Everything in one bonus pool breaks the other pool: refused.
+    expect(() =>
+      validateTurn({
+        ...args(map, 21, [[1, 21]]),
+        incomeUncertain: deployCheckUncertainties(s),
+        poolsUncertain: overrideUncertainties(s),
+      }),
+    ).toThrow(/Local Deployment/);
   });
 
   it('no overrides: exactly today’s behaviour', () => {

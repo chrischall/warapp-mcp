@@ -217,7 +217,7 @@ export interface GameSettings {
    * (docs/WARAPP-API.md): see {@link parseOverriddenBonuses}.
    */
   overriddenBonuses?: ReadonlyMap<number, number>;
-  /** `true` when `OverriddenBonuses` was sent in a shape that could not be read (then `overriddenBonuses` is empty). */
+  /** `true` when `OverriddenBonuses` could not be read in full (malformed entries skipped, or an unknown shape with no values). */
   overriddenBonusesUnparsed?: true;
   /** Every setting as the feed sent it. */
   raw: Rec;
@@ -298,13 +298,13 @@ function overrideEntry(e: unknown): [number, number] | undefined {
 }
 
 /**
- * Read GameFeed's `OverriddenBonuses` (bonus id → value). war.app's client keeps it as
- * a `Dictionary<bonusId, value>` (values −1000..1000); how GameFeed serialises it is
- * UNVERIFIED (a lobby with none sent `[]`), so this accepts, without throwing: an
- * array of `{ <id key>, <value key> }` objects (several key spellings) or `[id, value]`
- * pairs, an object keyed by bonus id, string scalars throughout, and any of those as a
- * JSON string. Anything else — or any entry that does not read — gives no values and
- * `unparsed: true` (all or nothing: a half-read map would be silently wrong).
+ * Read GameFeed's `OverriddenBonuses` (bonus id → value). Verified live (#62, 2026-11-12):
+ * GameFeed sends an array of `{ "bonusID": <int>, "value": <int> }` with JSON numbers, and
+ * `[]` when nothing is overridden (war.app's client keeps a `Dictionary<bonusId, value>`,
+ * values −1000..1000). Read loosely, never throwing: string numbers, other key spellings,
+ * `[id, value]` pairs, an object keyed by bonus id, or any of those as a JSON string. A
+ * malformed entry is skipped (the rest are kept) and the read flagged `unparsed`, so the
+ * pre-checks stay soft; an unreadable shape gives no values and `unparsed: true`.
  */
 export function parseOverriddenBonuses(raw: unknown): { values: ReadonlyMap<number, number>; unparsed: boolean } {
   const none = { values: new Map<number, number>(), unparsed: false };
@@ -321,22 +321,29 @@ export function parseOverriddenBonuses(raw: unknown): { values: ReadonlyMap<numb
     if (typeof v === 'string') return fail;
   }
   const values = new Map<number, number>();
+  let bad = false;
   if (Array.isArray(v)) {
     for (const e of v) {
       const pair = overrideEntry(e);
-      if (!pair) return fail;
+      if (!pair) {
+        bad = true;
+        continue;
+      }
       values.set(pair[0], pair[1]);
     }
-    return { values, unparsed: false };
+    return { values, unparsed: bad };
   }
   if (isRec(v)) {
     for (const [k, val] of Object.entries(v)) {
       const id = asInt(k);
       const value = asInt(val);
-      if (id === undefined || value === undefined) return fail;
+      if (id === undefined || value === undefined) {
+        bad = true;
+        continue;
+      }
       values.set(id, value);
     }
-    return { values, unparsed: false };
+    return { values, unparsed: bad };
   }
   return fail;
 }
