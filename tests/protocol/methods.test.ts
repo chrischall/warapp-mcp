@@ -191,8 +191,10 @@ describe('SendOrders params', () => {
     ).toBe('39300000' + '01' + '03000000' + '01' + deploy + '01' + move + '01' + blockade + '02000000' + '0000');
   });
 
-  it('writes an Order Delay (phase 50) after every move, Order Priority still first', () => {
+  it('writes an Order Delay (phase 50) among the moves where it is listed, Order Priority still first', () => {
     // Live 2026-11-12: Order Delay placed with Order Priority (phase 12) was refused with error 10.
+    // #127: the card delays only the orders listed after it, so it keeps its place among the moves
+    // (the position within phase 50 is UNVERIFIED live).
     const od = 'ffeeddccbbaa99887766554433221100';
     const r = '00112233445566778899aabbccddeeff';
     const op = '0a0b0c0d0e0f10111213141516171819';
@@ -217,7 +219,7 @@ describe('SendOrders params', () => {
           2,
         ),
       ),
-    ).toBe('39300000' + '01' + '04000000' + '01' + playR + '01' + deploy + '01' + attack + '01' + playOd + '02000000' + '0000');
+    ).toBe('39300000' + '01' + '04000000' + '01' + playR + '01' + deploy + '01' + playOd + '01' + attack + '02000000' + '0000');
     expect(
       hex((w) =>
         writeSendOrdersParams(
@@ -235,8 +237,32 @@ describe('SendOrders params', () => {
         ),
       ),
     ).toBe(
-      '39300000' + '01' + '05000000' + '01' + playOp + '01' + deploy + '01' + attack + '01' + transfer + '01' + playOd + '02000000' + '0000',
+      '39300000' + '01' + '05000000' + '01' + playOp + '01' + deploy + '01' + playOd + '01' + attack + '01' + transfer + '02000000' + '0000',
     );
+  });
+
+  it('keeps an Order Delay between the moves it is listed between (#127)', () => {
+    const od = 'ffeeddccbbaa99887766554433221100';
+    const playOd = '0B' + 'CCDDEEFF' + 'AABB' + '8899' + '7766554433221100' + '090300000000';
+    const attack = '01000300090000000003000000000A000000090300000000';
+    const transfer = '010003000600000000010000000004000000090300000000';
+    const deploy = '0209000000000500000009030000' + '0000';
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'move', from: 9, to: 10, armies: 3 },
+            { kind: 'card', card: 'OrderDelay', cardId: od },
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '04000000' + '01' + deploy + '01' + attack + '01' + playOd + '01' + transfer + '02000000' + '0000');
   });
 
   it('writes discards (phase 10) before everything else, Order Priority next', () => {

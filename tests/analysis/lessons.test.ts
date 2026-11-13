@@ -20,6 +20,7 @@ import { buildGraph } from '../../src/analysis/graph.js';
 import {
   captureCost,
   MIN_EXPANSION_SHARE,
+  ORDER_PRIORITY_MIN_ARMIES,
   planTurn,
   type PlanOptions,
   type PlannerSettings,
@@ -267,7 +268,8 @@ describe('lessons from a lost game', () => {
   });
 
   it('6. a withdrawal goes first in the turn, with Order Priority advised', () => {
-    const p = plan(withdrawBoard, 9);
+    // #127: the card is advised only when I hold one to play.
+    const p = plan(withdrawBoard, 9, { holdsOrderPriority: true });
     expect(p.conceded).toEqual([3]);
     // To T1, a border itself (it faces the fogged T4).
     expect(p.moves[0]).toEqual(expect.objectContaining({ from: 3, to: 1, armies: 14, kind: 'transfer' }));
@@ -275,7 +277,14 @@ describe('lessons from a lost game', () => {
     expect(p.moves.findIndex((m) => m.kind === 'attack')).toBeGreaterThan(0);
     expect(p.cardAdvice).toBe('order-priority');
     expect(p.warnings).toContain(
-      'The withdrawal from T3 (#3) only executes if T3 (#3) is still mine when the order runs; play Order Priority so it goes first.',
+      "The withdrawal from T3 (#3) only executes if T3 (#3) is still mine when the order runs; play Order Priority: it is my first order, and the card runs it before the opponent's first.",
+    );
+    // Without a card in hand it is still the first order, and nothing advises a card I lack.
+    const bare = plan(withdrawBoard, 9);
+    expect(bare.moves[0]).toEqual(expect.objectContaining({ from: 3, to: 1, kind: 'transfer' }));
+    expect(bare.cardAdvice).toBeNull();
+    expect(bare.warnings).toContain(
+      'The withdrawal from T3 (#3) only executes if T3 (#3) is still mine when the order runs; it is my first order (Order Priority not advised: I hold no Order Priority card to play).',
     );
     // The planner advises the card; it never plays one, and `expand` plans no withdrawal.
     const expand = plan(withdrawBoard, 9, { goal: 'expand' });
@@ -296,7 +305,7 @@ describe('lessons from a lost game', () => {
     ];
     for (const [b, income, options, prev] of cases)
       for (const goal of ['balanced', 'expand', 'complete-bonus', 'defend'] as const) {
-        const p = plan(b, income, { ...options, goal }, prev);
+        const p = plan(b, income, { ...options, goal, holdsOrderPriority: true }, prev);
         const armies = new Map(b.territories.map((t) => [t.territoryId, t.armies ?? 0]));
         const mineIds = new Set(
           b.territories.filter((t) => t.owner.kind === 'player' && t.owner.playerId === ME).map((t) => t.territoryId),
@@ -314,8 +323,11 @@ describe('lessons from a lost game', () => {
           if (m.kind === 'transfer') expect(mineIds.has(m.to)).toBe(true);
         }
         for (const [id, n] of out) expect(n, `${goal}: outgoing from ${id}`).toBeLessThanOrEqual(armies.get(id)! + deployedTo(p, id) - 1);
-        // A withdrawal is the only thing that needs Order Priority.
-        expect(p.cardAdvice === 'order-priority').toBe(p.moves.some((m) => m.reason === 'withdraws from a conceded border'));
+        // A withdrawal is the only thing that needs Order Priority, and only one worth a card (#127);
+        // the order it protects is the first.
+        const worth = p.moves.some((m) => m.reason === 'withdraws from a conceded border' && m.armies >= ORDER_PRIORITY_MIN_ARMIES);
+        expect(p.cardAdvice === 'order-priority').toBe(worth);
+        if (worth) expect(p.moves[0]!.reason).toBe('withdraws from a conceded border');
       }
   });
 });

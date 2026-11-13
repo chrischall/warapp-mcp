@@ -331,8 +331,9 @@
 //     border rule 1c keeps. Captured members are not garrisoned (next turn's deploys land first).
 //  1b. Withdraw (under `defend` and `balanced`, after 1c). A conceded border's movable armies move first
 //     to the adjacent territory of mine nearest a border that holds (then the
-//     one protecting the most value, then id); the plan advises Order Priority
-//     (`cardAdvice`), because a withdrawal only executes while the border is mine.
+//     one protecting the most value, then id); the largest is my first order, and the plan
+//     advises Order Priority (`cardAdvice`) under rule 7's test, because a withdrawal only
+//     executes while the border is mine.
 //     A conceded border of a bonus I hold in full whose armies staying still hold
 //     against the expected attack (movable + deploy estimate) is never withdrawn from
 //     (issue #59): its garrison stays, and under Local Deployment its bonus's leftover
@@ -620,6 +621,34 @@
 //     toward its source first, when it is no farther than the enemy front ("Move N from … to …:
 //     stages toward …"): live, a stack two steps from the one neutral its bonus lacked stood
 //     still for five turns.
+//  7. Move order (#127; every goal, last). Orders zigzag — the first mover's 1st, the other's
+//     1st and 2nd, the first mover's 2nd and 3rd, … — so `moves` is scheduled
+//     (`scheduleMoves`, src/analysis/schedule.ts), earliest first: the one order Order Priority
+//     protects (the strike, rule 1s; else the move out of a conceded border carrying the most
+//     armies, which is my first order whether or not the card is advised); withdrawals, attacks
+//     out of a conceded border and transfers into a territory facing a visible enemy at the start
+//     of the turn; attacks on a player sized for its owner's whole deploy (rules 1e, 1s, 3's #120
+//     sizing) and neutral captures another player can reach whose survivors (sent less the
+//     defenders' kills) need more to take than its own capture of that neutral (its capture
+//     cost, at most its stacks next to it plus its deploy: a 2-neutral taken with 4 leaves 3,
+//     which need 5; with 3 it leaves 2, which 3 retake); filler
+//     (uncontested neutral captures, interior transfers); last, attacks into a player's stack
+//     not sized for its deploy (a defender kills 70% per army, an attacker 60%: attacking second
+//     fights its survivors — 24 against 28 loses attacking first and wins attacking second) and
+//     contested neutrals whose survivors would fall (taken last, they meet what is left there).
+//     Ties keep decision order. Dependencies hold: attacks on one target keep their order
+//     (softeners before the finisher), a move out of a territory stays after any earlier move
+//     into it, and a transfer into a territory captured this turn after the capture. A rationale
+//     line "Move order (#127): …" names the protected order and each move put last, and why.
+//     Order Priority (`cardAdvice`) moves only my FIRST order ahead of the opponent's first: for a
+//     move out of a conceded border it is advised only when I hold one (`holdsOrderPriority`), I
+//     am not known to move first (`movesFirst`), and that order carries at least
+//     ORDER_PRIORITY_MIN_ARMIES; its warning then says so, and the other such moves' warnings say
+//     they are listed early but may come too late. Under `movesFirst` the strike's card advice is
+//     dropped too. Finishing a player off (rule 1e) assumes my attacks land before its own
+//     orders: unless `movesFirst`, a warning says it can move between its territories or take my
+//     borders next to it that its stacks plus its deploy can take (named), and survive. (Holding
+//     those borders against it is not planned.)
 // Local Deployment (`localDeployments`): a held bonus's value is a pool deployable
 // only on that bonus's territories (a superbonus's on all of its territories, beside
 // its member bonuses' pools); the rest of the income (base, per-territory, card
@@ -686,6 +715,7 @@ import {
   type KillRates,
 } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
+import { MoveSlot, scheduleMoves } from './schedule.js';
 import { chargeDeploys, deployPools } from './local-deploy.js';
 import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from './player.js';
 import { BEHIND_RATIO, gameProfile, type GameProfile, type ProfilePlayer } from './profile.js';
@@ -700,6 +730,12 @@ export const WASTELAND_FACTOR = 5;
  * default rates): a cheap step still widens my reach, a 10-army one throws 7 armies away.
  */
 export const PLAIN_EXPANSION_LOSS = 2;
+/**
+ * The fewest armies an order out of a conceded border must carry before the plan spends an Order
+ * Priority card on it (#127): a base income's worth (war.app's default MinimumArmyBonus). A
+ * 1-army withdrawal from a +0 border is not worth a card.
+ */
+export const ORDER_PRIORITY_MIN_ARMIES = DEFAULT_BASE_INCOME;
 /** Floor of the default enemy deploy estimate (a player's base income). */
 export const MIN_ENEMY_DEPLOY = DEFAULT_BASE_INCOME;
 
@@ -826,9 +862,16 @@ export interface PlanOptions {
   opponents?: number;
   /**
    * I hold an Order Priority card I could play this turn: when a commander strike is planned
-   * and my commander's territory is threatened, `cardAdvice` says to play it (rule 1s).
+   * and my commander's territory is threatened, `cardAdvice` says to play it (rule 1s); for a
+   * move out of a conceded border worth a card, too (rule 7, #127). Without it no card is advised.
    */
   holdsOrderPriority?: boolean;
+  /**
+   * I move first this turn (#127): the caller knows it (Cycle and No-Luck Cycle swap the first
+   * mover every turn). My first order then already runs before the opponent's first, so
+   * Order Priority is never advised, and finishing a player off needs no caveat. Default unknown.
+   */
+  movesFirst?: boolean;
   /**
    * Adapt to the game profile (rule 0p): with no `goal`, pick it from the profile (behind:
    * `defend`, else `balanced`) and apply the profile's rules. An explicit `goal` always wins
@@ -928,7 +971,7 @@ export interface TurnPlan {
   profile: GameProfile;
   /** Sorted by territory id; sums to the income whenever I own a territory. */
   deploys: PlannedDeploy[];
-  /** Withdrawals from conceded borders first, then attacks in decision order, then transfers. */
+  /** In the order to send them (rule 7, #127): the protected order, early, sure, filler, last. */
   moves: PlannedMove[];
   expected: {
     captures: number[];
@@ -4067,6 +4110,8 @@ export function planTurn(input: PlanInput): TurnPlan {
    * owner's full deploy estimate (the worst case). Other targets: their armies now.
    */
   const worstCase = new Map<number, number>();
+  /** Players this plan eliminates (rule 1e, every territory taken for sure), for the move-order caveat (#127). */
+  const finishedOff = new Set<number>();
   const defendersAt = (t: number) => worstCase.get(t) ?? defenceAt(t);
   /**
    * Capture `t` from its best source. A conceded border is never deployed to: it attacks
@@ -4853,6 +4898,7 @@ export function planTurn(input: PlanInput): TurnPlan {
       return true;
     }
     if (chosen.all) {
+      finishedOff.add(p);
       rationale.push(
         `Finish off player ${p}: attack all ${ts.length} of its territories (${names}) this turn, each sized for its full ~${deployP} deploy landing there, so it is eliminated ${fogAnywhere ? 'if it holds nothing in the fog, ' : ''}even if it reinforces; the borders facing it need no holding.`,
       );
@@ -7492,6 +7538,112 @@ export function planTurn(input: PlanInput): TurnPlan {
     const take = toTake(have + unitsAt(id));
     warnings[i] += ` Before this turn's deploys: the plan deploys ${n} there, leaving ${have} armies (${take ?? 'none can'} to take${take !== null && take > threat ? `, more than the ${threat} that can reach it: it holds` : `; the ${threat} that can reach it still could`}).`;
   }
+  // ---- 7. schedule the moves (#127) ----
+  // Orders zigzag (the first mover's 1st, the other's 1st and 2nd, …), so the place of a move in
+  // the list decides what it meets. One order is protected when Order Priority is advised.
+  const CONCEDED_ORDER = /; play Order Priority so it goes first\.$/;
+  const outOfConceded = moves.filter((m) => conceded.has(m.from) && !strikes.has(m.to));
+  let firstOrder: PlannedMove | undefined;
+  /** Why Order Priority is not advised for the protected move out of a conceded border, if not. */
+  let why: string | undefined;
+  if (struck.size && cardAdvice === 'order-priority') {
+    firstOrder = moves.find((m) => m.kind === 'attack' && strikes.has(m.to));
+    if (opts.movesFirst) {
+      cardAdvice = null;
+      rationale.push("Order Priority is not needed for the strike: I move first this turn, so my first order already runs before any of the opponent's.");
+    }
+  } else if (outOfConceded.length) {
+    // The one order the card protects: the move out of a conceded border carrying the most armies.
+    firstOrder = [...outOfConceded].sort((a, b) => b.armies - a.armies || a.from - b.from || a.to - b.to)[0]!;
+    // Order Priority moves only my first order ahead of the opponent's first: spend the card only
+    // when the order it protects saves enough, when I hold one, and when I do not move first anyway.
+    const n = firstOrder.armies;
+    why = opts.movesFirst
+      ? "I move first this turn, so my first order already runs before any of the opponent's"
+      : !opts.holdsOrderPriority
+        ? 'I hold no Order Priority card to play'
+        : n < ORDER_PRIORITY_MIN_ARMIES
+          ? `it saves only ${n} ${n === 1 ? 'army' : 'armies'}, under the ${ORDER_PRIORITY_MIN_ARMIES} a card is worth`
+          : undefined;
+    cardAdvice = why === undefined ? 'order-priority' : null;
+  } else if (!struck.size) cardAdvice = null;
+  // Each move out of a conceded border says where it stands: the protected first order, or early
+  // but possibly too late (the card protects one order only).
+  const top = firstOrder && outOfConceded.includes(firstOrder) ? label(firstOrder.from) : undefined;
+  for (let i = 0; i < warnings.length; i++) {
+    if (!CONCEDED_ORDER.test(warnings[i]!)) continue;
+    const head = warnings[i]!.replace(CONCEDED_ORDER, '');
+    const isTop = top !== undefined && (head.startsWith(`The withdrawal from ${top} only`) || head.startsWith(`The attack out of ${top} only`));
+    warnings[i] = !isTop
+      ? `${head}; it is listed early, but only my first order can run before the opponent's first, so it may come too late.`
+      : why === undefined
+        ? `${head}; play Order Priority: it is my first order, and the card runs it before the opponent's first.`
+        : `${head}; it is my first order (Order Priority not advised: ${why}).`;
+  }
+  /** The visible stacks of one player next to `t` plus its deploy: what can reach `t` this turn. */
+  const reachOf = (t: number) => {
+    const byPlayer = new Map<number, number>();
+    for (const n of neighborsOf(g, t)) {
+      const st = state.get(n);
+      if (st?.owner.kind !== 'player' || st.owner.playerId === me || st.armies === null) continue;
+      const p = st.owner.playerId;
+      byPlayer.set(p, (byPlayer.get(p) ?? deployOf(p)) + Math.max(0, st.armies - guard) + unitsAt(n));
+    }
+    return byPlayer.size ? Math.max(...byPlayer.values()) : null;
+  };
+  const facesEnemy = (t: number) =>
+    neighborsOf(g, t).some((n) => {
+      const st = state.get(n);
+      return st?.owner.kind === 'player' && st.owner.playerId !== me;
+    });
+  const lastWhy = new Map<PlannedMove, string>();
+  const slotOf = (m: PlannedMove): MoveSlot => {
+    if (m === firstOrder) return MoveSlot.Protected;
+    if (m.kind === 'transfer') return conceded.has(m.from) || facesEnemy(m.to) ? MoveSlot.Early : MoveSlot.Filler;
+    if (conceded.has(m.from)) return MoveSlot.Early;
+    const st = state.get(m.to);
+    if (st?.owner.kind === 'player') {
+      if (worstCase.has(m.to) || strikes.has(m.to)) return MoveSlot.Sure;
+      lastWhy.set(m, `${label(m.to)} (player ${st.owner.playerId}'s stack can attack first; attacking second fights its survivors)`);
+      return MoveSlot.Last;
+    }
+    // A neutral another player can reach: early only when my survivors hold against its capture
+    // of that neutral (sized as mine are), at most what its stacks next to it plus its deploy send.
+    const near = reachOf(m.to);
+    if (near === null) return MoveSlot.Filler;
+    const reach = Math.min(near, captureCost(defenceAt(m.to), s) ?? near);
+    const survivors = m.armies - Math.min(m.armies, straightKills(defenceAt(m.to), rates.defensiveKillRate));
+    if ((toTake(survivors) ?? Infinity) > reach) return MoveSlot.Sure;
+    lastWhy.set(m, `${label(m.to)} (another player can send ~${reach} at it, which would take my ${survivors} survivors: taken last, mine is the capture that stands)`);
+    return MoveSlot.Last;
+  };
+  // "Eliminated even if it reinforces" holds only if my attacks land before its own orders: moving
+  // first, it can move between its territories or take a thin border of mine, and survive.
+  for (const p of opts.movesFirst ? [] : [...finishedOff].sort(byNum)) {
+    const theirs = ownedBy.get(p) ?? [];
+    const reach = (b: number) =>
+      deployOf(p) +
+      neighborsOf(g, b)
+        .filter((n) => theirs.includes(n))
+        .reduce((a, n) => a + Math.max(0, armiesOf(n) - guard) + unitsAt(n), 0);
+    const exposed = mine.filter(
+      (b) => neighborsOf(g, b).some((n) => theirs.includes(n)) && (toTake(stayAt(b) + unitsAt(b)) ?? Infinity) <= reach(b),
+    );
+    const most = Math.max(0, ...exposed.map(reach));
+    warnings.push(
+      `Eliminating player ${p} assumes my attacks land before its own orders: they interleave, so if it moves first it can move between its territories${exposed.length ? `, or take ${exposed.map(label).join(' or ')} (what this plan leaves there falls to its ~${most})` : ''}, and survive.`,
+    );
+  }
+  const decided = [...moves];
+  const scheduled = scheduleMoves(decided, slotOf);
+  moves.splice(0, moves.length, ...scheduled);
+  const lasts = scheduled.filter((m) => lastWhy.has(m)).map((m) => lastWhy.get(m)!);
+  if (lasts.length || scheduled.some((m, i) => m !== decided[i])) {
+    rationale.push(
+      `Move order (#127): ${firstOrder ? `${label(firstOrder.from)} → ${label(firstOrder.to)} first; ` : ''}withdrawals and transfers into borders the enemy can break early, attacks that land even if the owner deploys there first next, uncontested captures and interior transfers as filler${lasts.length ? `, and last ${lasts.join('; ')}` : ''}.`,
+    );
+  }
+
   const offenceList = [...offence.values()].map(({ bonusId, ...o }): OffenceEntry => {
     // A strike attack's cost is what the final orders send (a top-up can raise it).
     // The strike stack's own entry is final as built.

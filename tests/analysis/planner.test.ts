@@ -491,7 +491,7 @@ describe('planTurn — value-aware defence', () => {
   it('(a) withdraws a conceded border\'s movable armies behind it, first, with Order Priority advice', () => {
     // #118: T1 must not be in a bonus I hold in full (its garrison would stay), so T5 is out of
     // sight here: bonus 701 is not visibly held, and T1 protects +0.
-    const p = planTurn({ graph: ag, board: board([mine(1, 15), mine(2, 1), mine(3, 4), neutral(4, 2), fogged(5), enemy(9, 50)]), me: ME, income: 35, settings: STD, options: { goal: 'defend', enemyDeploy: 38 } });
+    const p = planTurn({ graph: ag, board: board([mine(1, 15), mine(2, 1), mine(3, 4), neutral(4, 2), fogged(5), enemy(9, 50)]), me: ME, income: 35, settings: STD, options: { goal: 'defend', enemyDeploy: 38, holdsOrderPriority: true } });
     expect(p.warnings).toContain('T1 (#1) cannot be held economically (needs 38, protects +0): conceded');
     expect(p.deploys.find((d) => d.territoryId === 1)).toBeUndefined();
     // Toward the frontier (T2, one step from T3), not into the fogged dead end T5.
@@ -507,6 +507,23 @@ describe('planTurn — value-aware defence', () => {
       expect.objectContaining({ from: 3, to: 4, kind: 'attack' }),
     ]);
     expect(p.moves.some((m) => m.kind === 'transfer' && m.from !== 1)).toBe(false);
+  });
+
+  it('(a) #127: Order Priority is not advised for a withdrawal too small to be worth a card', () => {
+    // A 4-army border: 3 movable armies withdraw, under ORDER_PRIORITY_MIN_ARMIES.
+    const p = planTurn({ graph: ag, board: board([mine(1, 4), mine(2, 1), mine(3, 4), neutral(4, 2), fogged(5), enemy(9, 50)]), me: ME, income: 35, settings: STD, options: { goal: 'defend', enemyDeploy: 38, holdsOrderPriority: true } });
+    expect(p.moves[0]).toEqual(expect.objectContaining({ from: 1, to: 2, armies: 3, kind: 'transfer' }));
+    expect(p.cardAdvice).toBeNull();
+    expect(p.warnings).toContain(
+      'The withdrawal from T1 (#1) only executes if T1 (#1) is still mine when the order runs; it is my first order (Order Priority not advised: it saves only 3 armies, under the 5 a card is worth).',
+    );
+  });
+
+  it('(a) #127: Order Priority is not advised when I move first this turn', () => {
+    const p = planTurn({ graph: ag, board: board([mine(1, 15), mine(2, 1), mine(3, 4), neutral(4, 2), fogged(5), enemy(9, 50)]), me: ME, income: 35, settings: STD, options: { goal: 'defend', enemyDeploy: 38, holdsOrderPriority: true, movesFirst: true } });
+    expect(p.moves[0]).toEqual(expect.objectContaining({ from: 1, to: 2, armies: 14, kind: 'transfer' }));
+    expect(p.cardAdvice).toBeNull();
+    expect(p.warnings.join('\n')).toMatch(/Order Priority not advised: I move first this turn/);
   });
 
   it('(a) never sends idle interior armies into a conceded border', () => {

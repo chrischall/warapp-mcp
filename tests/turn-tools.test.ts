@@ -245,7 +245,8 @@ describe('warapp_plan_turn', () => {
     // R3: the bonus could not be held next turn.)
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.conceded).toEqual([{ id: 161, name: mapName(161) }]);
-    expect(p.cardAdvice).toBe('order-priority');
+    // #127: no Order Priority card in hand (and a 2-army withdrawal is not worth one): no advice.
+    expect(p.cardAdvice).toBeNull();
     expect(p.moves[0]).toEqual({
       from: { id: 161, name: mapName(161) },
       to: { id: 159, name: mapName(159) },
@@ -253,7 +254,7 @@ describe('warapp_plan_turn', () => {
       kind: 'transfer',
     });
     expect(p.deploys.some((d) => d.territory.id === 161)).toBe(false);
-    expect(p.warnings.join('\n')).toContain(`play Order Priority so it goes first`);
+    expect(p.warnings.join('\n')).toContain('it is my first order (Order Priority not advised: I hold no Order Priority card to play)');
   });
 
   it('reports the next income if the conceded borders fall, and the bonuses at risk (#109)', async () => {
@@ -824,7 +825,8 @@ describe('warapp_plan_turn — never stand still (#107)', () => {
     expect(p.conceded.map((t) => t.id)).toEqual([158]);
     expect(p.moves.map((m) => [m.from.id, m.to.id, m.armies, m.kind])).toEqual([[158, 157, 6, 'attack']]);
     expect(p.deploys.find((d) => d.territory.id === 158)?.armies).toBe(1);
-    expect(p.cardAdvice).toBe('order-priority');
+    // #127: no Order Priority card in hand, so none is advised; the attack out is still the first order.
+    expect(p.cardAdvice).toBeNull();
     expect(p.rationale.join('\n')).toMatch(/Attack out of conceded .* \(#158\) rather than withdraw/);
     expect(p.warnings.join('\n')).not.toMatch(/standing still/i);
   });
@@ -1368,12 +1370,44 @@ describe('cards in the turn tools', () => {
     expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
   });
 
-  it('plan_turn plays the Order Priority card it holds when the plan advises it, so the orders carry it', async () => {
-    // As in "reports a conceded border": Sheepshead Hills is conceded and withdraws, so the
-    // plan advises Order Priority; holding one, the orders play it (not only the advice).
+  it('plan_turn does not spend Order Priority on a trivial withdrawal (#127)', async () => {
+    // As in "reports a conceded border": Sheepshead Hills is conceded and withdraws its 2 movable
+    // armies — under ORDER_PRIORITY_MIN_ARMIES, so the card stays in hand.
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: withHand([{ id: OP, type: 4 }]) }) });
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cardAdvice).toBeNull();
+    expect(p.cards.plays).toEqual([]);
+    expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
+    expect(p.warnings.join('\n')).toContain('Order Priority not advised: it saves only 2 armies');
+  });
+
+  it('plan_turn plays the Order Priority card it holds when the plan advises it, so the orders carry it', async () => {
+    // Ann's conceded 6-stack on 158 attacks out (6 armies, worth the card), and she holds one:
+    // the orders play it (not only the advice), and the attack out is the first move.
+    const opening: SyntheticTerritory[] = [
+      { id: 158, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 1 },
+      { id: 157, fogLevel: 1, owner: 0, armies: 4 },
+      { id: 161, fogLevel: 1, owner: 0, armies: 12 },
+      { id: 135, fogLevel: 1, owner: 0, armies: 12 },
+      { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 25 },
+    ];
+    h = await liveHarness({
+      feed: [game('Playing', { numberOfTurns: '1', settings: modelledSettings() })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () =>
+          ({
+            body: (w) => writeLatestGameInfo(w, opening, [ANN.inGame, BOB.inGame], { [ANN.inGame]: [{ id: OP, type: 4 }] }),
+          }) satisfies Partial<ReplyFrame>,
+      }),
+    });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.cardAdvice).toBe('order-priority');
+    expect(p.moves[0]).toEqual(expect.objectContaining({ from: { id: 158, name: mapName(158) }, kind: 'attack' }));
+    // Moving first this turn (#127), the card is not needed: it stays in hand.
+    const first = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', moves_first: true }));
+    expect(first.cardAdvice).toBeNull();
+    expect(first.orders.some((o) => o.kind === 'card')).toBe(false);
     expect(p.cards.playRequired).toBe(false);
     expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
     expect(p.orders[0]).toEqual({ kind: 'card', card: OP });
@@ -1388,7 +1422,7 @@ describe('cards in the turn tools', () => {
     expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
   });
 
-  it('plan_turn over the hold limit (6/5) plays Order Priority, never Blockade or Order Delay', async () => {
+  it('plan_turn over the hold limit (6/5) discards Order Delay and keeps Order Priority (#127), never playing Blockade or Order Delay', async () => {
     h = await liveHarness({
       feed: [game('Playing')],
       warapp: routes({
@@ -1404,9 +1438,10 @@ describe('cards in the turn tools', () => {
     });
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.cards.playRequired).toBe(true);
-    expect(p.cards.plays).toEqual([{ id: OP, name: 'Order Priority' }]);
-    expect(p.cards.discards).toEqual([]);
-    expect(p.orders[0]).toEqual({ kind: 'card', card: OP });
+    expect(p.cards.plays).toEqual([]);
+    expect(p.cards.discards).toEqual([{ id: OD, name: 'Order Delay' }]);
+    expect(p.orders[0]).toEqual({ kind: 'discard', card: OD });
+    expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
     expect(p.income).toBe(5);
   });
 

@@ -799,8 +799,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           `its full deploy plus a margin, at most ${PRESSURE_FACTOR}× a typical neutral capture each — one visible ` +
           'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent from its visible bonuses, or ' +
           'its observed deploy since the previous turn when larger). Obeys the kill rates, luck, rounding, Local ' +
-          'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement and (when cards must go) Order Priority, never ' +
-          "Blockade or Order Delay. The full rule list is in the planner's header and the warapp-mcp skill. " +
+          'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement, and Order ' +
+          'Priority only when the plan advises it (a withdrawal worth a card, a commander strike) or it is the card that must ' +
+          'go (over the hold limit the lowest-value cards leave first); never Blockade or Order Delay. Moves are listed in the ' +
+          "order to send them (both players' orders interleave). The full rule list is in the planner's header and the warapp-mcp skill. " +
           'When this server kept your pick list (warapp_submit_picks or warapp_get_my_picks during distribution), ' +
           '`award` says what the award of picks showed: the territories of your list that are another player\'s ' +
           'start for certain (in a two-player game they are planned as the opponent\'s while still fogged, with the ' +
@@ -858,6 +860,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               'captures a bonus still needs reach it together. Attacks sized for a worst case (finishing a player off, ' +
               'fog pressure, commander strikes) stay certain.',
           ),
+        moves_first: z
+          .boolean()
+          .optional()
+          .describe(
+            'Whether you move first this turn, when you know it (Cycle and No-Luck Cycle move orders swap the first ' +
+              'mover every turn: whoever moved second last turn moves first now). Moving first, your first order already ' +
+              'runs before the opponent\'s, so Order Priority is not advised. Default unknown.',
+          ),
         view: viewArg(
           VIEWS,
           'compact (default) gives the plan and orders (the profile as format, phase and standing); "full" adds each ' +
@@ -865,7 +875,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ),
       }),
     },
-    async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, view }) => {
+    async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, moves_first, view }) => {
       const game = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(game);
       const map = mapOf(game);
@@ -938,6 +948,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
+          ...(moves_first !== undefined ? { movesFirst: moves_first } : {}),
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);

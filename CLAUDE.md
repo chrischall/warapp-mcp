@@ -167,15 +167,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the bundle's check is `remaining > MaxCardsHold` after removing every played and discarded
   card) war.app refuses a `SendOrders` (**error 51 `MustUseCard`**), so `cardsToShed` cards must
   be played or discarded and `warapp_submit_turn` refuses up front. The planner always plays
-  Reinforcement (its armies join the income) and, only when cards must go, one Order Priority,
-  then discards the lowest-value cards — never playing Blockade (it gives a territory away) or
+  Reinforcement (its armies join the income); when cards must go, the lowest-value cards leave
+  first (#127: Order Delay is discarded before Order Priority is spent; an Order Priority that
+  must go is played, not discarded) — never playing Blockade (it gives a territory away) or
   Order Delay (it holds back my attacks). A discard (`GameOrderDiscard`) is tag 9, the GUID, the
   base — from the bundle's writer, not yet live-verified. Card plays must come in war.app's
   turn-phase order or the server answers **error 10 `OrdersInIncorrectOrder`**, so
   `writeSendOrdersParams` sorts every order by `TurnPhase` (discards 10, Order Priority 12,
   Reinforcement 20, deploys 25, moves 50, Order Delay 50, Blockade 60). Order Delay (tag 11) runs
-  in phase 50, verified live 2026-11-12 (sent in phase 12 it drew error 10). Within a phase,
-  card plays are written after the moves — that position is unverified. Order Delay may be combined with other card plays.
+  in phase 50, verified live 2026-11-12 (sent in phase 12 it drew error 10). Within a phase the
+  orders keep their given order (#127): an Order Delay delays only the orders listed after it, so
+  it stays where it is listed among the moves — that war.app accepts it ahead of a move is
+  unverified. Order Delay may be combined with other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
 - **Turn notifications are a socket.io v0.9 client with two transports.** While the active
   transport is the direct leg, a **WebSocket** (`src/push/websocket.ts`): handshake GET with the
@@ -289,10 +292,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Withdraw** (under `balanced`/`defend`): a conceded border's movable armies go first to
     the neighbour nearest a border that holds — except from a bonus I hold in full (#118),
     whose garrison stays unless it makes that neighbour, a valued enemy-facing border, hold
-    this turn — and the plan sets `cardAdvice:
-    'order-priority'` because a withdrawal only executes while the border is still mine. The
-    planner never plays cards itself; `warapp_plan_turn` adds the Order Priority I hold to
-    `orders` when `cardAdvice` asks for it.
+    this turn — and is my first order, because a withdrawal only executes while the border is
+    still mine. Order Priority moves only that first order ahead of the opponent's first, so the
+    plan sets `cardAdvice: 'order-priority'` only when I hold one (`holdsOrderPriority`), I am
+    not known to move first (`movesFirst`), and the order it protects carries at least
+    `ORDER_PRIORITY_MIN_ARMIES` (#127). The planner never plays cards itself;
+    `warapp_plan_turn` adds the Order Priority I hold to `orders` when `cardAdvice` asks for it.
+  - **Move order (#127).** Orders zigzag (the first mover's 1st, the other's 1st and 2nd, …), so
+    the plan's `moves` are scheduled last (`src/analysis/schedule.ts`): the protected order, then
+    withdrawals and transfers into enemy-facing borders, attacks that land even if the owner
+    deploys there first, filler (uncontested neutrals, interior transfers), and last the attacks
+    into a stack that can fight back (attacking second fights survivors) and contested neutrals
+    whose survivors would not hold — softeners before finishers, moves into a territory before
+    moves out of it.
   - **The game profile (`src/analysis/profile.ts`, S1)** is on every plan (`profile`): format
     (players' teams — the shared `carriesTeam` test in `src/teams.ts` — and who is still
     playing), phase, standing (my income vs the strongest opponent's estimate; the armies on

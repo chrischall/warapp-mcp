@@ -403,12 +403,13 @@ export function turnPhaseOf(o: TurnOrder): number {
 }
 
 /**
- * Turn-phase order, and within one phase the card plays after the other
- * orders (so an Order Delay, phase 50, follows every AttackTransfer). The
- * within-phase position is UNVERIFIED; the phase itself is.
+ * Turn-phase order only; within one phase the orders keep their given order (#127): an Order
+ * Delay (phase 50) delays only the orders listed after it, so it stays where it is listed among
+ * the moves — at the end of the list it would do nothing. The phase is VERIFIED; that war.app
+ * accepts an Order Delay ahead of a move in phase 50 is UNVERIFIED (docs/WEB-PROTOCOL.md).
  */
 function compareTurnOrders(a: TurnOrder, b: TurnOrder): number {
-  return turnPhaseOf(a) - turnPhaseOf(b) || Number(a.kind === 'card') - Number(b.kind === 'card');
+  return turnPhaseOf(a) - turnPhaseOf(b);
 }
 
 /**
@@ -416,10 +417,10 @@ function compareTurnOrders(a: TurnOrder, b: TurnOrder): number {
  * present order list (int32 count, then per order a present flag and the
  * order), the turn number (GameFeed `numberOfTurns` + 1), then two bools the
  * client sends as false. Orders are written in turn-phase order (a stable
- * sort, so orders of one phase keep their given order, card plays after
- * the rest): discards, Order Priority and Reinforcement plays, then every deploy, then
- * the moves (ordinary AttackTransfers, mode 3) followed by any Order Delay
- * plays, then any Blockade plays.
+ * sort, so orders of one phase keep their given order): discards, Order
+ * Priority and Reinforcement plays, then every deploy, then the moves (ordinary
+ * AttackTransfers, mode 3) with any Order Delay play where it is listed among
+ * them (#127), then any Blockade plays.
  */
 export function writeSendOrdersParams(
   w: Writer,

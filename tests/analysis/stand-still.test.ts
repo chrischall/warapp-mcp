@@ -389,7 +389,7 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
   const at = (near: number): BoardState =>
     board([mine(1, 6), mine(2, 1), neutral(3, near), neutral(5, 12), neutral(6, 12), neutral(7, 12), player(22, 25, P2)]);
   const run = (b: BoardState, settings: PlannerSettings = CAP, adapt = false) =>
-    planTurn({ graph: mg, board: b, me: ME, income: 5, settings, game: SEVEN, options: { adapt } });
+    planTurn({ graph: mg, board: b, me: ME, income: 5, settings, game: SEVEN, options: { adapt, holdsOrderPriority: true } });
 
   it('takes the 4-neutral from the conceded stack (5 movable + 1 deploy) instead of withdrawing', () => {
     const b = at(4);
@@ -402,7 +402,9 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
       expect(p.deploys.find((d) => d.territoryId === 1)?.armies).toBe(1);
       expect(deploySum(p)).toBe(5);
       expect(p.cardAdvice).toBe('order-priority');
-      expect(p.warnings).toContain('The attack out of T1 (#1) only executes if T1 (#1) is still mine when the order runs; play Order Priority so it goes first.');
+      expect(p.warnings).toContain(
+        "The attack out of T1 (#1) only executes if T1 (#1) is still mine when the order runs; play Order Priority: it is my first order, and the card runs it before the opponent's first.",
+      );
       const r = p.rationale.join('\n');
       expect(r).toMatch(
         /Attack out of conceded T1 \(#1\) rather than withdraw: its 5 movable armies \(and 1 deployed there, which leave with the attack\) take T3 \(#3\)/,
@@ -508,7 +510,7 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
 
     it('opening: the waived capture goes ahead from 4 and 5, and the withdrawal stands', () => {
       for (const adapt of [false, true]) {
-        const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: CAP, game: SEVEN, options: { adapt } });
+        const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: CAP, game: SEVEN, options: { adapt, holdsOrderPriority: true } });
         expect(p.profile.phase).toBe('opening');
         expect(attacks(p).map((m) => m.to)).toEqual([3, 3]);
         expect(attacks(p).every((m) => m.from !== 1)).toBe(true);
@@ -520,7 +522,7 @@ describe('#107: a conceded border attacks out rather than stand still', () => {
     it('later (contact, over the army cap): rule 4d is a cost, not a veto (#114); the capture goes ahead from 4 and 5, and the withdrawal stands', () => {
       // An army cap of 1× income: my 20 armies after deploy exceed 5, so 4e runs in contact. Every
       // candidate is tried and undone to rank it: the withdrawal survives those undos too.
-      const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: { ...STD, armyCap: 1 }, game: { ...SEVEN, turn: 5 } });
+      const p = planTurn({ graph: cg, board: cb, me: ME, income: 5, settings: { ...STD, armyCap: 1 }, game: { ...SEVEN, turn: 5 }, options: { holdsOrderPriority: true } });
       expect(p.profile.phase).toBe('contact');
       expect(p.rationale.join('\n')).not.toMatch(/Do not take T3 \(#3\)/);
       expect(attacks(p).map((m) => m.to)).toEqual([3, 3]);

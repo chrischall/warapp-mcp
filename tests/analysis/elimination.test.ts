@@ -137,6 +137,17 @@ describe('finishing off a weak opponent (#45)', () => {
     expect(() => validate(p, ENDGAME, 22)).not.toThrow();
   });
 
+  it('#127: says the elimination assumes my attacks land first, naming the borders it could take first', () => {
+    const p = plan(ENDGAME, 22);
+    // Orders interleave: moving first, player 22567833 deploys its ~6 next to my 1-army borders and takes one.
+    expect(p.warnings).toContain(
+      'Eliminating player 22567833 assumes my attacks land before its own orders: they interleave, so if it moves first it can move between its territories, or take T3 (#3) or T4 (#4) (what this plan leaves there falls to its ~7), and survive.',
+    );
+    // Known to move first this turn: no caveat.
+    const first = plan(ENDGAME, 22, { options: { movesFirst: true } });
+    expect(first.warnings.join('\n')).not.toMatch(/assumes my attacks land before its own orders/);
+  });
+
   it("the opponent's best response: one shared deploy, spent where it saves a target most cheaply", () => {
     // Saving a target costs (what the attack can take) − (its armies) + 1 deploys there.
     expect(guaranteedFalls([3, 4], 6)).toBe(1); // it saves the cheaper one, not both (3 + 4 > 6)

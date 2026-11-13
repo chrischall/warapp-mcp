@@ -203,9 +203,16 @@ describe('chooseCardPlays', () => {
   const al: Card = { id: '77777777777777777777777777777777', type: 6, name: 'Airlift' };
   const bl2: Card = { ...bl, id: '99999999999999999999999999999998' };
 
-  it('over the hold limit plays Order Priority rather than discarding', () => {
+  it('over the hold limit discards Order Delay before spending Order Priority (#127)', () => {
+    // A strong opponent discarded Order Delay and kept Order Priority for its decisive hits.
     const c = chooseCardPlays([op, od, bl, sp, al], { maxCardsHold: 4, inPlay: [] });
     expect(c.required).toBe(true);
+    expect(c.plays).toEqual([]);
+    expect(c.discards).toEqual([od]);
+  });
+
+  it('plays Order Priority rather than discarding it when it is the card that must go', () => {
+    const c = chooseCardPlays([op, r()], { maxCardsHold: 1, inPlay: [] });
     expect(c.plays).toEqual([op]);
     expect(c.discards).toEqual([]);
   });
@@ -234,12 +241,12 @@ describe('chooseCardPlays', () => {
 
   it('sheds as many cards as the hand is over the limit: plays first, then the lowest-value discards', () => {
     expect(chooseCardPlays([bl, al, od, sp, bl2, op], { maxCardsHold: 3, inPlay: [] })).toMatchObject({
-      plays: [op],
-      discards: [od, sp],
+      plays: [],
+      discards: [od, sp, bl],
     });
     expect(chooseCardPlays([r(5), op, bl, al, sp, bl2], { maxCardsHold: 4, inPlay: [] })).toMatchObject({
-      plays: [r(5), op],
-      discards: [],
+      plays: [r(5)],
+      discards: [sp],
     });
   });
 

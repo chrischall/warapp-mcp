@@ -239,8 +239,11 @@ advanced).
 | Order Delay | 11 | **50** — placed in phase 12 (with Order Priority) it was refused with error 10 |
 | Blockade | 18 | 60 |
 
-Within one phase the encoder writes card plays after the other orders (an Order Delay after
-every AttackTransfer); that within-phase position is unverified.
+Within one phase the encoder keeps the orders in the order given (#127): an Order Delay stays
+where it is listed among the AttackTransfers, because it delays only the orders listed after it —
+written after every move (as before #127) it did nothing. **Unverified:** that war.app accepts an
+Order Delay ahead of an AttackTransfer in phase 50 (one live commit with
+`[deploy, OrderDelay, attack]` settles it; an error 10 would mean card plays must close the phase).
 
 **The hold limit (#20).** A play or discard is required only when the hand holds **more** whole
 cards than `MaxCardsHold`: live, a commit with no card was accepted at 4/4 and refused with error

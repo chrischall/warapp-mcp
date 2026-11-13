@@ -420,6 +420,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       "against its owner's whole income.",
     source: S.combat,
     basis: 'derived',
+    encoded: 'the planner lists its moves in this order (rule 7, warapp_plan_turn)',
   },
   {
     id: 'settings-contested-neutral',
@@ -432,6 +433,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'early: the three survivors then need five.',
     source: S.combat,
     basis: 'derived',
+    encoded: 'the planner orders such a capture last, or early when its survivors hold (rule 7)',
   },
   {
     id: 'settings-army-cap',
@@ -545,7 +547,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'if you would move first anyway and they play none; if both play one the normal order decides.',
     source: S.orderPriority,
     basis: 'source',
-    encoded: 'the planner advises it for a withdrawal or a commander strike (cardAdvice, warapp_plan_turn)',
+    encoded:
+      'the planner puts the protected order first and advises the card (cardAdvice, warapp_plan_turn) for a commander ' +
+      'strike or a withdrawal worth a card, only when you hold one and are not known to move first',
   },
   {
     id: 'cards-blockade-own-bonus',

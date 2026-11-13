@@ -241,9 +241,10 @@ export interface CardChoice {
 
 /**
  * The cards the planner plays: every Reinforcement card (it only adds armies). Over
- * the hold limit, with plays still short of what must leave the hand, one Order
- * Priority (my moves go first), then discards of the lowest-value cards. Order Delay
- * (it holds back my own attacks) and Blockade (it gives a territory away) are never
+ * the hold limit, with plays still short of what must leave the hand, the lowest-value
+ * cards leave it (#127): discarded, except an Order Priority, which is played (my first
+ * order goes first) — so Order Delay is discarded before Order Priority is spent. Order
+ * Delay (it holds back my own attacks) and Blockade (it gives a territory away) are never
  * auto-played — discarding one costs nothing this turn.
  */
 export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardChoice {
@@ -263,15 +264,15 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules): CardCh
     extraArmies += armies;
   }
   if (plays.length < shed) {
-    const op = hand.find((c) => c.type === CARD_ORDER_PRIORITY);
-    if (op) plays.push(op);
-  }
-  if (plays.length < shed) {
     const used = new Set(plays.map((c) => c.id));
     const rest = hand.filter((c) => !used.has(c.id));
-    // A stable sort: equal-value cards are discarded in hand order.
+    // A stable sort: equal-value cards go in hand order. The lowest-value cards leave the hand
+    // (#127: Order Delay goes before Order Priority, which is kept for a turn that needs it); an
+    // Order Priority that must go anyway is played rather than discarded.
     const byValue = rest.map((c, i) => ({ c, i })).sort((a, b) => keepValue(a.c) - keepValue(b.c) || a.i - b.i);
-    for (const { c } of byValue.slice(0, shed - plays.length)) discards.push(c);
+    for (const { c } of byValue.slice(0, shed - plays.length)) (c.type === CARD_ORDER_PRIORITY ? plays : discards).push(c);
+  }
+  if (discards.length) {
     warnings.push(
       `You hold ${hand.length} cards (the limit is ${rules.maxCardsHold}), so ${shed} must be played or discarded this ` +
         `turn. Discarding ${discards.map((c) => c.name).join(', ')} — no play of ${discards.length === 1 ? 'it' : 'them'} ` +
