@@ -16,7 +16,14 @@ import type { Player } from '../normalize.js';
 import { CHAT_CHANNEL_PUBLIC, Method, writeSendChatParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
 import { asInt } from '../scalars.js';
-import { gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
+import {
+  gameIdArg,
+  readAnnotations,
+  respond,
+  UNTRUSTED_PREVIEW_NOTE,
+  untrustedDescription,
+  untrustedText,
+} from './common.js';
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { failureText, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
@@ -152,20 +159,23 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
             // Read the game for every message (#130): one GameFeed does not know is refused here.
             const game = await ctx.client.getGame(gameId);
             let recipient: ChatState['recipient'];
+            let shownRecipient: { id: number; name: string } | undefined;
             if (to !== undefined && String(to).trim() !== '') {
               const p = resolvePlayer(game.players, to);
               if (p.id === (await ctx.myInviteToken())) {
-                throw new McpToolError(`${p.name} is you: a private message to yourself was not sent.`, {
+                throw new McpToolError(`${untrustedText(p.name)} (${p.id}) is you: a private message to yourself was not sent.`, {
                   hint: 'Name another player in `to`, or omit it to post to the whole game.',
                 });
               }
               recipient = { id: inGameId(p), name: p.name };
+              // The recipient's name is their own words: by id in the sentence, delimited in a field.
+              shownRecipient = { id: p.id, name: untrustedText(p.name) };
             }
             return {
               gate: {
                 action: 'warapp.send_chat',
-                summary: recipient
-                  ? `Send a private chat message to ${recipient.name} in game ${gameId}`
+                summary: shownRecipient
+                  ? `Send a private chat message to player ${shownRecipient.id} in game ${gameId}`
                   : `Post a chat message to everyone in game ${gameId}`,
                 account: undefined,
                 target: gameId,
@@ -176,10 +186,12 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
                   channel: CHAT_CHANNEL_PUBLIC,
                   recipient: recipient?.id ?? null,
                 },
-                willSend: { game: gameId, to: recipient?.name ?? 'everyone in the game', message },
+                willSend: { game: gameId, to: shownRecipient?.name ?? 'everyone in the game', message },
                 preview: {
                   note: 'Other players will see this message; it cannot be unsent.',
-                  game: { id: game.id, name: game.name ?? null, state: game.state },
+                  game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state },
+                  ...(shownRecipient ? { recipient: shownRecipient } : {}),
+                  untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
               state: { gameId, text: message, ...(recipient ? { recipient } : {}) } satisfies ChatState,

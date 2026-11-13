@@ -326,7 +326,7 @@ describe('validateTurn — No-Split warns when an order sends less than the whol
     const { warnings } = run(3, true);
     expect(warnings).toEqual([
       expect.stringMatching(
-        /^No-Split: T1 \(1\) → T3 \(3\) sends 3, but this game moves the whole stack: war\.app sends all 14 \(its armies plus this turn's deploys there, less the guard\)/,
+        /^No-Split: ⟦T1⟧ \(1\) → ⟦T3⟧ \(3\) sends 3, but this game moves the whole stack: war\.app sends all 14 \(its armies plus this turn's deploys there, less the guard\)/,
       ),
     ]);
   });

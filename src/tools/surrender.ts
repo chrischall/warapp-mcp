@@ -17,7 +17,7 @@ import { parseGameId } from '../client.js';
 import type { Game, Player } from '../normalize.js';
 import { Method, writeSurrenderParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, respond } from './common.js';
+import { gameIdArg, respond, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { mintMeta, withToolConfig } from './hints.js';
 import { failureText, type LiveContext } from './live-context.js';
 
@@ -136,9 +136,11 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
             surrenderable(game, me, takeBack);
             const name = gameLabel(game);
             const players = activePlayers(game).length;
+            // The sentences name the game by id only: its name is its creator's words and
+            // goes, delimited, in `game.name` (the preview sits beside the confirmToken).
             const summary = takeBack
-              ? `Take back your pending surrender in ${name} (war.app game ${gameId})`
-              : `This ENDS your game ${name} — you lose it and cannot rejoin (war.app game ${gameId})`;
+              ? `Take back your pending surrender in war.app game ${gameId}`
+              : `This ENDS your war.app game ${gameId} — you lose it and cannot rejoin`;
             return {
               gate: {
                 action: takeBack ? 'warapp.take_back_surrender' : 'warapp.surrender',
@@ -149,13 +151,13 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                 willSend: { game: gameId, surrender: !takeBack },
                 preview: {
                   warning: takeBack
-                    ? `This will take back your pending surrender in ${name}.`
-                    : `This ENDS your game ${name} — you lose it and cannot rejoin.`,
-                  game: { id: gameId, name, state: game.state, playersStillIn: players },
+                    ? `This will take back your pending surrender in game ${gameId}.`
+                    : `This ENDS your game ${gameId} — you lose it and cannot rejoin.`,
+                  game: { id: gameId, name: game.name === undefined ? null : untrustedText(game.name), state: game.state, playersStillIn: players },
                   ...(takeBack || players <= 2
                     ? {}
                     : { note: 'With more than two players, the others must accept the surrender before it ends your game.' }),
-                  untrusted: 'The game name is written by its creator.',
+                  untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
               state: { gameId, name, me, undo: takeBack } satisfies SurrenderState,

@@ -343,7 +343,7 @@ describe('warapp_get_my_picks', () => {
     h = await liveHarness({ feed: [game('DistributingTerritories')] });
     const res = await h.call('warapp_get_my_picks', { game_id: GAME });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toMatch(/Ann \(3312345644\)/);
+    expect(textOf(res)).toMatch(/⟦Ann⟧ \(3312345644\)/);
     expect(h.exchanges).toEqual([]);
   });
 

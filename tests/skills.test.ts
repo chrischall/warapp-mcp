@@ -30,6 +30,11 @@ const read = (p: string) => readFileSync(p, 'utf8');
 const hasShell = (sh: string) => spawnSync(sh, ['-c', 'true']).status === 0;
 const SHELLS = (['bash', 'zsh'] as const).filter((sh) => sh === 'bash' || hasShell(sh));
 if (!SHELLS.includes('zsh' as never)) it.skip('zsh helper run (zsh is not installed here)', () => {});
+const bashVersion = (sh: string) => spawnSync(sh, ['--version']).stdout?.toString().split('\n')[0];
+const LOCALE_SHELLS: string[] = [
+  ...SHELLS,
+  ...(hasShell('/bin/bash') && bashVersion('/bin/bash') !== bashVersion('bash') ? ['/bin/bash'] : []),
+];
 
 function frontmatter(md: string): Record<string, string> {
   const m = /^---\n([\s\S]*?)\n---\n/.exec(md);
@@ -72,6 +77,10 @@ describe('skill files', () => {
     expect(src).toMatch(/--data-binary @-/);
     expect(src).not.toMatch(/APIToken=\$/);
   });
+
+  it('the helper runs curl with URL globbing off', () => {
+    expect(read(HELPER)).toMatch(/curl\s[^\n]*(--globoff|\s-g\b)/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -84,10 +93,20 @@ interface Seen {
 let server: Server;
 let base: string;
 let seen: Seen[] = [];
+/** A second loopback listener that must never be reached: a curlrc destination, a proxy, a redirect target. */
+let other: Server;
+let otherBase: string;
+let otherHits: string[] = [];
 let answer: (s: Seen) => unknown = () => lobbyFixture();
 let scratch: string;
 /** A stand-in `fpx` on PATH: serves the synthetic scout pages, logs its argv. */
 let stubBin: string;
+/** A stand-in `curl`: logs its arguments, one call per line, and fails without connecting.
+ * `run` puts it first on PATH whenever the base URL is not loopback, so no test can send
+ * anything to a real host, whatever its script does. */
+let noNetBin: string;
+/** The only base URLs the real curl may be pointed at: loopback with a port. */
+const LOOPBACK = /^http:\/\/(?:127\.0\.0\.1|localhost):\d{1,5}$/;
 
 function body(req: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -126,6 +145,9 @@ esac
 `,
   );
   chmodSync(fpx, 0o755);
+  noNetBin = mkdtempSync(join(tmpdir(), 'warapp-nonet-'));
+  writeFileSync(join(noNetBin, 'curl'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "\${CURL_LOG:-/dev/null}"\nexit 7\n`);
+  chmodSync(join(noNetBin, 'curl'), 0o755);
   server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
     const s: Seen = { query: url.searchParams, form: new URLSearchParams(await body(req)) };
@@ -139,13 +161,22 @@ esac
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  other = createServer((req, res) => {
+    otherHits.push(`${req.method} ${req.url}`);
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(lobbyFixture()));
+  });
+  await new Promise<void>((r) => other.listen(0, '127.0.0.1', r));
+  otherBase = `http://127.0.0.1:${(other.address() as AddressInfo).port}`;
 });
 afterAll(async () => {
   await new Promise<void>((r) => server.close(() => r()));
+  await new Promise<void>((r) => other.close(() => r()));
   rmSync(stubBin, { recursive: true, force: true });
+  rmSync(noNetBin, { recursive: true, force: true });
 });
 afterEach(() => {
   seen = [];
+  otherHits = [];
   answer = gamefeed;
   if (scratch) rmSync(scratch, { recursive: true, force: true });
   scratch = '';
@@ -162,6 +193,7 @@ function run(shell: string, script: string, env: Record<string, string | undefin
   scratch ||= mkdtempSync(join(tmpdir(), 'warapp-skill-'));
   const fullEnv: Record<string, string> = {
     PATH: `${stubBin}:${process.env.PATH ?? ''}`,
+    CURL_LOG: join(scratch, 'curl.log'),
     HOME: scratch,
     FPX_LOG: join(scratch, 'fpx.log'),
     SCOUT,
@@ -177,6 +209,9 @@ function run(shell: string, script: string, env: Record<string, string | undefin
     if (v === undefined) delete fullEnv[k];
     else fullEnv[k] = v;
   }
+  // The real curl only ever runs against loopback: any other base URL (the default
+  // https://war.app included) gets the stub curl first on PATH.
+  if (!LOOPBACK.test(fullEnv.WARAPP_BASE_URL ?? '')) fullEnv.PATH = `${noNetBin}:${fullEnv.PATH}`;
   return new Promise((resolve) => {
     execFile(
       shell,
@@ -188,6 +223,23 @@ function run(shell: string, script: string, env: Record<string, string | undefin
       },
     );
   });
+}
+
+/** The argument lines the stub curl logged in this test's scratch dir. */
+function stubCurlCalls(): string[] {
+  try {
+    return read(join(scratch, 'curl.log')).split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Run with curl replaced by a stub; `curlCalls` reads back how often it was run, `curlArgs` with what. */
+async function runNoNet(shell: string, script: string, env: Record<string, string | undefined> = {}) {
+  scratch ||= mkdtempSync(join(tmpdir(), 'warapp-skill-'));
+  const r = await run(shell, script, { PATH: `${noNetBin}:${stubBin}:${process.env.PATH ?? ''}`, ...env });
+  const curlArgs = stubCurlCalls();
+  return { ...r, curlCalls: curlArgs.length, curlArgs };
 }
 
 const noToken = (r: Run) => {
@@ -322,6 +374,148 @@ describe.each(SHELLS)('helper under %s', (shell) => {
     expect(r.code).toBe(5);
   });
 
+  // The helper sends the account's credentials: only to war.app itself, or to a loopback
+  // stand-in (the tests' seam). Anything else is refused before a request is made.
+  it.each([
+    'https://evil.example',
+    'http://evil.example',
+    'https://war.app.evil.example',
+    'https://war.app@evil.example',
+    'https://war.app/',
+    'https://war.app:8443',
+    'http://war.app',
+    'HTTPS://war.app',
+    'http://127.0.0.2:PORT',
+    'http://localhost.evil.example:PORT',
+    'http://127.0.0.1.evil.example:PORT',
+    'http://127.0.0.1:PORT@evil.example',
+    'http://127.0.0.1:PORT/x',
+    'http://127.0.0.1',
+    'http://127.0.0.1:',
+    'https://127.0.0.1:PORT',
+    'https://localhost:PORT',
+    'http://[::1]:PORT',
+    'file:///etc/passwd',
+  ])('refuses base URL %j with no request (exit 1)', async (raw) => {
+    const url = raw.replace('PORT', String(new URL(base).port));
+    const r = await runNoNet(shell, 'warapp_feed 5', { WARAPP_BASE_URL: url });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/WARAPP_BASE_URL/);
+    expect(r.curlCalls).toBe(0);
+    expect(seen).toHaveLength(0);
+    noToken(r);
+  });
+
+  it('the curl stub sees an accepted call (so the zero counts above mean something)', async () => {
+    const r = await runNoNet(shell, 'warapp_feed 5 GetChat=true');
+    expect(r.code).toBe(5);
+    expect(r.curlCalls).toBe(1);
+  });
+
+  it('the default base URL (war.app) only ever reaches the stub curl in this suite', async () => {
+    const r = await run(shell, 'warapp_feed 5', { WARAPP_BASE_URL: undefined });
+    expect(r.code).toBe(5);
+    expect(stubCurlCalls()).toHaveLength(1);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('war.app: curl reads no config file, speaks https only, follows no redirect', async () => {
+    const r = await runNoNet(shell, 'warapp_feed 5', { WARAPP_BASE_URL: undefined });
+    expect(r.curlArgs).toHaveLength(1);
+    const args = r.curlArgs[0]!;
+    expect(args.startsWith('-q ')).toBe(true);
+    expect(args).toMatch(/ --proto =https /);
+    expect(args).toMatch(/ --max-redirs 0 /);
+    expect(args).toMatch(/ https:\/\/war\.app\/API\/GameFeed\?GameID=5$/);
+  });
+
+  it('war.app: the proxy settings in the environment are left as they are', async () => {
+    const r = await runNoNet(shell, 'warapp_feed 5', { WARAPP_BASE_URL: undefined, no_proxy: 'corp.example' });
+    expect(r.curlArgs[0]).toMatch(/ --noproxy corp\.example /);
+    const r2 = await runNoNet(shell, 'warapp_feed 5', { WARAPP_BASE_URL: undefined });
+    expect(r2.curlArgs[1]).toMatch(/ --noproxy {2}/);
+  });
+
+  it('loopback: curl speaks http only and bypasses every proxy', async () => {
+    const r = await runNoNet(shell, 'warapp_feed 5', { WARAPP_BASE_URL: base });
+    const args = r.curlArgs[0]!;
+    expect(args.startsWith('-q ')).toBe(true);
+    expect(args).toMatch(/ --proto =http /);
+    expect(args).toMatch(/ --noproxy \* /);
+  });
+
+  it('a curl config file adds no second destination for the credentials', async () => {
+    scratch = mkdtempSync(join(tmpdir(), 'warapp-skill-'));
+    const rc = `url = "${otherBase}/elsewhere"\nlocation\n`;
+    writeFileSync(join(scratch, '.curlrc'), rc);
+    const curlHome = mkdtempSync(join(scratch, 'curlhome-'));
+    writeFileSync(join(curlHome, '.curlrc'), rc);
+    const r = await run(shell, 'warapp_feed 5 >/dev/null', { CURL_HOME: curlHome });
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen).toHaveLength(1);
+    expect(otherHits).toEqual([]);
+  });
+
+  it('a proxy in the environment never sees a loopback request', async () => {
+    const r = await run(shell, 'warapp_feed 5 >/dev/null', {
+      http_proxy: otherBase,
+      HTTP_PROXY: otherBase,
+      all_proxy: otherBase,
+      ALL_PROXY: otherBase,
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen).toHaveLength(1);
+    expect(otherHits).toEqual([]);
+  });
+
+  it('accepts a localhost base URL with a port', async () => {
+    const r = await run(shell, 'warapp_feed 5 >/dev/null', {
+      WARAPP_BASE_URL: `http://localhost:${new URL(base).port}`,
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen).toHaveLength(1);
+  });
+
+  it.each([
+    'GetChat=[1-3]',
+    'GetChat={true,false}',
+    'Get[A-Z]=true',
+    'X={a,b}',
+    'GetChat=true GetMap=false',
+    'GetChat=true;id',
+    'GetChat=$(id)',
+    'GetChat=`id`',
+    'GetChat=a|b',
+    'GetChat=a&GetMap=false',
+    'GetChat=a#b',
+    'GetChat=a%20b',
+    'GetChat',
+    '=true',
+    '1Get=true',
+    'Get-Chat=true',
+    'GetChat=a\nb',
+  ])('refuses extra argument %j with no request (exit 1)', async (arg) => {
+    const r = await runNoNet(shell, 'warapp_feed 5 "$ARG"', { ARG: arg });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/argument/i);
+    expect(r.curlCalls).toBe(0);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('warapp_game refuses a bad extra argument too', async () => {
+    const r = await runNoNet(shell, 'warapp_game 5 "$ARG"', { ARG: 'GetChat=[1-9]' });
+    expect(r.code).toBe(1);
+    expect(r.curlCalls).toBe(0);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('accepts an empty value and the documented parameters', async () => {
+    const r = await run(shell, 'warapp_feed 5 GetSettings=true GetMap=false GetHistory=true GetChat=true Foo= >/dev/null');
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.query.get('Foo')).toBe('');
+  });
+
   it('warapp_map fetches the map once and serves it from the cache after', async () => {
     const r = await run(shell, 'warapp_map "$GAME" | jq -r .id; warapp_map "$GAME" | jq ".territories | length"');
     expect(r.code, r.stderr).toBe(0);
@@ -350,6 +544,40 @@ describe.each(SHELLS)('helper under %s', (shell) => {
 const recipes = [...read(join(SKILLS, 'warapp-api', 'SKILL.md')).matchAll(/<!-- recipe: ([^>]+?) -->\n```sh\n([\s\S]*?)```/g)].map(
   (m) => ({ name: m[1]!, script: m[2]! }),
 );
+
+// The character checks again, under every shell that may source the helper, macOS's
+// /bin/bash 3.2 included (where it differs from the `bash` on PATH).
+describe.each(LOCALE_SHELLS)('helper character checks under %s', (shell) => {
+  // A bracket range like [A-Za-z] matches by collation order in some shells under a UTF-8
+  // locale (macOS /bin/bash 3.2 lets é, ß and fullwidth letters through), so the helper
+  // spells its character set out. Run under a UTF-8 locale to prove it.
+  it.each(['A=é', 'Aé=b', 'GetMap=ｔｒｕｅ', 'GetMapＡ=true', 'Æ=1', 'ß=1', 'A=ⅰ'])(
+    'refuses non-ASCII extra argument %j under a UTF-8 locale with no request (exit 1)',
+    async (arg) => {
+      const r = await runNoNet(shell, 'warapp_feed 5 "$ARG"', { ARG: arg, LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(/argument/i);
+      expect(r.curlCalls).toBe(0);
+    },
+  );
+
+  it.each(['１２３', '٣'])('refuses non-ASCII game id %j under a UTF-8 locale', async (id) => {
+    const r = await runNoNet(shell, 'warapp_feed "$ID"', { ID: id, LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' });
+    expect(r.code).toBe(1);
+    expect(r.curlCalls).toBe(0);
+  });
+
+  it('refuses a non-ASCII loopback port under a UTF-8 locale', async () => {
+    const r = await runNoNet(shell, 'warapp_feed 5', {
+      WARAPP_BASE_URL: 'http://127.0.0.1:８０８０',
+      LC_ALL: 'en_US.UTF-8',
+      LANG: 'en_US.UTF-8',
+    });
+    expect(r.code).toBe(1);
+    expect(r.curlCalls).toBe(0);
+  });
+
+});
 
 describe('documented recipes', () => {
   it('documents the player, bonus and standing recipes', () => {

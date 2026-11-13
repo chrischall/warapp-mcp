@@ -38,7 +38,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
-  is read-only, `warapp_plan_turn` and `warapp_track_opponents` included.
+  is read-only, `warapp_plan_turn` and `warapp_track_opponents` included. The two-step token
+  confirmation verifies no person — on a client that cannot prompt it is advisory (the model itself
+  supplies the token) — so a write preview's sentences name things by id only, and every
+  third-party name in a preview or a thrown error goes through `untrustedText` (`src/tools/common.ts`:
+  delimited ⟦ ⟧, control characters, quotes and non-ASCII brackets neutralised, capped).
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words with a source link from the researched war.app pages, marked
   `source` or `derived`; never paste guide text. `docs/STRATEGY.md` names every note id (a test checks it). With a

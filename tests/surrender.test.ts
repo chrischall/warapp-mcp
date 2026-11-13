@@ -78,7 +78,9 @@ describe('warapp_surrender', () => {
     h = await harness([feedGame(DUEL)], s.warapp);
     const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID }));
     const text = JSON.stringify(preview);
-    expect(text).toContain('This ENDS your game Synthetic Duel');
+    // The sentences name the game by id; its name is only in the delimited `game.name` field.
+    expect(text).toContain(`This ENDS your game ${GAME_ID}`);
+    expect(text).toContain('"name":"⟦Synthetic Duel⟧"');
     expect(text).toMatch(/you lose it and cannot rejoin/);
     expect(s.sent).toEqual([]);
   });
@@ -173,7 +175,8 @@ describe('warapp_surrender', () => {
       h = await harness([feedGame(THREE, 'Playing', 'Synthetic Brawl')], s.warapp);
       const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID, undo: true }));
       const text = JSON.stringify(preview);
-      expect(text).toContain('take back your pending surrender in Synthetic Brawl');
+      expect(text).toContain(`take back your pending surrender in game ${GAME_ID}`);
+      expect(text).toContain('"name":"⟦Synthetic Brawl⟧"');
       expect(text).not.toContain('ENDS');
       expect(s.sent).toEqual([]);
       const p = payload(await h.call('warapp_surrender', { game_id: GAME_ID, undo: true, confirmToken: preview.confirmToken }));

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { analyzeBonuses, applyBonusOverrides, findChokepoints, type BonusAnalysis, type MapGraph } from '../analysis/index.js';
 import type { WarappClient } from '../client.js';
 import type { Game, GameMap } from '../normalize.js';
-import { gameIdArg, graphOf, mapSummary, readAnnotations, respond, round2, untrustedDescription, viewArg } from './common.js';
+import { gameIdArg, graphOf, mapSummary, readAnnotations, respond, round2, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -117,7 +117,8 @@ export function registerMapTool(server: McpServer, client: WarappClient): void {
           const q = bonus.trim().toLowerCase();
           const hits = all.filter((b) => b.name.toLowerCase().includes(q)).sort(order);
           if (!hits.length) {
-            throw new McpToolError(`No bonus on ${map.name} matches ${JSON.stringify(bonus)}.`, {
+            // The map name is map-maker text: delimited, since errors sit outside the untrusted envelope.
+            throw new McpToolError(`No bonus on map ${map.id} (${untrustedText(map.name)}) matches ${JSON.stringify(bonus)}.`, {
               hint: 'Use part of the bonus name as the game spells it, or omit `bonus` to list the ranked table.',
             });
           }

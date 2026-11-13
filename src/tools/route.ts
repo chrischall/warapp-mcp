@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { shortestPath } from '../analysis/index.js';
 import type { WarappClient } from '../client.js';
-import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription } from './common.js';
+import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, untrustedText } from './common.js';
 import { lookupMeta } from './hints.js';
 import { mapOf } from './map.js';
 import { resolveTerritory } from './resolve.js';
@@ -31,7 +31,12 @@ export function registerRouteTool(server: McpServer, client: WarappClient): void
       const a = resolveTerritory(map, from);
       const b = resolveTerritory(map, to);
       const path = shortestPath(graphOf(map), a.id, b.id);
-      if (!path) throw new McpToolError(`No route connects ${a.name} (${a.id}) and ${b.name} (${b.id}) on ${map.name}.`);
+      // Territory and map names are map-maker text: delimited, since errors sit outside the untrusted envelope.
+      if (!path) {
+        throw new McpToolError(
+          `No route connects ${untrustedText(a.name)} (${a.id}) and ${untrustedText(b.name)} (${b.id}) on map ${map.id} (${untrustedText(map.name)}).`,
+        );
+      }
       const byId = new Map(map.territories.map((t) => [t.id, t.name]));
       return respond(undefined, ['compact'], () => ({
         from: { id: a.id, name: a.name },
