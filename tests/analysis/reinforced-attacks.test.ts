@@ -186,3 +186,59 @@ describe('the strike stack goes where it can strike (#120)', () => {
     valid(input, p);
   });
 });
+
+// Rule 1e pressure in an FFA: my 50-stack T1 beside a third player's 1-army T2, which borders the
+// fog. A 2-army neutral next to me prices a typical expansion at 3, so the margin-sized capture of
+// T2 (1 + ~5 + 3 = 9 → 15) is over 4 × 3 = 12. T1's idle armies pay for it, so it is not priced
+// against expansion: the cap is waived.
+describe('fog pressure paid from idle armies is not priced against expansion (#120)', () => {
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5, 6, 7, 8],
+      [
+        [1, 2],
+        [2, 3],
+        [1, 4],
+        [4, 5],
+        [5, 6],
+        [1, 7],
+        [7, 8],
+      ],
+      [
+        [100, 3, [1, 4]],
+        [102, 9, [7, 8]],
+      ],
+    ),
+  );
+  const input = (stack: number): PlanInput => ({
+    graph: g,
+    board: board([
+      mine(1, stack),
+      enemy(2, 1, THIRD),
+      fogged(3),
+      mine(4, 5),
+      enemy(5, 2),
+      enemy(6, 2),
+      neutral(7, 2),
+      fogged(8),
+    ]),
+    me: ME,
+    income: 8,
+    settings: STD,
+    game: { players: [{ id: ME }, { id: ENEMY }, { id: THIRD }] },
+    options: { adapt: true },
+  });
+
+  it('a 50-stack pressures the 1-army territory', () => {
+    const p = planTurn(input(50));
+    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 2 }));
+    expect(why(p)).toMatch(/Pressure player 30: take all 1 of its visible territories/);
+    expect(why(p)).toMatch(/paid from idle armies/);
+    valid(input(50), p);
+  });
+
+  it('a stack whose idle armies do not cover it is still priced against expansion', () => {
+    const p = planTurn(input(8));
+    expect(why(p)).not.toMatch(/Pressure player 30/);
+  });
+});

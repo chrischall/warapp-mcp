@@ -248,7 +248,11 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
 5. **The overall shape.** The planner is single-turn: it charges each capture for the frontier
    it adds, commits to the bonus closest to completion until one is held (keeping last turn's
    unless another is strictly closer) and, in a 1v1, breaks probable enemy bonuses and builds a
-   strike stack that attacks every adjacent enemy territory it can take while keeping its hold, but it does not plan a campaign over several turns. In an FFA it never concentrates on one front and avoids
+   strike stack — on the border with the most to spare after the best strike it can make — that attacks every adjacent enemy territory it can take while keeping its hold, but it does not plan a campaign over several turns.
+   An attack on a player is sized for its owner's deploy landing there first when idle armies
+   cover it; when they do not, the warning "Attack on enemy … assumes its owner does not
+   reinforce it first: … (win chance N%)" gives its odds against that deploy — weigh it before
+   submitting. In an FFA it never concentrates on one front and avoids
    second fronts; judge yourself when a leader must be attacked.
 
 Every ~3 turns, step back and compare income trends (yours vs each opponent), frontier vs

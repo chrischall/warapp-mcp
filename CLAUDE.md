@@ -230,6 +230,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     transfer toward the enemy front first (the nearest non-held territory only when no enemy is
     reachable), a capture of a player's territory sized without a reserve does not make the
     garrison beside it idle, and my commander's stack beside a conceded border stays.
+  - **Attacks on a player are sized for its owner's deploy (#120).** When the armies beyond what
+    holds the source cover it, an attack on a player's territory (break, counter-attack, strike,
+    rule 4e capture) is sized for its defenders plus the owner's deploy estimate (or its growth
+    there, when larger), and counts as landing; otherwise its "assumes its owner does not
+    reinforce" warning gives the win chance against the reinforced target. The 1v1 strike stack
+    goes to the border with the most to spare after its best such strike (most armies only when
+    none can strike), and fog pressure paid outright from idle armies is not priced against
+    expansion (`PRESSURE_FACTOR`).
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin (with several, each is brought to its margin first, and a conceded border the leftover
     can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies

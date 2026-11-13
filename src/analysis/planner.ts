@@ -137,7 +137,10 @@
 //     territories …, so this is not an elimination", with a warning that it may hold more
 //     in the fog) — when each of those margin-sized captures costs at most PRESSURE_FACTOR × a typical
 //     expansion capture (the median capture cost of the visible neutrals next to me; with
-//     none, any cost). Otherwise it is not attempted (a warning says so when its visible
+//     none, any cost), or (#120) is paid outright from the armies already on one of my
+//     territories next to it beyond what holds it (no deploys; each source pays once; never under
+//     No-Split, where it takes that source's one order): it then displaces no expansion, and a
+//     rationale line names the source ("… is paid from idle armies on …"). Otherwise it is not attempted (a warning says so when its visible
 //     territories could all be taken); with fog anywhere else, the
 //     elimination is hedged ("if it holds nothing in the fog") and a warning says it
 //     may hold unseen territories. When it can save some attacked territories, a
@@ -647,7 +650,8 @@ export function nearMissMargin(need: number): number {
  * visible territories attacked, each sized for its full estimated deploy plus
  * {@link pressureMargin} — when each of those margin-sized captures costs at most this many
  * times a typical expansion capture (the median capture cost of the visible neutrals next to
- * me; issue #60). All or nothing: one visible territory over it blocks the pressure on all.
+ * me; issue #60), or is paid outright from idle armies next to it (#120: it then displaces no
+ * expansion). All or nothing: one visible territory over it blocks the pressure on all.
  * Not tuned to admit #60: at ~6 its 0-army territory costs 15 with the margin, five 2-army
  * neutrals — "more than the expansion it displaces" (the owner's live calibration) — so it is
  * not attempted; at ~4 it costs 10 and is.
@@ -4379,18 +4383,44 @@ export function planTurn(input: PlanInput): TurnPlan {
      * the profile, rule 0p.3; with no visible neutral next to me,
      * nothing to compare with: no limit). All or nothing.
      */
-    const pressureAffordable = (p: number) => {
+    const pressureAffordable = (p: number): { t: number; from: number; cost: number }[] | null => {
       const d = deployOf(p);
-      return (
-        expansionCost === null ||
-        ownedBy.get(p)!.every((t) => (captureCost(armiesOf(t) + d + marginFor(d), s) ?? Infinity) <= pressureFactor * expansionCost)
-      );
+      if (expansionCost === null) return [];
+      // #120: a capture over the limit displaces no expansion when the armies already on one source
+      // beyond what holds it pay for all of it (no deploys): it is waived, each source paying once
+      // (never under No-Split, where it takes that source's one order).
+      const idle = new Map<number, number>();
+      const waived: { t: number; from: number; cost: number }[] = [];
+      for (const t of [...ownedBy.get(p)!].sort(byNum)) {
+        const cost = captureCost(armiesOf(t) + d + marginFor(d), s) ?? Infinity;
+        if (cost <= pressureFactor * expansionCost) continue;
+        // Under No-Split the source's one order is what the capture displaces: no waiver.
+        if (noSplit) return null;
+        const from = neighborsOf(g, t)
+          .filter((x) => mineSet.has(x) && !locked.has(x) && !orderOf(x))
+          .map((x) => ({ x, left: idle.get(x) ?? Math.max(0, movableFor(x, t)) }))
+          .filter(({ left }) => left >= cost)
+          .sort((a, b) => b.left - a.left || a.x - b.x)[0];
+        if (!from) return null;
+        idle.set(from.x, from.left - cost);
+        waived.push({ t, from: from.x, cost });
+      }
+      return waived;
     };
     for (const p of candidates) {
       const edge = fogEdge(p);
       if (edge.length) {
         // Fog is a reason not to claim elimination, not to skip a cheap capture (#60).
-        if (pressureAffordable(p) && finishOff(p, false, edge)) continue;
+        const waived = pressureAffordable(p);
+        if (waived && finishOff(p, false, edge)) {
+          if (waived.length)
+            rationale.push(
+              `Pressure on player ${p} is not priced against expansion (${pressureFactor}× a typical neutral capture, ${pressureFactor * expansionCost!}): ${waived
+                .map((w) => `${label(w.t)} (${w.cost}) is paid from idle armies on ${label(w.from)}`)
+                .join(', ')}, so it displaces no expansion.`,
+            );
+          continue;
+        }
         if (finishOff(p, true))
           warnings.push(
             `player ${p} may hold more territories in the fog (next to ${edge.map(label).join(', ')}): finishing it off is not attempted, though its ${ownedBy.get(p)!.length} visible territories could all be taken this turn.`,
