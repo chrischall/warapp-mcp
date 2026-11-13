@@ -349,11 +349,11 @@ describe('planPicks — compactness (#47)', () => {
       expect(Math.min(...primary.filter((b) => b !== a).map((b) => distance(g, a, b)!))).toBeLessThanOrEqual(SPREAD_DISTANCE);
   });
 
-  it('in a 1v1 the hop bound does not send a far better group to the fallback', () => {
+  it('with spread: true in a 1v1 the hop bound does not send a far better group to the fallback', () => {
     // Within 4 hops only the weak cluster forms a group of 3; the three +5 first-turn picks lie
     // 6 hops apart and score several times more, so the primary spreads to them, with a warning.
     const g = spreadMap();
-    const p = plan({ graph: g, pickable, players: 2, territoryLimit: 3, maxPicks: 6 });
+    const p = plan({ graph: g, pickable, players: 2, territoryLimit: 3, maxPicks: 6, spread: true });
     expect([...primaryOf(p)].sort((a, b) => a - b)).toEqual([1, 11, 21]);
     expect(p.picks.filter((x) => x.group === 'fallback').map((x) => x.territoryId).sort((a, b) => a - b)).toEqual([
       31, 33, 35,
@@ -362,6 +362,15 @@ describe('planPicks — compactness (#47)', () => {
     expect(p.warnings.join(' ')).toMatch(/1v1.*primary group spreads to within 6 hops/);
     expect(p.groups.primary.maxHops).toBe(12);
     expect(p.rationale.join(' ')).toContain('farthest two 12 hops apart');
+  });
+
+  it('by default in a 1v1 the primary stays compact even when the spread picks score more (#73)', () => {
+    const g = spreadMap();
+    const p = plan({ graph: g, pickable, players: 2, territoryLimit: 3, maxPicks: 6 });
+    expect([...primaryOf(p)].sort((a, b) => a - b)).toEqual([31, 33, 35]);
+    expect(compact(g, primaryOf(p))).toBe(true);
+    expect(p.warnings.join(' ')).not.toMatch(/primary group spreads/);
+    expect(p.warnings.join(' ')).toMatch(/fallback group scores more than the primary.*counter-pick/i);
   });
 
   it('with ≥ 3 players a fallback that outscores the compact primary is flagged', () => {
@@ -475,5 +484,139 @@ describe('planPicks — reasons lead with the point (#47)', () => {
     const r = p.picks[0]!.reasons;
     expect(r[0]).toMatch(/^Advances Long \(\+10\): \d of 8 territories by turn 3, ~\d+ armies to take all of it from this pick/);
     expect(r.slice(1).join(' | ')).toMatch(/not complete within 3 turns/);
+  });
+});
+
+describe('planPicks — compact 1v1 (#73)', () => {
+  // Two regions joined by a 3-hop bridge (3-20-21-11). West: pick 1 anchors a +5 pair, picks 2
+  // and 3 (next to 1) +2 pairs. East mirrors it: 11 (+5), 12 and 13 (+2). Each pair's second
+  // territory hangs off its pick only.
+  const twoRegions = () =>
+    mkGraph(
+      [
+        [1, 2], [1, 3], [1, 51], [2, 52], [3, 53],
+        [3, 20], [20, 21], [21, 11],
+        [11, 12], [11, 13], [11, 61], [12, 62], [13, 63],
+      ],
+      [
+        { id: 1001, name: 'WestBig', value: 5, territoryIds: [1, 51] },
+        { id: 1002, name: 'WestA', value: 2, territoryIds: [2, 52] },
+        { id: 1003, name: 'WestB', value: 2, territoryIds: [3, 53] },
+        { id: 1011, name: 'EastBig', value: 5, territoryIds: [11, 61] },
+        { id: 1012, name: 'EastA', value: 2, territoryIds: [12, 62] },
+        { id: 1013, name: 'EastB', value: 2, territoryIds: [13, 63] },
+      ],
+    );
+  const regionPicks = [1, 2, 3, 11, 12, 13];
+  const fallbackOf = (p: PickPlan) => p.picks.filter((x) => x.group === 'fallback').map((x) => x.territoryId);
+  const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
+
+  it('a 1v1 primary is one compact cluster in one region, not spread over both', () => {
+    const g = twoRegions();
+    const p = plan({ graph: g, pickable: regionPicks, players: 2, territoryLimit: 3, maxPicks: 6 });
+    expect(sorted(primaryOf(p))).toEqual([1, 2, 3]);
+    expect(compact(g, primaryOf(p))).toBe(true);
+    expect(sorted(fallbackOf(p))).toEqual([11, 12, 13]);
+    expect(compact(g, fallbackOf(p))).toBe(true);
+    const r = p.rationale.join(' ');
+    expect(r).toMatch(/1v1/);
+    expect(r).toMatch(/compact/);
+    expect(r).toMatch(/fallback/);
+    expect(r).not.toMatch(/within 4 hops when it anchors/);
+  });
+
+  it('spread: true restores the bounded 1v1 spread across bonuses', () => {
+    const g = twoRegions();
+    const p = plan({ graph: g, pickable: regionPicks, players: 2, territoryLimit: 3, maxPicks: 6, spread: true });
+    const primary = primaryOf(p);
+    expect(primary).toContain(1);
+    expect(primary).toContain(11);
+    expect(compact(g, primary)).toBe(false);
+    expect(p.rationale.join(' ')).toMatch(/spread/);
+  });
+
+  it('spread: true changes nothing with three or more players', () => {
+    const g = twoRegions();
+    const base = { graph: g, pickable: regionPicks, players: 4, territoryLimit: 3, maxPicks: 6 };
+    expect(plan({ ...base, spread: true })).toEqual(plan(base));
+  });
+
+  it('in a 1v1 the fallback goes to another area when one scores equally, compact and disjoint', () => {
+    // Home: picks 1, 2 (+5 pairs). Near (11, 12) and Far (21, 22) are mirror +2 regions; Near is
+    // 3 hops from Home, Far 3 hops beyond Near. Ties would give Near (lower ids); Far is preferred.
+    const g = mkGraph(
+      [
+        [1, 2], [1, 51], [2, 52],
+        [2, 30], [30, 31], [31, 11],
+        [11, 12], [11, 61], [12, 62],
+        [12, 32], [32, 33], [33, 21],
+        [21, 22], [21, 71], [22, 72], [22, 34],
+      ],
+      [
+        { id: 1101, name: 'HomeA', value: 5, territoryIds: [1, 51] },
+        { id: 1102, name: 'HomeB', value: 5, territoryIds: [2, 52] },
+        { id: 1111, name: 'NearA', value: 2, territoryIds: [11, 61] },
+        { id: 1112, name: 'NearB', value: 2, territoryIds: [12, 62] },
+        { id: 1121, name: 'FarA', value: 2, territoryIds: [21, 71] },
+        { id: 1122, name: 'FarB', value: 2, territoryIds: [22, 72] },
+      ],
+    );
+    const pickable = [1, 2, 11, 12, 21, 22];
+    const p = plan({ graph: g, pickable, players: 2, territoryLimit: 2, maxPicks: 4 });
+    expect(sorted(primaryOf(p))).toEqual([1, 2]);
+    // The two candidate fallbacks really do score the same.
+    const all = plan({ graph: g, pickable, territoryLimit: 2, maxPicks: 6 });
+    expect(scoreOf(all, 11)).toBe(scoreOf(all, 21));
+    expect(scoreOf(all, 12)).toBe(scoreOf(all, 22));
+    const fallback = fallbackOf(p);
+    expect(sorted(fallback)).toEqual([21, 22]);
+    expect(compact(g, fallback)).toBe(true);
+    expect(fallback.filter((t) => primaryOf(p).includes(t))).toEqual([]);
+  });
+
+  it('in a 1v1 a single fallback pick is the farthest of the equally scored best', () => {
+    const g = mkGraph(
+      [
+        [1, 51], [1, 30], [30, 31], [31, 11],
+        [11, 61], [11, 32], [32, 33], [33, 21],
+        [21, 71], [21, 34],
+      ],
+      [
+        { id: 1301, name: 'Home', value: 5, territoryIds: [1, 51] },
+        { id: 1311, name: 'Near', value: 2, territoryIds: [11, 61] },
+        { id: 1321, name: 'Far', value: 2, territoryIds: [21, 71] },
+      ],
+    );
+    const all = plan({ graph: g, pickable: [1, 11, 21], maxPicks: 3 });
+    expect(scoreOf(all, 11)).toBe(scoreOf(all, 21));
+    const p = plan({ graph: g, pickable: [1, 11, 21], territoryLimit: 1, maxPicks: 2 });
+    expect(p.picks.map((x) => x.territoryId)).toEqual([1, 21]);
+  });
+
+  it('in a 1v1 entry points weigh more: a narrow bonus beats a wider, bigger one; not in an FFA', () => {
+    // Wide (+4) = {1,2}: 6 entry points (50, 51…55). Narrow (+3) = {3,4}: one entry point (50).
+    // At 60/70 the FFA discount is ×1/(1 + 0.05 × entries), the 1v1 one ×1/(1 + 0.1 × entries):
+    // FFA 4·3/1.3 ≈ 9.23 > 3·3/1.05 ≈ 8.57; 1v1 4·3/1.6 = 7.5 < 3·3/1.1 ≈ 8.18.
+    // Two pickables are equally central, so the FFA contest penalty is nil for both.
+    const g = mkGraph(
+      [[1, 2], [1, 50], [2, 51], [2, 52], [2, 53], [2, 54], [2, 55], [3, 4], [3, 50]],
+      [
+        { id: 1201, name: 'Wide', value: 4, territoryIds: [1, 2] },
+        { id: 1202, name: 'Narrow', value: 3, territoryIds: [3, 4] },
+      ],
+    );
+    const duel = plan({ graph: g, pickable: [1, 3], players: 2 });
+    expect(duel.picks[0]!.territoryId).toBe(3);
+    expect(scoreOf(duel, 3)).toBeGreaterThan(scoreOf(duel, 1));
+    const ffa = plan({ graph: g, pickable: [1, 3], players: 4 });
+    expect(ffa.picks[0]!.territoryId).toBe(1);
+    expect(scoreOf(ffa, 1)).toBeGreaterThan(scoreOf(ffa, 3));
+  });
+
+  it('is deterministic', () => {
+    const g = twoRegions();
+    const input = { graph: g, pickable: [13, 11, 3, 1, 12, 2], players: 2, territoryLimit: 3, maxPicks: 6 };
+    expect(plan(input)).toEqual(plan(input));
+    expect(plan(input)).toEqual(plan({ ...input, pickable: regionPicks }));
   });
 });

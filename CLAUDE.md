@@ -44,10 +44,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   planner; neutral sizes come from the live board when shown (wastelands at their real size), else the settings.
   Its opening simulation keeps armies where they stand (an attack is funded by its bordering source plus that
   turn's deploys, never by another pick's armies — pooling them made it promise first-turn bonuses `plan_turn`
-  could not deliver, #47). With 3+ players each group is compact (one cluster linked in steps of at most 2 hops
-  on the route tool's graph), relaxed one hop at a time with a warning when no such group exists. A 1v1 group
-  may spread within 4 hops, and past that (warned) only when no bounded group exists or spreading scores 1.5×
-  as much — the bound must not quietly hand the best picks to the fallback. The rationale reports real hop
+  could not deliver, #47). Each group is compact, a 1v1 included (one cluster linked in steps of at most 2 hops
+  on the route tool's graph), relaxed one hop at a time with a warning when no such group exists; a spread 1v1
+  primary meant a frontier on every bonus from turn 1 (#73). In a 1v1 the fallback (the counter-pick insurance)
+  goes to another area when one scores as much, and entry points weigh twice as much. The old bounded 1v1 spread
+  survives only behind `spread: true`. The rationale reports real hop
   distances and never calls a group compact unless it is one such cluster.
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes. `docs/STRATEGY.md` states the community
   heuristics in our own words with source links (cite, never copy) and marks which are encoded.

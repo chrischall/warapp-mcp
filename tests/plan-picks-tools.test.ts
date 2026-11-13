@@ -145,6 +145,30 @@ describe('warapp_plan_picks', () => {
     expect(p.submitPicks.territories).toHaveLength(2);
   });
 
+  it('in a 1v1 keeps the primary compact by default, and spreads it only with spread: true (#73)', async () => {
+    const duel = () => {
+      const g = game('DistributingTerritories');
+      return { ...g, players: (g.players as unknown[]).slice(0, 2) };
+    };
+    h = await liveHarness({ feed: [duel()], warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
+    const compact = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(compact.players).toBe(2);
+    expect(compact.rationale.join(' ')).toMatch(/In a 1v1 .*compact/);
+    expect(compact.rationale.join(' ')).not.toMatch(/with spread on/);
+    const spread = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME, spread: true }));
+    expect(spread.rationale.join(' ')).toMatch(/with spread on/);
+  });
+
+  it('describes the spread parameter', async () => {
+    h = await liveHarness({ feed: [game('DistributingTerritories')] });
+    const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_plan_picks')!;
+    const prop = (tool.inputSchema.properties as Record<string, { type?: string; description?: string }>).spread!;
+    expect(prop.type).toBe('boolean');
+    expect(prop.description).toMatch(/counter-pick/);
+    expect(prop.description).toMatch(/usually worse on large maps/);
+    expect(tool.description).not.toMatch(/bounded spread/);
+  });
+
   it('refuses outside the picking stage, without touching the bridge', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({}) });
     const res = await h.call('warapp_plan_picks', { game_id: GAME });
