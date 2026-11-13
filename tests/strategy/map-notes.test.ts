@@ -58,6 +58,36 @@ describe('mapNotes: bonuses by efficiency', () => {
   });
 });
 
+describe('mapNotes: double borders (#166)', () => {
+  // Pair (+3) = 1, 2. Territory 3 borders both of them, territory 4 only the second.
+  const map: GameMap = {
+    id: 78,
+    name: 'Test Wedge',
+    territories: [
+      { id: 1, name: 'T1', connectedTo: [2, 3] },
+      { id: 2, name: 'T2', connectedTo: [1, 3, 4] },
+      { id: 3, name: 'T3', connectedTo: [1, 2] },
+      { id: 4, name: 'T4', connectedTo: [2] },
+    ],
+    bonuses: [{ id: 1, name: 'Pair', value: 3, territoryIds: [1, 2], bonusIds: [] }],
+    distributionModes: [],
+  };
+
+  it('lists the entry points that border two or more of the bonus’s territories', () => {
+    const n = mapNotes({ graph: buildGraph(map) });
+    const pair = n.bonuses[0]!;
+    expect(pair.entryPoints.map((e) => e.id)).toEqual([3, 4]);
+    expect(pair.doubleBorders).toEqual([{ id: 3, name: 'T3', touches: 2 }]);
+    expect(mapNotesMarkdown(map.name, n)).toContain('entry points: T3 (a double border: next to 2 of its territories), T4');
+  });
+
+  it('is empty for a bonus without one, and the markdown is what it was', () => {
+    const n = mapNotes({ graph });
+    for (const b of n.bonuses) expect(b.doubleBorders).toEqual([]);
+    expect(mapNotesMarkdown(MAP.name, n)).toContain('0.56 per army; entry points: T5\n');
+  });
+});
+
 describe('mapNotes: chokepoints', () => {
   it('lists the territories that cut the map, with the bonuses they join', () => {
     const n = mapNotes({ graph });

@@ -90,7 +90,7 @@
 //     negative bonuses held) come last.
 
 import type { GameSettings } from '../normalize.js';
-import { analyzeBonus, bonusTerritories } from './bonuses.js';
+import { analyzeBonus, bonusTerritories, entryTouches } from './bonuses.js';
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { captureCost } from './planner.js';
@@ -124,6 +124,8 @@ export const MAX_SEEDS = 12;
 export const MAX_REORDER = 5;
 /** Neutral size used to compare attack hardness against the standard kill rates. */
 const HARDNESS_PROBE = 10;
+/** Territories a reason names before it says "and n more". */
+const MAX_NAMED = 3;
 
 export type PickSettings = Partial<
   Pick<
@@ -220,6 +222,8 @@ interface BonusInfo {
   value: number;
   members: number[];
   entryPoints: number;
+  /** Entry points that border two or more of its territories, ascending, with how many. */
+  doubleBorders: { territoryId: number; touches: number }[];
   defense: number;
 }
 
@@ -537,14 +541,18 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     const a = analyzeBonus(g, b.id)!;
     const members = a.territoryIds.filter((t) => g.territoryById.has(t));
     if (!members.length) continue;
-    const entryPoints = a.entryPointIds.length;
+    // Exposure: each entry point counted once per member it borders, so a double border
+    // (one outside territory next to two members) weighs twice (#166).
+    const touches = [...entryTouches(g, b.id)];
+    const exposure = touches.reduce((n, [, k]) => n + k, 0);
     bonuses.set(b.id, {
       id: b.id,
       name: b.name,
       value: b.value,
       members,
-      entryPoints,
-      defense: 1 / (1 + entryWeight * entryPoints * hardness),
+      entryPoints: a.entryPointIds.length,
+      doubleBorders: touches.filter(([, k]) => k > 1).map(([territoryId, k]) => ({ territoryId, touches: k })),
+      defense: 1 / (1 + entryWeight * exposure * hardness),
     });
     for (const t of members) bonusesOf.set(t, [...(bonusesOf.get(t) ?? []), b.id]);
   }
@@ -556,7 +564,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     if (b.value >= 0 || b.bonusIds.length > 0) continue;
     const members = (analyzeBonus(g, b.id)?.territoryIds ?? []).filter((t) => g.territoryById.has(t));
     if (!members.length) continue;
-    penalties.set(b.id, { id: b.id, name: b.name, value: b.value, members, entryPoints: 0, defense: 1 });
+    penalties.set(b.id, { id: b.id, name: b.name, value: b.value, members, entryPoints: 0, doubleBorders: [], defense: 1 });
     for (const t of members) penaltiesOf.set(t, [...(penaltiesOf.get(t) ?? []), b.id]);
   }
 
@@ -609,6 +617,17 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     anchor: number | null;
   }
   const terrName = (id: number) => g.territoryById.get(id)?.name ?? String(id);
+  /** "3 entry points, 1 a double border (T7 touches 2 of its territories)"; three named at most. */
+  const entriesText = (b: BonusInfo) => {
+    const entries = `${b.entryPoints} entry point${b.entryPoints === 1 ? '' : 's'}`;
+    const doubles = b.doubleBorders;
+    if (!doubles.length) return entries;
+    const shown = doubles
+      .slice(0, MAX_NAMED)
+      .map((d, i) => `${terrName(d.territoryId)} touches ${d.touches}${i === 0 ? ' of its territories' : ''}`);
+    const more = doubles.length > MAX_NAMED ? ` and ${doubles.length - MAX_NAMED} more` : '';
+    return `${entries}, ${doubles.length === 1 ? '1 a double border' : `${doubles.length} double borders`} (${shown.join(', ')}${more})`;
+  };
   const assess = (t: number, taken: ReadonlySet<number>): Assessment => {
     const sim = simulate(ctx, [t], taken);
     const factor = contestFactor(t);
@@ -618,7 +637,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       const b = bonuses.get(id)!;
       const turn = sim.completions.get(id);
       const head = `${b.name} (+${b.value})`;
-      const entries = `${b.entryPoints} entry point${b.entryPoints === 1 ? '' : 's'}`;
+      const entries = entriesText(b);
       const negatives: string[] = [];
       let point: string;
       let worth: number;
