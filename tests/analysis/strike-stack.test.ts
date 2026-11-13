@@ -12,7 +12,7 @@ import { captureCost, planTurn, type PlanInput, type PlannerSettings, type TurnP
 import { OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
-import { board, fogged, mine, neutral } from './helpers.js';
+import { board, fogged, mine, neutral, ruleAttacks } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -38,13 +38,6 @@ const enemy = (territoryId: number, armies: number, playerId = ENEMY): Territory
   armies,
 });
 const attacks = (p: TurnPlan) => p.moves.filter((m) => m.kind === 'attack');
-/**
- * Attacks other than #107's contact fallback (reason "cheapest capture …" / "cheapest expansion …",
- * or a combined capture's softener for one): in the contact and late phases a plan that would
- * otherwise capture nothing now takes one, so a test of another rule checks only the rest.
- */
-const ruleAttacks = (p: TurnPlan) =>
-  attacks(p).filter((m) => !/^(wears .* down for a combined capture \()?cheapest (capture|expansion)/.test(m.reason));
 const why = (p: TurnPlan) => p.rationale.join('\n');
 
 /** A track observed over two turns with `income`. */

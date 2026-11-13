@@ -397,21 +397,24 @@
 //     armies after deploy exceed cap × income, armies above it are wasted, so the same fallback
 //     fires in any phase, and the rationale says so. The cap's cut to income is not modelled.
 //     Contact and late phases (#107): a plan with no capture at all falls back too — unless the
-//     caller chose `defend`, or the 1v1 strike stack (rule 0p.3c) spends itself this turn. Its
-//     candidates are the neutral steps above and (unless the caller chose `expand`) every visible
+//     caller chose `defend` (a `defend` that adapt picked, rule 0p.3 behind outside a 1v1, still
+//     falls back: its holds come first), or the 1v1 strike stack (rule 0p.3c) spends itself this
+//     turn. Its candidates are the neutral steps above and (unless the caller chose `expand`) every visible
 //     enemy territory next to mine without an enemy commander (rule 1s's) whose capture does not
 //     lower income, sized like any capture at the plan's win chance. A capture of a player's
 //     territory must trade at least even (defenders killed ≥ attackers lost; a single capture
 //     always does, a combined one whose softeners lose more is refused with a warning, "… a trade
-//     below even"), and no source may be left unable to hold a border it held at the start (a
-//     conceded one excepted; a warning names an enemy capture refused so). Order: affordable
+//     below even"), and every source must still hold its border once the attack leaves: a source
+//     left short gets the deploys still available there that make it hold (a rationale line says
+//     so), and a capture they cannot cover is refused (a conceded source excepted; a warning names
+//     an enemy capture refused so, with what would stay and the deploys left). Order: affordable
 //     first, then one that breaks a bonus (its owner holds it in full) or advances one of mine,
 //     then cheapest, then (neutral steps) the order above, then id. In an FFA with two or more
-//     opponents (rule 0p.2), a capture against a player that cannot currently attack me (it could
-//     take no territory of mine next turn) opens a second front and is tried only after every
-//     other; the rationale says which ("can already attack me …: opens no new front" / "cannot
-//     attack me now: … opens a second front (rule 2), taken only because no neutral capture
-//     fits"), and the trade ("kills K for L lost"). Rule 4d still judges every candidate. An
+//     opponents (rule 0p.2's setting, applied here whether or not the plan adapts), a capture
+//     against a player that cannot currently attack me (it could take no territory of mine next
+//     turn) opens a second front and is tried only after every other; the rationale says which
+//     ("can already attack me …: opens no new front" / "cannot attack me now: … opens a second
+//     front (no second front in an FFA), taken only because no neutral capture fits"), and the trade ("kills K for L lost"). Rule 4d still judges every candidate. An
 //     enemy capture carries the usual warning that it assumes the owner does not reinforce first.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, and
 //     in the opening and expansion phases, completions and advances keep the slots their scores
@@ -4309,7 +4312,8 @@ export function planTurn(input: PlanInput): TurnPlan {
     const early = profile.phase === 'opening' || profile.phase === 'expansion';
     // In a 1v1 the strike stack (rule 0p.3c, #102) is contact's own answer: it attacks every turn.
     const strikeStackRuns = auto && profile.format === '1v1' && goal !== 'defend' && facing.size > 0;
-    // A caller who chose `defend` gets no contact fallback; one who chose `expand` only its neutral steps.
+    // A caller who chose `defend` gets no contact fallback (a `defend` adapt picked still does: its
+    // holds come first); one who chose `expand` only its neutral steps.
     const contact =
       (profile.phase === 'contact' || profile.phase === 'late') && !strikeStackRuns && opts.goal !== 'defend';
     const enemyFallback = contact && opts.goal !== 'expand';
@@ -4477,7 +4481,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         })`;
 
       // ---- #107, in contact: enemy captures ----
-      /** Rule 0p.2's setting: an FFA with two or more opponents left. */
+      /** Rule 0p.2's setting: an FFA with two or more opponents left. Applied here with or without adapt. */
       const ffaFronts = profile.format === 'ffa' && profile.opponents >= 2;
       /**
        * The first territory of mine (by id) player `p` could take next turn — its stacks next to it
@@ -4579,22 +4583,33 @@ export function planTurn(input: PlanInput): TurnPlan {
         | { kind: 'r3' }
         | { kind: 'split'; from: number }
         | { kind: 'trade'; lost: number; killed: number }
-        | { kind: 'hold'; from: number; stays: number; threat: number }
+        | { kind: 'hold'; from: number; stays: number; spare: number; threat: number }
         | { kind: 'size' };
       const failed = new Map<number, Fail>();
       /**
-       * In contact (#107): a source of the attack on `t` that held at the start of the turn but no
-       * longer would, with what stays and the threat it faces once `t` is taken; else `undefined`.
-       * A conceded border is skipped: its armies are given up anyway.
+       * In contact (#107): every source of the attack on `t` must still hold its border once `t` is
+       * taken. A source left short gets the deploys still available there that make it hold (they
+       * are placed now, so the leftover deploy cannot go elsewhere; the step's undo takes them
+       * back). A source that cannot be made to hold is returned, with what stays, the deploys that
+       * were available and the threat it faces; else `undefined`. A conceded border is skipped: its
+       * armies are given up anyway.
        */
-      const holdLeftShort = (t: number): { from: number; stays: number; threat: number } | undefined => {
+      const holdLeftShort = (t: number): { from: number; stays: number; spare: number; threat: number } | undefined => {
         for (const m of moves) {
           if (m.kind !== 'attack' || m.to !== t || conceded.has(m.from)) continue;
           const th = threatAt(m.from, (n) => captured.has(n));
           if (!th) continue;
           const stays = stayAt(m.from);
-          if ((armiesToTake(stays + unitsAt(m.from), rates) ?? Infinity) <= th.threat)
-            return { from: m.from, stays, threat: th.threat };
+          const holds = (n: number) => (armiesToTake(stays + n + unitsAt(m.from), rates) ?? Infinity) > th.threat;
+          if (holds(0)) continue;
+          const spare = Math.max(0, spareAt(m.from));
+          let n = 1;
+          while (n <= spare && !holds(n)) n++;
+          if (n > spare) return { from: m.from, stays, spare, threat: th.threat };
+          deploy(m.from, n);
+          rationale.push(
+            `Deploy ${n} to ${label(m.from)} so it still holds its border after the attack on ${label(t)} (${stays + n} stay against a threat of ${th.threat}).`,
+          );
         }
         return undefined;
       };
@@ -4722,6 +4737,9 @@ export function planTurn(input: PlanInput): TurnPlan {
           : `it needs ${st.cost}, and at most ${st.reach} can reach it this turn (${st.movable} movable on ${label(st.from)}${
               conceded.has(st.from) ? ', a conceded border,' : ''
             } + ${st.deploy} to deploy${held > 0 ? `; the holds took ${held}` : ''})`;
+      /** "S would stay[, S+D with the D deploys left there,] against a threat of T". */
+      const holdText = (f: { stays: number; spare: number; threat: number }) =>
+        `${f.stays} would stay${f.spare > 0 ? `, ${f.stays + f.spare} with the ${f.spare} deploys left there,` : ''} against a threat of ${f.threat}`;
       /** Why `st` was not taken, as a clause after its name. */
       const failText = (st: Cand, fail: Fail | undefined) => {
         if (fail?.kind === '4d')
@@ -4737,7 +4755,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         if (fail?.kind === 'trade')
           return `is not taken: no single source can afford it, and the combined capture loses ${fail.lost} armies for the ${fail.killed} it kills, a trade below even`;
         if (fail?.kind === 'hold')
-          return `is not taken: attacking it would leave ${label(fail.from)} unable to hold its border (${fail.stays} would stay against a threat of ${fail.threat})`;
+          return `is not taken: attacking it would leave ${label(fail.from)} unable to hold its border (${holdText(fail)})`;
         if (st.from === undefined) return `cannot be reached: ${blockedText(st)}`;
         // What the holds took before this rule ran (no capture spent anything yet).
         const held = income - budget;
@@ -4757,7 +4775,7 @@ export function planTurn(input: PlanInput): TurnPlan {
           );
         if (f?.kind === 'hold')
           warnings.push(
-            `Not attacking ${label(e.t)}: it would leave ${label(f.from)} unable to hold its border (${f.stays} would stay against a threat of ${f.threat}).`,
+            `Not attacking ${label(e.t)}: it would leave ${label(f.from)} unable to hold its border (${holdText(f)}).`,
           );
       }
       if (taken) {
@@ -4775,7 +4793,7 @@ export function planTurn(input: PlanInput): TurnPlan {
             rationale.push(
               e.front !== undefined
                 ? `Player ${e.player} can already attack me (${label(e.front)}): taking ${label(t)} opens no new front.`
-                : `Player ${e.player} cannot attack me now: taking ${label(t)} opens a second front (rule 2), taken only because no neutral capture fits this turn.`,
+                : `Player ${e.player} cannot attack me now: taking ${label(t)} opens a second front (no second front in an FFA), taken only because no neutral capture fits this turn.`,
             );
         } else {
           // The bonus with the fewest armies to finish was passed over: say why.

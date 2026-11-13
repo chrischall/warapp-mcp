@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { BoardState, TerritoryState } from '../../src/board.js';
+import type { PlannedMove, TurnPlan } from '../../src/analysis/planner.js';
 import { normalizeMap, normalizeSettings, type GameMap, type GameSettings } from '../../src/normalize.js';
 
 /** The anonymized lobby fixture's map (761 territories, 372 bonuses). */
@@ -112,4 +113,15 @@ export function overlapRawMap(): Record<string, unknown> {
     ],
     distributionModes: [],
   };
+}
+
+/**
+ * Attacks other than #107's contact fallback (reason "cheapest capture …" / "cheapest expansion …",
+ * or a combined capture's softener for one): in the contact and late phases a plan that would
+ * otherwise capture nothing now takes one, so a test of another rule checks only the rest.
+ */
+export function ruleAttacks(p: TurnPlan): PlannedMove[] {
+  return p.moves.filter(
+    (m) => m.kind === 'attack' && !/^(wears .* down for a combined capture \()?cheapest (capture|expansion)/.test(m.reason),
+  );
 }

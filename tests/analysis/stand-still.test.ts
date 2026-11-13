@@ -627,9 +627,9 @@ describe('#107: in contact, never stand still either', () => {
       const r = p.rationale.join('\n');
       expect(r).toMatch(/Take T22 \(#22\) though no planned capture is economic: contact phase: no capture is planned/);
       expect(r).toMatch(/kills 4 for 3 lost: a trade of at least even/);
-      // Rule 2: player 30 cannot attack me now, so this opens a second front — taken only because no neutral capture fits.
+      // No second front in an FFA: player 30 cannot attack me now, so this opens a second front — taken only because no neutral capture fits.
       expect(r).toMatch(
-        /Player 30 cannot attack me now: taking T22 \(#22\) opens a second front \(rule 2\), taken only because no neutral capture fits this turn\./,
+        /Player 30 cannot attack me now: taking T22 \(#22\) opens a second front \(no second front in an FFA\), taken only because no neutral capture fits this turn\./,
       );
       const w = p.warnings.join('\n');
       expect(w).toMatch(/Attack on enemy T22 \(#22\) assumes its owner does not reinforce it first\./);
@@ -679,7 +679,8 @@ describe('#107: in contact, never stand still either', () => {
 
   it('an attack that would leave its source unable to hold is not made', () => {
     // 22 holds 9 (15 to take) next to my 15-stack on 1: its 14 movable + 1 deploy take it, but the 1
-    // that stays on 1 falls to the 8-army stack of player 30 on 24, next to it too (7 movable + 5 deploy).
+    // that stays on 1 falls to the 8-army stack of player 30 on 24, next to it too (7 movable + 5 deploy),
+    // and so do the 5 that would stay with every deploy left.
     const tight = makeMap(
       [1, 2, 3, 4, 5, 6, 22, 23, 24, 25],
       [[1, 2], [1, 3], [1, 22], [2, 4], [2, 23], [3, 4], [4, 5], [5, 6], [22, 24], [23, 25], [1, 24]],
@@ -696,9 +697,74 @@ describe('#107: in contact, never stand still either', () => {
     expect(attacks(p)).toEqual([]);
     const w = p.warnings.join('\n');
     expect(w).toMatch(
-      /Not attacking T22 \(#22\): it would leave T1 \(#1\) unable to hold its border \(1 would stay against a threat of 12\)\./,
+      /Not attacking T22 \(#22\): it would leave T1 \(#1\) unable to hold its border \(1 would stay, 5 with the 4 deploys left there, against a threat of 12\)\./,
     );
     expect(w).toMatch(/Standing still: no capture is planned/);
+  });
+
+  it('behind on income in an FFA (adapt picks defend): the fallback still fires, unlike a chosen defend', () => {
+    // Player 40 holds Moor (+5) on 25, a 12-stack out of my reach: ~9 income against my 5, so adapt
+    // picks `defend` (rule 0p.3).
+    const moor = makeMap(
+      [1, 2, 3, 4, 5, 6, 22, 23, 24, 25],
+      [[1, 2], [1, 3], [1, 22], [2, 4], [2, 23], [3, 4], [4, 5], [5, 6], [22, 24], [23, 25]],
+      [
+        [501, 'Delta', 3, [1, 22, 3]],
+        [502, 'Fen', 2, [4, 5, 6]],
+        [503, 'Moor', 5, [25]],
+      ],
+    );
+    const b = board(contactBoard().territories.map((t) => (t.territoryId === 25 ? player(25, 12, P3) : t)));
+    const p = run(b, { map: moor, adapt: true });
+    expect(p.profile.standing).toBe('behind');
+    expect(p.goal).toBe('defend');
+    expect(attacks(p)).toHaveLength(1);
+    expect(p.rationale.join('\n')).toMatch(/though no planned capture is economic: contact phase/);
+    expect(valid(p, b, 5, moor)).toEqual([]);
+    // The caller's own `defend` keeps its behaviour: no fallback.
+    const chosen = planTurn({
+      graph: buildGraph(moor),
+      board: b,
+      me: ME,
+      income: 5,
+      settings: STD,
+      game: EIGHT,
+      options: { goal: 'defend' },
+    });
+    expect(attacks(chosen)).toEqual([]);
+  });
+
+  it('a source next to two enemies attacks when the deploys left on it make it hold', () => {
+    // My 15 on 1 borders 22 (player 30, 4 armies: 6 to take) and 24 (player 40, 12 armies: a threat
+    // of 11 movable + its deploy). Right after the attack too few stay on 1 to hold — but the deploys
+    // still unspent can land there: then 1 holds and the capture is safe.
+    const two = makeMap(
+      [1, 3, 4, 22, 24, 26, 27],
+      [[1, 3], [3, 4], [1, 22], [1, 24], [22, 26], [24, 27]],
+      [[502, 'Fen', 2, [3, 4]]],
+    );
+    const b = board([
+      mine(1, 15),
+      neutral(3, 15),
+      neutral(4, 15),
+      player(22, 4, P2),
+      player(24, 12, P3),
+      player(26, 3, P2),
+      player(27, 3, P3),
+    ]);
+    const p = run(b, { map: two });
+    expect(p.profile.phase).toBe('contact');
+    expect(p.conceded).toEqual([]);
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 22, kind: 'attack' })]);
+    const sent = attacks(p)[0]!.armies;
+    const onOne = 15 + (p.deploys.find((d) => d.territoryId === 1)?.armies ?? 0) - sent;
+    // 24's threat: its 11 movable plus player 40's deploy; 1 must stand against it.
+    expect(armiesToTake(onOne)!).toBeGreaterThan(16);
+    expect(p.warnings.join('\n')).not.toMatch(/Not attacking T22|Standing still/);
+    expect(p.rationale.join('\n')).toMatch(
+      /Deploy \d+ to T1 \(#1\) so it still holds its border after the attack on T22 \(#22\) \(\d+ stay against a threat of 16\)\./,
+    );
+    expect(valid(p, b, 5, two)).toEqual([]);
   });
 
   it('the only enemy capture trades below even: no capture, and a warning says so', () => {

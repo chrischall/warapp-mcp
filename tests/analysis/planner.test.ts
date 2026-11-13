@@ -21,7 +21,7 @@ import {
   type TurnPlan,
 } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, fogged, mine, neutral, tinyMap } from './helpers.js';
+import { board, fogged, mine, neutral, tinyMap, ruleAttacks } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -49,13 +49,6 @@ const enemy = (territoryId: number, armies: number, playerId = ENEMY): Territory
 });
 
 const attacks = (p: TurnPlan) => p.moves.filter((m) => m.kind === 'attack');
-/**
- * Attacks other than #107's contact fallback (reason "cheapest capture …" / "cheapest expansion …",
- * or a combined capture's softener for one): in the contact and late phases a plan that would
- * otherwise capture nothing now takes one, so a test of another rule checks only the rest.
- */
-const ruleAttacks = (p: TurnPlan) =>
-  attacks(p).filter((m) => !/^(wears .* down for a combined capture \()?cheapest (capture|expansion)/.test(m.reason));
 const deploySum = (p: TurnPlan) => p.deploys.reduce((s, d) => s + d.armies, 0);
 const deployedTo = (p: TurnPlan, id: number) => p.deploys.find((d) => d.territoryId === id)?.armies ?? 0;
 
