@@ -215,7 +215,26 @@ different area: among equally scored compact fallbacks, the one farthest from th
    group exists), which is warned about. Either way the rationale states the group's real spread
    (the hops between its two farthest picks and the longest step linking them) and calls it
    compact only when it is.
-7. **Read the opponent.** Strong picks depend on what the other player is likely to pick and
+7. **Coverage: knowing where the opponent is (#166).** The ladder guides weigh a different
+   style against the fast compact start: spread the picks so that every bonus an opponent would
+   reasonably start in has one of mine within a couple of moves, accepting a slower start for
+   knowing early where the opponent is, keeping a way into every region, and not being out-paced
+   somewhere unseen. The 1v1 ladder picking guide (in Sources) puts this first when sizing up a
+   board, and has it favoured where the good bonuses hold few wastelands; clustered picks leave
+   no reach and no information.
+   Neither style wins everywhere, so both are offered and the player chooses per game.
+   **Encoded:** `coverage` is the share of reasonable bonuses — positive, not a superbonus, with a
+   pickable territory and no wasteland, value per army to take it at least the median — that a
+   pick set can stand next to within two moves, never walking through a wasteland (a territory
+   larger than an ordinary neutral); the primary group reports it with the bonuses it misses. In a
+   two-player game without `spread`, an `alternative` list of the same size is built beside the
+   unchanged primary: a pair within two hops chosen as the primary's best pair would be, then the
+   picks that most raise coverage (ties: their own score), scored by the same opening simulation,
+   with its own fallback and `submitPicks`; it is shown only when it covers more than the
+   primary. Compact stays the default; prefer the alternative on a small board when reach and
+   information matter more than the fastest start. **Not encoded:** the guides' "clustered pairs"
+   and partitioning the board into areas.
+8. **Read the opponent.** Strong picks depend on what the other player is likely to pick and
    where they will start. **Not encoded** — a later strategy phase (it needs their history).
 
 ## What the award shows
