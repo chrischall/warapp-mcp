@@ -6265,11 +6265,14 @@ export function planTurn(input: PlanInput): TurnPlan {
        * What capturing `st` is expected to cost (#112): the defensive kills on its attackers at the
        * game's rates, and the armies sent. One source that can take it alone sends its cost and
        * loses the defenders' kills; otherwise the combined capture rule 3a would plan, its every
-       * attack's losses (the softeners' and the finisher's) and armies counted.
+       * attack's losses (the softeners' and the finisher's) and armies counted — only with no luck
+       * and straight rounding, where rule 3a makes one.
        */
       const lossOf = (st: Reach & { t: number; cost: number }): { lost: number; sent: number } => {
         const single = { lost: Math.min(st.cost, straightKills(defendersAt(st.t), rates.defensiveKillRate)), sent: st.cost };
-        if (st.from === undefined || st.reach >= st.cost) return single;
+        // Under luck or weighted rounding a combined capture is never made (rule 3a, `tryCombined`):
+        // the single source's sizing is the one the plan would use.
+        if (st.from === undefined || st.reach >= st.cost || luck > 0 || weightedRounding) return single;
         const c = combinedPlan(st.t);
         if (!c) return single;
         return {

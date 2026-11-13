@@ -1192,3 +1192,31 @@ describe('#114: the contact fallback counts the frontier as armies at risk, not 
     expect(valid(p, b, 5, map)).toEqual([]);
   });
 });
+
+// #112 review: under luck a combined capture is never made (rule 3a), so the contact fallback ranks
+// a candidate no single source can afford by the single source's loss, not the combined capture's.
+describe('#112: under luck the contact ranking prices no combined capture', () => {
+  const EIGHT: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80, 90].map((id) => ({ id })), turn: 3 };
+  //   My 20-stacks on 1, 2 and 8, and a 1-army 9 that both players can take. 22 (player 30, 17)
+  //   borders 1 and 8; 23 (player 40, 17) borders 2. Each needs 29, and at most 24 reach it: both
+  //   fall 5 short. At 0% luck 8 would soften 22 for 1 (loses 16 in all, against 12 for one source).
+  const map = makeMap(
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 22, 23, 24, 25, 26, 27],
+    [
+      [9, 22], [9, 23], [1, 2], [1, 3], [1, 22], [8, 22], [1, 8], [2, 4], [2, 23], [2, 7], [3, 4], [4, 5], [5, 6],
+      [22, 24], [23, 25], [7, 24], [24, 26], [25, 27],
+    ],
+    [[601, 'Crown', 4, [3, 4, 5, 6]]],
+  );
+  const b = board([
+    mine(1, 20), mine(2, 20), mine(8, 20), mine(9, 1),
+    neutral(3, 15), neutral(4, 15), neutral(5, 15), neutral(6, 15), neutral(7, 15),
+    player(22, 17, P2), player(23, 17, P3), player(24, 6, P2), player(25, 6, P3), player(26, 3, P2), player(27, 3, P3),
+  ]);
+
+  it('ties on the single loss go by id: 22 is the cheapest capture named', () => {
+    const p = planTurn({ graph: buildGraph(map), board: b, me: ME, income: 5, settings: { ...STD, luckModifier: 0.16 }, game: EIGHT, options: { adapt: false } });
+    expect(p.profile.phase).toBe('contact');
+    expect(p.warnings.join('\n')).toMatch(/Standing still: no capture is planned, and the cheapest capture \(T22 \(#22\), 29 armies/);
+  });
+});
