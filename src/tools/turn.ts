@@ -1127,6 +1127,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                   hint: 'A Blockade targets a territory you hold on the live board (warapp_get_live_board).',
                 });
               }
+              // A Blockade turns the territory neutral: my commander there would be lost with it (#163).
+              if (t && t.specialUnits?.some((u) => u.kind === 'commander' && u.owner === playerId)) {
+                throw new McpToolError(`${label(p.target!)} holds your commander, so it cannot be blockaded.`, {
+                  hint: 'A Blockade makes the territory neutral and your commander on it would be lost (a commander must stay on your land). Move the commander out first, or blockade another territory.',
+                });
+              }
             }
             const modelled = incomeFor(graphOf(map), board, me.id, game.settings);
             const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
