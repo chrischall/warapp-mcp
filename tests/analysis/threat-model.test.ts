@@ -191,3 +191,19 @@ describe('opening-board detection reads only the players\' stacks (#128)', () =>
     expect(enemyDeployEstimates(g, b, ME).every((e) => !e.opening)).toBe(true);
   });
 });
+
+describe('bosses and custom units are never counted as nothing in silence (#128)', () => {
+  // 1 mine (10); 2 a 2-army neutral with a boss; 3 a plain 2-army neutral; 4 an enemy with a custom unit.
+  const g = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [1, 3], [1, 4]], []));
+  const boss: TerritoryState = { ...neutral(2, 2), specialUnits: [{ kind: 'boss', id: 'b1', playerId: 0 }] };
+  const custom: TerritoryState = { ...player(4, 3, 20), specialUnits: [{ kind: 'custom', id: 'c1', playerId: 20 }] };
+  const plan = planTurn({ graph: g, board: board([mine(1, 10), boss, neutral(3, 2), custom]), me: ME, income: 5, settings: STD, options: { goal: 'expand' } });
+  it('a territory with a boss is not attacked at a stated certainty, and the plan says why', () => {
+    expect(attacksOn(plan, 2)).toEqual([]);
+    expect(plan.warnings.join('\n')).toMatch(/T2 \(#2\) holds a boss, whose strength the board does not carry: its defence is unknown, so no attack is planned on it/);
+    expect(attacksOn(plan, 3).length).toBe(1);
+  });
+  it("an enemy's custom unit next to me is named as left out of the threat", () => {
+    expect(plan.warnings.join('\n')).toMatch(/T4 \(#4\) \(player 20\) holds a custom unit, whose strength the board does not carry: the threat to T1 \(#1\) counts its armies only/);
+  });
+});

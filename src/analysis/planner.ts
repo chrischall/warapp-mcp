@@ -696,7 +696,9 @@
 // over), so a stack of d armies plus a commander defends exactly as d + 7: every capture
 // cost, worst case, survivor count and hold above counts it, and an enemy commander next
 // to my border adds 7 to that player's threat. A target with a special unit is never a
-// combined capture. Bosses and custom units are not counted.
+// combined capture. Bosses and custom units are not counted (the board carries no strength for
+// them): #128, a territory holding one is never attacked (a warning says so), and an enemy one
+// next to me is named as left out of the threat.
 // Kill rates: every combat computation above (capture cost, threats and holds,
 // survivors, R3's frontier, R4's kills) uses the game's offensive/defensive kill
 // rates; only when the settings carry none does it assume 60/70, with a warning.
@@ -2001,6 +2003,13 @@ export function planTurn(input: PlanInput): TurnPlan {
   const armiesOf = (id: number) => state.get(id)?.armies ?? 0;
   /** The armies the special units on `id` fight as (a commander: {@link COMMANDER_STRENGTH}). */
   const unitsAt = (id: number) => specialUnitStrength(state.get(id)?.specialUnits);
+  /**
+   * #128: a territory holding a special unit whose strength the board does not carry (a boss, a
+   * custom unit): it counts as 0 everywhere, so no attack on it is sized as sure.
+   */
+  const uncounted = (id: number) => (state.get(id)?.specialUnits ?? []).some((u) => u.kind !== 'commander');
+  const uncountedKind = (id: number) =>
+    [...new Set((state.get(id)?.specialUnits ?? []).filter((u) => u.kind !== 'commander').map((u) => (u.kind === 'boss' ? 'a boss' : u.kind === 'custom' ? 'a custom unit' : 'a special unit')))].join(' and ');
   /** What a territory defends as now: its armies plus its special units. */
   const defenceAt = (id: number) => armiesOf(id) + unitsAt(id);
   /**
@@ -2554,6 +2563,16 @@ export function planTurn(input: PlanInput): TurnPlan {
     }
     const b = borderAt(t, () => false);
     if (b) borders.set(t, b);
+  }
+  // #128: an enemy unit the board gives no strength for is in no threat: say so.
+  for (const e of [...state.keys()].sort(byNum)) {
+    const st = state.get(e)!;
+    if (st.owner.kind !== 'player' || !foe(st.owner.playerId) || !uncounted(e)) continue;
+    const next = neighborsOf(g, e).filter((n) => mineSet.has(n));
+    if (next.length)
+      warnings.push(
+        `${label(e)} (player ${st.owner.playerId}) holds ${uncountedKind(e)}, whose strength the board does not carry: the threat to ${next.map(label).join(', ')} counts its armies only.`,
+      );
   }
   /**
    * Borders that hold at the start of the turn on the armies they have (#121): their surplus is
@@ -3780,6 +3799,12 @@ export function planTurn(input: PlanInput): TurnPlan {
     if (st.owner.kind === 'available') continue;
     // A teammate's territory is never a target (#128).
     if (st.owner.kind === 'player' && !foe(st.owner.playerId)) continue;
+    if (uncounted(t)) {
+      warnings.push(
+        `${label(t)} holds ${uncountedKind(t)}, whose strength the board does not carry: its defence is unknown, so no attack is planned on it.`,
+      );
+      continue;
+    }
     const enemy = st.owner.kind === 'player';
     if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t)))) continue;
     const cost = costAt(t);
@@ -5088,7 +5113,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   const unstruck: { t: number; text: string }[] = [];
   for (const t of [...state.keys()].sort(byNum)) {
     const st = state.get(t)!;
-    if (mineSet.has(t) || captured.has(t) || st.armies === null || st.owner.kind !== 'player' || !foe(st.owner.playerId)) continue;
+    if (mineSet.has(t) || captured.has(t) || st.armies === null || st.owner.kind !== 'player' || !foe(st.owner.playerId) || uncounted(t)) continue;
     if (!(st.specialUnits ?? []).some((u) => u.kind === 'commander' && foe(u.playerId))) continue;
     const adjacent = neighborsOf(g, t).filter((n) => mineSet.has(n));
     if (!adjacent.length) continue;
@@ -5199,7 +5224,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   }
   if (guarded) {
     const candidates = [...ownedBy.keys()]
-      .filter((p) => inReach(p) && !struck.has(p))
+      .filter((p) => inReach(p) && !struck.has(p) && !ownedBy.get(p)!.some(uncounted))
       .sort(
         (a, b) =>
           ownedBy.get(a)!.length - ownedBy.get(b)!.length ||
@@ -5963,7 +5988,7 @@ export function planTurn(input: PlanInput): TurnPlan {
         for (const t of [...g.territoryById.keys()].sort(byNum)) {
           if (mineSet.has(t) || captured.has(t)) continue;
           const st = state.get(t);
-          if (st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
+          if (st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null || uncounted(t)) continue;
           // An enemy commander is rule 1s's, sized for its owner's full deploy: never a fallback.
           if (unitsAt(t) > 0) continue;
           const sources = neighborsOf(g, t).filter((n) => mineSet.has(n));
@@ -7055,7 +7080,7 @@ export function planTurn(input: PlanInput): TurnPlan {
     const candidates: StrikeTarget[] = [];
     for (const n of neighborsOf(g, S)) {
       const st = state.get(n);
-      if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
+      if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null || uncounted(n)) continue;
       const cost = costAt(n);
       // Never a capture that lowers income (rule 4c): it completes a negative bonus. Re-checked
       // below against the strike's own captures, which can complete one only together.
