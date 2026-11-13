@@ -704,6 +704,9 @@ describe('#107: in contact, never stand still either', () => {
       [2, 23],
       [1, 22],
     ]);
+    // Holds intact, and 23 still sized for its 0 defenders plus player 40's ~5 deploy (#120).
+    expect(p.conceded).toEqual([]);
+    expect(attacks(p).find((m) => m.to === 23)).toEqual(expect.objectContaining({ from: 2, to: 23, armies: 8, kind: 'attack' }));
     const r = p.rationale.join('\n');
     expect(r).toMatch(/FFA army lead: my 30 armies in view are 4\.3× player 30's 7/);
     expect(r).toMatch(/Attack T22 \(#22\) from T1 \(#1\) with 15: army lead: a step into bonus Delta \(#501\)/);

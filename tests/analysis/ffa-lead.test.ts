@@ -160,3 +160,136 @@ describe('#167: a big army lead in a free-for-all', () => {
     expect(planTurn(input([80, 60, 55]))).toEqual(planTurn(input([80, 60, 55])));
   });
 });
+
+describe('#167: the reason an enemy territory next to mine is left alone stays accurate', () => {
+  it('under goal defend, when the plan attacks another player\'s territory, it does not claim it attacks none', () => {
+    // My 60 on T1 faces player 20's 3 on T2 and player 30's 15 on T9. Behind on income, the goal is
+    // defend; rule 4e's fallback still takes T2. T9 is left alone.
+    const m = makeMap(
+      [1, 2, 5, 6, 9],
+      [
+        [1, 2],
+        [1, 9],
+        [2, 5],
+        [5, 6],
+      ],
+      [[901, 2, [1]]],
+    );
+    const i: PlanInput = {
+      graph: buildGraph(m),
+      board: board([mine(1, 60), enemy(2, 3, 20), enemy(9, 15, 30), enemy(5, 3, 20), enemy(6, 3, 30)]),
+      me: ME,
+      income: 2,
+      settings: { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true },
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: { adapt: true, enemyDeploy: 16 },
+    };
+    const p = planTurn(i);
+    expect(why(p)).toMatch(/Goal defend/);
+    expect(attacks(p).map((x) => x.to)).toEqual([2]);
+    expect(why(p)).toMatch(
+      /T9 \(#9\) \(player 30, 15 armies\): under goal defend the plan attacks a player's territory only where a rule calls for it \(here T2 \(#2\)\), and none calls for this one/,
+    );
+    expect(why(p)).not.toMatch(/goal defend attacks no player's territory/);
+  });
+
+  it('with the lead lever on, a territory a neighbour cannot take for sure names the lead strike\'s size, not the lead', () => {
+    // My 32 on T1 is 4.0× player 20's 8 in view, but a lead strike on T2 is sized for its 5 defenders
+    // plus player 20's ~16 deploy, more than T1 can spare.
+    const m = makeMap(
+      [1, 2, 3, 5, 6, 7, 8],
+      [
+        [1, 2],
+        [1, 3],
+        [1, 7],
+        [7, 8],
+        [2, 5],
+        [5, 6],
+      ],
+      [
+        [901, 2, [1]],
+        [902, 6, [3]],
+        [903, 3, [7, 8]],
+      ],
+    );
+    const i: PlanInput = {
+      graph: buildGraph(m),
+      board: board([mine(1, 32), enemy(2, 5, 20), neutral(3, 2), enemy(5, 3, 20), enemy(6, 3, 30), neutral(7, 4), neutral(8, 4)]),
+      me: ME,
+      income: 10,
+      settings: { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true },
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: { adapt: true, enemyDeploy: 16 },
+    };
+    const p = planTurn(i);
+    expect(why(p)).toMatch(/FFA army lead: my 32 armies in view are 4\.0×/);
+    expect(attacks(p).map((x) => x.to)).not.toContain(2);
+    expect(why(p)).toMatch(
+      /T2 \(#2\) \(player 20, 5 armies\): a lead strike \(my army lead is 4\.0×, over 3×\) needs \d+ — sized for its 5 defenders plus player 20's ~16 deploy — and the most a neighbour of mine can spare for it is \d+ \(T1 \(#1\)\)/,
+    );
+    expect(why(p)).not.toMatch(/a lead strike takes one only with an army lead over 3×; mine is 4\.0×/);
+  });
+});
+
+describe('#167: the "Not attacking" line is capped', () => {
+  it('gives the first six their reasons and names the rest', () => {
+    // My T1 (2 armies) touches nine enemy territories of 20 armies each, T2–T10.
+    const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const m = makeMap(
+      ids,
+      ids.slice(1).map((n) => [1, n] as [number, number]),
+      [[901, 2, [1]]],
+    );
+    const p = planTurn({
+      graph: buildGraph(m),
+      board: board([mine(1, 2), ...ids.slice(1).map((n) => enemy(n, 20, n % 2 ? 20 : 30))]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: { adapt: true },
+    });
+    const line = p.rationale.find((l) => l.startsWith('Not attacking'))!;
+    expect(line).toMatch(/^Not attacking 9 enemy territories next to mine: T2 \(#2\) \(player 30, 20 armies\): /);
+    expect(line).toMatch(/T7 \(#7\) \(player 20, 20 armies\): [^;]+; and 3 more: T8 \(#8\), T9 \(#9\), T10 \(#10\)\.$/);
+    expect(line).not.toMatch(/T8 \(#8\) \(player/);
+  });
+});
+
+describe('#167: the army lead under fog', () => {
+  it('a player stronger on the FFA ranking (armies + income) that shows a small stack does not switch the lever on', () => {
+    // My 40 on T1 against player 20's 5 in view is 8×, but player 20 holds B902 (+40): it leads the
+    // ranking on strength, so the lead does not switch the second-front rule off.
+    const m = makeMap(
+      [1, 2, 3, 4, 5],
+      [
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+      ],
+      [
+        [901, 2, [1]],
+        [902, 40, [2, 3]],
+      ],
+    );
+    const i = (bonus: number): PlanInput => ({
+      graph: buildGraph({ ...m, bonuses: m.bonuses.map((b) => (b.id === 902 ? { ...b, value: bonus } : b)) }),
+      board: board([mine(1, 40), enemy(2, 3, 20), enemy(3, 2, 20), neutral(4, 2), enemy(5, 2, 30)]),
+      me: ME,
+      income: 10,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: { adapt: true },
+    });
+    const strong = planTurn(i(40));
+    expect(strong.profile.ranking?.myRank).toBeGreaterThan(1);
+    expect(why(strong)).not.toMatch(/FFA army lead/);
+    // Rule 0p.2 still applies in rule 4e: taking T2 is named a second front.
+    expect(why(strong)).toMatch(/taking T2 \(#2\) opens a second front/);
+    // The same board with B902 worth +1: I lead the ranking, and the lever is on.
+    const weak = planTurn(i(1));
+    expect(weak.profile.ranking?.myRank).toBe(1);
+    expect(why(weak)).toMatch(/FFA army lead: my 40 armies in view are 8\.0×/);
+  });
+});
