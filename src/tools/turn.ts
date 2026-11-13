@@ -281,6 +281,12 @@ export function validateTurn(args: {
   localDeployments?: boolean;
   /** No-Split: each territory issues at most one attack or transfer. */
   noSplit?: boolean;
+  /**
+   * Multi-Attack: armies that move into a territory (a capture or a transfer) may move on from it
+   * later in the same list (#130). A source not mine at the start of the turn is accepted when
+   * an earlier move targets it, and sends at most what moved in before it.
+   */
+  multiAttack?: boolean;
   /** Why the modelled income may be wrong; non-empty makes the deploy-total check a warning. */
   incomeUncertain?: readonly string[];
   /** Why the Local Deployment pools may be wrong (overridden bonuses); non-empty makes that check a warning. */
@@ -300,7 +306,20 @@ export function validateTurn(args: {
     const t = standing.get(id);
     return t !== undefined && !t.fogged && t.owner === myInGameId;
   };
-  const notMine = [...deploys.map((d) => d.territory), ...moves.map((m) => m.from)].filter((t) => !mine(t.id));
+  // Armies moved into each territory before its first move out (Multi-Attack chains on with them).
+  const inflow = new Map<number, number>();
+  const chained = new Set<number>();
+  if (args.multiAttack) {
+    const movedOut = new Set<number>();
+    for (const m of moves) {
+      if (!mine(m.from.id) && inflow.has(m.from.id)) chained.add(m.from.id);
+      movedOut.add(m.from.id);
+      if (!movedOut.has(m.to.id)) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + m.armies);
+    }
+  }
+  const notMine = [...deploys.map((d) => d.territory), ...moves.map((m) => m.from)].filter(
+    (t) => !mine(t.id) && !chained.has(t.id),
+  );
   if (notMine.length) {
     const unique = [...new Map(notMine.map((t) => [t.id, t])).values()];
     throw new McpToolError(`These territories are not yours at the start of this turn: ${unique.map(label).join(', ')}.`, {
@@ -392,7 +411,8 @@ export function validateTurn(args: {
     out.set(m.from.id, o);
   }
   for (const { from, armies } of out.values()) {
-    const max = (standing.get(from.id)?.armies ?? 0) + (deployedOn.get(from.id) ?? 0) - (args.guard ? 1 : 0);
+    const start = chained.has(from.id) ? 0 : (standing.get(from.id)?.armies ?? 0) + (deployedOn.get(from.id) ?? 0);
+    const max = start + (inflow.get(from.id) ?? 0) - (args.guard ? 1 : 0);
     if (armies > max) {
       throw new McpToolError(
         `These orders send ${armies} armies from ${label(from)}, which can send at most ${max} this turn` +
@@ -946,7 +966,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
             'income uncertain; after war.app\'s error 11, resend with the game\'s own number as `income`); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
             'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
-            'stack, which war.app moves anyway; warapp_plan_turn obeys these and the kill rates). ' +
+            'stack, which war.app moves anyway); under Multi-Attack, a move may go on from a territory an ' +
+            'earlier move in the list captures (warapp_plan_turn obeys these and the kill rates). ' +
             'Always sent as ' +
             'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
             `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
@@ -1033,6 +1054,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               moves,
               localDeployments: game.settings?.localDeployments ?? false,
               noSplit: game.settings?.noSplit ?? false,
+              multiAttack: game.settings?.multiAttack ?? false,
               unplayedReinforcements: hand.flatMap((c) => {
                 if (c.type !== CARD_REINFORCEMENT || plays.some((p) => p.card.id === c.id)) return [];
                 const armies = reinforcementArmies(c, rules);

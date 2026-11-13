@@ -1734,6 +1734,53 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
   });
 });
 
+describe('Multi-Attack in the turn tools (#130)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  const map = normalizeMap(lobbyFixture().map);
+  const live = BOARD.map((t) => ({ territoryId: t.id, fogLevel: t.fogLevel, fogged: t.fogged ?? false, owner: t.owner, armies: t.armies }));
+  const T = (id: number) => ({ id, name: mapName(id) });
+  const run = (moves: Array<[number, number, number]>, multiAttack?: boolean) =>
+    validateTurn({
+      map,
+      board: live,
+      myInGameId: ANN.inGame,
+      income: 5,
+      guard: true,
+      deploys: [{ territory: T(161), armies: 5 }],
+      moves: moves.map(([from, to, armies]) => ({ from: T(from), to: T(to), armies })),
+      ...(multiAttack !== undefined ? { multiAttack } : {}),
+    });
+
+  it('accepts a move out of a territory captured earlier in the same list', () => {
+    expect(run([[161, 157, 7], [157, 158, 4]], true).warnings).toEqual([]);
+  });
+
+  it('without Multi-Attack the same chain is refused (not mine at the start of the turn)', () => {
+    expect(() => run([[161, 157, 7], [157, 158, 4]])).toThrow(/not yours at the start of this turn.*\(157\)/);
+  });
+
+  it('refuses a chained move listed before the capture, or sending more than moved in', () => {
+    expect(() => run([[157, 158, 4], [161, 157, 7]], true)).toThrow(/not yours.*\(157\)/);
+    expect(() => run([[161, 157, 7], [157, 158, 7]], true)).toThrow(/send 7 armies from .*\(157\).* at most 6/);
+  });
+
+  it('warapp_submit_turn passes the game\'s Multi-Attack setting through', async () => {
+    const settings = { ...modelledSettings(), MultiAttack: 'True' };
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const preview = payload(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 161, to: 157, armies: 7 },
+          { kind: 'move', from: 157, to: 158, armies: 4 },
+        ],
+      }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
+  });
+});
+
 describe('No-Split in the turn tools (G3, issue #31)', () => {
   const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
   // Ann holds only Oldcastle 453745 (12), which borders the neutrals White Harbor 23473 (1)
