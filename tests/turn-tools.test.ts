@@ -299,7 +299,7 @@ describe('warapp_plan_turn', () => {
     const full = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
     expect(Array.isArray(full.offence)).toBe(true);
     for (const o of full.offence!) {
-      expect(['break', 'strike', 'counter']).toContain(o.kind);
+      expect(['break', 'strike', 'strike-attack', 'counter']).toContain(o.kind);
       expect(typeof o.why).toBe('string');
     }
   });
