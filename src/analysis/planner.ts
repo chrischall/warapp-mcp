@@ -624,6 +624,15 @@
 //     the contact/late fallback (passes 1–3, the opening/expansion and army-cap fallback) rule 4d
 //     keeps its veto. An enemy capture carries the usual warning that it assumes the owner does
 //     not reinforce first, unless rule 3 sizes it for that deploy (#120).
+//  4g. A capture worth a card piece (#127; every goal but `complete-bonus`, after rule 4e, not while
+//     the 1v1 strike stack, rule 0p.3c, is contact's answer). Any capture this turn earns the turn's
+//     card pieces; `cardPieceValue` is what they are worth in armies (the Reinforcement pieces a
+//     capturing turn brings × its armies over its pieces: src/strategy/card-clock.ts
+//     `capturePieceValue`; the other cards are not valued). With no capture planned, the target
+//     whose capture loses the fewest armies (the defenders' kills on its attackers) is taken when
+//     that loss is at most the value — neutrals before players' territories, then the cheapest, then
+//     id — with the usual sizing (tryCapture: each source keeps what holds it), never one lowering
+//     income. Absent (no Reinforcement card, or a progressive one and none in hand): off.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, in
 //     the opening and expansion phases, and in an FFA while a neutral borders a territory of mine
 //     (#132: one front leaves the rest of the map to expand into; the rationale says "neutrals in
@@ -1059,6 +1068,12 @@ export interface PlanOptions {
    * unharmed), and the leftover goes to two stacks rather than one. Default false.
    */
   opponentsMayHoldBomb?: boolean;
+  /**
+   * #127: the armies a turn with a capture earns in card pieces (`capturePieceValue`: the
+   * Reinforcement pieces it brings × that card's armies over its pieces). With no capture planned,
+   * the cheapest capture that loses no more armies than this is taken (rule 4g). Absent or 0: off.
+   */
+  cardPieceValue?: number;
   /**
    * Adapt to the game profile (rule 0p): with no `goal`, pick it from the profile (behind:
    * `defend`, else `balanced`) and apply the profile's rules. An explicit `goal` always wins
@@ -7668,6 +7683,25 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         ];
       });
       if (dropped.length) rationale.push(`Other candidates not taken: ${dropped.join('; ')}.`);
+    }
+  }
+
+  // ---- 4g. a capture worth a card piece (#127) ----
+  // Any capture this turn earns the turn's card pieces. With none planned (every goal but
+  // `complete-bonus`; not while the 1v1 strike stack, rule 0p.3c, is contact's answer), the capture
+  // losing the fewest armies (the defenders' kills on its attackers) is taken when that loss is no
+  // more than the pieces are worth (`cardPieceValue`) — neutrals before players' territories, then
+  // the cheapest, then id — with the usual sizing, every source keeping what holds it, never one
+  // lowering income.
+  const pieceValue = opts.cardPieceValue ?? 0;
+  if (pieceValue > 0 && goal !== 'complete-bonus' && captured.size === 0 && !(auto && profile.format === '1v1' && goal !== 'defend' && facing.size > 0)) {
+    const loss = (t: number) => straightKills(defendersAt(t), rates.defensiveKillRate);
+    const candidates = [...targets.values()]
+      .filter((tg) => !captured.has(tg.id) && !spared.has(tg.id) && loss(tg.id) <= pieceValue && gainWith([tg.id]) >= 0)
+      .sort((a, b) => loss(a.id) - loss(b.id) || Number(a.enemy) - Number(b.enemy) || a.cost - b.cost || a.id - b.id);
+    for (const tg of candidates) {
+      const reason = `a capture earns this turn's card pieces, worth ~${pieceValue} armies, and this one loses ~${loss(tg.id)} (#127)`;
+      if (tryCapture(tg.id, reason)) break;
     }
   }
 

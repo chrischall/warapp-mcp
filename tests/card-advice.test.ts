@@ -3,7 +3,8 @@ import type { TerritoryState } from '../src/board.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import type { Card, CardChoice } from '../src/cards.js';
 import type { GameSettings, Player } from '../src/normalize.js';
-import { adviseCards, cardGame, handOwners, type CardAdviceInput } from '../src/tools/card-advice.js';
+import { adviseCards, cardGame, cardPieceOption, handOwners, type CardAdviceInput } from '../src/tools/card-advice.js';
+import { normalizeSettings } from '../src/normalize.js';
 import { board, mine, neutral, tinyMap } from './analysis/helpers.js';
 
 // Synthetic GameFeed ids: the in-game id wrapped in two check digits each end.
@@ -113,5 +114,27 @@ describe('the game around the hand (#163)', () => {
     expect(handOwners({ players: [ME, FOE] }, ME)).toEqual([ME_IN]);
     const a = { ...ME, team: 1 };
     expect(handOwners({ players: [a, { ...FOE, team: 1 }, { ...FOE, id: 1002, team: 1 }] }, a)).toEqual([ME_IN, FOE_IN]);
+  });
+});
+
+describe('cardPieceOption (#127): the planner option a capture\'s card pieces are worth', () => {
+  const fixed = normalizeSettings({
+    NumberOfCardsToReceiveEachTurn: 1,
+    ReinforcementCard: { NumPieces: 4, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1, FixedArmies: 8 },
+  });
+  const progressive = normalizeSettings({
+    NumberOfCardsToReceiveEachTurn: 1,
+    ReinforcementCard: { NumPieces: 4, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1, Mode: 1, ProgressivePercentage: 0.1 },
+  });
+  const rein = (armies: number): Card => ({ id: 'a'.repeat(32), type: 1, name: 'Reinforcement', armies });
+
+  it('passes the value of a fixed Reinforcement card', () => {
+    expect(cardPieceOption(fixed, [])).toEqual({ cardPieceValue: 2 });
+  });
+
+  it('values a progressive card at the one in hand, and passes nothing without one', () => {
+    expect(cardPieceOption(progressive, [rein(12)])).toEqual({ cardPieceValue: 3 });
+    expect(cardPieceOption(progressive, [])).toEqual({});
+    expect(cardPieceOption(undefined, [])).toEqual({});
   });
 });

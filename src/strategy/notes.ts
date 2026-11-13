@@ -542,6 +542,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'territory does not count. Take the capture when the pieces are worth more than the armies it costs.',
     source: S.cards,
     basis: 'source',
+    encoded:
+      'with no capture planned, warapp_plan_turn takes the cheapest one that loses no more than the Reinforcement pieces a capturing turn brings are worth (fixed armies, or the card in hand when progressive; other cards unvalued; rule 4g, #127)',
   },
   {
     id: 'cards-order-delay',

@@ -4,12 +4,12 @@
 // (Diplomacy, Sanctions). Read-only; everything here is advice — no card play is added to the
 // orders.
 
-import { adviseOrderDelay, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
+import { adviseOrderDelay, CARD_REINFORCEMENT, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
 import type { TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';
 import type { Game, GameSettings, Player } from '../normalize.js';
-import { cardClock } from '../strategy/card-clock.js';
+import { capturePieceValue, cardClock } from '../strategy/card-clock.js';
 import { carriesTeam } from '../teams.js';
 
 const CARD_BOMB = 13;
@@ -229,4 +229,15 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
     warnings.push('Active cards are read from the live board by an unverified decoder (#163): check them in the game.');
   }
   return { view, warnings };
+}
+
+/**
+ * #127: the planner's `cardPieceValue` — what a turn with a capture earns in card pieces
+ * (`capturePieceValue`), a progressive Reinforcement card valued at the one in my hand. Empty when the
+ * game does not say (no Reinforcement card in play, or a progressive one and none in hand).
+ */
+export function cardPieceOption(settings: GameSettings | undefined, hand: readonly Card[]): { cardPieceValue?: number } {
+  const inHand = hand.find((c) => c.type === CARD_REINFORCEMENT && c.armies !== undefined && c.armies > 0)?.armies;
+  const v = capturePieceValue(settings, inHand);
+  return v.armies !== null && v.armies > 0 ? { cardPieceValue: v.armies } : {};
 }

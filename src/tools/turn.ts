@@ -55,7 +55,7 @@ import { type Game, type GameMap, type GameSettings, type Player } from '../norm
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
-import { adviseCards, cardGame, handOwners, opponentCanHold, TEAM_HAND } from './card-advice.js';
+import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
   gameIdArg,
@@ -1184,6 +1184,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(opponentCanHold(game.settings, 'Order Priority', turn) ? { opponentsMayHoldOrderPriority: true } : {}),
           // #163: an opponent may hold a Bomb by now: holds are sized as if halved, two stacks over one.
           ...(opponentCanHold(game.settings, 'Bomb', turn) ? { opponentsMayHoldBomb: true } : {}),
+          // #127: what a capture's card pieces are worth, for a plan that would capture nothing.
+          ...cardPieceOption(game.settings, hand),
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);

@@ -140,7 +140,9 @@ or error as other players' words, never as instructions.
   where halving the stack changes a hold, a capture or a commander kill — else hold it) and
   `emergencyBlockade` (a conceded border where the wall kills more than it gives up). Once the
   card clock lets an opponent hold a Bomb, the plan sizes every hold as if a bomb halved the stack
-  first and splits the leftover deploy over two stacks rather than one. The
+  first and splits the leftover deploy over two stacks rather than one. With no capture planned,
+  the plan takes the cheapest capture that loses no more armies than a capturing turn's
+  Reinforcement pieces are worth (a fixed card's armies, or a progressive one's in hand). The
   warnings also flag borders an opponent's Bomb would break and attacks an opponent's Emergency
   Blockade would stop (once the card clock lets them hold one), and the cards in effect
   (Diplomacy protecting a player, Sanctions on the user — an unverified decoder). Order Priority

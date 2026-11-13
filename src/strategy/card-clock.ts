@@ -122,3 +122,52 @@ export function cardClock(settings: GameSettings | undefined): CardClock | undef
     cards,
   };
 }
+
+/** What one turn with a capture earns in card pieces, in armies (#127). */
+export interface CapturePieceValue {
+  /** Armies a capturing turn's pieces are worth; `null` when the game does not say (see `why`). */
+  armies: number | null;
+  /** Reinforcement pieces expected from one capturing turn: its minimum plus its weighted share of the random ones. */
+  reinforcementPieces?: number;
+  /** Armies one Reinforcement card adds, and the pieces it takes. */
+  armiesPerCard?: number;
+  pieces?: number;
+  why: string;
+}
+
+/**
+ * The armies one turn with a capture earns in card pieces (#127): the Reinforcement pieces it brings
+ * — the card's minimum per turn plus its weighted share of the random pieces — times the armies a
+ * Reinforcement card adds over the pieces it takes. Those armies are the game's `FixedArmies`; when
+ * the card is not fixed (progressive), the armies of a Reinforcement card in my hand stand in
+ * (`handArmies`: the card as it is worth now). The other cards have no army value here: `null` when
+ * no Reinforcement card is in play or its armies are unknown, with the reason.
+ */
+export function capturePieceValue(settings: GameSettings | undefined, handArmies?: number): CapturePieceValue {
+  const clock = cardClock(settings);
+  if (!clock) return { armies: null, why: 'no card is in play' };
+  const r = clock.cards.find((c) => c.card === 'Reinforcement');
+  if (!r) return { armies: null, why: 'no Reinforcement card is in play, and the other cards have no army value here' };
+  const drawWeight = clock.cards.reduce((n, c) => n + c.weight, 0);
+  const pieces = r.minimumPerTurn + (r.weight > 0 && drawWeight > 0 ? (clock.randomPerTurn * r.weight) / drawWeight : 0);
+  const reinforcementPieces = round2(pieces);
+  const raw = settings!.raw.ReinforcementCard;
+  const fixed = isRec(raw) ? asInt(raw.FixedArmies) : undefined;
+  const per = fixed !== undefined && fixed > 0 ? fixed : handArmies !== undefined && handArmies > 0 ? handArmies : undefined;
+  if (per === undefined)
+    return {
+      armies: null,
+      reinforcementPieces,
+      pieces: r.pieces,
+      why: 'the Reinforcement card is not a fixed number of armies here, and no Reinforcement card in hand shows what one is worth now',
+    };
+  const armies = round2((pieces * per) / r.pieces);
+  const source = fixed !== undefined && fixed > 0 ? `${per} armies a card` : `the Reinforcement card in hand (${per} armies)`;
+  return {
+    armies,
+    reinforcementPieces,
+    armiesPerCard: per,
+    pieces: r.pieces,
+    why: `a capturing turn brings ~${reinforcementPieces} Reinforcement pieces of the ${r.pieces} a card takes, at ${source}: ~${armies} armies (the other cards are not valued)`,
+  };
+}
