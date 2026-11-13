@@ -151,6 +151,35 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   hosted deployment keeps the browser bridge. If a session expires the tools fall back to the
   bridge and `warapp_session_status` says to relink.
 
+## Supervising the planner
+
+`warapp_plan_turn` is a single-turn, rule-based advisor. Review every plan before
+`warapp_submit_turn`, and override it when one of these shows up:
+
+1. **A held bonus's border is conceded** (rationale "protects +N … conceded"). This is
+   especially costly when an existing garrison is pulled out after falling just short, or when a
+   Local Deployment pool is parked on interior territories. Check whether an adjacent stack can be
+   moved in to hold. At default kill rates defenders kill 70% and attackers 60%, so a border is
+   cheaper to hold than to take back.
+2. **The enemy income estimate looks wrong.** Check the "Enemy deploy estimate" line against
+   what the opponent can plausibly earn: its territory count and the bonuses it can hold.
+   Territories revealed from the fog have been counted as growth (#69). When the figure is off,
+   re-plan with `enemy_deploy`.
+3. **Income drops.** Look for a negative-value bonus in `expected.bonusesCompleted`, or a
+   `nextIncome` below this turn's income without a reason the user accepts.
+4. **A rule the plan may not model.** Compare the plan's income with the game's deploy panel,
+   and read the plan's warnings for assumed settings: luck, rounding, Local Deployment, No-Split,
+   overridden bonuses and commanders.
+5. **Sprawl or passivity against a concentrating opponent.** Watch for frontier growing faster
+   than income, armies spread thin over many borders, or no attack on an opponent whose income is
+   outpacing yours. The planner breaks enemy bonuses only when it can see the whole bonus (#71,
+   #72, #74).
+
+Every ~3 turns, step back and compare income trends (yours vs each opponent), frontier vs
+income, and what `warapp_scout_player` shows. Override early, because a lost bonus costs every
+turn after. If a committed turn turns out to be wrong, `warapp_uncommit_turn` withdraws it before
+the turn advances. Then re-plan and submit again.
+
 ## Conventions
 
 - **"Surrender that game" / "I give up"** → `warapp_surrender` with `game_id` (confirm-gated):
