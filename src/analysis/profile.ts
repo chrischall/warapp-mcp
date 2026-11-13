@@ -14,6 +14,11 @@ import { neighborsOf, type MapGraph } from './graph.js';
 export const AHEAD_RATIO = 1.25;
 /** Behind when my income is at most this many times the strongest opponent's estimated income. */
 export const BEHIND_RATIO = 0.8;
+/**
+ * A player's strength in a free-for-all ranking (#167): its visible armies plus this many turns of
+ * its income — what it can field over the next few turns.
+ */
+export const STRENGTH_INCOME_TURNS = 3;
 
 export type GameFormat = '1v1' | 'ffa' | 'teams';
 export type GamePhase = 'opening' | 'expansion' | 'contact' | 'late';
@@ -96,7 +101,22 @@ export interface GameProfile {
    * most of it, but every opponent's income is tracked over several turns, #97), `null` when unknown.
    */
   standingSource: 'visible' | 'tracked' | null;
+  /**
+   * #167, a free-for-all only: every player in sight ranked by strength (visible armies +
+   * {@link STRENGTH_INCOME_TURNS} × income; an opponent's figures are lower bounds under fog),
+   * strongest first (ties: id). `leader` is the first; `myRank` is 1-based. `commonThreat` is the
+   * leader when it is not me — the player the others combine against.
+   */
+  ranking?: FfaRanking;
   notes: string[];
+}
+
+export interface FfaRanking {
+  leader: number;
+  myRank: number;
+  of: number;
+  commonThreat: number | null;
+  players: { playerId: number; armies: number; income: number; strength: number }[];
 }
 
 /** Player states that never held a seat: they did not start the game. */
@@ -275,6 +295,28 @@ export function gameProfile(input: ProfileInput): GameProfile {
     }
   }
 
+  // ---- #167: who leads a free-for-all ----
+  let ranking: FfaRanking | undefined;
+  if (format === 'ffa' && mine.length) {
+    const incomeOf = new Map(input.estimates.filter((e) => !ally(e.playerId)).map((e) => [e.playerId, e.estimate]));
+    const rows = [
+      { playerId: me, armies: myArmies, income: input.income },
+      ...[...armiesBy]
+        .filter(([p]) => !ally(p))
+        .map(([p, armies]) => ({ playerId: p, armies, income: incomeOf.get(p) ?? 0 })),
+    ]
+      .map((r) => ({ ...r, strength: r.armies + STRENGTH_INCOME_TURNS * r.income }))
+      .sort((a, b) => b.strength - a.strength || a.playerId - b.playerId);
+    const leader = rows[0]!.playerId;
+    const myRank = rows.findIndex((r) => r.playerId === me) + 1;
+    ranking = { leader, myRank, of: rows.length, commonThreat: leader === me ? null : leader, players: rows };
+    notes.push(
+      leader === me
+        ? `FFA ranking: I lead ${rows.length} players in sight on strength (armies + ${STRENGTH_INCOME_TURNS} × income: ${rows[0]!.strength}${rows[1] ? ` against player ${rows[1].playerId}'s ${rows[1].strength}` : ''}); the others may combine against me.`
+        : `FFA ranking: player ${leader} leads on strength (armies + ${STRENGTH_INCOME_TURNS} × income: ${rows[0]!.strength}); I am ${myRank} of ${rows.length} in sight (${rows[myRank - 1]!.strength}). Opponents' figures are lower bounds under fog.`,
+    );
+  }
+
   return {
     format,
     opponents,
@@ -290,6 +332,7 @@ export function gameProfile(input: ProfileInput): GameProfile {
     phase,
     standing,
     standingSource,
+    ...(ranking ? { ranking } : {}),
     notes,
   };
 }

@@ -18,6 +18,25 @@
 //          turn and loses nothing to this turn's strike / finishing off is skipped when a
 //          neutral bonus capture scores at least SECOND_FRONT_SIMILAR × its score per army.
 //          Finishing off (rule 1e) and strikes (rule 1s) are untouched.
+//          #167, scaled by my army lead (my visible armies and special units over the largest
+//          opponent's in view): the neutral needs SECOND_FRONT_SIMILAR × the lead (at least 1×, at
+//          most SECOND_FRONT_LEAD×) of the break's score; above SECOND_FRONT_LEAD× the rule is off,
+//          here and in rule 4e. A clear leader that is not me (the profile's FFA ranking: strength =
+//          armies + STRENGTH_INCOME_TURNS × income, at least AHEAD_RATIO × the next player's) is never
+//          a second front: the others combine against it. Lead strikes: above the lead, under
+//          `balanced`, every enemy territory next to mine (no special unit, never one lowering income)
+//          is attacked after the leftover deploy from the neighbour with the most armies beyond what
+//          holds it once the target falls (#172's two-step keep too; never a hold, a conceded border,
+//          my commander's territory or the strike stack; not under No-Split), when that covers an
+//          attack sized for its defenders plus its owner's deploy there (rule 3's #120 sizing):
+//          breaks first, then a step into a positive bonus, then cheapest, then id ("army lead: …").
+//       2f. Front outlook (#167; adapting, contact and late phases): rule 4a's expansion share stands
+//          only when the main front (the biggest enemy stack next to me against my biggest stack
+//          beside it) is no worse than a stand-off with the income less the share deployed there each
+//          turn (`forecastBorder`, src/analysis/exchange.ts: both owners deploy on the stacks every
+//          turn, simulated with `simulateTurn`; "press" — I attack every turn — and "pressed"); ground
+//          down so, the share is 0 this turn and holds come first. A rationale line gives the outcome,
+//          the turn and the income the border pins.
 //       3. Behind on income: pressure (rule 1e) is sized with no margin. Outside a 1v1 the goal
 //          is `defend`; in a 1v1 (#72) it stays `balanced` — strike: rule 1's ordering puts
 //          breaks before expansion that completes nothing, and held-bonus units that pay for
@@ -676,6 +695,21 @@
 //     toward its source first, when it is no farther than the enemy front ("Move N from … to …:
 //     stages toward …"): live, a stack two steps from the one neutral its bonus lacked stood
 //     still for five turns.
+//  7r. Reports (#167; every goal, around rule 7). Exchange: every attack on a
+//     player's territory is judged by `classifyExchange` (src/analysis/exchange.ts) — kills, losses
+//     and capture against its defenders now, plus its owner's estimated deploy there, plus its whole
+//     income, labelled certain first strike / favourable exchange / strike last / stand — in
+//     `exchanges` and one rationale line. Cover odds: against a player facing two or more of my kept
+//     borders, those holding against its stacks alone but not with its whole deploy on them are a
+//     gamble on where that one deploy lands; a rationale line names them and the chance each (and
+//     all) hold if it picks at random. Left alone: every visible enemy territory next to mine that no
+//     order attacks is named in one line, "Not attacking … next to mine", with its first reason: a
+//     special unit, the offence report's reason (a second front, unaffordable, a trade below even), a
+//     capture lowering income, its size against the most a neighbour can spare, or that it is no
+//     target of the plan's (rule 2).
+//     Wastelands (#167, `settings.wastelands`): a fogged missing member of a bonus is costed at the
+//     costliest visible missing member plus the expected surcharge of being a wasteland
+//     (ceil(count ÷ the map's territories × (a wasteland's capture cost − that))), with a rationale line.
 //  7. Move order (#127; every goal, last). Orders zigzag — the first mover's 1st, the other's
 //     1st and 2nd, the first mover's 2nd and 3rd, … — so `moves` is scheduled
 //     (`scheduleMoves`, src/analysis/schedule.ts), earliest first: the one order Order Priority
@@ -783,11 +817,12 @@ import {
   type KillRates,
 } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
+import { classifyExchange, forecastBorder, type Exchange, type ExchangeCase } from './exchange.js';
 import { twoStepReaches, type TwoStepReach } from './lookahead.js';
 import { indexAfterAll, MoveSlot, opponentOrdersBefore, scheduleMoves, type MoverPosition } from './schedule.js';
 import { chargeDeploys, deployPools } from './local-deploy.js';
 import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from './player.js';
-import { BEHIND_RATIO, gameProfile, type GameProfile, type ProfilePlayer } from './profile.js';
+import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type GameProfile, type ProfilePlayer } from './profile.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
@@ -869,6 +904,13 @@ export const AHEAD_PRESSURE_FACTOR = 8;
  * bonus of mine is skipped when a neutral capture scores at least this share of it per army.
  */
 export const SECOND_FRONT_SIMILAR = 0.5;
+/**
+ * #167: rule 0p.2 scales with my army lead — my visible armies over the largest opponent's in view
+ * (special units included). Up to this many times, the neutral needs SECOND_FRONT_SIMILAR × the lead
+ * (at least 1×) of a break's score to skip it; above it the rule is off: idle stacks beside weak
+ * enemy territories are a lever, not a risk, and (adapting) they attack them (the lead strikes).
+ */
+export const SECOND_FRONT_LEAD = 3;
 
 /** Denying +V to the opponent is worth this many times gaining +V yourself (per opponent: divided among them). */
 export const BREAK_WEIGHT = 1.0;
@@ -913,6 +955,11 @@ export interface PlannerSettings {
    * free (rule 4e). `null` / absent: no cap.
    */
   armyCap?: number | null;
+  /**
+   * #167: automatic Wastelands — `count` neutrals started at `size` armies. A fogged missing member of
+   * a bonus (its size unknown) is then costed with the expected surcharge of being one.
+   */
+  wastelands?: { count: number; size: number };
 }
 
 export interface PlanOptions {
@@ -1120,6 +1167,19 @@ export interface TurnPlan {
    * Delay goes above every order that is not urgent when a `last` attack is planned).
    */
   moveSlots?: MoveSlotName[];
+  /**
+   * #167: each attack on a player's territory judged by its exchange (`classifyExchange`): kills,
+   * losses and capture against its defenders as they stand, after its owner's estimated deploy
+   * there, and after its owner's whole income, with a label. Absent when no attack hits a player.
+   */
+  exchanges?: ExchangeView[];
+}
+
+export interface ExchangeView extends Exchange {
+  from: number;
+  to: number;
+  armies: number;
+  player: number;
 }
 
 /** The names of {@link MoveSlot}, earliest first. */
@@ -2306,6 +2366,32 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     );
     return lost + (idle ? 0 : 1);
   };
+  /**
+   * #167: my army lead over the largest opponent in view — my visible armies and special units over
+   * theirs (Infinity with no opponent in view). Rule 0p.2 scales with it, and above
+   * SECOND_FRONT_LEAD× it is off.
+   */
+  const armyLead = (() => {
+    const by = new Map<number, number>();
+    for (const [id, st] of state)
+      if (st.owner.kind === 'player' && st.armies !== null) by.set(st.owner.playerId, (by.get(st.owner.playerId) ?? 0) + st.armies + unitsAt(id));
+    const my = by.get(me) ?? 0;
+    const rival = [...by].filter(([p]) => foe(p)).sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+    return { my, rival: rival?.[0], theirs: rival?.[1] ?? 0, ratio: rival && rival[1] > 0 ? my / rival[1] : Infinity };
+  })();
+  /** #167: adapting (rule 0p), the lead switches rule 0p.2 off. */
+  const leadLever = opts.adapt === true && opts.goal === undefined && armyLead.rival !== undefined && armyLead.ratio > SECOND_FRONT_LEAD;
+  /**
+   * #167: a clear FFA leader that is not me (strength at least AHEAD_RATIO × the next player's): the
+   * player the others combine against, never a second front.
+   */
+  const clearLeader = (() => {
+    const r = profile.ranking;
+    if (!(opts.adapt === true && opts.goal === undefined) || !r || r.commonThreat === null || r.players.length < 2) return undefined;
+    return r.players[0]!.strength >= AHEAD_RATIO * r.players[1]!.strength ? r.commonThreat : undefined;
+  })();
+  /** "3.3×" */
+  const leadText = () => (Number.isFinite(armyLead.ratio) ? `${(Math.round(armyLead.ratio * 10) / 10).toFixed(1)}×` : 'unbounded (no opponent army in view)');
   /** My territories where my own commander stands: must-hold (rule 1k). */
   const myCommanders = new Set(
     mine.filter((id) => (state.get(id)?.specialUnits ?? []).some((u) => u.kind === 'commander' && u.playerId === me)),
@@ -4395,6 +4481,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     fogged ? ` (${fogged} fogged member${fogged === 1 ? '' : 's'} counted at ${each} each)` : '';
   const toFinish = (cost: number, fogged: number, each: number) => `${cost} armies to finish${fogNote(fogged, each)}`;
   const plans: BonusPlan[] = [];
+  /** #167: the share of the map's territories that started as wastelands, and what one costs to take and loses. */
+  const wasteShare =
+    s.wastelands && s.wastelands.count > 0 && s.wastelands.size > 0 && g.territoryById.size > 0
+      ? Math.min(1, s.wastelands.count / g.territoryById.size)
+      : 0;
+  const wasteCost = wasteShare > 0 ? (costOf(s.wastelands!.size) ?? Infinity) : 0;
+  const wasteLoss = wasteShare > 0 ? Math.min(wasteCost - 1, straightKills(s.wastelands!.size, rates.defensiveKillRate)) + 1 : 0;
   /** Every positive bonus worth completing (net > 0) still missing members: its armies to finish (rule 4e). */
   const finishCost = new Map<number, { cost: number; value: number; net: number; fogged: number; fogEach: number }>();
   const economicMember = new Set<number>();
@@ -4456,8 +4549,22 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       loss += l;
       worstLoss = Math.max(worstLoss, l);
     }
-    const fogEach = fogged ? (fogged < remaining.length ? worst : Infinity) : 0;
-    const fogLoss = fogged ? (fogged < remaining.length ? worstLoss : Infinity) : 0;
+    let fogEach = fogged ? (fogged < remaining.length ? worst : Infinity) : 0;
+    let fogLoss = fogged ? (fogged < remaining.length ? worstLoss : Infinity) : 0;
+    // #167: with automatic Wastelands, a fogged member may be one: its expected surcharge over an
+    // ordinary member is (wastelands ÷ territories on the map) × (a wasteland's cost − this one's).
+    if (wasteShare > 0 && fogged && Number.isFinite(fogEach)) {
+      const extra = Math.ceil(wasteShare * Math.max(0, wasteCost - fogEach));
+      const extraLoss = Math.ceil(wasteShare * Math.max(0, wasteLoss - fogLoss));
+      if (extra > 0) {
+        fogEach += extra;
+        fogLoss += extraLoss;
+        if (remaining.some(bonusTarget))
+          rationale.push(
+            `${b.name} (#${b.id}): its ${fogged} fogged member${fogged === 1 ? '' : 's'} may be ${fogged === 1 ? 'a wasteland' : 'wastelands'} (${s.wastelands!.count} of the map's ${g.territoryById.size} territories start at ${s.wastelands!.size}): +${extra * fogged} armies expected.`,
+          );
+      }
+    }
     cost += fogged * fogEach;
     loss += fogged * fogLoss;
     if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach });
@@ -5886,8 +5993,15 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
      * is said with the first break it skips). Call it only for a break the plan could afford.
      */
     const secondFrontSaid = new Set<number>();
+    /** #167: the neutral's share of a break's score that skips it, scaled by my army lead (at least 1×). */
+    const similar = SECOND_FRONT_SIMILAR * Math.max(1, Math.min(SECOND_FRONT_LEAD, armyLead.ratio));
     const opensSecondFront = (b: Breakable, score: number): boolean =>
-      ffa && !threatensMyBonus(b.player) && !beingFinished(b.player) && bestNeutral >= SECOND_FRONT_SIMILAR * score;
+      ffa &&
+      !leadLever &&
+      b.player !== clearLeader &&
+      !threatensMyBonus(b.player) &&
+      !beingFinished(b.player) &&
+      bestNeutral >= similar * score;
     const secondFront = (b: Breakable, score: number): boolean => {
       if (!opensSecondFront(b, score)) return false;
       if (!secondFrontSaid.has(b.bonusId)) {
@@ -5897,7 +6011,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           );
         secondFrontSaid.add(b.bonusId);
         rationale.push(
-          `Not breaking ${bonusName(b.bonusId)} (+${b.value} from player ${b.player}): no second front in an FFA — player ${b.player} threatens no bonus of mine and is not being finished off, and a neutral capture earns ${bestNeutral.toFixed(2)} per army against ${score.toFixed(2)}.`,
+          `Not breaking ${bonusName(b.bonusId)} (+${b.value} from player ${b.player}): no second front in an FFA — player ${b.player} threatens no bonus of mine and is not being finished off, and a neutral capture earns ${bestNeutral.toFixed(2)} per army against ${score.toFixed(2)}${
+            similar > SECOND_FRONT_SIMILAR ? ` (it needs ${similar.toFixed(2)}× of it, scaled by my army lead of ${leadText()})` : ''
+          }.`,
         );
       }
       return true;
@@ -6109,7 +6225,44 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     expansionLeft = candidates.length;
     // Under rule 0p.1 an advance never outranks a hold, so it never defers one either.
     topValue = Math.max(0, ...candidates.filter((c) => !(oneVsOne && c.kind === 'advance')).map((c) => c.value));
-    const floor = expansionLeft ? Math.ceil(MIN_EXPANSION_SHARE * income) : 0;
+    let floor = expansionLeft ? Math.ceil(MIN_EXPANSION_SHARE * income) : 0;
+    // #167: a multi-turn view of the main front. Adapting in contact, the expansion share stands only
+    // when the front is no worse than a stand-off without those armies: my biggest stack facing the
+    // opponent with the biggest stack next to me, deploying the income less the share every turn
+    // against that stack on the opponent's whole deploy (`forecastBorder`). Ground down so, the share
+    // is dropped this turn and holds come first.
+    if (floor > 0 && auto && (profile.phase === 'contact' || profile.phase === 'late')) {
+      let front: { theirs: number; at: number; player: number; mine: number; from: number } | undefined;
+      for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
+        if (st.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
+        const mineNext = neighborsOf(g, id).filter((n) => mineSet.has(n));
+        if (!mineNext.length) continue;
+        const from = [...mineNext].sort((x, y) => armiesOf(y) - armiesOf(x) || x - y)[0]!;
+        const theirs = st.armies + unitsAt(id);
+        if (!front || theirs > front.theirs)
+          front = { theirs, at: id, player: st.owner.playerId, mine: armiesOf(from) + unitsAt(from), from };
+      }
+      if (front) {
+        const f = forecastBorder({
+          mine: front.mine,
+          theirs: front.theirs,
+          myIncome: income,
+          theirIncome: deployOf(front.player),
+          myDeploy: income - floor,
+          settings: { offensiveKillRate: rates.offensiveKillRate, defensiveKillRate: rates.defensiveKillRate, oneArmyStandsGuard: guard === 1 },
+        });
+        const pair = `my ${front.mine} on ${label(front.from)} against player ${front.player}'s ${front.theirs} on ${label(front.at)}, each deploying there every turn`;
+        if (f.outcome === 'ground-down') {
+          rationale.push(
+            `Front outlook (#167): ${pair}, with ${income - floor} a turn (the income less the ${floor} expansion share) I am ground down on turn ${f.turn} — the border pins ${f.pinned} of my ${income} income. Holds come before the expansion share this turn.`,
+          );
+          floor = 0;
+        } else
+          rationale.push(
+            `Front outlook (#167): ${pair}, ${f.outcome === 'breaks' ? `my stack breaks it on turn ${f.turn}` : 'it is a stand-off'} even with ${floor} of income going to expansion (the border pins ${f.pinned}): the expansion share stands.`,
+          );
+      }
+    }
     for (const t of holds)
       candidates.push({
         kind: 'hold',
@@ -6571,7 +6724,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
       // ---- #107, in contact: enemy captures ----
       /** Rule 0p.2's setting: an FFA with two or more opponents left. Applied here with or without adapt. */
-      const ffaFronts = profile.format === 'ffa' && profile.opponents >= 2;
+      const ffaFronts = profile.format === 'ffa' && profile.opponents >= 2 && !leadLever;
       /**
        * The first territory of mine (by id) player `p` could take next turn — its stacks next to it
        * plus max(its deploy estimate, its fastest growth there) against what taking it needs — or
@@ -6617,7 +6770,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           bonus: enemyBonus(t, p),
           /** Its owner can attack me now: the territory of mine it could take. */
           front: from,
-          secondFront: ffaFronts && from === undefined,
+          secondFront: ffaFronts && from === undefined && p !== clearLeader,
           ...reachOf(t),
         };
       });
@@ -7926,6 +8079,83 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       );
     }
 
+  // ---- #167: lead strikes ----
+  // Adapting in a free-for-all with two or more opponents, under `balanced`, when my visible armies
+  // are more than SECOND_FRONT_LEAD × the largest opponent's in view: rule 0p.2 is off, and every
+  // enemy territory next to mine (no special unit on it, never one whose capture lowers income) is
+  // attacked from the territory of mine beside it with the most to spare — armies beyond what holds
+  // it once the target falls (rule 1's arithmetic, #172's two-step keep too; never a hold, a conceded
+  // border, my commander's territory or the strike stack; no deploys: the income is spent) — when
+  // that covers an attack sized for its defenders plus what its owner may deploy there first (rule
+  // 3's #120 sizing, so it lands for sure). Breaks first, then a step into a positive bonus, then
+  // cheapest, then id. Not under No-Split (an order carries the whole stack).
+  if (auto && balanced && profile.format === 'ffa' && profile.opponents >= 2) {
+    if (leadLever)
+      rationale.push(
+        `FFA army lead: my ${armyLead.my} armies in view are ${Number.isFinite(armyLead.ratio) ? `${leadText()} player ${armyLead.rival}'s ${armyLead.theirs}, the most of any opponent` : `against no opposing army in view`} (more than ${SECOND_FRONT_LEAD}×): no second-front rule — idle stacks beside weak enemy territories attack them, a lever, not a risk.`,
+      );
+    if (leadLever && !noSplit) {
+      const spareFor = (x: number, n: number) => {
+        if (!mineSet.has(x) || holdLocked.has(x) || conceded.has(x) || myCommanders.has(x) || x === strikeStack?.id) return 0;
+        const gone = (m: number) => m === n;
+        const near = keepFor(x, gone);
+        const far = twoStepKeep(x, gone);
+        return Math.max(0, avail.get(x)! - Math.max(near, far));
+      };
+      const candidates = [...new Set(mine.flatMap((x) => neighborsOf(g, x)))]
+        .filter((n) => {
+          const st = state.get(n);
+          return (
+            !mineSet.has(n) &&
+            !captured.has(n) &&
+            st?.owner.kind === 'player' &&
+            foe(st.owner.playerId) &&
+            st.armies !== null &&
+            !uncounted(n) &&
+            unitsAt(n) === 0
+          );
+        })
+        .map((n) => {
+          const p = (state.get(n)!.owner as { playerId: number }).playerId;
+          const d = defenceAt(n);
+          const extra = reinforcementAt(n);
+          const breaks = breakable.find((b) => b.player === p && bonusTs.get(b.bonusId)!.includes(n));
+          const step = g.map.bonuses.find((b) => b.value > 0 && bonusTs.get(b.id)!.includes(n) && !breaks);
+          return { n, p, d, extra, cost: costAt(n, d + extra), breaks, step };
+        })
+        .filter((c) => c.cost !== null)
+        .sort(
+          (a, b) =>
+            Number(!a.breaks) - Number(!b.breaks) || Number(!a.step) - Number(!b.step) || a.cost! - b.cost! || a.n - b.n,
+        );
+      for (const c of candidates) {
+        if (captured.has(c.n) || gainWith([c.n]) < 0) continue;
+        const cost = c.cost!;
+        const src = neighborsOf(g, c.n)
+          .filter((x) => mineSet.has(x))
+          .map((x) => ({ x, spare: spareFor(x, c.n) }))
+          .filter((o) => o.spare >= cost)
+          .sort((a, b) => b.spare - a.spare || a.x - b.x)[0];
+        if (!src) continue;
+        avail.set(src.x, avail.get(src.x)! - cost);
+        captured.add(c.n);
+        worstCase.set(c.n, c.d + c.extra);
+        survivorsAt.set(c.n, cost - straightKills(c.d + c.extra, rates.defensiveKillRate));
+        captureOrder.push(c.n);
+        captureUndo.set(c.n, () => avail.set(src.x, avail.get(src.x)! + cost));
+        if (!targets.has(c.n)) targets.set(c.n, { id: c.n, cost, enemy: true, sources: neighborsOf(g, c.n).filter((x) => mineSet.has(x)) });
+        const effect = c.breaks
+          ? `breaks ${c.breaks.probable ? 'probable ' : ''}enemy bonus ${bonusName(c.breaks.bonusId)} (+${c.breaks.value} from player ${c.p})`
+          : c.step
+            ? `a step into bonus ${bonusName(c.step.id)} (+${c.step.value})`
+            : `takes a territory of player ${c.p}`;
+        const reason = `army lead: ${effect}, sure even if player ${c.p} deploys its ~${c.extra} there first (${c.d} + ${c.extra} defenders), with armies ${label(src.x)} does not need to hold`;
+        moves.push({ from: src.x, to: c.n, armies: cost, kind: 'attack', reason, winChance: chanceOf(cost, c.d) });
+        rationale.push(`Attack ${label(c.n)} from ${label(src.x)} with ${cost}: ${reason}.`);
+      }
+    }
+  }
+
   // ---- efficient sizes (S2) ----
   // An attack below its next kill breakpoint is topped up to it from armies that would sit
   // idle on its source — never from a hold, a conceded border, my commander's territory, or
@@ -8306,6 +8536,40 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     );
   }
 
+  // #167: cover odds. One deploy lands on one territory: against a player that faces two or more of
+  // my kept borders, those that hold against its stacks alone but not with its whole deploy on them
+  // are a gamble on where it lands — say which, and the chance each survives if it picks at random.
+  {
+    const facingBy = new Map<number, { x: number; movable: number }[]>();
+    for (const x of mine) {
+      if (conceded.has(x)) continue;
+      const by = new Map<number, number>();
+      for (const n of neighborsOf(g, x)) {
+        const st = state.get(n);
+        if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
+        by.set(st.owner.playerId, (by.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard) + unitsAt(n));
+      }
+      for (const [q, movable] of by) facingBy.set(q, [...(facingBy.get(q) ?? []), { x, movable }]);
+    }
+    for (const [q, list] of [...facingBy].sort((a, b) => a[0] - b[0])) {
+      if (list.length < 2) continue;
+      const d = deployOf(q);
+      const short = list.filter(({ x, movable }) => {
+        const take = toTake(stayAt(x) + unitsAt(x));
+        return take !== null && take > movable && take <= movable + d;
+      });
+      if (!short.length) continue;
+      const n = list.length;
+      rationale.push(
+        `Cover odds against player ${q} (#167): its one ~${d} deploy can land on one of the ${n} borders facing it; ${short.length} hold${short.length === 1 ? 's' : ''} against its stacks alone but not with that deploy on ${short.length === 1 ? 'it' : 'them'} (${short.map(({ x }) => label(x)).join(', ')}) — a gamble on where it lands: if it picks among the ${n} at random, ${
+          short.length === 1
+            ? `it holds with chance ${Math.round(((n - 1) / n) * 100)}%`
+            : `each holds with chance ${Math.round(((n - 1) / n) * 100)}%, and all of them with ${Math.round(((n - short.length) / n) * 100)}%`
+        }.`,
+      );
+    }
+  }
+
   if (noSplit && moves.length && guard)
     warnings.push(
       'No-Split is on: each order sends its territory\'s whole stack less the one army that stands guard; whether war.app leaves that army behind under No-Split is unverified (a live turn with the guard off left every source at 0).',
@@ -8344,6 +8608,57 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     warnings.push(
       `${label(id)} holds against each opponent alone, but players ${pile.split.players.join(' and ')} attacking it in the same turn (${pile.split.attacks.join(' then ')}) could take up to ${pile.split.takes} armies, and ${have} stay there.`,
     );
+  }
+  // ---- #167: every enemy territory next to mine left alone names why ----
+  // One rationale line lists each visible enemy territory next to a territory I held at the start
+  // that no order attacks, with the first reason that applies: a special unit there, a reason the
+  // offence report already gave (rule 0p.2's second front among them), a capture that lowers income,
+  // its size against the most any neighbour of mine can spare once it holds its border, or that it is
+  // no target of the plan's (rule 2: a player's territory is attacked to break a bonus, counter-attack,
+  // finish a player off, strike, or as rule 4e's fallback; adapting in an FFA, the lead strikes).
+  {
+    const spareNow = (x: number, n: number) => {
+      if (!mineSet.has(x) || holdLocked.has(x) || conceded.has(x) || myCommanders.has(x) || orderOf(x)) return 0;
+      const gone = (m: number) => m === n;
+      return Math.max(0, avail.get(x)! - Math.max(keepFor(x, gone), twoStepKeep(x, gone)));
+    };
+    const attacked = new Set(moves.filter((m) => m.kind === 'attack').map((m) => m.to));
+    const left = [...new Set(mine.flatMap((x) => neighborsOf(g, x)))].sort(byNum).filter((n) => {
+      const st = state.get(n);
+      return !mineSet.has(n) && !attacked.has(n) && st?.owner.kind === 'player' && foe(st.owner.playerId) && st.armies !== null;
+    });
+    const reasonFor = (n: number): string => {
+      const st = state.get(n)!;
+      const p = (st.owner as { playerId: number }).playerId;
+      if (uncounted(n)) return `it holds ${uncountedKind(n)}, whose strength the board does not carry`;
+      if (unitsAt(n) > 0) return `an enemy commander stands there: only a commander strike (rule 1s) attacks it, sized for its owner's whole deploy`;
+      const skip = offenceSkip.get(n);
+      if (skip) return skip;
+      if (gainWith([n]) < 0) return 'taking it would lower my income (it completes a negative bonus)';
+      const need = costAt(n);
+      const extra = reinforcementAt(n);
+      const sure = extra > 0 ? costAt(n, defenceAt(n) + extra) : need;
+      const best = neighborsOf(g, n)
+        .filter((x) => mineSet.has(x))
+        .map((x) => ({ x, spare: spareNow(x, n) }))
+        .sort((a, b) => b.spare - a.spare || a.x - b.x)[0]!;
+      if (need === null) return 'no attack can take it at these kill rates';
+      if (best.spare < need)
+        return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}`;
+      return goal === 'balanced'
+        ? `${label(best.x)} could spare ${best.spare} for it, but it breaks no bonus and is no counter-attack, finishing blow or strike — the only reasons the plan attacks a player's territory (rule 2), besides rule 4e's fallback when nothing else is captured${
+            auto && profile.format === 'ffa' && profile.opponents >= 2
+              ? ` (a lead strike takes one only with an army lead over ${SECOND_FRONT_LEAD}×; mine is ${leadText()})`
+              : ''
+          }`
+        : `goal ${goal} attacks no player's territory${goal === 'complete-bonus' ? ' outside the bonus it completes' : ''}`;
+    };
+    if (left.length)
+      rationale.push(
+        `Not attacking ${left.length === 1 ? 'the enemy territory' : `${left.length} enemy territories`} next to mine: ${left
+          .map((n) => `${label(n)} (player ${(state.get(n)!.owner as { playerId: number }).playerId}, ${state.get(n)!.armies} armies): ${reasonFor(n)}`)
+          .join('; ')}.`,
+      );
   }
   // ---- 7. schedule the moves (#127) ----
   // Orders zigzag (the first mover's 1st, the other's 1st and 2nd, …), so the place of a move in
@@ -8538,6 +8853,36 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     pass.viaFinal.set(v, !conceded.has(v) && b !== undefined && (toTake(ends + unitsAt(v)) ?? Infinity) > b.threat);
   }
 
+  // ---- #167: the exchange of each attack on a player ----
+  const exchanges: ExchangeView[] = moves.flatMap((m): ExchangeView[] => {
+    const st = state.get(m.to);
+    if (m.kind !== 'attack' || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) return [];
+    const p = st.owner.playerId;
+    const deploy = reinforcementAt(m.to);
+    // Its stack can hit my source: what stays there against its movable armies plus its deploy.
+    const take = toTake(stayAt(m.from) + unitsAt(m.from));
+    const threatensSource = take !== null && take <= Math.max(0, st.armies - guard) + unitsAt(m.to) + deployOf(p);
+    const x = classifyExchange({
+      attackers: m.armies,
+      defenders: defenceAt(m.to),
+      deploy,
+      income: Math.max(deploy, deployOf(p)),
+      threatensSource,
+      rates,
+    });
+    return [{ from: m.from, to: m.to, armies: m.armies, player: p, ...x }];
+  });
+  if (exchanges.length)
+    rationale.push(
+      `Exchange of attacks on players (#167): ${exchanges
+        .map((e) => {
+          const [now, est, whole] = e.cases as [ExchangeCase, ExchangeCase, ExchangeCase];
+          const at = (c: ExchangeCase) => `${c.captures ? 'takes' : `${c.net >= 0 ? '+' : ''}${c.net}`} against ${c.defenders}`;
+          return `${label(e.to)} from ${label(e.from)} with ${e.armies}: ${e.label} (${at(now)}, ${at(est)} after the estimated deploy, ${at(whole)} after the whole income)`;
+        })
+        .join('; ')}.`,
+    );
+
   return {
     goal,
     profile,
@@ -8563,5 +8908,6 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     frontier,
     offence: offenceList,
     moveSlots: moves.map((m) => SLOT_NAMES[slotOf(m)]!),
+    ...(exchanges.length ? { exchanges } : {}),
   };
 }

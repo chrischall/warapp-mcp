@@ -624,7 +624,9 @@ describe('#107: in contact, never stand still either', () => {
 
   it('takes the enemy territory that loses the fewest armies, from a 15-stack, holds intact', () => {
     const b = contactBoard();
-    for (const adapt of [false, true]) {
+    // Not adapting: with adapt, my 30 armies are 4.3× player 30's 7 in view, so (#167) rule 0p.2 is
+    // off and the lead strikes take 22 too (pinned below).
+    for (const adapt of [false]) {
       const p = run(b, { adapt });
       expect(p.profile.phase).toBe('contact');
       expect(p.conceded).toEqual([]);
@@ -694,6 +696,19 @@ describe('#107: in contact, never stand still either', () => {
     expect(r).toMatch(/Also take T23 \(#23\): it costs nothing/);
     expect(r).toMatch(/Player 40 cannot attack me now: taking T23 \(#23\) opens a second front, taken only because it costs nothing\./);
     expect(valid(p, b, 5, front)).toEqual([]);
+  });
+
+  it('adapting with an army lead over 3× (#167): no second front, and the idle 15-stack takes 22 as well', () => {
+    const p = run(contactBoard(), { adapt: true });
+    expect(attacks(p).map((m) => [m.from, m.to])).toEqual([
+      [2, 23],
+      [1, 22],
+    ]);
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/FFA army lead: my 30 armies in view are 4\.3× player 30's 7/);
+    expect(r).toMatch(/Attack T22 \(#22\) from T1 \(#1\) with 15: army lead: a step into bonus Delta \(#501\)/);
+    expect(r).not.toMatch(/opens a second front/);
+    expect(valid(p, contactBoard(), 5, map)).toEqual([]);
   });
 
   it('a neutral step that fits beats a second-front enemy capture', () => {
