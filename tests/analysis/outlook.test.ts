@@ -119,6 +119,31 @@ describe('gameOutlook (#178)', () => {
     expect(o.state).not.toBe('winning');
   });
 
+  it('under BonusArmyPer, bounds every turn by the per-territory income of the whole map (a fogged territory can raise it)', () => {
+    // 41 territories in a line; me on 1–10 (60 each), the foe on 11–40 (1 each, 30 territories:
+    // 15 a turn at 1 per 2), 41 fogged. Base 5, 1 army per 2 territories, start 3 × 5.
+    const gl = buildGraph(line(41));
+    const b = board([
+      ...Array.from({ length: 10 }, (_, i) => mine(i + 1, 60)),
+      ...Array.from({ length: 30 }, (_, i) => foe(i + 11, 1)),
+      fogged(41),
+    ]);
+    const start = { territories: 3, armiesPerTerritory: 5 };
+    const o = gameOutlook({
+      graph: gl,
+      me: ME,
+      boards: turns(10, [b, b, b]),
+      settings: { baseIncome: 5, bonusArmyPer: 2 },
+      game: { ...game, start },
+    });
+    const s = o.turns.at(-1)!.strongest!;
+    // It could really hold 15 + 12 × 15 + 3 × 15 = 240; the bound charges the whole map's
+    // territory income, max(5, floor(41 / 2)) = 20, on every turn: 15 + 12 × 20 + 3 × 20 = 315.
+    expect(s.high).toBeGreaterThanOrEqual(240);
+    expect(s).toMatchObject({ playerId: FOE, high: 315 });
+    expect(o.turns.map((t) => t.state)).not.toContain('winning');
+  });
+
   it('a bounded opponent with no strength at all is dominated: winning', () => {
     const empty = board([mine(1, 5), mine(2, 5), mine(3, 5), neutral(4, 2), neutral(5, 2), neutral(6, 2), neutral(7, 2), neutral(8, 2)]);
     const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [empty, empty, empty]), game, settings: { baseIncome: 0 } });
@@ -129,6 +154,13 @@ describe('gameOutlook (#178)', () => {
   it('says the comparison is per player, not by team', () => {
     const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [apart(20, 5), apart(20, 5), apart(20, 5)]), game });
     expect(o.basis).toMatch(/per player/i);
+    expect(o.basis).not.toMatch(/transfer/i);
+  });
+
+  it('in a team game, says a teammate\'s transfers can take an opponent past its high', () => {
+    const players = [{ id: ME, team: 1 }, { id: FOE, team: 2 }, { id: 30, team: 2 }];
+    const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [apart(20, 5), apart(20, 5), apart(20, 5)]), game: { players } });
+    expect(o.basis).toMatch(/teammate can transfer armies.*not a ceiling/i);
   });
 
   it('counts an opponent still playing with nothing in view as unbounded', () => {

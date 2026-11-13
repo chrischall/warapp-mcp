@@ -6,8 +6,10 @@
 //   - low: its visible armies + k × the income it visibly earns (both lower bounds);
 //   - high: what it could have, at most — every army it can have received (its start plus, each
 //     turn paid, the most it could earn that turn: the could-earn cap of an observed turn, else
-//     base income plus every bonus, since a bonus held by someone else now may have paid it
-//     before) and k × its could-earn cap now. Unbounded (`null`) when the start is unknown, cards can add armies, or it has
+//     the whole map's territory income plus every bonus, since a bonus held by someone else now
+//     may have paid it before; under BonusArmyPer an observed cap, which counts only territories
+//     in view, is raised by what the rest of the map could add) and k × its could-earn cap now.
+//     In a team game a teammate can transfer armies to it, so its high is not a ceiling there. Unbounded (`null`) when the start is unknown, cards can add armies, or it has
 //     nothing in view. With every territory in view, high = low.
 // The ratio is mine ÷ the strongest opponent's, as a range: `low` against the highest `high`,
 // `high` against the highest `low` (`null`: no upper limit). It is per player: in a team game my
@@ -29,7 +31,7 @@ import { carriesTeam } from '../teams.js';
 import { neighborsOf, type MapGraph } from './graph.js';
 import { trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
 import type { PlannerSettings } from './planner.js';
-import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
+import { boardIncome, DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
 import { STRENGTH_INCOME_TURNS } from './profile.js';
 
 /** Turns a state must hold before it is reported. */
@@ -111,9 +113,17 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   const players = input.game?.players ?? [];
   const myTeam = players.find((p) => p.id === me)?.team;
   const ally = (id: number) => id === me || (carriesTeam(myTeam) && players.find((p) => p.id === id)?.team === myTeam);
+  const teamGame = players.some((p) => carriesTeam(p.team));
   const stillPlaying = (id: number) => (players.find((p) => p.id === id)?.state ?? 'Playing') === 'Playing';
   const rules = { base: Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME)), per: settings.bonusArmyPer ?? 0 };
   const allBonuses = [...g.bonusById.values()].reduce((s, b) => s + Math.max(0, b.value), 0);
+  // The most any player can earn in a turn: the whole map's territory income (BonusArmyPer) plus
+  // every bonus. An observed turn's cap counts only the territories in view, so under BonusArmyPer
+  // it is raised by what the rest of the map could add to the base, never past this ceiling.
+  const mapTerritories = territoryIncome(g.territoryById.size, rules.base, rules.per);
+  const ceiling = mapTerritories + allBonuses;
+  const turnCap = (observed: number | undefined) =>
+    observed === undefined ? ceiling : Math.min(ceiling, observed + mapTerritories - rules.base);
   const start = input.game?.start ? input.game.start.territories * input.game.start.armiesPerTerritory : null;
 
   const turns: OutlookTurn[] = run.map((turn) => {
@@ -143,12 +153,12 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         if (open) return { playerId, low, high: low as number | null };
         if (!held.has(playerId) || start === null || input.cards) return { playerId, low, high: null };
         // The could-earn cap per observed turn (paid at the start of `to`); any other turn is
-        // bounded by base income plus every bonus.
+        // bounded by the ceiling ({@link turnCap}).
         const observedCap = new Map<number, number>();
         for (const x of trackOf.get(playerId)?.turns ?? []) observedCap.set(x.to, Math.max(observedCap.get(x.to) ?? 0, x.cap));
         let received = start;
-        for (let t = 1; t <= turn; t++) received += observedCap.get(t) ?? rules.base + allBonuses;
-        const cap = Math.max(income, observedCap.get(turn) ?? rules.base + allBonuses);
+        for (let t = 1; t <= turn; t++) received += turnCap(observedCap.get(t));
+        const cap = Math.max(income, turnCap(observedCap.get(turn)));
         return { playerId, low, high: Math.max(a, received) + k * cap };
       });
     const maxLow = rows.reduce((m, r) => Math.max(m, r.low), 0);
@@ -172,9 +182,12 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       const after = ownersOf(g, board);
       changed = [...after].filter(([t, o]) => before.has(t) && before.get(t) !== o).length;
     }
+    // The first entry per territory, as a linear find would read it.
+    const ownerById = new Map<number, BoardState['territories'][number]['owner']>();
+    for (const x of board.territories) if (!ownerById.has(x.territoryId)) ownerById.set(x.territoryId, x.owner);
     const front = [...(held.get(me) ?? [])].some((t) =>
       neighborsOf(g, t).some((n) => {
-        const o = board.territories.find((x) => x.territoryId === n)?.owner;
+        const o = ownerById.get(n);
         return o?.kind === 'player' && !ally(o.playerId);
       }),
     );
@@ -193,7 +206,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   let heldTurns = 0;
   for (let i = turns.length - 1; i >= 0 && turns[i]!.state === last?.state; i--) heldTurns++;
   const state = last && heldTurns >= OUTLOOK_TURNS ? last.state : null;
-  const measure = `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). Per player: my strength alone against the single strongest opponent, teams not summed.`;
+  const measure = `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). Per player: my strength alone against the single strongest opponent, teams not summed.${teamGame ? ' In a team game a teammate can transfer armies to an opponent, so its high is not a ceiling.' : ''}`;
   const thresholds = `Winning at ${OUTLOOK_RATIO}× the strongest opponent or more even at its high, losing at 1/${OUTLOOK_RATIO} (${round2(1 / OUTLOOK_RATIO)}×) or less even at its low, stalemate when nothing in view changed hands for ${OUTLOOK_TURNS} turns along a front. The ${OUTLOOK_RATIO}× is borrowed from a bot and was never measured for war.app: a basis for a decision, not a verdict.`;
   let reading: string;
   if (!last) reading = 'No board to judge.';
