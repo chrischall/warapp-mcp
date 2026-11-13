@@ -13,7 +13,8 @@
 //     starting with InitialPlayerArmiesPerTerritory. Armies stay where they stand:
 //     each turn's income is max(base income, floor(territories held / BonusArmyPer))
 //     (`territoryIncome`: the territory armies replace the base, never add to it, #38)
-//     + completed bonuses. Within a turn it
+//     + completed bonuses; with local deployments a bonus's income is deployed only inside
+//     that bonus, the rest anywhere (#129: it was pooled). Within a turn it
 //     repeatedly picks the bonus (value > 0, not a superbonus, with a member in or next
 //     to the territories held) with the best value / remaining capture cost that has a
 //     member next to a territory held at the start of the turn, and attacks that bonus's
@@ -76,7 +77,7 @@
 //     negative bonuses held) come last.
 
 import type { GameSettings } from '../normalize.js';
-import { analyzeBonus } from './bonuses.js';
+import { analyzeBonus, bonusTerritories } from './bonuses.js';
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { captureCost } from './planner.js';
@@ -211,6 +212,14 @@ interface Ctx {
   guard: number;
   baseIncome: number;
   bonusArmyPer: number;
+  /** Bonus income may be deployed only inside its bonus (#129). */
+  localDeployments: boolean;
+}
+
+/** A turn's deploys: `cells` null deploys anywhere, else only there (a bonus, under local deployments). */
+interface Pool {
+  cells: ReadonlySet<number> | null;
+  left: number;
 }
 
 interface SimResult {
@@ -264,16 +273,39 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
   checkComplete(0);
   for (let turn = 1; turn <= PICK_HORIZON; turn++) {
     // The one income rule (#85): every bonus held in full counts — negative ones and superbonuses
-    // too, not only the anchorable bonuses the simulation steers for.
-    let budget = boardIncome(ctx.g, held, { base: ctx.baseIncome, per: ctx.bonusArmyPer }).total;
+    // too, not only the anchorable bonuses the simulation steers for. With local deployments
+    // (#129) each positive bonus's income is its own pool, deployable only inside the bonus;
+    // the rest (base or territory income, less negative bonuses) goes anywhere.
+    const income = boardIncome(ctx.g, held, { base: ctx.baseIncome, per: ctx.bonusArmyPer });
+    const pools: Pool[] = [];
+    if (ctx.localDeployments) {
+      const local = income.bonuses.filter((b) => b.value > 0);
+      const free = income.total - local.reduce((n, b) => n + b.value, 0);
+      for (const b of local) pools.push({ cells: new Set(bonusTerritories(ctx.g, b.bonusId)), left: b.value });
+      pools.push({ cells: null, left: Math.max(0, free) });
+    } else pools.push({ cells: null, left: income.total });
+    const usable = (p: Pool, t: number) => p.cells === null || p.cells.has(t);
     const startHeld = [...held].sort(byNum);
     const startSet = new Set(startHeld);
     // Movable armies of the territories held at the start of the turn (captured ones never attack).
     const avail = new Map(startHeld.map((t) => [t, Math.max(0, armiesOn.get(t)! - ctx.guard)]));
     const captured = new Set<number>();
     // Where this turn's unspent deploys go: the source of the attack it is saving for.
-    // Once set, the deploys are reserved for it; other sources still attack with their own armies.
+    // Once set, the deploys that could go there are reserved for it; other sources still
+    // attack with their own armies (and, with local deployments, the pools it cannot use).
     let saveAt: number | null = null;
+    const reserved = new Set<Pool>();
+    const deployAt = (t: number) => pools.reduce((n, p) => n + (usable(p, t) && !reserved.has(p) ? p.left : 0), 0);
+    const spend = (t: number, n: number) => {
+      // Bonus-local pools first: the free pool can go elsewhere.
+      for (const p of [...pools].sort((a, b) => (a.cells === null ? 1 : 0) - (b.cells === null ? 1 : 0))) {
+        if (n <= 0) break;
+        if (!usable(p, t) || reserved.has(p)) continue;
+        const k = Math.min(p.left, n);
+        p.left -= k;
+        n -= k;
+      }
+    };
     // Bonuses whose next capture cannot be paid for this turn.
     const skipped = new Set<number>();
     // This turn's attacks, in order: the armies left over follow them (#129).
@@ -318,41 +350,53 @@ function simulate(ctx: Ctx, start: readonly number[], taken: ReadonlySet<number>
         if (source < 0 || avail.get(n)! > avail.get(source)!) source = n;
       }
       const own = source < 0 ? 0 : avail.get(source)!;
-      const deploy = saveAt === null ? budget : 0;
+      const deploy = source < 0 ? 0 : deployAt(source);
       if (source < 0 || own + deploy < best.cost) {
         // Save the deploys for the best bonus; try the next one with what else stands idle.
-        if (saveAt === null && source >= 0) saveAt = source;
+        if (saveAt === null && source >= 0) {
+          saveAt = source;
+          for (const p of pools) if (usable(p, source)) reserved.add(p);
+        }
         skipped.add(best.id);
         continue;
       }
       const fromOwn = Math.min(own, best.cost);
       avail.set(source, own - fromOwn);
       armiesOn.set(source, armiesOn.get(source)! - fromOwn);
-      budget -= best.cost - fromOwn;
+      spend(source, best.cost - fromOwn);
       captured.add(best.target);
       attacks.push({ source, target: best.target });
       armiesOn.set(best.target, Math.max(0, best.cost - ctx.lost.get(best.target)!));
     }
     // Armies are not parked (#129): what is left goes with the attacks, as a player would
     // send it — each attacking source's spare movable armies, and the unspent deploys (on the
-    // first attack's source), join that source's most forward capture (the most territories
-    // next to it neither held nor captured; ties: lowest id). Deploys saved for an attack
-    // next turn stay on its source; with no attack at all they go on the start territory
-    // with the most unheld neighbours.
+    // first attack's source they may be deployed on), join that source's most forward capture
+    // (the most territories next to it neither held nor captured; ties: lowest id). Deploys
+    // saved for an attack next turn stay on its source; with no attack they can go with, they
+    // go on the start territory (they may be deployed on) with the most unheld neighbours.
     const unheld = (t: number) => neighborsOf(ctx.g, t).filter((n) => !held.has(n) && !captured.has(n)).length;
     const forward = (ids: number[]) => ids.reduce((a, b) => (unheld(b) > unheld(a) || (unheld(b) === unheld(a) && b < a) ? b : a));
-    if (saveAt !== null) armiesOn.set(saveAt, armiesOn.get(saveAt)! + budget);
-    else if (budget > 0 && !attacks.length && startHeld.length) {
-      const at = forward(startHeld);
-      armiesOn.set(at, armiesOn.get(at)! + budget);
+    const carry = new Map<number, number>();
+    for (const p of pools) {
+      if (p.left <= 0) continue;
+      if (reserved.has(p)) {
+        armiesOn.set(saveAt!, armiesOn.get(saveAt!)! + p.left);
+        continue;
+      }
+      const with_ = attacks.find((a) => usable(p, a.source) && a.source !== saveAt);
+      if (with_) carry.set(with_.source, (carry.get(with_.source) ?? 0) + p.left);
+      else {
+        const cells = startHeld.filter((t) => usable(p, t));
+        if (!cells.length) continue;
+        const at = forward(cells);
+        armiesOn.set(at, armiesOn.get(at)! + p.left);
+      }
     }
     const sources = [...new Set(attacks.map((a) => a.source))].filter((t) => t !== saveAt);
     for (const src of sources) {
       const to = forward(attacks.filter((a) => a.source === src).map((a) => a.target));
-      let move = avail.get(src)!;
-      if (saveAt === null && src === attacks[0]!.source) move += budget;
       armiesOn.set(src, armiesOn.get(src)! - avail.get(src)!);
-      armiesOn.set(to, armiesOn.get(to)! + move);
+      armiesOn.set(to, armiesOn.get(to)! + avail.get(src)! + (carry.get(src) ?? 0));
     }
     for (const t of captured) held.add(t);
     checkComplete(turn);
@@ -429,7 +473,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   if (s.roundingMode !== undefined && s.roundingMode !== 'StraightRound')
     warnings.push(`Capture costs assume straight rounding; this game uses ${s.roundingMode}.`);
   if (s.localDeployments)
-    warnings.push('Local deployments are on: bonus income must be deployed inside its bonus; the model pools it.');
+    warnings.push(
+      'Local deployments are on: bonus income must be deployed inside its bonus, and the opening simulation deploys it only there.',
+    );
 
   const guard = s.oneArmyStandsGuard === false ? 0 : 1;
   const players = Math.max(1, Math.floor(input.players));
@@ -500,6 +546,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     guard,
     baseIncome,
     bonusArmyPer: s.bonusArmyPer ?? 0,
+    localDeployments: s.localDeployments === true,
   };
 
   // Contestedness from centrality among the pickables.

@@ -163,3 +163,25 @@ describe('planPicks — wastelands (#129)', () => {
     expect(reasonsOf(p, 1)).toMatch(/Pair \(\+1\) holds a wasteland: T2 \(10 armies\)/);
   });
 });
+
+describe('planPicks — Local Deployment income stays in its bonus (#129)', () => {
+  // Solo (+5) = {1} alone; Fan (+3) = {10,11,12}, 11 and 12 hanging off pick 10 (3 armies each).
+  // With no base income, Solo's +5 is the only income: pooled, it tops up pick 10's 4 movable
+  // armies to take both on turn 1; deployed only inside Solo it never reaches Fan.
+  const g = () =>
+    mkGraph([[1, 2], [2, 3], [10, 11], [10, 12], [12, 13]], [
+      { id: 100, name: 'Solo', value: 5, territoryIds: [1] },
+      { id: 101, name: 'Fan', value: 3, territoryIds: [10, 11, 12] },
+    ]);
+  const input = { pickable: [1, 10], territoryLimit: 2, maxPicks: 2 };
+  it('pooled, Solo pays for Fan on turn 1', () => {
+    const p = plan({ graph: g(), ...input, settings: { ...STD, minimumArmyBonus: 0 } });
+    expect(p.groups.primary.bonuses.find((b) => b.name === 'Fan')?.turn).toBe(1);
+  });
+  it('with local deployments it cannot, and the warning no longer says the model pools it', () => {
+    const p = plan({ graph: g(), ...input, settings: { ...STD, minimumArmyBonus: 0, localDeployments: true } });
+    expect(p.groups.primary.bonuses.find((b) => b.name === 'Fan')).toBeUndefined();
+    expect(p.warnings.join(' ')).not.toMatch(/pools it/);
+    expect(p.warnings.join(' ')).toMatch(/[Ll]ocal deployments/);
+  });
+});
