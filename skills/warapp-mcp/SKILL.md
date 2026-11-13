@@ -184,8 +184,8 @@ the user reviews it, and only then does `warapp_submit_turn` commit it.
   committed this turn (withdraw them first with `warapp_uncommit_turn`, or modify orders in the game)
   or the user's seat is no longer `Playing` (as `warapp_plan_turn` does). A plan with
   `cards.handReadable: false` could not read the hand: say so and check it in the game. Show the
-  preview's `attacks` (each attack's expected kills and win chance against the armies there now);
-  an attack marked `cannotCapture` should be resized or dropped before confirming. Report its `status`: `resolved` (the
+  preview's `attacks` (each attack's expected kills and win chance against the armies there now;
+  several attacks on one target are sized together, marked `combined`); an attack marked `cannotCapture` should be resized or dropped before confirming. Report its `status`: `resolved` (the
   turn advanced), `committed` (orders in, waiting on others) or `unknown` — then check
   `warapp_get_game` (its `turn` is the turn being played, as every tool reports it: a `turn` above
   the submitted one means it resolved; `turnsCompleted` counts the finished turns); never resend

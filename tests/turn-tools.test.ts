@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
-import { plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
+import { attackSizes, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { normalizeMap } from '../src/normalize.js';
 import { AHEAD_PRESSURE_FACTOR, PRESSURE_FACTOR } from '../src/analysis/planner.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
@@ -1777,6 +1777,57 @@ describe('the submit preview sizes each attack (#130)', () => {
   });
 });
 
+describe('attackSizes: several attacks on one target are sized together (#130)', () => {
+  const T = (id: number) => ({ id, name: mapName(id) });
+  const live = BOARD.map((t) => ({
+    territoryId: t.id,
+    fogLevel: t.fogLevel,
+    fogged: t.fogged ?? false,
+    owner: t.owner,
+    armies: t.id === 157 ? 4 : t.armies,
+  }));
+
+  it('a leg too small alone is not flagged when the legs together capture', () => {
+    const attacks = attackSizes(
+      live,
+      ANN.inGame,
+      [
+        { from: T(161), to: T(157), armies: 3 },
+        { from: T(159), to: T(157), armies: 4 },
+      ],
+      {},
+    );
+    expect(attacks.map((a) => [a.from.id, a.armies])).toEqual([
+      [161, 3],
+      [159, 4],
+    ]);
+    for (const a of attacks) {
+      expect(a.combined).toEqual({ attacks: 2, armies: 7 });
+      expect(a.cannotCapture).toBeUndefined();
+      expect(a.winChance).toBeGreaterThan(0);
+      expect(a.expectedKills).toBe(4.2);
+    }
+  });
+
+  it('legs that cannot capture even together are all flagged', () => {
+    const attacks = attackSizes(
+      live,
+      ANN.inGame,
+      [
+        { from: T(161), to: T(157), armies: 1 },
+        { from: T(159), to: T(157), armies: 1 },
+      ],
+      {},
+    );
+    expect(attacks.every((a) => a.cannotCapture === true)).toBe(true);
+  });
+
+  it('a single attack carries no combined field', () => {
+    const [a] = attackSizes(live, ANN.inGame, [{ from: T(161), to: T(157), armies: 7 }], {});
+    expect(a).not.toHaveProperty('combined');
+  });
+});
+
 describe('Multi-Attack in the turn tools (#130)', () => {
   const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
   const map = normalizeMap(lobbyFixture().map);
@@ -1805,6 +1856,31 @@ describe('Multi-Attack in the turn tools (#130)', () => {
   it('refuses a chained move listed before the capture, or sending more than moved in', () => {
     expect(() => run([[157, 158, 4], [161, 157, 7]], true)).toThrow(/not yours.*\(157\)/);
     expect(() => run([[161, 157, 7], [157, 158, 7]], true)).toThrow(/send 7 armies from .*\(157\).* at most 6/);
+  });
+
+  it('refuses a deploy on a territory captured only later in the list: deploys land before any attack', () => {
+    const call = () =>
+      validateTurn({
+        map,
+        board: live,
+        myInGameId: ANN.inGame,
+        income: 5,
+        guard: true,
+        deploys: [
+          { territory: T(161), armies: 3 },
+          { territory: T(157), armies: 2 },
+        ],
+        moves: [
+          { from: T(161), to: T(157), armies: 5 },
+          { from: T(157), to: T(158), armies: 4 },
+        ],
+        multiAttack: true,
+      });
+    expect(call).toThrow(/not yours at the start of this turn.*\(157\)/);
+  });
+
+  it('says the most a captured territory can send on is an upper bound', () => {
+    expect(() => run([[161, 157, 7], [157, 158, 7]], true)).toThrow(/at most 6.*upper bound/s);
   });
 
   it('warapp_submit_turn passes the game\'s Multi-Attack setting through', async () => {

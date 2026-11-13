@@ -288,7 +288,9 @@ export function validateTurn(args: {
   /**
    * Multi-Attack: armies that move into a territory (a capture or a transfer) may move on from it
    * later in the same list (#130). A source not mine at the start of the turn is accepted when
-   * an earlier move targets it, and sends at most what moved in before it.
+   * an earlier move targets it, and sends at most what moved in before it — an upper bound, since
+   * an attack's survivors are fewer than the armies sent. Deploys still need a territory held at
+   * the start of the turn: they land before any attack.
    */
   multiAttack?: boolean;
   /** Why the modelled income may be wrong; non-empty makes the deploy-total check a warning. */
@@ -321,9 +323,11 @@ export function validateTurn(args: {
       if (!movedOut.has(m.to.id)) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + m.armies);
     }
   }
-  const notMine = [...deploys.map((d) => d.territory), ...moves.map((m) => m.from)].filter(
-    (t) => !mine(t.id) && !chained.has(t.id),
-  );
+  // Deploys land before any attack, so only a move's source may be a territory captured earlier in the list.
+  const notMine = [
+    ...deploys.map((d) => d.territory).filter((t) => !mine(t.id)),
+    ...moves.map((m) => m.from).filter((t) => !mine(t.id) && !chained.has(t.id)),
+  ];
   if (notMine.length) {
     const unique = [...new Map(notMine.map((t) => [t.id, t])).values()];
     throw new McpToolError(`These territories are not yours at the start of this turn: ${unique.map(label).join(', ')}.`, {
@@ -420,7 +424,8 @@ export function validateTurn(args: {
     if (armies > max) {
       throw new McpToolError(
         `These orders send ${armies} armies from ${label(from)}, which can send at most ${max} this turn` +
-          `${args.guard ? ' (one army stands guard)' : ''}.`,
+          `${args.guard ? ' (one army stands guard)' : ''}` +
+          `${inflow.has(from.id) ? '; that counts every army moved in, an upper bound: an attack\'s survivors are fewer' : ''}.`,
         { hint: 'A territory sends at most its armies plus what is deployed there this turn.' },
       );
     }
@@ -448,16 +453,27 @@ export interface AttackSize {
   armies: number;
   /** Visible armies on the target at the start of the turn, a commander counted as {@link COMMANDER_STRENGTH}. */
   defenders: number;
-  /** The luck-free kills of these armies at the game's offensive kill rate. */
+  /**
+   * The luck-free kills at the game's offensive kill rate: of this attack's armies, or of all the
+   * attacks on this target together when {@link combined} is set.
+   */
   expectedKills: number;
-  /** The exact chance of capturing them (kill rates, luck, rounding); deploys there this turn are not counted. */
+  /**
+   * The exact chance of capturing them (kill rates, luck, rounding); deploys there this turn are not
+   * counted. With {@link combined}, the chance of the attacks' armies taken as one stack — an
+   * optimistic estimate, since separate attacks each face the defenders' kills.
+   */
   winChance: number;
+  /** Set when several moves attack this target this turn: how many, and their armies together. */
+  combined?: { attacks: number; armies: number };
   cannotCapture?: true;
 }
 
 /**
  * Each move into a territory that is not mine and is visible, sized against what stands there
- * now: a transfer, a fogged target and a target an earlier move captures are left out.
+ * now: a transfer and a fogged target are left out. Several moves into one target (a
+ * multi-source capture) are sized together, so a leg too small on its own is not flagged when
+ * the legs capture together.
  */
 export function attackSizes(
   board: readonly LiveTerritory[],
@@ -467,31 +483,39 @@ export function attackSizes(
 ): AttackSize[] {
   const standing = new Map(board.map((t) => [t.territoryId, t]));
   const off = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
-  const out: AttackSize[] = [];
-  const entered = new Set<number>();
-  for (const m of moves) {
+  const attacks = moves.filter((m) => {
     const t = standing.get(m.to.id);
-    const attack = t !== undefined && !t.fogged && t.owner !== myInGameId && !entered.has(m.to.id);
-    entered.add(m.to.id);
-    if (!attack) continue;
+    return t !== undefined && !t.fogged && t.owner !== myInGameId;
+  });
+  const together = new Map<number, { attacks: number; armies: number }>();
+  for (const m of attacks) {
+    const g = together.get(m.to.id) ?? { attacks: 0, armies: 0 };
+    g.attacks += 1;
+    g.armies += m.armies;
+    together.set(m.to.id, g);
+  }
+  return attacks.map((m) => {
+    const t = standing.get(m.to.id)!;
+    const group = together.get(m.to.id)!;
+    const armies = group.attacks > 1 ? group.armies : m.armies;
     const defenders = (t.armies ?? 0) + specialUnitStrength(t.specialUnits);
-    const chance = winChance(m.armies, defenders, {
+    const chance = winChance(armies, defenders, {
       ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
       ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
       ...(settings.luckModifier !== undefined ? { luck: settings.luckModifier } : {}),
       ...(settings.roundingMode !== undefined ? { rounding: settings.roundingMode } : {}),
     });
-    out.push({
+    return {
       from: m.from,
       to: m.to,
       armies: m.armies,
       defenders,
-      expectedKills: Math.round(expectedKills(m.armies, off) * 10) / 10,
+      expectedKills: Math.round(expectedKills(armies, off) * 10) / 10,
       winChance: Math.round(chance * 1000) / 1000,
+      ...(group.attacks > 1 ? { combined: { ...group } } : {}),
       ...(chance === 0 ? { cannotCapture: true as const } : {}),
-    });
-  }
-  return out;
+    };
+  });
 }
 
 /** The card types warapp_submit_turn can play, by the encoder's name. */
@@ -988,9 +1012,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
             'income uncertain; after war.app\'s error 11, resend with the game\'s own number as `income`); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
             'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
-            'stack, which war.app moves anyway); under Multi-Attack, a move may go on from a territory an ' +
-            'earlier move in the list captures (warapp_plan_turn obeys these and the kill rates). ' +
-            'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance) ' +
+            'stack, which war.app moves anyway); under Multi-Attack, a move (not a deploy) may go on from a ' +
+            'territory an earlier move in the list captures (warapp_plan_turn obeys these and the kill rates). ' +
+            'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
+            'several attacks on one target together) ' +
             'and warns about one that cannot capture. Always sent as ' +
             'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
             `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
