@@ -97,16 +97,17 @@ describe('the fog prior (#119): a symmetric-start 1v1 opponent bordering the fog
     expect(p.warnings.join('\n')).not.toMatch(/a prior/);
   });
 
-  it('not without a symmetric start, nor in an FFA', () => {
+  it('not without a symmetric start, nor in an FFA, even one down to two players', () => {
     expect(planTurn(input({ game: { players, turn: 12 } })).enemyDeploy).toBe(5);
     expect(planTurn(input({ game: { players, turn: 12, symmetricStart: false } })).enemyDeploy).toBe(5);
     const ffa = planTurn(input({ game: { players: [...players, { id: OTHER }], turn: 12, symmetricStart: true } }));
     expect(ffa.enemyDeploy).toBe(5);
-    // A third player out of the game leaves a 1v1.
+    // An FFA down to two is no even start: either survivor may have absorbed the eliminated player.
     const left = planTurn(
       input({ game: { players: [...players, { id: OTHER, state: 'Eliminated' }], turn: 12, symmetricStart: true } }),
     );
-    expect(left.enemyDeploy).toBe(45);
+    expect(left.enemyDeploy).toBe(5);
+    expect(left.warnings.join('\n')).not.toMatch(/a prior/);
   });
 
   it('not once every territory it holds is in view, with no fog beside it', () => {

@@ -12,6 +12,7 @@ import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './help
 import { overlapRawMap } from './analysis/helpers.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import { boardIncome } from '../src/analysis/player.js';
+import { readCachedOrders } from '../src/trend.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
@@ -351,7 +352,7 @@ describe('warapp_plan_turn', () => {
 
   it('reports the enemy deploy estimate; enemy_deploy overrides it', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    // Bob shows 7 next to Ann and holds no visible bonus: clamp(5 + 0, 5, round(0.75 × 7)) = 5.
+    // Bob shows 7 next to Ann and holds no visible bonus: base 5 + 0 = 5 (its stack plays no part, #119).
     const def = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(def.enemyDeploy).toBe(5);
     expect(def.warnings.join('\n')).toMatch(
@@ -1010,6 +1011,37 @@ describe('warapp_submit_turn', () => {
     expect(p.warning).toMatch(/may already have run/);
     expect(p.warning).toMatch(/Reload or focus a war\.app tab/);
     expect(p.warning).toMatch(/Do not resend/i);
+  });
+
+  it('caches the deploys and moves it sent for the turn, so opponent tracking can measure with them (#119)', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing'), game('Playing'), game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    expect(await readCachedOrders(h.dataDir, GAME, Number(ANN.feed))).toEqual(new Map());
+    await confirmed({ game_id: GAME, player: 'Ann', orders: GOOD });
+    expect(await readCachedOrders(h.dataDir, GAME, Number(ANN.feed))).toEqual(
+      new Map([
+        [
+          3,
+          {
+            deploys: [
+              { territoryId: 159, armies: 3 },
+              { territoryId: 161, armies: 2 },
+            ],
+            moves: [
+              { from: 161, to: 157, armies: 4 },
+              { from: 159, to: 158, armies: 8 },
+            ],
+          },
+        ],
+      ]),
+    );
+  });
+
+  it('a refused send caches no orders (#119)', async () => {
+    const s = ordersServer({ error: { code: 11, message: 'x' } });
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
+    expect((await confirmed({ game_id: GAME, orders: GOOD })).isError).toBe(true);
+    expect(await readCachedOrders(h.dataDir, GAME, Number(ANN.feed))).toEqual(new Map());
   });
 
   it('a server refusal is an error (error 11: deployments differ from income)', async () => {

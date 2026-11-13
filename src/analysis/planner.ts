@@ -101,7 +101,8 @@
 //     measurements; #119) in place of the
 //     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
 //     The fog prior (#119, `EnemyIncomePrior`): when `game.symmetricStart` says every player
-//     started even and it is a 1v1 (one opponent still playing, no teams), an opponent
+//     started even and it is a 1v1 (two players in the game, no teams; an FFA down to two is
+//     not: a survivor may have absorbed the others), an opponent
 //     bordering the fog (a territory next to one of its own shows no owner) is estimated at
 //     least at my own income (card armies out), capped at what it could earn on this board —
 //     every observed figure is a lower bound under fog, and the estimates read 2–3× low
@@ -1478,13 +1479,15 @@ interface BonusPlan {
 
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
- * symmetric (`symmetricStart`) and it is a 1v1 — exactly one opponent still playing, no teams
- * (the players in sight when no player list is given).
+ * symmetric (`symmetricStart`) and it is a 1v1 — two players in the game, the other still
+ * playing, no teams (the players in sight when no player list is given). An FFA down to two
+ * gets none: either survivor may have absorbed the eliminated players' territories.
  */
 function fogPrior(board: BoardState, me: number, ctx: PlanGameContext, myIncome: number): EnemyIncomePrior | undefined {
   if (ctx.symmetricStart !== true) return undefined;
   const players = ctx.players ?? [];
   if (players.some((p) => carriesTeam(p.team))) return undefined;
+  if (players.length > 2) return undefined;
   const opponents = players.length
     ? players.filter((p) => p.id !== me && (p.state ?? 'Playing') === 'Playing').length
     : new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId !== me ? [t.owner.playerId] : []))).size;

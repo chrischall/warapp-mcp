@@ -8,10 +8,16 @@
 // The cache holds only the player's own fogged view (what the live board
 // showed them), at `<dataDir>/boards/<gameId>.json`; a game's file not written for
 // 60 days is deleted on the first write of a process.
+//
+// Beside the boards, the same file keeps the orders this server sent for a turn
+// (`warapp_submit_turn`, #119): my own orders are measurements of what an opponent
+// deployed (analysis/opponents.ts `measureOrders`). Orders sent from the web client
+// stay unknown, which changes nothing.
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { boardFromStanding, type BoardState, type TerritoryState } from './board.js';
 import { playersByInGameId } from './live.js';
+import type { MyOrders } from './analysis/opponents.js';
 import type { Player } from './normalize.js';
 import { asInt } from './scalars.js';
 
@@ -152,19 +158,101 @@ interface CachedBoards {
   gameId: number;
   playerId: number;
   turns: Record<string, BoardState>;
+  /** The orders this server sent, by turn (#119); absent when none were. */
+  orders?: Record<string, MyOrders>;
+}
+
+/** The raw cache for `gameId` as `playerId` saw it: boards and orders by turn; empty when absent or unusable. */
+async function readCache(
+  dir: string,
+  gameId: number,
+  playerId: number,
+): Promise<{ turns: Record<string, unknown>; orders: Record<string, unknown> }> {
+  try {
+    const c: unknown = JSON.parse(await readFile(boardCachePath(dir, gameId), 'utf8'));
+    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId) return { turns: {}, orders: {} };
+    const orders = isRec(c.orders) ? c.orders : {};
+    if (isRec(c.turns)) return { turns: c.turns, orders };
+    // A single-board cache written before turns were kept.
+    if (typeof c.turn === 'number') return { turns: { [String(c.turn)]: c.board }, orders };
+    return { turns: {}, orders };
+  } catch {
+    return { turns: {}, orders: {} };
+  }
 }
 
 /** The cached boards by turn for `gameId` as `playerId` saw them; `{}` when absent or unusable. */
 async function readCachedTurns(dir: string, gameId: number, playerId: number): Promise<Record<string, unknown>> {
+  return (await readCache(dir, gameId, playerId)).turns;
+}
+
+/** The newest {@link CACHED_TURNS} numeric keys of `rec` at or below `upTo`, ascending. */
+function newestTurns(rec: Record<string, unknown>, upTo = Infinity): number[] {
+  return Object.keys(rec)
+    .filter((k) => /^\d+$/.test(k) && Number(k) <= upTo)
+    .map(Number)
+    .sort((a, b) => b - a)
+    .slice(0, CACHED_TURNS)
+    .sort((a, b) => a - b);
+}
+
+/** Write a game's cache file atomically, then prune old games. */
+async function writeCache(dir: string, body: CachedBoards): Promise<void> {
+  const path = boardCachePath(dir, body.gameId);
+  await mkdir(join(dir, 'boards'), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.${process.pid}.tmp`;
+  await writeFile(tmp, JSON.stringify(body), { mode: 0o600 });
+  await rename(tmp, path);
+  await pruneBoardCaches(dir);
+}
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** Cached orders, loosely: unusable entries are dropped, never thrown on. */
+function ordersOf(o: unknown): MyOrders | undefined {
+  if (!isRec(o) || !Array.isArray(o.deploys) || !Array.isArray(o.moves)) return undefined;
+  return {
+    deploys: (o.deploys as unknown[])
+      .filter((d): d is Rec => isRec(d) && isNum(d.territoryId) && isNum(d.armies))
+      .map((d) => ({ territoryId: d.territoryId as number, armies: d.armies as number })),
+    moves: (o.moves as unknown[])
+      .filter((m): m is Rec => isRec(m) && isNum(m.from) && isNum(m.to) && isNum(m.armies))
+      .map((m) => ({ from: m.from as number, to: m.to as number, armies: m.armies as number })),
+  };
+}
+
+/** The orders this server sent for `gameId` as `playerId`, by turn (#119); empty when none. Never throws. */
+export async function readCachedOrders(dir: string, gameId: number, playerId: number): Promise<Map<number, MyOrders>> {
+  const { orders } = await readCache(dir, gameId, playerId);
+  const out = new Map<number, MyOrders>();
+  for (const turn of newestTurns(orders)) {
+    const o = ordersOf(orders[String(turn)]);
+    if (o) out.set(turn, o);
+  }
+  return out;
+}
+
+/**
+ * Cache the deploys and moves this server sent for turn `turn` of `gameId` as `playerId` (#119),
+ * keeping the newest {@link CACHED_TURNS} turns of orders and every cached board; the newest send
+ * for a turn wins. Never throws.
+ */
+export async function writeOrdersCache(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  turn: number,
+  orders: MyOrders,
+): Promise<boolean> {
   try {
-    const c: unknown = JSON.parse(await readFile(boardCachePath(dir, gameId), 'utf8'));
-    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId) return {};
-    if (isRec(c.turns)) return c.turns;
-    // A single-board cache written before turns were kept.
-    if (typeof c.turn === 'number') return { [String(c.turn)]: c.board };
-    return {};
+    const cache = await readCache(dir, gameId, playerId);
+    const all = { ...cache.orders, [String(turn)]: { deploys: orders.deploys, moves: orders.moves } };
+    const kept: Record<string, MyOrders> = {};
+    for (const n of newestTurns(all)) kept[String(n)] = all[String(n)] as MyOrders;
+    await writeCache(dir, { gameId, playerId, turns: cache.turns as Record<string, BoardState>, orders: kept });
+    return true;
   } catch {
-    return {};
+    return false;
   }
 }
 
@@ -229,22 +317,12 @@ export async function writeBoardCache(
   board: BoardState,
 ): Promise<boolean> {
   try {
-    const path = boardCachePath(dir, gameId);
-    const kept = { ...(await readCachedTurns(dir, gameId, playerId)), [String(turn)]: board };
-    const newest = Object.keys(kept)
-      .filter((k) => /^\d+$/.test(k) && Number(k) <= turn)
-      .map(Number)
-      .sort((a, b) => b - a)
-      .slice(0, CACHED_TURNS)
-      .sort((a, b) => a - b);
+    const cache = await readCache(dir, gameId, playerId);
+    const kept = { ...cache.turns, [String(turn)]: board };
     const turns: Record<string, BoardState> = {};
-    for (const n of newest) turns[String(n)] = kept[String(n)] as BoardState;
-    await mkdir(join(dir, 'boards'), { recursive: true, mode: 0o700 });
-    const tmp = `${path}.${process.pid}.tmp`;
-    const body: CachedBoards = { gameId, playerId, turns };
-    await writeFile(tmp, JSON.stringify(body), { mode: 0o600 });
-    await rename(tmp, path);
-    await pruneBoardCaches(dir);
+    for (const n of newestTurns(kept, turn)) turns[String(n)] = kept[String(n)] as BoardState;
+    const orders = Object.keys(cache.orders).length ? { orders: cache.orders as Record<string, MyOrders> } : {};
+    await writeCache(dir, { gameId, playerId, turns, ...orders });
     return true;
   } catch {
     return false;

@@ -1073,9 +1073,9 @@ describe('enemy deploy estimate', () => {
     // No visible enemy, or only a fogged one: the floor.
     expect(defaultEnemyDeploy(g, board([mine(1, 2), neutral(3, 2)]), ME)).toBe(MIN_ENEMY_DEPLOY);
     expect(defaultEnemyDeploy(g, board([mine(1, 99), fogged(2)]), ME)).toBe(MIN_ENEMY_DEPLOY);
-    // A 40-stack next to me but no visible bonus: base income only (the stack is just a cap).
+    // A 40-stack next to me but no visible bonus: base income only (a stack is no part of the estimate, #119).
     expect(defaultEnemyDeploy(g, board([mine(1, 2), enemy(2, 40), neutral(3, 3)]), ME)).toBe(5);
-    // Player 20 holds bonus B (+2) in full: 5 + 2 = 7, under its cap round(0.75 × 40) = 30.
+    // Player 20 holds bonus B (+2) in full: 5 + 2 = 7.
     expect(defaultEnemyDeploy(g, board([mine(3, 2), enemy(4, 40), enemy(5, 1), neutral(1, 3)]), ME)).toBe(7);
   });
 
@@ -1084,8 +1084,8 @@ describe('enemy deploy estimate', () => {
   // fixed estimate (12 movable + 5) said it was safe, but the enemy deployed more.
   // T1 is a held +2 bonus, so holding it pays (L1 concedes borders that protect nothing).
   // R1: the enemy's estimate is now income-aware, so the fixture gives it the income
-  // the live opponent really had — a visibly held +6 bonus (T2 + T4) — and the stack
-  // rule (round(0.75 × 13) = 10) caps 5 + 6 = 11 at 10, as before.
+  // the live opponent really had — a visibly held +6 bonus (T2 + T4): 5 + 6 = 11, with no
+  // stack cap since #119.
   const g = buildGraph(
     makeMap(
       [1, 2, 3, 4],
@@ -1112,8 +1112,8 @@ describe('enemy deploy estimate', () => {
     const p = planTurn({ graph: g, board: florida, me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
     const d = p.deploys.find((x) => x.territoryId === 1)?.armies ?? 0;
     expect(d).toBeGreaterThan(0);
-    // Holds against 12 movable + ~10 deploy.
-    expect(armiesToTake(12 + d)).toBeGreaterThan(12 + 10);
+    // Holds against 12 movable + ~11 deploy.
+    expect(armiesToTake(12 + d)).toBeGreaterThan(12 + 11);
     expect(p.rationale.join(' ')).toMatch(/so it holds/);
     expect(p.moves.filter((m) => m.from === 1)).toEqual([]);
   });

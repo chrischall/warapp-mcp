@@ -331,12 +331,15 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   planned turns kept so a turn planned twice still finds the one before it, used only when
   cached on exactly the previous turn). When a live in-progress history is seen, record its
   shape here and tighten the parser.
-- **My own past orders — UNVERIFIED, not read yet (#119).** The opponent tracker can use the
-  player's own orders on a turn as measurements (`TurnBoard.orders`, `measureOrders` in
-  `src/analysis/opponents.ts`: the defenders a failed attack killed, what a hold that fell really
-  killed), but no tool supplies them: whether `GetHistory` carries the player's own orders for a
-  game in progress (a finished game's feed shows every side's), and in what shape, needs a live
-  check. Until then the tracker reads the boards alone, as before.
+- **My own past orders (#119).** The opponent tracker uses the player's own orders on a turn as
+  measurements (`TurnBoard.orders`, `measureOrders` in `src/analysis/opponents.ts`: the defenders a
+  failed attack killed, what a hold that fell really killed). They come from this server, not from
+  war.app: `warapp_submit_turn` caches the deploys and moves it sent (once `SendOrders` returned
+  without an error) beside the boards in `<dataDir>/boards/<gameId>.json`, by turn, and
+  `boardHistory` attaches them. Orders sent from the web client are unknown, and the tracker reads
+  those turns from the boards alone, as before. Whether `GetHistory` carries the player's own
+  orders for a game in progress (a finished game's feed shows every side's) is UNVERIFIED and not
+  read.
 
 When an in-progress game is captured live, record its shape here, add an anonymized fixture,
 tighten `boardFromStanding`, and set `verified: true`.

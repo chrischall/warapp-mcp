@@ -35,7 +35,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           'exceeds what it could earn), its income estimate (each observed deploy is a lower bound under fog, so: the ' +
           'largest of its last three observed turns, or its visible army growth plus losses per turn (stacks out of the fog left out) when more, capped ' +
           'at what it could earn and at least its base income plus the bonuses it visibly holds; it never decays: an ' +
-          'earlier figure is carried until a bonus it visibly held is visibly broken; with the method used ' +
+          'earlier figure is carried until a bonus it visibly held is visibly broken; orders you sent through warapp_submit_turn count as measurements; with the method used ' +
           'and the observed range), its unaccounted armies (income earned since first ' +
           'seen minus its visible army change and losses: armies that must be in the fog) and inferred bonuses (the ' +
           'combinations of bonuses it could hold whose values best explain the gap between that income and what it ' +
@@ -85,6 +85,8 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
           deploy: x.observed,
           ...(x.raw !== x.observed ? { uncapped: x.raw, cap: x.cap } : {}),
           visibleIncome: x.visibleIncome,
+          // #119: what my own orders that turn measured (defenders my failed attacks killed, …).
+          ...(x.measured ? { measured: x.measured } : {}),
           ...(x.broken.length ? { brokenBonuses: x.broken.map(bonusOf) } : {}),
           ...(rung === 'full'
             ? {

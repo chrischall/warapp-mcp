@@ -40,6 +40,7 @@ import {
   symmetricStart,
   trackGame,
   trackOpponents,
+  type MyOrders,
   type TurnBoard,
   type PlanGoal,
   type PlannerSettings,
@@ -67,7 +68,15 @@ import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type L
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
-import { boardFromHistory, CACHED_TURNS, readBoardHistory, writeBoardCache, type TrendSource } from '../trend.js';
+import {
+  boardFromHistory,
+  CACHED_TURNS,
+  readBoardHistory,
+  readCachedOrders,
+  writeBoardCache,
+  writeOrdersCache,
+  type TrendSource,
+} from '../trend.js';
 import type { BoardState } from '../board.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -704,6 +713,14 @@ function mustPlayCard(hand: readonly Card[], rules: CardRules, shed: number, giv
 
 const cardView = (c: Card) => ({ id: c.id, name: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}) });
 
+/** The deploys and moves of a sent turn, as opponent tracking reads my orders (#119); card plays left out. */
+export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
+  return {
+    deploys: orders.flatMap((o) => (o.kind === 'deploy' ? [{ territoryId: o.territoryId, armies: o.armies }] : [])),
+    moves: orders.flatMap((o) => (o.kind === 'move' ? [{ from: o.from, to: o.to, armies: o.armies }] : [])),
+  };
+}
+
 /** Earlier turns that, when all cached, make the GameFeed history read unnecessary. */
 const TREND_TURNS = 2;
 
@@ -720,7 +737,8 @@ export interface BoardHistory {
  * before `turn`, the board this server cached when it planned or tracked that turn (a verified
  * live board), else GameFeed's `GetHistory` standing when the feed sends one (unverified for
  * games in progress). History is read only for turns the cache lacks, and not at all when the
- * last {@link TREND_TURNS} turns are cached. Empty otherwise; never throws.
+ * last {@link TREND_TURNS} turns are cached. Each carries the deploys and moves
+ * `warapp_submit_turn` sent that turn, when it sent them (#119). Empty otherwise; never throws.
  */
 export async function boardHistory(ctx: LiveContext, game: Game, me: Player, turn: number | null): Promise<BoardHistory> {
   if (turn === null || turn < 2) return { boards: [] };
@@ -746,7 +764,14 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
       // History is optional: the cache stands.
     }
   }
-  const boards = [...byTurn].sort(([a], [b]) => a - b).map(([t, b]) => ({ turn: t, board: b.board }));
+  // The orders this server sent on those turns (#119): measurements of what an opponent deployed.
+  const orders = ctx.dataDir ? await readCachedOrders(ctx.dataDir, game.id, me.id) : new Map<number, MyOrders>();
+  const boards = [...byTurn]
+    .sort(([a], [b]) => a - b)
+    .map(([t, b]): TurnBoard => {
+      const o = orders.get(t);
+      return { turn: t, board: b.board, ...(o ? { orders: o } : {}) };
+    });
   const previous = byTurn.get(turn - 1);
   return { boards, ...(previous ? { previous } : {}) };
 }
@@ -1265,6 +1290,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               await ctx.rpc.call('SendOrders', Method.SendOrders, (w) =>
                 writeSendOrdersParams(w, st.gameId, st.playerId, st.orders, st.turnNumber),
               );
+              // Sent: keep my deploys and moves for opponent tracking (#119). Best effort, never throws.
+              if (ctx.dataDir) await writeOrdersCache(ctx.dataDir, st.gameId, st.feedPlayerId, st.turnNumber, myOrdersOf(st.orders));
             } catch (e) {
               // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.
               if (e instanceof WarappServerError && e.code === 11) throw incomeRefused(e, st.income, st.incomeGiven);

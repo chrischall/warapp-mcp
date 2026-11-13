@@ -11,7 +11,9 @@ import {
   CACHED_TURNS,
   readBoardCache,
   readBoardHistory,
+  readCachedOrders,
   writeBoardCache,
+  writeOrdersCache,
 } from '../src/trend.js';
 
 // Synthetic GameFeed ids: the in-game id wrapped in two check digits each end.
@@ -186,5 +188,70 @@ describe('board cache', () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
     writeFileSync(join(dir, 'boards'), 'a file where the directory should be');
     expect(await writeBoardCache(dir, 1, ANN.id, 1, board)).toBe(false);
+  });
+});
+
+describe('orders cache (#119: my own orders as measurements)', () => {
+  const board: BoardState = {
+    source: 'browser',
+    verified: true,
+    territories: [{ territoryId: 1, owner: { kind: 'player', playerId: ANN.id }, armies: 5 }],
+  };
+  const orders = (armies: number) => ({
+    deploys: [{ territoryId: 1, armies }],
+    moves: [{ from: 1, to: 2, armies: armies + 1 }],
+  });
+
+  it('keeps the orders I sent by turn beside the boards, and a board write keeps them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    expect(await readCachedOrders(dir, 42, ANN.id)).toEqual(new Map());
+    await writeBoardCache(dir, 42, ANN.id, 3, board);
+    expect(await writeOrdersCache(dir, 42, ANN.id, 3, orders(3))).toBe(true);
+    await writeBoardCache(dir, 42, ANN.id, 4, board);
+    expect(await writeOrdersCache(dir, 42, ANN.id, 4, orders(4))).toBe(true);
+    // Sent again for the same turn (uncommitted and re-sent): the newest wins.
+    await writeOrdersCache(dir, 42, ANN.id, 4, orders(40));
+    expect(await readCachedOrders(dir, 42, ANN.id)).toEqual(new Map([[3, orders(3)], [4, orders(40)]]));
+    // The boards are untouched by an orders write.
+    expect(await readBoardCache(dir, 42, ANN.id, 3)).toEqual(board);
+    expect(await readBoardCache(dir, 42, ANN.id, 4)).toEqual(board);
+    // Another player's view replaces the file, orders included; another game sees none.
+    expect(await readCachedOrders(dir, 42, BOB.id)).toEqual(new Map());
+    expect(await readCachedOrders(dir, 43, ANN.id)).toEqual(new Map());
+    await writeBoardCache(dir, 42, BOB.id, 5, board);
+    expect(await readCachedOrders(dir, 42, ANN.id)).toEqual(new Map());
+  });
+
+  it(`keeps the newest ${CACHED_TURNS} turns of orders`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    for (let t = 1; t <= CACHED_TURNS + 2; t++) await writeOrdersCache(dir, 42, ANN.id, t, orders(t));
+    expect([...(await readCachedOrders(dir, 42, ANN.id)).keys()]).toEqual(
+      Array.from({ length: CACHED_TURNS }, (_, i) => i + 3),
+    );
+  });
+
+  it('reads loosely and never throws: unusable orders and entries are dropped', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    mkdirSync(join(dir, 'boards'));
+    writeFileSync(
+      boardCachePath(dir, 5),
+      JSON.stringify({
+        gameId: 5,
+        playerId: ANN.id,
+        turns: {},
+        orders: {
+          '2': { deploys: [{ territoryId: 1, armies: 2 }, { territoryId: 'x' }], moves: [{ from: 1, to: 2, armies: 3 }, null] },
+          '3': 'nope',
+          x: { deploys: [], moves: [] },
+        },
+      }),
+    );
+    expect(await readCachedOrders(dir, 5, ANN.id)).toEqual(
+      new Map([[2, { deploys: [{ territoryId: 1, armies: 2 }], moves: [{ from: 1, to: 2, armies: 3 }] }]]),
+    );
+    writeFileSync(boardCachePath(dir, 6), 'not json');
+    expect(await readCachedOrders(dir, 6, ANN.id)).toEqual(new Map());
+    writeFileSync(join(dir, 'blocked'), 'a file');
+    expect(await writeOrdersCache(join(dir, 'blocked'), 1, ANN.id, 1, orders(1))).toBe(false);
   });
 });

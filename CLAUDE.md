@@ -224,8 +224,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   says when), and a rationale line names the turns compared and the reveals skipped. The
   estimate is max(visible-bonus figure, observed)
   and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). **The fog
-  prior (#119):** in a 1v1 that started even (`PlanGameContext.symmetricStart`, set by
-  `warapp_plan_turn` from `symmetricStart(settings, map)`: any distribution but a map scenario),
+  prior (#119):** in a 1v1 that started even (two players in the game, no teams — not an FFA
+  down to two; `PlanGameContext.symmetricStart`, set by `warapp_plan_turn` from
+  `symmetricStart(settings, map)`: any distribution but a map scenario),
   an opponent bordering the fog is estimated at least at my own income (card armies out), capped
   at what it could earn on the board, and the warning calls it a prior — every observed figure is
   a lower bound under fog, and without it a finished game's true deploys read 2–3× low. Each border
@@ -243,7 +244,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn, income = the most of the last three observed turns (or its stock and flow when more),
   floored at base + visibly held bonuses — and never decaying (#119): an earlier figure is carried
   until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it;
-  my own orders on a turn (`TurnBoard.orders`, when known) are measurements (`measureOrders`),
+  my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
+  deploys and moves it sent beside the boards, and `boardHistory` attaches them as
+  `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing),
   unaccounted armies (earned since first seen − visible army change − visible losses) and
   inferred bonuses (combinations of up to three bonuses it could hold that best fit the income
   gap, all of them listed — candidates, never asserted). With 2+ observed turns the planner uses
