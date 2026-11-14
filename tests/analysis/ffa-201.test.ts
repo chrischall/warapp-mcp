@@ -72,3 +72,50 @@ describe('#201: a break without an elimination invites retaliation', () => {
     expect(p.warnings.join('\n')).not.toMatch(/invites retaliation/);
   });
 });
+
+describe('#201: absorb a smaller neighbour only when it closes the gap to the leader', () => {
+  // My 20 on T1 beside player 20's lone T2 (2 armies): fully visible, an elimination in reach.
+  // Player 30 leads far away (T3–T5, 100 armies) with bonus B803 worth `lead`.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5, 6],
+      [
+        [1, 2],
+        [1, 6],
+        [3, 4],
+        [4, 5],
+        [5, 6],
+      ],
+      [[803, 0, [3, 4, 5]]],
+    ),
+  );
+  const run = (lead: number, adapt = true) =>
+    planTurn({
+      graph: buildGraph({ ...g.map, bonuses: [{ id: 803, name: 'B803', value: lead, territoryIds: [3, 4, 5], bonusIds: [] }] }),
+      board: board([mine(1, 20), enemy(2, 2, 20), enemy(3, 40, 30), enemy(4, 30, 30), enemy(5, 30, 30), neutral(6, 2)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: adapt ? { adapt: true } : { goal: 'balanced' },
+    });
+
+  it('my income plus its income short of the leader: not finished off', () => {
+    const p = run(10);
+    expect(attacks(p).some((m) => m.to === 2)).toBe(false);
+    expect(p.rationale.join('\n')).toMatch(
+      /Not finishing off player 20 \(#201\): player 30 leads the free-for-all on ~15 income; absorbing player 20's ~5 brings mine from 5 to 10, short of it — the others are better spent against the leader\./,
+    );
+    expect(p.rationale.join('\n')).toMatch(/Not attacking .*T2 \(#2\).*would not bring my income to the FFA leader's/);
+  });
+
+  it('enough to match the leader: finished off', () => {
+    const p = run(4);
+    expect(attacks(p).some((m) => m.to === 2)).toBe(true);
+    expect(p.rationale.join('\n')).toMatch(/Absorb player 20 \(#201\): its ~5 income brings mine from 5 to 10, matching leader player 30's ~9\./);
+  });
+
+  it('an explicit goal keeps the old behaviour', () => {
+    expect(attacks(run(10, false)).some((m) => m.to === 2)).toBe(true);
+  });
+});

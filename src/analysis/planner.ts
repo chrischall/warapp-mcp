@@ -246,6 +246,11 @@
 //     before and after (`frontierDelta`, its threat gone); a buffer whose removal costs more than
 //     a turn of my income and more than PAYBACK_TURNS × the income its land adds is left standing
 //     ("Not finishing off player …"), and no pass takes its territories this turn.
+//     #201 (adapting, an FFA with two or more opponents and a leader on strength that is not me): a
+//     player smaller than me, not the leader, is finished off or pressed only when its income added
+//     to mine reaches the leader's ("Absorb player …"); otherwise it is left standing the same way
+//     ("Not finishing off player … (#201)"), no pass takes its territories, and its "Not attacking"
+//     reason says so: the armies are better spent with the others against the leader.
 //     An opponent bordering the fog is never eliminated (issue #60): it is pressured
 //     instead — every visible territory attacked, each sized for its full deploy plus
 //     pressureMargin (an attack sized for exactly the estimate failed live), and
@@ -2838,6 +2843,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const coverOf = (x: number) => coverKeep.get(x) ?? 0;
   /** #179: a buffer in an FFA left standing: no pass captures its territories this turn. */
   const spared = new Set<number>();
+  /** #201: players left standing because absorbing them would not catch the leader. */
+  const unabsorbed = new Set<number>();
   const captured = new Set<number>();
   /** Targets taken by a combined (multi-source) capture. */
   const combined = new Set<number>();
@@ -6693,6 +6700,34 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
      * the profile, rule 0p.3; with no visible neutral next to me,
      * nothing to compare with: no limit). All or nothing.
      */
+    /**
+     * #201 (adapting, an FFA with two or more opponents, a leader on strength that is not me):
+     * finishing off or pressing a player smaller than me, not the leader, absorbs its income — worth
+     * it only when its income added to mine matches the leader's; else the armies are better spent
+     * with the others against the leader. A rationale line says which.
+     */
+    const absorbs = (p: number): boolean => {
+      const r = profile.ranking;
+      if (!auto || profile.format !== 'ffa' || profile.opponents < 2 || !r || r.commonThreat === null || p === r.commonThreat) return true;
+      const row = (q: number) => r.players.find((x) => x.playerId === q);
+      const mineRow = row(me);
+      const theirs = row(p);
+      const lead = row(r.commonThreat);
+      if (!mineRow || !theirs || !lead || theirs.strength >= mineRow.strength) return true;
+      const with_ = income + theirs.income;
+      if (with_ >= lead.income) {
+        rationale.push(
+          `Absorb player ${p} (#201): its ~${theirs.income} income brings mine from ${income} to ${with_}, matching leader player ${lead.playerId}'s ~${lead.income}.`,
+        );
+        return true;
+      }
+      unabsorbed.add(p);
+      for (const t of ownedBy.get(p) ?? []) spared.add(t);
+      rationale.push(
+        `Not finishing off player ${p} (#201): player ${lead.playerId} leads the free-for-all on ~${lead.income} income; absorbing player ${p}'s ~${theirs.income} brings mine from ${income} to ${with_}, short of it — the others are better spent against the leader.`,
+      );
+      return false;
+    };
     const pressureAffordable = (p: number): { t: number; from: number; cost: number }[] | null => {
       const d = deployOf(p);
       if (expansionCost === null) return [];
@@ -6718,6 +6753,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       return waived;
     };
     for (const p of candidates) {
+      if (!absorbs(p)) continue;
       const edge = fogEdge(p);
       if (edge.length) {
         // Fog is a reason not to claim elimination, not to skip a cheap capture (#60).
@@ -9588,6 +9624,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const p = (st.owner as { playerId: number }).playerId;
       if (uncounted(n)) return `it holds ${uncountedKind(n)}, whose strength the board does not carry`;
       if (unitsAt(n) > 0) return `an enemy commander stands there: only a commander strike (rule 1s) attacks it, sized for its owner's whole deploy`;
+      if (spared.has(n) && unabsorbed.has(p))
+        return `absorbing player ${p} would not bring my income to the FFA leader's: the armies are better spent against the leader (#201)`;
       if (spared.has(n)) return `player ${p} is a buffer in this FFA: finishing it off costs more frontier than it pays (#179)`;
       const skip = offenceSkip.get(n);
       if (skip) return skip;
