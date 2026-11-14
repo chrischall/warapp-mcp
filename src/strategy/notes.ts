@@ -2249,8 +2249,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'diplomacy',
     when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
     text:
-      'Calling the others to gang up on the leader, or posting its income, is resented by some players: one ' +
-      'calls it a popularity contest and blocks whoever sends it. Leave the board to make the case, and keep any ' +
+      'Calling the others to gang up on the leader, or posting its income, is resented: many forum posters ' +
+      'call it a popularity contest, and several block whoever sends it. Leave the board to make the case, and keep any ' +
       'message to your own position and your own border.',
     source: S.forumFfaChatEtiquette,
     basis: 'derived',
@@ -2272,8 +2272,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
     text:
       'A neighbour left alone where attacking it would plainly pay is the sign posters cite of two players ' +
-      'teaming. It cannot be proven and breaks no rule, and nothing in the game punishes it; the answer they ' +
-      'give is a deal of your own, where the game allows one.',
+      'teaming. It cannot be proven and breaks no rule, and nothing in the game punishes it; one answer given ' +
+      'is a deal of your own, where the game allows one.',
     source: S.forumHiddenTeaming,
     basis: 'source',
   },
@@ -2282,9 +2282,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'diplomacy',
     when: (p) => p.format === 'ffa' && p.opponents === 2,
     text:
-      'With three players, a forum poster says two against one is common and the skill is not being the one, ' +
-      'or breaking up the two. Our reading: the pair that has stopped fighting each other is the two; if it ' +
-      'is the other two, give one of them a reason to turn before both reach you.',
+      'A forum poster says two against one happens a lot in free-for-alls, and asks whether the skill is not ' +
+      'being the one, or breaking up the two. Our reading, with three players: the pair that has stopped ' +
+      'fighting each other is the two; if it is the other two, give one a reason to turn before both reach you.',
     source: S.forumFfaGames,
     basis: 'derived',
   },
@@ -2304,9 +2304,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'diplomacy',
     when: on({ format: ['ffa'], anyCards: true }),
     text:
-      'A territory that changes hands between the same two players every turn with few armies lost may be ' +
-      'card farming: friendly neighbours let one take it and the other retake it the same turn, so both earn ' +
-      'card pieces. Read it as a deal between them, not a war.',
+      'Card farming: friendly neighbours let one take a territory and the other retake it the same turn, so ' +
+      'both earn card pieces. The board shows the same owner each turn; the sign is two captures of it in ' +
+      'the events of every turn, a few armies lost each time. It can be mistaken for a real war: read it as a deal.',
     source: S.diplomacyGames,
     basis: 'source',
   },

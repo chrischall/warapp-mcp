@@ -1036,8 +1036,8 @@ Format:
 
 ## Diplomacy: truces and deals in a free-for-all (fourth pass)
 
-A fourth pass on 2026-11-14 (PLAN-TEAMS part E) read the site rules, the wiki's pages on private
-messaging, team games and diplomacy games, and forum threads on truces, their breaking and hidden
+A fourth pass on 2026-11-14 (PLAN-TEAMS part E) read the site rules, the wiki's pages on team games
+and diplomacy games, and forum threads on truces, their breaking and hidden
 teaming in free-for-alls. Each note's page was then fetched again and checked against the note, and
 claims the page did not carry were dropped. Notes from other games' writing (Diplomacy, Conquer Club)
 were left out: no note rests on a page outside war.app. Every note keeps to what the tools send: a
@@ -1074,20 +1074,22 @@ tool reads GameFeed alone and does not know the signed-in account's agreements
   **Advice only.** Source: <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced?Offset=20>
 - `diplomacy-restate-terms` — slow games forget; restate terms and say whether border stacking is a
   breach. **Advice only.** Source: <https://war.app/Forum/2981-psychology>
-- `diplomacy-no-gang-up-calls` — calls to gang up on the leader are resented by some, who block senders;
+- `diplomacy-no-gang-up-calls` — calls to gang up on the leader are resented by many; several block senders;
   speak to your own position. **Advice only.** Derived. Source:
   <https://war.app/Forum/759391-ffa-private-chat-etiquette>
 - `diplomacy-unspoken-truce` — three or four turns of no deploys on a shared border read as an unspoken
   truce; it binds nobody. **Advice only.** Source: <https://war.app/Forum/546500-ffa-competition-league>
 - `diplomacy-others-dealing` — a neighbour left alone where attacking would pay suggests two players
-  teaming; unprovable, legal, answered by a deal of your own. **Advice only.** Source:
+  teaming; unprovable, legal; one answer given is a deal of your own. **Advice only.** Source:
   <https://war.app/Forum/669761-playing-team-ffa>
-- `diplomacy-two-against-one` — with three players, two against one is common; do not be the one, or
-  break up the two.
+- `diplomacy-two-against-one` — a poster says two against one happens a lot in free-for-alls and asks
+  whether the skill is not being the one, or breaking up the two; our reading applies it to three players.
   **Advice only.** Derived. Source: <https://war.app/Forum/4723-best-way-quality-ffa-games>
 - `diplomacy-fog-checkable-terms` — diplomacy games use no or light fog; under heavier fog (Foggy and
   above) agree only terms you can check from your own side. **Advice only.** Derived. Source: <https://war.app/wiki/PE>
-- `diplomacy-card-farming` — a territory traded every turn with few losses may be card farming, a deal.
+- `diplomacy-card-farming` — card farming (a territory taken and retaken in the same turn) keeps its
+  owner on the board; its sign is two captures of it in each turn's events with a few armies lost. It can
+  be mistaken for a real war; read it as a deal.
   **Advice only.** Source: <https://war.app/wiki/PE>
 - `teams-team-chat` — each team has a chat only it reads: plan there (`channel: "team"`). **Advice
   only.** Source: <https://war.app/wiki/Team_Games>
