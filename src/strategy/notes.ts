@@ -2151,8 +2151,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     when: on({ format: ['ffa'], privateMessaging: false }),
     text:
       'With private messaging off, most posters in a long forum debate read it as the host asking for no ' +
-      'hidden deals, by mail or anywhere else; a few call mail fair. Keep any proposal in the game\'s public ' +
-      'chat, where every player can read it, and never take it to mail.',
+      'hidden deals, by mail or anywhere else; a few call mail fair. Take the stricter reading: the host ' +
+      'wants no deals, so propose none, in public chat or by mail.',
     source: S.forumFfaChatEtiquette,
     basis: 'derived',
   },

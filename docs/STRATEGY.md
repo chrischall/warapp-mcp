@@ -1033,6 +1033,8 @@ Format:
   **Advice only.** Derived. Source: <https://war.app/wiki/Team_Games>
 - `teams-no-march-through` — an order into a teammate's territory hands the armies over, so its land is a
   wall for your stacks. **Advice only.** Derived. Source: <https://war.app/wiki/Team_Games>
+- `teams-team-chat` — each team has a chat only it reads: plan there (`channel: "team"`); added in the
+  fourth pass, topic `format`. **Advice only.** Source: <https://war.app/wiki/Team_Games>
 
 ## Diplomacy: truces and deals in a free-for-all (fourth pass)
 
@@ -1049,9 +1051,9 @@ tool reads GameFeed alone and does not know the signed-in account's agreements
 - `diplomacy-site-rules` — working together breaks no site rule and is not reportable; only a second
   account in the game or a rigged game does; etiquette is unenforced. **Advice only.** Source:
   <https://war.app/wiki/Rules>
-- `diplomacy-private-off` — with private messaging off, most players read it as no hidden deals:
-  keep any proposal in public chat, never mail. **Advice only** (`warapp_send_chat` also
-  refuses a private message there). Derived. Source:
+- `diplomacy-private-off` — with private messaging off, most players read it as no hidden deals; we
+  read it as the host asking for no deals and propose none, in public chat or by mail (as the skill
+  does). **Advice only** (`warapp_send_chat` also refuses a private message there). Derived. Source:
   <https://war.app/Forum/759391-ffa-private-chat-etiquette>
 - `diplomacy-read-description` — read the host's description first; where it rules out alliances,
   make and accept none. **Advice only** (`warapp_advise_diplomacy` shows the description). Derived.
@@ -1062,8 +1064,8 @@ tool reads GameFeed alone and does not know the signed-in account's agreements
 - `diplomacy-truce-scope-end` — a truce limited to named territories leaves the rest open: cover the
   whole shared front or say what it excludes, give it an end; record it.
   **Advice only.** Derived. Source: <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced?Offset=20>
-- `diplomacy-truce-two-left` — a truce until "two are left" ended when others surrendered (one poster
-  held its letter was kept); tie the end to a turn or notice. **Advice only.** Source: <https://war.app/Forum/4467-fair-blacklist-here>
+- `diplomacy-truce-two-left` — a truce until "two are left" ended when others surrendered (the one poster
+  held that its letter was kept); tie the end to a turn or notice. **Advice only.** Source: <https://war.app/Forum/4467-fair-blacklist-here>
 - `diplomacy-stack-behind` — whoever stacked most near the line wins the break: keep the hold or the
   cap plus a stack behind, and read a partner's stacks as a warning. **Advice only.** Derived. Source:
   <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced>
@@ -1091,8 +1093,6 @@ tool reads GameFeed alone and does not know the signed-in account's agreements
   both players card pieces for a few armies (4 with the guard on, 2 without). It can be mistaken for a
   real war; read it as a deal.
   **Advice only.** Source: <https://war.app/wiki/PE>
-- `teams-team-chat` — each team has a chat only it reads: plan there (`channel: "team"`). **Advice
-  only.** Source: <https://war.app/wiki/Team_Games>
 
 ## Map (general)
 

@@ -594,6 +594,13 @@ with `channel` / `to` / `commitments`, `warapp_record_agreement`, `warapp_get_re
 - **Notes.** E1 is the skill only; the strategy notes and any `NoteCondition` for private messaging or an
   active relation are left to the notes step.
 
+*As built (the notes step, 2026-11-14):* the diplomacy topic and `teams-team-chat` in `src/strategy/notes.ts`, each
+listed in `docs/STRATEGY.md` ("Diplomacy: truces and deals in a free-for-all"). `NoteCondition` gained
+`privateMessaging` (from the game's settings); no condition on an active relation, since the strategy
+tool reads GameFeed alone and knows no agreements. Every note's page is on war.app (wiki or forum): no note
+rests on another game's writing. `diplomacy-private-off` follows the skill: private messaging off means
+propose no deal.
+
 **Strategy notes** from the digests, in the usual form (own words, at most 340 characters, one source
 link, `source` or `derived`). Follow the practice that caught most errors last time: check each note
 against what the tools can send, and re-read the page behind it. Likely new conditions on
