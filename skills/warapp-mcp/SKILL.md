@@ -458,6 +458,15 @@ do not send a backlog of turns unread. Override it when one of these shows up:
    fails when reinforced — then check again. A reply that needs `needsFirstMove: you` is avoided
    by listing the transfer out of that border last, or not making it.
 
+7. **A `guess` is offered.** When one opponent touches two or more borders and the plan's deploys
+   there cannot hold them all, `warapp_plan_turn` may return `guess` and `guessOrders`. Present it
+   to the user as a coin flip weighted by worth: name each border with its chance of being fully
+   held, the worst case of always splitting one way (`fixedLoss`, and the plan's own `planLoss`)
+   against the expected loss of the random split (`mixedLoss`), and this turn's draw. Show both
+   order lists — `orders` (the plan's fixed split) and `guessOrders` (the draw) — and let the user
+   choose; never pick for them, and never re-plan to re-roll the draw (it is seeded by the turn).
+   It is a model: one opponent, one deploy beside one border, its visible stacks.
+
 A bad plan is re-planned — with `focus`, `enemy_deploy` or `reserve` — never replaced by a
 deploy-only turn while captures are in reach. When editing by hand, keep the plan's card orders
 (an unplayed Reinforcement wastes its armies), size attacks by the submit preview's `attacks`

@@ -870,6 +870,39 @@ delays the orders listed after it; under No-Split the whole stack moves).
   works only if the stack attacks; send no more than you can afford to lose if it stays.
   **Advice only.** Source: <https://war.app/Forum/664334-skill-evaluation-phakh-gokhn>
 
+## Guessing at a border
+
+When one opponent touches two or more of my borders and the armies the plan deploys there cannot
+hold them all against its stacks plus its whole deploy, the opponent picks which border to hit.
+A fixed split is predictable: an opponent who reads it lands its deploy beside the border it
+always leaves short. Drawing the split at random, weighted by what each border is worth, keeps
+the opponent guessing and lowers the loss it can expect to inflict (`fighting-cover-valuable-attack-cheap`
+says the same in players' words). This is an attacker-picks-one-target security game: every border
+has only three meaningful deploy levels under exact combat (what planned moves out of it need,
+what holds the stacks alone, what holds the stacks plus the deploy), so the allocations are few and
+the mixed value is solved exactly as a small matrix game (`src/analysis/guess.ts`, a simplex).
+
+**Encoded:** `warapp_plan_turn` returns `guess` (the borders with the chance each is fully held, the
+best fixed split's worst case, the mix's expected loss, the plan's own split's worst case, one
+sampled split) and `guessOrders` (the plan's `orders` with that split in place of the plan's deploys
+on those borders) only when no fixed split holds every border and the mix beats the best fixed split by
+at least 5% of the worth at stake (`MIN_GUESS_GAIN`). The plan's own `orders` are unchanged; the
+guess is the user's choice. The draw is seeded by the game, the turn and a secret kept in the data directory, so re-planning a turn gives
+the same split.
+
+Measured on the planner's own test positions (350 usable, no Local Deployment, exact combat): 179
+had a fixed split holding everything; in 42 (12%) the mix beat the best fixed split, cutting the
+expected loss by about a quarter of the worth at stake — nearly all of them two borders where only
+one can be fully held.
+
+**Limits.** It is a model: one opponent (no guess when several touch these borders), one deploy
+landing beside one border, its visible stacks each attacking every border of mine it touches
+(fog-hidden stacks, split deploys, cards and a Bomb are not modelled), worth = 1 + the bonuses I
+hold in full containing the border + 100 with my commander there. Only the deploys the plan already
+puts on these borders are redistributed; transfers into a border are not counted as defence. Skipped
+with luck or weighted rounding, under Local Deployment, and under No-Split when the plan moves a
+whole stack out of one of these borders.
+
 ## The end-game: stand-offs, finishing, behind, leavers (third pass)
 
 Read 2026-11-13 by three researchers (two-player endings; free-for-all and team endings; how bots and

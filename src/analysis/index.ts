@@ -11,3 +11,4 @@ export * from './overrides.js';
 export * from './profile.js';
 export * from './exchange.js';
 export * from './opponents.js';
+export * from './guess.js';
