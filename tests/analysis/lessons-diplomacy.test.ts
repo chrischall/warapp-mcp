@@ -329,6 +329,162 @@ describe('B2 T5: the border cap', () => {
   });
 });
 
+describe('B2 T5: no order of mine fills a capped border past its cap (B2a review)', () => {
+  // A line: the partner's T2 (10) and player 30's T4 (10) both border my T5 (12), the truce's capped
+  // border; behind it my T6 (8, idle), T7 (1), T8 (3), then player 30's T9 (2). From T6 the nearest
+  // front is T4, through T5. Rule 6 used to send T6's idle armies into T5, and the cap then moved them
+  // straight back: opposite transfers, and a warning blaming armies my own orders had moved in.
+  const g7 = buildGraph(
+    makeMap(
+      [2, 4, 5, 6, 7, 8, 9],
+      [
+        [2, 5],
+        [4, 5],
+        [5, 6],
+        [6, 7],
+        [7, 8],
+        [8, 9],
+      ],
+      [],
+    ),
+  );
+  const line = (relations?: PlanRelation[]): PlanInput => ({
+    graph: g7,
+    board: board([enemy(2, 10, PARTNER), enemy(4, 10, OTHER), mine(5, 12), mine(6, 8), mine(7, 1), mine(8, 3), enemy(9, 2, OTHER)]),
+    me: ME,
+    income: 5,
+    settings: STD,
+    game: { players: FFA, turn: 8 },
+    options: { adapt: true, enemyDeploy: 3 },
+    ...(relations ? { relations } : {}),
+  });
+  const capped = (borderCap: number) => truce({ coveredMine: [5], coveredTheirs: [2], borderCap });
+  const both = (p: TurnPlan) =>
+    p.moves.filter((m) => m.kind === 'transfer' && p.moves.some((x) => x.kind === 'transfer' && x.from === m.to && x.to === m.from));
+
+  it('without the truce the idle stack walks into T5, toward player 30', () => {
+    const p = planTurn(line());
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 6, to: 5, armies: 7, kind: 'transfer' }));
+  });
+
+  it('at the cap, the idle stack stays and the hold deploy lands one step behind: nothing moves both ways', () => {
+    const i = line([capped(12)]);
+    const p = planTurn(i);
+    expect(both(p)).toEqual([]);
+    expect(p.moves.some((m) => m.kind === 'transfer' && m.to === 5)).toBe(false);
+    expect(endsAt(p, i, 5)).toBe(12);
+    expect(warned(p)).not.toMatch(/border cap/);
+  });
+
+  it('with room under the cap, only what fits moves in, and the plan says why the rest stay', () => {
+    const i = line([capped(17)]);
+    const p = planTurn(i);
+    expect(both(p)).toEqual([]);
+    // T5 holds with 3 deployed (15), so 2 of T6's idle armies fit under the cap of 17.
+    expect(deployedTo(p, 5)).toBe(3);
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 6, to: 5, armies: 2, kind: 'transfer' }));
+    expect(endsAt(p, i, 5)).toBe(17);
+    expect(why(p)).toMatch(/Transfer 2 from T6 \(#6\) to T5 \(#5\): moves idle interior armies toward the front \(the rest stay: a truce caps the armies on T5 \(#5\) at what this leaves there\)/);
+    expect(warned(p)).not.toMatch(/border cap/);
+  });
+});
+
+describe('B2 T5: a withdrawal never fills a capped border past its cap (B2a review)', () => {
+  // My T3 (4) faces player 30's T4 (30) and is conceded; it withdraws to T1 (10), the truce's capped
+  // border beside the partner's T2, or to T6 (2) on the other side when there is one.
+  const g9 = (withT6: boolean) =>
+    buildGraph(
+      makeMap(
+        withT6 ? [1, 2, 3, 4, 6, 7] : [1, 2, 3, 4],
+        [
+          [1, 2],
+          [1, 3],
+          [3, 4],
+          ...(withT6 ? ([[3, 6], [6, 7]] as [number, number][]) : []),
+        ],
+        [],
+      ),
+    );
+  const conceding = (withT6: boolean, t2: number, relations?: PlanRelation[]): PlanInput => ({
+    graph: g9(withT6),
+    board: board([mine(1, 10), enemy(2, t2, PARTNER), mine(3, 4), enemy(4, 30, OTHER), ...(withT6 ? [mine(6, 2), neutral(7, 2)] : [])]),
+    me: ME,
+    income: 5,
+    settings: STD,
+    game: { players: FFA, turn: 8 },
+    options: { adapt: true, enemyDeploy: 3 },
+    ...(relations ? { relations } : {}),
+  });
+  const capped = (borderCap: number, over: Partial<PlanRelation> = {}) => truce({ coveredMine: [1], borderCap, ...over });
+  const withdrawals = (p: TurnPlan) => p.moves.filter((m) => m.reason === 'withdraws from a conceded border');
+
+  it('without the truce T3 withdraws to T1; at its cap, to T6 instead', () => {
+    expect(withdrawals(planTurn(conceding(true, 6))).map((m) => m.to)).toEqual([1]);
+    const i = conceding(true, 6, [capped(10)]);
+    const p = planTurn(i);
+    expect(withdrawals(p)).toEqual([expect.objectContaining({ from: 3, to: 6, armies: 3 })]);
+    expect(endsAt(p, i, 1)).toBe(10);
+  });
+
+  it('with no other neighbour the armies stay, and the warning says a truce caps the border', () => {
+    const p = planTurn(conceding(false, 14, [capped(11, { trust: 'watch', watch: ['massing'] })]));
+    expect(withdrawals(p)).toEqual([]);
+    expect(warned(p)).toMatch(/T3 \(#3\) is conceded and has nowhere to withdraw to \(a truce caps the armies on the borders beside it\): its 3 movable armies stay\./);
+  });
+
+  it('a withdrawal a later deploy pushes past the cap is taken back, its lines with it', () => {
+    // At rule 1b T1 has room for the 3; the leftover deploy lands there later, and T1 has no step
+    // behind (T3 is conceded): the deploy stays, the withdrawal goes.
+    const i = conceding(false, 14, [capped(13)]);
+    const p = planTurn(i);
+    expect(deployedTo(p, 1)).toBe(5);
+    expect(withdrawals(p)).toEqual([]);
+    expect(why(p)).toMatch(/Truce with player 20 \(border cap 13\): my orders would leave more than 13 on T1 \(#1\), so move 3 fewer from T3 \(#3\) into it \(T5\)\./);
+    expect(why(p)).not.toMatch(/Withdraw 3 from T3/);
+    expect(warned(p)).not.toMatch(/The withdrawal from T3/);
+    expect(warned(p)).toMatch(/leave 2 above the agreed border cap of 13 on T1 \(#1\): this plan's own deploy of 5 there \(for its hold, or the leftover\) is what exceeds it/);
+  });
+});
+
+describe('B2 T5: a hold deploy above the cap with no step behind is named in the warning (B2a review)', () => {
+  // My only territory T1 (24) faces only the partner's T2 (40); T9 belongs to player 30, beyond T2.
+  // The partner massing keeps T1's full hold (T3): all 5 deployed there, above the cap of 25, and
+  // there is no territory of mine behind it to take them.
+  const g8 = buildGraph(
+    makeMap(
+      [1, 2, 9],
+      [
+        [1, 2],
+        [2, 9],
+      ],
+      [],
+    ),
+  );
+  const alone = (t1: number): PlanInput => ({
+    graph: g8,
+    board: board([mine(1, t1), enemy(2, 40, PARTNER), enemy(9, 3, OTHER)]),
+    me: ME,
+    income: 5,
+    settings: STD,
+    game: { players: FFA, turn: 8 },
+    options: { adapt: true, enemyDeploy: 5 },
+    relations: [truce({ borderCap: 25, trust: 'watch', watch: ['massing'] })],
+  });
+
+  it("says the plan's own deploy, sized for the hold, is what exceeds the cap", () => {
+    const p = planTurn(alone(24));
+    expect(deployedTo(p, 1)).toBe(5);
+    expect(warned(p)).toMatch(
+      /Truce with player 20: my orders leave 4 above the agreed border cap of 25 on T1 \(#1\): this plan's own deploy of 5 there \(for its hold, or the leftover\) is what exceeds it, and no territory of mine one step behind can take it — deploy less there to keep the term, or keep the deploy and break it: that breaks a term of the truce\./,
+    );
+  });
+
+  it('and the armies already standing there when they too are above it', () => {
+    const p = planTurn(alone(26));
+    expect(warned(p)).toMatch(/this plan's own deploy of 5 there \(for its hold, or the leftover\), on top of the 26 already standing there, is what exceeds it/);
+  });
+});
+
 describe('B2 T4: the partner is no second front', () => {
   // Rule 0p.2's scenario: my T1 (6) beside a 2-army neutral T2 (B821 +3) and player 20's T5 (2),
   // all of its B822 (+8). Player 30, far away on T9, is the partner: with the truce, player 20 is
@@ -368,6 +524,16 @@ describe('B2 T4: the partner is no second front', () => {
     const p = planTurn(i([{ player: OTHER, coveredMine: [], coveredTheirs: [9], state: 'active', trust: 'clear' }]));
     expect(attacks(p).map((m) => m.to).sort()).toEqual([2, 5]);
     expect(why(p)).not.toMatch(/no second front/);
+  });
+
+  it('a truce with a player who is out takes no front away (B2a review)', () => {
+    // Player 40 is on the list but eliminated: the profile counts two opponents (20 and 30), and a
+    // truce given directly with 40 must not bring that down to one.
+    const out = { ...i([{ player: 40, coveredMine: [], coveredTheirs: [], state: 'active', trust: 'clear' }]) };
+    out.game = { ...out.game, players: [...FFA, { id: 40, state: 'Eliminated' }] };
+    const p = planTurn(out);
+    expect(attacks(p).map((m) => m.to)).toEqual([2]);
+    expect(why(p)).toMatch(/no second front/);
   });
 });
 

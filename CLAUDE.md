@@ -210,7 +210,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   rule 4e); a covered border facing only the partner is sized for its stacks with no deploy (T2, in
   `forceAt`) unless my commander stands there, it protects more than 0.25 × income, or trust is `watch`
   (T3); the partner is no front for rule 0p.2 or rule 6, and a territory beside a covered one keeps its
-  hold (T4); a border cap moves the excess one step back after rule 6 (T5); `enforced` (T9) makes the
+  hold (T4); a border cap (T5) is never overfilled by my own withdrawals, staging or rule 6 transfers
+  (`capRoom` / `capStepRoom` at those call sites), and after rule 6 any excess is deployed one step back,
+  trimmed off a transfer in, or moved back — a warning names this plan's own deploy when that exceeds it; `enforced` (T9) makes the
   player no foe — `planRelationsFrom` never sets it (the ledger's field is ignored until a decoder-backed,
   turn-bounded source exists). `armiesFreed` counts a relaxed border only where the full hold would have
   been funded (not conceded, not refused by rule 1a or my income). **No

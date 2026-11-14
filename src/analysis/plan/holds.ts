@@ -19,6 +19,7 @@ import {
   type TwoStepPass,
 } from './shared.js';
 import type { DeployBook } from './orders.js';
+import { capRoom } from './relations.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
@@ -1297,8 +1298,9 @@ export function withdrawals(
           );
         }
       }
+      // B2 (T5): never onto a truce's capped border past its cap.
       const options = neighborsOf(g, t)
-        .filter(keep)
+        .filter((c) => keep(c) && capRoom(pc, ps, c, withdrawals) >= n)
         .map((c) => {
           const dist = bfsDistances(g, [c], { passable: keep });
           let best = Infinity;
@@ -1313,7 +1315,10 @@ export function withdrawals(
         .sort((a, b) => a.best - b.best || b.value - a.value || a.id - b.id);
       const to = options[0];
       if (!to) {
-        warnings.push(`${label(t)} is conceded and has nowhere to withdraw to: its ${n} movable armies stay.`);
+        const capped = neighborsOf(g, t).some((c) => keep(c) && capRoom(pc, ps, c, withdrawals) < n);
+        warnings.push(
+          `${label(t)} is conceded and has nowhere to withdraw to${capped ? ' (a truce caps the armies on the borders beside it)' : ''}: its ${n} movable armies stay.`,
+        );
         continue;
       }
       // #118: a border of a bonus I hold in full keeps its garrison — those armies kill attackers

@@ -12,7 +12,7 @@ import type { Staging } from './leftover.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
-import { truceKeep } from './relations.js';
+import { capStepRoom, truceKeep } from './relations.js';
 
 /** The transfers (rule 6), with staging toward `staging` (#125) when the leftover saved toward a step. */
 export function transfers(
@@ -66,15 +66,17 @@ export function transfers(
         if (moves.some((m) => m.from === t && m.kind === 'attack')) continue;
         const d = distStage.get(t);
         if (d === undefined || d < 1 || d > (distEnemy.get(t) ?? Infinity)) continue;
+        // B2 (T5): never onto a truce's capped border past its cap, nor back along a transfer.
         const step = neighborsOf(g, t)
-          .filter((x) => mineSet.has(x) && !conceded.has(x) && (distStage.get(x) ?? Infinity) < d)
+          .filter((x) => mineSet.has(x) && !conceded.has(x) && (distStage.get(x) ?? Infinity) < d && capStepRoom(pc, ps, t, x) > 0)
           .sort((a, b) => distStage.get(a)! - distStage.get(b)! || a - b)[0];
         if (step === undefined) continue;
         // #172: what a stack two steps away needs it to keep stays (the step below says so).
         const far = twoStepHold(t);
         // #179: nor what covers a finished-off player's exit. B2 (T4): nor what holds it beside a truce's covered territory.
         const truceStay = truceKeep(pc, threats, t) - guardAt(t);
-        const k = n - Math.max(twoStepKeep(t), coverOf(t), centralKeep.get(t) ?? 0, truceStay);
+        const room = capStepRoom(pc, ps, t, step);
+        const k = Math.min(n - Math.max(twoStepKeep(t), coverOf(t), centralKeep.get(t) ?? 0, truceStay), room);
         // No-Split (#124): the whole stack or nothing.
         if (k <= 0 || (noSplit && k < n)) continue;
         if (orderOf(t)) {
@@ -87,7 +89,9 @@ export function transfers(
         arrived.set(step, (arrived.get(step) ?? 0) + k);
         rationale.push(
           `Move ${k} from ${label(t)} to ${label(step)}: ${reason} (${st.cost} to take from ${label(st.from)}, not affordable this turn)${
-            k < n && far
+            k < n && k === room
+              ? `; the rest stay: a truce caps the armies on ${label(step)} at what this leaves there`
+              : k < n && far
               ? twoStepCite(t, far, (c) => `; the rest stay: ${c}`)
               : k < n && truceStay > 0
               ? '; the rest stay: they hold it beside a truce\'s covered territory'
@@ -112,8 +116,9 @@ export function transfers(
       if (d === undefined || d <= 1) continue;
       // Only into a territory held at the start of the turn: a planned capture is
       // not mine yet, and a "transfer" into it would execute as an attack.
+      // B2 (T5): never onto a truce's capped border past its cap, nor back along a transfer.
       const step = neighborsOf(g, t)
-        .filter((x) => mineSet.has(x) && !conceded.has(x) && (dist.get(x) ?? Infinity) < d)
+        .filter((x) => mineSet.has(x) && !conceded.has(x) && (dist.get(x) ?? Infinity) < d && capStepRoom(pc, ps, t, x) > 0)
         .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
       if (step === undefined) continue;
       // #128: interior only if this turn's attacks on players beside it land. Until they do, it
@@ -137,7 +142,8 @@ export function transfers(
         truceHold,
       );
       // No-Split (#124): a transfer sends the whole stack, so one that must keep some sends none.
-      const part = Math.min(n, Math.max(0, stayAt(t) - keep));
+      const room = capStepRoom(pc, ps, t, step);
+      const part = Math.min(n, Math.max(0, stayAt(t) - keep), room);
       const k = noSplit && part < n ? 0 : part;
       if (k <= 0) {
         if (twoStep)
@@ -160,7 +166,9 @@ export function transfers(
       arrived.set(step, (arrived.get(step) ?? 0) + k);
       rationale.push(
         `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${
-          k < n && twoStep
+          k < n && k === room
+            ? ` (the rest stay: a truce caps the armies on ${label(step)} at what this leaves there)`
+            : k < n && twoStep
             ? twoStepCite(t, twoStep, (c) => ` (the rest stay: ${c})`)
             : k < n && !ifFail && centralKeep.has(t)
             ? ` (the ${centralKeep.get(t)!} of the leftover kept central stay)`

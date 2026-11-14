@@ -1048,13 +1048,19 @@
 //           count; its Multi-Attack chains from the armies standing).
 //       T3. Never relaxed: my commander's territory, a border protecting more than
 //           TRUCE_RELAX_VALUE (0.25) × my income, and every border while the trust is `watch`.
-//       T4. The partner is no front: rule 0p.2 counts the opponents less the partners, and rule 6's
+//       T4. The partner is no front: rule 0p.2 counts the opponents less the partners still playing
+//           (`partnerFronts`: on the player list and `Playing`, else in sight), and rule 6's
 //           idle armies never head for a covered territory — while a territory beside one keeps what
 //           holds it there (T2's truce hold, or T3's full one).
-//       T5. A border cap: after rule 6, what my orders leave on a covered border territory is at
-//           most the cap — this turn's deploys there land one step behind instead, then the armies
-//           standing move back (toward a foe's territory no truce covers, else any open territory),
-//           said so when it already stood above the cap; what cannot move is a warning.
+//       T5. A border cap: what my orders leave on a covered border territory is at most the cap.
+//           No fill move overfills it (`capRoom`): rule 1b withdraws only where the whole
+//           withdrawal fits (else to another neighbour, or a warning that a truce caps them), and
+//           #125's staging and rule 6 send at most the room left and never back along a transfer
+//           planned this turn (`capStepRoom`). After rule 6, any excess still there: this turn's
+//           deploys land one step behind, then a transfer of mine into it carries fewer (its own
+//           line retold), then the armies standing move back (toward a foe's territory no truce
+//           covers, else any open territory), said so when it already stood above the cap; what
+//           cannot go is a warning — naming this plan's own deploy when that is what exceeds it.
 //       T7. Never a surprise break: a notice binds until `endsTurn`, then the partner is an
 //           ordinary opponent; the plan's `advice` says `give-notice` when the trust turned `watch`
 //           for the endgame or for outgrowing (not when I already gave notice).
@@ -1171,7 +1177,7 @@ import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
 import { newPlanState } from './plan/state.js';
-import { applyBorderCaps, armiesFreed, reportTruce, trucePass } from './plan/relations.js';
+import { applyBorderCaps, armiesFreed, partnerFronts, reportTruce, trucePass } from './plan/relations.js';
 
 export * from './plan/shared.js';
 export { alliesOf, planEnemyEstimates } from './plan/estimates.js';
@@ -1358,7 +1364,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const oneVsOne = auto && profile.format === '1v1' && facing.size > 0;
     // Rule 0p.2: in an FFA with two or more opponents left, no second front.
     // B2 (T4): a player a truce holds is no front.
-    const ffa = auto && profile.format === 'ffa' && profile.opponents - pc.truce.partners.size >= 2;
+    const ffa = auto && profile.format === 'ffa' && profile.opponents - partnerFronts(pc) >= 2;
     if (oneVsOne)
       rationale.push(
         '1v1 in contact: breaking an enemy bonus counts like completing one of equal value (the opponent loses that income), and expansion that completes no bonus this turn ranks below holding, breaking and completing.',

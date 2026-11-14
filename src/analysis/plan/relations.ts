@@ -10,10 +10,12 @@
 //       rule still applies);
 //   T3  never relaxed: my commander's territory, a border protecting more than
 //       TRUCE_RELAX_VALUE × my income, any border while the trust is `watch`;
-//   T4  the partner is no front: not for the no-second-front rule (rule 0p.2), and idle armies do
-//       not walk toward its covered territories (rule 6);
-//   T5  a border cap: my orders leave at most the cap on a covered border territory, the excess
-//       deployed or moved one step behind toward another front, said so when I already stand above it;
+//   T4  the partner is no front: not for the no-second-front rule (rule 0p.2, a partner still
+//       playing: `partnerFronts`), and idle armies do not walk toward its covered territories (rule 6);
+//   T5  a border cap: my orders leave at most the cap on a covered border territory — no transfer or
+//       withdrawal of mine fills it past the cap (`capRoom`), and the excess is deployed one step
+//       behind, an incoming transfer trimmed, or the standing armies moved one step behind toward
+//       another front, said so when I already stand above it;
 //   T7  never a surprise break: a notice binds until its `endsTurn`; the plan advises `give-notice`
 //       when the trust turned `watch` for the endgame or for outgrowing;
 //   T8  broken by them (`state: 'broken'`): an ordinary opponent at once, the plan naming the term,
@@ -26,7 +28,7 @@ import { bfsDistances, neighborsOf } from '../graph.js';
 import type { GameFormat } from '../profile.js';
 import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
-import { CONCEDE_FACTOR, type PlanAdvice, type PlanInput, type PlanRelation, type PlanRelationView, type TruceWatchReason } from './shared.js';
+import { CONCEDE_FACTOR, type PlanAdvice, type PlanInput, type PlannedMove, type PlanRelation, type PlanRelationView, type TruceWatchReason } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
@@ -105,6 +107,24 @@ export function truceOf(input: PlanInput, o: { notFoe: (p: number) => boolean; f
   return { given, status, binds, partners, enforced, noTarget, format: o.format };
 }
 
+/**
+ * T4 for rule 0p.2: the binding partners the game profile counts among my opponents — on the
+ * game's player list and still `Playing`, or, with no list, holding a territory in sight — so a
+ * truce with a player who is out takes no front away. 0 with no binding truce.
+ */
+export function partnerFronts(pc: PlanCtx): number {
+  const { truce, game, board, g } = pc;
+  if (!truce.partners.size) return 0;
+  const listed = game.players ?? [];
+  const playing = listed.length
+    ? (p: number) => listed.some((x) => x.id === p && (x.state ?? 'Playing') === 'Playing')
+    : (p: number) =>
+        board.territories.some(
+          (t) => g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.owner.playerId === p && t.armies !== null,
+        );
+  return [...truce.partners].filter(playing).length;
+}
+
 /** T2/T3 for one pass: the covered borders sized at the truce level, and those kept full and why. */
 export interface TrucePass {
   /** My border → the partner whose deploy it is not sized for (T2). */
@@ -175,17 +195,16 @@ function coveredBorder(pc: PlanCtx, r: PlanRelation): number[] {
     .sort(byNum);
 }
 
-/**
- * T5, after the transfers: what my orders leave on a covered border territory is at most the cap.
- * The excess is deployed, or moved, one step behind — to a territory of mine on no capped border,
- * nearest another front (a foe's territory no truce covers, else any territory not mine and not
- * covered) — and the plan says so; one already above the cap at the start is said to move back.
- * What cannot be moved (armies that arrived this turn, No-Split, no step) is a warning.
- */
-export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd: Holds, tp: TrucePass | undefined): void {
-  const { truce, g, mineSet, label, armiesOf, noSplit, territories: state } = pc;
-  if (!tp) return;
-  const { deployed, avail, moves, warnings, rationale } = ps;
+/** T5: per relation index, its capped covered border; and per territory, the lowest cap on it. */
+interface Caps {
+  borderOf: Map<number, number[]>;
+  capped: Map<number, number>;
+}
+const capsMemo = new WeakMap<PlanCtx, Caps>();
+function capsOf(pc: PlanCtx): Caps {
+  const hit = capsMemo.get(pc);
+  if (hit) return hit;
+  const { truce } = pc;
   const capped = new Map<number, number>();
   const borderOf = new Map<number, number[]>();
   truce.given.forEach((r, i) => {
@@ -194,6 +213,56 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
     borderOf.set(i, ts);
     for (const t of ts) capped.set(t, Math.min(capped.get(t) ?? Infinity, Math.max(0, Math.floor(r.borderCap))));
   });
+  const caps = { borderOf, capped };
+  capsMemo.set(pc, caps);
+  return caps;
+}
+
+/** What the orders planned so far (`ps.moves`, plus `pending` not yet in it) leave on my `t`. */
+function endsAt(pc: PlanCtx, ps: PlanState, t: number, pending: readonly PlannedMove[] = []): number {
+  let n = pc.armiesOf(t) + (ps.deployed.get(t) ?? 0);
+  for (const m of [...ps.moves, ...pending]) n += (m.kind === 'transfer' && m.to === t ? m.armies : 0) - (m.from === t ? m.armies : 0);
+  return n;
+}
+
+/**
+ * T5 for the moves that fill a border (rule 1b's withdrawals, #125's staging, rule 6's transfers):
+ * how many more armies my orders may move onto `t` without leaving more than a truce's border cap
+ * there, counting this turn's deploys and the orders planned so far (`pending`: those not yet in
+ * `ps.moves`). Infinity on a territory no cap binds — always, with no relations.
+ */
+export function capRoom(pc: PlanCtx, ps: PlanState, t: number, pending: readonly PlannedMove[] = []): number {
+  if (!pc.truce.partners.size) return Infinity;
+  const cap = capsOf(pc).capped.get(t);
+  if (cap === undefined) return Infinity;
+  return Math.max(0, cap - endsAt(pc, ps, t, pending));
+}
+
+/**
+ * T5 for one fill move from my `from` onto my `to`: {@link capRoom} on `to`, and 0 when a transfer
+ * from `to` into `from` is already planned — a cap that closes the nearest step turns idle armies
+ * another way, and they must not walk back along a move of this turn. Infinity with no binding truce.
+ */
+export function capStepRoom(pc: PlanCtx, ps: PlanState, from: number, to: number, pending: readonly PlannedMove[] = []): number {
+  if (!pc.truce.partners.size) return Infinity;
+  if ([...ps.moves, ...pending].some((m) => m.kind === 'transfer' && m.from === to && m.to === from)) return 0;
+  return capRoom(pc, ps, to, pending);
+}
+
+/**
+ * T5, after the transfers: what my orders leave on a covered border territory is at most the cap.
+ * The excess is deployed one step behind — to a territory of mine on no capped border, nearest
+ * another front (a foe's territory no truce covers, else any territory not mine and not covered) —
+ * then taken off a transfer of mine into it (the latest first; No-Split: a whole one only), then the
+ * standing armies move one step behind, and the plan says so; one already above the cap at the
+ * start is said to move back. What cannot go (No-Split, no step, armies that cannot move again) is a
+ * warning that names it — this plan's own deploy for a hold, when that is what exceeds the cap.
+ */
+export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd: Holds, tp: TrucePass | undefined): void {
+  const { truce, g, mineSet, label, armiesOf, noSplit, territories: state } = pc;
+  if (!tp) return;
+  const { deployed, avail, moves, warnings, rationale, incoming } = ps;
+  const { capped, borderOf } = capsOf(pc);
   if (!capped.size) return;
   // Another front: a foe's territory no truce covers, else any territory not mine no truce covers.
   const ids = [...g.territoryById.keys()];
@@ -205,12 +274,10 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
   const passable = (id: number) => mineSet.has(id) && !hd.conceded.has(id);
   const distFoe = bfsDistances(g, foeFront, { passable });
   const distAny = bfsDistances(g, ids.filter(open), { passable });
-  const endsAt = (t: number) =>
-    moves.reduce((n, m) => n - (m.from === t ? m.armies : 0) + (m.kind === 'transfer' && m.to === t ? m.armies : 0), armiesOf(t) + (deployed.get(t) ?? 0));
   truce.given.forEach((r, i) => {
     for (const t of borderOf.get(i) ?? []) {
       const cap = capped.get(t)!;
-      let excess = endsAt(t) - cap;
+      let excess = endsAt(pc, ps, t) - cap;
       if (excess <= 0) continue;
       const already = armiesOf(t) > cap;
       const dist = [...neighborsOf(g, t)].some((x) => distFoe.has(x)) ? distFoe : distAny;
@@ -219,6 +286,7 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
         .sort((a, b) => (dist.get(a) ?? Infinity) - (dist.get(b) ?? Infinity) || a - b)[0];
       const moved: { from: number; to: number; armies: number }[] = tp.capMoved.get(i) ?? [];
       const said: string[] = [];
+      const trimmed: string[] = [];
       if (step !== undefined) {
         // This turn's deploys there land one step behind instead.
         const off = Math.min(excess, deployed.get(t) ?? 0, avail.get(t)!);
@@ -231,6 +299,24 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
           if (shift > 0) said.push(`deploy ${shift} on ${label(step)} instead`);
           excess -= shift;
         }
+      }
+      // A transfer of mine into it carries fewer (the latest first; No-Split: a whole one only): the
+      // armies stay where they stood rather than arrive and move back. Its own line is retold.
+      for (let j = moves.length - 1; j >= 0 && excess > 0; j--) {
+        const m = moves[j]!;
+        if (m.kind !== 'transfer' || m.to !== t) continue;
+        const k = Math.min(excess, m.armies);
+        if (noSplit && k < m.armies) continue;
+        retell(pc, ps, m, m.armies - k);
+        m.armies -= k;
+        if (!m.armies) moves.splice(j, 1);
+        avail.set(m.from, (avail.get(m.from) ?? 0) + k);
+        if (hd.arrived.has(t)) hd.arrived.set(t, Math.max(0, hd.arrived.get(t)! - k));
+        if (m.reason === WITHDRAWS && incoming.has(t)) incoming.set(t, Math.max(0, incoming.get(t)! - k));
+        excess -= k;
+        trimmed.push(`move ${k} fewer from ${label(m.from)} into it`);
+      }
+      if (step !== undefined) {
         // Then the armies standing there, unless No-Split would send the whole stack.
         const k = Math.min(excess, avail.get(t)!);
         const busy = moves.some((m) => m.from === t);
@@ -254,18 +340,48 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
         }
       }
       if (moved.length) tp.capMoved.set(i, moved);
-      if (said.length)
+      if (said.length || trimmed.length)
         rationale.push(
-          `Truce with player ${r.player} (border cap ${cap}): ${already ? `${label(t)} already stands above the cap with ${armiesOf(t)}, so` : `my orders would leave more than ${cap} on ${label(t)}, so`} ${said.join(' and ')}, toward another front (T5).`,
+          `Truce with player ${r.player} (border cap ${cap}): ${already ? `${label(t)} already stands above the cap with ${armiesOf(t)}, so` : `my orders would leave more than ${cap} on ${label(t)}, so`} ${[...trimmed, ...said].join(' and ')}${said.length ? ', toward another front' : ''} (T5).`,
         );
-      if (excess > 0)
-        warnings.push(
-          `Truce with player ${r.player}: my orders leave ${excess} above the agreed border cap of ${cap} on ${label(t)}${
-            step === undefined ? ' (no territory of mine one step behind to move them to)' : noSplit ? ' (No-Split: an order sends the whole stack)' : ' (armies that arrived this turn cannot move again)'
-          }: that breaks a term of the truce.`,
-        );
+      if (excess > 0) {
+        const dep = deployed.get(t) ?? 0;
+        const why =
+          step === undefined && dep > 0
+            ? `: this plan's own deploy of ${dep} there (for its hold, or the leftover)${armiesOf(t) > cap ? `, on top of the ${armiesOf(t)} already standing there,` : ''} is what exceeds it, and no territory of mine one step behind can take it — deploy less there to keep the term, or keep the deploy and break it`
+            : step === undefined
+            ? ' (no territory of mine one step behind to move them to)'
+            : noSplit
+            ? ' (No-Split: an order sends the whole stack)'
+            : ' (the armies there cannot move again this turn)';
+        warnings.push(`Truce with player ${r.player}: my orders leave ${excess} above the agreed border cap of ${cap} on ${label(t)}${why}: that breaks a term of the truce.`);
+      }
     }
   });
+}
+
+/** Rule 1b's withdrawal reason (holds.ts), which the line retold below is keyed on. */
+const WITHDRAWS = 'withdraws from a conceded border';
+
+/**
+ * T5: a transfer the cap trims now carries `armies`: its own rationale line says so, or goes with
+ * it (and so does a dropped withdrawal's Order Priority warning) — the lines rule 1b, #125's staging
+ * and rule 6 wrote for it, as stand-still.ts's reclaim finds them.
+ */
+function retell(pc: PlanCtx, ps: PlanState, m: PlannedMove, armies: number): void {
+  const { label } = pc;
+  const { rationale, warnings } = ps;
+  const verb = m.reason === WITHDRAWS ? 'Withdraw' : m.reason === 'moves idle interior armies toward the front' ? 'Transfer' : 'Move';
+  const head = `${verb} ${m.armies} from ${label(m.from)} to ${label(m.to)}:`;
+  const r = rationale.findIndex((l) => l.startsWith(head));
+  if (r >= 0) {
+    if (armies) rationale[r] = `${verb} ${armies} from ${label(m.from)} to ${label(m.to)}:${rationale[r]!.slice(head.length)}`;
+    else rationale.splice(r, 1);
+  }
+  if (!armies && m.reason === WITHDRAWS) {
+    const w = warnings.findIndex((l) => l.startsWith(`The withdrawal from ${label(m.from)} only executes`));
+    if (w >= 0) warnings.splice(w, 1);
+  }
 }
 
 /** The trust reasons that make the plan advise giving notice (T7). */

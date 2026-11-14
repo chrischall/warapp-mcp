@@ -302,7 +302,8 @@ The plan output gains `relations`: per agreement its state, trust, flags, armies
 **Tests** (`tests/analysis/lessons-diplomacy.test.ts`, each a miniature like the lessons files): a
 truce frees armies that complete a bonus elsewhere; the partner massing restores the full hold; the
 commander's border is never thinned; a valuable border is never thinned; the endgame restores full
-holds; no pass targets the partner; the cap moves excess back; notice binds until its turn; a break is
+holds; no pass targets the partner; the cap moves excess back, and no order of mine fills a capped
+border past it (an idle stack whose nearest front runs through it, a withdrawal); notice binds until its turn; a break is
 an opponent the same turn; the golden corpus is unchanged without relations.
 
 *As built (B2a, 2026-11-14):* rules T1–T5 and T7–T9 in `src/analysis/plan/relations.ts`, the phase
@@ -318,7 +319,13 @@ decoder (#163) is unverified, so it is never "sure" and gives today's warning; p
 decoder-backed, turn-bounded source. `armiesFreed` is per relaxed border the full hold's shortfall less
 the truce hold's, counted only where the plan without the truce would have funded the full hold — not on
 a border this plan concedes, nor one whose full hold rule 1a's economic test or my income refuses — and
-at most my income. A plan holding no territory still reports each truce given. Not yet (B2b): T6 (`lossIfBroken`, `safeIfTruceHolds`) and
+at most my income. A plan holding no territory still reports each truce given. B2a review: no withdrawal, staging or
+rule 6 transfer of mine fills a capped border past its cap (`capRoom`; rule 6 and staging never move
+back along a transfer planned this turn), so the plan never moves armies both ways between two
+territories; any excess after rule 6 is deployed one step behind, then trimmed off a transfer in, then
+moved back; a warning that remains names this plan's own deploy when that is what exceeds the cap (so
+the agent can choose between the hold and the term). Rule 0p.2 subtracts only the partners still
+playing (`partnerFronts`). Not yet (B2b): T6 (`lossIfBroken`, `safeIfTruceHolds`) and
 `warapp_submit_turn`'s `break_agreement`. With no relations the golden corpus is byte-identical
 (`GOLDEN_FULL=1`), and the seeded legality property test also plans its boards under a truce.
 
