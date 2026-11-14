@@ -6,7 +6,7 @@ import { captureCost, planTurn, type PlannerSettings, type TurnPlan } from '../.
 import { boardStateFromLive, OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap, Player } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
-import { board, mine, neutral } from './helpers.js';
+import { board, mine, neutral, sizedBeforeMargin } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -686,7 +686,9 @@ describe('planner: commanders through the live board (#61)', () => {
       income: 5,
       settings: STD,
     });
-    expect(attacks(plan)[0]).toMatchObject({ from: 1, to: 2, armies: captureCost(0 + COMMANDER_STRENGTH + 5, STD)! });
+    expect(attacks(plan)[0]).toMatchObject({ from: 1, to: 2 });
+    // #226: sized for the commander and the owner's deploy; idle armies on T1 then join it as a margin.
+    expect(sizedBeforeMargin(plan, 1, 2)).toBe(captureCost(0 + COMMANDER_STRENGTH + 5, STD)!);
     expect(plan.conceded).not.toContain(1);
     expect(plan.rationale).toContain('My commander stays on T1 (#1): planned moves carry armies only, never the commander.');
     const named = (id: number) => ({ id, name: `T${id}` });

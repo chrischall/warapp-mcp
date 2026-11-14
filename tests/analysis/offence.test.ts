@@ -19,7 +19,7 @@ import {
   type TurnPlan,
 } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, fogged, mine, neutral, ruleAttacks } from './helpers.js';
+import { board, fogged, mine, neutral, ruleAttacks, sizedBeforeMargin } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -124,10 +124,12 @@ describe('break an inferred bonus (#72)', () => {
     );
     expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 5]]);
     // 5 − round(0.7 × 3) = 3 survivors, retaken for 5: worth 5 + 5 / 10 = 5.5.
-    // `cost` reads the final orders: the idle-army top-up sends 6 (sized at 5).
-    expect(attacks(p).map((m) => m.armies)).toEqual([6]);
+    // `cost` reads the final orders: the idle-army top-up sends 6 (sized at 5), and (#226) the
+    // armies T1 would otherwise leave idle join it as a margin: 9 of its 11 movable (2 hold it).
+    expect(sizedBeforeMargin(p, 1, 5)).toBe(6);
+    expect(attacks(p).map((m) => m.armies)).toEqual([9]);
     expect(p.offence).toEqual([
-      expect.objectContaining({ target: 5, kind: 'break', cost: 6, value: 5.5, taken: true }),
+      expect.objectContaining({ target: 5, kind: 'break', cost: 9, value: 5.5, taken: true }),
     ]);
     expect(p.offence[0]!.why).toMatch(/probable/);
     expect(p.warnings.join('\n')).toMatch(/T5 \(#5\) can be retaken after it breaks B901/);

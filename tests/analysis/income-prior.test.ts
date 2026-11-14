@@ -97,11 +97,13 @@ describe('the fog prior (#119): a symmetric-start 1v1 opponent bordering the fog
     expect(p.warnings.join('\n')).not.toMatch(/a prior/);
   });
 
-  it('not without a symmetric start, nor in an FFA, even one down to two players', () => {
+  it('not without a symmetric start, nor in an FFA down to two players (#226: an even FFA gets it)', () => {
     expect(planTurn(input({ game: { players, turn: 12 } })).enemyDeploy).toBe(5);
     expect(planTurn(input({ game: { players, turn: 12, symmetricStart: false } })).enemyDeploy).toBe(5);
+    // #226: an even-start free-for-all with every player still in gets the prior too.
     const ffa = planTurn(input({ game: { players: [...players, { id: OTHER }], turn: 12, symmetricStart: true } }));
-    expect(ffa.enemyDeploy).toBe(5);
+    expect(ffa.enemyDeploy).toBe(45);
+    expect(ffa.warnings.join('\n')).toMatch(/in a free-for-all that started even/);
     // An FFA down to two is no even start: either survivor may have absorbed the eliminated player.
     const left = planTurn(
       input({ game: { players: [...players, { id: OTHER, state: 'Eliminated' }], turn: 12, symmetricStart: true } }),

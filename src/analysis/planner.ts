@@ -212,7 +212,16 @@
 //     (fogged, or under a fog level that hid its armies) is a fog reveal, never growth or a
 //     capture (issue #69). The observed figure is capped
 //     at what the opponent could earn on this board: its base income plus every bonus none of
-//     whose territories someone else visibly holds, owner-only included (a warning says when). A rationale line names
+//     whose territories someone else visibly holds, owner-only included (a warning says when) —
+//     #226: with per-territory income the base counts every territory it could hold (its visible
+//     ones and every one whose owner the board hides), so the cap and the fog prior are not held
+//     at the base its few visible territories pay; a fog reveal stays no income, but one whose
+//     armies exceed its estimate in such a game is named in a warning (stacks that size say it
+//     holds more than is in view). #226: given my orders on the previous turn
+//     (`previousOrders`, what warapp_submit_turn cached), the defenders my failed attack killed
+//     on a territory that stayed its count back into its growth there (after = before + deploy
+//     − kills, kills straight-rounded at the offensive kill rate; beside the fog an ambiguous
+//     growth like any other, within #123's bound), and a rationale line says so. A rationale line names
 //     the turns compared and the territories counted vs skipped as reveals; the warning
 //     names which source won. Given `tracks` (`trackOpponents` over my board history, S3), an
 //     opponent observed over at least TRACKED_MIN_TURNS turns gets its tracked income (the
@@ -224,8 +233,9 @@
 //     measurements; #119) in place of the
 //     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
 //     The fog prior (#119, `EnemyIncomePrior`): when `game.symmetricStart` says every player
-//     started even and it is a 1v1 (two players in the game, no teams; an FFA down to two is
-//     not: a survivor may have absorbed the others), an opponent
+//     started even, with no teams and every seated player still playing — a 1v1, or (#226) a
+//     free-for-all, each opponent alike (a game with a player out is not: a survivor, or I, may
+//     have absorbed its territories; a player that never took its seat does not count) — an opponent
 //     bordering the fog (a territory next to one of its own shows no owner) is estimated at
 //     least at my own income (card armies out), capped at what it could earn on this board —
 //     every observed figure is a lower bound under fog, and the estimates read 2–3× low
@@ -611,6 +621,15 @@
 //     target is a player's or it is not certain, else an attack between breakpoints is named;
 //     and an attack on a player's still sized below that deploy keeps the warning, which then
 //     gives its win chance against the reinforced target and the size that would be sure.
+//     #226, a margin: once the transfers (rule 6) have moved what they move, an attack on a
+//     player's territory whose owner may deploy there (not a combined capture; not under No-Split,
+//     which sends the whole stack already) takes the armies still on its source beyond what holds
+//     it (`spareBeyondHold`; and, as rule 6's #128 keep, what holds the source against the threat
+//     beside it as if this turn's attacks on players there failed), the target with the most
+//     defenders first: sized to the exact kill count at an estimate the plan calls a floor, it
+//     would otherwise fail to one army more deployed while those armies sit idle. A rationale
+//     line ("Margin on the attack on …") says how much deploy it now covers; when that is the
+//     whole estimate the "assumes" warning goes.
 //  3a. Combined (multi-source) captures (R4). When no single source can afford a
 //     target (its movable armies plus the deploys left), two or more of my
 //     sources held at the start of the turn (not locked, not conceded) attack it
@@ -2232,6 +2251,72 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       `The attack on ${label(m.to)} from ${label(m.from)} sends ${m.armies}, but ${b} already kill ${kills} for sure: the other ${m.armies - b} add no kill (only survivors)${next !== null ? `; the next kill needs ${next}` : ''}.`,
     );
   }
+  // ---- 6. transfers, #125 staging (plan/transfers.ts) ----
+  transfers(pc, ps, book, threats, hd, caps, staging);
+
+  // ---- #226: a margin on attacks on a player from armies that would sit idle ----
+  // An attack on a player's territory is sized to the kill count its defenders plus an ESTIMATED
+  // deploy need (#120), and the estimate is a floor. Once the transfers have moved what they move,
+  // the armies still on its source beyond what holds it (`spareBeyondHold`: none on a hold, a
+  // conceded border or the strike stack) would sit idle: they join the attack (the target with the
+  // most defenders first, then id; No-Split already sends the whole stack).
+  if (!noSplit) {
+    const onPlayers = moves
+      .filter((m) => m.kind === 'attack' && !combined.has(m.to) && state.get(m.to)?.owner.kind === 'player' && reinforcementAt(m.to) > 0)
+      .sort((a, b) => defenceAt(b.to) - defenceAt(a.to) || a.to - b.to);
+    for (const m of onPlayers) {
+      // #128, as the transfers keep it: a source beside an attack on a player that may fail keeps
+      // what holds it against the threat there as if those attacks failed.
+      const pending = neighborsOf(g, m.from).filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player');
+      const ifFail = pending.length ? borderAt(m.from, () => false) : null;
+      const keep128 = ifFail ? Math.max(0, threats.holdArmies(ifFail.threat) - unitsAt(m.from)) : 0;
+      const add = Math.min(spareBeyondHold(m.from), Math.max(0, hd.stayAt(m.from) - keep128));
+      if (add <= 0) continue;
+      const d = defenceAt(m.to);
+      const before = m.armies;
+      avail.set(m.from, avail.get(m.from)! - add);
+      m.armies += add;
+      m.winChance = chanceOf(m.armies, d);
+      if (survivorsAt.has(m.to)) survivorsAt.set(m.to, survivorsAt.get(m.to)! + add);
+      const check = retakeChecks.get(m.to);
+      const at = check?.warning === undefined ? -1 : warnings.indexOf(check.warning);
+      if (check && at >= 0) {
+        check.survivors += add;
+        check.warning = retakeWarning(m.to, check.bonusId, check.survivors, check.counter);
+        if (check.warning) warnings[at] = check.warning;
+        else warnings.splice(at, 1);
+      }
+      // The most its owner could deploy there first and still lose it to this attack.
+      const fits = (x: number) => {
+        const c = costAt(m.to, d + x);
+        return c !== null && c <= m.armies;
+      };
+      let lo = 0;
+      let hi = m.armies;
+      if (!fits(0)) hi = -1;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (fits(mid)) lo = mid;
+        else hi = mid - 1;
+      }
+      const covered = Math.max(0, hi);
+      const extra = reinforcementAt(m.to);
+      if (hi >= extra) {
+        worstCase.set(m.to, Math.max(worstCase.get(m.to) ?? 0, d + covered));
+        const w = warnings.indexOf(assumes(m.to));
+        if (w >= 0) warnings.splice(w, 1);
+      }
+      const owner = (state.get(m.to)!.owner as { playerId: number }).playerId;
+      rationale.push(
+        `Margin on the attack on ${label(m.to)} from ${label(m.from)} (#226): up from ${before} to ${m.armies} with the ${add} armies that would otherwise sit idle there (no hold needs them, even if the attack fails)${
+          hi >= 0
+            ? `: ${m.armies} take it even if player ${owner} deploys up to ${covered} there first, against the ~${extra} estimate, which is a floor`
+            : ''
+        }.`,
+      );
+    }
+  }
+
   // #120: an attack on a player's territory still sized below its owner's deploy says what it
   // faces if that deploy lands there first.
   for (const m of moves) {
@@ -2247,8 +2332,6 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     warnings[w] = `Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first: if player ${st.owner.playerId} deploys its ~${extra} there, ${m.armies} attack ${d + extra} (win chance ${pct(chanceOf(m.armies, d + extra))})${full !== null ? `; ${full} would ${aim >= 1 ? 'be sure' : `reach ${pct(aim)}`}` : ''}.`;
   }
 
-  // ---- 6. transfers, #125 staging (plan/transfers.ts) ----
-  transfers(pc, ps, book, threats, hd, caps, staging);
 
   // ---- Order Priority for a strike (rule 1s) (plan/move-order.ts) ----
   const { strikeCard, strikeWho } = strikeOrderPriority(pc, ps, threats, hd, struck);

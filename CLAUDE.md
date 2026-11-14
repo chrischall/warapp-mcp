@@ -341,13 +341,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `unknown`, not `null` armies, not fog level `Fogged`/`OwnerOnly`/`3`/`4`) — live, fog lifting
   over existing stacks read as +119 and conceded six held-bonus borders. The observed figure is
   capped at base + every bonus none of whose territories someone else visibly holds (a warning
-  says when), and a rationale line names the turns compared and the reveals skipped. The
+  says when; #226: with per-territory income the base counts every territory it could hold — its
+  visible ones and every one whose owner is hidden — and a reveal whose armies exceed its estimate
+  is named in a warning, still not income), and a rationale line names the turns compared and the
+  reveals skipped. #226: given my orders on the previous turn (`PlanInput.previousOrders`, from the
+  cached orders), the defenders my failed attack killed on a territory that stayed its count back
+  into its growth there (`failedAttackKills`, shared with `measureOrders`; within #123's bound
+  beside the fog). The
   estimate is max(visible-bonus figure, observed)
   and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). **The fog
-  prior (#119):** in a 1v1 that started even (two players in the game, no teams — not an FFA
-  down to two; `PlanGameContext.symmetricStart`, set by `warapp_plan_turn` from
-  `symmetricStart(settings, map)`: any distribution but a map scenario),
-  an opponent bordering the fog is estimated at least at my own income (card armies out) — or, on
+  prior (#119):** in a 1v1 or (#226) a free-for-all that started even (no teams, every seated
+  player still playing — not once a player is out; `PlanGameContext.symmetricStart`, set by
+  `warapp_plan_turn` from `symmetricStart(settings, map)`: any distribution but a map scenario),
+  every opponent bordering the fog is estimated at least at my own income (card armies out) — or, on
   turns 1–4 when the award of picks proved all its starts, at the income the pick advisor's opening
   simulation gives it from them when that is larger (`openingIncome`, `PlanGameContext.opening`, #166) — capped
   at what it could earn on the board, and the warning calls it a prior — every observed figure is
@@ -490,7 +496,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     reinforce" warning gives the win chance against the reinforced target. The 1v1 strike stack
     goes to the border with the most to spare after its best such strike (most armies only when
     none can strike), and fog pressure paid outright from idle armies is not priced against
-    expansion (`PRESSURE_FACTOR`).
+    expansion (`PRESSURE_FACTOR`). #226: once the transfers have run, such an attack (not a
+    combined capture, not under No-Split) also takes the armies still idle on its source beyond
+    what holds it — even if the attacks on players beside it fail (#128) — as a margin over an
+    estimate that is only a floor; a "Margin on the attack on …" line says what deploy it covers.
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can

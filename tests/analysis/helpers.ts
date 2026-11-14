@@ -125,3 +125,13 @@ export function ruleAttacks(p: TurnPlan): PlannedMove[] {
     (m) => m.kind === 'attack' && !/^(wears .* down for a combined capture \()?cheapest (capture|expansion)/.test(m.reason),
   );
 }
+
+/**
+ * #226: the size an attack was planned at before the margin from idle armies joined it — the "up
+ * from N" of its margin line — else what it sends. Tests of a sizing rule read this one.
+ */
+export function sizedBeforeMargin(plan: TurnPlan, from: number, to: number): number | undefined {
+  const line = plan.rationale.find((l) => l.startsWith(`Margin on the attack on T${to} (#${to}) from T${from} (#${from}) (#226): up from `));
+  if (line) return Number(/up from (\d+) to/.exec(line)![1]);
+  return plan.moves.find((m) => m.kind === 'attack' && m.from === from && m.to === to)?.armies;
+}

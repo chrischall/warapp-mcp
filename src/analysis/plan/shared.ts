@@ -3,7 +3,7 @@
 // estimates. A leaf module: planner.ts and every phase under src/analysis/plan/ import from it, and it
 // imports no phase and not planner.ts, so the import graph has no cycle. planner.ts re-exports all of it.
 import type { BoardState, TerritoryState } from '../../board.js';
-import type { OpponentTrack } from '../opponents.js';
+import type { MyOrders, OpponentTrack } from '../opponents.js';
 import type { GameSettings } from '../../normalize.js';
 import { bonusTerritories } from '../bonuses.js';
 import {
@@ -278,7 +278,8 @@ export interface PlanGameContext {
   cards?: boolean;
   /**
    * Every player started with the same territories and armies (not a map scenario that sets its
-   * own starts): in a 1v1 it turns the fog prior on (#119, {@link EnemyIncomePrior}).
+   * own starts): in a 1v1 (#119), or a free-for-all with no teams and every seated player still in
+   * (#226), it turns the fog prior on ({@link EnemyIncomePrior}).
    */
   symmetricStart?: boolean;
   /**
@@ -326,6 +327,12 @@ export interface PlanInput {
    * that grew since then project their growth into next turn's threat.
    */
   previousBoard?: BoardState;
+  /**
+   * #226: my orders on the turn `previousBoard` was played (what warapp_submit_turn sent and cached):
+   * a failed attack of mine counts its kills back into the defender's observed deploy
+   * ({@link ObserveContext.myOrders}). Unknown orders change nothing.
+   */
+  previousOrders?: MyOrders;
   /**
    * The turn being planned, when known: `previousBoard` is then turn − 1's board, and the
    * observed-deploy rationale names the two turns.
@@ -678,9 +685,9 @@ export interface EnemyDeployEstimate {
   /** The observed deploy before the plausibility cap; `null` without a previous board. */
   observedRaw: number | null;
   /**
-   * The most it could earn on this board (issue #69): `base` plus every positive bonus it could
-   * possibly hold (none of its territories visibly held by someone else, owner-only included);
-   * `null` without a previous board.
+   * The most it could earn on this board (issue #69): what the territories it could hold pay
+   * ({@link EnemyDeployEstimate.couldHold}) plus every positive bonus it could possibly hold (none of
+   * its territories visibly held by someone else, owner-only included); `null` without a previous board.
    */
   observedCap: number | null;
   /** Which territories the observation counted and skipped; `null` without a previous board. */
@@ -694,14 +701,22 @@ export interface EnemyDeployEstimate {
   /** The observed turns behind `tracked` (`from` turns, oldest first); empty when `tracked` is `null`. */
   trackedTurns: number[];
   /**
-   * The most it could earn on this board: `base` plus every positive bonus none of whose
-   * territories someone else visibly holds (the same figure as `observedCap`, given or not a
-   * previous board).
+   * The most it could earn on this board: what the territories it could hold pay plus every
+   * positive bonus none of whose territories someone else visibly holds (the same figure as
+   * `observedCap`, given or not a previous board). #226: with per-territory income (BonusArmyPer)
+   * the territories it could hold are its visible ones and every one whose owner the board hides
+   * ({@link EnemyDeployEstimate.couldHold}), so a prior or an observation is not capped at the base
+   * its few visible territories pay; without it, the base.
    */
   couldEarn: number;
   /**
-   * The fog prior (#119), when asked for ({@link EnemyIncomePrior}: a symmetric-start 1v1) and
-   * it borders the fog: my own income, or its simulated opening income when given and larger (#166), capped
+   * #226: the territories it could hold on this board — its visible ones plus every one whose owner
+   * the board does not show — what `couldEarn` counts at the per-territory rate.
+   */
+  couldHold: number;
+  /**
+   * The fog prior (#119), when asked for ({@link EnemyIncomePrior}: a symmetric-start 1v1, or #226 an
+   * even-start free-for-all with no teams) and it borders the fog: my own income, or its simulated opening income when given and larger (#166), capped
    * at `couldEarn`; else `null`.
    */
   prior: number | null;
@@ -737,6 +752,13 @@ export interface EnemyDeployEstimate {
  */
 export interface EnemyIncomePrior {
   myIncome: number;
+  /**
+   * #226: the game it applies to: `1v1` (#119), or `ffa` — a free-for-all that started even, with no
+   * teams and every seated player still in, where each opponent beside the fog gets the same prior
+   * (peer-paced on my own income, as `peerPace` in src/analysis/outlook.ts paces an unmeasured one).
+   * Default `1v1`.
+   */
+  format?: '1v1' | 'ffa';
   /**
    * #166: per player, its income this turn from the pick advisor's opening simulation run from
    * the starts the award of picks proved (`openingIncome`); for that player the prior figure is the
@@ -830,6 +852,18 @@ export interface DeployObservation {
   emptied: number[];
   /** What `high` adds for `emptied` (my stack last turn standing there, not the guard). */
   emptiedHigh: number;
+  /**
+   * #226: its territories my failed attacks hit last turn (held by it on both boards, my source mine
+   * on both: {@link failedAttackKills}), given {@link ObserveContext.myOrders}; empty otherwise.
+   */
+  attacked: number[];
+  /**
+   * #226: the defenders my failed attacks killed there (straight-rounded at the offensive kill rate):
+   * defenders after = before + deploy + transfers in − kills, so they count back into its growth
+   * there (a lower bound on what stood there). Beside the fog that growth is ambiguous like any other
+   * ({@link ambiguousBound}). 0 without my orders.
+   */
+  attackKills: number;
   /** The deploy with every ambiguous army read the low way (fog moves, emptied captures), floored at 0. */
   low: number;
   /** The deploy with every ambiguous army read the high way (deploys, my stack standing), floored at 0. */
@@ -860,6 +894,44 @@ export interface ObserveContext {
    * capture's surplus is all a move, as before #123.
    */
   most?: number;
+  /**
+   * #226: my orders on the turn between the two boards (the deploys and moves warapp_submit_turn sent,
+   * `TurnBoard.orders`): a failed attack of mine on its territory killed defenders the board reads as
+   * a shrink, so they count back ({@link failedAttackKills}). Requires `me`.
+   */
+  myOrders?: MyOrders;
+}
+
+/**
+ * #226: what my failed attacks on `playerId` killed, by target, on the turn `before` → `after`: each
+ * move of mine onto a territory it holds on both boards (shown with armies both times), from a
+ * source mine on both (one that fell may have been taken before my attack ran), kills
+ * round(armies × the offensive kill rate) — a straight-rounded expectation, which luck can move.
+ * The board reads that loss as a shrink. The opponent tracker's `measureOrders` counts the same.
+ */
+export function failedAttackKills(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  me: number,
+  playerId: number,
+  orders: MyOrders,
+  rates: KillRates = {},
+): Map<number, number> {
+  const offensive = rates.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  const owns = (t: TerritoryState | undefined, p: number) => {
+    const v = visibleState(t);
+    return v?.owner.kind === 'player' && v.owner.playerId === p;
+  };
+  const out = new Map<number, number>();
+  for (const m of orders.moves) {
+    if (!g.territoryById.has(m.to) || !owns(was.get(m.from), me) || !owns(now.get(m.from), me)) continue;
+    if (!owns(was.get(m.to), playerId) || !owns(now.get(m.to), playerId)) continue;
+    out.set(m.to, (out.get(m.to) ?? 0) + straightKills(Math.max(0, m.armies), offensive));
+  }
+  return out;
 }
 
 /**
@@ -893,6 +965,10 @@ export interface ObserveContext {
  * this board says nothing about my orders), so the loss cannot be read off it; leaving it
  * out keeps the figure a lower bound (the failed attack's losses still shrink its source). The
  * opponent tracker adds it back when my orders that turn are known (#119, `measureOrders`).
+ * Given those orders here (`context.myOrders`, #226), the defenders my failed attack killed on a
+ * territory that stayed its count back into its growth there (`attacked`, `attackKills`): after =
+ * before + deploy + transfers in − kills, so deploy ≥ after + kills − before — beside the fog an
+ * ambiguous growth like any other, read as deploy up to the turn's bound.
  * One turn only, not smoothed (the tracker reads a history). Transfers in from (or out to) the
  * fog still bias it — income in the fog is unseen anyway.
  */
@@ -943,6 +1019,12 @@ export function observeSigned(
   const now = new Map(board.territories.map((t) => [t.territoryId, t]));
   const defensive = rates.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
   const guard = Math.max(0, context.guard ?? 1);
+  // #226: my failed attacks' kills, by target: they count back into its growth there.
+  const kills =
+    context.me !== undefined && context.myOrders
+      ? failedAttackKills(g, previous, board, context.me, playerId, context.myOrders, rates)
+      : new Map<number, number>();
+  const killsAt = (id: number) => kills.get(id) ?? 0;
   const mineBothTimes = (id: number) => {
     const a = visibleState(now.get(id));
     const b = visibleState(before.get(id));
@@ -956,7 +1038,7 @@ export function observeSigned(
   const shrinkLeft = new Map<number, number>();
   for (const t of board.territories)
     if (g.territoryById.has(t.territoryId) && mineBothTimes(t.territoryId))
-      shrinkLeft.set(t.territoryId, Math.max(0, visibleState(before.get(t.territoryId))!.armies! - t.armies!));
+      shrinkLeft.set(t.territoryId, Math.max(0, visibleState(before.get(t.territoryId))!.armies! - t.armies! - killsAt(t.territoryId)));
   /** Not shown with armies on both boards: armies could have left it unseen. */
   const hidden = (id: number) => !visibleState(now.get(id)) || !visibleState(before.get(id));
   for (const t of [...board.territories].sort((a, b) => a.territoryId - b.territoryId)) {
@@ -970,7 +1052,9 @@ export function observeSigned(
     counted.push(t.territoryId);
     const ns = [...neighborsOf(g, t.territoryId)].sort((a, b) => a - b);
     if (was.owner.kind === 'player' && was.owner.playerId === playerId) {
-      const growth = t.armies! - was.armies!;
+      // #226: what my failed attack killed there stood there too: defenders after = before + deploy
+      // + transfers in − kills.
+      const growth = t.armies! - was.armies! + killsAt(t.territoryId);
       if (growth > 0 && ns.some(hidden)) ambiguous.push({ id: t.territoryId, armies: growth, kind: 'growth' });
       else total += growth;
     } else {
@@ -1058,6 +1142,8 @@ export function observeSigned(
     grewFromFog,
     fogGrowth,
     expected: context.expected ?? null,
+    attacked: [...kills.keys()].sort(byNum),
+    attackKills: [...kills.values()].reduce((n, k) => n + k, 0),
     emptied,
     emptiedHigh,
     low: Math.max(0, total + lowExtra),
@@ -1134,7 +1220,13 @@ export function enemyDeployEstimates(
   previous?: BoardState,
   tracks?: readonly OpponentTrack[],
   prior?: EnemyIncomePrior,
-  when: { turn?: number | null; fog?: string | undefined; reinforcement?: ReinforcementClock | undefined } = {},
+  when: {
+    turn?: number | null;
+    fog?: string | undefined;
+    reinforcement?: ReinforcementClock | undefined;
+    /** #226: my orders on the turn between `previous` and `board` ({@link ObserveContext.myOrders}). */
+    previousOrders?: MyOrders | undefined;
+  } = {},
 ): EnemyDeployEstimate[] {
   const owner = new Map<number, number>();
   const armies = new Map<number, number>();
@@ -1194,7 +1286,16 @@ export function enemyDeployEstimates(
       });
       if (!taken) possible += b.value;
     }
-    const couldEarn = base + possible;
+    // #226: with per-territory income, the territories it could hold pay at the rate: its visible
+    // ones and every one whose owner this board hides (it may hold any of them).
+    const couldHold =
+      per > 0
+        ? g.map.territories.filter((t) => {
+            const st = ownerShown(seenNow.get(t.id));
+            return st === undefined || (st.owner.kind === 'player' && st.owner.playerId === playerId) || theirs.has(t.id);
+          }).length
+        : held;
+    const couldEarn = territoryIncome(couldHold, minimum, per) + possible;
     // #119: the fog prior. In a symmetric-start 1v1 an opponent bordering the fog earns at least
     // what I earn, capped at what it could earn on this board. It only ever raises the figure.
     const fogBeside = [...theirs].some((t) => neighborsOf(g, t).some((n) => !ownerShown(seenNow.get(n))));
@@ -1215,6 +1316,7 @@ export function enemyDeployEstimates(
           guard: (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
           expected: Math.max(visible, priorFigure ?? 0, tracked ?? 0),
           most: couldEarn,
+          ...(when.previousOrders ? { myOrders: when.previousOrders } : {}),
         })
       : null;
     const observedCap = observation ? couldEarn : null;
@@ -1282,6 +1384,7 @@ export function enemyDeployEstimates(
       observedRaw,
       observedCap,
       couldEarn,
+      couldHold,
       observation,
       tracked,
       trackedTurns: usable ? usable.incomeTurns : [],

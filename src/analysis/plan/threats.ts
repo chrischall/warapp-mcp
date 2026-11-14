@@ -16,8 +16,10 @@ import {
   openingArmies,
   ownerShown,
   visibleState,
+  type EnemyDeployEstimate,
   type PlanInput,
 } from './shared.js';
+import { territoryIncome } from '../player.js';
 import { simTerritories } from '../turn-sim.js';
 import type { PlanCtx, PlanState } from './state.js';
 import { byNum } from './util.js';
@@ -610,10 +612,14 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
 export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src: ThreatSources, forces: ThreatForces) {
   const {
     g, board, game: ctx, foe, custom, estimates, incomePrior, enemyDeploy, territories: state, label, mine, mineSet,
-    armiesOf, unitsAt, uncounted, uncountedKind, bombOn, toTake, turnNow, holdPasses, myCommanders,
+    armiesOf, unitsAt, uncounted, uncountedKind, bombOn, toTake, turnNow, holdPasses, myCommanders, s, baseIncome, rates,
   } = pc;
   const { warnings, rationale } = ps;
   const { growthOf, holdArmies, hiddenFoe, lostAt } = src;
+  /** #226: the game pays per territory (BonusArmyPer). */
+  const perTerritory = (s.bonusArmyPer ?? 0) > 0;
+  /** #226: what the bonuses it could still hold add to what it could earn (its territories' pay aside). */
+  const possibleOf = (e: EnemyDeployEstimate) => e.couldEarn - territoryIncome(e.couldHold, baseIncome, s.bonusArmyPer ?? 0);
   const { forceAt } = forces;
   // ---- 1. defence ----
   const borders = new Map<number, Border>();
@@ -712,6 +718,17 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           const turns = input.turn !== undefined ? `turn ${input.turn - 1} → turn ${input.turn}` : 'previous board → this board';
           const shown = o.reveals.slice(0, MAX_NAMED_REVEALS).map(label).join(', ');
           const more = o.reveals.length > MAX_NAMED_REVEALS ? ` and ${o.reveals.length - MAX_NAMED_REVEALS} more` : '';
+          // #226: my failed attack's kills, counted back into what stood there.
+          if (o.attacked.length)
+            rationale.push(
+              `Player ${p}: my failed attack${o.attacked.length === 1 ? '' : 's'} on ${o.attacked.map(label).join(', ')} killed ~${o.attackKills} of its defenders (at the ${rates.offensiveKillRate}% kill rate, from the orders I sent last turn), which stood there too: they count back into its observed deploy (after + kills − before, a lower bound${o.grewFromFog.some((x) => o.attacked.includes(x)) ? '; beside the fog, read as deploy only up to the turn\'s bound' : ''}).`,
+            );
+          // #226: in a per-territory game a large reveal says it holds more than is in view; still not income.
+          const revealed = o.reveals.reduce((n, id) => n + armiesOf(id), 0);
+          if (perTerritory && revealed > e.estimate - (e.card?.armies ?? 0))
+            warnings.push(
+              `Player ${p}: ${revealed} armies came into view on ${o.reveals.length} ${o.reveals.length === 1 ? 'territory' : 'territories'} (fog reveals, not income); with income per territory, stacks that size say it holds more territories than the ${e.held} in view, so its ~${e.estimate - (e.card?.armies ?? 0)} estimate may be far too low.`,
+            );
           rationale.push(
             `Observed deploy for player ${p}, ${turns}: +${e.observedRaw}/turn over ${o.counted.length} territories visible on both boards (${o.captured.length} captured${o.captured.length ? `, ${o.fromFog.length} from the fog` : ''}); ${o.reveals.length} skipped as fog reveals${o.reveals.length ? ` (${shown}${more}): not shown with an owner and armies last turn (fogged, armies hidden, or not yet picked), so what they hold is not income` : ''}.`,
           );
@@ -744,7 +761,11 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           }
           if (e.observedRaw! > e.observedCap!)
             warnings.push(
-              `player ${p} was observed to deploy +${e.observedRaw}/turn, more than it could earn on this board (base ${e.base} for its ${e.held} visible territories + bonuses it could still hold +${e.observedCap! - e.base} = ${e.observedCap}): capped at ${e.observedCap}. Armies moved in from the fog, a Reinforcement card, or a bonus it has lost since may explain the rest.`,
+              `player ${p} was observed to deploy +${e.observedRaw}/turn, more than it could earn on this board (${
+                perTerritory && e.observedCap! - possibleOf(e) > e.base
+                  ? `${e.observedCap! - possibleOf(e)} for the ${e.couldHold} territories it could hold: its ${e.held} visible and ${e.couldHold - e.held} whose owner is hidden`
+                  : `base ${e.base} for its ${e.held} visible territories`
+              } + bonuses it could still hold +${possibleOf(e)} = ${e.observedCap}): capped at ${e.observedCap}. Armies moved in from the fog, a Reinforcement card, or a bonus it has lost since may explain the rest.`,
             );
         }
         if (e.tracked !== null) {
@@ -779,7 +800,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
             `Enemy deploy estimate for player ${p}: ~${income} (a prior, not an observation: ${
               (incomePrior!.opening?.get(p) ?? -1) > incomePrior!.myIncome
                 ? `its opening simulated from the starts the award of picks proved earns ${incomePrior!.opening!.get(p)} this turn`
-                : `in a 1v1 that started even, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
+                : `in ${incomePrior!.format === 'ffa' ? 'a free-for-all that started even (no teams, every player still in)' : 'a 1v1 that started even'}, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
             }, capped at the most it could earn on this board, ${e.couldEarn}; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''})${withCard}; observed deploys are lower bounds under fog, and it could deploy more.`,
           );
           continue;

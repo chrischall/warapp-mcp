@@ -1176,6 +1176,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const cards = chooseCardPlays(hand, rules, inGame);
       const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
       const trend = history.previous;
+      const previousOrders = turn !== null ? history.boards.find((b) => b.turn === turn - 1)?.orders : undefined;
       // The opponents over my board history: one observed over 2+ turns gets its tracked income;
       // one still playing with nothing in view gets a received lower bound and a warning (#94).
       const tracks =
@@ -1228,6 +1229,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         cardArmies: cards.extraArmies,
         settings,
         ...(trend ? { previousBoard: trend.board } : {}),
+        // #226: my orders on that turn, when this server sent them: a failed attack's kills count back.
+        ...(trend && previousOrders ? { previousOrders } : {}),
         ...(turn !== null ? { turn } : {}),
         game: gameContext,
         ...(tracks ? { tracks } : {}),
@@ -1331,6 +1334,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         income: income - cards.extraArmies,
         settings,
         ...(trend ? { previousBoard: trend.board } : {}),
+        ...(trend && previousOrders ? { previousOrders } : {}),
         ...(tracks ? { tracks } : {}),
         game: gameContext,
         turn,

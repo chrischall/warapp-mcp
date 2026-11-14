@@ -366,6 +366,9 @@ describe('warapp_check_plan', () => {
     const CY = { feed: '5523456781', inGame: 234567 };
     const g = game();
     (g.players as Array<Record<string, string>>)[2] = { ...(g.players as Array<Record<string, string>>)[2]!, id: CY.feed, name: 'Cy' };
+    // A start the settings do not call even: with one (#226) each opponent beside the fog would be
+    // assumed to earn my income, and I would lead no one.
+    delete (g.settings as Record<string, unknown>).DistributionMode;
     const territories: SyntheticTerritory[] = [
       { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 6 },
       { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 20 },

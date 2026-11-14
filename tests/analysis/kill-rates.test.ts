@@ -7,7 +7,7 @@ import { armiesToTake } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { captureCost, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, mine, neutral } from './helpers.js';
+import { board, mine, neutral, sizedBeforeMargin } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -133,12 +133,14 @@ describe('planTurn — kill rates (G1)', () => {
     // Sized at 12; S2 then tops it up from T1's idle armies to the next efficient size, 15
     // (round(0.3·15) = 5 kills for sure instead of 4), since the enemy may reinforce T3.
     expect(p.rationale.join('\n')).toMatch(/Attack T3 \(#3\) from T1 \(#1\) with 12:/);
-    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 15 }));
+    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 3 }));
+    // #226: T1's idle armies left after that join it as a margin.
+    expect(sizedBeforeMargin(p, 1, 3)).toBe(15);
     const std = planTurn({ graph: gb, board: s, me: ME, income: 5, settings: STD, options: { goal: 'complete-bonus' } });
     expect(std.rationale.join('\n')).toMatch(/Attack T3 \(#3\) from T1 \(#1\) with 6:/);
     // 60% (#120): T1's idle armies size it for the 4 defenders plus the owner's ~5 deploy: 15.
     // At 30/75 that would need 30, more than T1 has idle: the breakpoint top-up above stands.
-    expect(attacks(std)).toContainEqual(expect.objectContaining({ from: 1, to: 3, armies: 15 }));
+    expect(sizedBeforeMargin(std, 1, 3)).toBe(15);
   });
 
   it('under WeightedRandom rounding the plan sizes under it (certain), computes the chance and says so', () => {
