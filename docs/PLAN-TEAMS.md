@@ -575,6 +575,32 @@ existing notes already state these.
 - In a team game: `warapp_get_team` and `warapp_team_brief` every turn, the brief early in the turn,
   commit late.
 
+*As built (E1, 2026-11-14):* `skills/warapp-mcp/SKILL.md` has a "Chat and diplomacy" section after "Start
+here" — a playbook over the tools as built (`warapp_get_chat` with `unread` / `mark_seen`, `warapp_send_chat`
+with `channel` / `to` / `commitments`, `warapp_record_agreement`, `warapp_get_relations`,
+`warapp_advise_diplomacy`, the plan's `relations` / `advice` / `lossIfBroken`, `warapp_check_plan`'s
+`safeIfTruceHolds`, `warapp_submit_turn`'s `break_agreement`), with D1–D3 stated once. Choices and departures:
+
+- **Private messaging unread.** `messaging.privateMessaging` is `null` when the feed did not say; the skill
+  treats `null` as off (propose nothing), and the older line in the truce-advice bullet that allowed a public
+  proposal when private messages were off now points to the section.
+- **No alliances means no deal either way.** Where the host's description forbids alliances the skill also
+  says to accept no deal, not only to propose none.
+- **`break_agreement`.** Only for a break the owner approved and the partner was already told of in chat
+  (D3), never to get an attack past the submit guard.
+- **Team games.** Part C is not built, so the skill carries only a placeholder: team coordination tools are
+  coming; meanwhile `channel: "team"` for plain facts. The `warapp_get_team` / `warapp_team_brief` lines
+  above arrive with C1/C4.
+- **Notes.** E1 is the skill only; the strategy notes and any `NoteCondition` for private messaging or an
+  active relation are left to the notes step.
+
+*As built (the notes step, 2026-11-14):* the diplomacy topic and `teams-team-chat` in `src/strategy/notes.ts`, each
+listed in `docs/STRATEGY.md` ("Diplomacy: truces and deals in a free-for-all"). `NoteCondition` gained
+`privateMessaging` (from the game's settings); no condition on an active relation, since the strategy
+tool reads GameFeed alone and knows no agreements. Every note's page is on war.app (wiki or forum): no note
+rests on another game's writing. `diplomacy-private-off` follows the skill: private messaging off means
+propose no deal.
+
 **Strategy notes** from the digests, in the usual form (own words, at most 340 characters, one source
 link, `source` or `derived`). Follow the practice that caught most errors last time: check each note
 against what the tools can send, and re-read the page behind it. Likely new conditions on

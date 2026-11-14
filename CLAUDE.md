@@ -88,9 +88,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
   researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or
-  `derived`; never paste guide text. Eight topics (`NOTE_TOPICS`: format, settings, cards, reading, opening, timing,
-  fighting, map). A note says which games it is for as data (`NoteCondition`: format, phase, standing, fog level,
-  move order, distribution, kill rates, the guard, cards in play, and so on), tested against the profile and
+  `derived`; never paste guide text. Nine topics (`NOTE_TOPICS`: format, settings, cards, reading, opening, timing,
+  fighting, diplomacy, map). A note says which games it is for as data (`NoteCondition`: format, phase, standing, fog level,
+  move order, distribution, kill rates, the guard, cards in play, private messaging on or off, and so on), tested against the profile and
   `noteContext(settings)`; a condition on something the game did not state does not hold, and a card condition
   falls back to "any card" when the list is unknown. `docs/STRATEGY.md` names every note id (a test checks it, and
   another that some game reaches every note). With a game the profile comes from GameFeed alone (`feedProfile`,
