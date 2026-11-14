@@ -467,7 +467,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     visible missing member. An FFA lead step into it (an enemy member, #203) is sized to land
     even if its owner deploys there first; when the turn cannot fund that for the closest bonus or
     a completion, it is taken at the bare cost that ranking used (#214), after every sibling's
-    sure try, with #120's warning.
+    sure try, with #120's warning — only while rule 4f commits to the closest bonus, and never
+    with the armies a hold gets: `planTurn` plans again without bare steps and keeps that plan
+    (saying so) when the bare one leaves a border it holds without its hold.
   - **The economy test charges armies lost (#125).** A capture costs the economy the armies its
     attackers lose plus the one left on it (waived when an idle stack beside it, facing no enemy,
     takes it), not the armies sent; a bonus's worth adds its members' per-territory income; plain

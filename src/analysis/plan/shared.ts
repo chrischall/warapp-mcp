@@ -1406,6 +1406,12 @@ export interface TwoStepPass {
  */
 export interface TwoStepShared {
   reaches?: ReadonlyMap<number, readonly TwoStepReach[]>;
+  /**
+   * #214 review: no lead step is retried at its bare cost in this {@link planTurn} run — the plan
+   * a run with bare steps is checked against (planTurn keeps the bare one only when it costs no
+   * hold this one makes).
+   */
+  noBare?: boolean;
 }
 /** A two-step hold on one territory of mine (#172): what stays, what it needs, and the reach. */
 export interface TwoStepHoldAt {

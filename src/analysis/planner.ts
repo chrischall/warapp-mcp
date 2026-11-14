@@ -80,11 +80,21 @@
 //          no worst case: #120's warning says what it faces if the owner deploys there first, and the
 //          reason says what would be sure ("sized for the N defenders there now: S would be sure …,
 //          more than this turn can fund"). Only a funding shortfall retries (an R3 or trade refusal of
-//          the sure step stands), and only after every step had its sure try: pass 1 retries a
+//          the sure step stands — a combined capture refused for a below-even trade or by R3 included),
+//          and only after every step had its sure try: pass 1 retries a
 //          completion with each step sure first and the ones that failed bare, pass 2 runs the closest
 //          bonus's leftover steps again bare once its sure round is done, so a bare step never takes
-//          the deploy a sibling's sure size would have had. One those passes do not take is an ordinary enemy
-//          territory again for every later rule
+//          the deploy a sibling's sure size would have had. Pass 2's retry runs only while rule 4f
+//          commits to the closest bonus (otherwise its order is the score order, with no closest
+//          bonus). #214 review: nor does a bare step take a hold's armies. Holds are sized after the
+//          captures (a contested held bonus is held whole from what they leave, #118), so planTurn
+//          checks the plan: when one with bare steps leaves a border of mine still threatened after
+//          its captures without a hold — conceded, short at the end, or a floored member — that the
+//          plan made without bare steps deploys to (or holds) and holds, that plan stands, with a
+//          rationale line "Lead step … not taken at its bare cost (#214 review): taking it would
+//          leave … without the hold this plan gives it". A failed completion retry leaves the skip
+//          line what the sure try said (a bare step it undid erased its member's entry). One those
+//          passes do not take is an ordinary enemy territory again for every later rule
 //          (rule 4e's fallback, 4g's card pieces, the lead strikes): its plain size, no sure sizing;
 //          its "Not attacking" line still ends with why its bonus's step failed (the hold it had to
 //          keep, the deploy that could reach it, or why no neighbour could attack).
@@ -1140,7 +1150,37 @@ function settledPass(
  * (a fixed point, so no cut reach is still there); without one, the plan that cuts nothing.
  */
 export function planTurn(input: PlanInput): TurnPlan {
-  const shared: TwoStepShared = {};
+  const plan = planRun(input, false);
+  const bare = runOutcome.get(plan);
+  if (!bare || !bare.bareSteps.length) return plan;
+  // #214 review: a lead step retried at its bare cost is not sure to land, so it may never take the
+  // armies a hold gets in the plan without bare steps. The planner sizes holds after captures (a
+  // contested held bonus is held whole from what they leave, #118), so this is checked on the two
+  // plans: when the bare one leaves a border that the other holds (funded there) without its hold,
+  // the plan without bare steps stands, and says why.
+  const sure = planRun(input, true);
+  const kept = runOutcome.get(sure);
+  if (!kept) return plan;
+  const lost = [...kept.held].filter((x) => bare.unheld.has(x)).sort((a, b) => a - b);
+  if (!lost.length) return plan;
+  const label = (id: number) => `${input.graph.territoryById.get(id)!.name} (#${id})`;
+  const list = (ids: number[]) => ids.map(label).join(', ');
+  const one = bare.bareSteps.length === 1;
+  sure.rationale.push(
+    `Lead step${one ? '' : 's'} ${list(bare.bareSteps)} not taken at ${one ? 'its' : 'their'} bare cost (#214 review): taking ${one ? 'it' : 'them'} would leave ${list(lost)} without the hold this plan gives ${lost.length === 1 ? 'it' : 'them'} — a bare step lands only if its owner does not deploy there first, and never takes a hold's armies.`,
+  );
+  return sure;
+}
+
+/**
+ * #214 review: per plan, the lead steps it takes at their bare cost, the borders it deploys to (or
+ * funds a hold on) that end holding, and the borders of mine still threatened once its captures
+ * land that end without a hold.
+ */
+const runOutcome = new WeakMap<TurnPlan, { bareSteps: number[]; held: Set<number>; unheld: Set<number> }>();
+
+function planRun(input: PlanInput, noBare: boolean): TurnPlan {
+  const shared: TwoStepShared = noBare ? { noBare } : {};
   const { plan, used } = settledPass(input, shared, new Set(), false);
   if (!used) return plan;
   const free = settledPass(input, shared, new Set(), true).plan;
@@ -2221,5 +2261,30 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const { slotOf, facesEnemy, exits } = scheduleOrders(pc, ps, threats, hd, caps, struck, strikeCard, strikeWho);
 
   // ---- the plan: offence list, #172's final check, #201 retaliation, #167 exchanges, #179 ETAs (plan/report.ts) ----
-  return finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
+  const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
+  // #214 review: what planTurn compares between the plans with and without bare steps. A border
+  // ends holding when it is not conceded and what the final orders leave there (its armies, deploys
+  // and transfers in, less every order out) beats the threat left once this plan's captures land.
+  const gone = (n: number) => captured.has(n);
+  const holdsAtEnd = (v: number, b: { threat: number }) => {
+    const ends = moves.reduce(
+      (n, m) => n - (m.from === v ? m.armies : 0) + (m.kind === 'transfer' && m.to === v ? m.armies : 0),
+      armiesOf(v) + (ps.deployed.get(v) ?? 0),
+    );
+    return !conceded.has(v) && (toTake(ends + unitsAt(v)) ?? Infinity) > b.threat;
+  };
+  const held = new Set<number>();
+  const unheld = new Set<number>();
+  for (const v of mine) {
+    const b = borderAt(v, gone);
+    if (!b) continue;
+    if (!holdsAtEnd(v, b)) unheld.add(v);
+    else if (heldBorders.has(v) || (ps.deployed.get(v) ?? 0) > 0) held.add(v);
+  }
+  // A held bonus left floored (#118: kept, but short of its whole hold) is short on those borders
+  // whatever the count above says: one shared deploy can still break it.
+  for (const u of units)
+    if (u.contested && !u.conceded) for (const m of u.members) if (!heldBorders.has(m.id)) unheld.add(m.id);
+  runOutcome.set(plan, { bareSteps: [...caps.bareTaken].filter(gone).sort(byNum), held, unheld });
+  return plan;
 }

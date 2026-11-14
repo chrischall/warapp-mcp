@@ -539,7 +539,9 @@ do not send a backlog of turns unread. Override it when one of these shows up:
    to land even if its owner deploys there first; when the turn cannot fund that for the closest bonus (or a
    completion), it is taken at its bare cost — the defenders standing there now — and the reason says so ("sized
    for the N defenders there now: S would be sure …"), with the "assumes its owner does not reinforce it first"
-   warning beside it; a clear leader who
+   warning beside it. A bare step never takes the armies a hold would get: when it would leave a border (a held
+   bonus's included) without the hold the plan otherwise gives it, the step is not taken and a "not taken at its
+   bare cost (#214 review)" line names the border; a clear leader who
    is not the user (the
    profile's `ranking`) is never a second front. Judge yourself when a leader must be attacked by several
    fronts at once. Weigh any "Attack on enemy … assumes its owner does not reinforce it first

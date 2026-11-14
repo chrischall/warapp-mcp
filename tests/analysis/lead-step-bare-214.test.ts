@@ -211,3 +211,79 @@ describe('#214 item 1: a lead step the sure cost cannot fund is retried at its b
     expect(JSON.stringify(planTurn(input(LOW, 4)))).toBe(JSON.stringify(planTurn(input(LOW, 4))));
   });
 });
+
+// #214 review: the same family with T1 = 1, T2 = 5, T3 = 12 and T4 = 5 (income 30). T4 is the one
+// threatened border of my held B905 (+3), contested (#118): the plan without bare steps funds the
+// captures, then holds B905 whole with 12 of what is left. Taken first, T2's bare step (15 deployed
+// on the conceded T1, an advance only, 0% if player 20 deploys there first) left too little for that
+// hold, and B905 was conceded (T3 = 7: floored, "+3 at risk").
+const fieldOf = (t1: number, t2: number, t3: number, t4: number): BoardState =>
+  board(
+    field(t3).territories.map((t) =>
+      t.territoryId === 1 ? { ...t, armies: t1 } : t.territoryId === 2 ? { ...t, armies: t2 } : t.territoryId === 4 ? { ...t, armies: t4 } : t,
+    ),
+  );
+const withB901 = (value: number) =>
+  buildGraph({ ...g.map, bonuses: g.map.bonuses.map((x) => (x.id === 901 ? { ...x, value } : x)) });
+const near = (settings: PlannerSettings, t3: number, b901 = 2, income = 30, t2 = 5): PlanInput => ({
+  ...input(settings, t3, income),
+  graph: withB901(b901),
+  board: fieldOf(1, t2, t3, 5),
+});
+const SEVENTY: PlannerSettings = { offensiveKillRate: 40, defensiveKillRate: 70, oneArmyStandsGuard: false, baseIncome: 16 };
+
+describe('#214 review: a bare step never takes the armies a hold the plan without it funds', () => {
+  for (const [name, settings] of [
+    ['30/75', LOW],
+    ['40/70', SEVENTY],
+  ] as const)
+    for (const b901 of [2, 4, 8])
+      it(`${name}, B901 at +${b901}: B905 is held whole and T2 is not taken bare`, () => {
+        const i = near(settings, 12, b901);
+        const p = planTurn(i);
+        expect(attacks(p).map((m) => m.to)).not.toContain(2);
+        expect(p.rationale.join('\n')).toMatch(/Hold bonus B905 \(#905\) \(\+3\) whole/);
+        expect(p.warnings.join('\n')).not.toMatch(/concedes bonus B905|T4 \(#4\) cannot be held/);
+        // Said once, naming the step and the hold it would cost.
+        expect(p.rationale.filter((l) => l.includes('#214 review'))).toEqual([
+          expect.stringMatching(/^Lead step T2 \(#2\) not taken at its bare cost \(#214 review\): taking it would leave T4 \(#4\) without the hold this plan gives it/),
+        ]);
+        expect(valid(p, i)).toEqual([]);
+      });
+
+  it('T3 at 7: B905 is held whole, not floored with "+3 at risk"', () => {
+    const p = planTurn(near(LOW, 7));
+    expect(attacks(p).map((m) => m.to)).not.toContain(2);
+    expect(p.rationale.join('\n')).toMatch(/Hold bonus B905 \(#905\) \(\+3\) whole/);
+    expect(p.warnings.join('\n')).not.toMatch(/can still break bonus B905/);
+  });
+
+  it('keeps a bare step that costs no hold (the item 1 shape)', () => {
+    const p = planTurn(input(LOW, 4));
+    expect(attacks(p).filter((m) => m.to === 2 || m.to === 3).map((m) => m.to).sort()).toEqual([2, 3]);
+    expect(p.rationale.join('\n')).not.toMatch(/#214 review/);
+  });
+
+  it('a completion whose bare step is undone keeps the skip line its sure try gave', () => {
+    // T2 = 0, T3 = 7, income 18: the completion's bare retry takes T2 (1) and then cannot fund T3,
+    // so it is undone. T2's entry still says why its bonus's step failed.
+    const p = planTurn(near(LOW, 7, 2, 18, 0));
+    expect(attacks(p).map((m) => m.to)).not.toContain(2);
+    const t2 = skipLine(p).split(/; (?=T\d+ \(#\d+\) \(player)/).find((x) => x.includes('T2 (#2) (player 20'))!;
+    expect(t2).toMatch(/its bonus's step/);
+  });
+
+  it('no bare advance while the plan is not committing to the closest bonus (rule 4f off)', () => {
+    // B902 held in full (T6, T7, T9 mine), so no neutral is in reach and a bonus is held: rule 4f
+    // is off, and pass 2 runs the bonuses by score — its first is no "closest" bonus to retry bare.
+    // B901 (+20) cannot complete (T3's 12 cost 40 bare): T2 is still taken, by a later rule.
+    const b = board(fieldOf(1, 0, 12, 15).territories.map((t) => ([6, 7, 9].includes(t.territoryId) ? mine(t.territoryId, 2) : t)));
+    const i: PlanInput = { ...input(LOW, 12), graph: withB901(20), board: b };
+    const p = planTurn(i);
+    expect(p.rationale.join('\n')).not.toMatch(/expansion goes to the bonus closest to completion first/);
+    const t2 = attacks(p).find((m) => m.to === 2)!;
+    expect(t2.reason).toMatch(/advances bonus B901/);
+    expect(t2.reason).not.toMatch(/sized for the 0 defenders there now|#214/);
+    expect(valid(p, i)).toEqual([]);
+  });
+});
