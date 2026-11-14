@@ -367,8 +367,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   a border; when I lead an FFA (#201) every adjacent opponent combines, but only while that hold pays —
   a border whose joint hold fails rule 1a's tests while its hold against the strongest single opponent
   passes is sized for that opponent, never conceded on the two together, #235; a held bonus is judged whole: its
-  members are sized so when its joint unit costs more than the income and its single-opponent unit pays, so a
-  bonus never leaves its border less protected than no bonus); teammates are never a threat or a target; under Local Deployment an opponent's
+  members are sized so when its joint unit costs more than the income and its single-opponent unit pays, and a
+  bonus funded neither so nor whole up front leaves each member the per-border test on its value without that
+  bonus — the judgement it gets with no bonus); teammates are never a threat or a target; under Local Deployment an opponent's
   visible bonus pools reach only their own territories (its free base income still lands anywhere,
   even when its estimate leaves the pools out). A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also

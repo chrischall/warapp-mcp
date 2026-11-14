@@ -6,6 +6,9 @@ import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import { noteEstimates, planContext } from '../../src/analysis/plan/estimates.js';
+import { deployBook } from '../../src/analysis/plan/orders.js';
+import { newPlanState } from '../../src/analysis/plan/state.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, mine, neutral } from './helpers.js';
 
@@ -221,5 +224,107 @@ describe('#235 review sweep: a held bonus never leaves its border less protected
     expect(worse).toEqual([]);
     // The sweep reaches the new path.
     expect(soloBonus).toBeGreaterThan(0);
+  });
+});
+
+describe('#235 review 2: a held bonus whose other member cannot be held', () => {
+  // The triangle again, plus player 40's T7 (10) beside T6 (2): B901 = {T1, T6} can never be held
+  // whole (T6 is hopeless on 5 income), so rule 1h concedes the unit. T1 (11) needs nothing against
+  // either of players 20 and 30 alone (9 each): it must be judged as it is with no bonus — kept on
+  // the strongest single opponent — not on the two together.
+  const edges: [number, number][] = [
+    [1, 2],
+    [1, 3],
+    [1, 4],
+    [1, 6],
+    [4, 6],
+    [4, 5],
+    [6, 7],
+  ];
+  const plan = (o: { bonus: number; e: number; t1: number; income: number; t7: 'enemy' | 'neutral'; t7armies?: number }) =>
+    planTurn({
+      graph: buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7], edges, o.bonus ? [[901, o.bonus, [1, 6]]] : [])),
+      board: board([
+        mine(1, o.t1),
+        enemy(2, o.e, 20),
+        enemy(3, o.e, 30),
+        mine(4, 90),
+        neutral(5, 50),
+        mine(6, 2),
+        o.t7 === 'enemy' ? enemy(7, o.t7armies ?? 10, 40) : neutral(7, o.t7armies ?? 10),
+      ]),
+      me: ME,
+      income: o.income,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }, { id: 40 }], turn: 8 },
+      options: { adapt: true, enemyDeploy: 5 },
+    });
+
+  it('the repro: T1 is kept with the bonus as without it', () => {
+    const base = { e: 9, t1: 11, income: 5, t7: 'enemy' as const };
+    const plain = plan({ ...base, bonus: 0 });
+    const held = plan({ ...base, bonus: 1 });
+    expect(plain.profile.ranking?.leader).toBe(ME);
+    expect(plain.conceded).not.toContain(1);
+    expect(held.conceded).not.toContain(1);
+    expect(held.conceded).toContain(6);
+    expect(held.rationale.join('\n')).toMatch(
+      /holding T1 \(#1\) against players 20 and 30 attacking together needs \d+ .*sized for the strongest single opponent \(~13\).*: it holds on what it has/,
+    );
+  });
+
+  it('sweep (second member threatened): the bonus run concedes T1 only when the plain run does', () => {
+    const worse: string[] = [];
+    let reached = 0;
+    let skipped = 0;
+    for (const t7 of ['enemy', 'neutral'] as const)
+      for (const bonus of [1, 3, 6])
+        for (const income of [5, 15, 30, 45])
+          for (const e of [6, 9, 12, 18, 24, 30])
+            for (const t1 of [3, 8, 11, 15, 20, 30, 40]) {
+              const plain = plan({ bonus: 0, e, t1, income, t7 });
+              const held = plan({ bonus, e, t1, income, t7 });
+              // A plan that finishes a player off (rule 1e) picks its strike before any hold, and
+              // the bonus can change which player it finishes: not a sizing question.
+              const finished = (p: TurnPlan) =>
+                p.rationale.flatMap((l) => /^Finish off player (\d+)/.exec(l)?.[1] ?? []).join(',');
+              if (finished(plain) !== finished(held)) {
+                skipped++;
+                continue;
+              }
+              if (held.rationale.some((l) => /holding T1 \(#1\) against players 20 and 30/.test(l))) reached++;
+              if (held.conceded.includes(1) && !plain.conceded.includes(1))
+                worse.push(`T7 ${t7}, bonus +${bonus}, income ${income}, enemies ${e}, T1 ${t1}`);
+            }
+    expect(worse).toEqual([]);
+    expect(reached).toBeGreaterThan(0);
+    expect(skipped).toBeLessThan(100);
+    console.log(`#235 review 2 sweep: reached ${reached}, skipped ${skipped} of 1,008`);
+  });
+});
+
+describe('#235 review 2: a cut after captures counts its per-territory income on the holdings it is cut from', () => {
+  it('a captured territory in the cut-off part', () => {
+    // My chain T1–T2–T3–T4–T5 (5 territories, base 4, one army per territory: income 5), and T9
+    // beside T1 captured this turn. Losing T2 cuts off T1 and T9: 6 territories down to 4, so the
+    // cut is worth 6 − 4 = 2, not territoryIncome(5) − territoryIncome(3) = 1 on the start-of-turn count.
+    const g = buildGraph(makeMap([1, 2, 3, 4, 5, 9], [[1, 2], [2, 3], [3, 4], [4, 5], [1, 9]]));
+    const input: PlanInput = {
+      graph: g,
+      board: board([mine(1, 3), mine(2, 3), mine(3, 3), mine(4, 3), mine(5, 3), neutral(9, 2)]),
+      me: ME,
+      income: 5,
+      settings: { ...STD, baseIncome: 4, bonusArmyPer: 1 },
+      game: { players: [{ id: ME }, { id: 20 }], turn: 8 },
+    };
+    const ctx = planContext(input);
+    const ps = newPlanState();
+    noteEstimates(ctx, ps);
+    const book = deployBook(ctx, ps);
+    expect(book.cutOff(2)).toMatchObject({ ids: [1], income: 1 });
+    ps.captured.add(9);
+    ps.holdings = new Set([...ctx.mine, 9]);
+    book.cutCache.clear();
+    expect(book.cutOff(2)).toMatchObject({ ids: [1, 9], income: 2 });
   });
 });

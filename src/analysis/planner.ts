@@ -197,8 +197,10 @@
 //     (#235 review): when the unit sized for them together costs more than the income (rule 1h
 //     could never hold it whole) while the unit sized for the strongest single opponent pays, the
 //     members that sizing lowers are sized so ("holding bonus … against players attacking together
-//     …"), unless another held bonus that fits the income holds them too; a joint unit within the
-//     income keeps #201's sizing (rule 1h contests it, #118). A rationale line says so ("… as FFA players attack alone (#235)") when the plan
+//     …"), unless another held bonus that fits the income holds them too. Any other held bonus not
+//     funded whole up front (#235 review 2: it may be conceded, another member hopeless or the
+//     captures leaving too little) gives each member it lowers the per-border test on its value
+//     without that bonus — the judgement it gets with no bonus. A rationale line says so ("… as FFA players attack alone (#235)") when the plan
 //     keeps it (live: a 23-stack that held against each neighbour alone, even at a 40 deploy, was
 //     conceded on the two together and withdrawn as the first order). Teammates (the game's team list) are never a threat, an
 //     estimate or a target. Under Local Deployment an opponent's visibly held bonus pays

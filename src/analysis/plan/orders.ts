@@ -194,9 +194,10 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
         const ts = bonusTerritories(g, b.id);
         if (b.value > 0 && ts.length && ts.every((x) => off.has(x))) inc += b.value;
       }
-      // On the same base as protectedValue's own per-territory share (#235 review): my start-of-turn count.
+      // On the holdings the cut is taken from (#235 review 2): my start-of-turn count until the
+      // captures are known, then with this turn's captures, which the cut-off part may include.
       const per = s.bonusArmyPer ?? 0;
-      const n = mine.length;
+      const n = ps.holdings.size;
       if (per > 0) inc += territoryIncome(n, baseIncome, per) - territoryIncome(n - ids.length, baseIncome, per);
       cut = { ids, armies: armies(ids), income: inc };
     }

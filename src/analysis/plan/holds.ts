@@ -21,7 +21,7 @@ import {
 import type { DeployBook } from './orders.js';
 import { capRoom, relaxedFor } from './relations.js';
 import type { PlanCtx, PlanState } from './state.js';
-import type { Threats } from './threats.js';
+import type { Border, Threats } from './threats.js';
 import { byNum } from './util.js';
 
 
@@ -186,10 +186,12 @@ export function holdBasics(pc: PlanCtx, ps: PlanState, book: DeployBook, threats
  * them together costs more than the income — it can never be held whole, so rule 1h concedes it — while
  * the unit sized for the strongest single opponent pays (within PAYBACK_TURNS × its value and
  * CONCEDE_FACTOR × its worth, and the income), every member that sizing lowers is sized so, unless
- * another bonus I hold that can be held whole on the joint sizing also holds it. A joint unit within
- * the income keeps #201's sizing even when it does not pay: rule 1h contests it and holds it whole from
- * what the captures leave (#118). So a held bonus never leaves its border less protected than the
- * same border with no bonus.
+ * another bonus I hold that can be held whole on the joint sizing also holds it. #235 review 2: any other
+ * held bonus rule 1h does not fund whole up front (it fits the income and pays) may be conceded — another
+ * member hopeless, or the captures leaving too little to hold it whole (#118) — and its members then
+ * judged alone; so each member it lowers takes the per-border test on its value without that bonus,
+ * exactly the judgement it gets with no bonus. Only a member of a bonus funded whole up front keeps
+ * #201's joint sizing.
  */
 export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, threats: Threats, prev: HoldsUpTo0) {
   const { g, ffaLeader, paybackTurns, label, bonusName, unitsAt, toTake, myCommanders } = pc;
@@ -218,33 +220,40 @@ export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, th
     if (solo) borders.set(id, solo);
     if ((toTake(have + units) ?? Infinity) > (solo?.threat ?? 0)) safeAtStart.add(id);
   };
-  for (const b of [...borders.values()].sort((x, y) => x.id - y.id)) {
-    if (b.alone === undefined || !b.split || myCommanders.has(b.id) || inHeldBonus(b.id)) continue;
+  /**
+   * The per-border test: `b` (worth `value`) sized for its strongest single opponent — the line
+   * that says so — when its joint hold is dear or above the income while its single hold passes
+   * both; null otherwise (one conceded either way, or one that holds jointly, keeps #201's sizing).
+   */
+  const judgeAlone = (b: Border, value: number): string | null => {
+    if (b.alone === undefined || !b.split) return null;
     const have = stayAt(b.id);
     const units = unitsAt(b.id);
     const joint = costFor(have + units, b.threat);
     const single = costFor(have + units, b.alone);
-    if (single >= joint) continue;
-    const value = valueOf(b.id);
+    if (single >= joint) return null;
     const worth = value + (have + stakeAt(b.id)) / paybackTurns;
     const recent = threats.recentlyTakenFrom(b.id);
     const judged = (threat: number, holdCost: number): Threatened => ({
       id: b.id, have, threat, holdCost, value, worth, units, ...(recent !== undefined && recent === b.player ? { recentFrom: recent } : {}),
     });
     const dear = uneconomic(judged(b.threat, joint));
-    if (!dear && joint <= ps.budget) continue;
+    if (!dear && joint <= ps.budget) return null;
     // Only a border the single opponent's hold keeps: one conceded either way keeps #201's sizing.
-    if (uneconomic(judged(b.alone, single)) || single > ps.budget) continue;
-    const line =
-      `I lead this free-for-all (#201), but holding ${label(b.id)} against players ${b.split.players.join(' and ')} attacking together needs ${joint} (protects +${value}, worth ~${Math.round(worth * 10) / 10}): ${
-        dear ? 'more than CONCEDE_FACTOR × its worth' : `more than the ${ps.budget} I can deploy`
-      }, so it is sized for the strongest single opponent (~${b.alone}), as FFA players attack alone (#235)${single ? `: it needs ${single}` : ': it holds on what it has'}.`;
-    soloSize(b.id, line);
+    if (uneconomic(judged(b.alone, single)) || single > ps.budget) return null;
+    return `I lead this free-for-all (#201), but holding ${label(b.id)} against players ${b.split.players.join(' and ')} attacking together needs ${joint} (protects +${value}, worth ~${Math.round(worth * 10) / 10}): ${
+      dear ? 'more than CONCEDE_FACTOR × its worth' : `more than the ${ps.budget} I can deploy`
+    }, so it is sized for the strongest single opponent (~${b.alone}), as FFA players attack alone (#235)${single ? `: it needs ${single}` : ': it holds on what it has'}.`;
+  };
+  for (const b of [...borders.values()].sort((x, y) => x.id - y.id)) {
+    if (myCommanders.has(b.id) || inHeldBonus(b.id)) continue;
+    const line = judgeAlone(b, valueOf(b.id));
+    if (line) soloSize(b.id, line);
   }
   // #235 review: a bonus I hold in full, judged whole as rule 1h's unit judges it.
   const local = pools !== null && pools.bonuses.length > 0;
   /** Each held bonus: its members the single-opponent sizing lowers, and whether its joint unit fits the income. */
-  const judged: { bonusId: number; lowered: number[]; fits: boolean }[] = [];
+  const judged: { bonusId: number; value: number; lowered: number[]; fits: boolean; whole: boolean }[] = [];
   /** The line each bonus sized for the strongest single opponent gives its members. */
   const soloLines = new Map<number, string>();
   for (const bonus of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
@@ -276,7 +285,9 @@ export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, th
       return net <= paybackTurns * bonus.value && (recent || net <= CONCEDE_FACTOR * worth) && cost <= ps.budget;
     };
     const fits = joint <= ps.budget;
-    judged.push({ bonusId: bonus.id, lowered, fits });
+    // Rule 1h funds it whole up front on the joint sizing: it pays and fits the income.
+    const whole = fits && pays(joint);
+    judged.push({ bonusId: bonus.id, value: bonus.value, lowered, fits, whole });
     if (!fits && lowered.length && pays(single)) {
       soloLines.set(
         bonus.id,
@@ -291,6 +302,22 @@ export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, th
       // A border another held bonus can hold whole against them together keeps #201's sizing.
       if (judged.some((o) => o !== j && o.fits && bonusTerritories(g, o.bonusId).includes(t))) continue;
       if (!ps.soloHeld.has(t)) soloSize(t, line);
+    }
+  }
+  // #235 review 2: a bonus neither sized so nor funded whole up front on the joint sizing may be
+  // conceded (another member hopeless, or the captures leaving too little), and rule 1h then judges
+  // each member alone. So a member it lowers takes the per-border test on its own value, less every
+  // such bonus that contains it: exactly the judgement it gets with no bonus, so a held bonus never
+  // leaves a border less protected than none. A member of a bonus funded whole keeps #201's sizing.
+  for (const j of judged) {
+    if (soloLines.has(j.bonusId) || j.whole) continue;
+    for (const t of j.lowered) {
+      if (ps.soloHeld.has(t) || judged.some((o) => o.whole && bonusTerritories(g, o.bonusId).includes(t))) continue;
+      const lost = judged
+        .filter((o) => !soloLines.has(o.bonusId) && bonusTerritories(g, o.bonusId).includes(t))
+        .reduce((n, o) => n + o.value, 0);
+      const line = judgeAlone(borders.get(t)!, Math.max(0, valueOf(t) - lost));
+      if (line) soloSize(t, line);
     }
   }
 }
