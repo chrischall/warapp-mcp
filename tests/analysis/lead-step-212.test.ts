@@ -140,6 +140,11 @@ describe('#212: a lead step out of a border that must keep its hold', () => {
     expect(why(p)).toMatch(/T4 \(#4\) keeps \d+ to hold its border against the ~\d+ threat once the attack on T3 \(#3\) leaves/);
     // 11 hold against ~17 at 60% offence (17 × 0.6 = 10.2 kills).
     expect(staysAt(p, i, 4)).toBeGreaterThanOrEqual(11);
+    // The warning on T4 is restated against the threat once T3 is taken (its 8 cannot attack),
+    // never against the start-of-turn threat that would contradict the hold line above.
+    const t4 = p.warnings.find((w) => w.startsWith('T4 (#4)')) ?? '';
+    expect(t4).toMatch(/the plan deploys \d+ there, leaving \d+ armies \(\d+ to take, more than the \d+ that can still reach it once T3 \(#3\) is taken: it holds\)/);
+    expect(t4).not.toMatch(/still could/);
     expect(valid(p, i)).toEqual([]);
   });
 

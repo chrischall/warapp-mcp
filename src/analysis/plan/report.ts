@@ -324,12 +324,29 @@ export function reportOffence(
   for (let i = 0; i < warnings.length; i++) {
     const hit = [...threatWarnings].find(([, w]) => w.text === warnings[i]);
     if (!hit) continue;
-    const [id, { threat }] = hit;
+    const [id, { threat: atStart }] = hit;
     const n = deployed.get(id) ?? 0;
     if (n <= 0) continue;
     const have = stayAt(id);
     const take = toTake(have + unitsAt(id));
-    warnings[i] += ` Before this turn's deploys: the plan deploys ${n} there, leaving ${have} armies (${take ?? 'none can'} to take${take !== null && take > threat ? `, more than the ${threat} that can reach it: it holds` : `; the ${threat} that can reach it still could`}).`;
+    // #212: judged against the threat once this turn's captures are done (a captured stack beside
+    // it cannot attack), as the hold and lead-step lines size it — else a border the plan just
+    // sized is called short against a stack it takes this turn.
+    const after = borderAt(id, (x) => captured.has(x));
+    const threat = after ? Math.min(atStart, after.worst ?? after.threat) : 0;
+    // The opponents' territories beside it that this turn's attacks take.
+    const takenNear = neighborsOf(g, id)
+      .filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player')
+      .sort(byNum);
+    const lower = threat < atStart && takenNear.length > 0;
+    const once = lower ? `once ${takenNear.map(label).join(' and ')} ${takenNear.length === 1 ? 'is' : 'are'} taken` : '';
+    warnings[i] += ` Before this turn's deploys: the plan deploys ${n} there, leaving ${have} armies (${take ?? 'none can'} to take${
+      !after
+        ? `; nothing can reach it${once ? ` ${once}` : ''}: it holds`
+        : take !== null && take > threat
+          ? `, more than the ${threat} that can ${lower ? `still reach it ${once}` : 'reach it'}: it holds`
+          : `; ${lower ? `even ${once}, ` : ''}the ${threat} that can reach it still could`
+    }).`;
   }
   // #201: the FFA leader's borders held against two or more opponents attacking together.
   if (ffaLeader)

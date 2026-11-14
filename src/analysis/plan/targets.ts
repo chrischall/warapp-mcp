@@ -48,7 +48,11 @@ export interface Counter {
  * reach it, both measured then; no source: none was free), refused by R3 or a trade below even,
  * or stopped by rule 4d's frontier budget. A try that succeeds clears it.
  */
-/** #212: why a neighbour of mine could not attack a lead step at all. */
+/**
+ * #212: why a neighbour of mine could not attack a lead step at all. `locked` cannot fire today
+ * (a locked, unconceded border that is not my commander's is a lead step's hold source, and
+ * No-Split, the only other way a source is unusable, turns lead steps off); it is the fallback.
+ */
 export type LeadBlock = 'conceded' | 'commander' | 'order' | 'locked';
 
 export type LeadTry =

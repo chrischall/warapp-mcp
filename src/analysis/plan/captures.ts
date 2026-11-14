@@ -384,7 +384,10 @@ export function captureHelper(
                           ? 'commander'
                           : orderOf(x)
                             ? 'order'
-                            : 'locked') as LeadBlock,
+                            : // Unreachable today: a locked border left is a holdSource (so open),
+                              // and only No-Split fails `usable` otherwise, which turns lead steps
+                              // off. Kept so the label stays exhaustive if that ever changes.
+                              'locked') as LeadBlock,
                     })),
                   }
                 : {}),
