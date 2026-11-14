@@ -988,10 +988,11 @@ import type { GameOutlook } from './outlook.js';
 import { classifyExchange, forecastBorder, type Exchange, type ExchangeCase } from './exchange.js';
 import { twoStepReaches, type TwoStepReach } from './lookahead.js';
 import { indexAfterAll, MoveSlot, opponentOrdersBefore, scheduleMoves, type MoverPosition } from './schedule.js';
-import { chargeDeploys, deployPools, enemyDeployReaching, heldBonusPools } from './local-deploy.js';
+import { chargeDeploys, enemyDeployReaching, heldBonusPools } from './local-deploy.js';
 import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from './player.js';
 import type { GameProfile, ProfilePlayer } from './profile.js';
 import { emptyPlan, noteEstimates, planContext } from './plan/estimates.js';
+import { deployBook } from './plan/orders.js';
 import { newPlanState } from './plan/state.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
@@ -2446,7 +2447,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const ps = newPlanState();
   noteEstimates(pc, ps);
   const {
-    g, board, me, s, baseIncome, opts, income, game: ctx, allies, foe, turnNow, incomePrior, profile, auto, goal, balanced,
+    g, board, me, s, opts, income, game: ctx, allies, foe, turnNow, incomePrior, profile, auto, goal, balanced,
     pressureFactor, marginFor, guarded, focus, reserve, custom, enemyDeploy, estimates, deployOf, incomeOfPlayer, paybackTurns,
   } = pc;
   const {
@@ -2470,175 +2471,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   if (!mine.length) return emptyPlan(pc, ps);
 
-  // ---- mutable plan state ----
-  let budget = income;
-  // #165: with the guard off, a territory of mine next to a visible enemy at the start of the turn
-  // keeps one army all the same (an empty territory falls to any single army) — never my commander's
-  // (it is not empty), and not under No-Split (an order sends the whole stack).
-  const sentinel = new Set(
-    guard || noSplit
-      ? []
-      : mine.filter(
-          (id) =>
-            !myCommanders.has(id) &&
-            neighborsOf(g, id).some((n) => {
-              const o = state.get(n)?.owner;
-              return o?.kind === 'player' && foe(o.playerId);
-            }),
-        ),
-  );
-  /** Armies that stay on my `id` whatever its orders: the guard, or (#165) the army kept next to an enemy. */
-  const guardAt = (id: number) => (guard || sentinel.has(id) ? 1 : 0);
-  // May start at −1 (a 0-army territory still owes its guard): deploys there pay for it first.
-  for (const id of mine) avail.set(id, armiesOf(id) - guardAt(id));
-  /** #179: what my `x` keeps to cover a finished-off player's exit, in `avail` terms (0 when none). */
-  const coverOf = (x: number) => coverKeep.get(x) ?? 0;
-
-
-  // ---- income change (#70): the one computation nextIncome, R3 and the negative-bonus rules use ----
-  const heldNow = () => new Set([...mine, ...captured]);
-  /** The income change of also capturing `ts`, on top of this turn's captures so far. */
-  const gainWith = (ts: readonly number[]): number => {
-    const now = heldNow();
-    return incomeGain(new Set([...now, ...ts])) - incomeGain(now);
-  };
-  /** Under No-Split, the order `x` already issues (its only one); otherwise always `undefined`. */
-  const orderOf = (x: number): PlannedMove | undefined => (noSplit ? moves.find((m) => m.from === x) : undefined);
-  const describeOrder = (m: PlannedMove) =>
-    m.kind === 'attack' ? `attacks ${label(m.to)}` : `transfers to ${label(m.to)}`;
-  /** A No-Split warning: `x` already issues an order, so `what` is not planned. Never repeated. */
-  const warnSplit = (x: number, what: string) => {
-    const w = `No-Split: ${label(x)} already ${describeOrder(orderOf(x)!)}, so ${what} (one attack or transfer per territory).`;
-    if (!warnings.includes(w)) warnings.push(w);
-  };
-  const deploy = (id: number, n: number) => {
-    if (n <= 0) return;
-    deployed.set(id, (deployed.get(id) ?? 0) + n);
-    avail.set(id, avail.get(id)! + n);
-    budget -= n;
-  };
-  const undeploy = (id: number, n: number) => {
-    const d = (deployed.get(id) ?? 0) - n;
-    if (d > 0) deployed.set(id, d);
-    else deployed.delete(id);
-    avail.set(id, avail.get(id)! - n);
-    budget += n;
-  };
-
-  // ---- Local Deployment pools ----
-  const pools = s.localDeployments ? deployPools(g, mineSet, income) : null;
+  // ---- the deploy book (plan/orders.ts): budget, guard, deploys, pools, protected value ----
+  const {
+    guardAt, coverOf, heldNow, gainWith, orderOf, describeOrder, warnSplit, deploy, undeploy, pools, roomAt, spareAt,
+    valueCache, valueOf,
+  } = deployBook(pc, ps);
+  // As the deploy book reads it, restated here so TypeScript narrows `pools` wherever it is tested.
   const local = pools !== null && pools.bonuses.length > 0;
-  /** Armies that may still be deployed on `id` (pools respected; with Local Deployment off, the budget). */
-  const roomAt = (id: number): number => {
-    if (!local || budget <= 0) return budget;
-    const fits = (n: number) => {
-      const next = new Map(deployed);
-      next.set(id, (next.get(id) ?? 0) + n);
-      return chargeDeploys(pools, next).anywhereUsed <= pools.anywhere;
-    };
-    let lo = 0;
-    let hi = budget;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      if (fits(mid)) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
-  };
-  /** Armies a capture may still deploy on `id`: its room, less the reserve. */
-  const spareAt = (id: number) => Math.min(budget - reserve, roomAt(id));
-  // #165: a sentinel that starts the turn at 0 owes its army: paid from the income before any other
-  // deploy, holds included (the reserve holds back captures only). When income is scarce one army
-  // may go to a border later conceded ahead of a high-value hold: a cheap price, said in the rationale. One the income (or its pool) cannot pay stays at
-  // 0, and the rationale does not claim it keeps one army.
-  for (const id of [...sentinel].sort(byNum)) {
-    const owed = -avail.get(id)!;
-    if (owed > 0) deploy(id, Math.min(owed, roomAt(id)));
-  }
-  const sentinelHeld = [...sentinel].filter((id) => avail.get(id)! >= 0).sort(byNum);
-  const paid = sentinelHeld.filter((id) => armiesOf(id) === 0);
-  if (sentinelHeld.length)
-    rationale.push(
-      `One Army Must Stand Guard is off: every army may move, but an empty territory falls to any single army, so ${sentinelHeld.map(label).join(', ')} ${sentinelHeld.length === 1 ? 'keeps' : 'each keep'} one army (next to an enemy)${paid.length ? `; ${paid.map(label).join(', ')} ${paid.length === 1 ? 'starts at 0, so its army is' : 'start at 0, so their armies are'} deployed first, before any hold (one army each, spent even where a border is later conceded)` : ''}.`,
-    );
-  if (local) {
-    rationale.push(
-      `Local Deployment: ${pools.anywhere} of the ${income} income may be deployed anywhere; each held bonus's armies stay inside it.`,
-    );
-    for (const p of pools.bonuses)
-      rationale.push(
-        `Local Deployment: bonus ${p.name} (#${p.bonusId})'s +${p.value} may only be deployed on its territories (${p.territoryIds.map(label).join(', ')}).`,
-      );
-    if (pools.trimmed)
-      warnings.push(
-        `Local Deployment: the income of ${income} is less than the held bonuses are worth; ${pools.trimmed} pooled armies were dropped from the plan's pools.`,
-      );
-  }
-
-  // ---- protected value ----
-  // Judged against my holdings at the start of the turn until the capture passes
-  // have run; then against those holdings plus this turn's captures (R2).
-  let holdings: Set<number> = mineSet;
-  /** #122: bonus `ts` is being built — its missing members all visible neutrals, finishing it economic (rule 4). */
-  const building = (ts: readonly number[], value: number): boolean => {
-    let cost = 0;
-    let worst = 0;
-    for (const x of ts) {
-      if (holdings.has(x)) continue;
-      const st = state.get(x);
-      if (st?.owner.kind !== 'neutral' || st.armies === null) return false;
-      const c = econCostAt(x);
-      cost += c;
-      worst = Math.max(worst, c);
-    }
-    return cost <= paybackTurns * value && worst <= WASTELAND_FACTOR * value;
-  };
-  const protectedValue = (t: number): number => {
-    // Each bonus is visited once, so it counts once however many of its borders are threatened.
-    let v = 0;
-    const mineWithout = (x: number) => x !== t && holdings.has(x);
-    for (const b of g.map.bonuses) {
-      const ts = bonusTerritories(g, b.id);
-      if (!ts.includes(t)) continue;
-      // #128: a negative bonus I hold in full that contains T is lifted when T falls.
-      if (b.value < 0) {
-        if (ts.every((x) => holdings.has(x))) v += b.value;
-        continue;
-      }
-      if (b.value === 0) continue;
-      if (ts.every((x) => holdings.has(x))) {
-        v += b.value;
-        continue;
-      }
-      // An incomplete bonus I am working on (T is in it): lost access if T is my only way in.
-      const access = (has: (x: number) => boolean) =>
-        ts.some((x) => has(x) || neighborsOf(g, x).some(has));
-      if (!access(mineWithout)) {
-        v += b.value;
-        continue;
-      }
-      // #122: a member of a bonus I am building carries its share of the bonus — value × the
-      // members I hold ÷ its size — so a second member is not worth +0 when the first (my only
-      // foothold) was worth the whole bonus. Being built: every missing member is a visible
-      // neutral, and finishing it passes rule 4's economy tests (a bonus behind an enemy, the
-      // fog or a wasteland is not being built).
-      if (building(ts, b.value)) {
-        const held = ts.filter((x) => holdings.has(x) || x === t).length;
-        v += Math.round(((b.value * held) / ts.length) * 10) / 10;
-      }
-    }
-    // Per-territory income replaces the base only when larger, so losing T
-    // costs an army only above it.
-    const per = s.bonusArmyPer ?? 0;
-    if (per > 0) v += territoryIncome(mine.length, baseIncome, per) - territoryIncome(mine.length - 1, baseIncome, per);
-    // Floored at 0 only (#128): a negative bonus can outweigh the rest, never below nothing.
-    return Math.max(0, v);
-  };
-  const valueCache = new Map<number, number>();
-  const valueOf = (t: number) => {
-    if (!valueCache.has(t)) valueCache.set(t, protectedValue(t));
-    return valueCache.get(t)!;
-  };
 
   // ---- 0. threat trend ----
   // Growth of each visible enemy territory next to me since the previous board
@@ -3682,7 +3521,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const buildUnits = () => {
     for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
       const ts = bonusTerritories(g, b.id);
-      if (b.value <= 0 || !ts.length || !ts.every((x) => holdings.has(x))) continue;
+      if (b.value <= 0 || !ts.length || !ts.every((x) => ps.holdings.has(x))) continue;
       const members = threatened.filter((t) => ts.includes(t.id)).sort((x, y) => x.id - y.id);
       if (!members.length) continue;
       // My commander's border, once its hold is funded (rule 1k), is held whatever it costs: a
@@ -3758,7 +3597,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /** The armies `u` may still deploy, for its warning: a one-border unit's room (pools respected). */
   const leftFor = (u: Unit) => {
     if (u.members.length === 1) return roomAt(u.members[0]!.id);
-    if (!local) return budget;
+    if (!local) return ps.budget;
     // Local Deployment: what may be deployed on its borders together (pools respected).
     const given = u.members.map((m) => {
       const n = roomAt(m.id);
@@ -3777,7 +3616,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // A commander border rule 1k could not fully hold is still owed (it cannot be deployed to further).
     const todo = u.members.filter((m) => !heldBorders.has(m.id) || (m.critical && !commanderHeld.has(m.id)));
     const cost = todo.reduce((n, m) => n + m.holdCost, 0);
-    if (cost > budget) return false;
+    if (cost > ps.budget) return false;
     if (local) {
       // Pools: each hold must fit its own territory's room, the earlier ones deployed.
       const done: Threatened[] = [];
@@ -3919,7 +3758,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     for (const { u } of order) {
       // Recomputed: a border shared with a unit floored before it already has its floor.
       const todo = need(u).filter((x) => x.f > 0);
-      if (todo.reduce((n, x) => n + x.f, 0) > budget) continue;
+      if (todo.reduce((n, x) => n + x.f, 0) > ps.budget) continue;
       const done: { m: Threatened; f: number }[] = [];
       let fits = true;
       for (const x of todo) {
@@ -4058,7 +3897,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // armies over all of them: simulate both and keep whole holds unless spreading loses less
     // to the opponents' best response (Local Deployment: whole holds, pools decide the room).
     const simulate = (wholeFirst: boolean) => {
-      let b = budget;
+      let b = ps.budget;
       const have = new Map<Threatened, number>();
       const left = new Map<Threatened, number>();
       for (const u of open)
@@ -4106,7 +3945,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
             ? `more than ${CONCEDE_FACTOR} × its worth`
             : null;
       if (
-        more <= budget &&
+        more <= ps.budget &&
         fundUnit(
           u,
           undefined,
@@ -4135,7 +3974,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       rationale.push(
         `Spread what is left over the floored bonuses' borders rather than hold one whole: against the opponent's best use of its deploy that loses less.`,
       );
-    while (budget > 0) {
+    while (ps.budget > 0) {
       const next = members
         .filter((m) => m.holdCost > 0 && roomAt(m.id) > 0)
         .sort((a, b) => breakCost(a) - breakCost(b) || value(b) - value(a) || a.id - b.id)[0];
@@ -4201,7 +4040,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         `My commander's territory ${label(t.id)} cannot be made safe this turn: it needs ${t.holdCost} more armies against the ~${t.threat} threat, but only ${room} can be deployed there. ${room ? `All ${room} go there, and` : 'Still,'} nothing leaves it (losing the commander eliminates me; it is never conceded).`,
       );
     }
-    let triageBudget = budget;
+    let triageBudget = ps.budget;
     buildUnits();
     if (goal === 'expand')
       for (const u of units)
@@ -4214,7 +4053,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const single = (t: Threatened, quiet = false) => {
       // My commander's border is already held (rule 1k).
       if (t.critical) return;
-      const left = Math.min(acting ? budget : triageBudget, local ? roomAt(t.id) : Infinity);
+      const left = Math.min(acting ? ps.budget : triageBudget, local ? roomAt(t.id) : Infinity);
       if (uneconomic(t)) {
         conceded.add(t.id);
         if (!quiet)
@@ -4420,7 +4259,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const kept = new Set<number>();
   const reconsider = () => {
     if (!captured.size) return;
-    holdings = new Set([...mine, ...captured]);
+    ps.holdings = new Set([...mine, ...captured]);
     valueCache.clear();
     if (!conceded.size) return;
     for (const t of [...conceded].sort(byNum)) {
@@ -4429,7 +4268,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const completes = g.map.bonuses
         .filter((b) => {
           const ts = bonusTerritories(g, b.id);
-          return b.value > 0 && ts.includes(t) && ts.every((x) => holdings.has(x)) && !ts.every((x) => mineSet.has(x));
+          return b.value > 0 && ts.includes(t) && ts.every((x) => ps.holdings.has(x)) && !ts.every((x) => mineSet.has(x));
         })
         .sort((a, b) => a.id - b.id);
       if (!completes.length) continue;
@@ -4462,7 +4301,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const garrisoned = new Set<number>();
   /** Do these deploys fit together what may still be deployed (the budget, and the pools under Local Deployment)? */
   const fitsTogether = (adds: readonly { id: number; d: number }[]): boolean => {
-    if (adds.reduce((n, x) => n + x.d, 0) > budget) return false;
+    if (adds.reduce((n, x) => n + x.d, 0) > ps.budget) return false;
     if (!local) return true;
     const next = new Map(deployed);
     for (const x of adds) next.set(x.id, (next.get(x.id) ?? 0) + x.d);
@@ -4494,7 +4333,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (!todo.length || split) continue;
       const cost = todo.reduce((n, x) => n + x.d, 0);
       const worth = b.value + have / paybackTurns;
-      if (cost > paybackTurns * b.value || cost > CONCEDE_FACTOR * worth || cost > budget - reserve) continue;
+      if (cost > paybackTurns * b.value || cost > CONCEDE_FACTOR * worth || cost > ps.budget - reserve) continue;
       // The pools are checked for the members together: each may fit the free pool on its own
       // while together they overdraw it.
       if (!fitsTogether(todo)) continue;
@@ -5109,7 +4948,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       .sort((a, b) => a.id - b.id);
     if (!completes.length) return true;
     const nextIncome = keptIncome(after);
-    const spare = Math.max(0, budget - reserve);
+    const spare = Math.max(0, ps.budget - reserve);
     const stays = (m: number) => {
       if (mineSet.has(m)) return avail.get(m)! + guardAt(m) + (incoming.get(m) ?? 0);
       if (m === t) return survivors;
@@ -5380,7 +5219,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const left = (deployed.get(src) ?? 0) - need;
       if (left > 0) deployed.set(src, left);
       else deployed.delete(src);
-      budget += need;
+      ps.budget += need;
       captured.delete(t);
       refusal = { kind: 'r3' };
       return false;
@@ -5516,7 +5355,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         return false;
       }
     }
-    const before = { avail: new Map(avail), incoming: new Map(incoming), deployed: new Map(deployed), budget };
+    const before = { avail: new Map(avail), incoming: new Map(incoming), deployed: new Map(deployed), budget: ps.budget };
     deploy(plan.finisher, plan.need);
     for (const x of plan.softeners) {
       avail.set(x.from, avail.get(x.from)! - x.armies);
@@ -5530,7 +5369,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       for (const [k, v] of before.incoming) incoming.set(k, v);
       deployed.clear();
       for (const [k, v] of before.deployed) deployed.set(k, v);
-      budget = before.budget;
+      ps.budget = before.budget;
       captured.delete(t);
       return false;
     }
@@ -5579,7 +5418,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /** Snapshot the captures, deploys and notes so far; the result undoes everything since. */
   const snapshot = () => {
     const snap = {
-      budget,
+      budget: ps.budget,
       anchor,
       deployed: new Map(deployed),
       avail: new Map(avail),
@@ -5594,7 +5433,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       warnings: warnings.length,
     };
     return () => {
-      budget = snap.budget;
+      ps.budget = snap.budget;
       anchor = snap.anchor;
       deployed.clear();
       for (const [k, v] of snap.deployed) deployed.set(k, v);
@@ -5806,7 +5645,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   };
   /** Everything a finish-off attempt may change, to restore it. */
   const checkpoint = (ts: readonly number[]) => ({
-    budget,
+    budget: ps.budget,
     deployed: new Map(deployed),
     avail: new Map(avail),
     incoming: new Map(incoming),
@@ -5823,7 +5662,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     warnings: warnings.length,
   });
   const restore = (c: ReturnType<typeof checkpoint>) => {
-    budget = c.budget;
+    ps.budget = c.budget;
     deployed.clear();
     for (const [k, v] of c.deployed) deployed.set(k, v);
     for (const [k, v] of c.avail) avail.set(k, v);
@@ -6067,7 +5906,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           falls,
           all,
           armies: ours.reduce((n, m) => n + m.armies, 0),
-          deploys: reserved.budget - budget,
+          deploys: reserved.budget - ps.budget,
           enough: falls > 0 && !uncovered && (all || ts.length - falls <= 1 || falls * 2 >= ts.length),
           freed,
           unfunded,
@@ -6125,7 +5964,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           if (d) deployed.set(x, d);
           else deployed.delete(x);
           avail.set(x, avail.get(x)! - k);
-          budget += k;
+          ps.budget += k;
         }
       };
       return { search, commit, covers };
@@ -6305,7 +6144,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         const d = (deployed.get(c) ?? 0) + (on ? n : -n);
         if (d > 0) deployed.set(c, d);
         else deployed.delete(c);
-        budget += on ? -n : n;
+        ps.budget += on ? -n : n;
       }
     };
     for (const c of [...myCommanders].sort(byNum)) {
@@ -6314,7 +6153,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (n <= 0) continue;
       held.set(c, n);
       deployed.set(c, (deployed.get(c) ?? 0) + n);
-      budget -= n;
+      ps.budget -= n;
     }
     hold(false);
     const reserved = [...held.values()].reduce((a, n) => a + n, 0);
@@ -6324,7 +6163,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const blocked = (x: number) => orderOf(x) !== undefined;
     const order = adjacent
       .filter((x) => !blocked(x))
-      .map((x) => ({ x, keep: keepFor(x, gone, budget - reserved - reserve) }))
+      .map((x) => ({ x, keep: keepFor(x, gone, ps.budget - reserved - reserve) }))
       .sort((a, b) => avail.get(b.x)! - b.keep - (avail.get(a.x)! - a.keep) || a.x - b.x);
     const prev = targets.get(t);
     targets.set(t, { id: t, cost, enemy: true, sources: adjacent });
@@ -6545,7 +6384,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         Math.max(0, avail.get(x)! - Math.max(keepFor(x, (y) => y === n), twoStepKeep(x, (y) => y === n), coverOf(x)));
       let src = near.map((x) => ({ x, spare: spareOf(x) })).filter((o) => o.spare >= 1).sort((a, b) => b.spare - a.spare || a.x - b.x)[0]?.x;
       let bought = 0;
-      if (src === undefined && budget - reserve >= 1) {
+      if (src === undefined && ps.budget - reserve >= 1) {
         src = near.filter((x) => !conceded.has(x) && avail.get(x)! >= 0 && roomAt(x) >= 1).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b)[0];
         if (src !== undefined) {
           deploy(src, 1);
@@ -6680,9 +6519,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     let expansionSpent = 0;
     let topValue = 0;
     const spend = (f: () => void) => () => {
-      const before = budget;
+      const before = ps.budget;
       f();
-      expansionSpent += before - budget;
+      expansionSpent += before - ps.budget;
       expansionLeft--;
     };
     /** A bonus's worth as the rationale states it: "+22, net +6" when its members carry penalties. */
@@ -6722,7 +6561,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const affordable = (t: number) => {
       const tg = targets.get(t)!;
       const free = tg.sources.filter((x) => !locked.has(x) && !orderOf(x)).reduce((n, x) => n + Math.max(0, avail.get(x)!), 0);
-      return free + Math.max(0, budget - reserve) >= tg.cost;
+      return free + Math.max(0, ps.budget - reserve) >= tg.cost;
     };
     const broken = (b: Breakable) => bonusTerritories(g, b.bonusId).some((x) => captured.has(x));
     const breakReason = (b: Breakable) =>
@@ -6755,7 +6594,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (t.holdCost + o.cost > spareAt(t.id) - rest) return false;
       // Scored as the break candidates are: landing armies plus the frontier it adds (#71, #72).
       if (secondFront(b, strikeWorth(b.value, o) / Math.max(1, o.scoreCost))) return false;
-      const before = budget;
+      const before = ps.budget;
       noteRecent(t);
       deploy(t.id, t.holdCost);
       if (!tryCapture(n, breakReason(b), { from: t.id, keep: avail.get(t.id)! })) {
@@ -6765,7 +6604,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         );
         return true;
       }
-      expansionSpent += before - budget - t.holdCost;
+      expansionSpent += before - ps.budget - t.holdCost;
       anchor ??= moves[moves.length - 1]!.from;
       rationale.push(
         `${label(n)} is the only visible threat to ${label(t.id)}: capturing it removes that threat and breaks the bonus.`,
@@ -6995,7 +6834,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           const pending =
             holdPasses !== 'worst' && !unitsDue && expansionLeft > 0 && u.worth < topValue && !recent ? Math.max(0, floor - expansionSpent) : 0;
           const cost = u.members.filter((m) => !heldBorders.has(m.id)).reduce((n, m) => n + m.holdCost, 0);
-          if (cost <= budget && cost > budget - pending) {
+          if (cost <= ps.budget && cost > ps.budget - pending) {
             waiting.push(u);
             rationale.push(
               `Hold ${u.members.map((m) => label(m.id)).join(', ')} after this turn's bonus completions (needs ${cost}, protects +${u.value}): a completion worth up to +${topValue} may go first, but the hold is funded before any capture that completes nothing.`,
@@ -7062,12 +6901,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
             )
           : [];
       if (!pending.length) return c.run();
-      const before = fundable(pending, budget);
+      const before = fundable(pending, ps.budget);
       const restore = snapshot();
       const spent = expansionSpent;
       const left = expansionLeft;
       c.run();
-      const after = new Set(fundable(pending, budget));
+      const after = new Set(fundable(pending, ps.budget));
       const starved = before.filter((u) => !after.has(u));
       const lost = starved.reduce((n, u) => n + u.value, 0);
       // #122: a starved unit that cannot even be kept short (near miss, floor) is conceded. Waiting
@@ -7075,7 +6914,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // turn until it is retaken — counted over PAYBACK_TURNS, the horizon every payback test
       // uses. So the completion goes first only when its one turn earns more than that.
       // Under Local Deployment only what may be deployed on its borders counts (pools respected).
-      const kept = starved.map((u) => keptShort(u, local ? Math.min(budget, leftFor(u)) : budget));
+      const kept = starved.map((u) => keptShort(u, local ? Math.min(ps.budget, leftFor(u)) : ps.budget));
       const conceding = starved.filter((_, i) => !kept[i]).reduce((n, u) => n + u.value, 0);
       // Units only left short (a near miss, a floor) still stand: the completion goes first when it
       // earns more than they are worth, or — when each stays a near miss — pays for itself within a
@@ -7122,7 +6961,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         run(c);
         // Every owed hold must fit what is left together, not each on its own: two holds of 4
         // with 5 left both pass alone, and the second would be conceded later.
-        if (owed.every((t) => t.holdCost <= roomAt(t.id)) && owed.reduce((n, t) => n + t.holdCost, 0) <= budget)
+        if (owed.every((t) => t.holdCost <= roomAt(t.id)) && owed.reduce((n, t) => n + t.holdCost, 0) <= ps.budget)
           return garrisonCompleted();
         restore();
         expansionSpent = spent;
@@ -7799,7 +7638,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           return `is not taken: attacking it would leave ${label(fail.from)} unable to hold its border (${holdText(fail)})`;
         if (st.from === undefined) return `cannot be reached: ${blockedText(st)}`;
         // What the holds took before this rule ran (no capture spent anything yet).
-        const held = income - budget;
+        const held = income - ps.budget;
         if (st.reach >= st.cost)
           return `is not taken, though ${st.reach} could reach it (it needs ${st.cost}): no single source can deliver them this turn`;
         if (held > 0 && st.reach + held >= st.cost) return `does not fit what the holds leave: ${reachText(st, held)}`;
@@ -8107,7 +7946,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
      * fits.
      */
     const bestStrike = (x: number) => {
-      const room = Math.max(0, Math.min(budget, roomAt(x)));
+      const room = Math.max(0, Math.min(ps.budget, roomAt(x)));
       let best: { n: number; cost: number; extra: number; spare: number; can: number } | null = null;
       for (const n of aims(x)) {
         const extra = reinforcementAt(n);
@@ -8142,7 +7981,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         const at = aims(x).sort((a, b) => armiesOf(b) + unitsAt(b) - (armiesOf(a) + unitsAt(a)) || a - b)[0]!;
         const theirs = armiesOf(at) + unitsAt(at);
         const f = forecastBorder({
-          mine: stackAt(x) + Math.max(0, Math.min(budget, roomAt(x))),
+          mine: stackAt(x) + Math.max(0, Math.min(ps.budget, roomAt(x))),
           theirs,
           myIncome: income,
           theirIncome: incomeOfPlayer(player.p),
@@ -8215,7 +8054,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /** Set by the leftover deploy (rule 5): the step it saved toward, which idle stacks stage toward (rule 6). */
   let staging: { t: number; bonusId: number; cost: number; from: number } | undefined;
   // ---- leftover deploy ----
-  if (budget > 0) {
+  if (ps.budget > 0) {
     const foggedNext = (id: number) =>
       neighborsOf(g, id).filter((n) => {
         const st = state.get(n);
@@ -8308,7 +8147,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         })
         .sort((a, b) => b.t.worth / Math.max(1, b.d) - a.t.worth / Math.max(1, a.d) || a.d - b.d || a.t.id - b.t.id);
       for (const { t, d, out, threat } of revivable) {
-        if (d > budget - falling || d > roomAt(t.id)) continue;
+        if (d > ps.budget - falling || d > roomAt(t.id)) continue;
         if (out) {
           moves.splice(moves.indexOf(out), 1);
           avail.set(t.id, avail.get(t.id)! + out.armies);
@@ -8389,7 +8228,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       } else {
         where = biggest(mine)!;
         why = 'my biggest stack';
-        warnings.push(`Every territory I hold is conceded; the leftover ${budget} goes to ${label(where)} anyway.`);
+        warnings.push(`Every territory I hold is conceded; the leftover ${ps.budget} goes to ${label(where)} anyway.`);
       }
     }
     let n = roomAt(where);
@@ -8430,7 +8269,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // most threatened member (not conceded first; ties by id). One charge, taken before
     // any of these deploys: re-charging after each would let the matching spread a
     // pool's armies over an overlapping pool and strand the latter's.
-    if (local && budget > 0) {
+    if (local && ps.budget > 0) {
       const danger = (id: number) => {
         const b = borders.get(id);
         if (!b) return -Infinity;
@@ -8464,14 +8303,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         }
       }
     }
-    if (budget > 0) {
+    if (ps.budget > 0) {
       // Unreachable: the leftover deploy filled `where` to its exact room, so no anywhere
       // armies remain, and each pool's unused room (from one maximum charge) went inside
       // it. Never leave income undeployed — but say the plan breaks the pools.
       warnings.push(
-        `Local Deployment: ${budget} armies could not be placed within the pools; they go to ${label(where)}, which breaks Local Deployment — war.app may refuse this turn.`,
+        `Local Deployment: ${ps.budget} armies could not be placed within the pools; they go to ${label(where)}, which breaks Local Deployment — war.app may refuse this turn.`,
       );
-      deploy(where, budget);
+      deploy(where, ps.budget);
     }
   }
 

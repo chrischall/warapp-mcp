@@ -144,10 +144,19 @@ export interface StandingCtx {
 export type PlanCtx = OpponentsCtx & BoardCtx & CombatCtx & StandingCtx;
 
 /**
- * What the phases of one planning pass share and change. Every field is a collection, so a phase
- * that takes the state sees (and makes) the same changes planPass's locals of the same name do.
+ * What the phases of one planning pass share and change. The collections are shared as they are,
+ * so a phase that takes the state sees (and makes) the same changes planPass's locals of the same
+ * name do; the two values a phase reassigns, `budget` and `holdings`, are read and written as
+ * `ps.budget` / `ps.holdings` everywhere.
  */
 export interface PlanState {
+  /** The income not yet deployed (the deploy book, plan/orders.ts, opens it at the income). */
+  budget: number;
+  /**
+   * What protected value is judged against (R2): my holdings at the start of the turn until the
+   * capture passes have run, then those plus this turn's captures.
+   */
+  holdings: ReadonlySet<number>;
   warnings: string[];
   rationale: string[];
   /** Armies deployed on each territory of mine. */
@@ -180,6 +189,8 @@ export interface PlanState {
 /** An empty plan state: nothing deployed, moved, captured or said yet. */
 export function newPlanState(): PlanState {
   return {
+    budget: 0,
+    holdings: new Set(),
     warnings: [],
     rationale: [],
     deployed: new Map(),
