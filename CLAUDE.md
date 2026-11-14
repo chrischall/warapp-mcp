@@ -734,7 +734,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`src/direct/session.ts`), the router is pinned to the browser bridge whatever `WARAPP_TRANSPORT`
   says (`createDirectFirstBridge`), and no hint suggests linking; `mint.yaml` keeps the bridge.
 - **End of game (#178).** `Game.endRules` holds the surrender, boot and AI settings; whether a surrender
-  needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback).
+  needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback;
+  #228: the surrender preview reads the game with `settings: true`, which carries it — without them it
+  always fell back — and unread with more than two players `acceptance.needed` is `null`: it MAY be
+  needed, the result reading unchanged).
   `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json`
   (`warapp_get_game` adds the final result); the surrender preview reads the latest from there.
   An opponent the outlook cannot measure (nothing in view now, or no observed income) gets a
@@ -745,6 +748,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   then), else my opening board, else the default territory limit (3) at the starting armies — never
   the territories I hold on a later board; my income before my first board ramps up from that
   opening's.
+  #228: the likely high is generous to the opponent (every army received, none lost: a game I lead read
+  0.05×), so `losing` on it needs mine at most `LIKELY_LOSING_RATIO` (1/(2.4 × 2)) of it AND
+  corroboration — the main front grinding me down, or my income at most `BEHIND_RATIO` × the most an
+  opponent is tracked earning; the turn carries `estimated: true` and `lowLikely`, and the basis says
+  which (or, uncorroborated, why it is no loss). `warapp_plan_turn` passes the plan's profile standing
+  back (`standing`): an `even`/`stalemate` outlook beside `ahead`/`behind` says why the two differ.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

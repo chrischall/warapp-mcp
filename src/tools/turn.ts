@@ -1366,10 +1366,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...cardPieceOption(game.settings, hand),
         },
       });
-      if (plan.front && turn !== null)
+      // #228: and the plan's profile standing, so an `even` outlook beside `behind` says why they differ.
+      // Neither changes the state the plan read except through the front, as before.
+      if (turn !== null && (plan.front || plan.profile.standing === 'ahead' || plan.profile.standing === 'behind'))
         outlook = gameOutlook({
           ...outlookInput,
-          front: { turn, from: plan.front.from, at: plan.front.at, myIncome: plan.front.myIncome, theirIncome: plan.front.theirIncome },
+          ...(plan.front
+            ? { front: { turn, from: plan.front.from, at: plan.front.at, myIncome: plan.front.myIncome, theirIncome: plan.front.theirIncome } }
+            : {}),
+          standing: plan.profile.standing,
         });
       // #194: since last turn — this turn's income (cards aside) against the next income the previous
       // turn's plan expected, and what was lost since the previous board. Read before this turn's write.

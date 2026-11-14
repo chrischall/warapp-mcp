@@ -54,7 +54,12 @@
 // Each turn gets a state: `winning` when even the low ratio is at least OUTLOOK_RATIO (or every
 // opponent is bounded at no strength at all while I have some, or — `estimated` — my strength is
 // at least OUTLOOK_RATIO × the highest likely high), `losing`
-// when even the high ratio is at most 1 / OUTLOOK_RATIO, `stalemate` when neither and no territory
+// when even the high ratio is at most 1 / OUTLOOK_RATIO — or (#228, `estimated`) when mine is at most
+// LIKELY_LOSING_RATIO × the highest likely high (1 / OUTLOOK_RATIO once its LIKELY_INCOME_MARGIN is
+// taken back out: it counts every army received and none lost, so alone it read 0.05× in a game I
+// led) AND that is corroborated, by the main front grinding me down or by my income at most
+// BEHIND_RATIO × the most an opponent is tracked earning (the profile's "behind"); such a turn carries
+// `lowLikely`, and so does an uncorroborated one, whose basis says why it is no loss — `stalemate` when neither and no territory
 // in view on both boards changed owner since the turn before while I face an enemy and (#201) the
 // main front's multi-turn forecast is a stand-off, else `even`. The main front (#218: `mainFront`,
 // exchange.ts, the planner's definition) is the biggest enemy stack next to me against my biggest
@@ -64,7 +69,9 @@
 // plan's front outlook and this forecast agree. A front that breaks or grinds me down within the
 // horizon is not stuck, however quiet the last turns were; the basis says what the front assumed.
 // The outlook reports a state only once it has held for OUTLOOK_TURNS consecutive turns; until
-// then `state` is null and the basis says what each turn read.
+// then `state` is null and the basis says what each turn read. #228: given the plan's profile
+// `standing`, an `even` or `stalemate` latest turn beside `ahead` / `behind` says why the two differ
+// (the standing compares incomes; this outlook needs a decided ratio). The state never reads it.
 //
 // OUTLOOK_RATIO (2.4×) is borrowed from a published bot's "lost" rule and has never been measured
 // for war.app: the outlook is a basis for a decision, not a verdict. The planner acts on it in one
@@ -79,7 +86,7 @@ import { ownerShown, type PlannerSettings } from './planner.js';
 import { bonusTerritories } from './bonuses.js';
 import { cardArmiesBy, type CardArmyCeiling } from '../strategy/card-clock.js';
 import { boardIncome, DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
-import { STRENGTH_INCOME_TURNS } from './profile.js';
+import { BEHIND_RATIO, STRENGTH_INCOME_TURNS, type GameStanding } from './profile.js';
 import { FORECAST_TURNS, forecastBorder, mainFront, type BorderOutcome, type FrontStack } from './exchange.js';
 import { specialUnitStrength } from './combat.js';
 
@@ -89,6 +96,12 @@ export const OUTLOOK_TURNS = 3;
 export const OUTLOOK_RATIO = 2.4;
 /** #208: the likely high lets an opponent earn up to this many times its tracked income every turn (unmeasured). */
 export const LIKELY_INCOME_MARGIN = 2;
+/**
+ * #228: losing on the estimate needs mine at most this share of the likely high — 1/OUTLOOK_RATIO
+ * of it once its LIKELY_INCOME_MARGIN is taken back out, since the likely high is generous to the
+ * opponent (it counts every army received, at the margin, and none lost) — and corroboration.
+ */
+export const LIKELY_LOSING_RATIO = 1 / (OUTLOOK_RATIO * LIKELY_INCOME_MARGIN);
 
 /**
  * #214: the peer-paced prior — what an opponent I cannot measure likely earns in a turn:
@@ -128,8 +141,17 @@ export interface OutlookTurn {
     /** #214: with a prior, why — `unseen` (no territory in view now) or `unmeasured` (no observed income). */
     why?: PriorWhy;
   };
-  /** #208: `true` when the state is `winning` on the likely high alone (the bound did not show it). */
+  /**
+   * #208: `true` when the state is `winning` on the likely high alone (the bound did not show it);
+   * #228: or `losing` on it, corroborated (see the header).
+   */
   estimated?: true;
+  /**
+   * #228: present when mine is at most {@link LIKELY_LOSING_RATIO} of the likely high (and neither
+   * winning nor the bound's losing applies): my income, the most an opponent is tracked earning (0:
+   * none measured), whether the main front grinds me down, and whether that corroborated a loss.
+   */
+  lowLikely?: { myIncome: number; mostTracked: number; groundDown: boolean; losing: boolean };
   /** Territories in view on this board and the one before that changed owner (`null` without the board before). */
   changed: number | null;
   /**
@@ -184,6 +206,11 @@ interface OutlookInput {
    * main front is that pair, its forecast uses the plan's incomes, so the two agree.
    */
   front?: { turn: number; from: number; at: number; myIncome: number; theirIncome: number };
+  /**
+   * #228: the plan's profile standing for the turn being played, when known: an `even` outlook
+   * beside an `ahead` or `behind` standing says why the two differ.
+   */
+  standing?: GameStanding;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -516,10 +543,26 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     }
     const bound = dominated || (rows.length > 0 && ratio.low >= OUTLOOK_RATIO);
     const estimated = !bound && likely !== undefined && likely.high > 0 && likely.ratio >= OUTLOOK_RATIO;
+    const lostOnBound = !bound && !estimated && ratio.high !== null && ratio.high <= 1 / OUTLOOK_RATIO;
+    // #228: losing on the likely high — far below it (LIKELY_LOSING_RATIO, its margin taken back
+    // out), and corroborated: the likely high alone reads every fogged opponent strong (it counts
+    // every army received and none lost, so a game I lead can read 0.05×). Corroborated by the
+    // main front grinding me down, or by my income at most BEHIND_RATIO × the most an opponent is
+    // tracked earning (the profile's "behind").
+    const myNow = boardIncome(g, mineNow, rules).total;
+    const mostTracked = () => {
+      let most = 0;
+      for (const [p, tr] of trackedAll()) if (!ally(p) && tr.income !== null) most = Math.max(most, tr.income);
+      return most;
+    };
+    const lowLikely = !bound && !estimated && !lostOnBound && likely !== undefined && likely.high > 0 && likely.ratio <= LIKELY_LOSING_RATIO;
+    const groundDown = forecast?.outcome === 'ground-down';
+    const incomeBehind = lowLikely && mostTracked() > 0 && myNow <= BEHIND_RATIO * mostTracked();
+    const lostOnEstimate = lowLikely && (groundDown || incomeBehind);
     const state: OutlookState =
       bound || estimated
         ? 'winning'
-        : ratio.high !== null && ratio.high <= 1 / OUTLOOK_RATIO
+        : lostOnBound || lostOnEstimate
           ? 'losing'
           : changed === 0 && front && (!forecast || forecast.outcome === 'stand-off')
             ? 'stalemate'
@@ -533,7 +576,8 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       changed,
       ...(forecast ? { front: forecast } : {}),
       state,
-      ...(estimated ? { estimated: true as const } : {}),
+      ...(estimated || lostOnEstimate ? { estimated: true as const } : {}),
+      ...(lowLikely ? { lowLikely: { myIncome: myNow, mostTracked: mostTracked(), groundDown, losing: lostOnEstimate } } : {}),
     };
   });
 
@@ -542,7 +586,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   for (let i = turns.length - 1; i >= 0 && turns[i]!.state === last?.state; i--) heldTurns++;
   const state = last && heldTurns >= OUTLOOK_TURNS ? last.state : null;
   const measure = `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). Per player: my strength alone against the single strongest opponent, teams not summed.${teamGame ? ' In a team game a teammate can transfer armies to an opponent, so its high is not a ceiling.' : ''}`;
-  const thresholds = `Winning at ${OUTLOOK_RATIO}× the strongest opponent or more even at its high, losing at 1/${OUTLOOK_RATIO} (${round2(1 / OUTLOOK_RATIO)}×) or less even at its low, stalemate when nothing in view changed hands for ${OUTLOOK_TURNS} turns along a front whose forecast is a stand-off. The ${OUTLOOK_RATIO}× is borrowed from a bot and was never measured for war.app: a basis for a decision, not a verdict.`;
+  const thresholds = `Winning at ${OUTLOOK_RATIO}× the strongest opponent or more even at its high, losing at 1/${OUTLOOK_RATIO} (${round2(1 / OUTLOOK_RATIO)}×) or less even at its low (or, on an estimate under fog, at ${round2(LIKELY_LOSING_RATIO)}× or less of its likely strength while the main front grinds me down or my income is at most ${BEHIND_RATIO}× the most an opponent is tracked earning), stalemate when nothing in view changed hands for ${OUTLOOK_TURNS} turns along a front whose forecast is a stand-off. The ${OUTLOOK_RATIO}× is borrowed from a bot and was never measured for war.app: a basis for a decision, not a verdict.`;
   let reading: string;
   if (!last) reading = 'No board to judge.';
   else {
@@ -558,7 +602,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       : `each turn at most ${LIKELY_INCOME_MARGIN}× the income the tracker reads off my boards`;
     let est = '';
     if (l && (l.high !== s?.high || l.source === 'prior'))
-      est = ` The likely high — an estimate, not a bound: ${rests} — is player ${l.playerId} at ${l.high}, ratio ${l.ratio}×${last.estimated ? '; winning rests on it' : ''}.`;
+      est = ` The likely high — an estimate, not a bound: ${rests} — is player ${l.playerId} at ${l.high}, ratio ${l.ratio}×${last.estimated ? `; ${last.state} rests on it` : ''}.`;
     if (l && l.high > 0 && last.state !== 'winning')
       est += ` Player ${l.playerId} blocks a win on the estimate: winning needs mine at ${OUTLOOK_RATIO}× its likely high (${round2(OUTLOOK_RATIO * l.high)}), and mine is ${last.mine}.`;
     reading =
@@ -568,6 +612,20 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
           ? `${state[0]!.toUpperCase()}${state.slice(1)} for ${OUTLOOK_TURNS} turns running; ${figures}.`
           : `${last.state[0]!.toUpperCase()}${last.state.slice(1)} for ${heldTurns} of the ${OUTLOOK_TURNS} turns (${turns.map((t) => t.state).join(', ')}), so no state yet; ${figures}.`;
     reading += est;
+    // #228: a likely ratio far below parity, said with what it took (or lacked) to read losing.
+    const low = last.lowLikely;
+    if (low) {
+      const share = `mine is at most 1/${round2(1 / LIKELY_LOSING_RATIO)} (${round2(LIKELY_LOSING_RATIO)}×) of the likely high`;
+      const incomeText = low.mostTracked > 0 ? `my income (${low.myIncome}) at most ${BEHIND_RATIO}× the most an opponent is tracked earning (${low.mostTracked})` : '';
+      const behind = low.mostTracked > 0 && low.myIncome <= BEHIND_RATIO * low.mostTracked;
+      reading += low.losing
+        ? ` Losing on the estimate: ${share}, corroborated by ${[low.groundDown ? 'the main front grinding me down' : '', behind ? incomeText : ''].filter(Boolean).join(' and ')}.`
+        : ` ${share[0]!.toUpperCase()}${share.slice(1)}, but that alone is no loss: the likely high counts every army an opponent could have received at ${LIKELY_INCOME_MARGIN}× its pace and none it lost, so it reads every fogged opponent strong. Losing on it needs the main front grinding me down or my income at most ${BEHIND_RATIO}× the most an opponent is tracked earning${low.mostTracked > 0 ? ` (mine ${low.myIncome}, the most tracked ${low.mostTracked})` : ' (none is tracked)'}.`;
+    }
+    // #228: the plan's profile standing is a different measure (incomes, then the armies in view).
+    const standing = input.standing;
+    if ((last.state === 'even' || last.state === 'stalemate') && (standing === 'ahead' || standing === 'behind'))
+      reading += ` The profile's standing reads ${standing} (my income against the strongest opponent's estimate, overruled by the armies in view); this outlook reads ${last.state} because neither the winning nor the losing threshold was met on strength (armies + ${k} × income, and the likely high), a stricter test for a decided game.`;
     // #218: the main front, said with what it assumes, so it reads with the plan's front outlook.
     const fr = last.front;
     if (fr) {
