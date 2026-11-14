@@ -282,7 +282,13 @@ describe('gameOutlook (#178)', () => {
       ]);
 
     it("the issue's shape reads winning on the likely high, labelled an estimate, while the bound stays loose", () => {
-      const o = gameOutlook({ graph: big, me: ME, boards: turns(8, [shape(), shape(), shape()]), game: ffa4 });
+      // #214: an observed income needs a pair of boards, so the first of the three judged turns
+      // needs the board before it (turn 7); on a first board every opponent rests on the prior.
+      const o = gameOutlook({ graph: big, me: ME, boards: turns(7, [shape(), shape(), shape(), shape()]), game: ffa4 });
+      expect(o.turns.map((t) => t.likely?.source)).toEqual(['tracked', 'tracked', 'tracked']);
+      const first = gameOutlook({ graph: big, me: ME, boards: turns(8, [shape()]), game: ffa4 }).turns[0]!;
+      expect(first.likely!.source).toBe('prior');
+      expect(first.state).not.toBe('winning');
       const last = o.turns.at(-1)!;
       expect(last.mine).toBe(378);
       // The sound bound is unchanged: the whole map's income on turns 1–7, the fog's on 8–10.
@@ -290,7 +296,7 @@ describe('gameOutlook (#178)', () => {
       expect(last.strongest!.high).toBeGreaterThan(2000);
       expect(last.ratio.low).toBeLessThan(1);
       // Likely: it earns at most twice its tracked income (5) each turn — 20 + 10 × 10 + 3 × 10.
-      expect(last.likely).toEqual({ playerId: FOE, high: 150, ratio: 2.52 });
+      expect(last.likely).toEqual({ playerId: FOE, high: 150, ratio: 2.52, source: 'tracked' });
       expect(last.state).toBe('winning');
       expect(last.estimated).toBe(true);
       expect(o.state).toBe('winning');
@@ -307,14 +313,115 @@ describe('gameOutlook (#178)', () => {
       expect(last.estimated).toBeUndefined();
     });
 
-    it('an opponent with nothing in view has no estimate: its bound stands', () => {
-      const hidden = (b: ReturnType<typeof board>) =>
-        board(b.territories.map((t) => (t.territoryId === 58 ? fogged(58) : t)));
-      const o = gameOutlook({ graph: big, me: ME, boards: turns(8, [hidden(shape()), hidden(shape()), hidden(shape())]), game: ffa4 });
-      const last = o.turns.at(-1)!;
-      expect(last.likely!.playerId).toBe(O3);
-      expect(last.likely!.high).toBe(last.strongest!.high);
-      expect(last.state).not.toBe('winning');
+    describe('#214: an opponent with nothing in view now, or no observed income, rests on a modest labelled prior', () => {
+      const hide = (ids: number[]) => (b: ReturnType<typeof board>) =>
+        board(b.territories.map((t) => (ids.includes(t.territoryId) ? fogged(t.territoryId) : t)));
+      const withStack = (stack: number) =>
+        board(shape().territories.map((t) => (t.territoryId === 52 ? mine(52, stack) : t)));
+      /** The issue's shape: turn 11, mine 455 (my stack on 52 is 92), the third opponent never in view. */
+      const issue = (stack = 92) => hide([58])(withStack(stack));
+
+      it("the issue's shape: the hidden opponent's likely high is its even share of the map's income, not its loose high", () => {
+        const o = gameOutlook({ graph: big, me: ME, boards: turns(9, [issue(), issue(), issue()]), game: ffa4 });
+        const last = o.turns.at(-1)!;
+        expect(last.turn).toBe(11);
+        expect(last.mine).toBe(455);
+        expect(last.strongest!.high).toBeGreaterThan(2000);
+        // Prior: an even share of the map's income — 160 ÷ 4 = 40 territories at base 5, plus 200 ÷ 4
+        // of the bonuses = 55 a turn: 20 + 11 × 55 + 3 × 55 = 790.
+        expect(last.likely).toEqual({ playerId: O3, high: 790, ratio: 0.58, source: 'prior', why: 'unseen' });
+        expect(last.likely!.high).toBeLessThan(last.strongest!.high!);
+        expect(last.state).not.toBe('winning');
+        expect(last.estimated).toBeUndefined();
+        // Said plainly: which opponent blocks an estimated win, and why.
+        expect(o.basis).toMatch(/player 40 blocks a win on the estimate/i);
+        expect(o.basis).toMatch(/no territory in view now/i);
+        expect(o.basis).toMatch(/at least an even share of the map.s income/i);
+      });
+
+      it('one seen on an earlier board but not now also rests on the prior', () => {
+        const o = gameOutlook({ graph: big, me: ME, boards: turns(9, [withStack(92), issue(), issue()]), game: ffa4 });
+        expect(o.turns.at(-1)!.likely).toMatchObject({ playerId: O3, high: 790, source: 'prior' });
+      });
+
+      it('one in view now with no observed income (no turn pair shows it) rests on the prior, said so', () => {
+        const late = hide([56]);
+        const o = gameOutlook({ graph: big, me: ME, boards: turns(9, [late(withStack(92)), late(withStack(92)), withStack(92)]), game: ffa4 });
+        const last = o.turns.at(-1)!;
+        expect(last.likely).toMatchObject({ playerId: O2, high: 790, source: 'prior', why: 'unmeasured' });
+        expect(o.basis).toMatch(/no observed income/i);
+      });
+
+      it('an unmeasured opponent is never more hopeful than the same opponent measured: twice its visible income at least', () => {
+        // O2 visibly holds 61–120 (15 bonuses: visible income 80).
+        const wide = board(shape().territories.map((t) => (t.territoryId >= 61 && t.territoryId <= 120 ? foe(t.territoryId, 3, O2) : t)));
+        const lone = gameOutlook({ graph: big, me: ME, boards: turns(8, [wide]), game: ffa4 }).turns[0]!;
+        const pair = gameOutlook({ graph: big, me: ME, boards: turns(7, [wide, wide]), game: ffa4 }).turns.at(-1)!;
+        expect(lone.likely).toMatchObject({ playerId: O2, source: 'prior', why: 'unmeasured' });
+        expect(pair.likely).toMatchObject({ playerId: O2, source: 'tracked' });
+        expect(lone.likely!.high).toBeGreaterThanOrEqual(pair.likely!.high);
+        expect(lone.likely!.high).toBeLessThanOrEqual(lone.strongest!.high!);
+      });
+
+      it('a prior can still show an estimated win when I am far ahead of it, labelled a prior', () => {
+        const o = gameOutlook({ graph: big, me: ME, boards: turns(9, [issue(2000), issue(2000), issue(2000)]), game: ffa4 });
+        const last = o.turns.at(-1)!;
+        expect(last.likely).toMatchObject({ playerId: O3, high: 790, source: 'prior' });
+        expect(last.ratio.low).toBeLessThan(OUTLOOK_RATIO);
+        expect(last.state).toBe('winning');
+        expect(last.estimated).toBe(true);
+        expect(o.basis).toMatch(/winning rests on it/i);
+        expect(o.basis).toMatch(/even share of the map's income/i);
+      });
+
+      it('a measured opponent that drops out of view keeps its tracked pace: losing sight never reads more hopeful', () => {
+        // The foe's stack grows by 50 a turn in view on turns 5–9 (tracked income 50), then on
+        // turn 10 it is fogged. Its likely high must not fall to the even-share prior.
+        const grow = (stack: number) => (i: number) => {
+          const b = shape(52 + 50 * i);
+          return stack === 92 ? b : board(b.territories.map((t) => (t.territoryId === 52 ? mine(52, stack) : t)));
+        };
+        for (const stack of [92, 1500, 2000]) {
+          const at = grow(stack);
+          const seen = [0, 1, 2, 3, 4, 5].map(at);
+          const gone = [...seen.slice(0, 5), hide([54])(seen[5]!)];
+          const inView = gameOutlook({ graph: big, me: ME, boards: turns(5, seen), game: ffa4 }).turns.at(-1)!;
+          const fogged = gameOutlook({ graph: big, me: ME, boards: turns(5, gone), game: ffa4 }).turns.at(-1)!;
+          expect(inView.likely).toMatchObject({ playerId: FOE, source: 'tracked' });
+          expect(fogged.likely).toMatchObject({ playerId: FOE, source: 'prior', why: 'unseen' });
+          expect(fogged.likely!.high).toBeGreaterThanOrEqual(inView.likely!.high);
+          expect(fogged.likely!.high).toBeLessThanOrEqual(fogged.strongest!.high!);
+          // In view it is no win at any of these stacks; out of view it must not become an estimated one.
+          expect(inView.state).not.toBe('winning');
+          expect(fogged.state).not.toBe('winning');
+          expect(fogged.estimated).toBeUndefined();
+        }
+      });
+
+      it('an opponent whose stack drops out of view keeps at least what it was last seen with: no estimated win from losing sight', () => {
+        // The foe holds a 1500 stack on 54 on turns 5–9, more than its tracked pace could have paid;
+        // my stack on 52 is 2500. In view on turn 10 that is no win; fogged on turn 10 it must not
+        // become one either.
+        const at = () => board(shape(1500).territories.map((t) => (t.territoryId === 52 ? mine(52, 2500) : t)));
+        const seen = [0, 1, 2, 3, 4, 5].map(at);
+        const gone = [...seen.slice(0, 5), hide([54])(seen[5]!)];
+        const inView = gameOutlook({ graph: big, me: ME, boards: turns(5, seen), game: ffa4 }).turns.at(-1)!;
+        const fogged = gameOutlook({ graph: big, me: ME, boards: turns(5, gone), game: ffa4 }).turns.at(-1)!;
+        expect(inView.mine).toBe(2863);
+        expect(inView.likely).toMatchObject({ playerId: FOE, source: 'tracked' });
+        expect(inView.state).not.toBe('winning');
+        expect(fogged.likely).toMatchObject({ playerId: FOE, source: 'prior', why: 'unseen' });
+        expect(fogged.likely!.high).toBeGreaterThanOrEqual(1500);
+        expect(fogged.likely!.high).toBeGreaterThanOrEqual(inView.likely!.high);
+        expect(fogged.likely!.high).toBeLessThanOrEqual(fogged.strongest!.high!);
+        expect(fogged.state).not.toBe('winning');
+        expect(fogged.estimated).toBeUndefined();
+      });
+
+      it('tracked opponents are labelled tracked', () => {
+        const o = gameOutlook({ graph: big, me: ME, boards: turns(8, [shape(), shape(), shape()]), game: ffa4 });
+        expect(o.turns.at(-1)!.likely!.source).toBe('tracked');
+      });
     });
 
     it('never estimates an unbounded opponent', () => {

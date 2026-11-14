@@ -243,17 +243,44 @@ export function captureHelper(
     return Math.max(near, far, coverOf(x));
   };
   /**
+   * #214: the other members a completion in progress (pass 1, all or nothing) plans this turn. A
+   * step from a conceded border that completes a bonus together with them is covered by #122's
+   * exception: if any of them fails, the whole completion is undone.
+   */
+  const siblings = new Set<number>();
+  /**
    * A conceded border attacks out only with the armies already on it (it is never deployed to),
    * unless every territory I hold is conceded, when there is nowhere better, or (#122) the capture
-   * completes a bonus the border is in: rule 1c then keeps it, so it is not given up.
+   * completes a bonus the border is in — with the members already taken or (#214) the sibling
+   * steps the same completion plans: rule 1c then keeps it, so it is not given up.
    */
-  const concededSource = (x: number, t: number, cost: number) =>
+  const concededSourceBase = (x: number, t: number, cost: number) =>
     movableFor(x, t) >= cost ||
     mine.every((id) => conceded.has(id)) ||
     g.map.bonuses.some((b) => {
       const ts = bonusTerritories(g, b.id);
-      return b.value > 0 && ts.includes(x) && ts.includes(t) && ts.every((y) => y === t || mineSet.has(y) || captured.has(y));
+      return (
+        b.value > 0 &&
+        ts.includes(x) &&
+        ts.includes(t) &&
+        ts.every((y) => y === t || mineSet.has(y) || captured.has(y) || siblings.has(y))
+      );
     });
+  /**
+   * #214: a lead step (#203) may be funded from this turn's deploy on a conceded border too, as
+   * #212 lets it attack out of a held one: the deploy there is sized for the attack and leaves
+   * with it (the border stays conceded: nothing is spent on its hold). Left out, the closest
+   * bonus's enemy member beside a conceded border had no source at all, and the deploy went to a
+   * farther bonus. Never my commander's territory (rule 1k: it is never conceded either).
+   */
+  const leadConceded = (x: number, t: number) => leadSteps.has(t) && conceded.has(x) && !myCommanders.has(x);
+  /**
+   * #214: lead steps captured on that allowance alone (a conceded source funded from this turn's
+   * deploy, the capture completing nothing it is in). Pass 2 tries the bonus's completion before
+   * taking one alone.
+   */
+  const fundedOnConceded = new Set<number>();
+  const concededSource = (x: number, t: number, cost: number) => concededSourceBase(x, t, cost) || leadConceded(x, t);
   /**
    * #212: a lead step (#203) may attack out of a border held under `balanced` — locked so its armies
    * stay put for its hold — when this turn's deploy covers the attack and the hold together. Left
@@ -325,6 +352,7 @@ export function captureHelper(
     fromConceded?: number,
   ): boolean => {
     ps.refusal = undefined;
+    fundedOnConceded.delete(t);
     if (spared.has(t)) return false;
     const tg = targets.get(t)!;
     // My commander's territory keeps what holds it (rule 1k). Under No-Split nothing is kept: the
@@ -378,16 +406,15 @@ export function captureHelper(
                 ? {
                     blocked: [...tg.sources].sort(byNum).map((x) => ({
                       from: x,
-                      why: (conceded.has(x)
-                        ? 'conceded'
-                        : myCommanders.has(x)
-                          ? 'commander'
-                          : orderOf(x)
-                            ? 'order'
-                            : // Unreachable today: a locked border left is a holdSource (so open),
-                              // and only No-Split fails `usable` otherwise, which turns lead steps
-                              // off. Kept so the label stays exhaustive if that ever changes.
-                              'locked') as LeadBlock,
+                      why: (myCommanders.has(x)
+                        ? 'commander'
+                        : orderOf(x)
+                          ? 'order'
+                          : // Unreachable today: a locked border left is a holdSource (so open), a
+                            // conceded one is funded from deploy (#214), and only No-Split fails
+                            // `usable` otherwise, which turns lead steps off. Kept so the label
+                            // stays exhaustive if that ever changes.
+                            'locked') as LeadBlock,
                     })),
                   }
                 : {}),
@@ -426,6 +453,8 @@ export function captureHelper(
     const far = noSplit || force || ps.spendKeeps || pass.relaxAttacks ? null : twoStepHold(src, (n) => n === t);
     const farKeep = far ? twoStepKeep(src, (n) => n === t) : 0;
     const farBinds = far !== null && farKeep > 0 && farKeep >= keepOf(src, t);
+    // #214: judged on the state the source was opened under, before the attack spends it.
+    const viaLead = !fromHold && !force && need > 0 && src !== fromConceded && leadConceded(src, t) && !concededSourceBase(src, t, tg.cost);
     deploy(src, need);
     // No-Split: the whole stack goes, every army deployed there so far included (#124).
     const sent = noSplit ? Math.max(tg.cost, avail.get(src)!) : tg.cost;
@@ -463,6 +492,11 @@ export function captureHelper(
         rationale.push(
           `${label(src)} keeps ${stayAt(src)} to hold its border against the ~${th.threat} threat once the attack on ${label(t)} leaves: it is held, and the deploy covers the attack and the hold together (#212).`,
         );
+    } else if (viaLead) {
+      fundedOnConceded.add(t);
+      rationale.push(
+        `${label(src)} is conceded, but the deploy there leaves with the attack on ${label(t)}: a lead step into a bonus (rule 4f's order) may be funded on a conceded source, the deploy sized for the attack alone (#214).`,
+      );
     } else if (farBinds) rationale.push(twoStepCite(src, far!, (c) => `The attack on ${label(t)} leaves ${label(src)} ${c}.`));
     else if (forHold > 0) {
       const th = borderAt(src, (n) => captured.has(n));
@@ -622,7 +656,7 @@ export function captureHelper(
     );
     return true;
   };
-  return { belowEven, movableFor, keepOf, concededSource, strikes, worstCase, finishedOff, defendersAt, tryCapture, shortAt, captureOnce, combinedPlan, tryCombined };
+  return { belowEven, movableFor, keepOf, concededSource, siblings, fundedOnConceded, strikes, worstCase, finishedOff, defendersAt, tryCapture, shortAt, captureOnce, combinedPlan, tryCombined };
 }
 
 /** Pass 1 (complete a bonus, all or nothing) and pass 2 (advance one a capture at a time, rule 4c(c), 4d). */
@@ -647,7 +681,7 @@ export function bonusPasses(
     targets, leadSteps, leadTry, leadNote, bonusTarget, frontierDelta, targetScoreCost, frontierOf, startHold,
     toFinish,
   } = tgt;
-  const { worstCase, tryCapture } = prev;
+  const { worstCase, tryCapture, siblings, fundedOnConceded } = prev;
   // ---- pass 1: complete a bonus this turn (all or nothing) ----
   /** Snapshot the captures, deploys and notes so far; the result undoes everything since. */
   const snapshot = () => {
@@ -693,24 +727,28 @@ export function bonusPasses(
       warnings.length = snap.warnings;
     };
   };
-  const complete = (p: BonusPlan) => {
+  /** `last` (#214): a step the completion tries after its siblings, whatever it costs. */
+  const complete = (p: BonusPlan, last?: number) => {
     if (!p.completable) return;
     const todo = p.remaining
       .filter((t) => !captured.has(t))
-      .sort((a, b) => targets.get(a)!.cost - targets.get(b)!.cost || a - b);
+      .sort((a, b) => Number(a === last) - Number(b === last) || targets.get(a)!.cost - targets.get(b)!.cost || a - b);
     if (!todo.length) return;
     const first = moves.length;
     const restore = snapshot();
     const before = incomeGain(heldNow());
     const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
+    // #214: each step counts the others this completion plans (it is undone whole if one fails).
+    for (const t of todo) siblings.add(t);
     const ok = todo.every((t) => tryCapture(t, `completes bonus ${bonusName(p.bonusId)} (${worth})${leadNote(t)}`));
+    siblings.clear();
     // Rule 4c: completing it must not lower income (its members' negative bonuses included).
     if (ok && !p.focus && incomeGain(heldNow()) < before) {
       const net = incomeGain(heldNow()) - before;
       restore();
-      rationale.push(
-        `Do not complete bonus ${bonusName(p.bonusId)} (${worth}): with this turn's other captures it changes income by ${net} (its members complete negative bonuses).`,
-      );
+      const line = `Do not complete bonus ${bonusName(p.bonusId)} (${worth}): with this turn's other captures it changes income by ${net} (its members complete negative bonuses).`;
+      // Pass 2's retry (#214) may refuse what pass 1 already did: say it once.
+      if (!rationale.includes(line)) rationale.push(line);
       return;
     }
     if (ok) {
@@ -813,23 +851,85 @@ export function bonusPasses(
     const todo = p.remaining
       .filter((t) => bonusTarget(t) && !captured.has(t))
       .sort((a, b) => targetScoreCost(a) - targetScoreCost(b) || targets.get(a)!.cost - targets.get(b)!.cost || a - b);
-    for (const t of todo) {
-      const lead = leadSteps.get(t);
-      // #203: a lead step never lowers income (as a lead strike).
-      if (lead && gainWith([t]) < 0) continue;
-      const stepping = !lead && !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
-      if (stepping === null) continue;
-      const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
-      const reason =
-        (stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${toFinish(p.cost, p.fogged, p.fogEach)})`) + leadNote(t);
-      if (tryExpand(t, reason)) {
+    /**
+     * Whether a step funded on a conceded source was met (once: its bonus's completion was tried,
+     * then the step was weighed; any later one is taken as it comes).
+     */
+    let whole = false;
+    /** Everything a run of steps changes, for {@link weigh}; the result undoes it. */
+    const checkpoint = () => {
+      const restore = snapshot();
+      const tried = new Map(leadTry);
+      const stops = stopped.length;
+      const refused = new Set(unstaged);
+      return () => {
+        restore();
+        leadTry.clear();
+        for (const [k, v] of tried) leadTry.set(k, v);
+        stopped.length = stops;
+        unstaged.clear();
+        for (const k of refused) unstaged.add(k);
+      };
+    };
+    /**
+     * #214 review: a step funded on a conceded source alone, its bonus's completion refused, is
+     * taken now or after the bonus's other steps, whichever plans more captures (a tie: whichever
+     * leaves more of this turn's deploy; a tie again: after). Taken first, it could sink most of
+     * the deploy into the conceded border and crowd out a sibling a held border funds for less;
+     * taken last, it could lose a pair that fits only in its order. Runs the rest of `queue` too.
+     */
+    const weigh = (t: number, rest: number[]) => {
+      const back = checkpoint();
+      run([t, ...rest]);
+      const now = { captures: captured.size, budget: ps.budget };
+      back();
+      run([...rest, t]);
+      if (captured.size > now.captures || (captured.size === now.captures && ps.budget >= now.budget)) return;
+      back();
+      run([t, ...rest]);
+    };
+    const run = (queue: number[]) => {
+      for (let i = 0; i < queue.length; i++) {
+        const t = queue[i]!;
+        if (captured.has(t)) continue;
+        const lead = leadSteps.get(t);
+        // #203: a lead step never lowers income (as a lead strike).
+        if (lead && gainWith([t]) < 0) continue;
+        const stepping = !lead && !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
+        if (stepping === null) continue;
+        const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
+        const reason =
+          (stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${toFinish(p.cost, p.fogged, p.fogEach)})`) + leadNote(t);
+        // Only a lead step (#203) can be funded on a conceded source.
+        const before = whole || !lead ? undefined : snapshot();
+        const tried = before && new Map(leadTry);
+        if (!tryExpand(t, reason)) continue;
+        if (before && fundedOnConceded.has(t)) {
+          /*
+           * #214: a step funded on a conceded source completes nothing on its own, and taken first it
+           * can block the completion: rule 1c's guard then judges the sibling's capture with the deploy
+           * already sunk into the conceded border (and refuses it), or the sibling alone is stopped by
+           * rule 4d. The bonus is completed whole instead when pass 1 can with that step last (it then
+           * completes the bonus under #122's exception, and the guard judges the completion as such);
+           * only otherwise is the step weighed against the bonus's other steps.
+           */
+          whole = true;
+          before();
+          complete(p, t);
+          if (p.remaining.every((x) => captured.has(x))) return;
+          leadTry.clear();
+          for (const [k, v] of tried!) leadTry.set(k, v);
+          weigh(t, queue.slice(i + 1));
+          return;
+        }
         ps.anchor ??= moves[moves.length - 1]!.from;
         if (stepping) {
           staged.set(t, p.bonusId);
           rationale.push(stepping.note);
         }
       }
-    }
+    };
+    run(todo);
   };
   return { snapshot, complete, unstaged, stage, stopped, stoppedLine, outgrows, tryExpand, advance };
 }

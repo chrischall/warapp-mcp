@@ -40,7 +40,6 @@ import { byNum, pct } from './util.js';
 
 /** #212: why a neighbour of mine could not attack a lead step, as the skip line says it. */
 const BLOCKED: Record<LeadBlock, string> = {
-  conceded: 'is conceded: it attacks out only with the armies on it, unless the step completes a bonus it is in',
   commander: 'holds my commander: nothing leaves it (rule 1k)',
   order: 'already issues an order',
   locked: 'keeps its armies where they are this turn',

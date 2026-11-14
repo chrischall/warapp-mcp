@@ -197,7 +197,9 @@ describe('#212: a lead step out of a border that must keep its hold', () => {
     expect(valid(p, c)).toEqual([]);
   });
 
-  it('says why no neighbour could attack a step at all: the conceded border', () => {
+  it('says what the conceded border lacked once the held border took the deploy (#214: no longer a conceded gate)', () => {
+    // #214: a lead step may be funded on a conceded source, so T1 is no longer refused outright;
+    // the held border's step on T3 takes most of the deploy first, and the line says what was left.
     const i = input();
     const map = { ...i.graph.map, bonuses: i.graph.map.bonuses.filter((b) => b.id !== 904) };
     const c: PlanInput = { ...i, income: 25, graph: buildGraph(map) };
@@ -205,8 +207,9 @@ describe('#212: a lead step out of a border that must keep its hold', () => {
     expect(attacks(p).map((m) => m.to)).not.toContain(2);
     const line = p.rationale.find((l) => l.startsWith('Not attacking')) ?? '';
     expect(line).toMatch(
-      /T2 \(#2\) \(player 20, 1 armies\): taking it needs 2 .*; when its bonus's step was tried, no neighbour of mine was free to attack it \(T1 \(#1\) is conceded: it attacks out only with the armies on it, unless the step completes a bonus it is in\)/,
+      /T2 \(#2\) \(player 20, 1 armies\): taking it needs 2 .*; when its bonus's step was tried, T1 \(#1\) could spare 0 for it and this turn's deploy could add at most (\d+) there: \1 in all;/,
     );
+    expect(line).not.toMatch(/is conceded/);
     expect(valid(p, c)).toEqual([]);
   });
 

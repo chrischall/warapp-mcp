@@ -79,7 +79,7 @@ describe('#201: the payback horizon once the game is decided', () => {
 
   it('#208: winning on the likely high counts its likely high, called an estimate, not the loose bound', () => {
     const o = outlook('winning', 120, 10, 2000);
-    const turns = o.turns.map((t) => ({ ...t, likely: { playerId: 20, high: 20, ratio: 6 }, estimated: true as const }));
+    const turns = o.turns.map((t) => ({ ...t, likely: { playerId: 20, high: 20, ratio: 6, source: 'tracked' as const }, estimated: true as const }));
     const p = run({ adapt: true, outlook: { state: 'winning', turns } });
     expect(p.rationale.join('\n')).toMatch(
       /Outlook \(#201\): winning for 3 turns running, so the game is decided — the strongest opponent's likely strength of 20 \(an estimate, not a bound\) over my income of 10 leaves ~3 turns/,
