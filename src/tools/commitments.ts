@@ -10,7 +10,15 @@
 // read (it shapes only a two-player plan, and reading it on turn 1 writes it).
 import { McpToolError } from '@chrischall/mcp-utils';
 import { z } from 'zod';
-import { checkCommitments, MAX_MESSAGE_COMMITMENTS, MAX_NO_ATTACK_TURNS, type Commitment, type CommitmentCheck, type OrderMove } from '../analysis/commitments.js';
+import {
+  checkCommitments,
+  MAX_MESSAGE_COMMITMENTS,
+  MAX_NO_ATTACK_TURNS,
+  type Commitment,
+  type CommitmentCheck,
+  type MessageAudience,
+  type OrderMove,
+} from '../analysis/commitments.js';
 import { planTurn } from '../analysis/index.js';
 import { MAX_NOTICE_TURNS, type AgreementTerms } from '../analysis/relations.js';
 import type { Game, GameMap, Player } from '../normalize.js';
@@ -99,6 +107,15 @@ export const commitmentsArg = z
       'carried. Recorded in the ledger once sent; warapp_submit_turn warns when later orders break one.',
   );
 
+/**
+ * What the preview's `checkedAgainst` says of a plan made in the call: the default plan — no goal, focus,
+ * reserve or first mover, and no award of picks — which may differ from a warapp_plan_turn plan made with
+ * those; submit the intended orders first to check against them.
+ */
+export const DEFAULT_PLAN_CHECKED =
+  'the default plan made now (no goal, focus, reserve or first mover, and no award of picks: a warapp_plan_turn plan made ' +
+  'with them may differ — submit those orders first to check against them)';
+
 /** What the preview and the send say about commitments. */
 export const COMMITMENTS_NOTE =
   "Checked against this turn's orders (the plan warapp_plan_turn would make, re-planned now, or the orders this " +
@@ -171,10 +188,17 @@ export interface MessageCommitments {
  * B4: check a message's commitments for `me` in `game` (read with its map and settings): the turn must
  * be in play and my seat playing; the plan is made as warapp_plan_turn makes it (without the award of
  * picks); the orders this server submitted this turn, when there are any, stand in for the plan. Refuses
- * the send — naming each commitment the plan or the ledger does not carry — before anything is sent.
+ * the send — naming each commitment the plan or the ledger does not carry, and each propose, accept or
+ * notice whose partner is not among the message's readers (`audience`) — before anything is sent.
  * Writes nothing.
  */
-export async function checkMessageCommitments(ctx: LiveContext, game: Game, me: Player, args: readonly CommitmentArg[]): Promise<MessageCommitments> {
+export async function checkMessageCommitments(
+  ctx: LiveContext,
+  game: Game,
+  me: Player,
+  args: readonly CommitmentArg[],
+  audience: MessageAudience,
+): Promise<MessageCommitments> {
   if (!ctx.dataDir) {
     throw new McpToolError('This server has no data directory, so the commitments could not be recorded: nothing was sent.', {
       hint: 'Set MCP_DATA_DIR, or send the message without `commitments` — and then without any promise in it.',
@@ -216,6 +240,7 @@ export async function checkMessageCommitments(ctx: LiveContext, game: Game, me: 
     commitments,
     moves,
     source,
+    audience,
   });
   const refused = checks.filter((c) => c.refused !== undefined);
   if (refused.length) {
@@ -224,7 +249,8 @@ export async function checkMessageCommitments(ctx: LiveContext, game: Game, me: 
       hint:
         'Promise only what the plan does: change or drop the commitment, and drop the promise from the message (an undeclared ' +
         'promise is not allowed). To promise an attack the plan does not make, submit those orders first (warapp_submit_turn); ' +
-        'to change a truce, record it with warapp_record_agreement.',
+        'to change a truce, record it with warapp_record_agreement. A proposal, an acceptance or a notice goes to the ' +
+        'partner: privately to that player, or to the whole game.',
     });
   }
   return { turn, source, commitments, checks, players };

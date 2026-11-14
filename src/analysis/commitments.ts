@@ -20,6 +20,13 @@
 //   whose last turn (`untilTurn`) is before this one is refused; an accept compares only the terms it
 //   restates.
 //
+// Audience (`MessageAudience`): a propose, accept or notice binds the ledger to the truce's partner,
+// so the partner must read the message — the private recipient, any player on the public channel, a
+// teammate on the team channel. Otherwise it is refused: recorded, it would put a truce in notice (or
+// agree or propose one) that the partner never saw, and the ledger would later free its territories
+// for a surprise break (D3). A no-attack or will-attack promise binds no agreement: it is a promise to
+// whoever reads it, recorded and warned on whoever that is.
+//
 // Fog: a territory a promise names (an explicit scope) whose owner is not shown may be the player's,
 // so an order attacking it conflicts; under the scope `all`, orders into territories whose owner is not
 // shown are named in the carried sentence, and in `commitmentWarnings`' (soft) warning, as not checked.
@@ -87,6 +94,26 @@ export interface AgreementChange {
   agreement: Agreement;
   before: Agreement | undefined;
   created: boolean;
+}
+
+/** Who reads a message: the whole game, one player privately (GameFeed id), or one team. */
+export type MessageAudience = { kind: 'public' } | { kind: 'private'; to: number } | { kind: 'team'; team: number };
+
+/**
+ * Why a propose, accept or notice with `partner` cannot go to `audience`: the partner would never read
+ * it. `undefined` when it reads it (the private recipient, anyone on the public channel, a player on the
+ * team the message goes to).
+ */
+export function audienceRefusal(audience: MessageAudience, partner: number, players: readonly RelationPlayer[]): string | undefined {
+  if (audience.kind === 'public') return undefined;
+  if (audience.kind === 'private')
+    return audience.to === partner
+      ? undefined
+      : `the message goes privately to player ${audience.to}, so player ${partner}, the truce's partner, would never read it (D3: a truce changes only with the partner told)`;
+  const p = players.find((x) => x.id === partner);
+  return p?.team === audience.team
+    ? undefined
+    : `the message goes to team ${audience.team} only, and player ${partner}, the truce's partner, is not on it: it would never read it (D3: a truce changes only with the partner told)`;
 }
 
 export interface CommitmentContext {
@@ -231,12 +258,13 @@ export function agreementChange(
  * B4: each commitment checked against this turn's orders (`moves`: the plan made in the call, or the
  * orders already submitted — `source` says which) and the ledger, in the message's order: a change an
  * earlier commitment makes to an agreement is seen by a later one. A commitment the orders or the
- * ledger do not carry is `refused`, with the reason.
+ * ledger do not carry is `refused`, with the reason, and so is a propose, accept or notice whose
+ * partner is not among the message's readers (`audience`, {@link audienceRefusal}).
  */
 export function checkCommitments(
-  input: CommitmentContext & { commitments: readonly Commitment[]; moves: readonly OrderMove[]; source: 'plan' | 'submitted' },
+  input: CommitmentContext & { commitments: readonly Commitment[]; moves: readonly OrderMove[]; source: 'plan' | 'submitted'; audience: MessageAudience },
 ): { checks: CommitmentCheck[]; agreements: Agreement[] } {
-  const { graph, board, me, turn, players, moves, source } = input;
+  const { graph, board, me, turn, players, moves, source, audience } = input;
   let agreements = [...input.agreements];
   const orders = source === 'plan' ? 'planned' : 'submitted';
   const named = (a: { from: number; to: number; index: number }) => `the ${orders} move ${a.index + 1} (${a.from} → ${a.to})`;
@@ -303,6 +331,8 @@ export function checkCommitments(
     const change = agreementChange(c, { agreements, turn, me, players, graph, nextAgreementId: input.nextAgreementId });
     if ('refused' in change) return out({ refused: change.refused });
     const a = change.agreement;
+    const unread = audienceRefusal(audience, a.with, players);
+    if (unread) return out({ refused: unread });
     const covered = new Set(coveredTerritories(graph, a.terms.scope, heldBy(board, a.with)));
     const hit = attacksOn(moves, covered);
     const fog = attacksOn(moves, unseenNamed(graph, board, a.terms.scope));

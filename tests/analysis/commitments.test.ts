@@ -1,7 +1,7 @@
 // B4 (docs/PLAN-TEAMS.md section 8): a message promises only what the plan does — each commitment kind
 // accepted and refused against this turn's orders and the ledger, and the warnings later orders draw.
 import { describe, expect, it } from 'vitest';
-import { checkCommitments, commitmentWarnings, type Commitment, type OrderMove, type RecordedCommitment } from '../../src/analysis/commitments.js';
+import { audienceRefusal, checkCommitments, commitmentWarnings, type Commitment, type MessageAudience, type OrderMove, type RecordedCommitment } from '../../src/analysis/commitments.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { newAgreement, transitionAgreement, type Agreement, type AgreementTerms, type RelationPlayer } from '../../src/analysis/relations.js';
 import { board, fogged, mine, neutral, tinyMap } from './helpers.js';
@@ -17,8 +17,9 @@ const terms = (over: Partial<AgreementTerms> = {}): AgreementTerms => ({ scope: 
 const next = (as: readonly Agreement[]) => `a${as.length + 1}`;
 const TURN = 5;
 
-const check = (commitments: Commitment[], moves: OrderMove[] = [], agreements: Agreement[] = [], source: 'plan' | 'submitted' = 'plan') =>
-  checkCommitments({ graph, board: b, me: ME, turn: TURN, players, agreements, nextAgreementId: next, commitments, moves, source });
+const PUBLIC: MessageAudience = { kind: 'public' };
+const check = (commitments: Commitment[], moves: OrderMove[] = [], agreements: Agreement[] = [], source: 'plan' | 'submitted' = 'plan', audience: MessageAudience = PUBLIC) =>
+  checkCommitments({ graph, board: b, me: ME, turn: TURN, players, agreements, nextAgreementId: next, commitments, moves, source, audience });
 const one = (c: Commitment, moves: OrderMove[] = [], agreements: Agreement[] = [], source: 'plan' | 'submitted' = 'plan') =>
   check([c], moves, agreements, source).checks[0]!;
 
@@ -195,7 +196,7 @@ describe('a territory whose owner is not shown (fog)', () => {
   // 6 is fogged: it may be player 20's.
   const fb = board([mine(1, 3), mine(2, 3), mine(3, 3), mine(4, 9), mine(5, 4, P), fogged(6), neutral(7, 2)]);
   const onFog = (c: Commitment, moves: OrderMove[], agreements: Agreement[] = []) =>
-    checkCommitments({ graph, board: fb, me: ME, turn: TURN, players, agreements, nextAgreementId: next, commitments: [c], moves, source: 'plan' }).checks[0]!;
+    checkCommitments({ graph, board: fb, me: ME, turn: TURN, players, agreements, nextAgreementId: next, commitments: [c], moves, source: 'plan', audience: PUBLIC }).checks[0]!;
   const INTO_6: OrderMove = { from: 5, to: 6 };
 
   it('a no-attack naming it is refused when an order attacks it', () => {
@@ -302,5 +303,56 @@ describe('commitmentWarnings', () => {
     const c = rec({ kind: 'propose', agreement: 'a1', with: P });
     expect(warn([c], [ATTACK_5], [a])[0]?.text).toMatch(/proposed truce a1 to player 20, still open: move 1 \(4 → 5\)/);
     expect(warn([c], [ATTACK_5], [(transitionAgreement(a, 'ended', 5) as { agreement: Agreement }).agreement])).toEqual([]);
+  });
+});
+
+describe('the audience: a truce changes only with its partner told (D3)', () => {
+  const agreed = () => {
+    const r = transitionAgreement(newAgreement('a1', P, 'proposed-by-them', 2, terms()), 'agreed', 3);
+    if ('refused' in r) throw new Error(r.refused);
+    return r.agreement;
+  };
+  const proposed = newAgreement('a1', P, 'proposed-by-them', 2, terms());
+  const toOther: MessageAudience = { kind: 'private', to: OTHER };
+  const toPartner: MessageAudience = { kind: 'private', to: P };
+
+  it('a notice sent privately to another player is refused, and the truce stays agreed', () => {
+    const { checks, agreements } = check([{ kind: 'notice', agreement: 'a1' }], [], [agreed()], 'plan', toOther);
+    expect(checks[0]!.refused).toBe(
+      "the message goes privately to player 30, so player 20, the truce's partner, would never read it (D3: a truce changes only with the partner told)",
+    );
+    expect(checks[0]!.record).toBeUndefined();
+    expect(agreements[0]!.status).toBe('agreed');
+  });
+
+  it('a propose or an accept sent privately to another player is refused; to the partner, or in public, carried', () => {
+    expect(check([{ kind: 'propose', with: P, terms: terms() }], [], [], 'plan', toOther).checks[0]!.refused).toMatch(/privately to player 30/);
+    expect(check([{ kind: 'accept', agreement: 'a1' }], [], [proposed], 'plan', toOther).checks[0]!.refused).toMatch(/privately to player 30/);
+    expect(check([{ kind: 'accept', with: P, terms: {} }], [], [], 'plan', toOther).checks[0]!.refused).toMatch(/privately to player 30/);
+    expect(check([{ kind: 'propose', with: P, terms: terms() }], [], [], 'plan', toPartner).checks[0]!.refused).toBeUndefined();
+    expect(check([{ kind: 'notice', agreement: 'a1' }], [], [agreed()], 'plan', toPartner).checks[0]!.refused).toBeUndefined();
+    expect(check([{ kind: 'accept', agreement: 'a1' }], [], [proposed], 'plan', PUBLIC).checks[0]!.refused).toBeUndefined();
+  });
+
+  it('on the team channel the partner must be on the team: a notice to an opponent there is refused', () => {
+    const teams: RelationPlayer[] = [
+      { id: ME, state: 'Playing', team: 1 },
+      { id: 11, state: 'Playing', team: 1 },
+      { id: P, state: 'Playing', team: 2 },
+      { id: OTHER, state: 'Playing', team: 3 },
+    ];
+    const r = checkCommitments({
+      graph, board: b, me: ME, turn: TURN, players: teams, agreements: [agreed()], nextAgreementId: next,
+      commitments: [{ kind: 'notice', agreement: 'a1' }], moves: [], source: 'plan', audience: { kind: 'team', team: 1 },
+    });
+    expect(r.checks[0]!.refused).toBe(
+      "the message goes to team 1 only, and player 20, the truce's partner, is not on it: it would never read it (D3: a truce changes only with the partner told)",
+    );
+    expect(audienceRefusal({ kind: 'team', team: 2 }, P, teams)).toBeUndefined();
+  });
+
+  it('a no-attack or will-attack promise binds no agreement: it may go to anyone', () => {
+    expect(check([{ kind: 'no-attack', with: P, scope: 'all', turns: 1 }], [], [], 'plan', toOther).checks[0]!.refused).toBeUndefined();
+    expect(check([{ kind: 'will-attack', with: P }], [ATTACK_5], [], 'plan', toOther).checks[0]!.refused).toBeUndefined();
   });
 });

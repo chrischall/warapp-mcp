@@ -241,7 +241,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared): without the truce and with it (the
   planner called, never changed). The hypothetical truce replaces any recorded one with that player but keeps
   its board reading (state — `broken` with the breach — trust, watch flags): a recorded truce is priced on the
-  plan `warapp_plan_turn` makes, and a broken or flagged one is `no` (`relation` in the entry). The
+  plan `warapp_plan_turn` makes, and a broken or flagged one is `no` (`relation` in the entry), as is one I
+  already gave notice on (`noticeBy: 'me'`: withdraw the notice or propose new terms). The
   no-deal plan never holds it: a shared `without` is reused only for a partner with no relation in the input
   (`priceTruce` ignores one given otherwise). It writes nothing: no board cache, and `livePlanSetup` is called
   with `award: false` (the award shapes only a two-player plan; reading it on turn 1 writes it). The host's
@@ -254,7 +255,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   carried refuses the send. A notice's `ends_turn` must be the turn the agreed notice gives (0 turns of notice:
   this turn — the truce ends with the message and this turn's attacks are free); an accept compares only
   the terms it restates; a truce whose `until_turn` is past is refused; an attack on a territory a promise names
-  whose owner is fogged conflicts (scope `all`: named as unchecked). The submitted orders are `MyOrders.sent`
+  whose owner is fogged conflicts (scope `all`: named as unchecked). A propose/accept/notice whose partner does
+  not read the message (`audience`: private to another player, or the team channel with the partner off the team)
+  is refused (D3: no truce changes unseen); a no-attack/will-attack binds no agreement and may go to anyone. The
+  preview's `checkedAgainst` names the default plan (no goal, focus, reserve, first mover or award). The submitted orders are `MyOrders.sent`
   (every move, Transfer Only flagged), not `moves`. With commitments the game is read with its map and the turn must be in play. Once
   the message is `confirmed` or `accepted` (war.app took it; `unconfirmed`/`unknown` record nothing and say so)
   they go into the ledger's `commitments` as mine (ids and turns only, at most 200), a propose/accept/notice

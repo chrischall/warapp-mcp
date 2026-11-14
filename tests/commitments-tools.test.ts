@@ -108,7 +108,7 @@ describe('warapp_send_chat commitments', () => {
       const preview = payload<{ preview: { commitments: { turn: number; checkedAgainst: string; carried: Array<{ kind: string; carried: string }> } } }>(
         await send([{ kind: 'no-attack', player: 'Bob', turns: 2 }]),
       );
-      expect(preview.preview.commitments).toMatchObject({ turn: TURN, checkedAgainst: 'the plan made now' });
+      expect(preview.preview.commitments).toMatchObject({ turn: TURN, checkedAgainst: expect.stringMatching(/^the default plan made now \(no goal, focus, reserve or first mover, and no award of picks/) });
       expect(preview.preview.commitments.carried[0]!.carried).toMatch(new RegExp(`player ${BOB.feed}'s territories .*through turn 4`));
       expect(s.sent).toEqual([]);
       const p = payload<{ outcome: string; commitments: { recorded: Array<{ id: string; kind: string }> } }>(
@@ -261,6 +261,49 @@ describe('warapp_send_chat commitments', () => {
       payload(await h!.call('warapp_record_agreement', { game_id: GAME, player: 'Ann', with: 'Bob', status: 'proposed-by-them' }));
       expect(textOf(await send([{ kind: 'accept', agreement: 'a1', notice_turns: 3 }]))).toMatch(/counter-offer is a propose/);
       expect([...s.sent, ...q.sent]).toEqual([]);
+    });
+  });
+
+  describe('the audience: a truce changes only with its partner told (D3)', () => {
+    const agreedWithBob = async () => {
+      payload(await h!.call('warapp_record_agreement', { game_id: GAME, player: 'Ann', with: 'Bob', status: 'agreed', notice_turns: 1 }));
+    };
+
+    it('a notice on a truce with Bob sent privately to Cat is refused; nothing is sent and the truce stays agreed', async () => {
+      const s = await start(quiet);
+      await agreedWithBob();
+      const res = await h!.call('warapp_send_chat', { game_id: GAME, message: 'a message', to: 'Cat', commitments: [{ kind: 'notice', agreement: 'a1' }] });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toMatch(
+        new RegExp(`commitment 1 \\(notice\\): the message goes privately to player ${CAT.feed}, so player ${BOB.feed}, the truce's partner, would never read it`),
+      );
+      expect(s.sent).toEqual([]);
+      const l = await ledger();
+      expect(l?.agreements[0]?.status).toBe('agreed');
+      expect(l?.commitments ?? []).toEqual([]);
+    });
+
+    it('a proposal to Bob sent privately to Cat is refused; in public it is carried', async () => {
+      const s = await start(quiet);
+      const res = await h!.call('warapp_send_chat', { game_id: GAME, message: 'a message', to: 'Cat', commitments: [{ kind: 'propose', player: 'Bob' }] });
+      expect(textOf(res)).toMatch(/goes privately to player \d+, so player \d+, the truce's partner, would never read it/);
+      const pub = payload<{ confirmToken?: string }>(await h!.call('warapp_send_chat', { game_id: GAME, message: 'a message', commitments: [{ kind: 'propose', player: 'Bob' }] }));
+      expect(pub.confirmToken).toEqual(expect.any(String));
+      expect(s.sent).toEqual([]);
+      expect(await ledger()).toBeUndefined();
+    });
+
+    it('a notice on the team channel, the partner on another team, is refused', async () => {
+      const s = server(quiet);
+      const teamed = game();
+      teamed.players = teamed.players.map((p, i) => ({ ...p, team: String([0, 1, 2][i]) }));
+      h = await liveHarness({ feed: [teamed], pages: SIGNED_IN, warapp: s.warapp });
+      await agreedWithBob();
+      const res = await h.call('warapp_send_chat', { game_id: GAME, message: 'a message', channel: 'team', commitments: [{ kind: 'notice', agreement: 'a1' }] });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toMatch(new RegExp(`goes to team 0 only, and player ${BOB.feed}, the truce's partner, is not on it`));
+      expect(s.sent).toEqual([]);
+      expect((await ledger())?.agreements[0]?.status).toBe('agreed');
     });
   });
 

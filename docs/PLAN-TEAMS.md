@@ -392,7 +392,8 @@ choices: the hypothetical truce replaces any recorded relation with the same pla
 board reading — its state (`broken` with the breach, `notice` with its end), trust and watch flags — so a
 recorded truce is priced on the plan `warapp_plan_turn` makes and a flagged partner is never priced as trusted
 (section 4: only the board raises a flag); a new one is priced at trust `clear`, or `watch` in the endgame. A
-broken truce or one under watch is `no` with the flag as the reason, and the neighbour entry shows the reading
+broken truce or one under watch is `no` with the flag as the reason (and so is a truce I already gave notice on: it is
+ending, so the reason says to withdraw the notice or propose new terms), and the neighbour entry shows the reading
 as `relation`. The no-deal plan never holds that player's truce: the
 tool shares one no-deal plan among partners with no recorded relation, and `priceTruce` plans its own (ignoring a
 given one) for a partner that has one. The tool writes nothing: it skips the award of picks (`livePlanSetup`'s
@@ -443,7 +444,10 @@ untouched. Choices and departures:
 - **Planned or submitted.** When this server submitted orders this turn (the orders cache), they are what runs
   and stand in for the plan; otherwise the plan made in the call. Orders sent from the web client are unknown,
   so the plan stands in for them. A plan made with other arguments (a `goal`, `focus`) is not the one checked:
-  submit those orders first, then send.
+  submit those orders first, then send. The preview's `checkedAgainst` says so (the default plan: no goal,
+  focus, reserve or first mover, and no award of picks).
+- **Not confirmed sent.** An `unconfirmed` or `unknown` send records nothing, though the message may have gone
+  out: such a promise draws no submit-time warning until it is recorded by hand (the result says how).
 - **Shapes.** `no-attack { player, territories | bonuses, turns }` (all of the player's territories when neither
   is given; 1–10 turns, this one included); `will-attack { player | territory, turn }` — only this turn, since
   no plan covers a later one; `notice { agreement, ends_turn? }` — on an agreed truce (or restating my notice),
@@ -458,6 +462,12 @@ untouched. Choices and departures:
   accept are refused while this turn's orders attack a territory the truce would cover, for a partner
   `partyRefusal` refuses, and when the truce's `until_turn` is before this turn. Commitments in one message are
   checked in order, each seeing the ledger changes of the ones before it.
+- **The partner must read it.** A propose, accept or notice binds the ledger to the truce's partner, so it is
+  refused when the partner is not among the message's readers (`audienceRefusal`: a private message to another
+  player, or the team channel when the partner is not on my team). Recorded, it would put a truce in notice the
+  partner never saw, and when the notice ran the ledger would free its territories for a surprise break (D3). A
+  `no-attack` or `will-attack` binds no agreement: it is a promise to whoever reads it, and stays allowed on any
+  channel (recorded and warned on all the same).
 - **Fog.** A territory a promise or truce names (territories or bonuses) whose owner my board does not show may
   be the partner's: an order attacking it is refused (and warned on at submit). Under the scope `all`, orders
   into territories whose owner is not shown are named in the carried sentence as not checked, and at submit

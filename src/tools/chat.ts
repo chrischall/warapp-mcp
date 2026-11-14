@@ -5,6 +5,7 @@
 import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import type { MessageAudience } from '../analysis/commitments.js';
 import { CHAT_CHANNELS, feedChatLines, readGameRefreshChat, readSendChatReply, type ChatChannel, type ChatLine } from '../chat.js';
 import {
   advanceCursor,
@@ -32,7 +33,7 @@ import {
   untrustedDescription,
   untrustedText,
 } from './common.js';
-import { checkMessageCommitments, commitmentsArg, COMMITMENTS_NOTE, type MessageCommitments } from './commitments.js';
+import { checkMessageCommitments, commitmentsArg, COMMITMENTS_NOTE, DEFAULT_PLAN_CHECKED, type MessageCommitments } from './commitments.js';
 import { lookupMeta, mintMeta } from './hints.js';
 import { mapOf } from './map.js';
 import { recordCommitments, type CommitmentRecorded } from './relations.js';
@@ -409,7 +410,10 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
               hint: 'Send the message without `commitments` — and then without any promise in it.',
             });
           }
-          promised = await checkMessageCommitments(ctx, game, seat, promises);
+          // A truce changes only with its partner told (D3): the check knows who reads the message.
+          const audience: MessageAudience =
+            kind === 'private' ? { kind: 'private', to: shownRecipient!.id } : kind === 'team' ? { kind: 'team', team: chatChannel } : { kind: 'public' };
+          promised = await checkMessageCommitments(ctx, game, seat, promises, audience);
         }
         const words =
           kind === 'private'
@@ -456,7 +460,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
                 ? {
                     commitments: {
                       turn: promised.turn,
-                      checkedAgainst: promised.source === 'plan' ? 'the plan made now' : 'the orders already submitted',
+                      checkedAgainst: promised.source === 'plan' ? DEFAULT_PLAN_CHECKED : 'the orders already submitted',
                       carried: promised.checks.map((c) => ({ kind: c.kind, carried: c.carried })),
                       note: COMMITMENTS_NOTE,
                     },
