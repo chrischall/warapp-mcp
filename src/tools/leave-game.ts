@@ -31,10 +31,12 @@ const LOBBY = 'WaitingForPlayers';
 const LEAVE_ERRORS: Readonly<Record<number, string>> = {
   191: 'You cannot leave an open game you created; delete it in war.app instead.',
   88: 'This game has been deleted.',
-  4: 'The game has already begun, so the seat could not be given up; surrender it with warapp_surrender instead.',
 };
-/** NotInGame and InvalidPlayerState: the seat may already be gone, so game state decides. */
-const READ_BACK_ERRORS = new Set([17, 7]);
+/**
+ * NotInGame and the codes the client swallows (4, 7): the seat may already be gone, so game
+ * state decides rather than a guessed wording (the encoding is unverified live).
+ */
+const READ_BACK_ERRORS = new Set([17, 4, 7]);
 
 interface LeaveState {
   gameId: number;
@@ -58,10 +60,14 @@ function leavable(game: Game, token: number): Player {
       'An invitation is declined in war.app; check warapp_my_games.',
     );
   }
+  // Unread settings are treated as possibly modded: the mod-hook flag is sent false, which a
+  // mod game could refuse or mishandle.
   const mods = game.settings?.mods;
-  if (mods !== undefined && mods !== 0) {
+  if (mods === undefined || mods !== 0) {
     refuse(
-      `Game ${game.id} uses mods, which can hook leaving the game in ways this tool cannot reproduce, so nothing was sent.`,
+      mods === undefined
+        ? `Game ${game.id}'s settings could not be read, so whether it uses mods is unknown and nothing was sent.`
+        : `Game ${game.id} uses mods, which can hook leaving the game in ways this tool cannot reproduce, so nothing was sent.`,
       'Leave it from war.app instead.',
     );
   }

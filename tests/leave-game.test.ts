@@ -203,7 +203,6 @@ describe('warapp_leave_game (#217)', () => {
   it.each([
     [191, /you created|your own/i],
     [88, /deleted/i],
-    [4, /already (begun|started)/i],
   ])('war.app error %i is a refusal in the client\'s terms', async (code, wording) => {
     const s = leaveServer({ error: { code, message: 'nope' } });
     h = await harness([SEATED], s.warapp);
@@ -213,12 +212,30 @@ describe('warapp_leave_game (#217)', () => {
     expect(textOf(res)).toContain(`war.app error ${code}`);
   });
 
-  it.each([17, 7])('war.app error %i (not in the game / player state) is read back like the client, not trusted', async (code) => {
+  it.each([17, 4, 7])('war.app error %i (not in the game / player state) is read back like the client, not trusted', async (code) => {
     const s = leaveServer({ error: { code, message: 'nope' } });
     h = await harness([SEATED, SEATED, LEFT], s.warapp);
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(p.status).toBe('left');
     expect(p.outcome).toBe('confirmed');
+  });
+
+  it('war.app error 4 with the seat still held reads back as not applied, worded from game state', async () => {
+    const s = leaveServer({ error: { code: 4, message: 'nope' } });
+    h = await harness([SEATED, SEATED, SEATED], s.warapp);
+    const p = payload(await confirmed({ game_id: GAME_ID }));
+    expect(p.status).not.toBe('left');
+    expect(p.outcome).not.toBe('confirmed');
+  });
+
+  it('refuses when the settings cannot be read (whether the game uses mods is unknown), sending nothing', async () => {
+    const { settings: _s, ...noSettings } = SEATED;
+    const s = leaveServer();
+    h = await harness([noSettings], s.warapp);
+    const res = await h.call('warapp_leave_game', { game_id: GAME_ID });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/settings could not be read/);
+    expect(s.sent).toEqual([]);
   });
 
   it('a transport failure is unknown and never resent', async () => {
