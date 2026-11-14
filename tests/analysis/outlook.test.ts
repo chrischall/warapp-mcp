@@ -249,6 +249,89 @@ describe('gameOutlook (#178)', () => {
     });
   });
 
+  describe('#208: a likely high, an estimate that winning may use when the bound is too loose', () => {
+    // The issue's shape: a 4-player FFA on turn 10, my boards from turn 8 only, me on 52 of 160
+    // territories, each opponent with one territory in view and the rest of the map fogged.
+    const O2 = 30;
+    const O3 = 40;
+    const ffa4 = { players: [{ id: ME }, { id: FOE }, { id: O2 }, { id: O3 }], start: { territories: 4, armiesPerTerritory: 5 } };
+    const big = buildGraph({
+      ...line(160),
+      bonuses: Array.from({ length: 40 }, (_, i) => ({
+        id: 1000 + i,
+        name: `B${i}`,
+        value: 5,
+        territoryIds: [4 * i + 1, 4 * i + 2, 4 * i + 3, 4 * i + 4],
+        bonusIds: [],
+      })),
+    });
+    /** Me on 1–52 (168 armies, 13 bonuses: income 70, strength 378), the foe's stack on 54. */
+    const shape = (foeArmies = 52, extra: TerritoryState[] = []) =>
+      board([
+        ...Array.from({ length: 52 }, (_, i) => mine(i + 1, i === 51 ? 15 : 3)),
+        neutral(53, 2),
+        foe(54, foeArmies),
+        neutral(55, 2),
+        foe(56, 3, O2),
+        neutral(57, 2),
+        foe(58, 3, O3),
+        neutral(59, 2),
+        neutral(60, 2),
+        ...Array.from({ length: 100 }, (_, i) => fogged(61 + i)),
+        ...extra,
+      ]);
+
+    it("the issue's shape reads winning on the likely high, labelled an estimate, while the bound stays loose", () => {
+      const o = gameOutlook({ graph: big, me: ME, boards: turns(8, [shape(), shape(), shape()]), game: ffa4 });
+      const last = o.turns.at(-1)!;
+      expect(last.mine).toBe(378);
+      // The sound bound is unchanged: the whole map's income on turns 1–7, the fog's on 8–10.
+      expect(last.strongest).toMatchObject({ playerId: FOE, low: 67 });
+      expect(last.strongest!.high).toBeGreaterThan(2000);
+      expect(last.ratio.low).toBeLessThan(1);
+      // Likely: it earns at most twice its tracked income (5) each turn — 20 + 10 × 10 + 3 × 10.
+      expect(last.likely).toEqual({ playerId: FOE, high: 150, ratio: 2.52 });
+      expect(last.state).toBe('winning');
+      expect(last.estimated).toBe(true);
+      expect(o.state).toBe('winning');
+      expect(o.basis).toMatch(/likely high/i);
+      expect(o.basis).toMatch(/estimate, not a bound/i);
+    });
+
+    it('an opponent seen deploying a lot is likely strong: not winning', () => {
+      // The foe's stack grows by 30 a turn in view: its tracked income is 30.
+      const o = gameOutlook({ graph: big, me: ME, boards: turns(8, [shape(52), shape(82), shape(112)]), game: ffa4 });
+      const last = o.turns.at(-1)!;
+      expect(last.likely!.high).toBeGreaterThan(378 / OUTLOOK_RATIO);
+      expect(last.state).not.toBe('winning');
+      expect(last.estimated).toBeUndefined();
+    });
+
+    it('an opponent with nothing in view has no estimate: its bound stands', () => {
+      const hidden = (b: ReturnType<typeof board>) =>
+        board(b.territories.map((t) => (t.territoryId === 58 ? fogged(58) : t)));
+      const o = gameOutlook({ graph: big, me: ME, boards: turns(8, [hidden(shape()), hidden(shape()), hidden(shape())]), game: ffa4 });
+      const last = o.turns.at(-1)!;
+      expect(last.likely!.playerId).toBe(O3);
+      expect(last.likely!.high).toBe(last.strongest!.high);
+      expect(last.state).not.toBe('winning');
+    });
+
+    it('never estimates an unbounded opponent', () => {
+      const o = gameOutlook({ graph: big, me: ME, boards: turns(8, [shape(), shape(), shape()]), game: { players: ffa4.players } });
+      expect(o.turns.at(-1)!.strongest!.high).toBeNull();
+      expect(o.turns.at(-1)!.likely).toBeUndefined();
+      expect(o.state).not.toBe('winning');
+    });
+
+    it('a game in full view needs no estimate', () => {
+      const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [apart(20, 5), apart(20, 5), apart(20, 5)]), game });
+      expect(o.turns.at(-1)!.likely).toBeUndefined();
+      expect(o.turns.at(-1)!.estimated).toBeUndefined();
+      expect(o.basis).not.toMatch(/likely high/i);
+    });
+  });
+
   it('leaves out teammates and players no longer playing, and is deterministic', () => {
     const three = (a: number) =>
       board([mine(1, a), mine(2, a), mine(3, a), foe(4, 1, 30), neutral(5, 2), foe(6, 5), foe(7, 5), foe(8, 5)]);

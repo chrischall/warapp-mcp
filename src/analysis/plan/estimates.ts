@@ -217,16 +217,19 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
    * of PAYBACK_TURNS: the loser's strength over the winner's income per turn (winning: the strongest
    * opponent's strength, its high when bounded, over my income; losing: mine over the strongest
    * opponent's deploy estimate), at least DECIDED_PAYBACK_MIN, at most PAYBACK_TURNS. Adapting only.
+   * #208: winning on the likely high alone (`estimated`) counts that likely high, said as an estimate.
    */
   const decidedGame = (() => {
     const o = opts.outlook;
     const last = o?.turns.at(-1);
     if (!auto || !o || !last || (o.state !== 'winning' && o.state !== 'losing')) return undefined;
-    const loser = o.state === 'winning' ? (last.strongest ? (last.strongest.high ?? last.strongest.low) : 0) : last.mine;
+    const likely = o.state === 'winning' && last.estimated && last.likely ? last.likely.high : undefined;
+    const loser =
+      likely ?? (o.state === 'winning' ? (last.strongest ? (last.strongest.high ?? last.strongest.low) : 0) : last.mine);
     const rate = o.state === 'winning' ? income : last.strongest ? incomeOfPlayer(last.strongest.playerId) : 0;
     if (rate <= 0) return undefined;
     const turns = Math.min(PAYBACK_TURNS, Math.max(DECIDED_PAYBACK_MIN, Math.ceil(loser / rate)));
-    return turns < PAYBACK_TURNS ? { state: o.state, turns, loser, rate } : undefined;
+    return turns < PAYBACK_TURNS ? { state: o.state, turns, loser, rate, ...(likely !== undefined ? { estimated: true as const } : {}) } : undefined;
   })();
   /** The turns every payback test counts: {@link PAYBACK_TURNS}, or fewer once the game is decided (#201). */
   const paybackTurns = decidedGame?.turns ?? PAYBACK_TURNS;
@@ -624,7 +627,7 @@ export function noteEstimates(ctx: PlanCtx, state: PlanState): void {
     rationale.push(
       `Outlook (#201): ${decidedGame.state} for ${OUTLOOK_TURNS} turns running, so the game is decided — ${
         decidedGame.state === 'winning'
-          ? `the strongest opponent's strength of ${decidedGame.loser} over my income of ${decidedGame.rate}`
+          ? `the strongest opponent's ${decidedGame.estimated ? 'likely strength' : 'strength'} of ${decidedGame.loser}${decidedGame.estimated ? ' (an estimate, not a bound)' : ''} over my income of ${decidedGame.rate}`
           : `my strength of ${decidedGame.loser} over the strongest opponent's ~${decidedGame.rate} a turn`
       } leaves ~${decidedGame.turns} turns, so every payback test counts ${decidedGame.turns} turns instead of ${PAYBACK_TURNS}.`,
     );
