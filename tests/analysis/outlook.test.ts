@@ -374,6 +374,30 @@ describe('gameOutlook (#178)', () => {
         expect(o.basis).toMatch(/even share of the map's income/i);
       });
 
+      it('a measured opponent that drops out of view keeps its tracked pace: losing sight never reads more hopeful', () => {
+        // The foe's stack grows by 50 a turn in view on turns 5–9 (tracked income 50), then on
+        // turn 10 it is fogged. Its likely high must not fall to the even-share prior.
+        const grow = (stack: number) => (i: number) => {
+          const b = shape(52 + 50 * i);
+          return stack === 92 ? b : board(b.territories.map((t) => (t.territoryId === 52 ? mine(52, stack) : t)));
+        };
+        for (const stack of [92, 1500, 2000]) {
+          const at = grow(stack);
+          const seen = [0, 1, 2, 3, 4, 5].map(at);
+          const gone = [...seen.slice(0, 5), hide([54])(seen[5]!)];
+          const inView = gameOutlook({ graph: big, me: ME, boards: turns(5, seen), game: ffa4 }).turns.at(-1)!;
+          const fogged = gameOutlook({ graph: big, me: ME, boards: turns(5, gone), game: ffa4 }).turns.at(-1)!;
+          expect(inView.likely).toMatchObject({ playerId: FOE, source: 'tracked' });
+          expect(fogged.likely).toMatchObject({ playerId: FOE, source: 'prior', why: 'unseen' });
+          expect(fogged.likely!.high).toBeGreaterThanOrEqual(inView.likely!.high);
+          expect(fogged.likely!.high).toBeLessThanOrEqual(fogged.strongest!.high!);
+          // In view it is no win at any of these stacks; out of view it must not become an estimated one.
+          expect(inView.state).not.toBe('winning');
+          expect(fogged.state).not.toBe('winning');
+          expect(fogged.estimated).toBeUndefined();
+        }
+      });
+
       it('tracked opponents are labelled tracked', () => {
         const o = gameOutlook({ graph: big, me: ME, boards: turns(8, [shape(), shape(), shape()]), game: ffa4 });
         expect(o.turns.at(-1)!.likely!.source).toBe('tracked');

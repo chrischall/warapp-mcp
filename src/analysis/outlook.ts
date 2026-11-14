@@ -32,7 +32,8 @@
 // (`source: 'prior'`): the same sum with each turn's income at most its even share of the map's
 // income (an even share of the territories at the base income, plus the map's bonuses ÷ the
 // seated players; base income alone when no one is seated), LIKELY_INCOME_MARGIN × its visible
-// income at least, so less evidence never reads more hopeful than a measure would — never its
+// income at least — and × the income tracked on earlier boards, when one was measured before it
+// went out of view — so less evidence never reads more hopeful than a measure would — never its
 // loose high, which used to stand in for it and then outranked every real estimate. None is
 // made while any opponent is unbounded. When an estimate exists but does not show a win, the
 // basis names the opponent that blocks it and why.
@@ -273,11 +274,14 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         const high = Math.max(a, received + now) + k * cap + ahead;
         // #208: the likely high — the same sum at LIKELY_INCOME_MARGIN × its tracked income a turn;
         // #214: only with territory in view now and an observed income, else at its prior. An
-        // unmeasured one keeps the margin on its visible income too: less evidence never reads lower.
+        // unmeasured one keeps the margin on its visible income too, and an unseen one measured on
+        // earlier boards keeps it on that tracked income: less evidence never reads lower.
         const tr = trackedOf(playerId);
         const why: PriorWhy | undefined = !tr || tr.visible === 0 ? 'unseen' : tr.income === null ? 'unmeasured' : undefined;
         const source: LikelySource = why ? 'prior' : 'tracked';
-        const pace = why ? Math.max(income, LIKELY_INCOME_MARGIN * (tr?.visibleIncome ?? 0), priorIncome) : LIKELY_INCOME_MARGIN * tr!.income!;
+        const pace = why
+          ? Math.max(income, LIKELY_INCOME_MARGIN * Math.max(tr?.visibleIncome ?? 0, tr?.income ?? 0), priorIncome)
+          : LIKELY_INCOME_MARGIN * tr!.income!;
         let likelyReceived = start;
         for (let t = 1; t <= turn; t++) likelyReceived += Math.min(turnCap(t, playerId), pace);
         const likely = Math.max(a, likelyReceived + now) + k * Math.max(income, Math.min(cap, pace)) + ahead;
@@ -394,7 +398,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     // that does not show a win names the opponent that blocks it.
     const l = last.likely;
     const rests = l?.source === 'prior'
-      ? `for player ${l.playerId} a prior (${l.why === 'unmeasured' ? 'no observed income: no pair of my boards measured its deploy' : 'no territory in view now'}): each turn at most an even share of the map's income, ${priorIncome}, ${LIKELY_INCOME_MARGIN}× its visible income at least`
+      ? `for player ${l.playerId} a prior (${l.why === 'unmeasured' ? 'no observed income: no pair of my boards measured its deploy' : 'no territory in view now'}): each turn at most an even share of the map's income, ${priorIncome}, ${LIKELY_INCOME_MARGIN}× its visible income (and any income tracked earlier) at least`
       : `each turn at most ${LIKELY_INCOME_MARGIN}× the income the tracker reads off my boards`;
     let est = '';
     if (l && (l.high !== s?.high || l.source === 'prior'))
