@@ -49,8 +49,14 @@ export const CHAT_SOURCE_NOTES: Readonly<Record<ChatSource, string>> = {
     'bundle and are UNVERIFIED live.',
   gamefeed:
     'Read from GameFeed, which names no channel: its messages are `unknown` (whether it returns team or private ' +
-    'messages is UNVERIFIED).',
+    'messages is UNVERIFIED). Its `new` flags are approximate after a mark_seen from the web client: they are then ' +
+    "judged against the whole chat's mark, and GameFeed's time format and channels are UNVERIFIED.",
 };
+
+/** What `warapp_plan_turn`'s `chat` says about its counts. */
+export const CHAT_SUMMARY_NOTE =
+  'Counted from GameFeed, which names no channel: unread messages show up under `unknown`, so zero on public, ' +
+  'team and private does not mean nothing to read. Read them with warapp_get_chat.';
 
 /** The signed-in account, when it can be read: its GameFeed id and in-game id. */
 export type ChatMe = { token: number; inGameId: number } | undefined;
@@ -109,13 +115,16 @@ export async function chatMe(ctx: LiveContext): Promise<ChatMe> {
  * `chat: true`): no request of its own. GameFeed names no channel, so its messages count as `unknown`.
  * `undefined` when no chat can be read. Never throws.
  */
-export async function chatSummary(ctx: LiveContext, game: Game): Promise<{ unread: UnreadCounts; source: ChatSource } | undefined> {
+export async function chatSummary(
+  ctx: LiveContext,
+  game: Game,
+): Promise<{ unread: UnreadCounts; source: ChatSource; note: string } | undefined> {
   try {
     const me = await chatMe(ctx);
     const lines = feedChatLines(game.chat);
     if (!lines) return undefined;
     const { unread } = await chatUnread(ctx, game.id, me, lines);
-    return { unread, source: 'gamefeed' };
+    return { unread, source: 'gamefeed', note: CHAT_SUMMARY_NOTE };
   } catch {
     return undefined;
   }
@@ -198,7 +207,8 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
       const me = await chatMe(ctx);
       const read = await readChat(ctx, game, me);
       const n = limit ?? DEFAULT_LIMIT;
-      const header = { game: { id: game.id, name: game.name ?? null, state: game.state } };
+      // The game's name is the host's words: delimited like any third-party text.
+      const header = { game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state } };
       if (!read) {
         return respond(undefined, ['compact'], () =>
           game.chat === undefined ? { ...header, messages: [], count: 0 } : { ...header, raw: game.chat },
@@ -235,6 +245,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
     kind: 'public' | 'team' | 'private';
     /** The SendChat channel value: -1, or my team. */
     channel: number;
+    /** The recipient: in-game id, and the name delimited (`untrustedText`: never the raw name, which is their words). */
     recipient?: { id: number; name: string };
     /** My in-game id, when my seat is known: the read-back finds my newest message by it. */
     meInGame?: number;
@@ -318,9 +329,9 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
             });
           }
           kind = 'private';
-          recipient = { id: inGameId(p), name: p.name };
-          // The recipient's name is their own words: by id in the sentence, delimited in a field.
+          // The recipient's name is their own words: by id in the sentence, delimited in a field and in the result.
           shownRecipient = { id: p.id, name: untrustedText(p.name) };
+          recipient = { id: inGameId(p), name: shownRecipient.name };
         } else if (channel === 'team') {
           // The team channel's value is my team (V3 in docs/PLAN-TEAMS.md: UNVERIFIED live). GameFeed's
           // player `team` is itself unverified, so a game where it is missing reads as no team.

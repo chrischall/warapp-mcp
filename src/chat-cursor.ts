@@ -47,30 +47,37 @@ const byChannel = <T extends CursorLine>(lines: readonly T[], channel: ChatChann
  * is. With the times of every message on the channel and a time in the cursor: what came after the
  * newest message seen (one sharing its millisecond counts past the `atLast` seen there), so a list
  * that dropped its oldest messages still finds the new ones. Otherwise by count: the messages past
- * the number seen (a list that shrank then has nothing new). My own messages are never new.
+ * the number seen (a list that shrank then has nothing new). My own messages are never new. An `unknown`
+ * message is judged against both the whole-chat mark (`all`) and the `unknown` channel's own: seen by
+ * either, it is not new, so marking `unknown` after the whole chat still clears what came since.
  */
 export function markNew(lines: readonly CursorLine[], cursor: ChatCursor | undefined): boolean[] {
   const out = lines.map((l) => !l.mine);
   if (!cursor) return out;
   for (const channel of CHAT_CHANNELS) {
-    const c = channel === 'unknown' ? (cursor.all ?? cursor.channels.unknown) : cursor.channels[channel];
-    if (!c) continue;
+    const marks = (channel === 'unknown' ? [cursor.all, cursor.channels.unknown] : [cursor.channels[channel]]).filter(
+      (c): c is ChannelCursor => c !== undefined,
+    );
+    if (!marks.length) continue;
     const mine = byChannel(lines, channel);
-    const timed = c.lastTimeMs !== undefined && mine.every(([l]) => l.timeMs !== undefined);
-    let atLast = 0;
+    const fresh = marks.map((c) => freshAgainst(mine.map(([l]) => l), c));
     mine.forEach(([l, i], k) => {
-      let fresh: boolean;
-      if (timed) {
-        const t = l.timeMs!;
-        if (t === c.lastTimeMs) fresh = ++atLast > (c.atLast ?? 1);
-        else fresh = t > c.lastTimeMs!;
-      } else {
-        fresh = k >= c.seen;
-      }
-      out[i] = fresh && !l.mine;
+      out[i] = !l.mine && fresh.every((f) => f[k]);
     });
   }
   return out;
+}
+
+/** Which of one channel's messages (oldest first) came after the mark `c`. */
+function freshAgainst(on: readonly CursorLine[], c: ChannelCursor): boolean[] {
+  const timed = c.lastTimeMs !== undefined && on.every((l) => l.timeMs !== undefined);
+  let atLast = 0;
+  return on.map((l, k) => {
+    if (!timed) return k >= c.seen;
+    const t = l.timeMs!;
+    if (t === c.lastTimeMs) return ++atLast > (c.atLast ?? 1);
+    return t > c.lastTimeMs!;
+  });
 }
 
 /** The cursor with `channels` marked seen as `lines` stand (every message on them, mine included). */

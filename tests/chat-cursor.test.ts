@@ -63,6 +63,18 @@ describe('a source with no channels (GameFeed) against a cursor marked from one 
     expect(markNew([line('unknown', 1), line('unknown', 3), line('unknown', 4)], c)).toEqual([false, false, true]);
   });
 
+  it('marking `unknown` after the whole chat counts: a message seen by either mark is not new', () => {
+    let c = advanceCursor(empty(), [line('public', 1), line('team', 2)], ['public', 'team', 'private', 'unknown']);
+    const feed = [line('unknown', 1), line('unknown', 2), line('unknown', 5)];
+    expect(markNew(feed, c)).toEqual([false, false, true]);
+    c = advanceCursor(c, feed, ['unknown']);
+    expect(markNew(feed, c)).toEqual([false, false, false]);
+    expect(markNew([...feed, line('unknown', 6)], c)).toEqual([false, false, false, true]);
+    // A later `unknown` mark that saw nothing (the web source has no unknown messages) keeps the whole-chat mark.
+    const c2 = advanceCursor(advanceCursor(empty(), [line('public', 4)], ['public', 'team', 'private', 'unknown']), [line('public', 4)], ['unknown']);
+    expect(markNew([line('unknown', 4), line('unknown', 7)], c2)).toEqual([false, true]);
+  });
+
   it('marking one channel does not mark the whole chat', () => {
     expect(advanceCursor(empty(), [line('public', 1)], ['public']).all).toBeUndefined();
   });

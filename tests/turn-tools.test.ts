@@ -17,6 +17,7 @@ import { readCachedOrders } from '../src/trend.js';
 import { writeAward, writePickList } from '../src/pick-list.js';
 import { writeFirstMover } from '../src/move-order.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { CHAT_SUMMARY_NOTE } from '../src/tools/chat.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -806,7 +807,9 @@ describe('warapp_plan_turn — threat trend', () => {
     const res = await h.call('warapp_plan_turn', { game_id: GAME });
     const p = payload<{ chat: unknown }>(res);
     // My own message is never unread; GameFeed names no channel.
-    expect(p.chat).toEqual({ unread: { public: 0, team: 0, private: 0, unknown: 1 }, source: 'gamefeed' });
+    expect(p.chat).toEqual({ unread: { public: 0, team: 0, private: 0, unknown: 1 }, source: 'gamefeed', note: CHAT_SUMMARY_NOTE });
+    // The note says the count shows up under `unknown`, so zeros on the named channels are not "nothing to read".
+    expect(CHAT_SUMMARY_NOTE).toMatch(/`unknown`.*warapp_get_chat/);
     expect(textOf(res)).not.toContain('secret plan');
     expect(h.calls[0]!.url).toContain('GetChat=true');
     // No extra request for it: the game's own read carried the chat.
