@@ -432,6 +432,38 @@ commitment the plan does not carry. On send, the commitments are recorded in the
 The free text is not parsed. The check covers what the agent declares, so the skill must say that an
 undeclared promise is not allowed.
 
+*As built (B4, 2026-11-14):* `checkCommitments`, `agreementChange` and `commitmentWarnings` in
+`src/analysis/commitments.ts` (pure; `tests/analysis/commitments.test.ts`); the send's check in
+`src/tools/commitments.ts` and the write in `recordCommitments` (`src/tools/relations.ts`;
+`tests/commitments-tools.test.ts`). The plan is `livePlanSetup` + `planTurn`, as `warapp_advise_diplomacy`
+makes it (without the award of picks, so the check writes nothing; in a two-player game on turn 1 it may differ
+from `warapp_plan_turn`'s by the opponent's proven starts). The planner is unchanged and the golden corpus
+untouched. Choices and departures:
+
+- **Planned or submitted.** When this server submitted orders this turn (the orders cache), they are what runs
+  and stand in for the plan; otherwise the plan made in the call. Orders sent from the web client are unknown,
+  so the plan stands in for them. A plan made with other arguments (a `goal`, `focus`) is not the one checked:
+  submit those orders first, then send.
+- **Shapes.** `no-attack { player, territories | bonuses, turns }` (all of the player's territories when neither
+  is given; 1–10 turns, this one included); `will-attack { player | territory, turn }` — only this turn, since
+  no plan covers a later one; `notice { agreement, ends_turn? }` — on an agreed truce (or restating my notice),
+  refused when no notice can run any more, when this turn's orders attack a covered territory, or when the
+  message's `ends_turn` comes before the agreed notice allows; `propose { player, terms }` — a new proposal, or
+  new terms on an open proposal (a counter-offer to theirs); `accept { agreement | player, terms? }` — a
+  recorded proposal (terms, when given, must match it) or, with terms, an offer not recorded yet. Propose and
+  accept are refused while this turn's orders attack a territory the truce would cover, and for a partner
+  `partyRefusal` refuses. Commitments in one message are checked in order, each seeing the ledger changes
+  of the ones before it.
+- **When recorded.** On `confirmed` or `accepted` (war.app took the message, whether or not its reply could
+  be read): a message that went out made its promises. `unconfirmed` and `unknown` record nothing and say how
+  to record by hand. The ledger is re-read under its lock and each propose/accept/notice re-applied to it, so
+  the agreement id is the ledger's own; the partner's player record (D5) follows when the game could be re-read.
+- **Stored.** The ledger's `commitments` (name-free: ids, turns, scope; at most 200, the newest). A notice keeps
+  the turn its truce stops binding.
+- **Checked again.** `warapp_submit_turn` warns — never refuses — on an attack a `no-attack` still covers, an
+  attack on what a proposal of mine (still open) covers, and a `will-attack` for this turn the orders leave
+  out. An accepted truce and a notice are the ledger's own agreements, refused by `truceBreaksIn` as before.
+
 ## 9. Part C — team games
 
 ### C1. Read the team

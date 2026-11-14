@@ -119,7 +119,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   // Reads the map statistics cache only when they are on (WARAPP_STATS=1, never hosted).
   registerWhereTool(server, live, deps.env ? { env: deps.env } : {});
   registerUncommitTool(server, live);
-  registerChatTools(server, live);
+  registerChatTools(server, live, deps.env ? { env: deps.env } : {});
   // The agreement ledger: one read-only tool, and one that writes only the local ledger (not confirm-gated).
   registerRelationsTools(server, live, deps.env ? { env: deps.env } : {});
   // B3: truce advice (read-only): prices a deal by planning with and without it; reads no chat.

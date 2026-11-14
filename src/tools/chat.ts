@@ -2,7 +2,7 @@
 // (`GetChat=true`, channels unknown), with what is new since the messages were last marked seen; send
 // through the web-client protocol (`SendChat`) publicly, to my team or privately, gated on the user's
 // confirmation — a message reaches other players and cannot be unsent.
-import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations } from '@chrischall/mcp-utils';
+import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { CHAT_CHANNELS, feedChatLines, readGameRefreshChat, readSendChatReply, type ChatChannel, type ChatLine } from '../chat.js';
@@ -32,7 +32,10 @@ import {
   untrustedDescription,
   untrustedText,
 } from './common.js';
+import { checkMessageCommitments, commitmentsArg, COMMITMENTS_NOTE, type MessageCommitments } from './commitments.js';
 import { lookupMeta, mintMeta } from './hints.js';
+import { mapOf } from './map.js';
+import { recordCommitments, type CommitmentRecorded } from './relations.js';
 import { requireApprovedAccount, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
 import { defineGatedWrite, requireMe, sendAndVerify } from './write-kit.js';
@@ -180,7 +183,7 @@ function shown(line: ChatLine, isNew: boolean, players: readonly Player[], byInG
 
 const CHANNEL_ARGS = ['all', ...CHAT_CHANNELS] as const;
 
-export function registerChatTools(server: McpServer, ctx: LiveContext): void {
+export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
   server.registerTool(
     'warapp_get_chat',
     {
@@ -274,7 +277,31 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
     meInGame?: number;
     /** The account the plan read and the gate bound (its GameFeed id). */
     account: string;
+    /** B4: the message's declared commitments, checked; recorded once it is sent. */
+    commitments?: Pick<MessageCommitments, 'turn' | 'commitments' | 'players'> & { records: NonNullable<MessageCommitments['checks'][number]['record']>[] };
   }
+
+  /** B4: record a sent message's commitments in the ledger as mine (the game re-read for the player record). */
+  const recordSent = async (gameId: number, meId: number, c: NonNullable<ChatState['commitments']>): Promise<CommitmentRecorded[]> => {
+    let game: { game: Game; me: Player; map: ReturnType<typeof mapOf> } | undefined;
+    try {
+      const g = await ctx.client.getGame(gameId, { settings: true });
+      const me = g.players.find((p) => p.id === meId);
+      if (me) game = { game: g, me, map: mapOf(g) };
+    } catch {
+      // The ledger is still written; the player record waits for warapp_record_agreement.
+    }
+    return recordCommitments({
+      dir: ctx.dataDir!,
+      env: opts.env,
+      gameId,
+      meId,
+      turn: c.turn,
+      players: c.players,
+      commitments: c.commitments.map((commitment, i) => ({ commitment, record: c.records[i]! })),
+      ...(game ? { game } : {}),
+    });
+  };
 
   defineGatedWrite(
     server,
@@ -291,6 +318,11 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
         '(ContextMint Bridge); the game is read from GameFeed first, so the GameFeed credentials are needed too. ' +
         "The result's `outcome` is `confirmed` when war.app's reply lists it as your newest message on that " +
         'channel, `accepted` when the reply cannot be read, `unconfirmed` when it does not show it. ' +
+        'Whatever the message promises must be declared in `commitments` (no-attack, will-attack, notice, propose, ' +
+        'accept; the text is never read): each is checked against this turn\'s plan (re-planned in the call, or the ' +
+        'orders already submitted) and the agreement ledger, a commitment they do not carry refuses the send, and once ' +
+        'the message is confirmed or accepted they are recorded in the ledger as yours (a propose or accept creates or ' +
+        'advances the agreement, a notice moves it to notice-by-me); warapp_submit_turn warns when later orders break one. ' +
         `${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Send a war.app chat message',
@@ -310,8 +342,9 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
           .union([z.string(), z.number()])
           .optional()
           .describe('A player (name or GameFeed id) to message privately. Omit to post to a channel.'),
+        commitments: commitmentsArg,
       }),
-      async plan({ game_id, message, channel, to }) {
+      async plan({ game_id, message, channel, to, commitments }) {
         const gameId = parseGameId(game_id);
         const privately = to !== undefined && String(to).trim() !== '';
         if (privately && channel === 'team') {
@@ -320,8 +353,9 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
           });
         }
         // Read the game for every message (#130): one GameFeed does not know is refused here. Its
-        // settings say whether private messages are allowed.
-        const game = await ctx.client.getGame(gameId, { map: false, settings: true });
+        // settings say whether private messages are allowed. Commitments are checked on a plan: the map too.
+        const promises = commitments?.length ? commitments : undefined;
+        const game = await ctx.client.getGame(gameId, { map: promises !== undefined, settings: true });
         // The message goes out as whoever is signed in: bind that account, so an
         // approval given while one account was signed in never posts as another (#133:
         // refused when it cannot be read, as every write is).
@@ -367,6 +401,16 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
           kind = 'team';
           chatChannel = seat.team;
         }
+        // B4: what the message promises, checked against this turn's plan and the ledger before anything is sent.
+        let promised: MessageCommitments | undefined;
+        if (promises) {
+          if (!seat) {
+            throw new McpToolError(`You hold no seat in game ${gameId}, so the commitments cannot be checked: nothing was sent.`, {
+              hint: 'Send the message without `commitments` — and then without any promise in it.',
+            });
+          }
+          promised = await checkMessageCommitments(ctx, game, seat, promises);
+        }
         const words =
           kind === 'private'
             ? `privately to player ${shownRecipient!.id} only`
@@ -391,6 +435,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
               text: message,
               channel: chatChannel,
               recipient: recipient?.id ?? null,
+              ...(promised ? { commitments: promised.commitments } : {}),
             },
             willSend: {
               game: gameId,
@@ -407,6 +452,16 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
                   : 'Other players will see this message; it cannot be unsent.',
               game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state },
               ...(shownRecipient ? { recipient: shownRecipient } : {}),
+              ...(promised
+                ? {
+                    commitments: {
+                      turn: promised.turn,
+                      checkedAgainst: promised.source === 'plan' ? 'the plan made now' : 'the orders already submitted',
+                      carried: promised.checks.map((c) => ({ kind: c.kind, carried: c.carried })),
+                      note: COMMITMENTS_NOTE,
+                    },
+                  }
+                : {}),
               untrusted: UNTRUSTED_PREVIEW_NOTE,
             },
           },
@@ -418,15 +473,25 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
             ...(recipient ? { recipient } : {}),
             ...(meInGame !== undefined ? { meInGame } : {}),
             account,
+            ...(promised
+              ? {
+                  commitments: {
+                    turn: promised.turn,
+                    commitments: promised.commitments,
+                    players: promised.players,
+                    records: promised.checks.map((c) => c.record!),
+                  },
+                }
+              : {}),
           } satisfies ChatState,
         };
       },
-      async execute({ gameId, text, kind, channel, recipient, meInGame, account }: ChatState) {
+      async execute({ gameId, text, kind, channel, recipient, meInGame, account, commitments }: ChatState) {
         await requireApprovedAccount(ctx, account);
         const to = recipient?.name ?? (kind === 'team' ? `your team (team ${channel})` : 'everyone in the game');
         const base = { status: 'sent' as const, game: gameId, channel: kind, to };
         let reply: ReplyEnvelope | undefined;
-        return sendAndVerify({
+        const result = await sendAndVerify({
           send: async () => {
             reply = await ctx.rpc.call('SendChat', Method.SendChat, (w) =>
               writeSendChatParams(w, { gameId, text, channel, ...(recipient ? { recipient: recipient.id } : {}) }),
@@ -470,6 +535,21 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
             };
           },
         });
+        if (!commitments) return result;
+        // B4: a message war.app confirmed or accepted made its promises: record them as mine. Otherwise
+        // whether it went out is open, and so is whether the promises were made.
+        if (result.outcome === 'confirmed' || result.outcome === 'accepted') {
+          return { ...result, commitments: { recorded: await recordSent(gameId, Number(account), commitments), note: COMMITMENTS_NOTE } };
+        }
+        return {
+          ...result,
+          commitments: {
+            recorded: [],
+            why:
+              'The message is not confirmed sent, so its commitments were not recorded. Check warapp_get_chat: if it went out, ' +
+              'record a propose, accept or notice with warapp_record_agreement, and keep every other promise it made.',
+          },
+        };
       },
     },
   );

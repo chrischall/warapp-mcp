@@ -32,7 +32,9 @@ import {
 import {
   emptyLedger,
   MAX_AGREEMENTS,
+  MAX_COMMITMENTS,
   nextAgreementId,
+  nextCommitmentId,
   readLedger,
   recordTruceUsage,
   relationsPath,
@@ -51,6 +53,30 @@ const walk = (statuses: AgreementStatus[], turn = 3): Agreement => {
 };
 
 describe('the per-game ledger', () => {
+  it('B4: keeps my commitments name-free, drops an unusable one, numbers them and bounds them', async () => {
+    const dir = tmp();
+    const commitments = [
+      { id: 'c1', sentTurn: 3, kind: 'no-attack' as const, with: P, scope: { territories: [4] }, fromTurn: 3, toTurn: 5 },
+      { id: 'c2', sentTurn: 3, kind: 'will-attack' as const, territory: 7, turn: 3 },
+      { id: 'c3', sentTurn: 4, kind: 'notice' as const, agreement: 'a1', with: P, endsTurn: 6 },
+      { id: 'c4', sentTurn: 4, kind: 'propose' as const, agreement: 'a2', with: P },
+    ];
+    const ledger = { ...emptyLedger(GAME, ME), commitments };
+    expect(await writeLedger(dir, ledger)).toBe(true);
+    expect(await readLedger(dir, GAME, ME)).toEqual(ledger);
+    expect(nextCommitmentId(ledger)).toBe('c5');
+    expect(nextCommitmentId(emptyLedger(GAME, ME))).toBe('c1');
+    const raw = JSON.parse(readFileSync(relationsPath(dir, GAME, ME), 'utf8'));
+    raw.commitments.push({ id: 'c9', kind: 'will-attack', sentTurn: 1, turn: 1 }, { id: 'zz', kind: 'notice' }, { id: 'c8', kind: 'say', sentTurn: 1 });
+    writeFileSync(relationsPath(dir, GAME, ME), JSON.stringify(raw));
+    expect((await readLedger(dir, GAME, ME))?.commitments).toEqual(commitments);
+    const many = Array.from({ length: MAX_COMMITMENTS + 3 }, (_, i) => ({ ...commitments[1]!, id: `c${i + 1}` }));
+    expect(await writeLedger(dir, { ...emptyLedger(GAME, ME), commitments: many })).toBe(true);
+    const kept = (await readLedger(dir, GAME, ME))?.commitments ?? [];
+    expect(kept).toHaveLength(MAX_COMMITMENTS);
+    expect(kept[0]!.id).toBe('c4');
+  });
+
   it('round-trips, name-free and private', async () => {
     const dir = tmp();
     const ledger = { ...emptyLedger(GAME, ME), agreements: [walk(['proposed-by-them', 'agreed'])] };

@@ -246,6 +246,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`priceTruce` ignores one given otherwise). It writes nothing: no board cache, and `livePlanSetup` is called
   with `award: false` (the award shapes only a two-player plan; reading it on turn 1 writes it). The host's
   description key is UNVERIFIED, shown through `untrustedText`.
+- **A message promises only what the plan does (B4, `src/analysis/commitments.ts`, pure; `src/tools/commitments.ts`).**
+  `warapp_send_chat` takes `commitments` (no-attack, will-attack, notice, propose, accept), declared — the text is
+  never parsed — and its plan step checks each against this turn's orders (`livePlanSetup` with `award: false`,
+  then `planTurn`; the orders this server submitted this turn, `readCachedOrders`, stand in when there are any)
+  and the ledger (`agreementChange`: the same rule `recordCommitments` re-applies after the send). One not
+  carried refuses the send. With commitments the game is read with its map and the turn must be in play. Once
+  the message is `confirmed` or `accepted` (war.app took it; `unconfirmed`/`unknown` record nothing and say so)
+  they go into the ledger's `commitments` as mine (ids and turns only, at most 200), a propose/accept/notice
+  through warapp_record_agreement's path (player record included). `warapp_submit_turn` warns (never refuses)
+  via `commitmentWarnings`: an attack a no-attack still covers or an open proposal of mine covers, and a
+  will-attack for this turn the orders leave out. A will-attack is only for the current turn.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — the others' acceptance is needed when the game's
@@ -842,8 +853,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   process). Offline replay reads a stored map
   whatever its age. A bad file is ignored and
   replaced; the disk never fails a call. A tool
-  that never uses the map (the turn wait, surrender, uncommit, chat, join-game, scout, begin-turn,
-  submit-turn's read-back) always asks `GetMap=false`, even for a game it has not seen.
+  that never uses the map (the turn wait, surrender, uncommit, chat — a send with `commitments` aside, which
+  plans — join-game, scout, begin-turn, submit-turn's read-back) always asks `GetMap=false`, even for a game it has not seen.
 - **Offline replay (`src/replay.ts`).** Wherever the board cache is written (plan_turn,
   track_opponents, locate_opponents, get_relations) the game's settings are kept at
   `<dataDir>/games/<gameId>.json`: name-free (players by id, team, state and AI flags; raw settings

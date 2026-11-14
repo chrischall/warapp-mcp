@@ -104,6 +104,7 @@ import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
+import { commitmentWarnings } from '../analysis/commitments.js';
 import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
 import { recordBrokenByMe } from './relations.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
@@ -1904,9 +1905,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             : undefined;
         // B2: an order that attacks a territory an active or in-notice truce covers is refused unless the
         // caller breaks the agreement on purpose (the plan never orders a surprise break, T7).
+        const ledger = ctx.dataDir ? await readLedger(ctx.dataDir, game.id, me.id) : undefined;
         const breaks = ctx.dataDir
           ? truceBreaksIn({
-              agreements: (await readLedger(ctx.dataDir, game.id, me.id))?.agreements ?? [],
+              agreements: ledger?.agreements ?? [],
               graph: graphOf(map),
               board,
               me: me.id,
@@ -1957,6 +1959,21 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             `${breaksText(breaks, moves)}. break_agreement is true: once these orders are committed the ledger records ` +
               `${breaks.length === 1 ? 'it' : 'them'} broken-by-me, and the partner's player record says so. That is final: ` +
               'withdrawing the orders afterwards (warapp_uncommit_turn) does not undo it.',
+          );
+        // B4: what my chat messages promised (warapp_send_chat's commitments): a warning, never a refusal.
+        const promises = commitmentWarnings({
+          commitments: ledger?.commitments ?? [],
+          agreements: ledger?.agreements ?? [],
+          graph: graphOf(map),
+          board,
+          me: me.id,
+          turn: turnNumber,
+          moves: moves.map((m) => ({ from: m.from.id, to: m.to.id, ...(m.mode === 'transfer-only' ? { transferOnly: true } : {}) })),
+        });
+        for (const p of promises)
+          warnings.push(
+            `Your chat ${p.text}. Keep the promise (change these orders), or ask the owner and tell the player before ` +
+              'breaking it — never silently.',
           );
         warnings.push(...options.warnings);
         warnings.push(
