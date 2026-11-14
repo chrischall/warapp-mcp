@@ -1,7 +1,7 @@
 {
   "name": "warapp-mcp",
   "displayName": "war.app (Warzone)",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "war.app (Warzone) game advisor for Claude — games, maps, bonuses, routes, live board, picks, turns, cards and chat",
   "author": {
     "name": "Chris Hall",
