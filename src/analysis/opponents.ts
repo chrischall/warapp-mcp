@@ -1323,6 +1323,8 @@ export function trackOpponents(
       if (to !== from + 1) continue;
       const was = shownOn(from);
       const now = shownOn(to);
+      /** Lost stacks an attack already placed on this turn: each attack fixes one stack, once. */
+      const placed = new Set<number>();
       for (const c of [...g.territoryById.keys()].sort(byNum)) {
         const b = was.get(c);
         const a = now.get(c);
@@ -1332,10 +1334,11 @@ export function trackOpponents(
         if (!nexts.some((n) => !visibleState(n) && (!n || n.owner.kind === 'unknown'))) continue;
         const k = lostStacks
           .map((l, idx) => ({ l, idx }))
-          .filter(({ l }) => l.turn <= from && (bfsDistances(g, [l.territoryId]).get(c) ?? Infinity) <= from - l.turn + 1)
+          .filter(({ l, idx }) => !placed.has(idx) && l.turn <= from && (bfsDistances(g, [l.territoryId]).get(c) ?? Infinity) <= from - l.turn + 1)
           .sort((x, y) => y.l.armies - x.l.armies || x.l.territoryId - y.l.territoryId)[0];
         if (!k || (k.l.territoryId === c && k.l.turn === from)) continue;
         lostStacks[k.idx] = { ...k.l, territoryId: c, turn: from };
+        placed.add(k.idx);
         notes.push(
           `Its stack of ${k.l.armies} (last seen on territory ${k.l.territoryId} on turn ${k.l.turn}) attacked territory ${c} out of the fog between turns ${from} and ${to} (#201): it stood next to ${c} then, so it is counted from there.`,
         );

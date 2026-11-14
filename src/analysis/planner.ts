@@ -2791,7 +2791,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    * (each border against the whole deploy) before any capture, completions included. Behind: a
    * border facing a player that faces two or more of my territories is sized for the expected case
    * — its one deploy lands on one of them, so each most likely faces only the stacks next to it
-   * (#118's floor) — and the plan says what that gambles.
+   * (#118's floor) — and the plan says what that gambles. For each border that floor is its best
+   * case (none of the deploy, not a share of it); my commander's territory is never sized so (1k).
+   * Ahead, a held bonus never waits behind the expansion share either.
    */
   const holdPasses: 'worst' | 'expected' | undefined =
     opts.adapt === true && opts.goal === undefined
@@ -3656,9 +3658,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (!f) return null;
     // #201, behind: its one deploy lands on one of the territories of mine its owner faces, so each
     // most likely meets only the stacks next to it (one attack: no split, chain or Bomb sizing, whose
-    // arithmetic differs). Cover odds name the gamble.
+    // arithmetic differs). Cover odds name the gamble. The floor is #118's stacks-only threat — for
+    // the border it is the best case (none of the deploy), not a share of it: a split broke #118's
+    // lesson, and any partial sizing still falls wherever the one deploy lands. My commander's
+    // territory is never gambled: rule 1k holds it against the whole deploy.
     const n = facingCount.get(f.player) ?? 0;
-    if (holdPasses === 'expected' && n >= 2 && !f.split && !f.chain && !bombOn && !custom) {
+    if (holdPasses === 'expected' && n >= 2 && !myCommanders.has(t) && !f.split && !f.chain && !bombOn && !custom) {
       const expected = f.movable;
       if (expected < f.threat) {
         gambled.set(t, { player: f.player, worst: f.threat, expected, of: n });
@@ -7389,7 +7394,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         run: () => {
           if (u.conceded) return;
           const recent = u.members.some((m) => m.recentFrom !== undefined);
-          const pending = !unitsDue && expansionLeft > 0 && u.worth < topValue && !recent ? Math.max(0, floor - expansionSpent) : 0;
+          // #201, ahead: held for the worst case before any capture, completions included — no
+          // waiting behind the expansion share.
+          const pending =
+            holdPasses !== 'worst' && !unitsDue && expansionLeft > 0 && u.worth < topValue && !recent ? Math.max(0, floor - expansionSpent) : 0;
           const cost = u.members.filter((m) => !heldBorders.has(m.id)).reduce((n, m) => n + m.holdCost, 0);
           if (cost <= budget && cost > budget - pending) {
             waiting.push(u);
@@ -10188,7 +10196,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   }
 
   // ---- #167: the exchange of each attack on a player ----
-  const exchanges: ExchangeView[] =moves.flatMap((m): ExchangeView[] => {
+  const exchanges: ExchangeView[] = moves.flatMap((m): ExchangeView[] => {
     const st = state.get(m.to);
     if (m.kind !== 'attack' || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) return [];
     const p = st.owner.playerId;
