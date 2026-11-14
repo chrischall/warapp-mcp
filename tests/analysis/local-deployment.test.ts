@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { chargeDeploys, deployPools, type DeployPools } from '../../src/analysis/local-deploy.js';
+import { chargeDeploys, deployPools, enemyDeployReaching, heldBonusPools, type DeployPools } from '../../src/analysis/local-deploy.js';
 import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
@@ -461,5 +461,24 @@ describe('planTurn — Local Deployment over overlapping bonuses (property, G2)'
       expect(minOutside(pools, deployMap(p)), ctx).toBeLessThanOrEqual(pools.anywhere);
       expect(p.warnings.join('\n'), ctx).not.toMatch(/could not be placed within the pools/);
     }
+  });
+});
+
+describe('enemyDeployReaching / heldBonusPools (#180)', () => {
+  it('finds the bonuses each player is shown to hold in full', () => {
+    const g = buildGraph(tinyMap());
+    const owner = new Map([[1, 20], [2, 20], [3, 20], [4, 30], [5, 20]]);
+    const pools = heldBonusPools(g, (t) => owner.get(t));
+    expect([...pools.keys()]).toEqual([20]);
+    expect(pools.get(20)!.map((p) => p.bonusId)).toEqual([101]);
+  });
+
+  it('bounds a deploy by its free income plus the pools that contain the territory', () => {
+    const pool = [{ value: 5, members: new Set([4, 5]) }];
+    expect(enemyDeployReaching(10, 5, 5, pool, [3])).toBe(5);
+    expect(enemyDeployReaching(10, 5, 5, pool, [4])).toBe(10);
+    // Unseen income counts as free: an estimate above base plus pools lands anywhere.
+    expect(enemyDeployReaching(14, 5, 5, pool, [3])).toBe(9);
+    expect(enemyDeployReaching(10, 5, 5, [], [3])).toBe(10);
   });
 });

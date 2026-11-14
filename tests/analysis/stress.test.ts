@@ -100,8 +100,10 @@ describe('stressPlan', () => {
     // Six outcomes stop it: the stack on 3 striking my source (either order, alone or with every
     // stack), the stack on 4 walking in first, and the deploy simply sitting on it.
     expect(r.atRisk.captures).toEqual([{ id: 3, replies: 6 }]);
-    expect(r.considered).toBe(4);
+    // Five tried: the dodge into its own 4 (#180) costs nothing — my 7 take 3 from the guard.
+    expect(r.considered).toBe(5);
     expect(r.harmful).toBe(4);
+    expect(r.dodges).toEqual([expect.objectContaining({ stack: 3, exit: 4, exitOwner: 'own', harmful: false })]);
   });
 
   it('tells a capture that is taken straight back from one that never happens', () => {
