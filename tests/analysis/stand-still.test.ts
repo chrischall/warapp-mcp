@@ -700,16 +700,18 @@ describe('#107: in contact, never stand still either', () => {
 
   it('adapting with an army lead over 3× (#167): no second front, and the idle 15-stack takes 22 as well', () => {
     const p = run(contactBoard(), { adapt: true });
+    // #203: 22, a member of Delta, is a step in the bonus passes (funded from the deploy), so it
+    // comes before the lead strike on 23.
     expect(attacks(p).map((m) => [m.from, m.to])).toEqual([
-      [2, 23],
       [1, 22],
+      [2, 23],
     ]);
     // Holds intact, and 23 still sized for its 0 defenders plus player 40's ~5 deploy (#120).
     expect(p.conceded).toEqual([]);
     expect(attacks(p).find((m) => m.to === 23)).toEqual(expect.objectContaining({ from: 2, to: 23, armies: 8, kind: 'attack' }));
     const r = p.rationale.join('\n');
     expect(r).toMatch(/FFA army lead: my 30 armies in view are 4\.3× player 30's 7/);
-    expect(r).toMatch(/Attack T22 \(#22\) from T1 \(#1\) with 15: army lead: a step into bonus Delta \(#501\)/);
+    expect(r).toMatch(/Attack T22 \(#22\) from T1 \(#1\) with 15 \(deploy 1 there\): advances bonus Delta \(#501\) .*player 30's member, taken on my army lead \(4\.3×\): sure even if player 30 deploys its ~5 there first/);
     expect(r).not.toMatch(/opens a second front/);
     expect(valid(p, contactBoard(), 5, map)).toEqual([]);
   });
