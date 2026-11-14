@@ -169,6 +169,63 @@ describe('B3 priceTruce: plan with and without the truce', () => {
     expect(truceVerdict(price, 5).reasons.join(' ')).toMatch(/full hold \(1: watch\)/);
   });
 
+  it("carries the board's reading of a recorded truce into the price: a break by them is no truce (T8)", () => {
+    const broken: PlanRelation = {
+      player: PARTNER,
+      coveredMine: [1],
+      coveredTheirs: [2],
+      state: 'broken',
+      trust: 'watch',
+      watch: ['broken'],
+      agreement: 'a1',
+      breach: { term: 'took or attacked a covered territory of mine', turn: 7, evidence: 'took territories 1 on turn 7', territories: [1] },
+    };
+    const i = input({ relations: [broken] });
+    const price = priceTruce(i, PARTNER, scope12, { agreement: 'a1' });
+    // The plan with it is the plan warapp_plan_turn makes: the broken relation, as recorded.
+    const asPlanned = planTurn(i);
+    expect(price).toMatchObject({ state: 'broken', trust: 'watch', watch: ['broken'], honoured: false, armiesFreed: 0, incomeGained: 0 });
+    expect(price.breach).toMatchObject({ turn: 7, territories: [1] });
+    expect(asPlanned.relations?.[0]).toMatchObject({ state: 'broken', honoured: false });
+    const v = truceVerdict(price, 5);
+    expect(v).toEqual({ verdict: 'no', reasons: [expect.stringMatching(/broke the truce: took or attacked a covered territory of mine on turn 7 \(took territories 1 on turn 7\).*ordinary opponent/)] });
+  });
+
+  it("carries a recorded truce's watch flags (massing, their notice) into the price: full holds, and no", () => {
+    for (const watch of [['massing'], ['their-notice'], ['cap-exceeded', 'outgrowing']] as const) {
+      const rel: PlanRelation = { player: PARTNER, coveredMine: [1], coveredTheirs: [2], state: 'active', trust: 'watch', watch: [...watch] };
+      const price = priceTruce(input({ relations: [rel] }), PARTNER, scope12);
+      expect(price).toMatchObject({ state: 'active', trust: 'watch', watch: [...watch], armiesFreed: 0, relaxed: [], incomeGained: 0 });
+      const v = truceVerdict(price, 5);
+      expect(v.verdict).toBe('no');
+      expect(v.reasons.join(' ')).toMatch(/under watch/);
+    }
+    const massing = truceVerdict(
+      priceTruce(input({ relations: [{ player: PARTNER, coveredMine: [1], coveredTheirs: [2], state: 'active', trust: 'watch', watch: ['massing'] }] }), PARTNER, scope12),
+      5,
+    );
+    expect(massing.reasons.join(' ')).toMatch(/massing armies beside the covered border/);
+    // The endgame given by the caller joins the relation's own flags, once each.
+    const both = priceTruce(
+      input({ relations: [{ player: PARTNER, coveredMine: [1], coveredTheirs: [2], state: 'active', trust: 'watch', watch: ['massing', 'endgame'] }] }),
+      PARTNER,
+      scope12,
+      { trust: 'watch', watch: ['endgame'] },
+    );
+    expect(both.watch).toEqual(['massing', 'endgame']);
+    // A clear relation stays clear: the price is the unrecorded one's.
+    const clear = priceTruce(input({ relations: [{ player: PARTNER, coveredMine: [1], coveredTheirs: [2], state: 'active', trust: 'clear' }] }), PARTNER, scope12);
+    expect(clear).toMatchObject({ trust: 'clear', watch: [], armiesFreed: 3 });
+    expect(truceVerdict(clear, 5).verdict).toBe('propose');
+  });
+
+  it('carries a recorded truce in notice into the price, with when it ends', () => {
+    const rel: PlanRelation = { player: PARTNER, coveredMine: [1], coveredTheirs: [2], state: 'notice', endsTurn: 9, noticeBy: 'me', trust: 'clear' };
+    const price = priceTruce(input({ relations: [rel] }), PARTNER, scope12);
+    expect(price).toMatchObject({ state: 'notice', trust: 'clear' });
+    expect(price.armiesFreed).toBe(planTurn(input({ relations: [rel] })).relations![0]!.armiesFreed);
+  });
+
   it('outside a free-for-all the plan does not honour it, and the verdict is no', () => {
     const price = priceTruce(input({ game: { players: [{ id: ME }, { id: PARTNER }], turn: 8 } }), PARTNER, scope12);
     expect(price.honoured).toBe(false);
@@ -263,6 +320,16 @@ describe('B3 the three checks on an offer', () => {
     expect(c).toMatchObject({ iGainOnlyIfTheyKeepIt: false, stressTestFirst: false });
   });
 
+  it('a gain that comes only from attacks on them I give up survives a break: it does not rest on their keeping it', () => {
+    const base = priceTruce(input(), PARTNER, scope12);
+    const c = offerChecks({ ...base, armiesFreed: 0, concededAvoided: [], incomeGained: 2, capturesGained: [4] });
+    expect(c.iGainOnlyIfTheyKeepIt).toBe(false);
+    expect(c.stressTestFirst).toBe(false);
+    expect(c.reasons[0]).toMatch(/not from thinner holds/);
+    // Armies freed, or a border kept that would be conceded, come from thinner holds facing them.
+    expect(offerChecks({ ...base, armiesFreed: 0, concededAvoided: [1], incomeGained: 0 }).iGainOnlyIfTheyKeepIt).toBe(true);
+  });
+
   it('a boxed-in partner gains nothing from my compliance that shows', () => {
     const c = offerChecks(priceTruce(input({ board: at({ t6: mine(6, 2), t7: mine(7, 2) }) }), PARTNER, scope12));
     expect(c).toMatchObject({ theyGainFromMyCompliance: false, stressTestFirst: false });
@@ -293,6 +360,20 @@ describe('B3 facts the agent may cite', () => {
     expect(facts[1]!.text).toBe(`player ${OTHER} holds at least 2 territories`);
     // Nothing about me: withholding is free.
     expect(facts.every((f) => f.about !== ME && f.about !== PARTNER)).toBe(true);
+  });
+
+  it('under fog, what lies wholly beside the recipient is not said to be hidden from it', () => {
+    // The other player holds only T7, beside the partner's T2; T9 is neutral.
+    const b = board([mine(1, 24), enemy(2, 40, PARTNER), mine(3, 2), neutral(4, 4), neutral(5, 2), neutral(6, 2), enemy(7, 6, OTHER), neutral(9, 3)]);
+    const count = (fog: string) => diplomacyFacts({ graph: g, board: b, me: ME, recipient: PARTNER, fog }).find((f) => f.kind === 'territories');
+    // Under normal fog it sees the owners beside it; under heavier fog that is not known.
+    expect(count('Foggy')).toMatchObject({ count: 1, recipientSees: 'yes' });
+    expect(count('VeryFoggy')).toMatchObject({ recipientSees: 'unknown' });
+    expect(count('ExtremeFog')).toMatchObject({ recipientSees: 'unknown' });
+    // Not wholly beside it (T9 is far from the partner): it cannot be assumed to see it.
+    expect(diplomacyFacts({ graph: g, board: at(), me: ME, recipient: PARTNER, fog: 'VeryFoggy' }).find((f) => f.kind === 'bonuses')).toMatchObject({
+      recipientSees: 'no',
+    });
   });
 
   it('with every owner shown the count is exact', () => {

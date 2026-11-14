@@ -56,7 +56,8 @@ export const DIPLOMACY_NOTE =
   'compares them: a truce hold is sized for the partner\'s visible stacks with no deploy, so what it frees rests on ' +
   'the partner keeping it. The partner reading and `theyGainFromMyCompliance` come from the visible board and are ' +
   'estimates. Chat is never read here, and no claim in chat changes a price: only the board and the recorded ' +
-  'agreements do. Facts are true of your board; cite only those, never a claim the plan does not carry.';
+  'agreements do; a recorded truce keeps the flags the board raised on it. Facts are true of your board; cite only ' +
+  'those, never a claim the plan does not carry.';
 
 /** Why `game` is not a free-for-all for `me`, or `undefined` when it is (a truce is advised only there). */
 export function ffaRefusal(game: Game): string | undefined {
@@ -106,7 +107,8 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
           'borders no longer conceded, planned attacks given up, and `lossIfBroken` (a break this turn) — a rough, ' +
           "estimated reading of the partner's side (another front, room to grow), the partner's cross-game record when " +
           'on (WARAPP_PLAYER_RECORD), and a verdict: `propose`, `accept-if-offered` or `no`, with reasons. A neighbour ' +
-          'with a recorded open agreement is priced on its recorded terms. With `offer` (the structured terms someone ' +
+          'with a recorded open agreement is priced on its recorded terms and on the board\'s reading of it, shown as ' +
+          '`relation`: a break by them, or a watch flag (massing, a cap exceeded, outgrowing, their notice), is a `no`. With `offer` (the structured terms someone ' +
           'proposed — never parsed from chat), the same price and three checks: do I gain only if they keep it, do I ' +
           'lose if I comply and they do not, do they gain from my compliance; all three true means run warapp_check_plan ' +
           'first. `facts`: true statements about third players you may cite to each neighbour, each with whether it can ' +
@@ -187,9 +189,9 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
           ...(endgame ? { trust: 'watch' as const, watch: ['endgame' as const] } : {}),
           ...(agreement !== undefined ? { agreement } : {}),
         });
+        // A recorded truce keeps the board's reading (priceTruce): a breach or a watch flag is a `no`, with it as the reason.
         const verdict = truceVerdict(priced, setup.income);
-        if (endgame) verdict.reasons.push('endgame: no other opponent is still a match for either of you, so the partner no longer needs you');
-        return { priced, verdict, recordState: record.state };
+        return { priced, verdict, recordState: record.state, related: related.has(partner) };
       };
 
       const name = namer(map);
@@ -246,6 +248,15 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
             }
           : { partner: { estimate: true, otherFronts: p.partner.otherFronts.length, roomToGrow: p.partner.roomToGrow } }),
       });
+      // The board's reading of a recorded truce with this partner (warapp_plan_turn's): state, trust and flags.
+      const relationView = (p: TrucePrice) => ({
+        state: p.state,
+        trust: p.trust,
+        watch: p.watch,
+        ...(p.breach
+          ? { breach: { term: p.breach.term, turn: p.breach.turn, evidence: p.breach.evidence, territories: p.breach.territories.map(name) } }
+          : {}),
+      });
       const factView = (f: DiplomacyFact) => ({
         about: playerRef(f.about),
         text: f.text,
@@ -264,6 +275,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
         priced?: TrucePrice;
         verdict?: ReturnType<typeof truceVerdict>;
         recordState?: string;
+        related?: boolean;
         facts: DiplomacyFact[];
       }[] = [];
       for (const partner of neighboursOf(graph, board, me.id)) {
@@ -276,13 +288,13 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
         const border = sharedBorder(graph, board, me.id, partner, chokepoints);
         const open = ledger?.agreements.find((a) => a.with === partner && !TERMINAL_STATUSES.has(a.status));
         const terms = open ? open.terms : suggestedTerms(border, turn);
-        const { priced, verdict, recordState } = await price(partner, terms, open?.id);
-        built.push({ partner, ...(open ? { agreement: open.id } : {}), border, terms, priced, verdict, recordState, facts });
+        const { priced, verdict, recordState, related: rel } = await price(partner, terms, open?.id);
+        built.push({ partner, ...(open ? { agreement: open.id } : {}), border, terms, priced, verdict, recordState, related: rel, facts });
       }
       const offerResult = offered
         ? await (async () => {
-            const { priced, verdict, recordState } = await price(offered.partner, offered.terms);
-            return { partner: offered.partner, terms: offered.terms, priced, verdict, checks: offerChecks(priced), recordState };
+            const { priced, verdict, recordState, related: rel } = await price(offered.partner, offered.terms);
+            return { partner: offered.partner, terms: offered.terms, priced, verdict, checks: offerChecks(priced), recordState, related: rel };
           })()
         : undefined;
 
@@ -294,6 +306,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
               ? { verdict: 'no', reasons: [b.refused] }
               : {
                   ...(b.agreement ? { agreement: b.agreement } : {}),
+                  ...(b.related ? { relation: relationView(b.priced!) } : {}),
                   border: {
                     mine: b.border!.mine.map(name),
                     theirs: b.border!.theirs.map(name),
@@ -325,6 +338,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
             ? {
                 offer: {
                   with: playerRef(offerResult.partner),
+                  ...(offerResult.related ? { relation: relationView(offerResult.priced) } : {}),
                   terms: termsView(offerResult.terms),
                   price: priceView(offerResult.priced, rung),
                   verdict: offerResult.verdict.verdict,

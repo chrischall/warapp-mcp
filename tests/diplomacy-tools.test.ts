@@ -39,9 +39,9 @@ function game(
 }
 
 // Ann holds 159 and 161; Bob's 158 borders both. 157 neutral, 135 fogged.
-const boardAt = (opts: { bob158?: number } = {}): SyntheticTerritory[] => [
+const boardAt = (opts: { bob158?: number; bobTakes161?: boolean } = {}): SyntheticTerritory[] => [
   { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 6 },
-  { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+  opts.bobTakes161 ? { id: 161, fogLevel: 1, owner: BOB.inGame, armies: 2 } : { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
   { id: 157, fogLevel: 2, owner: 0, armies: 2 },
   { id: 158, fogLevel: 1, owner: BOB.inGame, armies: opts.bob158 ?? 7 },
   { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
@@ -73,6 +73,7 @@ interface Advice {
   neighbours: Array<{
     player: { id: number; name: string | null };
     agreement?: string;
+    relation?: { state: string; trust: string; watch: string[]; breach?: { term: string; turn: number; territories: Named[] } };
     border?: { mine: Named[]; theirs: Named[]; chokepoints: Named[]; myArmies: number; theirArmies: number };
     terms?: { scope: unknown; noticeTurns: number; borderCap?: number; untilTurn?: number; source: string };
     price?: PriceView;
@@ -83,6 +84,7 @@ interface Advice {
   }>;
   offer?: {
     with: { id: number; name: string | null };
+    relation?: { state: string; trust: string; watch: string[] };
     price: PriceView;
     verdict: string;
     reasons: string[];
@@ -100,6 +102,7 @@ const advise = async (args: Record<string, unknown> = {}) =>
   h!.call('warapp_advise_diplomacy', { game_id: GAME, player: 'Ann', ...args });
 const record = (args: Record<string, unknown>) => h!.call('warapp_record_agreement', { game_id: GAME, player: 'Ann', ...args });
 const ids = (xs: Named[] | undefined) => (xs ?? []).map((x) => x.id);
+const planTurn = () => h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
 
 describe('warapp_advise_diplomacy', () => {
   it('is listed read-only and open-world', async () => {
@@ -214,6 +217,50 @@ describe('warapp_advise_diplomacy', () => {
     ).offer!;
     const { record: _t, ...offerPrice } = offer.price as PriceView & { record?: unknown };
     expect(offerPrice).toEqual(freshPrice);
+  });
+
+  it('a recorded truce the partner broke on the board is no truce: verdict no, with the breach (T8)', async () => {
+    // Turn 3: agree, and cache the board with a plan. Turn 4: Bob has taken 161, not yet recorded.
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    payload(await planTurn());
+    const dir = h.dataDir;
+    await h.harness.close();
+    h = await liveHarness({ dataDir: dir, feed: [game('3')], warapp: live(boardAt({ bobTakes161: true })) });
+    const p = payload<Advice>(await advise({ offer: { with: 'Bob' } }));
+    const bob = p.neighbours.find((n) => n.player.id === Number(BOB.feed))!;
+    expect(bob).toMatchObject({ agreement: 'a1', relation: { state: 'broken', trust: 'watch', watch: ['broken'] }, verdict: 'no' });
+    expect(ids(bob.relation!.breach!.territories)).toEqual([161]);
+    expect(bob.reasons).toEqual([expect.stringMatching(/broke the truce: took or attacked a covered territory of mine on turn 3 .*ordinary opponent/)]);
+    expect(bob.price).toMatchObject({ honoured: false, armiesFreed: 0 });
+    // An offer from it is priced on the same reading: words change no estimate.
+    expect(p.offer).toMatchObject({ relation: { state: 'broken' }, verdict: 'no' });
+  });
+
+  it('a recorded truce whose partner is massing on the border is under watch: verdict no, frees nothing', async () => {
+    // Bob's stack beside the covered border grows on each of two turns.
+    let dir: string | undefined;
+    for (const [turn, armies] of [
+      ['2', 7],
+      ['3', 10],
+    ] as const) {
+      await h?.harness.close();
+      h = await liveHarness({ ...(dir ? { dataDir: dir } : {}), feed: [game(turn)], warapp: live(boardAt({ bob158: armies })) });
+      dir = h.dataDir;
+      if (turn === '2') payload(await record({ with: 'Bob', status: 'agreed' }));
+      payload(await planTurn());
+    }
+    await h!.harness.close();
+    h = await liveHarness({ dataDir: dir!, feed: [game('4')], warapp: live(boardAt({ bob158: 14 })) });
+    const bob = payload<Advice>(await advise()).neighbours[0]!;
+    expect(bob).toMatchObject({ agreement: 'a1', relation: { state: 'active', trust: 'watch', watch: expect.arrayContaining(['massing']) }, verdict: 'no' });
+    expect(bob.reasons.join(' ')).toMatch(/under watch \(.*massing armies beside the covered border/);
+    expect(bob.price).toMatchObject({ armiesFreed: 0, incomeGained: 0 });
+  });
+
+  it('a neighbour with no recorded truce carries no relation', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    expect(payload<Advice>(await advise()).neighbours[0]).not.toHaveProperty('relation');
   });
 
   it("reads the partner's record (D5) into the price, and says when it is off", async () => {

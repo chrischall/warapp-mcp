@@ -811,6 +811,15 @@ export interface TrucePrice {
   /** My territories and the partner's that the terms cover on this board, ascending. */
   coveredMine: number[];
   coveredTheirs: number[];
+  /**
+   * The truce as the plan with it reads it: a recorded truce with this player keeps the board's
+   * reading of it (`planRelationsFrom`: its state — `broken` with the breach, T8 — its trust and
+   * its watch flags); a new one is `active`, `clear` unless the caller says `watch` (the endgame).
+   */
+  state: 'active' | 'notice' | 'broken';
+  trust: 'clear' | 'watch';
+  watch: TruceWatchReason[];
+  breach?: PlanRelation['breach'];
   /** Whether the plan with the truce honours it (only in a free-for-all; never under `watch` trust for the relaxing). */
   honoured: boolean;
   /** The plan's view of the hypothetical truce (T2's relaxed borders, T3's full holds). */
@@ -878,8 +887,12 @@ const minus = (a: readonly number[], b: readonly number[]) => {
 
 /**
  * B3: price a truce with `player` on `terms` — plan the turn without it (any other relation in
- * `input` kept, a recorded one with this player taken out) and with it (`active`, trust `clear`
- * unless `opts.trust` says `watch`, as an endgame would), and compare: the armies freed, the
+ * `input` kept, a recorded one with this player taken out) and with it, and compare. The truce
+ * planned with is `active`, trust `clear` — unless `input` holds a relation with `player`, whose
+ * board reading it keeps (state, `broken` with its breach or `notice` with its end, trust and
+ * watch flags: so a recorded truce is priced on the plan warapp_plan_turn makes, and a partner the
+ * board flags is never priced as trusted) — with `opts.trust` / `opts.watch` (an endgame) added.
+ * Compared: the armies freed, the
  * captures, bonuses and next income gained or lost, the borders no longer conceded, the partner's
  * covered territories the no-deal plan attacks (what the truce gives up), and T6's `lossIfBroken`.
  * Plus a rough reading of the partner's side from the visible board, marked as an estimate, and its
@@ -902,15 +915,24 @@ export function priceTruce(
   const holding = (p: number) => new Set(input.board.territories.filter((t) => ownedBy(t, p)).map((t) => t.territoryId));
   const coveredMine = coveredTerritories(input.graph, terms.scope, holding(input.me));
   const coveredTheirs = coveredTerritories(input.graph, terms.scope, holding(player));
+  // The board's reading of a recorded truce with this player (planRelationsFrom) is kept: words
+  // never clear a flag, and a price never trusts more than warapp_plan_turn does (PLAN-TEAMS §4).
+  const standing = (input.relations ?? []).find((r) => r.player === player);
+  const watch = [...new Set([...(standing?.watch ?? []), ...(opts.watch ?? [])])];
+  const trusted: 'clear' | 'watch' = standing?.trust === 'watch' || opts.trust === 'watch' ? 'watch' : 'clear';
+  const state = standing?.state ?? 'active';
   const hypothetical: PlanRelation = {
     player,
     coveredMine,
     coveredTheirs,
-    state: 'active',
+    state,
+    ...(state === 'notice' && standing?.endsTurn !== undefined ? { endsTurn: standing.endsTurn } : {}),
+    ...(state === 'notice' && standing?.noticeBy !== undefined ? { noticeBy: standing.noticeBy } : {}),
+    ...(state === 'broken' && standing?.breach ? { breach: standing.breach } : {}),
     ...(terms.borderCap !== undefined ? { borderCap: terms.borderCap } : {}),
-    trust: opts.trust ?? 'clear',
-    ...(opts.watch?.length ? { watch: [...opts.watch] } : {}),
-    ...(opts.agreement !== undefined ? { agreement: opts.agreement } : {}),
+    trust: trusted,
+    ...(watch.length ? { watch } : {}),
+    ...(opts.agreement !== undefined ? { agreement: opts.agreement } : standing?.agreement !== undefined ? { agreement: standing.agreement } : {}),
   };
   const withPlan = planTurn({ ...base, relations: [...others, hypothetical] });
   const view = withPlan.relations?.find((r) => r.player === player);
@@ -921,6 +943,10 @@ export function priceTruce(
     player,
     coveredMine,
     coveredTheirs,
+    state,
+    trust: trusted,
+    watch,
+    ...(hypothetical.breach ? { breach: hypothetical.breach } : {}),
     honoured: view?.honoured ?? false,
     relaxed: view?.relaxed ?? [],
     fullHold: view?.fullHold ?? [],
@@ -952,8 +978,21 @@ export interface TruceVerdict {
 /** Whether a break this turn would cost me anything on the board (territory, armies, a bonus, my commander). */
 const breakCosts = (l: TruceBreakLoss | null) => l !== null && (l.commanderLost || l.territories.length > 0 || l.bonusValue > 0 || l.armies > 0);
 
+/** Each watch flag in plain words, for a verdict's reasons. */
+const WATCH_WORDS: Readonly<Record<TruceWatchReason, string>> = {
+  broken: 'a covered territory of mine was lost or hit beside it',
+  'cap-exceeded': 'it keeps more than the cap on the covered border',
+  massing: 'it is massing armies beside the covered border',
+  outgrowing: 'its income has outgrown mine',
+  'their-notice': 'it gave notice',
+  endgame: 'endgame: no other opponent is still a match for either of us, so the partner no longer needs me',
+};
+
 /**
- * B3: the verdict on a priced truce. `no` when the plan would not honour it, when it gains nothing
+ * B3: the verdict on a priced truce. `no` when the partner broke it (`state: 'broken'`, T8: an
+ * ordinary opponent at once), when the plan would not honour it, when the board puts it under
+ * watch (its flags, their notice, the endgame: every covered border keeps its full hold, so it
+ * frees nothing to rely on), when it gains nothing
  * this turn (no armies freed, no income, no border kept), when a break would cost my commander, or
  * when the partner's record reads `broke` and a break would cost me anything. `propose` when it gains
  * something material (income, a border kept, or armies freed of at least {@link TRUCE_MATERIAL_SHARE}
@@ -964,9 +1003,23 @@ const breakCosts = (l: TruceBreakLoss | null) => l !== null && (l.commanderLost 
 export function truceVerdict(price: TrucePrice, income: number): TruceVerdict {
   const reasons: string[] = [];
   const p = price.player;
+  if (price.state === 'broken') {
+    const b = price.breach;
+    return {
+      verdict: 'no',
+      reasons: [
+        `player ${p} broke the truce${b ? `: ${b.term} on turn ${b.turn} (${b.evidence})` : ''}; it is an ordinary opponent now, and no truce is priced as trusted (T8)`,
+      ],
+    };
+  }
   if (!price.honoured) return { verdict: 'no', reasons: [`the plan would not honour a truce with player ${p} this turn (not a free-for-all, or nothing of it binds)`] };
   if (price.lossIfBroken?.commanderLost)
     return { verdict: 'no', reasons: [`a break this turn would take my commander (from ${price.lossIfBroken.from} on ${price.lossIfBroken.to})`] };
+  if (price.trust === 'watch') {
+    const flags = price.watch.map((w) => WATCH_WORDS[w]);
+    const holds = price.fullHold.length ? `; every covered border facing it keeps its full hold (${price.fullHold.map((f) => `${f.territory}: ${f.why}`).join(', ')})` : '';
+    return { verdict: 'no', reasons: [`under watch (${flags.length ? flags.join('; ') : 'the board flags it'}): nothing it frees can be relied on${holds}`] };
+  }
   const gained = price.armiesFreed > 0 || price.incomeGained > 0 || price.concededAvoided.length > 0;
   if (!gained) {
     const why = price.fullHold.length
@@ -1009,7 +1062,12 @@ export function truceVerdict(price: TrucePrice, income: number): TruceVerdict {
 
 /** B3: the three checks on an offer (the research's), and whether to stress-test first. */
 export interface OfferChecks {
-  /** My gain rests on their keeping it: it comes from thinning borders that face them. */
+  /**
+   * My gain rests on their keeping it: armies freed or a border kept that the plan without it
+   * concedes — both come from thinner holds facing them (T2), which a break takes. A gain that is
+   * only captures and income, with no hold thinned (armies kept from an attack on them I give up),
+   * survives a break: `false`.
+   */
   iGainOnlyIfTheyKeepIt: boolean;
   /** Complying while they break costs me: a break this turn takes territory, armies, a bonus or my commander. */
   iLoseIfIComplyAndTheyDoNot: boolean;
@@ -1022,8 +1080,14 @@ export interface OfferChecks {
 
 export function offerChecks(price: TrucePrice): OfferChecks {
   const reasons: string[] = [];
-  const mine = price.armiesFreed > 0 || price.incomeGained > 0 || price.concededAvoided.length > 0;
-  reasons.push(mine ? 'what it gains me comes from thinner holds on borders that face them' : 'it gains me nothing this turn');
+  const thinned = price.armiesFreed > 0 || price.concededAvoided.length > 0;
+  reasons.push(
+    thinned
+      ? 'what it gains me comes from thinner holds on borders that face them'
+      : price.incomeGained > 0 || price.capturesGained.length > 0
+        ? 'what it gains me comes from armies kept from an attack on them, not from thinner holds: it survives a break'
+        : 'it gains me nothing this turn',
+  );
   const lose = breakCosts(price.lossIfBroken);
   const l = price.lossIfBroken;
   reasons.push(
@@ -1042,10 +1106,10 @@ export function offerChecks(price: TrucePrice): OfferChecks {
         : 'it frees nothing of theirs that shows',
   );
   return {
-    iGainOnlyIfTheyKeepIt: mine,
+    iGainOnlyIfTheyKeepIt: thinned,
     iLoseIfIComplyAndTheyDoNot: lose,
     theyGainFromMyCompliance: theirs,
-    stressTestFirst: mine && lose && theirs,
+    stressTestFirst: thinned && lose && theirs,
     reasons,
   };
 }
@@ -1134,7 +1198,11 @@ export interface DiplomacyFact {
   about: number;
   /** One plain sentence, players and territories by id: true of my board. */
   text: string;
-  /** Whether the recipient can check it under the game's fog. */
+  /**
+   * Whether the recipient can check it under the game's fog: `no` means it cannot be assumed to
+   * (fog that hides owners, and some of it away from the recipient); what lies wholly beside a
+   * territory the recipient holds is `yes` where the fog shows armies beside it, else `unknown`.
+   */
   recipientSees: Sees;
   territory?: number;
   beside?: number;
@@ -1164,6 +1232,11 @@ export function diplomacyFacts(input: { graph: MapGraph; board: BoardState; me: 
     byPlayer.set(o, [...(byPlayer.get(o) ?? []), t.territoryId]);
   }
   const ownersShown = seesUnderFog(fog, 'owners');
+  const besideShown = seesUnderFog(fog, 'armies-beside');
+  const besideRecipient = (t: number) => neighborsOf(graph, t).some((n) => ownedBy(at.get(n), recipient));
+  // Owners hidden by the fog: what lies wholly beside the recipient it may still see.
+  const sees = (ts: readonly number[]): Sees =>
+    ownersShown !== 'no' || !ts.length || !ts.every(besideRecipient) ? ownersShown : besideShown === 'yes' ? 'yes' : 'unknown';
   const out: DiplomacyFact[] = [];
   for (const [p, ts] of [...byPlayer].sort(([a], [b]) => a - b)) {
     let best: { territory: number; beside: number; armies: number } | undefined;
@@ -1187,7 +1260,7 @@ export function diplomacyFacts(input: { graph: MapGraph; board: BoardState; me: 
       kind: 'territories',
       about: p,
       text: `player ${p} holds ${atLeast ? 'at least ' : ''}${ts.length} territor${ts.length === 1 ? 'y' : 'ies'}`,
-      recipientSees: ownersShown,
+      recipientSees: sees(ts),
       count: ts.length,
       ...(atLeast ? { atLeast: true } : {}),
     });
@@ -1205,7 +1278,7 @@ export function diplomacyFacts(input: { graph: MapGraph; board: BoardState; me: 
         kind: 'bonuses',
         about: p,
         text: `player ${p} holds bonus${full.length === 1 ? '' : 'es'} ${full.join(', ')} in full, worth +${value} a turn`,
-        recipientSees: ownersShown,
+        recipientSees: sees(full.flatMap((b) => bonusTerritories(graph, b))),
         bonuses: full,
         value,
       });

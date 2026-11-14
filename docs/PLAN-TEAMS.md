@@ -388,8 +388,12 @@ Read-only tool `warapp_advise_diplomacy`:
 the tool in `src/tools/diplomacy.ts`. The plan is built by `livePlanSetup` (`src/tools/turn.ts`, extracted from
 `warapp_plan_turn` and shared by both tools), so a price is the difference between two plans
 `warapp_plan_turn` would make; the planner is unchanged and the golden corpus untouched. Departures and
-choices: the hypothetical truce replaces any recorded relation with the same player and is priced at trust
-`clear`, or `watch` in the endgame (where it frees nothing). The no-deal plan never holds that player's truce: the
+choices: the hypothetical truce replaces any recorded relation with the same player but keeps that relation's
+board reading — its state (`broken` with the breach, `notice` with its end), trust and watch flags — so a
+recorded truce is priced on the plan `warapp_plan_turn` makes and a flagged partner is never priced as trusted
+(section 4: only the board raises a flag); a new one is priced at trust `clear`, or `watch` in the endgame. A
+broken truce or one under watch is `no` with the flag as the reason, and the neighbour entry shows the reading
+as `relation`. The no-deal plan never holds that player's truce: the
 tool shares one no-deal plan among partners with no recorded relation, and `priceTruce` plans its own (ignoring a
 given one) for a partner that has one. The tool writes nothing: it skips the award of picks (`livePlanSetup`'s
 `award: false`), which changes only a two-player plan and is written when first read on turn 1. The partner's D5 record enters as
@@ -400,7 +404,10 @@ the border territories of both sides, one turn's notice, a cap at the largest st
 with an open agreement is priced on its recorded terms; an AI or otherwise ineligible neighbour is listed
 with `no` and the reason, unpriced. `facts` cover third players only (stack beside the recipient, territory
 count — "at least" unless the fog shows every owner — and bonuses held in full), each with `recipientSees`
-from the fog setting (the wiki's levels, unverified). The host's description is read loosely
+from the fog setting (the wiki's levels, unverified): `no` means it cannot be assumed to see it; what lies wholly
+beside the recipient is `yes` where the fog shows armies beside it, else `unknown`. `offerChecks`'
+`iGainOnlyIfTheyKeepIt` is true only for a gain from thinner holds facing them (armies freed, a border kept);
+captures and income from an attack on them given up survive a break. The host's description is read loosely
 (`Game.description`; the GameFeed key is unverified). Not built: T7's `give-notice` when B3 prices a
 recorded truce below zero (that needs the planner to price, which B3 leaves unchanged).
 

@@ -239,7 +239,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Pricing a deal (B3): `warapp_advise_diplomacy`, read-only, free-for-alls only** (docs/PLAN-TEAMS.md
   section 8 B3). `priceTruce` (`src/analysis/relations.ts`, pure) diffs two plans on the exact input
   `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared): without the truce and with it (the
-  planner called, never changed). The hypothetical truce replaces any recorded one with that player, and the
+  planner called, never changed). The hypothetical truce replaces any recorded one with that player but keeps
+  its board reading (state — `broken` with the breach — trust, watch flags): a recorded truce is priced on the
+  plan `warapp_plan_turn` makes, and a broken or flagged one is `no` (`relation` in the entry). The
   no-deal plan never holds it: a shared `without` is reused only for a partner with no relation in the input
   (`priceTruce` ignores one given otherwise). It writes nothing: no board cache, and `livePlanSetup` is called
   with `award: false` (the award shapes only a two-player plan; reading it on turn 1 writes it). The host's

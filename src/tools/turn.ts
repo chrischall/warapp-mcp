@@ -1114,120 +1114,120 @@ export async function livePlanSetup(
 ) {
   const { game, map, me, turn, territories, info, history } = a;
   const { goal, focusBonusIds = [], reserve, enemyDeploy: enemy_deploy, minWinChance: min_win_chance, firstMover: first_mover } = a.args ?? {};
-    const graph = graphOf(map);
-    // The board as war.app shows it: what is tracked and cached. The plan is made on the board
-    // the award of picks completes (#166): in a two-player game, the opponent's starts my own
-    // pick list proves, where they are still fogged.
-    const seen = boardStateFromLive(territories, me, game.players);
-    const award = a.award === false ? undefined : await loadAward(ctx.dataDir, game, me, seen, turn);
-    const board = award?.board ?? seen;
-    const opening = openingThreat(award, game, graph, seen, turn);
-    // #127: who moves first — first_mover, else a turn kept for this game alternated, else the award.
-    const mover = await firstMoverFor(ctx.dataDir, game, me, turn, first_mover, award);
-    const settings = plannerSettings(game.settings);
-    const rules = cardRules(game.settings);
-    // A team shares one hand (#163): mine and my teammates' cards.
-    const owners = handOwners(game, me);
-    const hand = readHand(info, owners);
-    const handUnknown = rules.inPlay.length > 0 && !handReadable(info, owners);
-    const inGame = cardGame(game);
-    const cards = chooseCardPlays(hand, rules, inGame);
-    // The board's income, card armies out: what the truces' trust reads (as warapp_check_plan passes it).
-    const boardIncome = incomeFor(graph, board, me.id, game.settings);
-    const income = boardIncome + cards.extraArmies;
-    const trend = history.previous;
-    const previousOrders = turn !== null ? history.boards.find((b) => b.turn === turn - 1)?.orders : undefined;
-    // The opponents over my board history: one observed over 2+ turns gets its tracked income;
-    // one still playing with nothing in view gets a received lower bound and a warning (#94).
-    const tracks =
-      turn !== null
-        ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
-        : undefined;
-    // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
-    // #201: the planner reads it too — a decided game shortens its payback horizon.
-    const cardArmies = cardArmyCeiling(game.settings);
-    const outlookInput = {
-      graph,
-      me: me.id,
-      boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
-      settings,
-      game: trackGame(game.players, game.settings, map),
-      cards: rules.inPlay.length > 0,
-      // #205: what the card clock lets cards add, so a fogged card game can still be bounded.
-      ...(cardArmies ? { cardArmies } : {}),
-    };
-    // The plan reads the outlook (#201: winning or losing only); #218 then feeds the outlook the
-    // plan's main front, so its front forecast and the plan's front outlook are one computation.
-    const outlook = gameOutlook(outlookInput);
-    const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
-    // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
-    const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
-    const gameContext: PlanGameContext = {
-      players: game.players.map((p) => ({
-        id: p.id,
-        ...(p.team !== undefined ? { team: p.team } : {}),
-        ...(p.state !== undefined ? { state: p.state } : {}),
-        ...(p.isAI ? { isAI: true } : {}),
-        ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
-      })),
-      ...(game.endRules?.aisSurrenderWhenOneHumanRemains !== undefined
-        ? { endRules: { aisSurrenderWhenOneHumanRemains: game.endRules.aisSurrenderWhenOneHumanRemains } }
-        : {}),
-      turn,
-      ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
-      ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
-      cards: rules.inPlay.length > 0,
-      // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
-      symmetricStart: symmetricStart(game.settings),
-      // #235: why not, when it was not (the plan says so in a free-for-all).
-      ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
-      // #166: the opponent's opening simulated from the starts the award proved, as the prior.
-      ...(opening ? { opening } : {}),
-      // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
-      ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
-    };
-    // B2: the truces in force, from the agreement ledger (warapp_record_agreement) and my board
-    // history, and the tacit truces (reported, never planned on).
-    const truces = await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: boardIncome, tracks });
-    const input: PlanInput = {
-      graph,
-      board,
-      me: me.id,
-      income,
-      cardArmies: cards.extraArmies,
-      ...(truces?.relations.length ? { relations: truces.relations } : {}),
-      settings,
-      ...(trend ? { previousBoard: trend.board } : {}),
-      // #226: my orders on that turn, when this server sent them: a failed attack's kills count back.
-      ...(trend && previousOrders ? { previousOrders } : {}),
-      ...(turn !== null ? { turn } : {}),
-      game: gameContext,
-      ...(tracks ? { tracks } : {}),
-      options: {
-        // No goal: the game profile picks it and tunes the plan (an explicit goal overrides it).
-        adapt: true,
-        outlook: { state: outlook.state, turns: outlook.turns },
-        // #201: the picking board's neutrals, so a fogged one keeps its size (wastelands).
-        ...(picking?.neutrals ? { rememberedNeutrals: new Map(picking.neutrals) } : {}),
-        ...(goal !== undefined ? { goal } : {}),
-        focusBonusIds,
-        ...(opponents > 0 ? { opponents } : {}),
-        holdsOrderPriority: holdsOrderPriority(hand, cards),
-        ...(playsOrderPriority(cards) ? { orderPriorityForced: true } : {}),
-        ...(reserve !== undefined ? { reserve } : {}),
-        ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
-        ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
-        // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
-        ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
-        // #215 review: from the award (unverified), the schedule and card advice use it, holds do not.
-        ...(mover.firstMover !== undefined && !mover.verified ? { movesFirstUnverified: true } : {}),
-        ...(opponentCanHold(game.settings, 'Order Priority', turn) ? { opponentsMayHoldOrderPriority: true } : {}),
-        // #163: an opponent may hold a Bomb by now: holds are sized as if halved, two stacks over one.
-        ...(opponentCanHold(game.settings, 'Bomb', turn) ? { opponentsMayHoldBomb: true } : {}),
-        // #127: what a capture's card pieces are worth, for a plan that would capture nothing.
-        ...cardPieceOption(game.settings, hand),
-      },
-    };
+  const graph = graphOf(map);
+  // The board as war.app shows it: what is tracked and cached. The plan is made on the board
+  // the award of picks completes (#166): in a two-player game, the opponent's starts my own
+  // pick list proves, where they are still fogged.
+  const seen = boardStateFromLive(territories, me, game.players);
+  const award = a.award === false ? undefined : await loadAward(ctx.dataDir, game, me, seen, turn);
+  const board = award?.board ?? seen;
+  const opening = openingThreat(award, game, graph, seen, turn);
+  // #127: who moves first — first_mover, else a turn kept for this game alternated, else the award.
+  const mover = await firstMoverFor(ctx.dataDir, game, me, turn, first_mover, award);
+  const settings = plannerSettings(game.settings);
+  const rules = cardRules(game.settings);
+  // A team shares one hand (#163): mine and my teammates' cards.
+  const owners = handOwners(game, me);
+  const hand = readHand(info, owners);
+  const handUnknown = rules.inPlay.length > 0 && !handReadable(info, owners);
+  const inGame = cardGame(game);
+  const cards = chooseCardPlays(hand, rules, inGame);
+  // The board's income, card armies out: what the truces' trust reads (as warapp_check_plan passes it).
+  const boardIncome = incomeFor(graph, board, me.id, game.settings);
+  const income = boardIncome + cards.extraArmies;
+  const trend = history.previous;
+  const previousOrders = turn !== null ? history.boards.find((b) => b.turn === turn - 1)?.orders : undefined;
+  // The opponents over my board history: one observed over 2+ turns gets its tracked income;
+  // one still playing with nothing in view gets a received lower bound and a warning (#94).
+  const tracks =
+    turn !== null
+      ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
+      : undefined;
+  // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
+  // #201: the planner reads it too — a decided game shortens its payback horizon.
+  const cardArmies = cardArmyCeiling(game.settings);
+  const outlookInput = {
+    graph,
+    me: me.id,
+    boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
+    settings,
+    game: trackGame(game.players, game.settings, map),
+    cards: rules.inPlay.length > 0,
+    // #205: what the card clock lets cards add, so a fogged card game can still be bounded.
+    ...(cardArmies ? { cardArmies } : {}),
+  };
+  // The plan reads the outlook (#201: winning or losing only); #218 then feeds the outlook the
+  // plan's main front, so its front forecast and the plan's front outlook are one computation.
+  const outlook = gameOutlook(outlookInput);
+  const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
+  // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
+  const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
+  const gameContext: PlanGameContext = {
+    players: game.players.map((p) => ({
+      id: p.id,
+      ...(p.team !== undefined ? { team: p.team } : {}),
+      ...(p.state !== undefined ? { state: p.state } : {}),
+      ...(p.isAI ? { isAI: true } : {}),
+      ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
+    })),
+    ...(game.endRules?.aisSurrenderWhenOneHumanRemains !== undefined
+      ? { endRules: { aisSurrenderWhenOneHumanRemains: game.endRules.aisSurrenderWhenOneHumanRemains } }
+      : {}),
+    turn,
+    ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
+    ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
+    cards: rules.inPlay.length > 0,
+    // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
+    symmetricStart: symmetricStart(game.settings),
+    // #235: why not, when it was not (the plan says so in a free-for-all).
+    ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
+    // #166: the opponent's opening simulated from the starts the award proved, as the prior.
+    ...(opening ? { opening } : {}),
+    // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
+    ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
+  };
+  // B2: the truces in force, from the agreement ledger (warapp_record_agreement) and my board
+  // history, and the tacit truces (reported, never planned on).
+  const truces = await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: boardIncome, tracks });
+  const input: PlanInput = {
+    graph,
+    board,
+    me: me.id,
+    income,
+    cardArmies: cards.extraArmies,
+    ...(truces?.relations.length ? { relations: truces.relations } : {}),
+    settings,
+    ...(trend ? { previousBoard: trend.board } : {}),
+    // #226: my orders on that turn, when this server sent them: a failed attack's kills count back.
+    ...(trend && previousOrders ? { previousOrders } : {}),
+    ...(turn !== null ? { turn } : {}),
+    game: gameContext,
+    ...(tracks ? { tracks } : {}),
+    options: {
+      // No goal: the game profile picks it and tunes the plan (an explicit goal overrides it).
+      adapt: true,
+      outlook: { state: outlook.state, turns: outlook.turns },
+      // #201: the picking board's neutrals, so a fogged one keeps its size (wastelands).
+      ...(picking?.neutrals ? { rememberedNeutrals: new Map(picking.neutrals) } : {}),
+      ...(goal !== undefined ? { goal } : {}),
+      focusBonusIds,
+      ...(opponents > 0 ? { opponents } : {}),
+      holdsOrderPriority: holdsOrderPriority(hand, cards),
+      ...(playsOrderPriority(cards) ? { orderPriorityForced: true } : {}),
+      ...(reserve !== undefined ? { reserve } : {}),
+      ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
+      ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
+      // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
+      ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
+      // #215 review: from the award (unverified), the schedule and card advice use it, holds do not.
+      ...(mover.firstMover !== undefined && !mover.verified ? { movesFirstUnverified: true } : {}),
+      ...(opponentCanHold(game.settings, 'Order Priority', turn) ? { opponentsMayHoldOrderPriority: true } : {}),
+      // #163: an opponent may hold a Bomb by now: holds are sized as if halved, two stacks over one.
+      ...(opponentCanHold(game.settings, 'Bomb', turn) ? { opponentsMayHoldBomb: true } : {}),
+      // #127: what a capture's card pieces are worth, for a plan that would capture nothing.
+      ...cardPieceOption(game.settings, hand),
+    },
+  };
   return {
     graph, seen, award, board, opening, mover, settings, rules, owners, hand, handUnknown, inGame, cards,
     boardIncome, income, trend, previousOrders, tracks, outlookInput, outlook, picking, opponents, gameContext, truces, input,
