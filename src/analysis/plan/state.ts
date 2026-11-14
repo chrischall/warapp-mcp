@@ -11,6 +11,7 @@ import type { CombatSettings } from '../combat.js';
 import type { MapGraph } from '../graph.js';
 import type { GameProfile } from '../profile.js';
 import type {
+  CardAdvice,
   EnemyDeployEstimate,
   EnemyIncomePrior,
   PlanGameContext,
@@ -81,6 +82,8 @@ export interface BoardCtx {
   /** Each territory on the map, as the board shows it; planPass calls it `state`. */
   territories: Map<number, TerritoryState>;
   label: (id: number) => string;
+  /** A bonus by name and id, as the rationale names it. */
+  bonusName: (id: number) => string;
   isMine: (id: number) => boolean;
   mine: number[];
   mineSet: Set<number>;
@@ -146,8 +149,8 @@ export type PlanCtx = OpponentsCtx & BoardCtx & CombatCtx & StandingCtx;
 /**
  * What the phases of one planning pass share and change. The collections are shared as they are,
  * so a phase that takes the state sees (and makes) the same changes planPass's locals of the same
- * name do; the two values a phase reassigns, `budget` and `holdings`, are read and written as
- * `ps.budget` / `ps.holdings` everywhere.
+ * name do; the values a phase reassigns, `budget`, `holdings` and `cardAdvice`, are read and
+ * written as `ps.budget` / `ps.holdings` / `ps.cardAdvice` everywhere.
  */
 export interface PlanState {
   /** The income not yet deployed (the deploy book, plan/orders.ts, opens it at the income). */
@@ -157,6 +160,8 @@ export interface PlanState {
    * capture passes have run, then those plus this turn's captures.
    */
   holdings: ReadonlySet<number>;
+  /** The card to play this turn, if any (rule 1s; rule 1b's withdrawals): reassigned as orders are made. */
+  cardAdvice: CardAdvice | null;
   warnings: string[];
   rationale: string[];
   /** Armies deployed on each territory of mine. */
@@ -176,6 +181,8 @@ export interface PlanState {
   /** Targets taken by a combined (multi-source) capture. */
   combined: Set<number>;
   moves: PlannedMove[];
+  /** Armies withdrawn into each territory this turn (they stay there: armies never move twice). */
+  incoming: Map<number, number>;
   /** Armies that occupy each capture this turn (its finishing attack's survivors). */
   survivorsAt: Map<number, number>;
   /** Every capture planned, in the order it was made (a rolled-back one may repeat; filter by `captured`). */
@@ -191,6 +198,7 @@ export function newPlanState(): PlanState {
   return {
     budget: 0,
     holdings: new Set(),
+    cardAdvice: null,
     warnings: [],
     rationale: [],
     deployed: new Map(),
@@ -203,6 +211,7 @@ export function newPlanState(): PlanState {
     captured: new Set(),
     combined: new Set(),
     moves: [],
+    incoming: new Map(),
     survivorsAt: new Map(),
     captureOrder: [],
     captureUndo: new Map(),

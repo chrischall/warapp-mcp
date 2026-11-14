@@ -274,6 +274,7 @@ function boardCtx(input: PlanInput, o: OpponentsCtx): BoardCtx {
   const state = new Map<number, BoardState['territories'][number]>();
   for (const t of board.territories) if (g.territoryById.has(t.territoryId)) state.set(t.territoryId, t);
   const label = (id: number) => `${g.territoryById.get(id)!.name} (#${id})`;
+  const bonusName = (id: number) => `${g.bonusById.get(id)!.name} (#${id})`;
   const isMine = (id: number) => {
     const o = state.get(id)?.owner;
     return o?.kind === 'player' && o.playerId === me;
@@ -352,6 +353,7 @@ function boardCtx(input: PlanInput, o: OpponentsCtx): BoardCtx {
   return {
     territories: state,
     label,
+    bonusName,
     isMine,
     mine,
     mineSet,

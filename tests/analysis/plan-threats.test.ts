@@ -1,9 +1,10 @@
-// The deploy book and the threats phase of planPass, moved to src/analysis/plan/orders.ts and
-// src/analysis/plan/threats.ts (#133): run in order after the estimates, their lines are the next
-// lines of planTurn's, and the borders they find are the ones the plan defends.
+// The deploy book, the threats and the holds of planPass, moved to src/analysis/plan/orders.ts,
+// threats.ts and holds.ts (#133): run in order after the estimates, their lines are the next lines
+// of planTurn's, the borders they find face an opponent, and the holds only define what planPass runs.
 import { describe, expect, it } from 'vitest';
 import * as planner from '../../src/analysis/planner.js';
 import { emptyPlan, noteEstimates, planContext } from '../../src/analysis/plan/estimates.js';
+import { holdsPhase } from '../../src/analysis/plan/holds.js';
 import { deployBook } from '../../src/analysis/plan/orders.js';
 import { newPlanState } from '../../src/analysis/plan/state.js';
 import { threatsPhase } from '../../src/analysis/plan/threats.js';
@@ -52,5 +53,50 @@ describe('plan/orders and plan/threats (#133)', () => {
       }
     }
     expect(borders).toBeGreaterThan(0);
+  });
+});
+
+describe('plan/holds (#133)', () => {
+  it('defines the holds without deploying, moving or saying anything', () => {
+    let defined = 0;
+    for (let i = 0; i < 2000; i += 43) {
+      const input = syntheticInput(i);
+      const ctx = planContext(input);
+      const state = newPlanState();
+      noteEstimates(ctx, state);
+      if (!ctx.mine.length) continue;
+      const book = deployBook(ctx, state);
+      const threats = threatsPhase(ctx, state, input);
+      const before = {
+        rationale: [...state.rationale],
+        warnings: [...state.warnings],
+        budget: state.budget,
+        deployed: new Map(state.deployed),
+        moves: state.moves.length,
+      };
+      const pass = {
+        cut: new Set<number>(),
+        relaxAttacks: false,
+        used: false,
+        viaHeld: new Map(),
+        viaNever: false,
+        viaSeen: new Map(),
+        viaMixed: false,
+        viaFinal: new Map(),
+        shared: {},
+      };
+      const holds = holdsPhase(ctx, state, book, threats, pass);
+      expect(state.rationale).toEqual(before.rationale);
+      expect(state.warnings).toEqual(before.warnings);
+      expect(state.budget).toBe(before.budget);
+      expect(state.deployed).toEqual(before.deployed);
+      expect(state.moves.length).toBe(before.moves);
+      expect(holds.threatened).toEqual([]);
+      expect(holds.conceded.size).toBe(0);
+      // Nothing conceded or contested yet: the income the plan counts on is the board's.
+      expect(holds.keptIncome(ctx.mineSet)).toBe(ctx.incomeAfter(ctx.mineSet));
+      defined++;
+    }
+    expect(defined).toBeGreaterThan(0);
   });
 });

@@ -83,7 +83,9 @@ export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput) {
     growthOf, deployReaching, reinforcementAt, holdArmies, bombSized, hiddenFoe, hiddenMovable, hiddenPool,
   } = src;
   const { chainAt, stacksAt, forceAt, threatAt, expectedAt, exposure } = forces;
+  const seen = visibleOpponents(pc, input);
   return {
+    ...seen,
     growthOf,
     deployReaching,
     reinforcementAt,
@@ -809,4 +811,49 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     borderAt,
     safeAtStart,
   };
+}
+
+/**
+ * The opponents in view (rule 1e, #45): each visible opponent's territories, the fog's edge, and
+ * the weak ones — fully visible, fewer territories than mine, a deploy below my income — with the
+ * territories of mine just taken from one. Pure: read from the board at the start of the turn.
+ */
+export function visibleOpponents(pc: PlanCtx, input: PlanInput) {
+  const { g, me, foe, territories: state, mine, mineSet, deployOf, income } = pc;
+  // Visible enemy territories by owner, sorted.
+  const ownedBy = new Map<number, number[]>();
+  for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
+    if (st.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
+    ownedBy.set(st.owner.playerId, [...(ownedBy.get(st.owner.playerId) ?? []), id]);
+  }
+  const ownerOf = (id: number) => {
+    const o = state.get(id)?.owner;
+    return o?.kind === 'player' ? o.playerId : undefined;
+  };
+  const hidden = (n: number) => {
+    const st = state.get(n);
+    return !st || st.owner.kind === 'unknown' || st.armies === null;
+  };
+  // Anything on the board hidden: an opponent may hold territories there no visible one borders.
+  const fogAnywhere = [...g.territoryById.keys()].some(hidden);
+  /** Its territories with a fogged neighbour: it may hold more in the fog. */
+  const fogEdge = (p: number) => ownedBy.get(p)!.filter((t) => neighborsOf(g, t).some(hidden));
+  const inReach = (p: number) => ownedBy.get(p)!.every((t) => neighborsOf(g, t).some((n) => mineSet.has(n)));
+  /** Fully visible, fewer territories than mine, and a deploy below my income. */
+  const weak = new Set(
+    [...ownedBy.keys()].filter(
+      (p) => !fogEdge(p).length && ownedBy.get(p)!.length < mine.length && deployOf(p) < income,
+    ),
+  );
+  const previousOwner = new Map(
+    (input.previousBoard?.territories ?? []).flatMap((t) =>
+      t.owner.kind === 'player' ? [[t.territoryId, t.owner.playerId] as const] : [],
+    ),
+  );
+  /** The weak opponent that held my `id` on the previous board, if any. */
+  const recentlyTakenFrom = (id: number): number | undefined => {
+    const p = previousOwner.get(id);
+    return p !== undefined && p !== me && weak.has(p) ? p : undefined;
+  };
+  return { ownedBy, ownerOf, hidden, fogAnywhere, fogEdge, inReach, weak, previousOwner, recentlyTakenFrom };
 }
