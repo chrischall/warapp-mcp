@@ -12,6 +12,7 @@ import {
   readBoardCache,
   readBoardHistory,
   readCachedOrders,
+  readExpectedIncome,
   writeBoardCache,
   writeOrdersCache,
   dropOrdersCache,
@@ -270,5 +271,48 @@ describe('orders cache (#119: my own orders as measurements)', () => {
     expect(await readCachedOrders(dir, 6, ANN.id)).toEqual(new Map());
     writeFileSync(join(dir, 'blocked'), 'a file');
     expect(await writeOrdersCache(join(dir, 'blocked'), 1, ANN.id, 1, orders(1))).toBe(false);
+  });
+});
+
+describe('expected next income (#194)', () => {
+  const board: BoardState = {
+    source: 'browser',
+    verified: true,
+    territories: [{ territoryId: 1, owner: { kind: 'player', playerId: ANN.id }, armies: 5 }],
+  };
+
+  it('keeps the plan\'s expected next income per turn beside the board; the newest plan of a turn wins', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    expect(await readExpectedIncome(dir, 42, ANN.id, 3)).toBeUndefined();
+    await writeBoardCache(dir, 42, ANN.id, 3, board, 9);
+    await writeBoardCache(dir, 42, ANN.id, 3, board, 11);
+    await writeBoardCache(dir, 42, ANN.id, 4, board, 12);
+    expect(await readExpectedIncome(dir, 42, ANN.id, 3)).toBe(11);
+    expect(await readExpectedIncome(dir, 42, ANN.id, 4)).toBe(12);
+    expect(await readExpectedIncome(dir, 42, ANN.id, 5)).toBeUndefined();
+    // A board write without a figure (a tracked turn) keeps the figures already kept.
+    await writeBoardCache(dir, 42, ANN.id, 5, board);
+    expect(await readExpectedIncome(dir, 42, ANN.id, 4)).toBe(12);
+    // Orders writes and drops keep them too.
+    await writeOrdersCache(dir, 42, ANN.id, 4, { deploys: [], moves: [] });
+    await dropOrdersCache(dir, 42, ANN.id, 4);
+    expect(await readExpectedIncome(dir, 42, ANN.id, 4)).toBe(12);
+    // Another player's view or game sees none.
+    expect(await readExpectedIncome(dir, 42, BOB.id, 4)).toBeUndefined();
+    expect(await readExpectedIncome(dir, 43, ANN.id, 4)).toBeUndefined();
+  });
+
+  it('keeps only the newest turns, and reads loosely', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    for (let t = 1; t <= CACHED_TURNS + 2; t++) await writeBoardCache(dir, 42, ANN.id, t, board, t * 2);
+    expect(await readExpectedIncome(dir, 42, ANN.id, 1)).toBeUndefined();
+    expect(await readExpectedIncome(dir, 42, ANN.id, CACHED_TURNS + 2)).toBe((CACHED_TURNS + 2) * 2);
+    writeFileSync(
+      boardCachePath(dir, 7),
+      JSON.stringify({ gameId: 7, playerId: ANN.id, turns: {}, expected: { '2': 'x', '3': 4, '4': -1 } }),
+    );
+    expect(await readExpectedIncome(dir, 7, ANN.id, 2)).toBeUndefined();
+    expect(await readExpectedIncome(dir, 7, ANN.id, 3)).toBe(4);
+    expect(await readExpectedIncome(dir, 7, ANN.id, 4)).toBeUndefined();
   });
 });

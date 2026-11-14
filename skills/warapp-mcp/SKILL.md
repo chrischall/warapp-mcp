@@ -438,8 +438,9 @@ do not send a backlog of turns unread. Override it when one of these shows up:
    evidence. Visible territories and armies are lower bounds, not totals: with much of the map
    unseen, "76 territories to his 7" is not a lead. An opponent with nothing in view has only
    a floor ("has received at least X armies").
-3. **Income.** Before planning, compare this turn's income with the last plan's
-   `expected.nextIncome`, and say what broke (bonuses, territories lost) when it fell short.
+3. **Income.** The plan's `sinceLastTurn` line compares this turn's income with the last plan's
+   `expected.nextIncome` and names the bonuses broken and territories lost since the previous
+   board; say what broke when it fell short.
    Never submit a plan whose `nextIncome` is below this turn's without knowing why (it carries a
    focused-bonus or "Stage bonus …" warning) and the user agreeing.
 4. **A rule the plan may not model.** Compare the plan's income with the game's deploy panel,
