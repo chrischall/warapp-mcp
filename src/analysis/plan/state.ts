@@ -9,6 +9,7 @@
 import type { BoardState, TerritoryState } from '../../board.js';
 import type { CombatSettings } from '../combat.js';
 import type { MapGraph } from '../graph.js';
+import type { Refusal } from './captures.js';
 import type { GameProfile } from '../profile.js';
 import type {
   CardAdvice,
@@ -149,8 +150,9 @@ export type PlanCtx = OpponentsCtx & BoardCtx & CombatCtx & StandingCtx;
 /**
  * What the phases of one planning pass share and change. The collections are shared as they are,
  * so a phase that takes the state sees (and makes) the same changes planPass's locals of the same
- * name do; the values a phase reassigns, `budget`, `holdings` and `cardAdvice`, are read and
- * written as `ps.budget` / `ps.holdings` / `ps.cardAdvice` everywhere.
+ * name do; the values a phase reassigns (`budget`, `holdings`, `cardAdvice`, and the capture
+ * passes' `anchor`, `assumeGone`, `refusal`, `evenTradesOnly` and `spendKeeps`) are read and
+ * written as `ps.<field>` everywhere.
  */
 export interface PlanState {
   /** The income not yet deployed (the deploy book, plan/orders.ts, opens it at the income). */
@@ -191,6 +193,23 @@ export interface PlanState {
   captureUndo: Map<number, () => void>;
   /** Captures that stage a positive bonus under rule 4c(c), with the bonus they stage. */
   staged: Map<number, number>;
+  /** The expansion stack: the source of the first bonus pass's finishing attack (the leftover deploy's home). */
+  anchor: number | undefined;
+  /** Territories a pass assumes fall this turn (finishing a player off): they threaten nothing. */
+  assumeGone: (n: number) => boolean;
+  /** Why the last tryCapture refused (R3, No-Split on a source that could take it); else size. */
+  refusal: Refusal;
+  /**
+   * Rule 4e in contact (#107): a capture of a player's territory must trade at least even. Set while
+   * the fallback tries an enemy capture; a combined capture that loses more than it kills is then
+   * refused (as when behind on armies, rule 0p.3).
+   */
+  evenTradesOnly: boolean;
+  /**
+   * Set only while rule 4e retries a step that failed on its size, to name the border it would
+   * have stripped (its hold check then reports it, as before #121).
+   */
+  spendKeeps: boolean;
 }
 
 /** An empty plan state: nothing deployed, moved, captured or said yet. */
@@ -216,5 +235,10 @@ export function newPlanState(): PlanState {
     captureOrder: [],
     captureUndo: new Map(),
     staged: new Map(),
+    anchor: undefined,
+    assumeGone: () => false,
+    refusal: undefined,
+    evenTradesOnly: false,
+    spendKeeps: false,
   };
 }
