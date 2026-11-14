@@ -9,6 +9,7 @@ import { McpToolError, toolAnnotations, type EnvSource } from '@chrischall/mcp-u
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { boardIncome, incomeRules, trackGame, trackOpponents, type MapGraph, type TurnBoard } from '../analysis/index.js';
+import { agreementChange, type Commitment, type CommitmentRecord, type RecordedCommitment } from '../analysis/commitments.js';
 import { playerRecord, recordDelta, recordEntryFor, type BreakContext, type RecordEntry, type RecordLeader } from '../analysis/player-record.js';
 import {
   AGREEMENT_STATUSES,
@@ -28,6 +29,7 @@ import {
   type Agreement,
   type AgreementScope,
   type AgreementTerms,
+  type RelationPlayer,
   type WatchFlag,
   type WatchFlagKind,
 } from '../analysis/relations.js';
@@ -35,7 +37,7 @@ import type { BoardState } from '../board.js';
 import { boardStateFromLive } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
 import { entryKey, legacyEntryKey, playerRecordEnabled, playerRecordState, readPlayerRecord, updatePlayerRecord } from '../player-record-store.js';
-import { emptyLedger, nextAgreementId, readLedger, readLedgerForWrite, withLedgerLock, writeLedger, type RelationsLedger } from '../relations-store.js';
+import { emptyLedger, nextAgreementId, nextCommitmentId, readLedger, readLedgerForWrite, withLedgerLock, writeLedger, type RelationsLedger } from '../relations-store.js';
 import { carriesTeam } from '../teams.js';
 import { readBoardHistory, readCachedOrders, writeBoardCache } from '../trend.js';
 import { writeGameRecord } from '../replay.js';
@@ -65,7 +67,7 @@ export const LEDGER_NOTE =
 const playerRef = z.union([z.string(), z.number()]);
 
 /** The players as the ledger needs them. */
-const relationPlayers = (players: readonly Player[]) =>
+export const relationPlayers = (players: readonly Player[]) =>
   players.map((p) => ({
     id: p.id,
     isAI: p.isAI,
@@ -138,10 +140,15 @@ const formatOf = (game: Game): RecordEntry['format'] => {
   return { players: game.players.length, teams, ffaSize: teams ? null : game.players.filter(alive).length };
 };
 
-/** A scope from the tool's arguments, by id. */
-function scopeFrom(map: GameMap, territories: readonly (string | number)[] | undefined, bonuses: readonly (string | number)[] | undefined): AgreementScope {
+/** A scope from the tool's arguments, by id. `nothing` ends the refusal: what the caller did not do. */
+export function scopeFrom(
+  map: GameMap,
+  territories: readonly (string | number)[] | undefined,
+  bonuses: readonly (string | number)[] | undefined,
+  nothing = 'nothing was recorded',
+): AgreementScope {
   if (territories?.length && bonuses?.length) {
-    throw new McpToolError('Give `territories` or `bonuses`, not both: nothing was recorded.', {
+    throw new McpToolError(`Give \`territories\` or \`bonuses\`, not both: ${nothing}.`, {
       hint: 'A truce covers all of your territories (omit both), some territories, or the territories of some bonuses.',
     });
   }
@@ -199,7 +206,7 @@ function agreementView(a: Agreement, game: Game, map: GameMap, turn: number, run
 const entryView = ({ key: _key, ...rest }: RecordEntry) => rest;
 
 /** The reliability facts on record for `partner` (and its entries), or why there are none. */
-async function recordFor(dir: string | undefined, partner: number, env: EnvSource | undefined) {
+export async function recordFor(dir: string | undefined, partner: number, env: EnvSource | undefined) {
   if (!playerRecordEnabled(env)) return { record: 'off' as const };
   if (!dir) return { record: null };
   const r = await readPlayerRecord(dir, partner, env);
@@ -328,6 +335,87 @@ export async function recordBrokenByMe(o: {
     });
   } catch (e) {
     return o.agreements.map((agreement) => ({ agreement, ledger: 'refused' as const, why: (e as Error).message }));
+  }
+}
+
+/** One commitment of a sent message, and what the ledger made of it. */
+export interface CommitmentRecorded {
+  index: number;
+  kind: Commitment['kind'];
+  /** Its id in the ledger, once recorded. */
+  id?: string;
+  /** The agreement it created or moved, and its status now. */
+  agreement?: { id: string; status: string; playerRecord?: 'updated' | 'off' | 'failed' };
+  /** Why it was not recorded. */
+  why?: string;
+}
+
+/**
+ * B4 (warapp_send_chat, once a message is sent): record its declared commitments in the ledger as
+ * mine, under the ledger's lock — a propose, accept or notice re-applied to the ledger as it now stands
+ * (`agreementChange`, the same rule the check used, so the agreement id is the ledger's own) and moved
+ * through warapp_record_agreement's path (the partner's player record, D5, when `game` is given); a
+ * no-attack or will-attack as the check made it. Never throws: what could not be recorded says why.
+ */
+export async function recordCommitments(o: {
+  dir: string;
+  env: EnvSource | undefined;
+  gameId: number;
+  meId: number;
+  turn: number;
+  players: readonly RelationPlayer[];
+  /** Each declared commitment and what the check would record for it. */
+  commitments: readonly { commitment: Commitment; record: CommitmentRecord }[];
+  /** The game re-read after the send, for the player record; absent when it could not be read. */
+  game?: { game: Game; me: Player; map: GameMap };
+}): Promise<CommitmentRecorded[]> {
+  const { dir, env, gameId, meId, turn, players } = o;
+  const refusedAll = (why: string) => o.commitments.map(({ commitment }, index) => ({ index, kind: commitment.kind, why }));
+  try {
+    return await withLedgerLock(dir, gameId, meId, async () => {
+      const read = await readLedgerForWrite(dir, gameId, meId);
+      if (read === 'unreadable') return refusedAll('the ledger exists but cannot be read');
+      let ledger: RelationsLedger = read ?? emptyLedger(gameId, meId);
+      const out: CommitmentRecorded[] = [];
+      const changes: { agreement: Agreement; before: Agreement | undefined; created: boolean; at: number }[] = [];
+      for (const [index, { commitment: c, record }] of o.commitments.entries()) {
+        let entry: CommitmentRecord = record;
+        if (c.kind === 'propose' || c.kind === 'accept' || c.kind === 'notice') {
+          const change = agreementChange(c, { agreements: ledger.agreements, turn, me: meId, players, nextAgreementId: (agreements) => nextAgreementId({ agreements }) });
+          if ('refused' in change) {
+            out.push({ index, kind: c.kind, why: change.refused });
+            continue;
+          }
+          const a = change.agreement;
+          ledger = { ...ledger, agreements: [...ledger.agreements.filter((x) => x.id !== a.id), a] };
+          if (change.agreement !== change.before) changes.push({ ...change, at: out.length });
+          entry =
+            c.kind === 'notice'
+              ? { sentTurn: turn, kind: 'notice', agreement: a.id, with: a.with, endsTurn: record.kind === 'notice' ? record.endsTurn : turn + a.terms.noticeTurns }
+              : { sentTurn: turn, kind: c.kind, agreement: a.id, with: a.with };
+          out.push({ index, kind: c.kind, agreement: { id: a.id, status: a.status } });
+        } else {
+          out.push({ index, kind: c.kind });
+        }
+        const id = nextCommitmentId(ledger);
+        ledger = { ...ledger, commitments: [...(ledger.commitments ?? []), { id, ...entry } as RecordedCommitment] };
+        out[out.length - 1]!.id = id;
+      }
+      if (!(await writeLedger(dir, ledger))) return refusedAll('the ledger could not be written');
+      for (const ch of changes) {
+        const shown = out[ch.at]!.agreement!;
+        if (!o.game) {
+          shown.playerRecord = 'failed';
+          continue;
+        }
+        const { game, me, map } = o.game;
+        const others = ledger.agreements.filter((a) => a.id !== ch.agreement.id);
+        shown.playerRecord = await updateAgreementRecord({ dir, env, game, me, map, graph: graphOf(map), agreement: ch.agreement, before: ch.before, created: ch.created, others });
+      }
+      return out;
+    });
+  } catch (e) {
+    return refusedAll((e as Error).message);
   }
 }
 

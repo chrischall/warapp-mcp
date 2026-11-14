@@ -20,6 +20,7 @@ import { registerOpponentsTool } from './opponents.js';
 import { registerPickTools } from './picks.js';
 import { registerPushTools } from './push.js';
 import { registerRelationsTools } from './relations.js';
+import { registerDiplomacyTool } from './diplomacy.js';
 import { registerRouteTool } from './route.js';
 import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
@@ -118,9 +119,11 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   // Reads the map statistics cache only when they are on (WARAPP_STATS=1, never hosted).
   registerWhereTool(server, live, deps.env ? { env: deps.env } : {});
   registerUncommitTool(server, live);
-  registerChatTools(server, live);
+  registerChatTools(server, live, deps.env ? { env: deps.env } : {});
   // The agreement ledger: one read-only tool, and one that writes only the local ledger (not confirm-gated).
   registerRelationsTools(server, live, deps.env ? { env: deps.env } : {});
+  // B3: truce advice (read-only): prices a deal by planning with and without it; reads no chat.
+  registerDiplomacyTool(server, live, deps.env ? { env: deps.env } : {});
   // One push socket per process: keyed on the shared fetchproxy bridge so
   // connections share it, with requests routed through the direct-first bridge.
   // While the direct leg is active the push rides a direct WebSocket (the

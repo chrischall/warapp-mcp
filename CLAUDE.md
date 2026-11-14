@@ -53,7 +53,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   within the honesty line without the owner approving each message; D3 the honesty line is the plan's
   default (no false statement of fact, no promise the plan does not intend, withholding is free, never
   claim to be human, a truce ends with the agreed notice). Every other tool
-  is read-only, `warapp_plan_turn` and `warapp_track_opponents` included. The two-step token
+  is read-only, `warapp_plan_turn`, `warapp_track_opponents` and `warapp_advise_diplomacy` included. The two-step token
   confirmation verifies no person — on a client that cannot prompt it is advisory (the model itself
   supplies the token) — so a write preview's sentences name things by id only, and every
   third-party name in a preview or a thrown error goes through `untrustedText` (`src/tools/common.ts`:
@@ -236,6 +236,36 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`agreementsBroken`; otherwise it says to record it by hand). That is final: `warapp_uncommit_turn`
   does not undo it, and says so (`agreementsStillBroken`, the agreements broken-by-me on that turn). Not yet: writing `broken-by-them` to the
   ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
+- **Pricing a deal (B3): `warapp_advise_diplomacy`, read-only, free-for-alls only** (docs/PLAN-TEAMS.md
+  section 8 B3). `priceTruce` (`src/analysis/relations.ts`, pure) diffs two plans on the exact input
+  `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared): without the truce and with it (the
+  planner called, never changed). The hypothetical truce replaces any recorded one with that player but keeps
+  its board reading (state — `broken` with the breach — trust, watch flags): a recorded truce is priced on the
+  plan `warapp_plan_turn` makes, and a broken or flagged one is `no` (`relation` in the entry), as is one I
+  already gave notice on (`noticeBy: 'me'`: withdraw the notice or propose new terms). The
+  no-deal plan never holds it: a shared `without` is reused only for a partner with no relation in the input
+  (`priceTruce` ignores one given otherwise). It writes nothing: no board cache, and `livePlanSetup` is called
+  with `award: false` (the award shapes only a two-player plan; reading it on turn 1 writes it). The host's
+  description key is UNVERIFIED, shown through `untrustedText`.
+- **A message promises only what the plan does (B4, `src/analysis/commitments.ts`, pure; `src/tools/commitments.ts`).**
+  `warapp_send_chat` takes `commitments` (no-attack, will-attack, notice, propose, accept), declared — the text is
+  never parsed — and its plan step checks each against this turn's orders (`livePlanSetup` with `award: false`,
+  then `planTurn`; the orders this server submitted this turn, `readCachedOrders`, stand in when there are any)
+  and the ledger (`agreementChange`: the same rule `recordCommitments` re-applies after the send). One not
+  carried refuses the send. A notice's `ends_turn` must be the turn the agreed notice gives (0 turns of notice:
+  this turn — the truce ends with the message and this turn's attacks are free); an accept compares only
+  the terms it restates; a truce whose `until_turn` is past is refused; an attack on a territory a promise names
+  whose owner is fogged conflicts (scope `all`: named as unchecked). A propose/accept/notice whose partner does
+  not read the message (`audience`: private to another player, or the team channel with the partner off the team)
+  is refused (D3: no truce changes unseen); a no-attack/will-attack binds no agreement and may go to anyone. The
+  preview's `checkedAgainst` names the default plan (no goal, focus, reserve, first mover or award). The submitted orders are `MyOrders.sent`
+  (every move, Transfer Only flagged), not `moves`. With commitments the game is read with its map and the turn must be in play. Once
+  the message is `confirmed` or `accepted` (war.app took it; `unconfirmed`/`unknown` record nothing and say so)
+  they go into the ledger's `commitments` as mine (ids and turns only, at most 200), a propose/accept/notice
+  through warapp_record_agreement's path (player record included). `warapp_submit_turn` warns (never refuses)
+  via `commitmentWarnings`: an attack a no-attack still covers or an open proposal of mine covers (scope `all`:
+  an attack into the fog, `unchecked`), and a will-attack for this turn the orders leave out; `warapp_plan_turn`
+  gives the same warnings for its plan (the planner never reads commitments). A will-attack is only for the current turn.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — the others' acceptance is needed when the game's
@@ -832,8 +862,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   process). Offline replay reads a stored map
   whatever its age. A bad file is ignored and
   replaced; the disk never fails a call. A tool
-  that never uses the map (the turn wait, surrender, uncommit, chat, join-game, scout, begin-turn,
-  submit-turn's read-back) always asks `GetMap=false`, even for a game it has not seen.
+  that never uses the map (the turn wait, surrender, uncommit, chat — a send with `commitments` aside, which
+  plans — join-game, scout, begin-turn, submit-turn's read-back) always asks `GetMap=false`, even for a game it has not seen.
 - **Offline replay (`src/replay.ts`).** Wherever the board cache is written (plan_turn,
   track_opponents, locate_opponents, get_relations) the game's settings are kept at
   `<dataDir>/games/<gameId>.json`: name-free (players by id, team, state and AI flags; raw settings

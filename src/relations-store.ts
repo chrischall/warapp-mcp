@@ -6,6 +6,9 @@
 // record (src/player-record-store.ts); nothing is sent to war.app. Reads are loose: an unusable
 // file or entry is dropped, never thrown on.
 //
+// `commitments` (part B4): what my chat messages promised (warapp_send_chat's declared commitments,
+// never the text), recorded once a message is sent; warapp_submit_turn warns when orders break one.
+//
 // `usage` (part B2): per planned turn, what each honoured truce freed and what a break would have
 // cost (rule T6: the armies and the income); warapp_plan_turn calls `recordTruceUsage`.
 import { randomUUID } from 'node:crypto';
@@ -20,6 +23,7 @@ import {
   type AgreementStatus,
   type AgreementTerms,
 } from './analysis/relations.js';
+import { COMMITMENT_KINDS, type RecordedCommitment } from './analysis/commitments.js';
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -30,6 +34,8 @@ const ints = (v: unknown): number[] | undefined => (Array.isArray(v) && v.every(
 export const MAX_AGREEMENTS = 50;
 /** Planned turns of usage kept per game (the newest). */
 export const MAX_USAGE_TURNS = 200;
+/** Commitments kept per game (the newest). */
+export const MAX_COMMITMENTS = 200;
 
 /** Part B2's per-turn log for one truce. */
 export interface TruceUsage {
@@ -49,6 +55,8 @@ export interface RelationsLedger {
   agreements: Agreement[];
   /** Per planned turn (as a string key), each truce's {@link TruceUsage}. */
   usage: Record<string, TruceUsage[]>;
+  /** B4: what my sent messages committed me to, oldest first (absent when none). */
+  commitments?: RecordedCommitment[];
 }
 
 export const relationsDir = (dir: string) => join(dir, 'relations');
@@ -97,6 +105,44 @@ export function agreementOf(v: unknown): Agreement | undefined {
   return a;
 }
 
+const COMMITMENT_ID = /^c(\d{1,9})$/;
+
+/** A commitment read back, or `undefined` when it is unusable. */
+export function commitmentOf(v: unknown): RecordedCommitment | undefined {
+  if (!isRec(v) || typeof v.id !== 'string' || !COMMITMENT_ID.test(v.id) || !isInt(v.sentTurn)) return undefined;
+  if (typeof v.kind !== 'string' || !(COMMITMENT_KINDS as readonly string[]).includes(v.kind)) return undefined;
+  const base = { id: v.id, sentTurn: v.sentTurn };
+  switch (v.kind) {
+    case 'no-attack': {
+      const scope = scopeOf(v.scope);
+      if (!scope || !isInt(v.with) || !isInt(v.fromTurn) || !isInt(v.toTurn)) return undefined;
+      return { ...base, kind: 'no-attack', with: v.with, scope, fromTurn: v.fromTurn, toTurn: v.toTurn };
+    }
+    case 'will-attack':
+      if (!isInt(v.turn) || (!isInt(v.with) && !isInt(v.territory))) return undefined;
+      return { ...base, kind: 'will-attack', turn: v.turn, ...(isInt(v.with) ? { with: v.with } : {}), ...(isInt(v.territory) ? { territory: v.territory } : {}) };
+    case 'notice':
+      if (typeof v.agreement !== 'string' || !isInt(v.with) || !isInt(v.endsTurn)) return undefined;
+      return { ...base, kind: 'notice', agreement: v.agreement, with: v.with, endsTurn: v.endsTurn };
+    default:
+      if (typeof v.agreement !== 'string' || !isInt(v.with)) return undefined;
+      return { ...base, kind: v.kind as 'propose' | 'accept', agreement: v.agreement, with: v.with };
+  }
+}
+
+/** The commitments of a ledger file, the unusable dropped; absent when none. */
+function commitmentsOf(v: unknown): { commitments?: RecordedCommitment[] } {
+  if (!Array.isArray(v)) return {};
+  const list = v.map(commitmentOf).filter((c): c is RecordedCommitment => c !== undefined);
+  return list.length ? { commitments: list } : {};
+}
+
+/** The next commitment id in `ledger`: `c1`, `c2`, … */
+export function nextCommitmentId(ledger: Pick<RelationsLedger, 'commitments'>): string {
+  const n = (ledger.commitments ?? []).reduce((m, c) => Math.max(m, Number(COMMITMENT_ID.exec(c.id)?.[1] ?? 0)), 0);
+  return `c${n + 1}`;
+}
+
 function usageOf(v: unknown): Record<string, TruceUsage[]> {
   if (!isRec(v)) return {};
   const out: Record<string, TruceUsage[]> = {};
@@ -127,7 +173,7 @@ export async function readLedger(dir: string, gameId: number, playerId: number):
     const c: unknown = JSON.parse(await readFile(relationsPath(dir, gameId, playerId), 'utf8'));
     if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !Array.isArray(c.agreements)) return undefined;
     const agreements = c.agreements.map(agreementOf).filter((a): a is Agreement => a !== undefined);
-    return { gameId, playerId, agreements, usage: usageOf(c.usage) };
+    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments) };
   } catch {
     return undefined;
   }
@@ -153,7 +199,7 @@ export async function readLedgerForWrite(
     const c: unknown = JSON.parse(text);
     if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !Array.isArray(c.agreements)) return 'unreadable';
     const agreements = c.agreements.map(agreementOf).filter((a): a is Agreement => a !== undefined);
-    return { gameId, playerId, agreements, usage: usageOf(c.usage) };
+    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments) };
   } catch {
     return 'unreadable';
   }
@@ -175,7 +221,9 @@ export function boundLedger(ledger: RelationsLedger): RelationsLedger {
     .sort((a, b) => b - a)
     .slice(0, MAX_USAGE_TURNS)
     .sort((a, b) => a - b);
-  return { ...ledger, agreements, usage: Object.fromEntries(turns.map((t) => [String(t), ledger.usage[String(t)]!])) };
+  const commitments = ledger.commitments?.length ? { commitments: ledger.commitments.slice(-MAX_COMMITMENTS) } : {};
+  const { commitments: _all, ...rest } = ledger;
+  return { ...rest, agreements, usage: Object.fromEntries(turns.map((t) => [String(t), ledger.usage[String(t)]!])), ...commitments };
 }
 
 /** Write the ledger (bounded), atomically, 0600. `true` when written; never throws. */
@@ -193,7 +241,7 @@ export async function writeLedger(dir: string, ledger: RelationsLedger): Promise
 }
 
 /** The next agreement id in `ledger`: `a1`, `a2`, … */
-export function nextAgreementId(ledger: RelationsLedger): string {
+export function nextAgreementId(ledger: { agreements: readonly Agreement[] }): string {
   const n = ledger.agreements.reduce((m, a) => Math.max(m, idNumber(a.id)), 0);
   return `a${n + 1}`;
 }

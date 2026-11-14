@@ -420,6 +420,11 @@ export interface Game {
   chat?: unknown;
   /** #178: the end-of-game, boot and AI settings, read from `settings` ({@link parseEndRules}). */
   endRules?: EndRules;
+  /**
+   * B3: the host's description of the game, when GameFeed carries one (`description` or `Description`
+   * on the game or in its settings; UNVERIFIED: no live reply has shown one). Third-party text.
+   */
+  description?: string;
 }
 
 /** Normalize a GameFeed game body (the map is left to the client). */
@@ -443,6 +448,11 @@ export function normalizeGame(raw: unknown): Game {
   if (standing) game.standing = standing;
   if (g.history !== undefined) game.history = g.history;
   if (g.chat !== undefined) game.chat = g.chat;
+  const settings = isRec(g.settings) ? g.settings : undefined;
+  const description = [g.description, g.Description, settings?.description, settings?.Description]
+    .map(asStr)
+    .find((d) => d !== undefined && d.trim() !== '');
+  if (description !== undefined) game.description = description;
   return game;
 }
 

@@ -417,4 +417,20 @@ describe('myOrdersOf: what opponent tracking reads of my sent turn (#165)', () =
       { from: 1, to: 3, armies: 4 },
     ]);
   });
+
+  it('keeps every move in `sent` for the chat commitments check, a Transfer Only one flagged (B4)', () => {
+    const r = myOrdersOf([
+      { kind: 'deploy', territoryId: 1, armies: 3 },
+      { kind: 'move', from: 1, to: 3, armies: 4 },
+      { kind: 'move', from: 1, to: 2, armies: 2, mode: AttackTransferMode.Transfer },
+      { kind: 'move', from: 2, to: 1, armies: 2, mode: AttackTransferMode.Attack },
+      { kind: 'move', from: 1, to: 5, armies: 50, byPercent: true },
+    ]);
+    expect(r.sent).toEqual([
+      { from: 1, to: 3 },
+      { from: 1, to: 2, transferOnly: true },
+      { from: 2, to: 1 },
+      { from: 1, to: 5 },
+    ]);
+  });
 });

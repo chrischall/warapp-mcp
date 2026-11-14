@@ -87,6 +87,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
     });
 
     expect(tools).toEqual([
+      'warapp_advise_diplomacy',
       'warapp_analyze_board',
       'warapp_begin_turn',
       'warapp_check_plan',

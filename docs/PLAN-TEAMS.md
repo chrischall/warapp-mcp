@@ -383,6 +383,35 @@ Read-only tool `warapp_advise_diplomacy`:
 - `facts`: true statements the agent may cite, each with whether the recipient can see it under the
   game's fog (visible incomes, territory counts, a third player's stack beside them).
 
+*As built (B3, 2026-11-14):* `priceTruce`, `partnerReading`, `truceVerdict`, `offerChecks`, `sharedBorder`,
+`suggestedTerms` and `diplomacyFacts` in `src/analysis/relations.ts` (pure; `tests/analysis/truce-pricing.test.ts`);
+the tool in `src/tools/diplomacy.ts`. The plan is built by `livePlanSetup` (`src/tools/turn.ts`, extracted from
+`warapp_plan_turn` and shared by both tools), so a price is the difference between two plans
+`warapp_plan_turn` would make; the planner is unchanged and the golden corpus untouched. Departures and
+choices: the hypothetical truce replaces any recorded relation with the same player but keeps that relation's
+board reading — its state (`broken` with the breach, `notice` with its end), trust and watch flags — so a
+recorded truce is priced on the plan `warapp_plan_turn` makes and a flagged partner is never priced as trusted
+(section 4: only the board raises a flag); a new one is priced at trust `clear`, or `watch` in the endgame. A
+broken truce or one under watch is `no` with the flag as the reason (and so is a truce I already gave notice on: it is
+ending, so the reason says to withdraw the notice or propose new terms), and the neighbour entry shows the reading
+as `relation`. The no-deal plan never holds that player's truce: the
+tool shares one no-deal plan among partners with no recorded relation, and `priceTruce` plans its own (ignoring a
+given one) for a partner that has one. The tool writes nothing: it skips the award of picks (`livePlanSetup`'s
+`award: false`), which changes only a two-player plan and is written when first read on turn 1. The partner's D5 record enters as
+`reliability` (kept rate ≥ 0.75 `kept`, < 0.5 `broke`): `broke` blocks `propose`, and gives `no` when a break
+this turn would cost me. "Income gained this turn" is next turn's income with less without. Suggested terms:
+the border territories of both sides, one turn's notice, a cap at the largest stack standing on the border
+(so neither side moves back and a build-up shows as `cap-exceeded`), `until_turn` five turns on. A neighbour
+with an open agreement is priced on its recorded terms; an AI or otherwise ineligible neighbour is listed
+with `no` and the reason, unpriced. `facts` cover third players only (stack beside the recipient, territory
+count — "at least" unless the fog shows every owner — and bonuses held in full), each with `recipientSees`
+from the fog setting (the wiki's levels, unverified): `no` means it cannot be assumed to see it; what lies wholly
+beside the recipient is `yes` where the fog shows armies beside it, else `unknown`. `offerChecks`'
+`iGainOnlyIfTheyKeepIt` is true only for a gain from thinner holds facing them (armies freed, a border kept);
+captures and income from an attack on them given up survive a break. The host's description is read loosely
+(`Game.description`; the GameFeed key is unverified). Not built: T7's `give-notice` when B3 prices a
+recorded truce below zero (that needs the planner to price, which B3 leaves unchanged).
+
 ### B4. A message promises only what the plan does
 
 `warapp_send_chat` gains an optional `commitments` list, which the skill requires whenever a message
@@ -403,6 +432,65 @@ commitment the plan does not carry. On send, the commitments are recorded in the
 
 The free text is not parsed. The check covers what the agent declares, so the skill must say that an
 undeclared promise is not allowed.
+
+*As built (B4, 2026-11-14):* `checkCommitments`, `agreementChange` and `commitmentWarnings` in
+`src/analysis/commitments.ts` (pure; `tests/analysis/commitments.test.ts`); the send's check in
+`src/tools/commitments.ts` and the write in `recordCommitments` (`src/tools/relations.ts`;
+`tests/commitments-tools.test.ts`). The plan is `livePlanSetup` + `planTurn`, as `warapp_advise_diplomacy`
+makes it (without the award of picks, so the check writes nothing; in a two-player game on turn 1 it may differ
+from `warapp_plan_turn`'s by the opponent's proven starts). The planner is unchanged and the golden corpus
+untouched. Choices and departures:
+
+- **Planned or submitted.** When this server submitted orders this turn (the orders cache), they are what runs
+  and stand in for the plan; otherwise the plan made in the call. Orders sent from the web client are unknown,
+  so the plan stands in for them. A plan made with other arguments (a `goal`, `focus`) is not the one checked:
+  submit those orders first, then send. The preview's `checkedAgainst` says so (the default plan: no goal,
+  focus, reserve or first mover, and no award of picks).
+- **Not confirmed sent.** An `unconfirmed` or `unknown` send records nothing, though the message may have gone
+  out: such a promise draws no submit-time warning until it is recorded by hand (the result says how).
+- **Shapes.** `no-attack { player, territories | bonuses, turns }` (all of the player's territories when neither
+  is given; 1–10 turns, this one included); `will-attack { player | territory, turn }` — only this turn, since
+  no plan covers a later one; `notice { agreement, ends_turn? }` — on an agreed truce (or restating my notice),
+  refused when no notice can run any more, when this turn's orders attack a covered territory, or when the
+  message's `ends_turn` is not the turn the agreed notice gives (earlier is a surprise break; later a promise
+  the ledger would not keep, since it frees the territories when the notice has run). A truce with 0 turns of
+  notice (a legal term) ends with the message: its end is this turn, and this turn's attacks are free once it
+  is served; `propose { player, terms }`
+  — a new proposal, or new terms on an open proposal (a counter-offer to theirs); `accept { agreement | player,
+  terms? }` — a recorded proposal (the terms given must match it, field by field; those left out are not
+  compared) or, with terms, an offer not recorded yet (left out: all territories, 1 turn of notice). Propose and
+  accept are refused while this turn's orders attack a territory the truce would cover, for a partner
+  `partyRefusal` refuses, and when the truce's `until_turn` is before this turn. Commitments in one message are
+  checked in order, each seeing the ledger changes of the ones before it.
+- **The partner must read it.** A propose, accept or notice binds the ledger to the truce's partner, so it is
+  refused when the partner is not among the message's readers (`audienceRefusal`: a private message to another
+  player, or the team channel when the partner is not on my team). Recorded, it would put a truce in notice the
+  partner never saw, and when the notice ran the ledger would free its territories for a surprise break (D3). A
+  `no-attack` or `will-attack` binds no agreement: it is a promise to whoever reads it, and stays allowed on any
+  channel (recorded and warned on all the same).
+- **Fog.** A territory a promise or truce names (territories or bonuses) whose owner my board does not show may
+  be the partner's: an order attacking it is refused (and warned on at submit). Under the scope `all`, orders
+  into territories whose owner is not shown are named in the carried sentence as not checked, and at submit
+  (and in the plan) a soft `unchecked` warning names them; a will-attack on a player is not carried by an
+  attack into the fog.
+- **Submitted orders keep their mode.** The orders cache keeps every move sent (`MyOrders.sent`: a Transfer
+  Only one flagged; percentage and Attack Only orders, which `moves` leaves out for opponent tracking, kept), so
+  a Transfer Only order does not count as an attack and an Attack Only one does. A cache written before it falls
+  back to `moves`.
+- **When recorded.** On `confirmed` or `accepted` (war.app took the message, whether or not its reply could
+  be read): a message that went out made its promises. `unconfirmed` and `unknown` record nothing and say how
+  to record by hand. The ledger is re-read under its lock and each propose/accept/notice re-applied to it, so
+  the agreement id is the ledger's own; the partner's player record (D5) follows when the game could be re-read.
+- **Stored.** The ledger's `commitments` (name-free: ids, turns, scope; at most 200, the newest). A notice keeps
+  the turn its truce stops binding.
+- **Checked again.** `warapp_submit_turn` warns — never refuses — on an attack a `no-attack` still covers, an
+  attack on what a proposal of mine (still open) covers, and a `will-attack` for this turn the orders leave
+  out. An accepted truce and a notice are the ledger's own agreements, refused by `truceBreaksIn` as before.
+  `warapp_plan_turn` gives the same warnings for its plan's moves: the planner never reads commitments (words
+  change no estimate), so a multi-turn `no-attack` it would break is said there, not planned around.
+- **Accepting my own proposal.** `accept` by agreement id also moves `proposed-by-me` to agreed, as
+  warapp_record_agreement allows: the message records the partner's yes, so the skill says to send it only
+  once the partner has agreed.
 
 ## 9. Part C — team games
 

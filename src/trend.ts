@@ -231,6 +231,13 @@ function ordersOf(o: unknown): MyOrders | undefined {
     moves: (o.moves as unknown[])
       .filter((m): m is Rec => isRec(m) && isNum(m.from) && isNum(m.to) && isNum(m.armies))
       .map((m) => ({ from: m.from as number, to: m.to as number, armies: m.armies as number })),
+    ...(Array.isArray(o.sent)
+      ? {
+          sent: (o.sent as unknown[])
+            .filter((m): m is Rec => isRec(m) && isNum(m.from) && isNum(m.to))
+            .map((m) => ({ from: m.from as number, to: m.to as number, ...(m.transferOnly === true ? { transferOnly: true as const } : {}) })),
+        }
+      : {}),
   };
 }
 
@@ -259,7 +266,7 @@ export async function writeOrdersCache(
 ): Promise<boolean> {
   try {
     const cache = await readCache(dir, gameId, playerId);
-    const all = { ...cache.orders, [String(turn)]: { deploys: orders.deploys, moves: orders.moves } };
+    const all = { ...cache.orders, [String(turn)]: { deploys: orders.deploys, moves: orders.moves, ...(orders.sent ? { sent: orders.sent } : {}) } };
     const kept: Record<string, MyOrders> = {};
     for (const n of newestTurns(all)) kept[String(n)] = all[String(n)] as MyOrders;
     await writeCache(dir, { gameId, playerId, turns: cache.turns as Record<string, BoardState>, ...extras(cache), orders: kept });
