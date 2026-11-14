@@ -328,9 +328,31 @@ back along a transfer planned this turn), so the plan never moves armies both wa
 territories; any excess after rule 6 is deployed one step behind, then trimmed off a transfer in, then
 moved back; a warning that remains names this plan's own deploy when that is what exceeds the cap (so
 the agent can choose between the hold and the term). Rule 0p.2 subtracts only the partners still
-playing (`partnerFronts`). Not yet (B2b): T6 (`lossIfBroken`, `safeIfTruceHolds`) and
-`warapp_submit_turn`'s `break_agreement`. With no relations the golden corpus is byte-identical
+playing (`partnerFronts`). With no relations the golden corpus is byte-identical
 (`GOLDEN_FULL=1`), and the seeded legality property test also plans its boards under a truce.
+
+*As built (B2b, 2026-11-14):* T6 is `truceBreakLosses` in `src/analysis/plan/relations.ts`, called once
+the plan's orders are final: per binding, unenforced truce, each pair of a covered partner territory in
+view and a covered territory of mine beside it is carried out on `turn-sim.ts` (my deploys and moves, the
+partner's whole deploy estimate there and an attack with everything, its commander too; both move orders
+unless the first mover is known and verified; no other player moves), and the costliest is `lossIfBroken`
+(my commander, then income lost, territories, armies): from, to, deploy, attackers, territories, armies,
+bonuses, income, `firstMover` when only one order costs it, `exact`. `null` when nothing binds, the truce is
+enforced, or no such pair exists. It changes no order. `warapp_plan_turn` logs it per turn beside
+`armiesFreed` (`lossIfBroken` = armies, plus `incomeLostIfBroken`). `warapp_check_plan` resolves the same
+truces (`truceRelations` in `src/tools/turn.ts`, shared with `warapp_plan_turn`), keeps every partner among
+the opponents, marks a reply that attacks a covered territory `breaksTruce` (any order, a chain's path, a
+joint strike's partner) and reports `safeIfTruceHolds` over the rest (`null` when none is left). Departure:
+an all-attack that mixes a break with attacks elsewhere is left out of `safeIfTruceHolds` whole, since its
+attacks elsewhere are each tried alone too. `warapp_submit_turn` refuses an order (not transfer-only) that
+attacks a territory the partner holds and an active or in-notice agreement covers (`truceBreaksIn`: the
+ledger's own states and the live board; the breach watch is not consulted, so a break by them is recorded
+`broken-by-them` first) unless `break_agreement: true`; with it the preview names the agreement, and once the
+outcome is `confirmed` the ledger records `broken-by-me` through warapp_record_agreement's path
+(`recordBrokenByMe`, `updateAgreementRecord` in `src/tools/relations.ts`: the transition under the ledger's
+lock, then the partner's player record with the break's flag and context); otherwise `agreementsBroken`
+says to record it by hand. Writing `broken-by-them` from the plan is still not done (the plan says to record
+it).
 
 ### B3. Pricing a deal
 
