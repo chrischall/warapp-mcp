@@ -698,13 +698,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   cached in memory (`MapCache`) and on disk (`src/map-store.ts`, local and hosted: the per-user
   `state.dataDir` persists): `<dataDir>/maps/<mapId>.json` holds the normalized map with its BASE
   bonus values (overrides are per game, applied by `mapOf`), at most `MAX_STORED_MAPS`, the least
-  recently used evicted; `<dataDir>/maps/games.json` says which map a game is on (bounded), so a
+  recently used evicted (a memory hit marks the file used, and stores it again if it has gone, so a
+  game played all session keeps its map for replay); `<dataDir>/maps/games.json` says which map a game is on (bounded), so a
   known game is re-fetched with `GetMap=false` after a restart too. That index is written only for
   a caller that wants the map, on a game not finished (map statistics and `GetMap=false` callers
-  spend no entry). **A map is not immutable:** its maker can publish an edit under the same id and
+  spend no entry; a game read back from it after a restart moves to the newest). **A map is not immutable:** its maker can publish an edit under the same id and
   GameFeed sends no map version, so a stored map carries `storedAt` and is trusted for
   `MAX_MAP_AGE_MS` (30 days); older, or with no `storedAt`, it reads as absent and the game is
-  fetched with its map again (the fresh copy replaces it). Offline replay reads a stored map
+  fetched with its map again (the fresh copy replaces it). Within that time, a feed standing that
+  names a territory the cached map lacks has the game fetched with its map again (once per map per
+  process). Offline replay reads a stored map
   whatever its age. A bad file is ignored and
   replaced; the disk never fails a call. A tool
   that never uses the map (the turn wait, surrender, uncommit, chat, join-game, scout, begin-turn,
@@ -712,7 +715,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Offline replay (`src/replay.ts`).** Wherever the board cache is written (plan_turn,
   track_opponents, locate_opponents, get_relations) the game's settings are kept at
   `<dataDir>/games/<gameId>.json`: name-free (players by id, team, state and AI flags; raw settings
-  through `sanitizeSettings` — numbers, booleans, numeric strings and a few enum words, no free text,
+  through `sanitizeSettings` — numbers, booleans, numeric strings, a few enum words and a card's
+  `Mode` word (`cardArmyCeiling` reads it), no free text,
   no mod entries, nothing equal to a player's or the game's name; overrides re-written in their
   verified shape), 0600, atomic, best effort, the newest `MAX_GAME_RECORDS` kept and a game not
   written for 60 days deleted, like the boards. `loadReplay(dataDir, gameId)` rebuilds the planner's

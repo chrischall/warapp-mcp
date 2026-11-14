@@ -15,6 +15,7 @@ import {
 } from '../src/replay.js';
 import { writeBoardCache, writeOrdersCache } from '../src/trend.js';
 import { mapOf } from '../src/tools/map.js';
+import { cardArmyCeiling, cardClock } from '../src/strategy/card-clock.js';
 
 const FIXTURE = JSON.parse(
   readFileSync(new URL('./fixtures/gamefeed-lobby-map39905.json', import.meta.url), 'utf8'),
@@ -96,6 +97,27 @@ describe('the per-game replay record', () => {
     expect(back!.players.every((p) => p.name === String(p.id))).toBe(true);
   });
 
+  for (const mode of ['ProgressiveByNumberOfTerritories', 'Fixed', 0, 1] as const) {
+    it(`reproduces the card clock and army ceiling from the record (Reinforcement Mode ${JSON.stringify(mode)})`, async () => {
+      const dir = tmp();
+      const none = Object.fromEntries(
+        ['Blockade', 'Airlift', 'Diplomacy', 'Sanctions', 'Reconnaissance'].map((c) => [`${c}Card`, 'none']),
+      );
+      const g = gameOf({
+        ...none,
+        ReinforcementCard: { NumPieces: 5, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1, Mode: mode, FixedArmies: 5 },
+        NumberOfCardsToReceiveEachTurn: 1,
+      });
+      await writeGameRecord(dir, g);
+      const back = (await readGameRecord(dir, g.id))!.settings;
+      const live = cardArmyCeiling(g.settings);
+      if (mode === 'Fixed' || mode === 0) expect(live).toBeDefined();
+      else expect(live).toBeUndefined();
+      expect(cardArmyCeiling(back)).toEqual(live);
+      expect(cardClock(back)).toEqual(cardClock(g.settings));
+    });
+  }
+
   it('keeps an unreadable override list flagged as unreadable', async () => {
     const dir = tmp();
     await writeGameRecord(dir, gameOf({ OverriddenBonuses: 'not json' }));
@@ -147,6 +169,18 @@ describe('sanitizeSettings', () => {
       ['player'],
     );
     expect(out).toEqual({ Fog: 'Foggy', Num: '12.5', Flag: 'False', N: null, Card: { Mode: 1 }, Deep: { a: { b: {} } } });
+  });
+
+  it("keeps a card's Mode word (cardArmyCeiling reads it), but no other nested word and never a name", () => {
+    const out = sanitizeSettings(
+      {
+        ReinforcementCard: { Mode: 'ProgressiveByNumberOfTerritories', FixedArmies: 5, Note: 'Bob' },
+        SpyCard: { Mode: 'Player' },
+        Other: { Mode: 'Progressive' },
+      },
+      ['player'],
+    );
+    expect(out).toEqual({ ReinforcementCard: { Mode: 'ProgressiveByNumberOfTerritories', FixedArmies: 5 }, SpyCard: {}, Other: {} });
   });
 });
 

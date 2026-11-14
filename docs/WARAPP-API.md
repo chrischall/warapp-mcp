@@ -356,7 +356,8 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   directory, on disk (`src/map-store.ts`: `<dataDir>/maps/<mapId>.json`, base bonus values,
   LRU-bounded, plus `<dataDir>/maps/games.json` naming each game's map), so the cache survives a
   restart. A stored map carries `storedAt` and is trusted for `MAX_MAP_AGE_MS` (30 days): after
-  that the game is fetched with its map again and the fresh copy replaces the stored one. A game whose map is already cached is
+  that the game is fetched with its map again and the fresh copy replaces the stored one; sooner, when
+  a feed standing names a territory the cached map lacks (once per map per process). A game whose map is already cached is
   fetched with `GetMap=false`. A new game is fetched once with its map, because its map id is unknown
   until the response arrives — except by a caller that never uses the map (#148): the turn wait,
   surrender, uncommit, chat, join-game, scout, begin-turn and submit-turn's read-back always ask

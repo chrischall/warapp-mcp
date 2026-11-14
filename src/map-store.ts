@@ -4,10 +4,12 @@
 // - `<dataDir>/maps/<mapId>.json`: `{ version: 1, storedAt, map }`, the map exactly as `MapCache` holds
 //   it (normalized: territories with adjacency, bonuses with their BASE values — overrides are per game
 //   and applied by `mapOf`). Maps are public data. At most MAX_STORED_MAPS files; the least recently
-//   used (file mtime, touched on every read) is evicted on a write.
+//   used (file mtime, touched on every read and on every memory hit in `MapCache`) is evicted on a
+//   write.
 //   A map maker can publish an edit under the same map id and GameFeed sends no map version, so a
 //   stored map is trusted for MAX_MAP_AGE_MS after `storedAt` (the download time, epoch ms) and then
-//   reads as absent: the game is fetched with its map again and the fresh copy replaces it. A file with
+//   reads as absent: the game is fetched with its map again and the fresh copy replaces it (sooner when
+//   a feed standing names land the map lacks: src/client.ts `getGame`). A file with
 //   no readable `storedAt` is stale. Offline replay (src/replay.ts) reads a map whatever its age.
 // - `<dataDir>/maps/games.json`: `{ version: 1, games: [[gameId, mapId], …] }`, newest last, at most
 //   MAX_GAME_INDEX entries — which map a game is on, so a game seen before a restart is still asked
@@ -156,6 +158,20 @@ export async function writeStoredMap(dir: string, map: GameMap, storedAt: number
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Mark the stored copy of `map` recently used, storing it when its file has gone. A map served from
+ * memory is otherwise never read from disk, so the map of a game played all session long would age
+ * out of the store and leave its replay without a map. Never throws.
+ */
+export async function touchStoredMap(dir: string, map: GameMap): Promise<void> {
+  const now = new Date();
+  try {
+    await utimes(mapStorePath(dir, map.id), now, now);
+  } catch {
+    await writeStoredMap(dir, map);
   }
 }
 

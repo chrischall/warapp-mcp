@@ -5,9 +5,9 @@
 // warapp_track_opponents, warapp_locate_opponents, warapp_get_relations): `{ version: 1, gameId,
 // mapId, state, numberOfTurns, players, settings, derived }`. NAME-FREE: players are kept by id
 // (with their team, state and AI flags), never by name; the settings are GameFeed's raw settings
-// filtered by `sanitizeSettings` (numbers, booleans, numeric strings and a few enum settings; no
-// free text such as the creator's message, no mod entries, nothing equal to a player's or the
-// game's name), with the overridden bonuses re-written in their verified shape. Read back through
+// filtered by `sanitizeSettings` (numbers, booleans, numeric strings, a few enum settings and a
+// card's `Mode`; no free text such as the creator's message, no mod entries, nothing equal to a
+// player's or the game's name), with the overridden bonuses re-written in their verified shape. Read back through
 // `normalizeSettings`, they give the planner the same income, kill rates, luck, rounding, fog,
 // move order, teams, Local Deployment, commanders, cards and overrides. 0600 in a 0700 folder,
 // atomic, best effort (never throws); the newest MAX_GAME_RECORDS games are kept, and a game not
@@ -41,12 +41,16 @@ export const gameRecordPath = (dir: string, gameId: number) => join(gamesDir(dir
 const ENUM_SETTINGS = new Set(['Pace', 'Fog', 'MoveOrder', 'RoundingMode', 'InstantSurrender', 'AutomaticTerritoryDistribution']);
 /** Settings never kept: free text, mod entries (their count is kept apart), the overrides (re-written). */
 const DROPPED_SETTINGS = new Set(['PersonalMessage', 'Mods', 'OverriddenBonuses']);
+/** Keys inside a card's settings (`<Name>Card`) whose value is a word: `cardArmyCeiling` reads `Mode`. */
+const CARD_ENUM_KEYS: ReadonlySet<string> = new Set(['Mode']);
+const NO_KEYS: ReadonlySet<string> = new Set();
 const ENUM = /^[A-Za-z][A-Za-z0-9_]{0,40}$/;
 const NUMERIC = /^\s*-?\d+(\.\d+)?\s*$/;
 const LITERAL = /^(true|false|none|null)$/i;
 const MAX_DEPTH = 3;
 
-function cleanValue(v: unknown, depth: number, enumOk: boolean, names: ReadonlySet<string>): unknown {
+/** `enumKeys`: the keys of this value (an object) whose word values are kept; deeper levels keep none. */
+function cleanValue(v: unknown, depth: number, enumOk: boolean, names: ReadonlySet<string>, enumKeys: ReadonlySet<string> = NO_KEYS): unknown {
   if (v === null || typeof v === 'boolean') return v;
   if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
   if (typeof v === 'string') {
@@ -59,7 +63,7 @@ function cleanValue(v: unknown, depth: number, enumOk: boolean, names: ReadonlyS
     const out: Rec = {};
     for (const [k, x] of Object.entries(v)) {
       if (!ENUM.test(k) && !NUMERIC.test(k)) continue;
-      const c = cleanValue(x, depth + 1, false, names);
+      const c = cleanValue(x, depth + 1, enumKeys.has(k), names);
       if (c !== undefined) out[k] = c;
     }
     return out;
@@ -69,15 +73,16 @@ function cleanValue(v: unknown, depth: number, enumOk: boolean, names: ReadonlyS
 
 /**
  * GameFeed's raw settings without free text or names: numbers, booleans, numeric strings, the
- * literals true/false/none/null, and the {@link ENUM_SETTINGS} words that are not one of `names`
- * (compared without case); objects to a depth of {@link MAX_DEPTH}.
+ * literals true/false/none/null, and the {@link ENUM_SETTINGS} words (and a card's
+ * {@link CARD_ENUM_KEYS} words) that are not one of `names` (compared without case); objects to a
+ * depth of {@link MAX_DEPTH}.
  */
 export function sanitizeSettings(raw: Rec, names: readonly string[]): Rec {
   const lower = new Set(names.map((n) => n.toLowerCase()));
   const out: Rec = {};
   for (const [k, v] of Object.entries(raw)) {
     if (DROPPED_SETTINGS.has(k) || (!ENUM.test(k) && !NUMERIC.test(k))) continue;
-    const c = cleanValue(v, 1, ENUM_SETTINGS.has(k), lower);
+    const c = cleanValue(v, 1, ENUM_SETTINGS.has(k), lower, k.endsWith('Card') ? CARD_ENUM_KEYS : NO_KEYS);
     if (c !== undefined) out[k] = c;
   }
   return out;

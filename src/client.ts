@@ -33,7 +33,7 @@ import {
 } from '@chrischall/mcp-utils';
 import { readCredentials, TOKEN_URL, WarappConfigError, type WarappCredentials } from './config.js';
 import { feedErrorOf, normalizeGame, normalizeMap, type Game, type GameMap } from './normalize.js';
-import { readGameMapId, readStoredMap, rememberGameMap, writeStoredMap } from './map-store.js';
+import { readGameMapId, readStoredMap, rememberGameMap, touchStoredMap, writeStoredMap } from './map-store.js';
 import { scrubSecrets, type SecretValue } from './redact.js';
 import { asInt } from './scalars.js';
 
@@ -83,6 +83,7 @@ export function parseGameId(v: unknown): number {
 export class MapCache {
   readonly #maps = new Map<number, GameMap>();
   readonly #gameMaps = new Map<number, number>();
+  readonly #refreshed = new Set<number>();
 
   get(mapId: number): GameMap | undefined {
     return this.#maps.get(mapId);
@@ -105,27 +106,45 @@ export class MapCache {
   /** {@link get}, else the map stored under `dir` (then kept in memory). */
   async load(mapId: number, dir: string | undefined): Promise<GameMap | undefined> {
     const hit = this.#maps.get(mapId);
+    if (hit && dir !== undefined) await touchStoredMap(dir, hit);
     if (hit || dir === undefined) return hit;
     const stored = await readStoredMap(dir, mapId);
     if (stored) this.set(stored);
     return stored;
   }
 
-  /** {@link forGame}, else the map the store under `dir` names for the game (then kept in memory). */
+  /**
+   * {@link forGame}, else the map the store under `dir` names for the game (the map then kept in
+   * memory). A game found only in the stored index is not remembered here, so the caller's
+   * {@link storeGame} moves its index entry to the newest.
+   */
   async loadForGame(gameId: number, dir: string | undefined): Promise<GameMap | undefined> {
-    const hit = this.forGame(gameId);
-    if (hit || dir === undefined) return hit;
-    const mapId = this.#gameMaps.get(gameId) ?? (await readGameMapId(dir, gameId));
-    const map = mapId === undefined ? undefined : await this.load(mapId, dir);
-    if (map) this.rememberGame(gameId, map.id);
-    return map;
+    const mapId = this.#gameMaps.get(gameId);
+    if (mapId !== undefined && this.#maps.has(mapId)) return this.load(mapId, dir);
+    if (dir === undefined) return undefined;
+    const id = mapId ?? (await readGameMapId(dir, gameId));
+    return id === undefined ? undefined : this.load(id, dir);
   }
 
-  /** Keep `map` in memory and, when it is new to this process, under `dir`. */
-  async store(map: GameMap, dir: string | undefined): Promise<void> {
+  /**
+   * Keep `map` in memory and, when it is new to this process (or `replace`), under `dir`; a map
+   * already known is only marked recently used there.
+   */
+  async store(map: GameMap, dir: string | undefined, replace = false): Promise<void> {
     const known = this.#maps.has(map.id);
     this.set(map);
-    if (!known && dir !== undefined) await writeStoredMap(dir, map);
+    if (dir === undefined) return;
+    if (!known || replace) await writeStoredMap(dir, map);
+    else await touchStoredMap(dir, map);
+  }
+
+  /** Whether `mapId` was already downloaded again this process because the feed named land it lacked. */
+  wasRefreshed(mapId: number): boolean {
+    return this.#refreshed.has(mapId);
+  }
+
+  markRefreshed(mapId: number): void {
+    this.#refreshed.add(mapId);
   }
 
   /** Remember the game's map in memory and, when that is new to this process, under `dir`. */
@@ -138,7 +157,16 @@ export class MapCache {
   clear(): void {
     this.#maps.clear();
     this.#gameMaps.clear();
+    this.#refreshed.clear();
   }
+}
+
+/** Whether the game's standing names a territory `map` does not have. */
+function lacksTerritory(map: GameMap, game: Game): boolean {
+  const territories = game.standing?.territories;
+  if (!territories?.length) return false;
+  const ids = new Set(map.territories.map((t) => t.id));
+  return territories.some((t) => !ids.has(t.territoryId));
 }
 
 /** The process-wide default cache. */
@@ -265,16 +293,26 @@ export class WarappClient {
   async getGame(id: unknown, opts: GetGameOptions = {}): Promise<Game> {
     const gameId = parseGameId(id);
     const dir = this.#dir();
-    const known = await this.#cache.loadForGame(gameId, dir);
-    const body = await this.#feed(gameId, { ...opts, noMap: known !== undefined || opts.map === false });
-    const game = normalizeGame(body);
+    let known = await this.#cache.loadForGame(gameId, dir);
+    let body = await this.#feed(gameId, { ...opts, noMap: known !== undefined || opts.map === false });
+    let game = normalizeGame(body);
+    // GameFeed sends no map version, so an edited map shows as land the cached copy lacks: download
+    // it once more (once per map per process, in case the loose standing parser misreads an id).
+    let replace = false;
+    if (known && opts.map !== false && lacksTerritory(known, game) && !this.#cache.wasRefreshed(known.id)) {
+      this.#cache.markRefreshed(known.id);
+      body = await this.#feed(gameId, { ...opts, noMap: false });
+      game = normalizeGame(body);
+      known = undefined;
+      replace = true;
+    }
 
     let map = known;
     const rawMap = body.map;
     if (!map && rawMap && typeof rawMap === 'object' && Array.isArray((rawMap as { territories?: unknown }).territories)) {
       const fresh = normalizeMap(rawMap);
-      map = this.#cache.get(fresh.id) ?? fresh;
-      await this.#cache.store(map, dir);
+      map = replace ? fresh : (this.#cache.get(fresh.id) ?? fresh);
+      await this.#cache.store(map, dir, replace);
     }
     if (!map && game.settings?.mapId !== undefined) map = await this.#cache.load(game.settings.mapId, dir);
     if (map) {
