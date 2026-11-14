@@ -305,6 +305,19 @@ commander's border is never thinned; a valuable border is never thinned; the end
 holds; no pass targets the partner; the cap moves excess back; notice binds until its turn; a break is
 an opponent the same turn; the golden corpus is unchanged without relations.
 
+*As built (B2a, 2026-11-14):* rules T1–T5 and T7–T9 in `src/analysis/plan/relations.ts`, the phase
+modules calling it (`noTarget` at every attack source, the truce hold in `forceAt`, T5 after rule 6);
+`planRelationsFrom` in `src/analysis/relations.ts` resolves the ledger. Departures from the text above:
+`PlanRelation` also carries `watch` (why the trust is `watch`), `agreement`, `noticeBy`, and a third
+state `broken` with its `breach` (T8: the planner reports it and plans the partner as an ordinary
+opponent; the ledger is not written — the plan says to record `broken-by-them`). A territory beside a
+covered one keeps what holds it there (T4: once the partner is no front, rule 6 would otherwise walk the
+garrison off). T9's `enforced` is read from the agreement only: the active-card decoder (#163) is
+unverified, so it is never "sure" and gives today's warning. `armiesFreed` is per relaxed border the
+full hold's shortfall less the truce hold's. Not yet (B2b): T6 (`lossIfBroken`, `safeIfTruceHolds`) and
+`warapp_submit_turn`'s `break_agreement`. With no relations the golden corpus is byte-identical
+(`GOLDEN_FULL=1`), and the seeded legality property test also plans its boards under a truce.
+
 ### B3. Pricing a deal
 
 `priceTruce(input, player, terms)` in `src/analysis/relations.ts`: run `planTurn` with and without the

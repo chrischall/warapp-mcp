@@ -181,8 +181,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `twoStepReaches`, which asks what a stack could take and hold, not where armies stand), `tacitTruces` (3 quiet turns, reported only), the endgame
   (no other opponent ≥ 0.5 × the larger income) and `trust`. Refused: me, an AI, a player out, a
   teammate, a 1v1, two left, and no third player or team outside me, my team and the partner's; an
-  `until_turn` before this turn. Massing needs its growing pairs to end at the newest board. The ledger's `usage` (armies a truce freed, loss if broken, per planned turn)
-  is a stub that part B2 fills. Nothing in the planner reads the ledger yet. Its read-modify-write runs
+  `until_turn` before this turn. Massing needs its growing pairs to end at the newest board. The ledger's `usage`
+  logs per planned turn (not a what-if plan) the armies each honoured truce freed (`lossIfBroken` stays null until T6). Its read-modify-write runs
   under an in-process per-path lock (`src/path-lock.ts`; another process sharing the data dir is not
   covered). **The cross-game player record** (owner decision D5 of 2026-11-14: on, local AND hosted —
   registered and enabled on a hosted child, in its per-user data dir) is `src/player-record-store.ts` at
@@ -200,6 +200,21 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   different path), so entries land in the order the ledger changed. `WARAPP_PLAYER_RECORD=off` switches it off. The tools report `playerRecord`
   (`warapp_record_agreement`: `updated` / `off` / `failed`; `warapp_get_relations`: `on` / `off` /
   `unreadable`).
+- **The planner honours a truce (B2, `src/analysis/plan/relations.ts`).** `warapp_plan_turn` resolves
+  the ledger with `planRelationsFrom` (`src/analysis/relations.ts`: covered territories on both sides
+  on this turn's board, `breachWatch` over my cached boards, `trust`; an unambiguous `broken` flag makes
+  it `broken`, T8) into `PlanInput.relations`; the plan reports `relations`, `advice` (`give-notice`) and
+  the tool `tacit`. Only in a free-for-all (teams or two players: ignored, a warning), while `active` or
+  in `notice` before `endsTurn`: a covered partner territory is never a target (T1: `pc.truce.noTarget`,
+  checked at every attack source — targets, tryCapture, the strikes, lead strikes, guard-off breaks,
+  rule 4e); a covered border facing only the partner is sized for its stacks with no deploy (T2, in
+  `forceAt`) unless my commander stands there, it protects more than 0.25 × income, or trust is `watch`
+  (T3); the partner is no front for rule 0p.2 or rule 6, and a territory beside a covered one keeps its
+  hold (T4); a border cap moves the excess one step back after rule 6 (T5); `enforced` (T9) makes the
+  player no foe — read from the agreement only, never from the unverified active-card decoder. **No
+  relations, no change:** every hook is false or absent then, and the golden corpus must stay
+  byte-identical. Not yet: T6 (`lossIfBroken`, `safeIfTruceHolds`), `warapp_submit_turn`'s
+  `break_agreement`, and writing `broken-by-them` to the ledger (the plan says to record it).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'
