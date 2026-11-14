@@ -614,6 +614,49 @@ describe('gameOutlook (#178)', () => {
         expect(o.basis).toMatch(/Losing on the estimate: .*corroborated by the main front grinding me down/);
       });
 
+      describe("the planner's read and the reported one agree when the plan's front incomes differ (#228 review)", () => {
+        const beside = (foeArmies: number) =>
+          board(small(0).territories.map((t) => (t.territoryId === 5 ? foe(5, foeArmies) : t.territoryId === 54 ? neutral(54, 2) : t)));
+        /** The first call is what the planner reads; the second, fed the plan's front, is reported and logged. */
+        const withPlanFront = (boards: TurnBoard[], myIncome: number, theirIncome: number) => {
+          const first = gameOutlook({ graph: big, me: ME, boards, game: ffa4 });
+          const f = first.turns.at(-1)!.front!;
+          const second = gameOutlook({
+            graph: big,
+            me: ME,
+            boards,
+            game: ffa4,
+            front: { turn: boards.at(-1)!.turn, from: f.from, at: f.at, myIncome, theirIncome },
+          });
+          return { first: first.turns.at(-1)!, second: second.turns.at(-1)!, firstState: first.state, secondState: second.state, basis: second.basis };
+        };
+
+        it("a front ground down on my boards' incomes but breaking on the plan's stays losing in both", () => {
+          const r = withPlanFront(turns(7, [beside(30), beside(40), beside(50), beside(60)]), 60, 1);
+          expect(r.first.state).toBe('losing');
+          expect(r.second.front!.incomeSource).toBe('plan');
+          expect(r.second.front!.outcome).not.toBe('ground-down');
+          expect(r.second.state).toBe('losing');
+          expect(r.second.estimated).toBe(true);
+          expect(r.secondState).toBe(r.firstState);
+          expect(r.basis).toMatch(/on the incomes read off my boards/);
+        });
+
+        it("a front quiet on my boards' incomes that the plan's grind down stays even in both", () => {
+          // A small foe stack beside mine, its big one away from me: on my boards' incomes nothing grinds
+          // me down; the plan prices the foe at 60 a turn against my 1.
+          const quiet = (foeArmies: number) => board(small(foeArmies).territories.map((t) => (t.territoryId === 5 ? foe(5, 3) : t)));
+          const r = withPlanFront(turns(7, [quiet(5), quiet(15), quiet(25), quiet(35)]), 1, 60);
+          expect(r.first.lowLikely).toMatchObject({ groundDown: false, losing: false });
+          expect(r.first.state).not.toBe('losing');
+          expect(r.second.front!.outcome).toBe('ground-down');
+          // The planner reads only winning and losing (stalemate may follow the reported front, as before).
+          expect(r.second.state).not.toBe('losing');
+          expect(r.second.lowLikely).toMatchObject({ groundDown: false, losing: false });
+          expect(r.secondState === 'losing').toBe(r.firstState === 'losing');
+        });
+      });
+
       it("explains an even outlook beside the profile's standing when they differ", () => {
         const o = gameOutlook({
           graph: big,

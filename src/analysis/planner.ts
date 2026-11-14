@@ -170,8 +170,11 @@
 //          counts the turns it has left instead: the loser's strength over the winner's income a
 //          turn (winning: the strongest opponent's, its high when bounded — #208: its likely high,
 //          called an estimate, when only that showed the win — over my income; losing:
-//          mine over its income estimate), at least DECIDED_PAYBACK_MIN, at most PAYBACK_TURNS; a
-//          rationale line ("Outlook (#201): …") says so. The strike stack's forecast uses it too.
+//          mine over its income estimate — #228: also when losing rests on the estimate, mine far
+//          below its likely high and corroborated by the main front on my boards' incomes or by my
+//          income, the line then calling it an estimate), at least DECIDED_PAYBACK_MIN, at most
+//          PAYBACK_TURNS; a rationale line ("Outlook (#201): …") says so. The strike stack's forecast
+//          uses it too.
 //       4. An explicit `goal` always wins: none of the above, and the rationale says the
 //          profile was overridden.
 //  1. Defence. A visible enemy next to my territory T threatens it when

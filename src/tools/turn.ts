@@ -1367,7 +1367,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         },
       });
       // #228: and the plan's profile standing, so an `even` outlook beside `behind` says why they differ.
-      // Neither changes the state the plan read except through the front, as before.
+      // Neither changes whether the turn reads winning or losing (the state the plan acted on): losing
+      // on the estimate reads the front on my boards' incomes, never the plan's (#228 review); only a
+      // stalemate may follow the plan's front, which the planner ignores.
       if (turn !== null && (plan.front || plan.profile.standing === 'ahead' || plan.profile.standing === 'behind'))
         outlook = gameOutlook({
           ...outlookInput,

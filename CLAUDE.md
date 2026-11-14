@@ -238,8 +238,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
-  outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'
-  acceptance — / `still_playing` after an undo — GameFeed has no pending state — / `unchanged`; lobbies refused), never from the reply, which has no result.
+  outcome from GameFeed (`surrendered` / `pending` — the others' acceptance is needed when the game's
+  `InstantSurrender` says so, and MAY be needed with more than two players when it is unread (#228) — /
+  `still_playing` after an undo — GameFeed has no pending state — / `unchanged`; lobbies refused), never from the reply, which has no result.
 - **A speed first turn hides the board until Begin.** With MoveOrder `NoLuckCycle` war.app sends
   no standing on turn 1 (or while picking) until the player presses Begin, which starts their
   turn timer; the live tools say so instead of the lobby error. `warapp_begin_turn` sends
@@ -752,7 +753,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   0.05×), so `losing` on it needs mine at most `LIKELY_LOSING_RATIO` (1/(2.4 × 2)) of it AND
   corroboration — the main front grinding me down, or my income at most `BEHIND_RATIO` × the most an
   opponent is tracked earning; the turn carries `estimated: true` and `lowLikely`, and the basis says
-  which (or, uncorroborated, why it is no loss). `warapp_plan_turn` passes the plan's profile standing
+  which (or, uncorroborated, why it is no loss). That front is always forecast on the incomes read off
+  my boards, never the plan's (#228 review): the planner reads the outlook before it plans, and the
+  reported one is re-read with the plan's front, so the losing state the plan acts on (rule 3d's decided
+  horizon, its line calling it an estimate) is the one shown and logged. `warapp_plan_turn` passes the plan's profile standing
   back (`standing`): an `even`/`stalemate` outlook beside `ahead`/`behind` says why the two differ.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe

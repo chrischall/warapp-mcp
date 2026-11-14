@@ -59,7 +59,11 @@
 // taken back out: it counts every army received and none lost, so alone it read 0.05× in a game I
 // led) AND that is corroborated, by the main front grinding me down or by my income at most
 // BEHIND_RATIO × the most an opponent is tracked earning (the profile's "behind"); such a turn carries
-// `lowLikely`, and so does an uncorroborated one, whose basis says why it is no loss — `stalemate` when neither and no territory
+// `lowLikely`, and so does an uncorroborated one, whose basis says why it is no loss. The front that
+// corroborates it is always forecast on the incomes read off my boards (below), never the plan's
+// (#228 review): warapp_plan_turn plans on an outlook read without the plan's front and then reports
+// one read with it, so a losing state that followed the plan's incomes could differ between the two
+// and the plan would act on a state it never showed — `stalemate` when neither and no territory
 // in view on both boards changed owner since the turn before while I face an enemy and (#201) the
 // main front's multi-turn forecast is a stand-off, else `even`. The main front (#218: `mainFront`,
 // exchange.ts, the planner's definition) is the biggest enemy stack next to me against my biggest
@@ -507,6 +511,9 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     const mineNow = held.get(me) ?? new Set<number>();
     const main = mainFront(g, (x) => mineNow.has(x), enemies, (x) => (armiesById.get(x) ?? 0) + unitsOn(board, x));
     let forecast: OutlookTurn['front'];
+    // #228 review: the front on my boards' incomes, for losing on the estimate (equal to `forecast`
+    // unless the plan's incomes are given), so the plan's read and the reported one share the state.
+    let ownOutcome: BorderOutcome | undefined;
     if (main) {
       const given =
         input.front && input.front.turn === turn && input.front.from === main.from && input.front.at === main.at ? input.front : undefined;
@@ -516,18 +523,28 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       const myIncome = given?.myIncome ?? boardIncome(g, mineNow, rules).total;
       const theirIncome =
         given?.theirIncome ?? Math.max(boardIncome(g, held.get(main.player) ?? new Set(), rules).total, tr?.income ?? 0);
-      const f = forecastBorder({
-        mine: main.mine,
-        theirs: main.theirs,
-        myIncome,
-        theirIncome,
-        outcomeOnly: true,
-        settings: {
-          ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
-          ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
-          ...(settings.oneArmyStandsGuard !== undefined ? { oneArmyStandsGuard: settings.oneArmyStandsGuard } : {}),
-        },
-      });
+      const forecastAt = (mineIncome: number, foeIncome: number) =>
+        forecastBorder({
+          mine: main.mine,
+          theirs: main.theirs,
+          myIncome: mineIncome,
+          theirIncome: foeIncome,
+          outcomeOnly: true,
+          settings: {
+            ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
+            ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
+            ...(settings.oneArmyStandsGuard !== undefined ? { oneArmyStandsGuard: settings.oneArmyStandsGuard } : {}),
+          },
+        });
+      const f = forecastAt(myIncome, theirIncome);
+      if (!given) ownOutcome = f.outcome;
+      else {
+        const own = trackedAll().get(main.player);
+        ownOutcome = forecastAt(
+          boardIncome(g, mineNow, rules).total,
+          Math.max(boardIncome(g, held.get(main.player) ?? new Set(), rules).total, own?.income ?? 0),
+        ).outcome;
+      }
       forecast = {
         mine: main.mine,
         theirs: main.theirs,
@@ -556,7 +573,8 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       return most;
     };
     const lowLikely = !bound && !estimated && !lostOnBound && likely !== undefined && likely.high > 0 && likely.ratio <= LIKELY_LOSING_RATIO;
-    const groundDown = forecast?.outcome === 'ground-down';
+    // #228 review: on my boards' incomes, whatever the plan gave the reported front.
+    const groundDown = ownOutcome === 'ground-down';
     const incomeBehind = lowLikely && mostTracked() > 0 && myNow <= BEHIND_RATIO * mostTracked();
     const lostOnEstimate = lowLikely && (groundDown || incomeBehind);
     const state: OutlookState =
@@ -619,8 +637,8 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       const incomeText = low.mostTracked > 0 ? `my income (${low.myIncome}) at most ${BEHIND_RATIO}× the most an opponent is tracked earning (${low.mostTracked})` : '';
       const behind = low.mostTracked > 0 && low.myIncome <= BEHIND_RATIO * low.mostTracked;
       reading += low.losing
-        ? ` Losing on the estimate: ${share}, corroborated by ${[low.groundDown ? 'the main front grinding me down' : '', behind ? incomeText : ''].filter(Boolean).join(' and ')}.`
-        : ` ${share[0]!.toUpperCase()}${share.slice(1)}, but that alone is no loss: the likely high counts every army an opponent could have received at ${LIKELY_INCOME_MARGIN}× its pace and none it lost, so it reads every fogged opponent strong. Losing on it needs the main front grinding me down or my income at most ${BEHIND_RATIO}× the most an opponent is tracked earning${low.mostTracked > 0 ? ` (mine ${low.myIncome}, the most tracked ${low.mostTracked})` : ' (none is tracked)'}.`;
+        ? ` Losing on the estimate: ${share}, corroborated by ${[low.groundDown ? 'the main front grinding me down on the incomes read off my boards' : '', behind ? incomeText : ''].filter(Boolean).join(' and ')}.`
+        : ` ${share[0]!.toUpperCase()}${share.slice(1)}, but that alone is no loss: the likely high counts every army an opponent could have received at ${LIKELY_INCOME_MARGIN}× its pace and none it lost, so it reads every fogged opponent strong. Losing on it needs the main front grinding me down on the incomes read off my boards (not the plan's, so the plan acts on the state shown) or my income at most ${BEHIND_RATIO}× the most an opponent is tracked earning${low.mostTracked > 0 ? ` (mine ${low.myIncome}, the most tracked ${low.mostTracked})` : ' (none is tracked)'}.`;
     }
     // #228: the plan's profile standing is a different measure (incomes, then the armies in view).
     const standing = input.standing;
