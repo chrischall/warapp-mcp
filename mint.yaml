@@ -103,8 +103,10 @@ state:
     (ujs.js, ~16 MB) is cached under $MCP_DATA_DIR/bundle/<version>.<sha256>.js: the
     live board is decoded with the client's own readers, so without the cache
     every cold start downloads it again. The agreement ledger
-    ($MCP_DATA_DIR/relations: the truces recorded per game) lives there too; the
-    cross-game player record is local only and never written hosted. The per-map GameFeed cache lives in
+    ($MCP_DATA_DIR/relations: the truces recorded per game) lives there too, and
+    so does the cross-game player record (relations/players.json and its salt:
+    owner decision D5, on hosted as well, name-free and keyed by a salted hash;
+    WARAPP_PLAYER_RECORD=off switches it off). The per-map GameFeed cache lives in
     memory and needs no state.
 
 egress:

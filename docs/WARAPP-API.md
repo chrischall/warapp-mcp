@@ -511,5 +511,5 @@ public wiki page "Game ID feed API" (read 2026-11-12, not called live):
   Conduct) bans automated systems (bots, scrapers, scripts) except through "authorized APIs", which
   the Terms do not define; section 7 (Communication Rules) bans false, defamatory, harassing or
   offensive messages. The wiki's Rules page (<https://war.app/wiki/Rules>) says players working
-  together is not against the rules. Owner decision D1 in `docs/PLAN-TEAMS.md` is still open; until
-  it is made, every chat send stays confirm-gated.
+  together is not against the rules. Owner decision D1 in `docs/PLAN-TEAMS.md` (decided
+  2026-11-14): chat proceeds, and every chat send stays confirm-gated.

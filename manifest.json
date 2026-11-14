@@ -191,7 +191,7 @@
     },
     {
       "name": "warapp_record_agreement",
-      "description": "Record a truce or a change to one in this machine's agreement ledger (nothing is sent to war.app)"
+      "description": "Record a truce or a change to one in the server's agreement ledger and the partner's name-free cross-game record (nothing is sent to war.app)"
     },
     {
       "name": "warapp_wait_for_turn",
