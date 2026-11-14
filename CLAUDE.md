@@ -548,7 +548,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     expansion (pass 3) repays its losses with the income it adds within `PAYBACK_TURNS`, or loses
     at most `PLAIN_EXPANSION_LOSS` (2) for +0. Turns to finish are never fewer than a bonus's depth.
     A capture rule 4e/4f names but cannot afford gets the leftover on its source, and idle stacks
-    facing no enemy stage one step toward it.
+    facing no enemy stage one step toward it; "cannot afford" counts what holds that source's border
+    once the step is taken (#218 comment: a source that grew enough to pay for the step by size alone
+    stopped saving, under any goal).
   - **One surplus per territory (#121).** A border that holds at the start of the turn keeps
     what holds it, as my commander's territory does: a capture from it spends only the armies
     above that (plus deploys), so a capture never leaves a safe border takeable. Idle armies

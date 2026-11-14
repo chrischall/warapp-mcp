@@ -72,7 +72,7 @@ export function leftoverDeploy(
   const stepSource = (
     open: (x: number) => boolean,
     notSoftening: (x: number) => boolean,
-  ): { t: number; bonusId: number; cost: number; from: number } | undefined => {
+  ): { t: number; bonusId: number; cost: number; from: number; holdThreat?: number } | undefined => {
     let step = saveStep;
     if (!step && committing) {
       for (const p of byCloseness) {
@@ -89,11 +89,25 @@ export function leftoverDeploy(
     const from = neighborsOf(g, step.t)
       .filter((x) => mineSet.has(x) && open(x) && notSoftening(x) && !orderOf(x))
       .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b)[0];
+    if (from === undefined) return undefined;
     // Only a step this turn cannot afford: one the plan could take but did not (R3, rule 4c or 4d
-    // refused it) is no reason to save.
-    if (from === undefined || avail.get(from)! + roomAt(from) >= step.cost) return undefined;
-    return { ...step, from };
+    // refused it) is no reason to save. #218 (comment): affording it means sending its cost and
+    // still holding the source's border (as rule 4e's hold check judges an attack: armies
+    // withdrawn into it count only when I am known to move first) — live, a source that had grown
+    // enough to pay for the step by size alone, not for the step and its hold, stopped saving.
+    const room = roomAt(from);
+    if (avail.get(from)! + room < step.cost) return { ...step, from };
+    const b = threats.borderAt(from, (n) => n === step.t);
+    if (!b) return undefined;
+    const left = stayAt(from) - lateArrivals(pc, ps, from) + room - step.cost;
+    if ((toTake(left + unitsAt(from)) ?? Infinity) > b.threat) return undefined;
+    return { ...step, from, holdThreat: b.threat };
   };
+  /** Why the step is saved toward: its size, or (#218 comment) its size and the source's hold together. */
+  const cannotAfford = (x: { from: number; holdThreat?: number }) =>
+    x.holdThreat === undefined
+      ? 'which this turn cannot afford'
+      : `which this turn cannot afford and still hold ${label(x.from)} against the ~${x.holdThreat} threat`;
   /** Set by the leftover deploy (rule 5): the step it saved toward, which idle stacks stage toward (rule 6). */
   let staging: Staging | undefined;
   /**
@@ -463,7 +477,7 @@ export function leftoverDeploy(
         // #218: the rest goes to the source, at equal defensive value, and saves toward the step.
         where = src!.id;
         concentrating = true;
-        why = `save toward ${label(saving!.t)} (${saving!.cost} to take), the next step of bonus ${bonusName(saving!.bonusId)}, which this turn cannot afford${
+        why = `save toward ${label(saving!.t)} (${saving!.cost} to take), the next step of bonus ${bonusName(saving!.bonusId)}, ${cannotAfford(saving!)}${
           short[0].id === src!.id
             ? `; it is also the held border with the most at stake (protects +${valueOf(src!.id)})`
             : `; it defends as well as ${label(short[0].id)} would (the same ~${short[0].threat} threat from player ${short[0].player}, protects +${valueOf(short[0].id)})`
@@ -476,7 +490,7 @@ export function leftoverDeploy(
       }
     } else if (saving) {
       where = saving.from;
-      why = `save toward ${label(saving.t)} (${saving.cost} to take), the next step of bonus ${bonusName(saving.bonusId)}, which this turn cannot afford`;
+      why = `save toward ${label(saving.t)} (${saving.cost} to take), the next step of bonus ${bonusName(saving.bonusId)}, ${cannotAfford(saving)}`;
       defends = true;
       lock = true;
       concentrating = true;
@@ -514,7 +528,7 @@ export function leftoverDeploy(
       }
     }
     let n = roomAt(where);
-    if (saving && where === saving.from) staging = saving;
+    if (saving && where === saving.from) staging = { t: saving.t, bonusId: saving.bonusId, cost: saving.cost, from: saving.from };
     // #163: an opponent may hold a Bomb: a second stack on another open border facing an enemy takes
     // half the leftover, so one bomb halves only one of them (same opponent first, then the bigger
     // stack, then id). Never a strike, saving or expansion stack: each concentrates for one attack

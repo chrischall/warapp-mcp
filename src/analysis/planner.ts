@@ -937,7 +937,10 @@
 //     rule 4e's top-ranked step when it stood still for want of armies, else (rule 4f committing)
 //     the closest bonus's cheapest missing member in reach when this turn made no capture into
 //     that bonus, and only when its armies free plus what may still be deployed there fall short
-//     of it (a step refused for another reason — R3, rule 4c or 4d — is no reason to save); it
+//     of it, or (#218 comment, any goal) of it and what holds that source's border once it is
+//     taken (armies withdrawn into it counted only when I am known to move first: "which this turn
+//     cannot afford and still hold S against the ~T threat") — a step refused for another reason
+//     — R3, rule 4c or 4d — is no reason to save; it
 //     goes to my territory beside that member with the most armies free (open, not a softener, no
 //     order under No-Split; "save toward …, the next step of bonus …") — else the
 //     source of the top expansion (a capture's finisher; it then makes no transfer) — #218: but
