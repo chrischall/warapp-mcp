@@ -44,13 +44,13 @@ export function transfers(
     // B2 (T4): a truce's covered territory is no front.
     const isEnemy = (id: number) => {
       const st = state.get(id);
-      return st?.owner.kind === 'player' && foe(st.owner.playerId) && !pc.truce.noTarget(id);
+      return st?.owner.kind === 'player' && foe(st.owner.playerId) && !pc.truce.noFront(id);
     };
     // Enemy front first (#121): idle armies head for the territories a visible enemy holds; only
     // with no enemy reachable do they head for the nearest territory not mine (neutral or fog).
     const ids = [...g.territoryById.keys()];
     const enemyFront = ids.filter((id) => !held.has(id) && isEnemy(id));
-    const anyFront = ids.filter((id) => !held.has(id) && !pc.truce.noTarget(id));
+    const anyFront = ids.filter((id) => !held.has(id) && !pc.truce.noFront(id));
     const distEnemy = bfsDistances(g, enemyFront, { passable });
     const distAny = bfsDistances(g, anyFront, { passable });
     // #125: staging. Idle armies on a territory facing no visible enemy — a border beside neutrals

@@ -1269,7 +1269,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const handUnknown = rules.inPlay.length > 0 && !handReadable(info, owners);
       const inGame = cardGame(game);
       const cards = chooseCardPlays(hand, rules, inGame);
-      const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
+      // The board's income, card armies out: what the truces' trust reads (as warapp_check_plan passes it).
+      const boardIncome = incomeFor(graph, board, me.id, game.settings);
+      const income = boardIncome + cards.extraArmies;
       const trend = history.previous;
       const previousOrders = turn !== null ? history.boards.find((b) => b.turn === turn - 1)?.orders : undefined;
       // The opponents over my board history: one observed over 2+ turns gets its tracked income;
@@ -1321,7 +1323,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       };
       // B2: the truces in force, from the agreement ledger (warapp_record_agreement) and my board
       // history, and the tacit truces (reported, never planned on).
-      const truces = await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income - cards.extraArmies, tracks });
+      const truces = await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: boardIncome, tracks });
       const plan = planTurn({
         graph,
         board,

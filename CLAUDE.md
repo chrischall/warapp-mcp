@@ -205,7 +205,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the ledger with `planRelationsFrom` (`src/analysis/relations.ts`: covered territories on both sides
   on this turn's board, `breachWatch` over my cached boards, `trust`; an unambiguous `broken` flag makes
   it `broken`, T8) into `PlanInput.relations`; the plan reports `relations`, `advice` (`give-notice`) and
-  the tool `tacit`. Only in a free-for-all (teams or two players: ignored, a warning), while `active` or
+  the tool `tacit`. Only in a free-for-all (teams or two players: ignored, a warning — but T1 still holds there), while `active` or
   in `notice` before `endsTurn`: a covered partner territory is never a target (T1: `pc.truce.noTarget`,
   checked at every attack source — targets, tryCapture, the strikes, lead strikes, guard-off breaks,
   rule 4e); a covered border facing only the partner is sized for its stacks with no deploy (T2, in
@@ -219,7 +219,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   line, #167 cover odds and #201 gamble leave out a T2-relaxed border (`relaxedFor`); `enforced` (T9) makes the
   player no foe — `planRelationsFrom` never sets it (the ledger's field is ignored until a decoder-backed,
   turn-bounded source exists). `armiesFreed` counts a relaxed border only where the full hold would have
-  been funded (not conceded, not refused by rule 1a or my income). **No
+  been funded (not conceded, not refused by rule 1a or my income), capped at what the plan's orders leave
+  that border short of the full hold. **No
   relations, no change:** every hook is false or absent then, and the golden corpus must stay
   byte-identical. **T6:** after the orders are final, `truceBreakLosses` carries out, per binding unenforced
   truce, the partner's whole deploy estimate on a covered territory of its beside a covered one of mine and
@@ -234,7 +235,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   outcome is `confirmed` the ledger records `broken-by-me` and the player record updates
   (`agreementsBroken`; otherwise it says to record it by hand). That is final: `warapp_uncommit_turn`
   does not undo it, and says so (`agreementsStillBroken`, the agreements broken-by-me on that turn). Not yet: writing `broken-by-them` to the
-  ledger (the plan says to record it).
+  ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'

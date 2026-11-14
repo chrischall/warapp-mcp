@@ -2,7 +2,9 @@
 // phase modules only call it.
 //
 // A truce (`PlanInput.relations`) is honoured only in a free-for-all, while `active` or in `notice`
-// (until its `endsTurn`), with a player who is a foe (not me, not a teammate):
+// (until its `endsTurn`), with a player who is a foe (not me, not a teammate) — except T1, which
+// holds wherever the agreement binds, a team or two-player game included (D3: never a surprise
+// break; `warapp_submit_turn` refuses such an order in any format):
 //   T1  a covered territory of the partner is never a target, in any pass (`noTarget`: the targets,
 //       tryCapture, the strikes, the lead strikes, the guard-off breaks and rule 4e's enemy fallback);
 //   T2  a covered border of mine that faces only the partner is sized for the partner's visible
@@ -25,7 +27,7 @@
 //   T7  never a surprise break: a notice binds until its `endsTurn`; the plan advises `give-notice`
 //       when the trust turned `watch` for the endgame or for outgrowing;
 //   T8  broken by them (`state: 'broken'`): an ordinary opponent at once, the plan naming the term,
-//       the turn and the evidence;
+//       the turn and the evidence, and saying to record `broken-by-them` before submitting;
 //   T9  enforced (a Diplomacy card the decoder is sure of): that player is no foe for the turn — its
 //       threat is 0 and no attack on it is planned.
 // With no relations every function here is a no-op, so every plan is byte-identical to one made
@@ -66,8 +68,13 @@ export interface Truce {
   partners: ReadonlySet<number>;
   /** T9: players an enforced truce makes no foe this turn. */
   enforced: ReadonlySet<number>;
-  /** T1: a territory of a binding partner the truce covers (every one of an enforced partner). */
+  /**
+   * T1: a territory of a partner the agreement covers (every one of an enforced partner) — wherever
+   * the agreement binds, a team or two-player game included.
+   */
   noTarget: (t: number) => boolean;
+  /** T4 for rule 6: a covered territory of a partner a truce binds the planner to (free-for-all only). */
+  noFront: (t: number) => boolean;
   /** The format the truces were read in (for the ignored warning). */
   format: GameFormat;
 }
@@ -80,6 +87,7 @@ const NONE: Truce = {
   partners: new Set(),
   enforced: new Set(),
   noTarget: () => false,
+  noFront: () => false,
   format: 'ffa',
 };
 
@@ -93,13 +101,16 @@ export function truceOf(input: PlanInput, o: { notFoe: (p: number) => boolean; f
   const ffa = o.format === 'ffa';
   const status: PlanRelationView['state'][] = [];
   const binds: boolean[] = [];
+  /** Whether the agreement itself binds this turn, whatever the format (T1 keeps to it everywhere). */
+  const kept: boolean[] = [];
   for (const r of given) {
     let st: PlanRelationView['state'];
-    if (!ffa) st = 'ignored';
-    else if (o.notFoe(r.player)) st = 'not-a-foe';
+    if (o.notFoe(r.player)) st = 'not-a-foe';
     else if (r.state === 'broken') st = 'broken';
     else if (r.state === 'notice' && r.endsTurn !== undefined && o.turnNow !== null && o.turnNow >= r.endsTurn) st = 'over';
     else st = r.state;
+    kept.push(st === 'active' || st === 'notice');
+    if (!ffa) st = 'ignored';
     status.push(st);
     binds.push(st === 'active' || st === 'notice');
   }
@@ -107,22 +118,31 @@ export function truceOf(input: PlanInput, o: { notFoe: (p: number) => boolean; f
   for (const t of input.board.territories) if (t.owner.kind === 'player') owner.set(t.territoryId, t.owner.playerId);
   const partners = new Set<number>();
   const enforced = new Set<number>();
-  /** Per binding partner, the territories of theirs covered. */
+  /** Per partner whose agreement binds (in any format), the territories of theirs covered. */
   const theirs = new Map<number, Set<number>>();
   given.forEach((r, i) => {
-    if (!binds[i]) return;
-    partners.add(r.player);
-    if (r.enforced) enforced.add(r.player);
+    if (!kept[i]) return;
+    // T2–T5 and T9 only in a free-for-all; T1 (never a surprise break, D3) wherever the agreement binds.
+    if (binds[i]) {
+      partners.add(r.player);
+      if (r.enforced) enforced.add(r.player);
+    }
     const set = theirs.get(r.player) ?? new Set<number>();
     for (const t of r.coveredTheirs) set.add(t);
     theirs.set(r.player, set);
   });
   const noTarget = (t: number): boolean => {
     const p = owner.get(t);
-    if (p === undefined || !partners.has(p)) return false;
-    return enforced.has(p) || theirs.get(p)!.has(t);
+    if (p === undefined) return false;
+    const set = theirs.get(p);
+    if (!set) return false;
+    return enforced.has(p) || set.has(t);
   };
-  return { given, status, binds, partners, enforced, noTarget, format: o.format };
+  const noFront = (t: number): boolean => {
+    const p = owner.get(t);
+    return p !== undefined && partners.has(p) && noTarget(t);
+  };
+  return { given, status, binds, partners, enforced, noTarget, noFront, format: o.format };
 }
 
 /**
@@ -471,9 +491,18 @@ const NOTICE_REASONS: readonly TruceWatchReason[] = ['endgame', 'outgrowing'];
  * truce hold's — only where the plan without the truce would have funded the full hold. A border
  * this plan concedes against the smaller threat is conceded against the full one too, and one whose
  * full hold rule 1a would refuse (more than {@link CONCEDE_FACTOR} × its worth, or more than my
- * income) gets nothing there either way: neither frees an army. At most my income in all.
+ * income) gets nothing there either way: neither frees an army. Each border's figure is capped at
+ * what the plan's orders really leave it short of the full hold (`ps`'s deploys and moves), so armies
+ * that end there anyway — the leftover, a #172 two-step keep, a transfer in — are not counted as
+ * freed. At most my income in all.
  */
-export function armiesFreed(pc: PlanCtx, threats: Threats, relaxed: readonly number[], hold: { conceded: ReadonlySet<number>; valueOf: (t: number) => number }): number {
+export function armiesFreed(
+  pc: PlanCtx,
+  ps: PlanState,
+  threats: Threats,
+  relaxed: readonly number[],
+  hold: { conceded: ReadonlySet<number>; valueOf: (t: number) => number },
+): number {
   const { armiesOf, unitsAt, income, paybackTurns, profile } = pc;
   const { forceAt, holdArmies } = threats;
   /** What a hold of `t` needs beyond the armies there against `threat`. */
@@ -490,7 +519,9 @@ export function armiesFreed(pc: PlanCtx, threats: Threats, relaxed: readonly num
     // the hold costs no more than the armies already there).
     const uneconomic = fullShort > CONCEDE_FACTOR * worth && !(profile.phase === 'opening' && fullShort <= armiesOf(t));
     if (fullShort > income || uneconomic) continue;
-    freed += Math.max(0, fullShort - short(t, now.threat));
+    // What the plan's orders really leave short of the full hold on `t`.
+    const leftShort = Math.max(0, holdArmies(full.threat) - endsAt(pc, ps, t) - unitsAt(t));
+    freed += Math.min(Math.max(0, fullShort - short(t, now.threat)), leftShort);
   }
   return Math.min(freed, income);
 }
@@ -501,6 +532,10 @@ export function armiesFreed(pc: PlanCtx, threats: Threats, relaxed: readonly num
  * plan holding no territory (`tp` undefined, nothing relaxed); with no relations it returns nothing
  * and says nothing. `freedOn` is {@link armiesFreed} for one relation's relaxed borders.
  */
+/** T8: `warapp_submit_turn` reads only the ledger, so a break the plan acts on must be recorded first. */
+const RECORD_BROKEN = (r: PlanRelation): string =>
+  `Record it with warapp_record_agreement (${r.agreement ? `agreement_id ${r.agreement}, ` : ''}status broken-by-them) before submitting: until then warapp_submit_turn refuses an order on its covered territories.`;
+
 export function reportTruce(
   pc: PlanCtx,
   ps: PlanState,
@@ -512,7 +547,7 @@ export function reportTruce(
   const { warnings, rationale } = ps;
   if (truce.status.some((s) => s === 'ignored'))
     warnings.push(
-      `Truces ignored (B2): ${truce.format === 'teams' ? 'this is a team game' : 'only two players are in this game'}, and the planner honours a truce only in a free-for-all; every player is planned as an ordinary opponent.`,
+      `Truces ignored (B2): ${truce.format === 'teams' ? 'this is a team game' : 'only two players are in this game'}, and the planner honours a truce only in a free-for-all; every player is planned as an ordinary opponent, except that the covered territories of an active or in-notice agreement are still never a target (T1: the plan never orders a surprise break).`,
     );
   const advice: PlanAdvice[] = [];
   const relations = truce.given.map((r, i): PlanRelationView => {
@@ -529,9 +564,9 @@ export function reportTruce(
     const freed = mineRelaxed.length ? freedOn(mineRelaxed) : 0;
     if (st === 'broken' && r.breach)
       warnings.push(
-        `${name} is broken by them: ${r.breach.term} on turn ${r.breach.turn}${r.breach.territories.length ? ` (${r.breach.territories.map(label).join(', ')})` : ''} — ${r.breach.evidence}. Player ${r.player} is planned as an ordinary opponent from this turn (T8).`,
+        `${name} is broken by them: ${r.breach.term} on turn ${r.breach.turn}${r.breach.territories.length ? ` (${r.breach.territories.map(label).join(', ')})` : ''} — ${r.breach.evidence}. Player ${r.player} is planned as an ordinary opponent from this turn (T8). ${RECORD_BROKEN(r)}`,
       );
-    else if (st === 'broken') warnings.push(`${name} is broken by them: player ${r.player} is planned as an ordinary opponent from this turn (T8).`);
+    else if (st === 'broken') warnings.push(`${name} is broken by them: player ${r.player} is planned as an ordinary opponent from this turn (T8). ${RECORD_BROKEN(r)}`);
     else if (st === 'over')
       rationale.push(`${name}: its notice ran out on turn ${r.endsTurn}, so player ${r.player} is an ordinary opponent this turn (T7).`);
     else if (st === 'not-a-foe') warnings.push(`${name}: player ${r.player} is me or a teammate, so the truce changes nothing.`);

@@ -259,6 +259,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // B2 T6: the truces in force (the ledger, as warapp_plan_turn reads it). Their partners stay among
       // the opponents tried, so `safe` still means safe against a break; `safeIfTruceHolds` leaves the
       // breaks out. Only in a free-for-all, as the planner honours them.
+      // `income` is the board's, card armies out — the same figure warapp_plan_turn passes.
       const truces = (await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks }))?.relations ?? [];
       const binding =
         teams.size === 0

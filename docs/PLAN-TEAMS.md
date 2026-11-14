@@ -264,7 +264,9 @@ watch and the trust:
 
 The rule logic goes in a new `src/analysis/plan/relations.ts`; the phase modules call it. The planner
 is under active change (#214, #215, #218, #226), so keep the diffs in existing modules to call sites.
-Only in a free-for-all; with teams or two players the input is ignored with a warning.
+Only in a free-for-all; with teams or two players the input is ignored with a warning — except T1, which
+holds wherever the agreement binds (D3: the plan never orders a surprise break, and `warapp_submit_turn`
+refuses one in any format).
 
 - **T1. No target.** A covered territory of the partner is never a target, in any pass, while the
   relation is `active` or `notice`.
@@ -316,15 +318,17 @@ modules calling it (`noTarget` at every attack source, the truce hold in `forceA
 `planRelationsFrom` in `src/analysis/relations.ts` resolves the ledger. Departures from the text above:
 `PlanRelation` also carries `watch` (why the trust is `watch`), `agreement`, `noticeBy`, and a third
 state `broken` with its `breach` (T8: the planner reports it and plans the partner as an ordinary
-opponent; the ledger is not written — the plan says to record `broken-by-them`). A territory beside a
+opponent; the ledger is not written — its warning says to record `broken-by-them` with
+`warapp_record_agreement` before submitting, since `warapp_submit_turn` reads only the ledger). A territory beside a
 covered one keeps what holds it there (T4: once the partner is no front, rule 6 would otherwise walk the
 garrison off). T9's `enforced` is never set by `planRelationsFrom`: the ledger's field is ignored (no tool
 writes it, and a hand-edited file must not make a player no foe indefinitely), and the active-card
 decoder (#163) is unverified, so it is never "sure" and gives today's warning; part D supplies the
 decoder-backed, turn-bounded source. `armiesFreed` is per relaxed border the full hold's shortfall less
 the truce hold's, counted only where the plan without the truce would have funded the full hold — not on
-a border this plan concedes, nor one whose full hold rule 1a's economic test or my income refuses — and
-at most my income. A plan holding no territory still reports each truce given. B2a review: no withdrawal, staging or
+a border this plan concedes, nor one whose full hold rule 1a's economic test or my income refuses —
+capped at what the plan's orders really leave that border short of the full hold (armies that end there
+anyway, the leftover, a #172 two-step keep or a transfer in, are not freed), and at most my income. A plan holding no territory still reports each truce given. B2a review: no withdrawal, staging or
 rule 6 transfer of mine fills a capped border past its cap (`capRoom`; rule 6 and staging never move
 back along a transfer planned this turn), so the plan never moves armies both ways between two
 territories; any excess after rule 6 is deployed one step behind, then trimmed off a transfer in, then

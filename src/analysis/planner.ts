@@ -1038,7 +1038,9 @@
 //     names none; it names those left exposed when the cover was unaffordable.
 //  T. Truces (B2, docs/PLAN-TEAMS.md section 8; `relations`, resolved by warapp_plan_turn from the
 //     agreement ledger). Honoured only in a free-for-all (with teams or two players: ignored, with a
-//     warning), with a foe, while `active` or in `notice` before its `endsTurn`. Absent or empty,
+//     warning — all but T1, which holds wherever the agreement binds: never a surprise break, and
+//     warapp_submit_turn refuses the order in any format), with a foe, while `active` or in `notice`
+//     before its `endsTurn`. Absent or empty,
 //     no rule here runs and the plan is byte-identical to one made without them.
 //       T1. A covered territory of the partner is never a target: not in the targets, tryCapture,
 //           the commander strikes, the strike stack, the lead strikes, the guard-off breaks or rule
@@ -1081,14 +1083,17 @@
 //           ordinary opponent; the plan's `advice` says `give-notice` when the trust turned `watch`
 //           for the endgame or for outgrowing (not when I already gave notice).
 //       T8. Broken by them (`state: 'broken'`): an ordinary opponent at once; a warning names the
-//           term, the turn and the evidence.
+//           term, the turn and the evidence, and says to record `broken-by-them` with
+//           warapp_record_agreement before submitting (warapp_submit_turn reads only the ledger).
 //       T9. Enforced (a Diplomacy card the decoder is sure of): that player is no foe this turn
 //           (`foe`), so its threat is 0 and no attack on any of its territories is planned.
 //     The plan's `relations` reports each truce: its state, whether it binds, the trust and its
 //     flags, the borders relaxed and kept full (and why), the armies the relaxed holds free (per
 //     border, what its full hold needs beyond the armies there less what the truce hold needs —
 //     only where the full hold would have been funded: not on a border this plan concedes, nor one
-//     whose full hold rule 1a would refuse; at most my income), the armies the cap moved and what
+//     whose full hold rule 1a would refuse; capped at what the plan's orders really leave short of
+//     the full hold, so armies that end there anyway are not freed; at most my income), the armies
+//     the cap moved and what
 //     a break would cost (T6). A plan holding no territory still reports each truce given.
 // Local Deployment (`localDeployments`): a held bonus's value is a pool deployable
 // only on that bonus's territories (a superbonus's on all of its territories, beside
@@ -2468,7 +2473,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const { slotOf, facesEnemy, exits } = scheduleOrders(pc, ps, threats, hd, caps, struck, strikeCard, strikeWho);
 
   // ---- B2: what the truces did (plan/relations.ts) ----
-  const truceReport = reportTruce(pc, ps, ps.truce, (r) => armiesFreed(pc, threats, r, { conceded, valueOf: book.valueOf }));
+  const truceReport = reportTruce(pc, ps, ps.truce, (r) => armiesFreed(pc, ps, threats, r, { conceded, valueOf: book.valueOf }));
   // ---- the plan: offence list, #172's final check, #201 retaliation, #167 exchanges, #179 ETAs (plan/report.ts) ----
   const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
   // #218: the main front's forecast at my whole income, for the game outlook to share.

@@ -133,6 +133,14 @@ describe('B2 T2: a truce hold frees armies', () => {
     expect(why(p)).toMatch(/0 armies freed this turn/);
   });
 
+  it('armies that end on the relaxed border anyway are not counted as freed', () => {
+    // T4 (40) is out of reach: the leftover goes to T1 after all, so the truce frees nothing this turn.
+    const b = { board: board([mine(1, 24), enemy(2, 40, PARTNER), mine(3, 2), neutral(4, 40), neutral(5, 2), enemy(9, 3, OTHER)]) };
+    const p = planTurn(input([truce()], b));
+    expect(deployedTo(p, 1)).toBe(5);
+    expect(p.relations![0]).toMatchObject({ relaxed: [1], armiesFreed: 0 });
+  });
+
   it('the partner massing (trust watch) restores the full hold', () => {
     const p = planTurn(input([truce({ trust: 'watch', watch: ['massing'] })]));
     expect(deployedTo(p, 1)).toBeGreaterThanOrEqual(3);
@@ -291,6 +299,10 @@ describe('B2 T1: no pass targets a covered territory', () => {
     expect(warned(p)).toMatch(
       /Truce with player 20 is broken by them: took a covered territory of mine on turn 7 \(T3 \(#3\)\) — T5 was mine on turn 6 and is player 20's on turn 7\. Player 20 is planned as an ordinary opponent from this turn \(T8\)/,
     );
+    // warapp_submit_turn reads only the ledger: the warning says to record the break before submitting.
+    expect(warned(p)).toMatch(/\(T8\)\. Record it with warapp_record_agreement \(status broken-by-them\) before submitting/);
+    const named = planTurn(base([{ ...broken, agreement: 'a1' }], { goal: 'balanced' }));
+    expect(warned(named)).toMatch(/warapp_record_agreement \(agreement_id a1, status broken-by-them\)/);
   });
 
   it('an enforced truce (T9): no threat from that player and no attack on any of its territories', () => {
@@ -757,6 +769,27 @@ describe('B2: truces only in a free-for-all; none given changes nothing', () => 
     const p = planTurn(input([truce()], { game: teams }));
     expect(p.relations![0]!.state).toBe('ignored');
     expect(warned(p)).toMatch(/this is a team game/);
+  });
+
+  it('in a team game with a third team, a covered territory of the partner is still never a target (T1, D3)', () => {
+    // partyRefusal accepts this agreement (team 2 stands outside both teams), and warapp_submit_turn
+    // refuses an order that breaks it: the plan must not order one. T2 (2) beside my T1 (24) is an
+    // easy capture without the truce.
+    const teams = { players: [{ id: ME, team: 0 }, { id: 11, team: 0 }, { id: PARTNER, team: 1 }, { id: OTHER, team: 2 }], turn: 8 };
+    const b = board([mine(1, 24), enemy(2, 2, PARTNER), mine(3, 2), neutral(4, 4), neutral(5, 2), enemy(9, 3, OTHER)]);
+    const plain = planTurn(input(undefined, { game: teams, board: b }));
+    expect(attacks(plain).map((m) => m.to)).toContain(2);
+    const p = planTurn(input([truce()], { game: teams, board: b }));
+    expect(attacks(p).map((m) => m.to)).not.toContain(2);
+    expect(p.relations![0]).toMatchObject({ state: 'ignored', honoured: false, relaxed: [] });
+    expect(warned(p)).toMatch(/this is a team game.*covered territories of an active or in-notice agreement are still never a target \(T1/);
+    // A notice binds until it runs; once over, or broken by them, T2 is a target again.
+    const notice = planTurn(input([truce({ state: 'notice', endsTurn: 12 })], { game: teams, board: b }));
+    expect(attacks(notice).map((m) => m.to)).not.toContain(2);
+    const over = planTurn(input([truce({ state: 'notice', endsTurn: 8 })], { game: teams, board: b }));
+    expect(attacks(over).map((m) => m.to)).toContain(2);
+    const broken = planTurn(input([truce({ state: 'broken' })], { game: teams, board: b }));
+    expect(attacks(broken).map((m) => m.to)).toContain(2);
   });
 });
 
