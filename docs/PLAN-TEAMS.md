@@ -148,7 +148,8 @@ The play session's saved game settings already show a `PrivateMessaging` boolean
   today plus the new fields.
 - `warapp_plan_turn` already reads the game: ask for chat in the same call and report
   `chat: { unread: { public, team, private } }`, counts only, so the playing agent knows to read chat
-  before it submits.
+  before it submits. *As built (A1):* the plan counts from the GameFeed chat it already reads, which names no
+  channel, so every unread message lands under `unknown`; `warapp_get_chat` gives the per-channel split.
 
 **Send.**
 

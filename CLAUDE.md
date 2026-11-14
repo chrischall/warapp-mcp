@@ -256,8 +256,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (no session, signed out, no `websocket` transport, failed upgrade) — **xhr-polling over the
   bridge** (`src/push/socketio.ts`): the first poll must return the connect packet `1::` before
   any POST (a POST first is HTTP 400). Both answer `2::` heartbeats and send `Subscribe`
-  (method 238, no auth block) to `Game.<id>`. A push is method 241 `GameUpdated` carrying only
-  the game id, so `warapp_wait_for_turn` re-reads GameFeed after one (debounced per game, below). **A reconnect loses the
+  (method 238, no auth block) to `Game.<id>`. A push is method 241 `GameUpdated` carrying the game
+  id and its chat flags (no text), so `warapp_wait_for_turn` re-reads GameFeed after one (debounced per game, below). **A reconnect loses the
   pushes sent during the gap** (war.app has closed a healthy socket after ~60 s): close, error
   or a missed heartbeat reconnects (new handshake, new sid, re-subscribe) and `onReconnect`
   fires, on which `warapp_wait_for_turn` re-reads every watched game — as it does when a failed
