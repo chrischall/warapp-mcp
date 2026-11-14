@@ -884,7 +884,9 @@ const minus = (a: readonly number[], b: readonly number[]) => {
  * covered territories the no-deal plan attacks (what the truce gives up), and T6's `lossIfBroken`.
  * Plus a rough reading of the partner's side from the visible board, marked as an estimate, and its
  * record (D5) when given. Pure and deterministic: the planner is called, never changed, and `input`
- * is not mutated. `opts.without` reuses a no-deal plan already made on the same input.
+ * is not mutated. `opts.without` reuses a no-deal plan already made on the same input, and is
+ * ignored when `input` holds a relation with `player`: a plan on that input already carries the
+ * truce, so it is no no-deal plan (priced against it, every gain would read zero).
  */
 export function priceTruce(
   input: PlanInput,
@@ -895,7 +897,8 @@ export function priceTruce(
   const others = (input.relations ?? []).filter((r) => r.player !== player);
   const { relations: _given, ...rest } = input;
   const base: PlanInput = others.length ? { ...rest, relations: others } : rest;
-  const without = opts.without ?? planTurn(base);
+  const reusable = others.length === (input.relations ?? []).length;
+  const without = (reusable ? opts.without : undefined) ?? planTurn(base);
   const holding = (p: number) => new Set(input.board.territories.filter((t) => ownedBy(t, p)).map((t) => t.territoryId));
   const coveredMine = coveredTerritories(input.graph, terms.scope, holding(input.me));
   const coveredTheirs = coveredTerritories(input.graph, terms.scope, holding(player));

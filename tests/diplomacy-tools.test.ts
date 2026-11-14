@@ -2,7 +2,7 @@
 // the message settings, each neighbour's shared border, a truce priced on suggested (or recorded) terms
 // with a verdict, an offer's three checks, and the facts the agent may cite. The pricing itself is
 // tested in tests/analysis/truce-pricing.test.ts. Every id and name here is made up.
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
@@ -184,6 +184,38 @@ describe('warapp_advise_diplomacy', () => {
     expect(ids(bob.price!.coveredMine)).toEqual([161]);
   });
 
+  it('prices an open agreement against a no-deal plan, so its gains match the same terms unrecorded', async () => {
+    // Ann also holds 9825 (a +12 bonus far away), so her borders with Bob are cheap enough to relax:
+    // the truce frees armies, and the no-deal plan attacks 158.
+    const rich: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 5 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 5 },
+      { id: 157, fogLevel: 2, owner: 0, armies: 2 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 3 },
+      { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+      { id: 9825, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+    ];
+    h = await liveHarness({ feed: [game('2')], warapp: live(rich) });
+    const fresh = payload<Advice>(await advise({ view: 'full' })).neighbours[0]!;
+    expect(fresh.terms).toMatchObject({ noticeTurns: 1, borderCap: 5, untilTurn: 8, source: 'suggested' });
+    expect(fresh.price).toMatchObject({ armiesFreed: 7, attacksForgone: [{ id: 158 }] });
+    // Record exactly the suggested terms: the price must not change. Priced against a plan that
+    // already held the truce, nothing would be forgone and the reasons would change.
+    payload(await record({ with: 'Bob', status: 'agreed', territories: [158, 159, 161], notice_turns: 1, border_cap: 5, until_turn: 8 }));
+    const recorded = payload<Advice>(await advise({ view: 'full' })).neighbours[0]!;
+    expect(recorded.terms?.source).toBe('recorded');
+    const { record: _r, ...freshPrice } = fresh.price as PriceView & { record?: unknown };
+    const { record: _s, ...recordedPrice } = recorded.price as PriceView & { record?: unknown };
+    expect(recordedPrice).toEqual(freshPrice);
+    expect(recorded.reasons).toEqual(fresh.reasons);
+    // An offer on those terms from the partner with the open agreement is priced the same way.
+    const offer = payload<Advice>(
+      await advise({ view: 'full', offer: { with: 'Bob', territories: [158, 159, 161], notice_turns: 1, border_cap: 5, until_turn: 8 } }),
+    ).offer!;
+    const { record: _t, ...offerPrice } = offer.price as PriceView & { record?: unknown };
+    expect(offerPrice).toEqual(freshPrice);
+  });
+
   it("reads the partner's record (D5) into the price, and says when it is off", async () => {
     h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
     payload(await record({ with: 'Bob', status: 'agreed' }));
@@ -205,9 +237,16 @@ describe('warapp_advise_diplomacy', () => {
     expect(bob).not.toHaveProperty('price');
   });
 
-  it('writes nothing: no ledger, no board cache', async () => {
-    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+  it('writes nothing: no ledger, no board cache, no award reading', async () => {
+    h = await liveHarness({ feed: [game('0')], warapp: live(boardAt()) });
+    // A kept pick list on turn 1: warapp_plan_turn would read the award from it and write the reading.
+    const picks = join(h.dataDir, 'picks');
+    mkdirSync(picks, { recursive: true });
+    const kept = join(picks, `${GAME}.json`);
+    writeFileSync(kept, JSON.stringify({ gameId: GAME, playerId: Number(ANN.feed), list: [159, 161, 157] }));
+    const before = readFileSync(kept, 'utf8');
     payload(await advise({ view: 'full' }));
+    expect(readFileSync(kept, 'utf8')).toBe(before);
     expect(existsSync(join(h.dataDir, 'relations'))).toBe(false);
     expect(existsSync(join(h.dataDir, 'boards')) ? readdirSync(join(h.dataDir, 'boards')) : []).toEqual([]);
   });

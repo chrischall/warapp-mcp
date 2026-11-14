@@ -2,7 +2,7 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import { describe, expect, it } from 'vitest';
 import type { Game, GameMap, Player } from '../src/normalize.js';
 import { WarappServerError } from '../src/protocol/rpc.js';
-import { namer } from '../src/tools/common.js';
+import { bonusNamer, namer } from '../src/tools/common.js';
 import {
   accountUnknown,
   mySeat,
@@ -51,6 +51,12 @@ describe('namer', () => {
   it('names a territory by id, falling back to the id', () => {
     const name = namer({ territories: [{ id: 1, name: 'Alpha' }] } as unknown as GameMap);
     expect(name(1)).toEqual({ id: 1, name: 'Alpha' });
+    expect(name(9)).toEqual({ id: 9, name: '9' });
+  });
+
+  it('names a bonus the same way (bonusNamer)', () => {
+    const name = bonusNamer({ bonuses: [{ id: 5, name: 'Beta' }] } as unknown as GameMap);
+    expect(name(5)).toEqual({ id: 5, name: 'Beta' });
     expect(name(9)).toEqual({ id: 9, name: '9' });
   });
 });

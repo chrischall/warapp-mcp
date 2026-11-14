@@ -153,6 +153,15 @@ describe('B3 priceTruce: plan with and without the truce', () => {
     expect(priceTruce(input({ relations: [same] }), PARTNER, scope12).armiesFreed).toBe(3);
   });
 
+  it('ignores a no-deal plan given when the input already holds a relation with the partner (it is no no-deal plan)', () => {
+    const same: PlanRelation = { player: PARTNER, coveredMine: [1], coveredTheirs: [2], state: 'active', trust: 'clear' };
+    const i = input({ relations: [same] });
+    // planTurn(i) carries the recorded truce: priced against it, the truce would gain nothing.
+    const price = priceTruce(i, PARTNER, scope12, { without: planTurn(i) });
+    expect(price).toEqual(priceTruce(i, PARTNER, scope12));
+    expect(price).toMatchObject({ armiesFreed: 3, capturesGained: [4], bonusesGained: [900], incomeGained: 3 });
+  });
+
   it('a truce under watch trust (the endgame) relaxes nothing and frees nothing', () => {
     const price = priceTruce(input(), PARTNER, scope12, { trust: 'watch', watch: ['endgame'] });
     expect(price).toMatchObject({ armiesFreed: 0, relaxed: [], incomeGained: 0, fullHold: [{ territory: 1, why: 'watch' }] });

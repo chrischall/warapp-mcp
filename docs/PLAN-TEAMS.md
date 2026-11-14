@@ -389,7 +389,10 @@ the tool in `src/tools/diplomacy.ts`. The plan is built by `livePlanSetup` (`src
 `warapp_plan_turn` and shared by both tools), so a price is the difference between two plans
 `warapp_plan_turn` would make; the planner is unchanged and the golden corpus untouched. Departures and
 choices: the hypothetical truce replaces any recorded relation with the same player and is priced at trust
-`clear`, or `watch` in the endgame (where it frees nothing). The partner's D5 record enters as
+`clear`, or `watch` in the endgame (where it frees nothing). The no-deal plan never holds that player's truce: the
+tool shares one no-deal plan among partners with no recorded relation, and `priceTruce` plans its own (ignoring a
+given one) for a partner that has one. The tool writes nothing: it skips the award of picks (`livePlanSetup`'s
+`award: false`), which changes only a two-player plan and is written when first read on turn 1. The partner's D5 record enters as
 `reliability` (kept rate ≥ 0.75 `kept`, < 0.5 `broke`): `broke` blocks `propose`, and gives `no` when a break
 this turn would cost me. "Income gained this turn" is next turn's income with less without. Suggested terms:
 the border territories of both sides, one turn's notice, a cap at the largest stack standing on the border

@@ -236,26 +236,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`agreementsBroken`; otherwise it says to record it by hand). That is final: `warapp_uncommit_turn`
   does not undo it, and says so (`agreementsStillBroken`, the agreements broken-by-me on that turn). Not yet: writing `broken-by-them` to the
   ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
-- **Pricing a deal (B3): `warapp_advise_diplomacy`, read-only, free-for-alls only** (refused in a 1v1, a team
-  game or with two left). `priceTruce` (`src/analysis/relations.ts`, pure) plans the turn without and with the
-  hypothetical truce (another recorded truce with that player is replaced; the planner is called, never
-  changed) on the exact input `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared by both
-  tools) and diffs them: armies freed, captures / bonuses / next income gained or lost, conceded borders,
-  the partner's covered territories the no-deal plan attacks (`attacksForgone`) and T6's `lossIfBroken`; plus
-  `partnerReading` (other fronts, neutrals, fog, its border armies: an estimate) and the partner's D5 record
-  (`reliabilityOf`: kept rate ≥ 0.75 kept, < 0.5 broke). In the endgame the truce is priced at trust
-  `watch` (relaxes nothing). `truceVerdict`: `no` unhonoured, nothing gained, commander lost on a break, or a
-  `broke` record with a costly break; `propose` only when the gain is material (income, a border kept, or
-  ≥ 0.2 × income freed), gives up no attack, a break costs no more income than it gains, the partner has
-  room to grow and its record is not `broke`; else `accept-if-offered`. Per neighbour: `sharedBorder` (with
-  `findChokepoints`), `suggestedTerms` (the border territories both sides, 1 turn notice, cap = the largest
-  stack there, `until_turn` = turn + 5), or the recorded terms of an open agreement. An `offer` (structured,
-  never parsed from chat) adds `offerChecks` (all three true → `stressTestFirst`). `diplomacyFacts`: true
-  statements about third players only (never me), each with `recipientSees` under the fog (`seesUnderFog`,
-  wiki-based, unverified). The game's `PrivateMessaging` and the host's description (`Game.description`,
-  read loosely from `description`/`Description` on the game or settings — key UNVERIFIED) are shown, the
-  description through `untrustedText`. Writes nothing (it does not cache the board). Not done: T7's
-  give-notice when B3 prices a recorded truce below zero (the planner is unchanged).
+- **Pricing a deal (B3): `warapp_advise_diplomacy`, read-only, free-for-alls only** (docs/PLAN-TEAMS.md
+  section 8 B3). `priceTruce` (`src/analysis/relations.ts`, pure) diffs two plans on the exact input
+  `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared): without the truce and with it (the
+  planner called, never changed). The hypothetical truce replaces any recorded one with that player, and the
+  no-deal plan never holds it: a shared `without` is reused only for a partner with no relation in the input
+  (`priceTruce` ignores one given otherwise). It writes nothing: no board cache, and `livePlanSetup` is called
+  with `award: false` (the award shapes only a two-player plan; reading it on turn 1 writes it). The host's
+  description key is UNVERIFIED, shown through `untrustedText`.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — the others' acceptance is needed when the game's

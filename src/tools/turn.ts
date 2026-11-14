@@ -1093,7 +1093,9 @@ export interface LivePlanArgs {
 /**
  * Everything warapp_plan_turn reads around the live board before it plans, and the planner input it
  * builds: shared with warapp_advise_diplomacy (B3), so a deal is priced on exactly the plan the turn
- * tool would make. Writes only what warapp_plan_turn's reads write (the award of picks on turn 1).
+ * tool would make. Writes only what warapp_plan_turn's reads write (the award of picks on turn 1),
+ * and not that with `award: false` — the award changes the plan only in a two-player game, so a
+ * free-for-all caller skips it and writes nothing.
  */
 export async function livePlanSetup(
   ctx: LiveContext,
@@ -1106,6 +1108,8 @@ export async function livePlanSetup(
     info: unknown;
     history: BoardHistory;
     args?: LivePlanArgs;
+    /** Read (and on turn 1 write) the award of picks; default true. */
+    award?: boolean;
   },
 ) {
   const { game, map, me, turn, territories, info, history } = a;
@@ -1115,7 +1119,7 @@ export async function livePlanSetup(
     // the award of picks completes (#166): in a two-player game, the opponent's starts my own
     // pick list proves, where they are still fogged.
     const seen = boardStateFromLive(territories, me, game.players);
-    const award = await loadAward(ctx.dataDir, game, me, seen, turn);
+    const award = a.award === false ? undefined : await loadAward(ctx.dataDir, game, me, seen, turn);
     const board = award?.board ?? seen;
     const opening = openingThreat(award, game, graph, seen, turn);
     // #127: who moves first — first_mover, else a turn kept for this game alternated, else the award.

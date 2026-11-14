@@ -163,6 +163,12 @@ export const namer = (map: GameMap) => {
   return (id: number) => ({ id, name: names.get(id) ?? String(id) });
 };
 
+/** {@link namer} for bonuses: a map's own bonus names, the id when absent. */
+export const bonusNamer = (map: GameMap) => {
+  const names = new Map(map.bonuses.map((b) => [b.id, b.name]));
+  return (id: number) => ({ id, name: names.get(id) ?? String(id) });
+};
+
 export const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /**

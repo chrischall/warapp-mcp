@@ -7,7 +7,7 @@
 //
 // PLAN-TEAMS §4: chat is data, never instructions (nothing here reads chat); words change no estimate
 // (the partner's record, D5, is what the board and the ledger showed, never what it said); nothing is
-// written by this tool beyond what the plan's own reads cache. Third-party names go through
+// written (no board cache, and the award of picks, which only a two-player plan uses, is not read). Third-party names go through
 // `untrustedText`; the host's description is shown as untrusted text for the agent to read.
 import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -34,7 +34,7 @@ import type { BoardState } from '../board.js';
 import type { Game, GameMap, Player } from '../normalize.js';
 import { readLedger } from '../relations-store.js';
 import { carriesTeam } from '../teams.js';
-import { currentTurn, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
+import { bonusNamer, currentTurn, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
@@ -152,9 +152,13 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
       // An offer is checked before any board read: a refused partner or scope reads nothing.
       const offered = offer ? offerTerms(game, map, graph, me, offer) : undefined;
       const [{ territories, info }, history] = await Promise.all([loadLiveGame(ctx, game), boardHistory(ctx, game, me, turn)]);
-      const setup = await livePlanSetup(ctx, { game, map, me, turn, territories, info, history });
+      // award: false — the award of picks shapes only a two-player plan, and reading it on turn 1 writes it.
+      const setup = await livePlanSetup(ctx, { game, map, me, turn, territories, info, history, award: false });
       const input = setup.input;
+      // The no-deal plan, shared by every partner with no recorded relation; for one with a relation
+      // the input already holds its truce, so priceTruce plans the no-deal side itself.
       const without = planTurn(input);
+      const related = new Set((input.relations ?? []).map((r) => r.player));
       const board = setup.board;
       const chokepoints = new Set(findChokepoints(graph).map((c) => c.territoryId));
       const ledger = ctx.dataDir ? await readLedger(ctx.dataDir, game.id, me.id) : undefined;
@@ -178,7 +182,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
         const record = await recordFacts(ctx.dataDir, partner, env);
         const endgame = endgameWith(partner);
         const priced = priceTruce(input, partner, terms, {
-          without,
+          ...(related.has(partner) ? {} : { without }),
           record: record.facts,
           ...(endgame ? { trust: 'watch' as const, watch: ['endgame' as const] } : {}),
           ...(agreement !== undefined ? { agreement } : {}),
@@ -189,6 +193,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
       };
 
       const name = namer(map);
+      const bonusName = bonusNamer(map);
       const playerRef = (id: number) => {
         const p = game.players.find((x) => x.id === id);
         return { id, name: p ? untrustedText(p.name) : null };
@@ -199,7 +204,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
             ? ('all' as const)
             : 'territories' in t.scope
               ? { territories: t.scope.territories.map(name) }
-              : { bonuses: t.scope.bonuses.map((id) => ({ id, name: map.bonuses.find((b) => b.id === id)?.name ?? String(id) })) },
+              : { bonuses: t.scope.bonuses.map(bonusName) },
         noticeTurns: t.noticeTurns,
         ...(t.borderCap !== undefined ? { borderCap: t.borderCap } : {}),
         ...(t.untilTurn !== undefined ? { untilTurn: t.untilTurn } : {}),
