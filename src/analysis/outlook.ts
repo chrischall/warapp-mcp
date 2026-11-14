@@ -29,12 +29,14 @@
 // that turn's cap, clamped between its low and its high (`source: 'tracked'`). #214: that needs
 // territory in view NOW and an observed income (a turn pair that measured its deploy); one with
 // nothing in view on this board, or never measured, gets a modest labelled prior instead
-// (`source: 'prior'`): the same sum with each turn's income at most its even share of the map's
+// (`source: 'prior'`): the same sum with each turn's income at least its even share of the map's
 // income (an even share of the territories at the base income, plus the map's bonuses ÷ the
-// seated players; base income alone when no one is seated), LIKELY_INCOME_MARGIN × its visible
-// income at least — and × the income tracked on earlier boards, when one was measured before it
-// went out of view — so less evidence never reads more hopeful than a measure would — never its
-// loose high, which used to stand in for it and then outranked every real estimate. None is
+// seated players; base income alone when no one is seated) and LIKELY_INCOME_MARGIN × its visible
+// income — and × the income tracked on earlier boards, when one was measured before it went out
+// of view — never above that turn's cap; one out of view now also keeps at least the armies and
+// income it held on the latest board it was in view on. So less evidence never reads more hopeful
+// than a measure would — and never its loose high, which used to stand in for it and then
+// outranked every real estimate. None is
 // made while any opponent is unbounded. When an estimate exists but does not show a win, the
 // basis names the opponent that blocks it and why.
 // Each turn gets a state: `winning` when even the low ratio is at least OUTLOOK_RATIO (or every
@@ -93,7 +95,7 @@ export interface OutlookTurn {
     playerId: number;
     high: number;
     ratio: number;
-    /** #214: `tracked` from its observed income, `prior` from its even share of the map's income. */
+    /** #214: `tracked` from its observed income, `prior` from at least its even share of the map's income. */
     source: LikelySource;
     /** #214: with a prior, why — `unseen` (no territory in view now) or `unmeasured` (no observed income). */
     why?: PriorWhy;
@@ -222,6 +224,23 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   // Cards: unbounded unless the card clock bounds what they add.
   const cardsBound = !input.cards ? null : (input.cardArmies ?? undefined);
 
+  // The armies and income a player held on the latest of my boards up to `turn` where it had any
+  // territory in view, and that board's turn (none when it never had).
+  const lastSeen = (playerId: number, turn: number): { turn: number; armies: number; income: number } | undefined => {
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (all[i]! > turn) continue;
+      const held = new Set<number>();
+      let armies = 0;
+      for (const t of byTurn.get(all[i]!)!.board.territories) {
+        if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player' || t.owner.playerId !== playerId || t.armies === null) continue;
+        held.add(t.territoryId);
+        armies += t.armies;
+      }
+      if (held.size) return { turn: all[i]!, armies, income: boardIncome(g, held, rules).total };
+    }
+    return undefined;
+  };
+
   const turns: OutlookTurn[] = run.map((turn) => {
     const board = byTurn.get(turn)!.board;
     // #208: what the tracker reads of each opponent's income off my boards up to this turn.
@@ -284,7 +303,14 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
           : LIKELY_INCOME_MARGIN * tr!.income!;
         let likelyReceived = start;
         for (let t = 1; t <= turn; t++) likelyReceived += Math.min(turnCap(t, playerId), pace);
-        const likely = Math.max(a, likelyReceived + now) + k * Math.max(income, Math.min(cap, pace)) + ahead;
+        // An unseen one keeps at least the armies it was last seen with, plus what the same pace
+        // paid it on each turn since, and the income it then held: losing sight of a stack bigger
+        // than its pace could have paid never reads more hopeful than seeing it.
+        const last = why === 'unseen' ? lastSeen(playerId, turn) : undefined;
+        let since = last?.armies ?? 0;
+        if (last) for (let t = last.turn + 1; t <= turn; t++) since += Math.min(turnCap(t, playerId), pace);
+        const likely =
+          Math.max(a, likelyReceived + now, since) + k * Math.max(income, last?.income ?? 0, Math.min(cap, pace)) + ahead;
         return { playerId, low, high, likely: Math.min(high, Math.max(low, likely)), source, why };
       });
     const maxLow = rows.reduce((m, r) => Math.max(m, r.low), 0);
@@ -398,7 +424,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     // that does not show a win names the opponent that blocks it.
     const l = last.likely;
     const rests = l?.source === 'prior'
-      ? `for player ${l.playerId} a prior (${l.why === 'unmeasured' ? 'no observed income: no pair of my boards measured its deploy' : 'no territory in view now'}): each turn at most an even share of the map's income, ${priorIncome}, ${LIKELY_INCOME_MARGIN}× its visible income (and any income tracked earlier) at least`
+      ? `for player ${l.playerId} a prior (${l.why === 'unmeasured' ? 'no observed income: no pair of my boards measured its deploy' : 'no territory in view now'}): each turn at least an even share of the map's income (${priorIncome}) and ${LIKELY_INCOME_MARGIN}× its visible income (and any income tracked earlier), never above that turn's cap${l.why === 'unmeasured' ? '' : ', and at least the armies and income it held when last in view'}`
       : `each turn at most ${LIKELY_INCOME_MARGIN}× the income the tracker reads off my boards`;
     let est = '';
     if (l && (l.high !== s?.high || l.source === 'prior'))

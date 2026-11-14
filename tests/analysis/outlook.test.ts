@@ -336,7 +336,7 @@ describe('gameOutlook (#178)', () => {
         // Said plainly: which opponent blocks an estimated win, and why.
         expect(o.basis).toMatch(/player 40 blocks a win on the estimate/i);
         expect(o.basis).toMatch(/no territory in view now/i);
-        expect(o.basis).toMatch(/even share of the map's income/i);
+        expect(o.basis).toMatch(/at least an even share of the map.s income/i);
       });
 
       it('one seen on an earlier board but not now also rests on the prior', () => {
@@ -396,6 +396,26 @@ describe('gameOutlook (#178)', () => {
           expect(fogged.state).not.toBe('winning');
           expect(fogged.estimated).toBeUndefined();
         }
+      });
+
+      it('an opponent whose stack drops out of view keeps at least what it was last seen with: no estimated win from losing sight', () => {
+        // The foe holds a 1500 stack on 54 on turns 5–9, more than its tracked pace could have paid;
+        // my stack on 52 is 2500. In view on turn 10 that is no win; fogged on turn 10 it must not
+        // become one either.
+        const at = () => board(shape(1500).territories.map((t) => (t.territoryId === 52 ? mine(52, 2500) : t)));
+        const seen = [0, 1, 2, 3, 4, 5].map(at);
+        const gone = [...seen.slice(0, 5), hide([54])(seen[5]!)];
+        const inView = gameOutlook({ graph: big, me: ME, boards: turns(5, seen), game: ffa4 }).turns.at(-1)!;
+        const fogged = gameOutlook({ graph: big, me: ME, boards: turns(5, gone), game: ffa4 }).turns.at(-1)!;
+        expect(inView.mine).toBe(2863);
+        expect(inView.likely).toMatchObject({ playerId: FOE, source: 'tracked' });
+        expect(inView.state).not.toBe('winning');
+        expect(fogged.likely).toMatchObject({ playerId: FOE, source: 'prior', why: 'unseen' });
+        expect(fogged.likely!.high).toBeGreaterThanOrEqual(1500);
+        expect(fogged.likely!.high).toBeGreaterThanOrEqual(inView.likely!.high);
+        expect(fogged.likely!.high).toBeLessThanOrEqual(fogged.strongest!.high!);
+        expect(fogged.state).not.toBe('winning');
+        expect(fogged.estimated).toBeUndefined();
       });
 
       it('tracked opponents are labelled tracked', () => {
