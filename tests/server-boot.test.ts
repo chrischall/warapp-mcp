@@ -97,6 +97,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_get_my_picks',
       'warapp_healthcheck',
       'warapp_join_game',
+      'warapp_leave_game',
       'warapp_link_session',
       'warapp_list_open_games',
       'warapp_locate_opponents',

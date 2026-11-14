@@ -33,8 +33,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GameFeed answers as the player whose token is presented (fog of war included). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Eight tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
-  `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn` and `warapp_link_session` (local only:
+- **Nine tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
+  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn` and `warapp_link_session` (local only:
   it stores a session cookie on this machine and is not registered hosted), registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
@@ -154,6 +154,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   golden-pinned, NOT yet verified live. It refuses outside a turn phase and when `hasCommittedOrders`
   is false, and reads the outcome from GameFeed (`uncommitted` / `unconfirmed`); a transport failure
   is `unknown`, never retried. `warapp_submit_turn`'s "already committed" refusal points to it.
+- **Leaving a lobby is `DeclineGame` (64) via `warapp_leave_game`, confirm-gated** (#217): the lobby's
+  Decline button, also how a seated player leaves a game still `WaitingForPlayers`. Its parameters
+  (the int32 game id, then a "mod hooks the decline" bool sent false) are read from the bundle's writer
+  and golden-pinned, NOT yet verified live. It refuses a started game (surrender instead), a seat the
+  account does not hold, and mod games; reports `left` only once GameFeed (else a `GetMyGames` entry)
+  shows the seat given up — never from the reply, whose bool means "your chat was removed"; a transport
+  failure is `unknown`, never retried. 17 and 7 are read back (the client swallows them); 191 (your own
+  open game), 88 and 4 are refusals.
+- **A lottery is read from the data, never the name** (#217, `lotteryOf` in `src/open-games.ts`): a
+  map of at most `LOTTERY_MAX_TERRITORIES` (4) territories is one; base income 0 with overridden
+  bonuses and the map size unread is a likely one (`lottery: null`, unchecked in the policy, not a
+  break). The open-games record carries no map size, so `markLotteries` asks GameFeed (map included)
+  only for lobbies with that settings shape, at most `LOTTERY_LOOKUPS` (5) per call, else uses a
+  cached map. A lottery breaks the joining policy.
 - **Open games come from the `/MultiPlayer/OpenGames` page payload (`AllOpenGamesData`), not a `/Services` call; joining is `AcceptOpenSeat` (61) via `warapp_join_game`, confirm-gated** and reported `joined` only once GameFeed or `GetMyGames` shows the account seated (`docs/WEB-PROTOCOL.md` "Open games").
 - **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (card plays, then deploys, then moves;
   encoders in `src/protocol/methods.ts` are golden-pinned to a live commit), turn number =

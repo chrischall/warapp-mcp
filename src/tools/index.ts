@@ -26,6 +26,7 @@ import { registerStrategyTool } from './strategy.js';
 import { registerSurrenderTool } from './surrender.js';
 import { registerTurnTools } from './turn.js';
 import { registerUncommitTool } from './uncommit.js';
+import { registerLeaveGameTool } from './leave-game.js';
 import { registerWhereTool } from './where.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { pushWebSocketLeg } from '../push/websocket.js';
@@ -104,6 +105,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerMyGamesTool(server, live);
   registerOpenGamesTool(server, live);
   registerJoinGameTool(server, live);
+  registerLeaveGameTool(server, live);
   registerSurrenderTool(server, live);
   registerBeginTurnTool(server, live);
   registerScoutTool(server, live);

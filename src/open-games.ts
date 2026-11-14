@@ -95,6 +95,10 @@ const DEFAULT_DEFENSIVE = 0.7;
 const DEFAULT_ROUNDING = 1;
 /** MoveOrderEnum's NoLuckCycle: the first turn is a speed race (docs/WEB-PROTOCOL.md "Begin first turn"). */
 const MOVE_ORDER_NO_LUCK_CYCLE = 2;
+/** The rule naming a non-default base income (`Minimum armies per turn is <n>`). */
+const RULE_MIN_ARMIES = 'Minimum armies per turn is';
+/** The rule naming overridden bonus values. */
+const RULE_OVERRIDDEN_BONUSES = 'Overridden bonuses';
 /** TimeSpans at or beyond this many ms are war.app's "never". */
 const NEVER_MS = 922_336_666_814_565;
 
@@ -120,6 +124,14 @@ export interface OpenGame {
   teamGame: boolean;
   /** The signed-in account already holds a seat (set by the list tool; absent otherwise). */
   joined?: boolean;
+  /**
+   * A lottery — pure luck, nothing to plan (#217): `true` from a tiny map, `null` when the settings
+   * fit the shape (base income 0, overridden bonuses) but the map size could not be read; absent
+   * otherwise. Set by the tools ({@link lotteryOf}), never from the name.
+   */
+  lottery?: true | null;
+  /** What {@link lottery} was decided from. */
+  lotteryBasis?: string;
   /** Random teams of this size. */
   randomTeamsOf?: number;
   /** The team of each open seat (team games only). */
@@ -257,13 +269,13 @@ function readSettings(v: unknown): SettingsRead | undefined {
   }
   if (f[GS.ranked] === false) rules.push('Practice game');
   const minArmies = f[GS.minArmies];
-  if (isInt(minArmies) && minArmies !== DEFAULT_MIN_ARMIES) rules.push(`Minimum armies per turn is ${minArmies}`);
+  if (isInt(minArmies) && minArmies !== DEFAULT_MIN_ARMIES) rules.push(`${RULE_MIN_ARMIES} ${minArmies}`);
   const per = f[GS.bonusArmiesPer];
   if (isInt(per) && per > 0) {
     // Modelled since #38 (docs/WARAPP-API.md "Income"): a rule, not a gap.
     rules.push(`Extra army for every ${per} ${per === 1 ? 'territory' : 'territories'}`);
   }
-  if (bool('overriddenBonuses')) rules.push('Overridden bonuses');
+  if (bool('overriddenBonuses')) rules.push(RULE_OVERRIDDEN_BONUSES);
   if (bool('attackOnly') || bool('transferOnly')) {
     rules.push(
       bool('attackOnly') && bool('transferOnly')
@@ -385,9 +397,14 @@ export function markJoined(games: readonly OpenGame[], lobbies: ReadonlyMap<numb
   return games.map((g) => (lobbies.get(g.id)?.seatedPlayerIds.includes(me) ? orderKeys({ ...g, joined: true }) : g));
 }
 
+/** `game` with a lottery verdict ({@link lotteryOf}) set, in the record's key order. */
+export function withLottery(game: OpenGame, verdict: { lottery: true | null; lotteryBasis: string }): OpenGame {
+  return orderKeys({ ...game, ...verdict });
+}
+
 const KEY_ORDER: Array<keyof OpenGame> = [
   'id', 'name', 'url', 'pace', 'bootTime', 'bootTimeMinutes', 'players', 'openSeats', 'seats', 'maxPlayers',
-  'teamGame', 'joined', 'randomTeamsOf', 'openSeatTeams', 'mapId', 'entryFeeCoins', 'prizeCoins', 'cards', 'rules', 'plannerGaps',
+  'teamGame', 'joined', 'lottery', 'lotteryBasis', 'randomTeamsOf', 'openSeatTeams', 'mapId', 'entryFeeCoins', 'prizeCoins', 'cards', 'rules', 'plannerGaps',
 ];
 function orderKeys(g: OpenGame): OpenGame {
   const out: Record<string, unknown> = {};
@@ -557,7 +574,8 @@ interface JoinPolicy {
  * The owner's joining policy (#134), checked against an open game and, when GameFeed could read
  * the lobby, its neutral-cost screen: no Commerce, mods or custom scenarios; the cheapest neutral
  * costs at most one turn of base income; at most four seats; a boot time of at least a day (no
- * boot time — war.app's "never" — keeps it). Lobbies are not counted against the game cap. Pure.
+ * boot time — war.app's "never" — keeps it); no lotteries (#217: `game.lottery`; a likely one whose
+ * map size went unread is unchecked, not a break). Lobbies are not counted against the game cap. Pure.
  */
 export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null): JoinPolicy {
   const breaks: string[] = [];
@@ -576,6 +594,40 @@ export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null): JoinP
   if (game.bootTimeMinutes !== undefined && game.bootTimeMinutes < POLICY_MIN_BOOT_MINUTES) {
     breaks.push(`Boot time ${game.bootTime} — the policy wants at least a day`);
   }
+  if (game.lottery === true) breaks.push(`Lottery (${game.lotteryBasis ?? 'a tiny map'}) — pure luck; the policy joins no lotteries`);
   if (breaks.length) return { passes: false, breaks };
-  return screen ? { passes: true, breaks } : { passes: null, breaks, unchecked: ["the cheapest neutral's cost"] };
+  const unchecked: string[] = [];
+  if (!screen) unchecked.push("the cheapest neutral's cost");
+  if (game.lottery === null) unchecked.push(`whether it is a lottery (${game.lotteryBasis ?? 'map size not read'})`);
+  return unchecked.length ? { passes: null, breaks, unchecked } : { passes: true, breaks };
+}
+
+/**
+ * A map of at most this many territories makes a lottery (#217): every player starts on (or next
+ * to) everything there is, so the game is decided by the luck of the distribution and the move
+ * order — nothing the planner can learn from. The live case: 2 territories, base income 0, one
+ * overridden +1 bonus.
+ */
+export const LOTTERY_MAX_TERRITORIES = 4;
+
+/** Whether a lobby's settings fit the lottery shape read so far: base income 0 and overridden bonuses. */
+export function lotteryShape(game: OpenGame): boolean {
+  return game.rules.includes(`${RULE_MIN_ARMIES} 0`) && game.rules.includes(RULE_OVERRIDDEN_BONUSES);
+}
+
+/**
+ * Whether an open game is a lottery (#217), from its data, never its name: a map of at most
+ * {@link LOTTERY_MAX_TERRITORIES} territories (`territories`, when the map could be read) is one;
+ * without the map size, settings with base income 0 and overridden bonuses make it a likely one
+ * (`null`). `undefined` when it is not one. Pure.
+ */
+export function lotteryOf(game: OpenGame, territories?: number): { lottery: true | null; lotteryBasis: string } | undefined {
+  const shape: string[] = [];
+  if (game.rules.includes(`${RULE_MIN_ARMIES} 0`)) shape.push('base income 0');
+  if (game.rules.includes(RULE_OVERRIDDEN_BONUSES)) shape.push('overridden bonuses');
+  if (territories !== undefined) {
+    if (territories > LOTTERY_MAX_TERRITORIES) return undefined;
+    return { lottery: true, lotteryBasis: [`${territories}-territory map`, ...shape].join(', ') };
+  }
+  return lotteryShape(game) ? { lottery: null, lotteryBasis: `${shape.join(', ')}; map size not read` } : undefined;
 }

@@ -23,7 +23,7 @@ import { noBrowserNote } from './session.js';
 import { mintMeta } from './hints.js';
 import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
-import { openGamesPage } from './open-games.js';
+import { markLotteries, openGamesPage } from './open-games.js';
 import { holdsSeat, playerStateName } from '../player-states.js';
 import { NO_TEAM } from '../teams.js';
 import { accountUnknown, defineGatedWrite, refuse, sendAndVerify } from './write-kit.js';
@@ -202,7 +202,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
         'pass); the preview shows which, plus a screen from the lobby\'s GameFeed settings (does the cheapest ' +
         'neutral cost at most one turn of base income; Light Fog) and `policy`: whether the lobby keeps the ' +
         'joining policy (no Commerce, mods or custom scenarios; that cheap neutral; at most four seats; a boot time ' +
-        'of at least a day) — advisory, the join is not refused for it. You become a player and are expected ' +
+        'of at least a day; no lottery — `lottery`, read from the data as warapp_list_open_games does) — advisory, the join is not refused for it. You become a player and are expected ' +
         'to take turns — leaving later means declining or being booted.' +
         `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
@@ -243,12 +243,14 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
         const parsed = parseOpenGamesPage(html, bundle);
         const lobby = parsed.lobbies.get(gameId);
         refuseJoined(lobby, gameId, myId);
-        const game = joinable(parsed.games, gameId, allow_team ?? false, accept_entry_fee ?? false);
+        const listed = joinable(parsed.games, gameId, allow_team ?? false, accept_entry_fee ?? false);
         const { color, source } = joinColor(requested, html, bundle, lobby, gameId);
         // A no-team game's open seats all carry the no-team value (any other
         // makes it a team game), so NO_TEAM is what its record holds.
-        const team = game.teamGame ? (game.openSeatTeams?.[0] ?? NO_TEAM) : NO_TEAM;
+        const team = listed.teamGame ? (listed.openSeatTeams?.[0] ?? NO_TEAM) : NO_TEAM;
+        // #217: the lobby's screen, then whether it is a lottery (its map read only for that settings shape).
         const screened = await lobbyScreen(ctx, gameId);
+        const [game] = (await markLotteries(ctx, [listed])) as [OpenGame];
         return {
           gate: {
             action: 'warapp.join_game',
@@ -271,6 +273,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
                 entryFeeCoins: game.entryFeeCoins,
                 prizeCoins: game.prizeCoins,
                 rules: game.rules,
+                ...(game.lottery !== undefined ? { lottery: game.lottery, lotteryBasis: game.lotteryBasis } : {}),
                 plannerGaps: [...game.plannerGaps, ...screened.gaps],
               },
               // #132: worth joining only when the cheapest neutral costs at most a turn of base income.

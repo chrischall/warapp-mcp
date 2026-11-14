@@ -12,6 +12,7 @@ import { harnessFor, type Harness } from './helpers.js';
 const WRITES = [
   'warapp_begin_turn',
   'warapp_join_game',
+  'warapp_leave_game',
   'warapp_send_chat',
   'warapp_submit_picks',
   'warapp_submit_turn',
@@ -53,6 +54,7 @@ describe('tool annotations', () => {
       'warapp_get_my_picks',
       'warapp_healthcheck',
       'warapp_join_game',
+      'warapp_leave_game',
       'warapp_link_session',
       'warapp_list_open_games',
       'warapp_locate_opponents',
@@ -89,6 +91,7 @@ describe('tool annotations', () => {
     expect(ann.warapp_send_chat?.idempotentHint).toBe(false);
     expect(ann.warapp_submit_turn?.idempotentHint).toBe(false);
     expect(ann.warapp_join_game?.idempotentHint).toBe(false);
+    expect(ann.warapp_leave_game?.idempotentHint).toBe(false);
     expect(ann.warapp_surrender?.idempotentHint).toBe(false);
     expect(ann.warapp_begin_turn?.idempotentHint).toBe(false);
     expect(ann.warapp_uncommit_turn?.idempotentHint).toBe(false);

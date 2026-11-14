@@ -96,7 +96,7 @@ string email                  the signed-in account's email
 | 61 | **AcceptOpenSeat** | take an open seat — see [Open games](#open-games) |
 | 62 | AcceptOpenAutoGame | not used |
 | 63 | GetOpenAutoGame | not used |
-| 64 | DeclineGame | not used |
+| 64 | **DeclineGame** | params: int32 gameId, bool modHook — read from the bundle, not verified live; see [DeclineGame](#declinegame-leaving-a-lobby) |
 | 67 | **Surrender** | params: int32 gameId, bool surrender, bool false — see [Surrender](#surrender) |
 | 68 | AcceptSurrender | accept another player's pending surrender (not used) |
 | 73 | GetMapDetails | no auth; params: int32 mapId |
@@ -578,6 +578,33 @@ that modifying orders close to the boot timer risks a boot, since the game waits
 Error codes, with the client's meaning: **99** the other players committed first and the turn is
 advancing; **4** the game is over; **7** and **230** you are no longer active in the game. The
 encoder is pinned by a golden test built from synthetic ids.
+
+## DeclineGame (leaving a lobby)
+
+**UNVERIFIED live: read from the client bundle's writer.** The lobby's Decline button (`LobbyVM`)
+sends `DeclineGame` (64), `POST /Services?m=DeclineGame&js=1` through `WarappRpc`. It is enabled for
+a seat that is `Invited` or `Playing` in a game still `WaitingForPlayers` (not for ladder or
+tournament games), so it is both "decline an invitation" and "leave a game I joined". After the
+auth block the writer sends:
+
+1. `int32` game id.
+2. `bool` — set when one of the game's mods hooks this method (the same per-method flag as
+   `AcceptOpenSeat`'s last bool); sent `false`, and mod games are refused.
+
+The reply is **one bool** (no present flag): when true the client says "Since you left the game, all
+chat messages that you sent to this game were removed." It is not a success signal.
+`warapp_leave_game` refuses a game that is not `WaitingForPlayers` (a started game is surrendered),
+a seat the account does not hold (absent, invited or declined) and a game whose GameFeed settings
+name mods; after sending it reports `left` only once GameFeed shows the account without a seat
+(declined, or no longer listed) — else, when GameFeed cannot be read, once `GetMyGames` lists the
+game with the account's seat given up (a game missing from that paged list proves nothing) — and
+`unconfirmed` otherwise. A transport failure is `unknown` and is never retried. In a team game the
+client first warns that declining leaves the teammates a player short; the preview says so.
+Error codes, with the client's handling: **191** `CannotDeclineYourOwnOpenGame` (delete it
+instead); **88** the game was deleted; **17** `NotInGame`, **4** and **7** `InvalidPlayerState` are
+swallowed by the client. The tool reads back after 17 and 7 (the seat may already be gone) and words
+4 as "the game has already begun". The encoder is pinned by a golden test built from synthetic ids;
+the owner verifies it live.
 
 ## Push channel (socket.io)
 

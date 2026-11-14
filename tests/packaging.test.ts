@@ -159,6 +159,7 @@ describe('packaging for the browser bridge (phase 2)', () => {
     'warapp_submit_turn',
     'warapp_send_chat',
     'warapp_join_game',
+    'warapp_leave_game',
     'warapp_surrender',
     'warapp_begin_turn',
     'warapp_uncommit_turn',
@@ -532,6 +533,29 @@ describe('packaging for uncommit (#61)', () => {
   });
 });
 
+describe('packaging for leaving a lobby (#217)', () => {
+  const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const protocol = doc('../docs/WEB-PROTOCOL.md');
+
+  it('WEB-PROTOCOL.md documents DeclineGame (64) as read from the bundle, UNVERIFIED live', () => {
+    const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
+    expect(methods).toMatch(/\| 64 \| \*\*DeclineGame\*\*/);
+    const start = protocol.indexOf('## DeclineGame');
+    expect(start).toBeGreaterThan(-1);
+    const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
+    expect(section).toContain('m=DeclineGame&js=1');
+    expect(section).toMatch(/UNVERIFIED live/);
+    expect(section).toMatch(/int32[^\n]*game id/);
+    expect(section).toContain('WaitingForPlayers');
+    for (const code of ['**191**', '**88**', '**17**', '**4**', '**7**']) expect(section, code).toContain(code);
+  });
+
+  it('CLAUDE.md and the skill say how a leave is confirmed', () => {
+    expect(doc('../CLAUDE.md')).toMatch(/DeclineGame` \(64\) via `warapp_leave_game`/);
+    expect(doc('../skills/warapp-mcp/SKILL.md')).toMatch(/`warapp_leave_game` with `game_id`/);
+  });
+});
+
 describe('packaging for map statistics (S6)', () => {
   const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
 
@@ -573,6 +597,7 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
   const plain: Record<string, RegExp> = {
     warapp_begin_turn: /\bbegin/i,
     warapp_join_game: /\bjoin/i,
+    warapp_leave_game: /\bleav/i,
     warapp_link_session: /\blink/i,
     warapp_send_chat: /\bchat/i,
     warapp_submit_picks: /\bpicks\b/i,

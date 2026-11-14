@@ -169,6 +169,32 @@ describe('warapp_join_game', () => {
     expect(p.confirmToken).toEqual(expect.any(String));
   });
 
+  it('marks a lottery from the data and breaks the policy with it (#217)', async () => {
+    const lobby = feedGame(3008, false);
+    const tiny = {
+      ...lobby,
+      settings: { ...(lobby.settings as object), Map: '778' },
+      map: {
+        id: '778',
+        name: 'Tiny',
+        territories: [
+          { id: '1', name: 'A', connectedTo: [2] },
+          { id: '2', name: 'B', connectedTo: [1] },
+        ],
+        bonuses: [{ id: '1', name: 'All', value: '1', territoryIDs: [1, 2] }],
+        distributionModes: [],
+      },
+    };
+    const lottery: SyntheticGame = { ...OPEN.plain!, id: 3008, mapId: 778, settings: { minArmies: 0, overriddenBonuses: true } };
+    h = await harness({ warapp: joinServer().warapp, feed: [tiny], games: [lottery] });
+    const p = payload<{ preview: { game: Record<string, unknown>; policy: { passes: boolean; breaks: string[] } } }>(
+      await h.call('warapp_join_game', { game_id: 3008 }),
+    );
+    expect(p.preview.game).toMatchObject({ lottery: true, lotteryBasis: '2-territory map, base income 0, overridden bonuses' });
+    expect(p.preview.policy.passes).toBe(false);
+    expect(p.preview.policy.breaks.join(' ')).toMatch(/Lottery/);
+  });
+
   it('a policy without a neutral screen is unchecked, not passed (#134)', async () => {
     h = await harness({ warapp: joinServer().warapp, feed: [{ termsOfUse: 'x', error: 'Auth failed' }] });
     const p = payload<{ preview: { policy: Record<string, unknown> } }>(await h.call('warapp_join_game', { game_id: 3001 }));

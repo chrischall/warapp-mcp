@@ -4,7 +4,7 @@
   "name": "warapp-mcp",
   "display_name": "war.app (Warzone)",
   "version": "0.0.0",
-  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining or surrendering a game, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends and linking a session (local only) are confirm-gated.",
+  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends and linking a session (local only) are confirm-gated.",
   "author": {
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com",
@@ -96,6 +96,10 @@
     {
       "name": "warapp_join_game",
       "description": "Join an open war.app game from the open games list (confirm-gated)"
+    },
+    {
+      "name": "warapp_leave_game",
+      "description": "Leave a game that has not started, giving up your seat (confirm-gated), confirmed from game state"
     },
     {
       "name": "warapp_surrender",

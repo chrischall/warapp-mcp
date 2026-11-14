@@ -24,8 +24,8 @@ summary: >-
   GameFeed API, plus the games waiting on you, opponent scouting (their record and
   your head-to-head), the live board, territory picks, turn planning and game chat
   through your signed-in war.app tab, with card plays and a wait for your turn on
-  war.app's push notifications. Joining or surrendering a game, Begin on a speed
-  first turn, picks, turn orders, withdrawing them and chat messages are sent only
+  war.app's push notifications. Joining, leaving or surrendering a game, Begin on a
+  speed first turn, picks, turn orders, withdrawing them and chat messages are sent only
   after you confirm.
 examples:
   - prompt: Which of my war.app games are waiting on me?
