@@ -78,7 +78,7 @@ export function registerOpenGamesTool(server: McpServer, ctx: LiveContext): void
           'wording) and plannerGaps — rules the turn planner does not model yet. joined: true marks a game you ' +
           'already hold a seat in (when the signed-in account can be told). By default only free, multi-day, ' +
           'no-team games. policyBreaks lists the joining-policy rules a game breaks (Commerce, mods, custom ' +
-          'scenarios, more than four seats, a boot time under a day, a lottery); the neutral cost is checked by ' +
+          'scenarios, more than four seats, a boot time under 12 hours, a lottery (a likely one too)); the neutral cost is checked by ' +
           'warapp_join_game\'s preview. lottery: true marks a lottery from the data, never the name — a map of at ' +
           'most four territories (its size read from GameFeed for lobbies with base income 0 and overridden ' +
           'bonuses, or from a map already cached); lottery: null is that settings shape with the map size unread; ' +

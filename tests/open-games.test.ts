@@ -586,7 +586,7 @@ describe('warapp_list_open_games', () => {
       expect(listed[0]!.lottery).toBeUndefined();
     });
 
-    it('a map GameFeed cannot read leaves a likely lottery (null), not a break', async () => {
+    it('a map GameFeed cannot read leaves a likely lottery (null), and that breaks the policy too', async () => {
       const games: SyntheticGame[] = [{ ...GAMES[0]!, id: 2020, mapId: 777, settings: LOTTERY_SETTINGS }];
       h = await liveHarness({
         pages: { [OPEN_GAMES_URL]: page(payloadHex(games)) },
@@ -594,7 +594,7 @@ describe('warapp_list_open_games', () => {
       });
       const listed = payload(await h.call('warapp_list_open_games')).games as Array<OpenGame & { policyBreaks?: string[] }>;
       expect(listed[0]).toMatchObject({ lottery: null, lotteryBasis: 'base income 0, overridden bonuses; map size not read' });
-      expect(listed[0]!.policyBreaks).toBeUndefined();
+      expect(listed[0]!.policyBreaks).toContain('Likely a lottery (base income 0, overridden bonuses; map size not read) — the policy joins no lotteries');
     });
 
     it('looks up at most a few lobbies per call', async () => {
@@ -686,10 +686,14 @@ describe('joiningPolicy: the owner\'s joining policy, advisory (#134)', () => {
     ]);
   });
 
-  it('a boot time under a day breaks it; no boot time ("never") does not', () => {
-    expect(joiningPolicy(plain({ bootTime: '12h', bootTimeMinutes: 720 }), cheap).breaks).toEqual([
-      'Boot time 12h — the policy wants at least a day',
+  it('a boot time under 12 hours breaks it (12h is fine, per the owner); no boot time ("never") does not', () => {
+    expect(joiningPolicy(plain({ bootTime: '5m', bootTimeMinutes: 5 }), cheap).breaks).toEqual([
+      'Boot time 5m — the policy wants at least 12 hours',
     ]);
+    expect(joiningPolicy(plain({ bootTime: '11h', bootTimeMinutes: 660 }), cheap).breaks).toEqual([
+      'Boot time 11h — the policy wants at least 12 hours',
+    ]);
+    expect(joiningPolicy(plain({ bootTime: '12h', bootTimeMinutes: 720 }), cheap).breaks).toEqual([]);
     expect(joiningPolicy(plain({ bootTime: '1d', bootTimeMinutes: 1440 }), cheap).breaks).toEqual([]);
     const never = plain();
     delete never.bootTime;
@@ -713,7 +717,7 @@ describe('joiningPolicy: the owner\'s joining policy, advisory (#134)', () => {
     expect(joiningPolicy(plain({ seats: 6 }), null).passes).toBe(false);
   });
 
-  it('a lottery breaks it (#217); a likely one whose map size went unread is unchecked, not a break', () => {
+  it('a lottery breaks it (#217), and so does a likely one whose map size went unread', () => {
     const lottery = plain({ lottery: true, lotteryBasis: '2-territory map, base income 0, overridden bonuses' });
     expect(joiningPolicy(lottery, cheap)).toEqual({
       passes: false,
@@ -721,9 +725,8 @@ describe('joiningPolicy: the owner\'s joining policy, advisory (#134)', () => {
     });
     const likely = plain({ lottery: null, lotteryBasis: 'base income 0, overridden bonuses; map size not read' });
     expect(joiningPolicy(likely, cheap)).toEqual({
-      passes: null,
-      breaks: [],
-      unchecked: ['whether it is a lottery (base income 0, overridden bonuses; map size not read)'],
+      passes: false,
+      breaks: ['Likely a lottery (base income 0, overridden bonuses; map size not read) — the policy joins no lotteries'],
     });
   });
 });

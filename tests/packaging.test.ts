@@ -537,14 +537,15 @@ describe('packaging for leaving a lobby (#217)', () => {
   const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
   const protocol = doc('../docs/WEB-PROTOCOL.md');
 
-  it('WEB-PROTOCOL.md documents DeclineGame (64) as read from the bundle, UNVERIFIED live', () => {
+  it('WEB-PROTOCOL.md documents DeclineGame (64) as read from the bundle and verified live (open-seat lobby)', () => {
     const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
     expect(methods).toMatch(/\| 64 \| \*\*DeclineGame\*\*/);
     const start = protocol.indexOf('## DeclineGame');
     expect(start).toBeGreaterThan(-1);
     const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
     expect(section).toContain('m=DeclineGame&js=1');
-    expect(section).toMatch(/UNVERIFIED live/);
+    expect(section).toMatch(/Verified live 2026-11-14/);
+    expect(section).toMatch(/invitation/);
     expect(section).toMatch(/int32[^\n]*game id/);
     expect(section).toContain('WaitingForPlayers');
     for (const code of ['**191**', '**88**', '**17**', '**4**', '**7**']) expect(section, code).toContain(code);

@@ -557,8 +557,8 @@ export function feedScreen(s: GameSettings): { screen?: JoinScreen; gaps: string
 
 /** The owner's joining policy (#134): at most this many seats (1v1 preferred). */
 const POLICY_MAX_SEATS = 4;
-/** …and a boot time of at least a day. */
-const POLICY_MIN_BOOT_MINUTES = 24 * 60;
+/** …and a boot time of at least 12 hours (owner, 2026-11-14: a 12-hour boot is fine; near-real-time means a boot in minutes). */
+const POLICY_MIN_BOOT_MINUTES = 12 * 60;
 
 /** Whether a lobby keeps the joining policy. Advisory: nothing is refused for it. */
 interface JoinPolicy {
@@ -573,9 +573,9 @@ interface JoinPolicy {
 /**
  * The owner's joining policy (#134), checked against an open game and, when GameFeed could read
  * the lobby, its neutral-cost screen: no Commerce, mods or custom scenarios; the cheapest neutral
- * costs at most one turn of base income; at most four seats; a boot time of at least a day (no
+ * costs at most one turn of base income; at most four seats; a boot time of at least 12 hours (no
  * boot time — war.app's "never" — keeps it); no lotteries (#217: `game.lottery`; a likely one whose
- * map size went unread is unchecked, not a break). Lobbies are not counted against the game cap. Pure.
+ * map size went unread breaks it too). Lobbies are not counted against the game cap. Pure.
  */
 export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null): JoinPolicy {
   const breaks: string[] = [];
@@ -592,13 +592,15 @@ export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null): JoinP
   const seats = game.maxPlayers ?? game.seats;
   if (seats > POLICY_MAX_SEATS) breaks.push(`${seats} seats — the policy is 1v1 or at most four players`);
   if (game.bootTimeMinutes !== undefined && game.bootTimeMinutes < POLICY_MIN_BOOT_MINUTES) {
-    breaks.push(`Boot time ${game.bootTime} — the policy wants at least a day`);
+    breaks.push(`Boot time ${game.bootTime} — the policy wants at least 12 hours`);
   }
   if (game.lottery === true) breaks.push(`Lottery (${game.lotteryBasis ?? 'a tiny map'}) — pure luck; the policy joins no lotteries`);
+  // A likely lottery (the lottery shape, map size unread) breaks the policy too: a caller filtering on
+  // breaks must not let one through (#217 live check).
+  if (game.lottery === null) breaks.push(`Likely a lottery (${game.lotteryBasis ?? 'map size not read'}) — the policy joins no lotteries`);
   if (breaks.length) return { passes: false, breaks };
   const unchecked: string[] = [];
   if (!screen) unchecked.push("the cheapest neutral's cost");
-  if (game.lottery === null) unchecked.push(`whether it is a lottery (${game.lotteryBasis ?? 'map size not read'})`);
   return unchecked.length ? { passes: null, breaks, unchecked } : { passes: true, breaks };
 }
 
