@@ -86,6 +86,17 @@
 //          no room, or holds and captures took the whole income: the stack is chosen the same way
 //          with no leftover, and a rationale line says none reached it): a strike stack, once
 //          built, is spent.
+//          #201: with no border able to strike this turn (not under No-Split), the multi-turn border
+//          forecast (`forecastBorder`) chooses: the border whose stack, with the leftover and then the
+//          income every turn, breaks the opponent's biggest stack beside it soonest (its owner
+//          deploying there every turn), when that is not the border holding the most armies and
+//          breaks sooner than it ("Strike stack on … (#201): no border can strike this turn; …").
+//       3d. Decided (#201): given `options.outlook` (#178) reporting winning or losing, the game is
+//          decided, and every payback test (PAYBACK_TURNS everywhere it appears in these rules)
+//          counts the turns it has left instead: the loser's strength over the winner's income a
+//          turn (winning: the strongest opponent's, its high when bounded, over my income; losing:
+//          mine over its income estimate), at least DECIDED_PAYBACK_MIN, at most PAYBACK_TURNS; a
+//          rationale line ("Outlook (#201): …") says so. The strike stack's forecast uses it too.
 //       4. An explicit `goal` always wins: none of the above, and the rationale says the
 //          profile was overridden.
 //  1. Defence. A visible enemy next to my territory T threatens it when
@@ -943,6 +954,7 @@ import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { CHAIN_MAX_STEPS, searchChains } from './chains.js';
 import { simTerritories } from './turn-sim.js';
 import { guardOffExposure } from './guard-off.js';
+import { OUTLOOK_TURNS, type GameOutlook } from './outlook.js';
 import { classifyExchange, forecastBorder, type Exchange, type ExchangeCase } from './exchange.js';
 import { twoStepReaches, type TwoStepReach } from './lookahead.js';
 import { indexAfterAll, MoveSlot, opponentOrdersBefore, scheduleMoves, type MoverPosition } from './schedule.js';
@@ -952,6 +964,8 @@ import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type GameProfile, type ProfileP
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
+/** #201: the shortest payback horizon once the game is decided. */
+export const DECIDED_PAYBACK_MIN = 3;
 /** …or when one remaining territory alone costs more than this many times its value (a wasteland). */
 export const WASTELAND_FACTOR = 5;
 /**
@@ -1101,6 +1115,12 @@ export interface PlannerSettings {
 export interface PlanOptions {
   /** Default `balanced`. */
   goal?: PlanGoal;
+  /**
+   * #201: the outlook (#178, `gameOutlook`) from my boards over the last turns. Once it reports the
+   * game decided (winning or losing), payback tests count the turns the game has left and the
+   * forecasts below read it; adapting only.
+   */
+  outlook?: Pick<GameOutlook, 'state' | 'turns'>;
   /** Bonuses to work on first, even when uneconomic. */
   focusBonusIds?: number[];
   /** Income held back from captures (still deployed, as leftover). */
@@ -2539,6 +2559,25 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const e = custom ? undefined : estimates.get(player);
     return e ? incomeOf(e) : deployOf(player);
   };
+  /**
+   * #201: the planning horizon. Once the outlook (#178) says the game is decided — winning or losing
+   * for OUTLOOK_TURNS turns running — every payback test counts the turns the game has left instead
+   * of PAYBACK_TURNS: the loser's strength over the winner's income per turn (winning: the strongest
+   * opponent's strength, its high when bounded, over my income; losing: mine over the strongest
+   * opponent's deploy estimate), at least DECIDED_PAYBACK_MIN, at most PAYBACK_TURNS. Adapting only.
+   */
+  const decidedGame = (() => {
+    const o = opts.outlook;
+    const last = o?.turns.at(-1);
+    if (!auto || !o || !last || (o.state !== 'winning' && o.state !== 'losing')) return undefined;
+    const loser = o.state === 'winning' ? (last.strongest ? (last.strongest.high ?? last.strongest.low) : 0) : last.mine;
+    const rate = o.state === 'winning' ? income : last.strongest ? incomeOfPlayer(last.strongest.playerId) : 0;
+    if (rate <= 0) return undefined;
+    const turns = Math.min(PAYBACK_TURNS, Math.max(DECIDED_PAYBACK_MIN, Math.ceil(loser / rate)));
+    return turns < PAYBACK_TURNS ? { state: o.state, turns, loser, rate } : undefined;
+  })();
+  /** The turns every payback test counts: {@link PAYBACK_TURNS}, or fewer once the game is decided (#201). */
+  const paybackTurns = decidedGame?.turns ?? PAYBACK_TURNS;
   const guard = (s.oneArmyStandsGuard ?? true) ? 1 : 0;
   /** #163: an opponent may hold a Bomb: every hold is sized as if its stack were halved first. */
   const bombOn = opts.opponentsMayHoldBomb === true;
@@ -2615,6 +2654,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         `Ahead in a 1v1 (${income} against ~${strongest}): keep attacking — pressure on an opponent next to the fog is allowed when each capture costs up to ${pressureFactor}× a typical neutral capture (instead of ${PRESSURE_FACTOR}×).`,
       );
   }
+  if (decidedGame)
+    rationale.push(
+      `Outlook (#201): ${decidedGame.state} for ${OUTLOOK_TURNS} turns running, so the game is decided — ${
+        decidedGame.state === 'winning'
+          ? `the strongest opponent's strength of ${decidedGame.loser} over my income of ${decidedGame.rate}`
+          : `my strength of ${decidedGame.loser} over the strongest opponent's ~${decidedGame.rate} a turn`
+      } leaves ~${decidedGame.turns} turns, so every payback test counts ${decidedGame.turns} turns instead of ${PAYBACK_TURNS}.`,
+    );
 
   const state = new Map<number, TerritoryState>();
   for (const t of board.territories) if (g.territoryById.has(t.territoryId)) state.set(t.territoryId, t);
@@ -3003,7 +3050,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       cost += c;
       worst = Math.max(worst, c);
     }
-    return cost <= PAYBACK_TURNS * value && worst <= WASTELAND_FACTOR * value;
+    return cost <= paybackTurns * value && worst <= WASTELAND_FACTOR * value;
   };
   const protectedValue = (t: number): number => {
     // Each bonus is visited once, so it counts once however many of its borders are threatened.
@@ -3982,7 +4029,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         threat: b.threat,
         holdCost: d,
         value,
-        worth: value + have / PAYBACK_TURNS,
+        worth: value + have / paybackTurns,
         ...(from !== undefined && from === b.player ? { recentFrom: from } : {}),
         units,
         ...(myCommanders.has(b.id) ? { critical: true as const } : {}),
@@ -4081,7 +4128,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // the unit's cost and its payback test. A hold rule 1k could not fully fund still counts.
       const paying = members.filter((m) => !commanderHeld.has(m.id));
       const cost = paying.reduce((n, m) => n + m.holdCost, 0);
-      const worth = b.value + paying.reduce((n, m) => n + m.have / PAYBACK_TURNS, 0);
+      const worth = b.value + paying.reduce((n, m) => n + m.have / paybackTurns, 0);
       // It pays back within PAYBACK_TURNS, and (as rule 1a asks of every border) costs at
       // most CONCEDE_FACTOR × its worth, unless a member was just taken from a weak opponent.
       const recent = members.some((m) => m.recentFrom !== undefined);
@@ -4097,7 +4144,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         pool,
         net,
         worth,
-        loss: net > PAYBACK_TURNS * b.value ? 'payback' : !recent && net > CONCEDE_FACTOR * worth ? 'factor' : null,
+        loss: net > paybackTurns * b.value ? 'payback' : !recent && net > CONCEDE_FACTOR * worth ? 'factor' : null,
         conceded: false,
         floored: false,
         contested: false,
@@ -4110,7 +4157,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const residual = (t: Threatened): Threatened => {
     const lost = units.filter((u) => u.conceded && u.members.some((m) => m.id === t.id)).reduce((n, u) => n + u.value, 0);
     const value = Math.max(0, t.value - lost);
-    return { ...t, value, worth: value + t.have / PAYBACK_TURNS };
+    return { ...t, value, worth: value + t.have / paybackTurns };
   };
   const unitBorders = (u: Unit) =>
     `${u.members.length} threatened border${u.members.length === 1 ? '' : 's'}`;
@@ -4139,7 +4186,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       loss.economic === false
         ? `more than the ${loss.left} armies left to deploy`
         : loss.economic === 'payback'
-          ? `more than it pays back in ${PAYBACK_TURNS} turns (${PAYBACK_TURNS} × +${u.value} = ${PAYBACK_TURNS * u.value})`
+          ? `more than it pays back in ${paybackTurns} turns (${paybackTurns} × +${u.value} = ${paybackTurns * u.value})`
           : `more than ${CONCEDE_FACTOR} × its worth (~${Math.round(u.worth * 10) / 10})`;
     const needs = u.pool > 0 && loss.economic ? `${u.cost} (${u.net} beyond its own ${Math.min(u.pool, u.cost)} local armies)` : `${u.cost}`;
     warnings.push(
@@ -4195,7 +4242,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         : `need${one ? 's' : ''} ${own} in all`;
     rationale.push(
       line ??
-        `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: its ${unitBorders(u)} ${needs} (it pays back within ${PAYBACK_TURNS} turns), before any capture that completes no bonus.`,
+        `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: its ${unitBorders(u)} ${needs} (it pays back within ${paybackTurns} turns), before any capture that completes no bonus.`,
     );
     let rest = cost;
     for (const m of todo) {
@@ -4492,7 +4539,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const floored = u.members.some((m) => (m.given ?? 0) > 0);
       const why =
         u.loss === 'payback'
-          ? `more than it pays back in ${PAYBACK_TURNS} turns`
+          ? `more than it pays back in ${paybackTurns} turns`
           : u.loss === 'factor'
             ? `more than ${CONCEDE_FACTOR} × its worth`
             : null;
@@ -4598,7 +4645,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       for (const u of units)
         if (!u.loss)
           warnings.push(
-            `goal expand does not defend held bonus ${bonusName(u.bonusId)} (+${u.value}) first: holding its ${unitBorders(u)} needs ${u.cost} (it pays back within ${PAYBACK_TURNS} turns).`,
+            `goal expand does not defend held bonus ${bonusName(u.bonusId)} (+${u.value}) first: holding its ${unitBorders(u)} needs ${u.cost} (it pays back within ${paybackTurns} turns).`,
           );
     if (!guarded) units.length = 0;
     /** The per-border triage of rule 1a. */
@@ -4884,8 +4931,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       }
       if (!todo.length || split) continue;
       const cost = todo.reduce((n, x) => n + x.d, 0);
-      const worth = b.value + have / PAYBACK_TURNS;
-      if (cost > PAYBACK_TURNS * b.value || cost > CONCEDE_FACTOR * worth || cost > budget - reserve) continue;
+      const worth = b.value + have / paybackTurns;
+      if (cost > paybackTurns * b.value || cost > CONCEDE_FACTOR * worth || cost > budget - reserve) continue;
       // The pools are checked for the members together: each may fit the free pool on its own
       // while together they overdraw it.
       if (!fitsTogether(todo)) continue;
@@ -5260,7 +5307,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     cost += fogged * fogEach;
     loss += fogged * fogLoss;
     if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach });
-    const economic = isFocus || (loss <= PAYBACK_TURNS * net && worstLoss <= WASTELAND_FACTOR * net);
+    const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
     if (!economic) {
@@ -5969,9 +6016,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const after = incomeAfter(new Set([...heldNow(), t]));
     const turns = after > 0 ? Math.max(1, Math.ceil(restCost / after)) : Infinity;
     const interim = turns * penalty;
-    if (turns <= PAYBACK_TURNS && interim <= PAYBACK_TURNS * p.net) {
+    if (turns <= paybackTurns && interim <= paybackTurns * p.net) {
       return {
-        note: `Stage bonus ${bonusName(p.bonusId)} with ${label(t)} (${step} income until it completes): its other ${rest.length} missing member${rest.length === 1 ? '' : 's'} cost ${restCost}, ~${turns} turns at income ${after} (after this step); ${turns} turns × ${penalty} = ${interim} of penalties at most, repaid within ${PAYBACK_TURNS} turns of completion (${PAYBACK_TURNS} × +${p.net} = ${PAYBACK_TURNS * p.net}).`,
+        note: `Stage bonus ${bonusName(p.bonusId)} with ${label(t)} (${step} income until it completes): its other ${rest.length} missing member${rest.length === 1 ? '' : 's'} cost ${restCost}, ~${turns} turns at income ${after} (after this step); ${turns} turns × ${penalty} = ${interim} of penalties at most, repaid within ${paybackTurns} turns of completion (${paybackTurns} × +${p.net} = ${paybackTurns * p.net}).`,
         reason: `stages bonus ${bonusName(p.bonusId)} (+${p.value}, net +${p.net} once complete; ${step} income until then)`,
       };
     }
@@ -5981,7 +6028,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         `Do not take ${label(t)} toward bonus ${bonusName(p.bonusId)}: it costs ${step} income until the bonus completes, ${
           restCost === Infinity
             ? 'and the rest of the bonus cannot be costed (fog)'
-            : `~${turns} turns away (${restCost} armies at income ${after} after this step); ${turns} × ${penalty} = ${interim} of penalties is not repaid by ${PAYBACK_TURNS} × +${p.net}`
+            : `~${turns} turns away (${restCost} armies at income ${after} after this step); ${turns} × ${penalty} = ${interim} of penalties is not repaid by ${paybackTurns} × +${p.net}`
         }.`,
       );
     }
@@ -6213,7 +6260,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         // Armies that must stay: the hold less what my special units there fight as.
         const need = Math.max(0, holdArmies(rest.threat) - unitsAt(x));
         const cost = Math.max(0, need - armiesOf(x));
-        const worth = valueOf(x) + armiesOf(x) / PAYBACK_TURNS;
+        const worth = valueOf(x) + armiesOf(x) / paybackTurns;
         // My commander's border is always worth holding (rule 1k).
         return cost > CONCEDE_FACTOR * worth && !myCommanders.has(x) ? null : { need, cost, worth };
       };
@@ -6463,7 +6510,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         const after = new Set([...mineSet, ...ts]);
         const delta = frontierDelta(mineSet, ts, (x) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0))).armies;
         const gain = Math.max(0, incomeGain(after));
-        const limit = Math.max(PAYBACK_TURNS * gain, income);
+        const limit = Math.max(paybackTurns * gain, income);
         const who = [...new Set(exposed.map((n) => ownerOf(n)!))].sort(byNum);
         const exposure = `taking ${ts.map(label).join(', ')} makes me border ${who
           .map((q) => `player ${q}'s ${exposed.filter((n) => ownerOf(n) === q).map(label).join(', ')}`)
@@ -6476,11 +6523,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           for (const [k, v] of coverBefore) coverKeep.set(k, v);
           for (const t of ts) spared.add(t);
           rationale.push(
-            `Not finishing off player ${p} (#179): it is a buffer: ${exposure}, and ${cost}, more than a turn of my income (${income}) and more than the +${gain} its land adds pays back in ${PAYBACK_TURNS} turns.`,
+            `Not finishing off player ${p} (#179): it is a buffer: ${exposure}, and ${cost}, more than a turn of my income (${income}) and more than the +${gain} its land adds pays back in ${paybackTurns} turns.`,
           );
           return false;
         }
-        rationale.push(`Elimination price (#179): ${exposure}; ${cost}, within ${limit} (a turn of my income, or ${PAYBACK_TURNS} turns of the +${gain} its land adds).`);
+        rationale.push(`Elimination price (#179): ${exposure}; ${cost}, within ${limit} (a turn of my income, or ${paybackTurns} turns of the +${gain} its land adds).`);
       }
     }
     const { attacked, falls, left } = chosen;
@@ -6994,7 +7041,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
      * loses this turn plus the armies it must spend to retake the territory (at least what my
      * survivors need to be taken) over PAYBACK_TURNS, weighted as breaks are.
      */
-    const strikeWorth = (lost: number, o: BreakOption) => weight * (lost + (o.take ?? o.survivors) / PAYBACK_TURNS);
+    const strikeWorth = (lost: number, o: BreakOption) => weight * (lost + (o.take ?? o.survivors) / paybackTurns);
     const round2 = (v: number) => Math.round(v * 100) / 100;
     /**
      * At most what a capture of `t` could draw on now: every source free to attack plus the
@@ -7354,7 +7401,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // turn (#122: a +3 for 3 armies was deferred so a near miss could be topped up to sure).
       const first =
         conceding > 0
-          ? c.value > PAYBACK_TURNS * conceding
+          ? c.value > paybackTurns * conceding
           : c.value > lost || (kept.every((k) => k === 'near') && c.cost <= c.value);
       if (!starved.length || first) return;
       restore();
@@ -7461,12 +7508,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (!inFocus(t.id) && !economicMember.has(t.id)) {
         const lost = straightKills(defenceAt(t.id), rates.defensiveKillRate);
         const worth = plainWorth(t.id, gain);
-        if (worth > 0 ? lost > PAYBACK_TURNS * worth : lost > PLAIN_EXPANSION_LOSS) {
+        if (worth > 0 ? lost > paybackTurns * worth : lost > PLAIN_EXPANSION_LOSS) {
           const reach = Math.max(...neighborsOf(g, t.id).filter((x) => avail.has(x)).map((x) => (avail.get(x) ?? 0) + roomAt(x)));
           if (reach >= t.cost)
             rationale.push(
               worth > 0
-                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${PAYBACK_TURNS} turns of it pay back.`
+                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${paybackTurns} turns of it pay back.`
                 : `Do not expand into ${label(t.id)}: it adds no income and loses ~${lost} armies (more than ${PLAIN_EXPANSION_LOSS}), in no bonus worth completing.`,
             );
           continue;
@@ -8395,7 +8442,37 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     });
     able.sort((a, b) => b.spare - a.spare || stackAt(b.x) - stackAt(a.x) || a.x - b.x);
     const pick = able[0];
-    const id = pick?.x ?? fronts[0];
+    // #201: with no border able to strike this turn, the multi-turn forecast (`forecastBorder`):
+    // the border whose stack, with the leftover and then the income every turn, breaks the
+    // opponent's biggest stack beside it soonest (its owner deploying there every turn too); ties,
+    // and none breaking within the horizon, keep the border holding the most armies.
+    const forecastPick = (() => {
+      if (pick || noSplit || fronts.length < 2) return undefined;
+      const rows = fronts.flatMap((x) => {
+        const at = aims(x).sort((a, b) => armiesOf(b) + unitsAt(b) - (armiesOf(a) + unitsAt(a)) || a - b)[0]!;
+        const theirs = armiesOf(at) + unitsAt(at);
+        const f = forecastBorder({
+          mine: stackAt(x) + Math.max(0, Math.min(budget, roomAt(x))),
+          theirs,
+          myIncome: income,
+          theirIncome: incomeOfPlayer(player.p),
+          turns: paybackTurns,
+          settings: { offensiveKillRate: rates.offensiveKillRate, defensiveKillRate: rates.defensiveKillRate, oneArmyStandsGuard: guard === 1 },
+        });
+        return f.outcome === 'breaks' && f.turn !== null ? [{ x, at, theirs, turn: f.turn }] : [];
+      });
+      rows.sort((a, b) => a.turn - b.turn || stackAt(b.x) - stackAt(a.x) || a.x - b.x);
+      const best = rows[0];
+      if (!best) return undefined;
+      const most = fronts[0]!;
+      const other = rows.find((r) => r.x === most);
+      if (best.x === most || (other && other.turn === best.turn)) return undefined;
+      rationale.push(
+        `Strike stack on ${label(best.x)} (#201): no border can strike this turn; pressing every turn with the income, ${label(best.x)} breaks player ${player.p}'s ${best.theirs} on ${label(best.at)} on turn ${best.turn} (the multi-turn forecast), sooner than ${label(most)}, which holds more armies but ${other ? `breaks its front only on turn ${other.turn}` : `breaks nothing within ${paybackTurns} turns`}.`,
+      );
+      return best.x;
+    })();
+    const id = pick?.x ?? forecastPick ?? fronts[0];
     if (pick) {
       const most = fronts[0]!;
       rationale.push(

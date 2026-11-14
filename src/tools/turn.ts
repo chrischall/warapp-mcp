@@ -1060,7 +1060,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
           'armies + 3 × income held over 3 turns of boards, with its `basis`; thresholds unmeasured, so advice, not a verdict; ' +
-          'an opponent with cards on, an unknown start or nothing in view has no upper bound, so `winning` is never read in a fogged card game). With no `goal` the profile picks and tunes it (`goalSource` ' +
+          'an opponent with cards on, an unknown start or nothing in view has no upper bound, so `winning` is never read in a fogged card game; ' +
+          'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
           '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
           'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
           `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
@@ -1211,6 +1212,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         turn !== null
           ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
           : undefined;
+      // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
+      // #201: the planner reads it too — a decided game shortens its payback horizon.
+      const outlook = gameOutlook({
+        graph,
+        me: me.id,
+        boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
+        settings,
+        game: trackGame(game.players, game.settings, map),
+        cards: rules.inPlay.length > 0,
+      });
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
       const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
       const gameContext: PlanGameContext = {
@@ -1249,6 +1260,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         options: {
           // No goal: the game profile picks it and tunes the plan (an explicit goal overrides it).
           adapt: true,
+          outlook: { state: outlook.state, turns: outlook.turns },
           ...(goal !== undefined ? { goal } : {}),
           focusBonusIds,
           ...(opponents > 0 ? { opponents } : {}),
@@ -1284,15 +1296,6 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           : undefined;
       if (ctx.dataDir && turn !== null)
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, plan.expected.nextIncome);
-      // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
-      const outlook = gameOutlook({
-        graph,
-        me: me.id,
-        boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
-        settings,
-        game: trackGame(game.players, game.settings, map),
-        cards: rules.inPlay.length > 0,
-      });
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       const name = namer(map);
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
