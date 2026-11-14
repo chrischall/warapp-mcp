@@ -817,6 +817,9 @@ export interface TrucePrice {
    * its watch flags); a new one is `active`, `clear` unless the caller says `watch` (the endgame).
    */
   state: 'active' | 'notice' | 'broken';
+  /** In notice: the first turn it no longer binds, and who gave the notice. */
+  endsTurn?: number;
+  noticeBy?: 'me' | 'them';
   trust: 'clear' | 'watch';
   watch: TruceWatchReason[];
   breach?: PlanRelation['breach'];
@@ -944,6 +947,8 @@ export function priceTruce(
     coveredMine,
     coveredTheirs,
     state,
+    ...(hypothetical.endsTurn !== undefined ? { endsTurn: hypothetical.endsTurn } : {}),
+    ...(hypothetical.noticeBy !== undefined ? { noticeBy: hypothetical.noticeBy } : {}),
     trust: trusted,
     watch,
     ...(hypothetical.breach ? { breach: hypothetical.breach } : {}),
@@ -990,7 +995,8 @@ const WATCH_WORDS: Readonly<Record<TruceWatchReason, string>> = {
 
 /**
  * B3: the verdict on a priced truce. `no` when the partner broke it (`state: 'broken'`, T8: an
- * ordinary opponent at once), when the plan would not honour it, when the board puts it under
+ * ordinary opponent at once), when I already gave notice on it (it is ending: withdraw the notice or
+ * propose new terms), when the plan would not honour it, when the board puts it under
  * watch (its flags, their notice, the endgame: every covered border keeps its full hold, so it
  * frees nothing to rely on), when it gains nothing
  * this turn (no armies freed, no income, no border kept), when a break would cost my commander, or
@@ -1012,6 +1018,14 @@ export function truceVerdict(price: TrucePrice, income: number): TruceVerdict {
       ],
     };
   }
+  if (price.state === 'notice' && price.noticeBy === 'me')
+    return {
+      verdict: 'no',
+      reasons: [
+        `I already gave notice on this truce with player ${p}: it ${price.endsTurn !== undefined ? `no longer binds from turn ${price.endsTurn}` : 'is ending'}. ` +
+          'To keep a truce, withdraw the notice or propose new terms',
+      ],
+    };
   if (!price.honoured) return { verdict: 'no', reasons: [`the plan would not honour a truce with player ${p} this turn (not a free-for-all, or nothing of it binds)`] };
   if (price.lossIfBroken?.commanderLost)
     return { verdict: 'no', reasons: [`a break this turn would take my commander (from ${price.lossIfBroken.from} on ${price.lossIfBroken.to})`] };

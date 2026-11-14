@@ -222,8 +222,13 @@ describe('B3 priceTruce: plan with and without the truce', () => {
   it('carries a recorded truce in notice into the price, with when it ends', () => {
     const rel: PlanRelation = { player: PARTNER, coveredMine: [1], coveredTheirs: [2], state: 'notice', endsTurn: 9, noticeBy: 'me', trust: 'clear' };
     const price = priceTruce(input({ relations: [rel] }), PARTNER, scope12);
-    expect(price).toMatchObject({ state: 'notice', trust: 'clear' });
+    expect(price).toMatchObject({ state: 'notice', endsTurn: 9, noticeBy: 'me', trust: 'clear' });
     expect(price.armiesFreed).toBe(planTurn(input({ relations: [rel] })).relations![0]!.armiesFreed);
+    // I am already ending it: never a proposal of the truce I gave notice on.
+    expect(truceVerdict(price, 5)).toEqual({
+      verdict: 'no',
+      reasons: ['I already gave notice on this truce with player 20: it no longer binds from turn 9. To keep a truce, withdraw the notice or propose new terms'],
+    });
   });
 
   it('outside a free-for-all the plan does not honour it, and the verdict is no', () => {
