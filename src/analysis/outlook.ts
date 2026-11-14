@@ -21,8 +21,16 @@
 // `high` against the highest `low` (`null`: no upper limit). It is per player: in a team game my
 // strength alone against the single strongest opponent, teams are not summed.
 //
+// #208: the high is a bound, and under fog it stays far too loose to call a win until late: the
+// most it could earn each turn is what the whole fog could pay, though most of the fog is
+// neutral. So each opponent also gets a LIKELY high — an estimate, not a bound: the same sum, with
+// every turn's income at most LIKELY_INCOME_MARGIN × the income the tracker reads off my boards
+// (`trackOpponents`: the most it was seen to deploy, its visible income at least), never above
+// that turn's cap, clamped between its low and its high. One with nothing in view gets no
+// estimate (its high stands); none is made while any opponent is unbounded.
 // Each turn gets a state: `winning` when even the low ratio is at least OUTLOOK_RATIO (or every
-// opponent is bounded at no strength at all while I have some), `losing`
+// opponent is bounded at no strength at all while I have some, or — `estimated` — my strength is
+// at least OUTLOOK_RATIO × the highest likely high), `losing`
 // when even the high ratio is at most 1 / OUTLOOK_RATIO, `stalemate` when neither and no territory
 // in view on both boards changed owner since the turn before while I face an enemy and (#201) the
 // main front's multi-turn forecast is a stand-off, else `even`. The main front is my biggest stack
@@ -39,7 +47,7 @@
 import type { BoardState } from '../board.js';
 import { carriesTeam } from '../teams.js';
 import { neighborsOf, type MapGraph } from './graph.js';
-import type { TrackGame, TurnBoard } from './opponents.js';
+import { trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
 import { ownerShown, type PlannerSettings } from './planner.js';
 import { bonusTerritories } from './bonuses.js';
 import { cardArmiesBy, type CardArmyCeiling } from '../strategy/card-clock.js';
@@ -51,6 +59,8 @@ import { forecastBorder, type BorderOutcome } from './exchange.js';
 export const OUTLOOK_TURNS = 3;
 /** Winning at this strength ratio or more, losing at its inverse or less (borrowed, unmeasured). */
 export const OUTLOOK_RATIO = 2.4;
+/** #208: the likely high lets an opponent earn up to this many times its tracked income every turn (unmeasured). */
+export const LIKELY_INCOME_MARGIN = 2;
 
 export type OutlookState = 'winning' | 'losing' | 'even' | 'stalemate';
 
@@ -62,6 +72,13 @@ export interface OutlookTurn {
   strongest: { playerId: number; low: number; high: number | null } | null;
   /** Mine ÷ the opponents' strength: `low` against the highest high (0 when unbounded or that high is 0), `high` against the highest low (`null`: no limit). */
   ratio: { low: number; high: number | null };
+  /**
+   * #208: the opponent with the highest likely high — an ESTIMATE, not a bound (see the header) —
+   * and mine ÷ it. Absent with every opponent in full view, or any unbounded.
+   */
+  likely?: { playerId: number; high: number; ratio: number };
+  /** #208: `true` when the state is `winning` on the likely high alone (the bound did not show it). */
+  estimated?: true;
   /** Territories in view on this board and the one before that changed owner (`null` without the board before). */
   changed: number | null;
   /**
@@ -183,6 +200,20 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
 
   const turns: OutlookTurn[] = run.map((turn) => {
     const board = byTurn.get(turn)!.board;
+    // #208: what the tracker reads of each opponent's income off my boards up to this turn.
+    let tracked: Map<number, { visible: number; income: number }> | undefined;
+    const trackedOf = (playerId: number) => {
+      tracked ??= new Map(
+        trackOpponents(
+          g,
+          all.filter((t) => t <= turn).map((t) => byTurn.get(t)!),
+          me,
+          settings,
+          input.game,
+        ).map((tr) => [tr.playerId, { visible: tr.visible, income: Math.max(tr.visibleIncome, tr.income ?? 0) }]),
+      );
+      return tracked.get(playerId);
+    };
     const held = new Map<number, Set<number>>();
     const armies = new Map<number, number>();
     for (const t of board.territories) {
@@ -203,8 +234,8 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         const a = armies.get(playerId) ?? 0;
         const income = boardIncome(g, held.get(playerId) ?? new Set(), rules).total;
         const low = a + k * income;
-        if (open) return { playerId, low, high: low as number | null };
-        if (start === null || cardsBound === undefined) return { playerId, low, high: null };
+        if (open) return { playerId, low, high: low as number | null, likely: undefined as number | undefined };
+        if (start === null || cardsBound === undefined) return { playerId, low, high: null, likely: undefined };
         // Each turn's could-earn cap: from that turn's board when I have it, else the ceiling.
         let received = start;
         for (let t = 1; t <= turn; t++) received += turnCap(t, playerId);
@@ -212,20 +243,36 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         // Cards: what the clock lets it have played by now, and over the next k turns.
         const now = cardsBound ? cardArmiesBy(cardsBound, turn) : 0;
         const ahead = cardsBound ? cardArmiesBy(cardsBound, turn + k) - now : 0;
-        return { playerId, low, high: Math.max(a, received + now) + k * cap + ahead };
+        const high = Math.max(a, received + now) + k * cap + ahead;
+        // #208: the likely high — the same sum at LIKELY_INCOME_MARGIN × its tracked income a turn.
+        const tr = trackedOf(playerId);
+        if (!tr || tr.visible === 0) return { playerId, low, high, likely: high };
+        const pace = LIKELY_INCOME_MARGIN * tr.income;
+        let likelyReceived = start;
+        for (let t = 1; t <= turn; t++) likelyReceived += Math.min(turnCap(t, playerId), pace);
+        const likely = Math.max(a, likelyReceived + now) + k * Math.max(income, Math.min(cap, pace)) + ahead;
+        return { playerId, low, high, likely: Math.min(high, Math.max(low, likely)) };
       });
     const maxLow = rows.reduce((m, r) => Math.max(m, r.low), 0);
     const unbounded = rows.some((r) => r.high === null);
     const maxHigh = rows.reduce((m, r) => Math.max(m, r.high ?? 0), 0);
-    const strongest =
+    const top =
       [...rows].sort(
         (a, b) =>
           (a.high === null ? 0 : 1) - (b.high === null ? 0 : 1) || (b.high ?? 0) - (a.high ?? 0) || b.low - a.low || a.playerId - b.playerId,
-      )[0] ?? null;
+      )[0];
+    const strongest = top ? { playerId: top.playerId, low: top.low, high: top.high } : null;
     const ratio = {
       low: !unbounded && maxHigh > 0 ? round2(mine / maxHigh) : 0,
       high: maxLow > 0 ? round2(mine / maxLow) : null,
     };
+    // #208: the highest likely high, when every opponent is bounded and one is not in full view.
+    let likely: OutlookTurn['likely'];
+    if (!unbounded && !open && rows.length) {
+      const top = [...rows].sort((a, b) => (b.likely ?? 0) - (a.likely ?? 0) || a.playerId - b.playerId)[0]!;
+      const high = top.likely ?? 0;
+      likely = { playerId: top.playerId, high, ratio: high > 0 ? round2(mine / high) : 0 };
+    }
     // Every opponent bounded at no strength at all while I have some: dominated.
     const dominated = rows.length > 0 && !unbounded && maxHigh === 0 && mine > 0;
     const prev = byTurn.get(turn - 1)?.board;
@@ -271,15 +318,27 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       });
       forecast = { ...main, outcome: f.outcome, turn: f.turn };
     }
+    const bound = dominated || (rows.length > 0 && ratio.low >= OUTLOOK_RATIO);
+    const estimated = !bound && likely !== undefined && likely.high > 0 && likely.ratio >= OUTLOOK_RATIO;
     const state: OutlookState =
-      dominated || (rows.length && ratio.low >= OUTLOOK_RATIO)
+      bound || estimated
         ? 'winning'
         : ratio.high !== null && ratio.high <= 1 / OUTLOOK_RATIO
           ? 'losing'
           : changed === 0 && front && (!forecast || forecast.outcome === 'stand-off')
             ? 'stalemate'
             : 'even';
-    return { turn, mine, strongest, ratio, changed, ...(forecast ? { front: forecast } : {}), state };
+    return {
+      turn,
+      mine,
+      strongest,
+      ratio,
+      ...(likely ? { likely } : {}),
+      changed,
+      ...(forecast ? { front: forecast } : {}),
+      state,
+      ...(estimated ? { estimated: true as const } : {}),
+    };
   });
 
   const last = turns.at(-1);
@@ -295,12 +354,18 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     const figures = s
       ? `turn ${last.turn}: mine ${last.mine}, the strongest opponent player ${s.playerId} at ${s.high === s.low ? s.low : `${s.low}–${s.high ?? 'unbounded'}`}, ratio ${last.ratio.high === last.ratio.low ? last.ratio.low : `${last.ratio.low}–${last.ratio.high ?? 'unbounded'}`}×`
       : `turn ${last.turn}: mine ${last.mine}, no opponent to compare`;
+    // #208: the likely high, said as what it is.
+    const est =
+      last.likely && last.likely.high !== s?.high
+        ? ` The likely high — an estimate, not a bound: each turn at most ${LIKELY_INCOME_MARGIN}× the income the tracker reads off my boards — is player ${last.likely.playerId} at ${last.likely.high}, ratio ${last.likely.ratio}×${last.estimated ? '; winning rests on it' : ''}.`
+        : '';
     reading =
       turns.length < OUTLOOK_TURNS
         ? `Only ${turns.length} turn${turns.length === 1 ? '' : 's'} of boards in a row (${OUTLOOK_TURNS} needed), so no state yet; ${figures}.`
         : state
           ? `${state[0]!.toUpperCase()}${state.slice(1)} for ${OUTLOOK_TURNS} turns running; ${figures}.`
           : `${last.state[0]!.toUpperCase()}${last.state.slice(1)} for ${heldTurns} of the ${OUTLOOK_TURNS} turns (${turns.map((t) => t.state).join(', ')}), so no state yet; ${figures}.`;
+    reading += est;
   }
   return { state, heldTurns, turns, k, threshold: OUTLOOK_RATIO, basis: `${reading} ${measure} ${thresholds}` };
 }

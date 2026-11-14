@@ -128,7 +128,8 @@
 //       3d. Decided (#201): given `options.outlook` (#178) reporting winning or losing, the game is
 //          decided, and every payback test (PAYBACK_TURNS everywhere it appears in these rules)
 //          counts the turns it has left instead: the loser's strength over the winner's income a
-//          turn (winning: the strongest opponent's, its high when bounded, over my income; losing:
+//          turn (winning: the strongest opponent's, its high when bounded — #208: its likely high,
+//          called an estimate, when only that showed the win — over my income; losing:
 //          mine over its income estimate), at least DECIDED_PAYBACK_MIN, at most PAYBACK_TURNS; a
 //          rationale line ("Outlook (#201): …") says so. The strike stack's forecast uses it too.
 //       4. An explicit `goal` always wins: none of the above, and the rationale says the

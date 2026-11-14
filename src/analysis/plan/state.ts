@@ -73,7 +73,7 @@ export interface OpponentsCtx {
   /** One opponent's income per turn: {@link deployOf} less the Reinforcement card it adds (#164). */
   incomeOfPlayer: (player: number) => number;
   /** #201: the game is decided, with the turns it has left. */
-  decidedGame: { state: 'winning' | 'losing'; turns: number; loser: number; rate: number } | undefined;
+  decidedGame: { state: 'winning' | 'losing'; turns: number; loser: number; rate: number; estimated?: true } | undefined;
   /** The turns every payback test counts (#201). */
   paybackTurns: number;
 }
