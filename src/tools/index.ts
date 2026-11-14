@@ -19,6 +19,7 @@ import { registerOpenGamesTool } from './open-games.js';
 import { registerOpponentsTool } from './opponents.js';
 import { registerPickTools } from './picks.js';
 import { registerPushTools } from './push.js';
+import { registerRelationsTools } from './relations.js';
 import { registerRouteTool } from './route.js';
 import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
@@ -116,6 +117,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerWhereTool(server, live, deps.env ? { env: deps.env } : {});
   registerUncommitTool(server, live);
   registerChatTools(server, live);
+  // The agreement ledger: one read-only tool, and one that writes only the local ledger (not confirm-gated).
+  registerRelationsTools(server, live, deps.env ? { env: deps.env } : {});
   // One push socket per process: keyed on the shared fetchproxy bridge so
   // connections share it, with requests routed through the direct-first bridge.
   // While the direct leg is active the push rides a direct WebSocket (the

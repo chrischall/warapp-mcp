@@ -46,7 +46,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `defineGatedWrite`. Every write result carries `outcome` (`confirmed`, `accepted`, `unconfirmed`,
   `unknown`, `not_applied`; the per-tool mapping is in that file's header) beside its own `status`,
   which callers still read. `warapp_submit_picks` validates against the live board and reports
-  `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
+  `verified` only when `GetTerritoryPicks` reads back exactly what was sent. `warapp_record_agreement`
+  also writes, but only the server's own agreement ledger and player record (nothing reaches war.app or a
+  player), so it is not confirm-gated and not counted above. Chat (owner decisions of 2026-11-14,
+  `docs/PLAN-TEAMS.md` §5): D1 chat proceeds with every send confirm-gated; D2 the play session sends
+  within the honesty line without the owner approving each message; D3 the honesty line is the plan's
+  default (no false statement of fact, no promise the plan does not intend, withholding is free, never
+  claim to be human, a truce ends with the agreed notice). Every other tool
   is read-only, `warapp_plan_turn` and `warapp_track_opponents` included. The two-step token
   confirmation verifies no person — on a client that cannot prompt it is advisory (the model itself
   supplies the token) — so a write preview's sentences name things by id only, and every
@@ -141,7 +147,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn. Disagreement is a warning; `firstMover` reports `{ who, source, from? }`. The game history is not
   read for it (UNVERIFIED whether an in-progress `GetHistory` carries the orders in the order they ran).
   `warapp_check_plan` writes nothing and still tries both orders unless `first_mover` is given.
-- **Chat has channels (part A1 of `docs/PLAN-TEAMS.md`; UNVERIFIED live).** `warapp_get_chat` reads
+- **Chat has channels (part A1 of `docs/PLAN-TEAMS.md`).** The `GameRefresh` read of **public** messages is
+  VERIFIED LIVE 2026-11-14 (count, time, turn, sender and channel matched GameFeed `GetChat=true`); team and
+  private channels, `mark_seen` / the cursor, `warapp_plan_turn`'s `chat.unread`, `chatActivity` and sending
+  remain UNVERIFIED. `warapp_get_chat` reads
   `GameRefresh` (39, chat only) → `GameDetailsAndChat` → `GameMessage` by type name (`src/chat.ts`:
   fields by read order, a private counterpart first, then a game group (`unknown`), then the channel,
   -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
@@ -159,6 +168,38 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
   is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`. The interpreter's registration
   scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
+- **The agreement ledger (part A2 of `docs/PLAN-TEAMS.md`).** An agreement (a truce) exists only when
+  recorded with `warapp_record_agreement` (structured terms; chat is never parsed into one), at
+  `<dataDir>/relations/<gameId>-<playerId>.json` (`src/relations-store.ts`: one file per account, ids,
+  turns and statuses only, 0600, atomic; registered hosted too, on the per-user data dir). The model is pure in
+  `src/analysis/relations.ts`: the status table (terminal: ended, broken-by-them / -by-me), the state on a
+  turn (over when the partner is out or turned AI, two players remain, or its turn / player / notice end
+  came), `breachWatch` over consecutive cached boards from the turn agreed (visibility as `observeDeploy`:
+  a fog reveal is no event; an attack is read only with my cached orders and only when the partner alone,
+  visibly, borders the territory, and no transfer of mine in came from a source taken or hit; anything the
+  fog leaves open is `massing`, never `broken`; massing reach is plain graph distance 2, not
+  `twoStepReaches`, which asks what a stack could take and hold, not where armies stand), `tacitTruces` (3 quiet turns, reported only), the endgame
+  (no other opponent ≥ 0.5 × the larger income) and `trust`. Refused: me, an AI, a player out, a
+  teammate, a 1v1, two left, and no third player or team outside me, my team and the partner's; an
+  `until_turn` before this turn. Massing needs its growing pairs to end at the newest board. The ledger's `usage` (armies a truce freed, loss if broken, per planned turn)
+  is a stub that part B2 fills. Nothing in the planner reads the ledger yet. Its read-modify-write runs
+  under an in-process per-path lock (`src/path-lock.ts`; another process sharing the data dir is not
+  covered). **The cross-game player record** (owner decision D5 of 2026-11-14: on, local AND hosted —
+  registered and enabled on a hosted child, in its per-user data dir) is `src/player-record-store.ts` at
+  `<dataDir>/relations/players.json` (version 3; versions 1 and 2 read loosely): per player, keyed by an
+  HMAC of the GameFeed id under the salt `relations/players.salt` (made only on the write path; a salt
+  file that exists but is malformed is never regenerated, and a `players.json` that exists but does not
+  parse — bad JSON, not an object — is never overwritten or moved aside: the write reports `failed`, reads
+  `unreadable`), name-free entries per agreement (its key an HMAC of my account, game and agreement —
+  entries keyed by game and agreement alone before that are read as they are and updated in place: format, turns
+  agreed and ended, terms shape, outcome with notice honoured or not, break turn and strongest flag, the
+  context at the break from the cached boards — endgame, leader, outgrowing — retaliated, proposed
+  again) and tallies (`src/analysis/player-record.ts`: `recordDelta` moves each once, on the transition
+  that earns it, so they never double-count and outlive entries dropped past the bound; 30 entries per
+  player, 300 players). `warapp_record_agreement` updates it inside the ledger's lock (its own lock, a
+  different path), so entries land in the order the ledger changed. `WARAPP_PLAYER_RECORD=off` switches it off. The tools report `playerRecord`
+  (`warapp_record_agreement`: `updated` / `off` / `failed`; `warapp_get_relations`: `on` / `off` /
+  `unreadable`).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'

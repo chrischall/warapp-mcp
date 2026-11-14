@@ -89,7 +89,7 @@ string email                  the signed-in account's email
 |---|---|---|
 | 10 | GetOpenGames | exists, but the web client never calls it — the open games list comes from a page payload (see [Open games](#open-games)); do not use |
 | 38 | GetGameDetails | |
-| 39 | **GameRefresh** | params: int32 gameId, bool chat, bool nonChat, string "-1", string "-1", bool lobby, optional dict, optional dict; reply `GameDetailsAndChat` — see [Chat](#chat) (UNVERIFIED live) |
+| 39 | **GameRefresh** | params: int32 gameId, bool chat, bool nonChat, string "-1", string "-1", bool lobby, optional dict, optional dict; reply `GameDetailsAndChat` — see [Chat](#chat) (the chat-only read of public messages VERIFIED live 2026-11-14; the rest UNVERIFIED) |
 | 40 | GetLatestGameInfo | params: int32 gameId; reply class `NE` — expected to carry the board |
 | 48 | GetGameSettings | |
 | 60 | AcceptGame | accept an invitation (not used) |
@@ -402,8 +402,15 @@ bridged POSTs time out while GETs still work; reloading the tab clears it.
 
 ## Chat
 
-Everything below except GameFeed's list is read from the client bundle and is **UNVERIFIED live**
-(checks V2, V3, V4 and V10 in `docs/PLAN-TEAMS.md`).
+Everything below was read from the client bundle. **The chat-only `GameRefresh` read of public
+messages is VERIFIED LIVE 2026-11-14** (the owner's play session, at main 5832977, check V4 in
+`docs/PLAN-TEAMS.md`): in two games with public chat, `warapp_get_chat`'s web source matched GameFeed
+`GetChat=true` message for message — the count, the time (to the second), the turn (field 9 absent
+→ `null`, `0` → 0, a later turn as sent), the sender (field 1 is the in-game id: the GameFeed id
+`fromId` maps it to, stripped of two digits each end, is GameFeed chat's `playerID`) and channel
+public (`-1`); six games with no chat read a count of 0. **Still UNVERIFIED live:** team and
+private channels (fields 2, 6 with a team, 7), `mark_seen` and the cursor, `warapp_plan_turn`'s
+`chat.unread`, `chatActivity` on a push, and sending (checks V2, V3 and V10).
 
 - **Read (web client):** `GameRefresh` (39): auth, int32 gameId, bool chat, bool nonChat, the public
   and team "last seen" markers as decimal text (a client that has seen nothing sends `"-1"`; the

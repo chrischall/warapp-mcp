@@ -90,17 +90,18 @@ Findings that shape the design:
   means unknown), golden-pinned on write, and marked unverified in the docs and the tool result.
 - **Every send stays confirm-gated.**
 
-## 5. Owner decisions, and the defaults assumed here
+## 5. Owner decisions
 
-The owner was asked these and has not answered yet. Build to the default; none blocks parts A to C.
+**Decided by the owner on 2026-11-14.** D1, D2, D3 and D5 are binding; where earlier text in this plan
+or elsewhere called them open or gave a different default, these replace it.
 
-| # | Decision | Default assumed |
+| # | Decision | Decided (2026-11-14) |
 |---|---|---|
-| D1 | Automate chat at all, given the Terms | Proceed, every send confirm-gated as today. Record the Terms finding in `docs/WARAPP-API.md` with its links. |
-| D2 | Who sends | The play skill says: draft, then send only with the owner's approval. Unattended sending is a later, explicit opt-in. The code is the same either way. |
-| D3 | The honesty line | No false statement of fact, no promise the plan does not intend, withholding is free, never claim to be human, a truce ends with the agreed notice. |
-| D4 | Order | A, then B, then C. |
-| D5 | A cross-game record of who kept deals | On, local only (never hosted), counts only. |
+| D1 | Automate chat at all, given the Terms | **Proceed.** Every send stays confirm-gated. The Terms finding is recorded in `docs/WARAPP-API.md` with its links. |
+| D2 | Who sends | **The play session sends** within the honesty line (D3) without the owner approving each message. Each send still passes the confirm gate (D1). |
+| D3 | The honesty line | **The default line:** no false statement of fact, no promise the plan does not intend, withholding is free, never claim to be human, a truce ends with the agreed notice. |
+| D4 | Order | A, then B, then C (the plan's order; the owner did not change it). |
+| D5 | A cross-game record of who kept deals | **On, local and hosted** (a hosted child keeps it in its per-user data dir; the tools are registered and the record enabled there). Keyed by a salted hash of the GameFeed player id: no raw id or name in the file. It keeps, per agreement and name-free: the game format, the turns agreed and ended, the terms' shape, the outcome (kept; ended with notice and whether it was honoured; broken by them or by me), the break turn and flag kind, the context at the break (endgame, who led, outgrowing), whether they retaliated or proposed again; and per-player tallies derived from those. Bounded (entries per player, players). Isolated, so `WARAPP_PLAYER_RECORD=off` switches it off. |
 
 If the owner changes D3, only parts B4 and rule T7 change.
 
@@ -114,7 +115,7 @@ path stays soft.
 | V1 | GameFeed player `team` in a real team game | Team detection (C1) |
 | V2 | Does GameFeed `GetChat=true` return team and private messages, and with which fields | Chat channels (A1) |
 | V3 | `SendChat`: public, private recipient, and the team channel value | Team-chat sending (A1) |
-| V4 | `GameRefresh` (39) reply `GameDetailsAndChat`: the chat message class and its fields | Chat channels (A1) |
+| V4 | `GameRefresh` (39) reply `GameDetailsAndChat`: the chat message class and its fields — **public messages verified live 2026-11-14** (count, time, turn, sender, channel matched GameFeed `GetChat=true` in two games; a game with no chat reads 0); team and private channels still open | Chat channels (A1) |
 | V5 | Teammate orders in `LatestGameInfo`: present before the teammate commits? | Team read (C1) |
 | V6 | `GetTerritoryPicks` with a teammate's player id | Team picks (C2) |
 | V7 | What a plain move onto a teammate's territory does; `attack_teammates` (#165) | Team planner (C3) |
@@ -175,9 +176,10 @@ unread counts survive a restart, and a team-channel send is refused outside a te
 ### A2. The agreement ledger
 
 **Pure model:** `src/analysis/relations.ts`. **Store:** `src/relations-store.ts`, at
-`<dataDir>/relations/<gameId>.json`, name-free. **Tools:** `warapp_get_relations` (read-only) and
-`warapp_record_agreement` (writes only that local file; not confirm-gated, since nothing leaves the
-machine; say so in CLAUDE.md's paragraph on writes).
+`<dataDir>/relations/<gameId>-<playerId>.json` (one file per account), name-free. **Tools:** `warapp_get_relations` (read-only) and
+`warapp_record_agreement` (writes only that file and the per-player record, both in the server's data
+directory; not confirm-gated, since nothing reaches war.app or a player; say so in CLAUDE.md's paragraph
+on writes).
 
 An agreement:
 
@@ -205,7 +207,9 @@ Pure functions:
   - `broken`: the partner took, or attacked, a covered territory of mine.
   - `cap-exceeded`: a visible partner territory on the covered border holds more than the cap.
   - `massing`: the partner's visible armies within two steps of the covered border grew over
-    `TRUCE_MASSING_TURNS` turns (use `twoStepReaches`).
+    `TRUCE_MASSING_TURNS` turns. Built with plain graph distance 2 (`bfsDistances`), not `twoStepReaches`:
+    that asks what a stack could take and hold through the territory between, while massing asks only
+    where the partner's armies stand, so neutrals and my own territories between still count.
   - `outgrowing`: the partner's tracked income passed `TRUCE_OUTGROW_RATIO` × mine.
   - `kept`: consecutive quiet turns.
   Under fog one ambiguous event is `massing`, not `broken`.
@@ -215,8 +219,18 @@ Pure functions:
   their notice, and in the endgame: when no other opponent's estimated income reaches
   `TRUCE_ENDGAME_RATIO` (0.5) × the larger of mine and the partner's. That is the point where the
   partner no longer needs me.
-- The per-player record (D5): `<dataDir>/relations/players.json`, by player id, counts of agreements
-  made, kept to their end, ended with notice, and broken. Local only.
+- The per-player record (owner decision D5, 2026-11-14): `<dataDir>/relations/players.json`, by player
+  (an HMAC of its GameFeed id under a local salt, `players.salt`, made only on the first write and never
+  replaced: a malformed salt fails the write and reads `unreadable`, and so does a record file that
+  exists but does not parse, which is never overwritten). Per agreement, a name-free entry (its own key
+  a salted hash of my account, the game and the agreement; older entries keyed without the account are
+  read as they are): the format, the turns agreed and ended, the terms'
+  shape, the outcome (kept, ended with notice and whether honoured, broken by them or by me), the break
+  turn and strongest flag, the context at the break (endgame, who led, outgrowing), retaliation and
+  proposing again. Per player, tallies (made, kept, ended with notice, broken by them, broken by me),
+  each moved once by the recorded transition that earns it, so they outlive entries dropped past the
+  bound (30 entries per player, 300 players). On, local and hosted (the per-user data dir);
+  `WARAPP_PLAYER_RECORD=off` switches it off.
 
 The store also logs per planned turn the armies a truce freed and the loss if it were broken, so "has
 it been useful in play?" has an answer later.

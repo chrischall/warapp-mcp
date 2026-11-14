@@ -412,7 +412,9 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
     the capture's cost), so `unexplained` is not simply everything it earned.
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
   through raw. `GetChat` is passed through raw too, and it is third-party text: `src/chat.ts` reads
-  it loosely (`{ playerID, date, turn, message }`, `playerID` the in-game id). **Whether it returns
+  it loosely (`{ playerID, date, turn, message }`, `playerID` the in-game id — verified live 2026-11-14:
+  for public messages it matched the web client's `GameRefresh` chat read in count, time, turn and
+  sender, `docs/WEB-PROTOCOL.md` "Chat"). **Whether it returns
   team or private messages, and with which fields, is UNVERIFIED** (V2 in `docs/PLAN-TEAMS.md`): a
   message with no channel field is `unknown`.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a
@@ -511,5 +513,5 @@ public wiki page "Game ID feed API" (read 2026-11-12, not called live):
   Conduct) bans automated systems (bots, scrapers, scripts) except through "authorized APIs", which
   the Terms do not define; section 7 (Communication Rules) bans false, defamatory, harassing or
   offensive messages. The wiki's Rules page (<https://war.app/wiki/Rules>) says players working
-  together is not against the rules. Owner decision D1 in `docs/PLAN-TEAMS.md` is still open; until
-  it is made, every chat send stays confirm-gated.
+  together is not against the rules. Owner decision D1 in `docs/PLAN-TEAMS.md` (decided
+  2026-11-14): chat proceeds, and every chat send stays confirm-gated.
