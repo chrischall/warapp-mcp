@@ -169,6 +169,12 @@ describe("an opponent's Reinforcement card, from the card clock (#164)", () => {
     const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, turn: 6, game: { turn: 6, fog: 'Foggy', reinforcement: clock }, tracks: tr });
     expect(plan.warnings.join('\n')).toMatch(/player 20's Reinforcement card is taken as played on turn 5 .*income the fog hides can look the same.*errs low/i);
   });
+  it('a tracked income is printed as tracked: the card is named on top of it, not folded into it', () => {
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, turn: 6, game: { turn: 6, fog: 'Foggy', reinforcement: clock }, tracks: [track(FOE, { income: 8 })] });
+    const text = plan.warnings.join('\n');
+    expect(text).toMatch(/player 20: ~8 \(tracked over 2 observed turns, more than [^)]*\), plus \+6 from its Reinforcement card/);
+    expect(text).not.toMatch(/player 20: ~14 \(tracked/);
+  });
 });
 
 describe('Dense and Heavy fog: an enemy next to me whose armies are hidden (#164)', () => {
@@ -505,5 +511,42 @@ describe("last turn's deploy is judged against last turn's income, not this turn
     const e = enemyDeployEstimates(g, big, ME, STD, prev, undefined, undefined, { turn: 6, fog: 'NoFog', reinforcement: clock }).find((x) => x.playerId === FOE)!;
     expect(e.cardPlayed).toBe(5);
     expect(e.card).toBeNull();
+  });
+});
+
+describe("an opponent's Reinforcement card is a deploy, not income (#164 x #167/#178 review)", () => {
+  // A line of 12 in a symmetric 3-player FFA under No Fog: me on 1-4, player 20 on 5-8, player 30
+  // on 9-12, each pair a +2 bonus, so everyone earns 9.
+  const ids = Array.from({ length: 12 }, (_, i) => i + 1);
+  const g = buildGraph(
+    makeMap(
+      ids,
+      ids.slice(1).map((i) => [i - 1, i] as [number, number]),
+      [0, 1, 2, 3, 4, 5].map((i) => [100 + i, 2, [2 * i + 1, 2 * i + 2]] as [number, number, number[]]),
+    ),
+  );
+  const owner = (id: number) => (id <= 4 ? ME : id <= 8 ? FOE : 30);
+  const b = board(ids.map((id) => foe(id, 8, owner(id))));
+  const plan = (reinforcement?: { firstTurn: number; armies: number; turnsPerCard: number }) =>
+    planTurn({
+      graph: g,
+      board: b,
+      me: ME,
+      income: 9,
+      settings: { ...STD, baseIncome: 5 },
+      game: { players: [{ id: ME }, { id: FOE }, { id: 30 }], turn: 10, fog: 'NoFog', cards: true, ...(reinforcement ? { reinforcement } : {}) },
+      options: { adapt: true },
+    });
+
+  it('the card clock leaves the standing, the goal and the FFA ranking as they are without it', () => {
+    const none = plan();
+    const card = plan({ firstTurn: 3, armies: 6, turnsPerCard: 4 });
+    expect(card.warnings.join(' ')).toMatch(/may hold a Reinforcement card/);
+    expect(none.profile!.standing).toBe('even');
+    expect(card.profile!.standing).toBe(none.profile!.standing);
+    expect(card.goal).toBe(none.goal);
+    const standing = (p: typeof none) => p.profile!.notes.filter((n) => /Standing/.test(n));
+    expect(standing(card)).toEqual(standing(none));
+    expect(card.profile!.ranking).toEqual(none.profile!.ranking);
   });
 });

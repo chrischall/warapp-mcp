@@ -2429,6 +2429,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     turn: turnNow,
   });
   const estimateList = allEstimates.filter((e) => foe(e.playerId));
+  /** An opponent's income: its deploy estimate less the Reinforcement card the clock adds (#164). */
+  const incomeOf = (e: EnemyDeployEstimate) => e.estimate - (e.card?.armies ?? 0);
   // ---- 0p. the game profile ----
   const profile = gameProfile({
     graph: g,
@@ -2451,7 +2453,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     ...(ctx.picking !== undefined ? { picking: ctx.picking } : {}),
     ...(ctx.endRules ? { endRules: ctx.endRules } : {}),
     income,
-    estimates: estimateList,
+    // #164 x #167: an opponent's Reinforcement card is a one-off deploy, not income: the standing
+    // and the FFA ranking read each estimate less its card.
+    estimates: estimateList.map((e) => ({ ...e, estimate: incomeOf(e) })),
     // #94: opponents the tracker found with nothing in view, for the 'unknown' standing note.
     unseen: (input.tracks ?? []).flatMap((t) =>
       t.earnedAtLeast ? [{ playerId: t.playerId, turnsUnseen: t.turnsUnseen, turnsUnseenAtLeast: t.turnsUnseenAtLeast, earnedAtLeast: t.earnedAtLeast.total }] : [],
@@ -2499,6 +2503,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const estimates = new Map(estimateList.map((e) => [e.playerId, e]));
   /** The deploy assumed for one opponent's threat: the override, else its own estimate. */
   const deployOf = (player: number) => (custom ? enemyDeploy : (estimates.get(player)?.estimate ?? MIN_ENEMY_DEPLOY));
+  /** One opponent's income per turn: {@link deployOf} less the Reinforcement card it adds (#164). */
+  const incomeOfPlayer = (player: number) => {
+    const e = custom ? undefined : estimates.get(player);
+    return e ? incomeOf(e) : deployOf(player);
+  };
   const guard = (s.oneArmyStandsGuard ?? true) ? 1 : 0;
   /** #163: an opponent may hold a Bomb: every hold is sized as if its stack were halved first. */
   const bombOn = opts.opponentsMayHoldBomb === true;
@@ -3529,7 +3538,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           if (o.fromFog.length) {
             const n = o.fromFog.length;
             rationale.push(
-              `Player ${p}'s estimated income: ~${e.estimate}/turn (${n} ${n === 1 ? 'stack' : 'stacks'} that arrived from the fog not counted in it).`,
+              `Player ${p}'s estimated income: ~${e.estimate - (e.card?.armies ?? 0)}/turn (${n} ${n === 1 ? 'stack' : 'stacks'} that arrived from the fog not counted in it).`,
             );
           }
           if (e.observedRaw! > e.observedCap!)
@@ -3555,8 +3564,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
               ? `Player ${p}'s Reinforcement card is taken as played on turn ${e.cardPlayed} (a deployment above its exact income), so none is added until the next can be due; armies the board misread, or that moved into view out of a territory whose armies the fog hid, can look the same, so it may still hold one and the estimate errs low.`
               : `Player ${p}'s Reinforcement card is taken as played on turn ${e.cardPlayed} (a deployment of a card's armies over its visible income), so none is added until the next can be due; income the fog hides can look the same, so it may still hold one and the estimate errs low.`,
           );
+        // #164: the income behind the estimate; a card the clock adds is named on top of it.
+        const income = e.estimate - (e.card?.armies ?? 0);
+        const withCard = e.card ? `, plus +${e.card.armies} from its Reinforcement card (~${e.estimate} in all)` : '';
         if (e.source === 'exact') {
-          const income = e.estimate - (e.card?.armies ?? 0);
           warnings.push(
             `Enemy deploy estimate for player ${p}: ~${income} (exact: under ${ctx.fog} every territory's owner shows, so its income is ${visible}${e.observed !== null && e.observed > income ? `; the +${e.observed} observed above it is a card or armies the board misread, not income` : ''}); only the army cap, Sanctions and a Reinforcement card are unknown.`,
           );
@@ -3564,31 +3575,31 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         }
         if (e.source === 'prior') {
           warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${e.estimate} (a prior, not an observation: ${
+            `Enemy deploy estimate for player ${p}: ~${income} (a prior, not an observation: ${
               (incomePrior!.opening?.get(p) ?? -1) > incomePrior!.myIncome
                 ? `its opening simulated from the starts the award of picks proved earns ${incomePrior!.opening!.get(p)} this turn`
                 : `in a 1v1 that started even, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
-            }, capped at the most it could earn on this board, ${e.couldEarn}; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''}); observed deploys are lower bounds under fog, and it could deploy more.`,
+            }, capped at the most it could earn on this board, ${e.couldEarn}; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''})${withCard}; observed deploys are lower bounds under fog, and it could deploy more.`,
           );
           continue;
         }
         if (e.source === 'tracked') {
           warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${e.estimate} (tracked over ${e.trackedTurns.length} observed turns, more than ${visible}); it holds income the fog hides, and could deploy more.`,
+            `Enemy deploy estimate for player ${p}: ~${income} (tracked over ${e.trackedTurns.length} observed turns, more than ${visible})${withCard}; it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }
         if (e.source === 'observed') {
           warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${e.estimate} (observed +${e.observed}/turn: the net growth of its territories visible on both boards plus what its captures from a visible owner cost it, more than ${visible}); it holds income the fog hides, and could deploy more.`,
+            `Enemy deploy estimate for player ${p}: ~${income} (observed +${e.observed}/turn: the net growth of its territories visible on both boards plus what its captures from a visible owner cost it, more than ${visible})${withCard}; it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }
         const seen = e.observed !== null ? ` Its deploy was observed +${e.observed}/turn since last turn, below that.` : '';
         warnings.push(
           (opening !== null
-            ? `Enemy deploy estimate for player ${p}: ~${e.estimate} (opening board: every visible player territory holds ${opening}, so no one has deployed yet and every opponent gets its base income, at least ${MIN_ENEMY_DEPLOY}); enemy income is unknown, so they could deploy more.`
-            : `Enemy deploy estimate for player ${p}: ~${e.estimate} (${visible}, at least max(${MIN_ENEMY_DEPLOY}, base); its largest stack next to me (${e.largestStack}) is what can move, not a limit on what it deploys); enemy income beyond its visible bonuses is unknown, so they could deploy more.`) + seen,
+            ? `Enemy deploy estimate for player ${p}: ~${income} (opening board: every visible player territory holds ${opening}, so no one has deployed yet and every opponent gets its base income, at least ${MIN_ENEMY_DEPLOY})${withCard}; enemy income is unknown, so they could deploy more.`
+            : `Enemy deploy estimate for player ${p}: ~${income} (${visible}, at least max(${MIN_ENEMY_DEPLOY}, base); its largest stack next to me (${e.largestStack}) is what can move, not a limit on what it deploys)${withCard}; enemy income beyond its visible bonuses is unknown, so they could deploy more.`) + seen,
         );
       }
     }
@@ -6977,7 +6988,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           mine: front.mine,
           theirs: front.theirs,
           myIncome: income,
-          theirIncome: deployOf(front.player),
+          // Every turn's income, not this turn's deploy: a card is played once (#164).
+          theirIncome: incomeOfPlayer(front.player),
           myDeploy: income - floor,
           settings: { offensiveKillRate: rates.offensiveKillRate, defensiveKillRate: rates.defensiveKillRate, oneArmyStandsGuard: guard === 1 },
         });
