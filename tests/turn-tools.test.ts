@@ -843,6 +843,21 @@ describe('warapp_plan_turn — threat trend', () => {
     });
   });
 
+  it('(h) a what-if plan (an explicit goal or enemy_deploy) keeps no expected income for since last turn (#194)', async () => {
+    h = await liveHarness({ feed: [game('Playing'), game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', enemy_deploy: 40 });
+    const dir = h.dataDir;
+    await h.harness.close();
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload & { sinceLastTurn: string }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.sinceLastTurn).toMatch(/^Income \d+; turn 3 was not planned here\./);
+  });
+
   it('(h) since last turn with nothing lost and the income met says so (#194)', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const first = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));

@@ -1089,7 +1089,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'starting armies on turn 1), whether you were awarded first or second and who moves first this turn under ' +
           "a `Cycle` move order, and with commanders the opponent's first award when the award pins it. " +
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
-          "turn's plan expected (kept per game), and the bonuses broken and territories lost since the previous board. " +
+          "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
+          'and the bonuses broken and territories lost since the previous board. ' +
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +
@@ -1298,8 +1299,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               expectedTurn: turn - 1,
             })
           : undefined;
+      // A what-if plan (an explicit goal or enemy_deploy) keeps the board but not its expected income:
+      // next turn's "since last turn" compares with the plan the profile chose, not the last one asked for.
+      const whatIf = goal !== undefined || enemy_deploy !== undefined;
       if (ctx.dataDir && turn !== null)
-        await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, plan.expected.nextIncome);
+        await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       const name = namer(map);
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
