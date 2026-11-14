@@ -6,7 +6,8 @@ import { readLatestGameInfo } from '../src/live.js';
 import type { Player } from '../src/normalize.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
 import { Reader, Writer } from '../src/protocol/codec.js';
-import { readTeammateOrders, teammateOrdersOf } from '../src/team-orders.js';
+import { readTeammateOrders, teammateOrdersOf, withTeammateOrders } from '../src/team-orders.js';
+import type { BoardState } from '../src/board.js';
 import { LIVE_BUNDLE, writeLatestGameInfo, type SyntheticTeammateOrders } from './protocol/live-bundle.js';
 
 const bundle = new WarappBundle(LIVE_BUNDLE, 'test');
@@ -120,5 +121,24 @@ describe('teammateOrdersOf', () => {
       { playerId: 999999, orders: null, picks: [5] },
     ]);
     expect(teammateOrdersOf(info(), players)).toBeUndefined();
+  });
+});
+
+describe('withTeammateOrders', () => {
+  const board: BoardState = { source: 'browser', verified: true, territories: [] };
+  const me = player('1212345634', 'Me');
+  const mate = player('4476543299', 'Mate');
+
+  it("sets a team game's board teammateOrders by GameFeed id, my own entry left out", () => {
+    const got = withTeammateOrders(board, info({ [MATE]: { picks: [3] }, [ME]: { picks: [9] } }), me, [me, mate]);
+    expect(got.teammateOrders).toEqual([{ playerId: 4476543299, orders: null, picks: [3] }]);
+    expect(board).not.toHaveProperty('teammateOrders');
+  });
+
+  it('adds no key to a 1v1 or FFA board (no teammate orders in the info)', () => {
+    const got = withTeammateOrders(board, info(), me, [me, mate]);
+    expect(got).not.toHaveProperty('teammateOrders');
+    expect(got).toBe(board);
+    expect(withTeammateOrders(board, undefined, me, [me])).toBe(board);
   });
 });

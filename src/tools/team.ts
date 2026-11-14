@@ -15,7 +15,7 @@ import { parseGameId } from '../client.js';
 import { boardStateFromLive, playersByInGameId } from '../live.js';
 import { myGamesTeams } from '../my-games.js';
 import type { Game, Player } from '../normalize.js';
-import { readTeammateOrders, type RawTeammateOrders, type TeamOrders } from '../team-orders.js';
+import { withTeammateOrders, type TeammateOrders, type TeamOrders } from '../team-orders.js';
 import { carriesTeam, isTeamGame, teammatesOf } from '../teams.js';
 import { handOwners } from './card-advice.js';
 import { chatUnread, readChat, type ChatMe } from './chat.js';
@@ -81,7 +81,7 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
         'Your team in a war.app (Warzone) team game: your team id (and whether GameFeed or your game list gave it), ' +
           'each teammate (GameFeed id, name, human or ai, state, whether they have committed this turn, their visible ' +
           'income on the live board, the orders they have entered this turn — deploys, moves, card plays — or, while ' +
-          'picking, their picks), the opponents by team, the team\'s shared hand, and unread team chat (a count, no text). ' +
+          'picking, their picks), the opponents by team, the team\'s shared hand ({ inPlay: false } in a game without cards), and unread team chat (a count, no text). ' +
           'A field that cannot be read is null: unknown, never "none". Teammate orders, picks and the team hand are read ' +
           `from the client's own structures and are UNVERIFIED live. Refuses outside a team game. ${BRIDGE_NOTE} Read-only.`,
       ),
@@ -120,12 +120,11 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
         try {
           const live = await loadLiveGame(ctx, game);
           info = live.info;
-          board = boardStateFromLive(live.territories, me, game.players);
+          board = withTeammateOrders(boardStateFromLive(live.territories, me, game.players), info, me, game.players);
         } catch (e) {
           warnings.push(`The live board could not be read (${(e as Error).message}): incomes, orders, picks and the hand are unknown.`);
         }
       }
-      const entered = info === undefined ? undefined : readTeammateOrders(info);
       const rules = cardRules(game.settings);
 
       const ordersView = (o: TeamOrders) => ({
@@ -147,7 +146,7 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
       const teammates: Array<Record<string, unknown>> = [];
       for (const p of mates) {
         const inGame = inGameOf(p);
-        const entry: RawTeammateOrders | undefined = inGame === undefined ? undefined : entered?.get(inGame);
+        const entry: TeammateOrders | undefined = board?.teammateOrders?.find((e) => e.playerId === p.id);
         let picks: { source: string; territories: Array<{ id: number; name: string }> } | null = null;
         if (game.state === DISTRIBUTING && board) {
           if (entry?.picks) picks = { source: 'teammate-orders', territories: entry.picks.map(name) };
@@ -172,8 +171,11 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
       }
 
       const owners = handOwners(game, me);
+      // No card in play is known from the settings, board or not; `null` is a hand that could not be read.
       const hand =
-        info === undefined || !rules.inPlay.length
+        game.settings && !rules.inPlay.length
+          ? { inPlay: false as const }
+          : info === undefined || !rules.inPlay.length
           ? null
           : {
               readable: handReadable(info, owners),

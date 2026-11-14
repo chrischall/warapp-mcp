@@ -174,9 +174,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `warapp_get_team` (`src/tools/team.ts`) refuses outside a team game; when GameFeed sends no team (V1) it
   takes GetMyGames' `GameInfoPlayer` team (`myGamesTeams`, by in-game id) and says so — no other tool does
   yet. Teammate orders and picks come from `LatestGameInfo`'s `TeammateOrders` dict (`src/team-orders.ts`,
-  found by type name, orders by class and read order; `BoardState.teammateOrders` by GameFeed id, filled by
-  no plan yet), picks falling back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
-  the team hand is `readHand` over `handOwners`; unread team chat is counted from the web chat only. All
+  found by type name, orders by class and read order). `withTeammateOrders` sets `BoardState.teammateOrders`
+  (by GameFeed id, my entry out) on the live boards of `warapp_plan_turn`, `warapp_check_plan`,
+  `warapp_submit_turn` and `warapp_get_team` when the dict is there — no key otherwise (1v1, FFA: goldens
+  unchanged); no rule reads it yet (C3), and the board cache never keeps it. Picks fall back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
+  the team hand is `readHand` over `handOwners` (`{ inPlay: false }` when the settings put no card in play); unread team chat is counted from the web chat only. All
   UNVERIFIED live (V1, V5, V6, #163); absent means unknown (`null`), never "none".
 - **The agreement ledger (part A2 of `docs/PLAN-TEAMS.md`).** An agreement (a truce) exists only when
   recorded with `warapp_record_agreement` (structured terms; chat is never parsed into one), at

@@ -108,6 +108,7 @@ import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
 import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
 import { recordBrokenByMe } from './relations.js';
+import { withTeammateOrders } from '../team-orders.js';
 import { teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 
@@ -1151,7 +1152,7 @@ export async function livePlanSetup(
   // The board as war.app shows it: what is tracked and cached. The plan is made on the board
   // the award of picks completes (#166): in a two-player game, the opponent's starts my own
   // pick list proves, where they are still fogged.
-  const seen = boardStateFromLive(territories, me, game.players);
+  const seen = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
   const award = a.award === false ? undefined : await loadAward(ctx.dataDir, game, me, seen, turn);
   const board = award?.board ?? seen;
   const opening = openingThreat(award, game, graph, seen, turn);
@@ -1883,7 +1884,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           }
         }
         const { territories, info } = await loadLiveGame(ctx, game);
-        const board = boardStateFromLive(territories, me, game.players);
+        const board = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
         const playerId = inGameId(me);
         const rules = cardRules(game.settings);
         // A team shares one hand (#163): cards under my teammates may be played or discarded too. But how

@@ -510,8 +510,16 @@ untouched. Choices and departures:
 *As built (C1):* `isTeamGame` / `teammatesOf` in `src/teams.ts` are the one test (the submit's teammate
 set no longer throws on an AI seat). The GetMyGames fallback (`gameWithTeams`, `src/tools/team.ts`) is
 used by `warapp_get_team` only; the planner and the other tools still read GameFeed's team, so a team game
-GameFeed sends without teams still plans as a free-for-all until V1 is checked. `BoardState.teammateOrders`
-is typed (`src/team-orders.ts` projects it, keyed by GameFeed id) and filled by no plan yet (C3).
+GameFeed sends without teams still plans as a free-for-all until V1 is checked (applying the fallback in
+the shared live-game load costs one GetMyGames call per plan: an owner decision). `BoardState.teammateOrders`
+is set by `withTeammateOrders` (`src/team-orders.ts`, keyed by GameFeed id, my own entry left out) on the
+live boards of `warapp_plan_turn`, `warapp_check_plan`, `warapp_submit_turn` and `warapp_get_team` whenever
+`LatestGameInfo` carries the dict, and absent otherwise, so 1v1 and FFA boards and the golden corpus are
+unchanged; no planner rule reads it yet (C3), and the board cache strips it (a turn's entries, not the
+board). An offline decode against the cached client bundle (no war.app call) read a synthetic
+`TeammateOrders` entry — a deploy, an attack/transfer in each mode, a discard, picks — through the real
+readers to the same projection as the mini-bundle; the mode is the plain enum byte (`P.uq`). Live frames are
+still V5. The team hand is `{ inPlay: false }` when the settings put no card in play.
 Teammate picks come from `TeammateOrders`' pick list first, then `GetTerritoryPicks`. Team chat is counted
 only from the web chat (GameFeed names no channel).
 

@@ -14,6 +14,7 @@
 // GUID, the base); Discard (the GUID, the base). Tolerant throughout: absent means unknown, an entry it
 // cannot read is listed as unread, nothing throws.
 
+import type { BoardState } from './board.js';
 import { cardTypeByName, cardTypeName, normalizeGuid } from './cards.js';
 import { playersByInGameId } from './live.js';
 import type { Player } from './normalize.js';
@@ -191,4 +192,14 @@ export function teammateOrdersOf(info: unknown, players: readonly Player[]): Tea
   if (!raw) return undefined;
   const byInGame = playersByInGameId(players);
   return [...raw.values()].map((r) => ({ playerId: byInGame.get(r.inGameId)?.id ?? r.inGameId, orders: r.orders, picks: r.picks }));
+}
+
+/**
+ * `board` with my teammates' entered orders (`BoardState.teammateOrders`, by GameFeed id, my own entry left
+ * out) when the decoded LatestGameInfo carries a teammate-orders dict; the board unchanged otherwise (a 1v1 or
+ * FFA board, or war.app sent none: unknown), so no key is added. Never throws.
+ */
+export function withTeammateOrders(board: BoardState, info: unknown, me: Player, players: readonly Player[]): BoardState {
+  const entries = teammateOrdersOf(info, players)?.filter((e) => e.playerId !== me.id);
+  return entries ? { ...board, teammateOrders: entries } : board;
 }

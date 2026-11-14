@@ -106,6 +106,13 @@ describe('board cache', () => {
     expect(await readBoardCache(dir, 43, ANN.id, 3)).toBeUndefined();
   });
 
+  it("never keeps a turn's teammate orders (C1): they are this turn's entries, not the board", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    const team = { ...board, teammateOrders: [{ playerId: BOB.id, orders: null, picks: [3] }] };
+    expect(await writeBoardCache(dir, 42, ANN.id, 3, team)).toBe(true);
+    expect(JSON.parse(readFileSync(boardCachePath(dir, 42), 'utf8')).turns['3']).toEqual(board);
+  });
+
   it(`keeps the newest ${CACHED_TURNS} turns, so opponent tracking has a history and re-planning a turn still finds the one before it`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
     const at = (armies: number): BoardState => ({

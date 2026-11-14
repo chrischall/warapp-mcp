@@ -263,6 +263,19 @@ describe('warapp_get_team', () => {
     expect(textOf(res)).not.toMatch(/team plan/);
   });
 
+  it('a game with no card in play says so (inPlay: false), not "hand unknown"', async () => {
+    const settings = Object.fromEntries(
+      Object.entries(lobbyFixture().settings as Record<string, unknown>).map(([k, v]) => [k, k.endsWith('Card') ? 'none' : v]),
+    );
+    h = await liveHarness({
+      feed: [game('Playing', { extra: { settings } })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: latest(BOARD) }),
+    });
+    const p = payload<TeamPayload>(await h.call('warapp_get_team', { game_id: GAME }));
+    expect(p.hand).toEqual({ inPlay: false });
+  });
+
   it('a lobby has no board: the roster only', async () => {
     h = await liveHarness({ feed: [game('WaitingForPlayers')], pages: ME_PAGE, warapp: routes({}) });
     const p = payload<TeamPayload>(await h.call('warapp_get_team', { game_id: GAME }));
