@@ -118,6 +118,27 @@ describe('notice', () => {
     const served = (transitionAgreement(agreed(), 'notice-by-me', 4) as { agreement: Agreement }).agreement;
     expect(one({ kind: 'notice', agreement: 'a1' }, [], [served]).refused).toMatch(/is over \(notice-served\)/);
   });
+
+  it('a truce with no notice ends with the message: it is carried, and an attack this turn breaks nothing (D3)', () => {
+    const zero = agreed({ noticeTurns: 0 });
+    const c = one({ kind: 'notice', agreement: 'a1' }, [ATTACK_5], [zero]);
+    expect(c.refused).toBeUndefined();
+    expect(c.carried).toBe(
+      'agreement a1 with player 20 carries no notice: it ends with this message, so it no longer binds from this turn (5) and an attack on its territories this turn breaks nothing',
+    );
+    expect(c.change?.agreement).toMatchObject({ status: 'notice-by-me', noticeTurn: 5 });
+    expect(c.record).toEqual({ sentTurn: TURN, kind: 'notice', agreement: 'a1', with: P, endsTurn: 5 });
+    // The end it names must be this turn.
+    expect(one({ kind: 'notice', agreement: 'a1', endsTurn: 5 }, [], [zero]).refused).toBeUndefined();
+    expect(one({ kind: 'notice', agreement: 'a1', endsTurn: 6 }, [], [zero]).refused).toMatch(
+      /^agreement a1 carries 0 turns of notice: given on turn 5, it binds until turn 5, so the message cannot say it ends on turn 6/,
+    );
+    // Restated on the turn it was given, it is the same notice; given on an earlier turn, it is over.
+    const givenNow = (transitionAgreement(zero, 'notice-by-me', 5) as { agreement: Agreement }).agreement;
+    expect(one({ kind: 'notice', agreement: 'a1' }, [], [givenNow]).record).toMatchObject({ endsTurn: 5 });
+    const givenBefore = (transitionAgreement(zero, 'notice-by-me', 4) as { agreement: Agreement }).agreement;
+    expect(one({ kind: 'notice', agreement: 'a1' }, [], [givenBefore]).refused).toMatch(/is over \(notice-served\)/);
+  });
 });
 
 describe('propose and accept', () => {
@@ -208,6 +229,29 @@ describe('a territory whose owner is not shown (fog)', () => {
     expect(commitmentWarnings({ commitments: [c], agreements: [], graph, board: fb, me: ME, turn: TURN, moves: [INTO_6] })).toEqual([
       expect.objectContaining({ commitment: 'c1', moves: [{ index: 0, from: 5, to: 6 }], text: expect.stringMatching(/move 1 \(5 → 6\) attacks it \(territory 6's owner is not shown\)/) }),
     ]);
+  });
+
+  it('commitmentWarnings: under the scope all, an attack into the fog is named as not checked', () => {
+    const c = { id: 'c1', sentTurn: 4, kind: 'no-attack', with: P, scope: 'all', fromTurn: 4, toTurn: 6 } as RecordedCommitment;
+    expect(commitmentWarnings({ commitments: [c], agreements: [], graph, board: fb, me: ME, turn: TURN, moves: [INTO_6] })).toEqual([
+      {
+        commitment: 'c1',
+        kind: 'no-attack',
+        with: P,
+        moves: [{ index: 0, from: 5, to: 6 }],
+        unchecked: true,
+        text: "commitment c1 (sent turn 4) promised player 20 no attack on any of its territories through turn 6: move 1 (5 → 6) goes into a territory whose owner is not shown — it may be player 20's, which was not checked",
+      },
+    ]);
+    // A truce I proposed over all its territories, the same.
+    const a = newAgreement('a1', P, 'proposed-by-me', 4, terms());
+    const p = { id: 'c2', sentTurn: 4, kind: 'propose', agreement: 'a1', with: P } as RecordedCommitment;
+    expect(commitmentWarnings({ commitments: [p], agreements: [a], graph, board: fb, me: ME, turn: TURN, moves: [INTO_6] })[0]).toMatchObject({
+      unchecked: true,
+      text: expect.stringMatching(/proposed truce a1 to player 20, still open: move 1 \(5 → 6\) goes into a territory whose owner is not shown — it may be player 20's, which was not checked/),
+    });
+    // A covered attack is the warning, not the fog.
+    expect(commitmentWarnings({ commitments: [c], agreements: [], graph, board: fb, me: ME, turn: TURN, moves: [ATTACK_5] })[0]?.unchecked).toBeUndefined();
   });
 });
 

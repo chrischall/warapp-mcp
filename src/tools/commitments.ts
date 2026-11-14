@@ -24,6 +24,8 @@ import { resolvePlayer, resolveTerritory } from './resolve.js';
 import { boardHistory, livePlanSetup, requirePlayingSeat, requireTurnPhase } from './turn.js';
 
 const ref = z.union([z.string(), z.number()]);
+/** How a refusal before the send ends. */
+const NOTHING_SENT = 'nothing was sent';
 const MAX_SCOPE_ITEMS = 200;
 
 const scopeArgs = {
@@ -106,7 +108,7 @@ export const COMMITMENTS_NOTE =
 
 function termsOf(map: GameMap, a: { territories?: (string | number)[] | undefined; bonuses?: (string | number)[] | undefined; notice_turns?: number | undefined; border_cap?: number | undefined; until_turn?: number | undefined }): AgreementTerms {
   return {
-    scope: scopeFrom(map, a.territories, a.bonuses),
+    scope: scopeFrom(map, a.territories, a.bonuses, NOTHING_SENT),
     noticeTurns: a.notice_turns ?? 1,
     ...(a.border_cap !== undefined ? { borderCap: a.border_cap } : {}),
     ...(a.until_turn !== undefined ? { untilTurn: a.until_turn } : {}),
@@ -119,7 +121,7 @@ const termsGiven = (a: Record<string, unknown>) =>
 /** Only the terms an accept restates: compared field by field with a recorded proposal's. */
 function givenTermsOf(map: GameMap, a: Parameters<typeof termsOf>[1]): Partial<AgreementTerms> {
   return {
-    ...(a.territories !== undefined || a.bonuses !== undefined ? { scope: scopeFrom(map, a.territories, a.bonuses) } : {}),
+    ...(a.territories !== undefined || a.bonuses !== undefined ? { scope: scopeFrom(map, a.territories, a.bonuses, NOTHING_SENT) } : {}),
     ...(a.notice_turns !== undefined ? { noticeTurns: a.notice_turns } : {}),
     ...(a.border_cap !== undefined ? { borderCap: a.border_cap } : {}),
     ...(a.until_turn !== undefined ? { untilTurn: a.until_turn } : {}),
@@ -132,7 +134,7 @@ export function resolveCommitments(game: Game, map: GameMap, args: readonly Comm
   return args.map((a): Commitment => {
     switch (a.kind) {
       case 'no-attack':
-        return { kind: 'no-attack', with: pid(a.player), scope: scopeFrom(map, a.territories, a.bonuses), turns: a.turns };
+        return { kind: 'no-attack', with: pid(a.player), scope: scopeFrom(map, a.territories, a.bonuses, NOTHING_SENT), turns: a.turns };
       case 'will-attack':
         return {
           kind: 'will-attack',

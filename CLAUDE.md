@@ -251,15 +251,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   never parsed — and its plan step checks each against this turn's orders (`livePlanSetup` with `award: false`,
   then `planTurn`; the orders this server submitted this turn, `readCachedOrders`, stand in when there are any)
   and the ledger (`agreementChange`: the same rule `recordCommitments` re-applies after the send). One not
-  carried refuses the send. A notice's `ends_turn` must be the turn the agreed notice gives; an accept compares only
+  carried refuses the send. A notice's `ends_turn` must be the turn the agreed notice gives (0 turns of notice:
+  this turn — the truce ends with the message and this turn's attacks are free); an accept compares only
   the terms it restates; a truce whose `until_turn` is past is refused; an attack on a territory a promise names
   whose owner is fogged conflicts (scope `all`: named as unchecked). The submitted orders are `MyOrders.sent`
   (every move, Transfer Only flagged), not `moves`. With commitments the game is read with its map and the turn must be in play. Once
   the message is `confirmed` or `accepted` (war.app took it; `unconfirmed`/`unknown` record nothing and say so)
   they go into the ledger's `commitments` as mine (ids and turns only, at most 200), a propose/accept/notice
   through warapp_record_agreement's path (player record included). `warapp_submit_turn` warns (never refuses)
-  via `commitmentWarnings`: an attack a no-attack still covers or an open proposal of mine covers, and a
-  will-attack for this turn the orders leave out. A will-attack is only for the current turn.
+  via `commitmentWarnings`: an attack a no-attack still covers or an open proposal of mine covers (scope `all`:
+  an attack into the fog, `unchecked`), and a will-attack for this turn the orders leave out; `warapp_plan_turn`
+  gives the same warnings for its plan (the planner never reads commitments). A will-attack is only for the current turn.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — the others' acceptance is needed when the game's

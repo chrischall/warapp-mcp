@@ -1033,6 +1033,33 @@ function breaksText(breaks: readonly TruceBreak[], moves: readonly { from: { id:
 }
 
 /**
+ * B4 (warapp_plan_turn): the commitments my chat messages made (the ledger's, warapp_send_chat) that the
+ * plan's `moves` would break this turn. The planner never reads them, so the plan is unchanged; this only
+ * says so. Empty with no data directory or ledger.
+ */
+async function promiseWarnings(
+  ctx: LiveContext,
+  a: { game: Game; me: Player; turn: number; graph: MapGraph; board: BoardState; moves: readonly { from: number; to: number; kind?: string }[] },
+): Promise<string[]> {
+  if (!ctx.dataDir) return [];
+  const ledger = await readLedger(ctx.dataDir, a.game.id, a.me.id);
+  if (!ledger?.commitments?.length) return [];
+  return commitmentWarnings({
+    commitments: ledger.commitments,
+    agreements: ledger.agreements,
+    graph: a.graph,
+    board: a.board,
+    me: a.me.id,
+    turn: a.turn,
+    moves: a.moves.map((m) => ({ from: m.from, to: m.to, ...(m.kind === 'transfer' ? { transferOnly: true } : {}) })),
+  }).map(
+    (w) =>
+      `The plan does not read your chat promises: ${w.text}. Change those moves before warapp_submit_turn, or ask the ` +
+      'owner and tell the player before breaking it — never silently.',
+  );
+}
+
+/**
  * B2: the truces in force in `game` for `me` this turn — the agreement ledger (warapp_record_agreement)
  * resolved against my board history (`boards`, then `board` as this turn's) into the planner's relations,
  * and the tacit truces (reported, never planned on). `undefined` with no turn. Shared by
@@ -1311,7 +1338,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'the partner held against its stacks with no deploy, except your commander\'s, a valuable border, or while trust ' +
           'is watch; a border cap kept), `advice` says `give-notice` when the endgame or the partner outgrowing you made ' +
           'the trust watch, a truce the board shows broken is planned as an ordinary opponent, and `tacit` lists quiet ' +
-          'borders with no agreement (a report, never a truce). ' +
+          'borders with no agreement (a report, never a truce). The plan never reads what your chat promised ' +
+          "(warapp_send_chat's `commitments`): a warning says when its moves would break one still in force. " +
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +
@@ -1489,6 +1517,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const advice = rules.inPlay.length
         ? adviseCards({ game, me, turn, info, hand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})`, truceCovered: new Set((truces?.relations ?? []).filter((r) => r.state === 'active' || r.state === 'notice').flatMap((r) => r.coveredTheirs)) })
         : { view: {}, warnings: [] };
+      // B4: the planner does not read what my chat messages promised (words change no estimate), so a
+      // plan that breaks a commitment still in force says so here; warapp_submit_turn warns again.
+      const promised = turn !== null ? await promiseWarnings(ctx, { game, me, turn, graph, board: seen, moves: plan.moves }) : [];
       const warnings = [
         ...(me.hasCommittedOrders
           ? [
@@ -1506,6 +1537,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
         ...(tracks ?? []).flatMap((t) => t.warnings),
         ...plan.warnings,
+        ...promised,
         ...modsWarning(game.settings),
         ...commerceWarning(game.settings),
         ...guardOffWarnings(graph, map, board, me.id, friendsOf(game.players, me), game.settings, plan.deploys, plan.moves),
@@ -1975,8 +2007,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         });
         for (const p of promises)
           warnings.push(
-            `Your chat ${p.text}. Keep the promise (change these orders), or ask the owner and tell the player before ` +
-              'breaking it — never silently.',
+            p.unchecked
+              ? `Your chat ${p.text}. Find out whose it is before committing these orders: if it is that player's, keep the ` +
+                  'promise (change them), or ask the owner and tell the player before breaking it — never silently.'
+              : `Your chat ${p.text}. Keep the promise (change these orders), or ask the owner and tell the player before ` +
+                  'breaking it — never silently.',
           );
         warnings.push(...options.warnings);
         warnings.push(

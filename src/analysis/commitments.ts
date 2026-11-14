@@ -12,7 +12,9 @@
 // - `notice`: I am ending agreement A. It must be agreed (or already in my notice); the truce binds
 //   until its agreed notice has run, so no order this turn may attack a covered territory, and a turn
 //   the message names as its end must be the one the agreed notice gives: earlier is a surprise break,
-//   later a promise the ledger does not keep (it frees the territories when the notice has run).
+//   later a promise the ledger does not keep (it frees the territories when the notice has run). A
+//   truce with no notice (0 turns) ends with the message: it binds no more from this turn, so an
+//   attack this turn breaks nothing.
 // - `propose` / `accept`: a truce on structured terms. No order this turn may attack a territory it
 //   covers. On send it creates or advances the agreement as warapp_record_agreement would. A truce
 //   whose last turn (`untilTurn`) is before this one is refused; an accept compares only the terms it
@@ -20,7 +22,7 @@
 //
 // Fog: a territory a promise names (an explicit scope) whose owner is not shown may be the player's,
 // so an order attacking it conflicts; under the scope `all`, orders into territories whose owner is not
-// shown are named in the carried sentence as not checked.
+// shown are named in the carried sentence, and in `commitmentWarnings`' (soft) warning, as not checked.
 //
 // Pure and deterministic like the planner (ids ascending, no I/O). Sentences name players and
 // territories by id only: names are third-party text.
@@ -307,21 +309,34 @@ export function checkCommitments(
     const fogText = (what: string) => `${named(fog[0]!)} attacks territory ${fog[0]!.to}, which ${what} names and whose owner is not shown: it may be player ${a.with}'s`;
     if (c.kind === 'notice') {
       const state = agreementState(a, turn, players);
-      if (state.phase !== 'notice' || state.endsTurn === undefined)
+      // A truce with no notice (0 turns, an agreed term) ends with the message: notice served this turn
+      // has already run, so it binds no more from this turn and an attack this turn breaks nothing.
+      const endsNow = a.status === 'notice-by-me' && a.noticeTurn === turn && state.phase === 'over' && state.reason === 'notice-served';
+      const endsTurn = endsNow ? turn : state.endsTurn;
+      if (endsTurn === undefined || (!endsNow && state.phase !== 'notice'))
         return out({ refused: `agreement ${a.id} is over (${state.reason ?? state.phase}): there is nothing to give notice on` });
-      if (c.endsTurn !== undefined && c.endsTurn !== state.endsTurn)
+      if (c.endsTurn !== undefined && c.endsTurn !== endsTurn)
         return out({
           refused:
             `agreement ${a.id} carries ${a.terms.noticeTurns} turn${a.terms.noticeTurns === 1 ? '' : 's'} of notice: given on turn ${a.noticeTurn}, ` +
-            `it binds until turn ${state.endsTurn}, so the message cannot say it ends on turn ${c.endsTurn}` +
-            (c.endsTurn > state.endsTurn ? ` (the ledger frees its territories on turn ${state.endsTurn}: to keep the truce longer, propose new terms)` : ''),
+            `it binds until turn ${endsTurn}, so the message cannot say it ends on turn ${c.endsTurn}` +
+            (c.endsTurn > endsTurn ? ` (the ledger frees its territories on turn ${endsTurn}: to keep the truce longer, propose new terms)` : ''),
         });
+      const record: CommitmentRecord = { sentTurn: turn, kind: 'notice', agreement: a.id, with: a.with, endsTurn };
+      if (endsNow) {
+        agreements = [...agreements.filter((x) => x.id !== a.id), a];
+        return out({
+          carried: `agreement ${a.id} with player ${a.with} carries no notice: it ends with this message, so it no longer binds from this turn (${turn}) and an attack on its territories this turn breaks nothing`,
+          record,
+          change,
+        });
+      }
       if (hit.length) return out({ refused: `${named(hit[0]!)} attacks territory ${hit[0]!.to}, which agreement ${a.id} covers while its notice runs` });
       if (fog.length) return out({ refused: fogText(`agreement ${a.id}`) });
       agreements = [...agreements.filter((x) => x.id !== a.id), a];
       return out({
-        carried: `agreement ${a.id} with player ${a.with}: notice from turn ${a.noticeTurn}, binding until turn ${state.endsTurn}, and no ${orders} order this turn attacks a territory it covers${unchecked(a.terms.scope)}`,
-        record: { sentTurn: turn, kind: 'notice', agreement: a.id, with: a.with, endsTurn: state.endsTurn },
+        carried: `agreement ${a.id} with player ${a.with}: notice from turn ${a.noticeTurn}, binding until turn ${endsTurn}, and no ${orders} order this turn attacks a territory it covers${unchecked(a.terms.scope)}`,
+        record,
         change,
       });
     }
@@ -347,13 +362,16 @@ export interface CommitmentWarning {
   moves: { index: number; from: number; to: number }[];
   /** What it says (ids only). */
   text: string;
+  /** The orders only go into territories whose owner is not shown, under the scope `all`: they may break it, unchecked. */
+  unchecked?: true;
 }
 
 /**
  * B4 (warapp_submit_turn): the commitments I sent that `moves` would break on `turn` — an order that
  * attacks a territory a `no-attack` still covers, or that a truce I proposed (still a proposal) covers;
  * and a `will-attack` for this turn that no order carries. Notice and accepted truces are the ledger's
- * own (`truceBreaksIn`). Warnings, never a refusal. Pure.
+ * own (`truceBreaksIn`). Under the scope `all`, orders that only go into territories whose owner is not
+ * shown are a soft warning (`unchecked`): they may land on the player. Warnings, never a refusal. Pure.
  */
 export function commitmentWarnings(input: {
   commitments: readonly RecordedCommitment[];
@@ -375,14 +393,18 @@ export function commitmentWarnings(input: {
     const hit = attacksOn(moves, new Set([...covered, ...unseen]));
     const fogged = [...new Set(hit.filter((h) => unseen.has(h.to)).map((h) => h.to))];
     const note = fogged.length ? ` (territory ${fogged.join(', ')}'s owner is not shown)` : '';
-    return { hit, note };
+    // Under the scope `all` any territory whose owner is not shown may be the player's: said, never assumed safe.
+    const fog = scope === 'all' && !hit.length ? attacksOn(moves, unseenAll(graph, board)) : [];
+    return { hit, note, fog, fogText: fog.length ? `${intoFog(fog)} — it may be player ${p}'s, which was not checked` : '' };
   };
   for (const c of [...input.commitments].sort((x, y) => x.id.localeCompare(y.id, 'en', { numeric: true }))) {
     if (c.kind === 'no-attack') {
       if (turn < c.fromTurn || turn > c.toTurn || c.with === me) continue;
-      const { hit, note } = hitsOn(c.scope, c.with);
+      const { hit, note, fog, fogText } = hitsOn(c.scope, c.with);
       if (hit.length)
         out.push({ commitment: c.id, kind: c.kind, with: c.with, moves: hit, text: `${said(c)} promised player ${c.with} no attack there through turn ${c.toTurn}: ${list(hit)} attacks it${note}` });
+      else if (fog.length)
+        out.push({ commitment: c.id, kind: c.kind, with: c.with, moves: fog, unchecked: true, text: `${said(c)} promised player ${c.with} no attack on any of its territories through turn ${c.toTurn}: ${fogText}` });
     } else if (c.kind === 'will-attack') {
       if (c.turn !== turn) continue;
       const targets = c.territory !== undefined ? new Set([c.territory]) : heldBy(board, c.with!);
@@ -398,9 +420,11 @@ export function commitmentWarnings(input: {
     } else if (c.kind === 'propose') {
       const a = input.agreements.find((x) => x.id === c.agreement);
       if (!a || (a.status !== 'proposed-by-me' && a.status !== 'proposed-by-them')) continue;
-      const { hit, note } = hitsOn(a.terms.scope, a.with);
+      const { hit, note, fog, fogText } = hitsOn(a.terms.scope, a.with);
       if (hit.length)
         out.push({ commitment: c.id, kind: c.kind, with: a.with, moves: hit, text: `${said(c)} proposed truce ${a.id} to player ${a.with}, still open: ${list(hit)} attacks a territory it covers${note}` });
+      else if (fog.length)
+        out.push({ commitment: c.id, kind: c.kind, with: a.with, moves: fog, unchecked: true, text: `${said(c)} proposed truce ${a.id} to player ${a.with}, still open: ${fogText}` });
     }
   }
   return out;

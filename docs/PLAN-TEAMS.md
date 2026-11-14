@@ -449,7 +449,9 @@ untouched. Choices and departures:
   no plan covers a later one; `notice { agreement, ends_turn? }` — on an agreed truce (or restating my notice),
   refused when no notice can run any more, when this turn's orders attack a covered territory, or when the
   message's `ends_turn` is not the turn the agreed notice gives (earlier is a surprise break; later a promise
-  the ledger would not keep, since it frees the territories when the notice has run); `propose { player, terms }`
+  the ledger would not keep, since it frees the territories when the notice has run). A truce with 0 turns of
+  notice (a legal term) ends with the message: its end is this turn, and this turn's attacks are free once it
+  is served; `propose { player, terms }`
   — a new proposal, or new terms on an open proposal (a counter-offer to theirs); `accept { agreement | player,
   terms? }` — a recorded proposal (the terms given must match it, field by field; those left out are not
   compared) or, with terms, an offer not recorded yet (left out: all territories, 1 turn of notice). Propose and
@@ -458,8 +460,9 @@ untouched. Choices and departures:
   checked in order, each seeing the ledger changes of the ones before it.
 - **Fog.** A territory a promise or truce names (territories or bonuses) whose owner my board does not show may
   be the partner's: an order attacking it is refused (and warned on at submit). Under the scope `all`, orders
-  into territories whose owner is not shown are named in the carried sentence as not checked; a will-attack on
-  a player is not carried by an attack into the fog.
+  into territories whose owner is not shown are named in the carried sentence as not checked, and at submit
+  (and in the plan) a soft `unchecked` warning names them; a will-attack on a player is not carried by an
+  attack into the fog.
 - **Submitted orders keep their mode.** The orders cache keeps every move sent (`MyOrders.sent`: a Transfer
   Only one flagged; percentage and Attack Only orders, which `moves` leaves out for opponent tracking, kept), so
   a Transfer Only order does not count as an attack and an Attack Only one does. A cache written before it falls
@@ -473,6 +476,11 @@ untouched. Choices and departures:
 - **Checked again.** `warapp_submit_turn` warns — never refuses — on an attack a `no-attack` still covers, an
   attack on what a proposal of mine (still open) covers, and a `will-attack` for this turn the orders leave
   out. An accepted truce and a notice are the ledger's own agreements, refused by `truceBreaksIn` as before.
+  `warapp_plan_turn` gives the same warnings for its plan's moves: the planner never reads commitments (words
+  change no estimate), so a multi-turn `no-attack` it would break is said there, not planned around.
+- **Accepting my own proposal.** `accept` by agreement id also moves `proposed-by-me` to agreed, as
+  warapp_record_agreement allows: the message records the partner's yes, so the skill says to send it only
+  once the partner has agreed.
 
 ## 9. Part C — team games
 

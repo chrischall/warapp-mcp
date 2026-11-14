@@ -140,10 +140,15 @@ const formatOf = (game: Game): RecordEntry['format'] => {
   return { players: game.players.length, teams, ffaSize: teams ? null : game.players.filter(alive).length };
 };
 
-/** A scope from the tool's arguments, by id. */
-export function scopeFrom(map: GameMap, territories: readonly (string | number)[] | undefined, bonuses: readonly (string | number)[] | undefined): AgreementScope {
+/** A scope from the tool's arguments, by id. `nothing` ends the refusal: what the caller did not do. */
+export function scopeFrom(
+  map: GameMap,
+  territories: readonly (string | number)[] | undefined,
+  bonuses: readonly (string | number)[] | undefined,
+  nothing = 'nothing was recorded',
+): AgreementScope {
   if (territories?.length && bonuses?.length) {
-    throw new McpToolError('Give `territories` or `bonuses`, not both: nothing was recorded.', {
+    throw new McpToolError(`Give \`territories\` or \`bonuses\`, not both: ${nothing}.`, {
       hint: 'A truce covers all of your territories (omit both), some territories, or the territories of some bonuses.',
     });
   }

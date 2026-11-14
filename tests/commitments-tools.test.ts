@@ -201,6 +201,22 @@ describe('warapp_send_chat commitments', () => {
       expect(s.sent).toEqual([]);
       expect((await ledger())?.agreements[0]?.status).toBe('agreed');
     });
+
+    it('a truce with no notice ends with the message: carried, recorded as ending this turn, and over in the ledger (D3)', async () => {
+      const s = await start(quiet);
+      await agreed(0);
+      const preview = payload<{ preview: { commitments: { carried: Array<{ carried: string }> } } }>(await send([{ kind: 'notice', agreement: 'a1', ends_turn: TURN }]));
+      expect(preview.preview.commitments.carried[0]!.carried).toMatch(/carries no notice: it ends with this message, so it no longer binds from this turn \(3\)/);
+      payload(await confirmed([{ kind: 'notice', agreement: 'a1', ends_turn: TURN }]));
+      expect(s.sent).toEqual(['a message']);
+      const l = await ledger();
+      expect(l?.agreements[0]).toMatchObject({ id: 'a1', status: 'notice-by-me', noticeTurn: TURN });
+      expect(l?.commitments).toEqual([{ id: 'c1', sentTurn: TURN, kind: 'notice', agreement: 'a1', with: Number(BOB.feed), endsTurn: TURN }]);
+      const rel = payload<{ agreements: Array<{ id: string; state: string; overBecause?: string }> }>(
+        await h!.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }),
+      );
+      expect(rel.agreements[0]).toMatchObject({ id: 'a1', state: 'over', overBecause: 'notice-served' });
+    });
   });
 
   describe('propose and accept', () => {
@@ -248,6 +264,14 @@ describe('warapp_send_chat commitments', () => {
     });
   });
 
+  it('a scope given as both territories and bonuses is refused as not sent', async () => {
+    const s = await start(quiet);
+    expect(textOf(await send([{ kind: 'no-attack', player: 'Bob', territories: [158], bonuses: [1], turns: 1 }]))).toMatch(
+      /Give `territories` or `bonuses`, not both: nothing was sent\./,
+    );
+    expect(s.sent).toEqual([]);
+  });
+
   it('a message not confirmed sent records nothing, and says so', async () => {
     await start(quiet, { msgNum: 999 });
     const p = payload<{ outcome: string; commitments: { recorded: unknown[]; why: string } }>(await confirmed([{ kind: 'no-attack', player: 'Bob', turns: 1 }]));
@@ -289,5 +313,55 @@ describe('warapp_submit_turn warns when orders break a commitment', () => {
     expect(text).toMatch(new RegExp(`Your chat commitment c1 \\(sent turn 2\\) promised player ${BOB.feed} no attack there through turn 3: move 1 \\(159 → 158\\) attacks it`));
     expect(text).toMatch(/Your chat commitment c2 \(sent turn 3\) said you would attack territory 157 this turn: no order here does/);
     expect(text).toMatch(/never silently/);
+  });
+});
+
+describe('warapp_plan_turn warns when the plan breaks a commitment', () => {
+  it('a no-attack the plan does not know about: the plan attacks, and the warning names the move', async () => {
+    await start(striking);
+    const me = Number(ANN.feed);
+    await writeLedger(h!.dataDir, {
+      ...emptyLedger(GAME, me),
+      commitments: [{ id: 'c1', sentTurn: TURN - 1, kind: 'no-attack', with: Number(BOB.feed), scope: 'all', fromTurn: TURN - 1, toTurn: TURN + 1 }],
+    });
+    const plan = payload<{ warnings: string[]; moves: Array<{ to: { id: number } }> }>(await h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    // The plan is the planner's: a chat promise changes no estimate and no order.
+    expect(plan.moves.some((m) => m.to.id === 158)).toBe(true);
+    expect(plan.warnings.join('\n')).toMatch(
+      new RegExp(`The plan does not read your chat promises: commitment c1 \\(sent turn 2\\) promised player ${BOB.feed} no attack there through turn 4: move \\d+ \\(\\d+ → 158\\) attacks it`),
+    );
+  });
+
+  it('no warning when no commitment applies', async () => {
+    await start(quiet);
+    const plan = payload<{ warnings: string[] }>(await h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(plan.warnings.join('\n')).not.toMatch(/chat promises/);
+  });
+});
+
+describe('warapp_submit_turn: an attack into the fog under a promise over all territories', () => {
+  it('is a soft warning: not checked, never silent', async () => {
+    await start(quiet);
+    const me = Number(ANN.feed);
+    await writeLedger(h!.dataDir, {
+      ...emptyLedger(GAME, me),
+      commitments: [{ id: 'c1', sentTurn: TURN - 1, kind: 'no-attack', with: Number(BOB.feed), scope: 'all', fromTurn: TURN - 1, toTurn: TURN }],
+    });
+    const income = payload<{ income: number }>(await h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' })).income;
+    const text = JSON.stringify(
+      payload(
+        await h!.call('warapp_submit_turn', {
+          game_id: GAME,
+          orders: [
+            { kind: 'deploy', territory: 159, armies: income },
+            { kind: 'move', from: 159, to: 135, armies: 4 },
+          ],
+        }),
+      ),
+    );
+    expect(text).toMatch(
+      new RegExp(`Your chat commitment c1 \\(sent turn 2\\) promised player ${BOB.feed} no attack on any of its territories through turn 3: move 1 \\(159 → 135\\) goes into a territory whose owner is not shown — it may be player ${BOB.feed}'s, which was not checked`),
+    );
+    expect(text).toMatch(/Find out whose it is before committing these orders/);
   });
 });
