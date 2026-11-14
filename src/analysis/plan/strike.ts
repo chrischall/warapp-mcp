@@ -63,7 +63,7 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
     warnings, rationale, deployed, avail, coverKeep, spared, captured, combined, moves, incoming, survivorsAt,
     captureOrder, staged,
   } = ps;
-  const { guardAt, deploy, roomAt, valueOf } = book;
+  const { guardAt, deploy, roomAt, valueOf, stakeAt } = book;
   const { ownedBy, ownerOf, fogAnywhere, deployReaching, holdArmies, bombSized, borderAt } = threats;
   const { stayAt } = hd;
   const { targets, frontierDelta } = tgt;
@@ -204,7 +204,7 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
         // Armies that must stay: the hold less what my special units there fight as.
         const need = Math.max(0, holdArmies(rest.threat) - unitsAt(x));
         const cost = Math.max(0, need - armiesOf(x));
-        const worth = valueOf(x) + armiesOf(x) / paybackTurns;
+        const worth = valueOf(x) + (armiesOf(x) + stakeAt(x)) / paybackTurns;
         // My commander's border is always worth holding (rule 1k).
         return cost > CONCEDE_FACTOR * worth && !myCommanders.has(x) ? null : { need, cost, worth };
       };

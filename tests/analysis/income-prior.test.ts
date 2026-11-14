@@ -102,7 +102,8 @@ describe('the fog prior (#119): a symmetric-start 1v1 opponent bordering the fog
     expect(planTurn(input({ game: { players, turn: 12, symmetricStart: false } })).enemyDeploy).toBe(5);
     // #226: an even-start free-for-all with every player still in gets the prior too.
     const ffa = planTurn(input({ game: { players: [...players, { id: OTHER }], turn: 12, symmetricStart: true } }));
-    expect(ffa.enemyDeploy).toBe(45);
+    // #235: capped at an even share of what the board hides: base 5 + half the fogged +40.
+    expect(ffa.enemyDeploy).toBe(25);
     expect(ffa.warnings.join('\n')).toMatch(/in a free-for-all that started even/);
     // An FFA down to two is no even start: either survivor may have absorbed the eliminated player.
     const left = planTurn(
@@ -309,13 +310,13 @@ describe('my own orders are measurements (#119)', () => {
 });
 
 describe('symmetricStart (#119): the start the fog prior needs', () => {
-  const map = { distributionModes: [{ id: 7, name: 'Scenario', type: 'scenario' }, { id: 8, name: 'Even', type: 'normal' }] };
-  it('picks, random and full distribution start even; a map scenario does not; unknown is not', () => {
-    expect(symmetricStart({ distributionMode: 0 }, map)).toBe(true);
-    expect(symmetricStart({ distributionMode: -1 }, map)).toBe(true);
-    expect(symmetricStart({ distributionMode: 8 }, map)).toBe(true);
-    expect(symmetricStart({ distributionMode: 7 }, map)).toBe(false);
-    expect(symmetricStart({}, map)).toBe(false);
-    expect(symmetricStart(undefined, map)).toBe(false);
+  it("picks, random and full distribution and every map distribution start even (#235: a map's scenario too); a custom scenario does not; unknown is not", () => {
+    expect(symmetricStart({ distributionMode: 0 })).toBe(true);
+    expect(symmetricStart({ distributionMode: -1 })).toBe(true);
+    expect(symmetricStart({ distributionMode: 8 })).toBe(true);
+    expect(symmetricStart({ distributionMode: 7 })).toBe(true);
+    expect(symmetricStart({ distributionMode: -3 })).toBe(false);
+    expect(symmetricStart({})).toBe(false);
+    expect(symmetricStart(undefined)).toBe(false);
   });
 });

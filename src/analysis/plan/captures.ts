@@ -901,10 +901,11 @@ export function bonusPasses(
   /**
    * Capture `t` for expansion, unless rule 4d's frontier budget stops it (then everything is undone).
    * `bare` (#214): a lead step toward the closest bonus, which may be retried at its bare cost.
+   * `force` (rule 5b, #218): the source, and the armies on it that stay out of the attack.
    */
-  const tryExpand = (t: number, reason: string, bare = false): boolean => {
+  const tryExpand = (t: number, reason: string, bare = false, force?: { from: number; keep: number }): boolean => {
     const restore = snapshot();
-    if (!tryCapture(t, reason, undefined, undefined, bare)) return false;
+    if (!tryCapture(t, reason, force, undefined, bare)) return false;
     const why = outgrows(t);
     if (why === null) return true;
     restore();

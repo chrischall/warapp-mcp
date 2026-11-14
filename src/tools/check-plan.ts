@@ -6,7 +6,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { incomeFor, planEnemyEstimates, symmetricStart, trackGame, trackOpponents } from '../analysis/index.js';
+import { incomeFor, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart } from '../analysis/index.js';
 import { stressPlan, type StressDodge, type StressExposure, type StressJoint, type StressReply } from '../analysis/stress.js';
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners, opponentReinforcement } from './card-advice.js';
@@ -222,7 +222,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             ...(p.state !== undefined ? { state: p.state } : {}),
           })),
           turn,
-          symmetricStart: symmetricStart(game.settings, map),
+          symmetricStart: symmetricStart(game.settings),
+          // #235: why not, when it was not (the plan says so in a free-for-all).
+          ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
           // #166: the opponent's opening simulated from the starts the award proved, as the prior.
           ...(opening ? { opening } : {}),
           // #164: exact income where the fog shows every owner, and an opponent's Reinforcement card.

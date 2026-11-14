@@ -298,6 +298,19 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
 - `DistributionMode` -1 is taken to be full distribution (every territory split among the
   players, `TerritoryLimit` ignored). Unverified. The bound leaves the starting armies out in
   that case, and for a map distribution whose type is not `normal`.
+- #235, read from the client bundle (its game-settings guide and its per-player count), NOT verified
+  against GameFeed: the client's own DistributionModeID is -3 custom scenario, 0 full distribution, -1
+  random warlords, -2 random cities, and any other id a map's distribution mode (`normal` or
+  `scenario`). A map's **scenario** distribution only says where each player or team starts (each is
+  randomly assigned one of the map maker's scenarios); every player still receives the same number
+  of territories (the smallest scenario's size, at most `TerritoryLimit`) at
+  `InitialPlayerArmiesPerTerritory`. Only a **custom** scenario (-3, the game creator's
+  territory-by-territory start) may start players unevenly. So the fog prior (`symmetricStart`)
+  treats every distribution but a custom scenario (-3, or a `CustomScenario` setting other than
+  `null`) as even. Two things stay open: whether GameFeed's `DistributionMode` uses the same ids
+  (the cached games show -2, -1, 0, 1 and 2, and a map's own ids start at 1), and the -1 = full
+  distribution assumption above, which the client's ids contradict (it names -1 random warlords and
+  0 full); the tracker's start bound is unchanged until that is checked live.
 - #205: the outlook's **upper** bound on a fogged opponent needs a start too. With the start
   unknown under full distribution or without `TerritoryLimit`, it takes ⌈territories ÷ seated
   players⌉ × `InitialPlayerArmiesPerTerritory` (every player gets an even share; unverified that full
@@ -468,8 +481,13 @@ types are verified on the lobby fixture.
   accepted" when off. Read: booleans and `True`/`False`, `Instant` = on, a few spellings of "not
   instant" = off; any other string is kept (`instantSurrenderRaw`) and treated as unknown.
   **UNVERIFIED:** the string GameFeed sends when it is off, and whether a two-player game with it off
-  really waits for the opponent to accept. `warapp_surrender` reads acceptance from it, falling back
-  to the player count (more than two players) when it does not read.
+  really waits for the opponent to accept. `warapp_surrender` reads acceptance from it (#228: the
+  game read with `GetSettings=true` — GameFeed sends no settings without it, so the preview had
+  always fallen back), falling back to the player count when it does not read: two players, no
+  acceptance; more than two, unknown (`needed: null`, "may"). #228: the cached settings records of
+  every recently planned game carry the key, as `"Instant"`; no other key names it. The two
+  multi-player surrenders of #228 went through at once, consistent with it (the setting was
+  never read there).
 - `AIsSurrenderWhenOneHumanRemains` (wiki): once one human is left the AIs give up, so the profile's
   `endsWith` names the last other human. **UNVERIFIED** live.
 - Boots (`leavers`): a human still `Playing` who has not committed, with the minutes left until

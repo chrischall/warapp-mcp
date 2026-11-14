@@ -87,6 +87,18 @@ describe('#201: the payback horizon once the game is decided', () => {
     expect(skips(p)).toBe(true);
   });
 
+  it('#228: losing on the estimate says so in the rationale line', () => {
+    const o = outlook('losing', 20, 10, 2000);
+    const turns = o.turns.map((t) => ({ ...t, likely: { playerId: 20, high: 200, ratio: 0.1, source: 'tracked' as const }, estimated: true as const }));
+    const p = run({ adapt: true, outlook: { state: 'losing', turns } });
+    expect(p.rationale.join('\n')).toMatch(
+      /Outlook \(#201\): losing for 3 turns running \(on an estimate under fog, #228: not a bound\), so the game is decided — my strength of 20 over the strongest opponent's ~\d+ a turn/,
+    );
+    // The bound's losing keeps its line unchanged.
+    const bound = run({ adapt: true, outlook: outlook('losing', 20, 10, 2000) });
+    expect(bound.rationale.join('\n')).toMatch(/Outlook \(#201\): losing for 3 turns running, so the game is decided/);
+  });
+
   it('an explicit goal ignores the outlook', () => {
     const p = run({ goal: 'balanced', outlook: outlook('winning', 120, 10, 20) });
     expect(p.rationale.join('\n')).not.toMatch(/Outlook \(#201\)/);

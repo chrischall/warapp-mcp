@@ -663,6 +663,18 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(JSON.stringify(log)).not.toMatch(/Ann|Bob/);
   });
 
+  it("(h) an even outlook beside the profile's behind standing says why they differ (#228)", async () => {
+    // Bob shows more than twice Ann's armies in view: the profile reads behind, whatever the incomes.
+    const outnumbered = BOARD.map((t) => (t.id === 158 ? { ...t, armies: 19 } : t));
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(outnumbered) }) });
+    const p = payload<PlanPayload & { profile: { standing: string }; outlook: { turns: { state: string }[]; basis: string } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }),
+    );
+    expect(p.profile.standing).toBe('behind');
+    expect(p.outlook.turns.at(-1)!.state).toBe('even');
+    expect(p.outlook.basis).toMatch(/The profile's standing reads behind/);
+  });
+
   it('(h) the verified cached board of the previous turn beats an unverified history standing (#131)', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });

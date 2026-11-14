@@ -12,6 +12,16 @@ import type { PlanCtx, PlanState } from './state.js';
 import { byNum } from './util.js';
 
 
+/** #235: what losing a territory of mine cuts off from the rest of my holdings ({@link deployBook}'s `cutOff`). */
+export interface Cut {
+  /** The territories cut off. */
+  ids: number[];
+  /** My armies on them at the start of the turn. */
+  armies: number;
+  /** The income they make: the positive bonuses held in full inside them, plus their per-territory income. */
+  income: number;
+}
+
 /** The deploy book: the helpers every phase deploys, moves and values territories through. */
 export type DeployBook = ReturnType<typeof deployBook>;
 
@@ -145,9 +155,60 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
     }
     return cost <= paybackTurns * value && worst <= WASTELAND_FACTOR * value;
   };
+  /**
+   * #235: what losing my `t` cuts off from the rest of my holdings (`ps.holdings` without `t`): when
+   * its neighbours of mine fall into two or more parts, every part but the largest (most territories,
+   * then most armies, then lowest id) is cut off — its territories, the armies on them (my start-of-turn
+   * armies), and the income they make: the positive bonuses held in full inside them, plus their
+   * per-territory income. `null` when nothing is cut off.
+   */
+  const cutOff = (t: number): Cut | null => {
+    if (cutCache.has(t)) return cutCache.get(t)!;
+    const has = (x: number) => x !== t && ps.holdings.has(x);
+    const parts: number[][] = [];
+    const seen = new Set<number>();
+    for (const start of neighborsOf(g, t).filter(has).sort(byNum)) {
+      if (seen.has(start)) continue;
+      const part: number[] = [];
+      const queue = [start];
+      seen.add(start);
+      while (queue.length) {
+        const x = queue.shift()!;
+        part.push(x);
+        for (const n of neighborsOf(g, x))
+          if (has(n) && !seen.has(n)) {
+            seen.add(n);
+            queue.push(n);
+          }
+      }
+      parts.push(part.sort(byNum));
+    }
+    let cut: Cut | null = null;
+    if (parts.length >= 2) {
+      const armies = (part: readonly number[]) => part.reduce((n, x) => n + (mineSet.has(x) ? armiesOf(x) : 0), 0);
+      const main = [...parts].sort((a, b) => b.length - a.length || armies(b) - armies(a) || a[0]! - b[0]!)[0]!;
+      const ids = parts.filter((p) => p !== main).flat().sort(byNum);
+      const off = new Set(ids);
+      let inc = 0;
+      for (const b of g.map.bonuses) {
+        const ts = bonusTerritories(g, b.id);
+        if (b.value > 0 && ts.length && ts.every((x) => off.has(x))) inc += b.value;
+      }
+      // On the holdings the cut is taken from (#235 review 2): my start-of-turn count until the
+      // captures are known, then with this turn's captures, which the cut-off part may include.
+      const per = s.bonusArmyPer ?? 0;
+      const n = ps.holdings.size;
+      if (per > 0) inc += territoryIncome(n, baseIncome, per) - territoryIncome(n - ids.length, baseIncome, per);
+      cut = { ids, armies: armies(ids), income: inc };
+    }
+    cutCache.set(t, cut);
+    return cut;
+  };
+  const cutCache = new Map<number, Cut | null>();
   const protectedValue = (t: number): number => {
     // Each bonus is visited once, so it counts once however many of its borders are threatened.
-    let v = 0;
+    // #235: plus the income of what losing it cuts off from the rest of my holdings.
+    let v = cutOff(t)?.income ?? 0;
     const mineWithout = (x: number) => x !== t && ps.holdings.has(x);
     for (const b of g.map.bonuses) {
       const ts = bonusTerritories(g, b.id);
@@ -186,6 +247,8 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
     // Floored at 0 only (#128): a negative bonus can outweigh the rest, never below nothing.
     return Math.max(0, v);
   };
+  /** #235: the armies a hold of my `t` also saves, as worth: those on what losing it cuts off. */
+  const stakeAt = (t: number) => cutOff(t)?.armies ?? 0;
   const valueCache = new Map<number, number>();
   const valueOf = (t: number) => {
     if (!valueCache.has(t)) valueCache.set(t, protectedValue(t));
@@ -210,5 +273,8 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
     protectedValue,
     valueCache,
     valueOf,
+    cutOff,
+    cutCache,
+    stakeAt,
   };
 }

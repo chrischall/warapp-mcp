@@ -240,3 +240,33 @@ describe('#218 review: the front forecasts my board income, never a one-off card
     expect(line).toMatch(/the 30 armies of this turn's card are played once/);
   });
 });
+
+describe('#218 (comment, turn 14): a source that could pay for the step but not for its hold still saves', () => {
+  // Live: the leftover saved on S toward Z on turn 13; on turn 14 S had grown enough to pay for Z
+  // by size alone, but not for Z and its own hold against the ~52 threat together, so the stand-still
+  // warning said attacking would leave S unable to hold — and the leftover went to the other border
+  // "with the most at stake" instead of saving on S, though both faced the same threat in the same
+  // bonus. The goal (`defend` that turn) was not the cause: it happened under `balanced` too.
+  // Here T1 (40) can send the 33 T3 needs, but must keep ~38 to hold against the ~44 threat.
+  const sc: Scenario = {
+    edges: '1-2 1-3 2-3 1-4 2-4 4-5 5-6',
+    bonuses: [[100, 6, [1, 2, 3]]],
+    cells: { 1: 'M40', 2: 'M30', 3: 'n20', 4: 'E40', 5: 'E3', 6: 'F5' },
+    income: 10,
+    options: { enemyDeploy: 5 },
+  };
+  it.each(['balanced', 'defend'] as const)('the leftover saves on that source under %s', (goal) => {
+    const p = planTurn(input({ ...sc, options: { ...sc.options, goal } }));
+    expect(p.moves.filter((m) => m.kind === 'attack')).toEqual([]);
+    expect(why(p)).toMatch(
+      /Deploy the leftover \d+ to T1 \(#1\): save toward T3 \(#3\) \(33 to take\), the next step of bonus B100 \(#100\), which this turn cannot afford and still hold T1 \(#1\) against the ~44 threat/,
+    );
+    expect(deployedTo(p, 1)).toBeGreaterThan(0);
+  });
+
+  it('a source that pays for the step and its hold together is no reason to save', () => {
+    // T1 with 80: it can take T3 and still hold, so the plan does not save toward it.
+    const p = planTurn(input({ ...sc, cells: { ...sc.cells, 1: 'M80' }, options: { ...sc.options, goal: 'defend' } }));
+    expect(why(p)).not.toMatch(/save toward T3/);
+  });
+});

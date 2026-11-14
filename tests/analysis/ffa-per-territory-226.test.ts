@@ -100,16 +100,20 @@ describe('(a) per-territory income: what an opponent could earn counts the terri
 
 describe('(b) the fog prior in an even-start free-for-all with no teams', () => {
   it('each opponent beside the fog is estimated at my own income, named a prior', () => {
+    // #235: capped at an even share of what the board hides (2 opponents): its 2 visible territories
+    // and 6 of the 12 fogged at one army each over the base 5, plus half the fogged +10 = 13.
     const p = planTurn(ffaInput());
     const text = p.warnings.join('\n');
     expect(text).toMatch(
-      /Enemy deploy estimate for player 20: ~18 \(a prior, not an observation: in a free-for-all that started even \(no teams, every player still in\), an opponent bordering the fog is assumed to earn at least my own income 18, capped at the most it could earn on this board, 24;/,
+      /Enemy deploy estimate for player 20: ~13 \(a prior, not an observation: in a free-for-all that started even \(no teams, every player still in\), an opponent bordering the fog is assumed to earn at least my own income 18, capped at an even share \(1 of 2 opponents\) of what the board hides, 13 \(all of it would be 24\);/,
     );
-    expect(p.enemyDeploy).toBe(18);
+    expect(p.enemyDeploy).toBe(13);
+    // Below the cap, my income: 12.
+    expect(planTurn(ffaInput({ income: 12 })).enemyDeploy).toBe(12);
   });
 
   it('card armies are not income: the prior is what I earn', () => {
-    expect(planTurn(ffaInput({ income: 28, cardArmies: 10 })).enemyDeploy).toBe(18);
+    expect(planTurn(ffaInput({ income: 22, cardArmies: 10 })).enemyDeploy).toBe(12);
   });
 
   it('not with teams, not once a player is out, not without an even start', () => {
@@ -126,7 +130,8 @@ describe('(b) the fog prior in an even-start free-for-all with no teams', () => 
 
   it('a player that never took its seat does not count as out', () => {
     const declined = [...players, { id: 40, state: 'Declined' }];
-    expect(planTurn(ffaInput({ game: { players: declined, turn: 6, symmetricStart: true } })).enemyDeploy).toBe(18);
+    // #235: nor as one of the opponents the hidden board is shared among (two, not three: 13).
+    expect(planTurn(ffaInput({ game: { players: declined, turn: 6, symmetricStart: true } })).enemyDeploy).toBe(13);
   });
 
   it('not for an opponent with nothing beside the fog', () => {

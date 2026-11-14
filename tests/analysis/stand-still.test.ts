@@ -566,8 +566,10 @@ describe('#107: the stand-still warning names the actual reason', () => {
     const b = board([mine(1, 4), mine(2, 3), neutral(3, 4), neutral(5, 12), player(22, 8, P2)]);
     const p = plan(b, 5, { map: buildGraph(map) });
     expect(attacks(p)).toEqual([]);
+    // #218 (comment): T1 could pay for T3 by size, not for T3 and its own hold together, so the
+    // leftover saves there and the warning says the plan stages on it.
     expect(p.warnings.join('\n')).toMatch(
-      /\(T3 \(#3\), 6 armies, toward bonus Pair \(#402\)\) cannot be reached: no neighbour of mine can attack it \(T1 \(#1\) stays to hold its border\)\./,
+      /\(T3 \(#3\), 6 armies, toward bonus Pair \(#402\)\) cannot be reached: no neighbour of mine can attack it \(T1 \(#1\) stays to hold its border\); the plan stages on T1 \(#1\) toward it \(the leftover saves there\)\./,
     );
   });
 });

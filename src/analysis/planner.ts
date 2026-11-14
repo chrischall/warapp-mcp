@@ -14,6 +14,7 @@
 //   1e, 1s, #165, 0p.3c strike stack, #102 spend, #167 lead ..... plan/strike.ts
 //   4e. never stand still ...................................... plan/stand-still.ts
 //   5. the leftover deploy, 3b's short borders (#121) ........... plan/leftover.ts
+//   5b. a neutral the leftover pays for (#218) ................. plan/after-leftover.ts
 //   6. transfers, #125 staging ................................. plan/transfers.ts
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
 //   7r. reports, the offence report, 1i (#109), the final plan .. plan/report.ts
@@ -169,8 +170,11 @@
 //          counts the turns it has left instead: the loser's strength over the winner's income a
 //          turn (winning: the strongest opponent's, its high when bounded — #208: its likely high,
 //          called an estimate, when only that showed the win — over my income; losing:
-//          mine over its income estimate), at least DECIDED_PAYBACK_MIN, at most PAYBACK_TURNS; a
-//          rationale line ("Outlook (#201): …") says so. The strike stack's forecast uses it too.
+//          mine over its income estimate — #228: also when losing rests on the estimate, mine far
+//          below its likely high and corroborated by the main front on my boards' incomes or by my
+//          income, the line then calling it an estimate), at least DECIDED_PAYBACK_MIN, at most
+//          PAYBACK_TURNS; a rationale line ("Outlook (#201): …") says so. The strike stack's forecast
+//          uses it too.
 //       4. An explicit `goal` always wins: none of the above, and the rationale says the
 //          profile was overridden.
 //  1. Defence. A visible enemy next to my territory T threatens it when
@@ -185,7 +189,20 @@
 //     one turn gets a warning — except (#201) when I lead an FFA on strength (adapting, two or more
 //     opponents left): the others may combine against the leader, so every adjacent opponent's
 //     stacks and deploys count together, like a team's, and a rationale line names each border held
-//     so ("I lead this free-for-all …"). Teammates (the game's team list) are never a threat, an
+//     so ("I lead this free-for-all …") — #235: but only while that pays. A leader's border whose
+//     joint hold costs more than CONCEDE_FACTOR × its worth (rule 1a) or the whole income, while
+//     its hold against the strongest single opponent passes both, is sized for that opponent
+//     (`soloHeld`, read by `borderAt` and `threatAt`), as in any FFA, with #128's pile-on warning;
+//     never my commander's territory. A member of a bonus I hold in full is judged with its bonus
+//     (#235 review): when the unit sized for them together costs more than the income (rule 1h
+//     could never hold it whole) while the unit sized for the strongest single opponent pays, the
+//     members that sizing lowers are sized so ("holding bonus … against players attacking together
+//     …"), unless another held bonus that fits the income holds them too. Any other held bonus not
+//     funded whole up front (#235 review 2: it may be conceded, another member hopeless or the
+//     captures leaving too little) gives each member it lowers the per-border test on its value
+//     without that bonus — the judgement it gets with no bonus. A rationale line says so ("… as FFA players attack alone (#235)") when the plan
+//     keeps it (live: a 23-stack that held against each neighbour alone, even at a 40 deploy, was
+//     conceded on the two together and withdrawn as the first order). Teammates (the game's team list) are never a threat, an
 //     estimate or a target. Under Local Deployment an opponent's visibly held bonus pays
 //     only into its own territories: what reaches T is its estimate less its visible pools
 //     plus the pools that contain one of its stacks next to T. An enemy commander counts in
@@ -239,6 +256,13 @@
 //     that bonus's value, and never above what it could earn; my own orders, when known, are
 //     measurements; #119) in place of the
 //     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
+//     The newest observed turn never lifts a usable track (#235 1c): a stack walking in beside
+//     the fog is not income (#123 lesson 5). When the track ends on this board and #123's bound cut
+//     armies beside the fog on its newest turn, a warning labels the cut reading ("reads up to +N
+//     if the armies that arrived beside the fog were deploys …; the estimate keeps ~T") and names
+//     warapp_check_plan's enemy_deploy to test it (`newestCut`). The planner reads that turn with
+//     the track's own bound (`ObservedTurn.expected`), so its observed line agrees with the track.
+//     With a usable track the fog prior stays out of the bound (#235 review).
 //     The fog prior (#119, `EnemyIncomePrior`): when `game.symmetricStart` says every player
 //     started even, with no teams and every seated player still playing — a 1v1, or (#226) a
 //     free-for-all, each opponent alike (a game with a player out is not: a survivor, or I, may
@@ -249,7 +273,18 @@
 //     against a finished game's true deploys without it. When the award of picks proved all its
 //     starts (`game.opening`, #166), the prior is the larger of my income and the income the pick
 //     advisor's opening simulation (`openingIncome`) gives it this turn from those starts. It only raises an
-//     estimate; the warning calls it a prior, not an observation, and says which.
+//     estimate; the warning calls it a prior, not an observation, and says which. #235: "even" is any
+//     distribution but a custom scenario (a map's scenario distribution included: it only says where
+//     each player starts); in a free-for-all the cap is an even share (1 of its opponents) of the
+//     territories the board hides and of the bonuses it could still hold (its own in full), and a
+//     free-for-all with no teams that gets no prior says why (`game.unevenStart`, a player out — never
+//     listed among the opponents beside the fog). The
+//     prior shrinks with evidence: with a usable track it keeps PRIOR_EVIDENCE_TURNS / (PRIOR_EVIDENCE_TURNS
+//     + its consecutive observed turns up to the newest board, none when the run stopped earlier, × the
+//     share of its edge in view) of its lead over the larger of
+//     its tracked income and its visible income (`priorBlend`), and the warning names both.
+//     In a 1v1 too, so it trades #119's prior back toward tracked figures #119 found 2-3x low:
+//     PRIOR_EVIDENCE_TURNS (4) is unmeasured against a finished 1v1.
 //     #164, exact income: under a fog setting that shows every owner (`OWNERS_SHOWN_FOG`: No, Light
 //     and Dense fog, matched by name, never by the engine's order) on a board that shows every
 //     territory's owner, an opponent's estimate is its base plus the bonuses it holds, exactly
@@ -379,7 +414,14 @@
 //     income it carries (each bonus counted once). Its worth adds the armies a
 //     hold saves, in income terms (armies / PAYBACK_TURNS): a top-up that keeps a
 //     big stack is worth paying even for a small bonus (live, a 60-army border
-//     protecting +4 needed 20 and held against 105). Its hold cost is the fewest
+//     protecting +4 needed 20 and held against 105). #235: a border whose loss cuts my
+//     holdings in two (its neighbours of mine fall into two or more parts without it) also
+//     protects what it cuts off — every part but the largest (most territories, then armies, then
+//     id): their income (positive bonuses held in full inside them, plus their per-territory
+//     income) in its protected value, their armies in its worth (/ PAYBACK_TURNS) — and a
+//     rationale line names the cut ("… links my holdings: losing it cuts off …") when it can change
+//     the judgement: income, or at least PAYBACK_TURNS armies (never a 1-army leaf). The cut's
+//     per-territory share uses my start-of-turn count, as the border's own does. Its hold cost is the fewest
 //     deploys making `armiesToTake(armies + d) > threat`. Every border facing one
 //     opponent is sized for that opponent's whole deploy (#69): it picks where to land
 //     after I commit, so that is each border's worst case, and a sure hold of several
@@ -777,7 +819,8 @@
 //     top-ranked step and the actual reason: rule 4d's frontier stop, R3 (it completes a bonus
 //     that falls next turn), No-Split, no neighbour able to attack (each named as holding its
 //     border or already ordered), the holds (it would fit without what they took), or its size
-//     (its cost against the movable armies and deploys that can reach it). Army cap (`armyCap`, × income): when my
+//     (its cost against the movable armies and deploys that can reach it); #235: when the leftover
+//     then stages on another source toward that step (rule 5), the warning names that source. Army cap (`armyCap`, × income): when my
 //     armies after deploy exceed cap × income, armies above it are wasted, so the same fallback
 //     fires in any phase, and the rationale says so. The cap's cut to income is not modelled.
 //     Contact and late phases (#107): a plan with no capture at all falls back too — unless the
@@ -894,7 +937,10 @@
 //     rule 4e's top-ranked step when it stood still for want of armies, else (rule 4f committing)
 //     the closest bonus's cheapest missing member in reach when this turn made no capture into
 //     that bonus, and only when its armies free plus what may still be deployed there fall short
-//     of it (a step refused for another reason — R3, rule 4c or 4d — is no reason to save); it
+//     of it, or (#218 comment, any goal) of it and what holds that source's border once it is
+//     taken (armies withdrawn into it counted only when I am known to move first: "which this turn
+//     cannot afford and still hold S against the ~T threat") — a step refused for another reason
+//     — R3, rule 4c or 4d — is no reason to save; it
 //     goes to my territory beside that member with the most armies free (open, not a softener, no
 //     order under No-Split; "save toward …, the next step of bonus …") — else the
 //     source of the top expansion (a capture's finisher; it then makes no transfer) — #218: but
@@ -905,6 +951,22 @@
 //     the leftover stays on that centre ("no front to go to: it stays central …"; rule 6 moves
 //     the armies already there, never the leftover) — else the
 //     border with the most fogged neighbours, else my biggest stack.
+//  5b. A neutral the leftover pays for (#218; live: a capture ruled out because its source "stays
+//     to hold its border", then the leftover put 8 on that source as its comfortable margin, and
+//     nothing took the 1-army neutral beside it). After the leftover, the strike stack's orders and
+//     the lead strikes, a territory of mine the leftover reached (not conceded, not my commander's,
+//     not the strike stack nor the step's source it saves on, attacking no player's territory: the
+//     #226 margin sizes those; never under No-Split or `complete-bonus`) takes a neutral beside it
+//     from what stands above its hold, by pass 3's order, eligibility and economy test (#125),
+//     sized as any capture (the target's cost, R3 and rule 4d through pass 3's capture, which
+//     deploys nothing: the leftover is spent). What it keeps: the hold against the threat beside
+//     it as if this turn's attacks on players there failed, without armies withdrawn into it
+//     unless I am known to move first (#215, as `keepFor`); what holds it against two opponents
+//     attacking together when it holds that now (#128); and at least its two-step keep (#172), an
+//     exit's cover (#179), the leftover kept central (#218) and a Local Deployment pool's armies
+//     (#103). The attack's line gives the arithmetic ("the leftover pays for (#218): of the N on
+//     S …, the C sent leave L, above the H that hold it …"); a capture removes rule 4e's
+//     stand-still warning, and a refused try leaves no line.
 //  6. Idle armies on interior territories transfer one step toward the front,
 //     only into territories held at the start of the turn and never into, or
 //     measured through, a conceded border
@@ -1193,6 +1255,7 @@ import { threatsPhase } from './plan/threats.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
+import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { transfers } from './plan/transfers.js';
@@ -1307,7 +1370,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   } = pc;
   const {
     territories: state, label, bonusName, mine, mineSet, incomeGain, nextIncomeWith, armiesOf, unitsAt, defenceAt,
-    bonusTs, completedBy, territoryShare, plainWorth, inFocus,
+    bonusTs, completedBy, inFocus,
   } = pc;
   const {
     guard, rates, chanceOf, chanceAt, costAt, toTake, luck, noSplit,
@@ -1355,7 +1418,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const tgt = targetsPhase(pc, ps, input, threats, hd);
   const {
     breakable, counterAt, targets, leadSteps, targetScoreCost, landScoreCost, offence, skipOffence, plans,
-    economicMember, uneconomicMember, negativeMember, ratio, committing, byCloseness, retakeChecks, retakeWarning,
+    ratio, committing, byCloseness, retakeChecks, retakeWarning,
   } = tgt;
   // #215 review: rule 1a's triage (run with the strikes, below) leaves pending a border in a bonus
   // these plans may complete this turn.
@@ -2045,15 +2108,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- pass 3: other expansion ----
   if (goal !== 'complete-bonus') {
     const rest = [...targets.values()]
-      .filter(
-        (t) =>
-          !captured.has(t.id) &&
-          !(balanced && t.enemy) &&
-          // #125: a member of an uneconomic bonus is still a territory worth its per-territory income.
-          (economicMember.has(t.id) ||
-            !uneconomicMember.has(t.id) ||
-            (territoryShare(1) > 0 && !negativeMember.has(t.id))),
-      )
+      // #125: a member of an uneconomic bonus is still a territory worth its per-territory income.
+      .filter((t) => !captured.has(t.id) && plainEligible(pc, tgt, t.id, t.enemy))
       .sort((a, b) => targetScoreCost(a.id) - targetScoreCost(b.id) || a.cost - b.cost || a.id - b.id);
     // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
     for (const t of rest) {
@@ -2062,10 +2118,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // #125: its own economy test. A member of an economic bonus is judged by that bonus; any
       // other capture pays for the armies it loses with the income it adds within PAYBACK_TURNS,
       // and one that adds none may lose at most PLAIN_EXPANSION_LOSS.
-      if (!inFocus(t.id) && !economicMember.has(t.id)) {
-        const lost = straightKills(defenceAt(t.id), rates.defensiveKillRate);
-        const worth = plainWorth(t.id, gain);
-        if (worth > 0 ? lost > paybackTurns * worth : lost > PLAIN_EXPANSION_LOSS) {
+      {
+        const refused = plainEconomy(pc, tgt, t.id, gain);
+        if (refused) {
+          const { lost, worth } = refused;
           const reach = Math.max(...neighborsOf(g, t.id).filter((x) => avail.has(x)).map((x) => (avail.get(x) ?? 0) + roomAt(x)));
           if (reach >= t.cost)
             rationale.push(
@@ -2081,7 +2137,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   }
 
   // ---- 4e. never stand still (#104, #107), the contact fallback (plan/stand-still.ts) ----
-  const { saveStep } = neverStandStill(pc, ps, book, threats, hd, tgt, caps);
+  const { saveStep, standStill } = neverStandStill(pc, ps, book, threats, hd, tgt, caps);
 
   // ---- 4g. a capture worth a card piece (#127) ----
   // Any capture this turn earns the turn's card pieces. With none planned (every goal but
@@ -2183,9 +2239,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- concentrate (#72, rule 0p.3c): the 1v1 strike stack's border (plan/strike.ts) ----
   const { stack, smallExpansion } = chooseStrikeStack(pc, ps, book, threats, open, stays);
   // ---- 5. the leftover deploy (plan/leftover.ts) ----
+  /** The deploys before the leftover: rule 5b's sources are the territories it reached. */
+  const beforeLeftover = new Map(ps.deployed);
   const leftover = leftoverDeploy(pc, ps, book, threats, hd, tgt, saveStep, stack, open, stays);
   let { strikeStack } = leftover;
   const { poolDeployed, staging } = leftover;
+  // #235: the Standing-still warning names the source the leftover actually stages on.
+  // Found by its text: earlier warnings may have been spliced out since (a revival, a dropped capture).
+  if (staging && standStill && staging.t === standStill.t && staging.from !== standStill.named) {
+    const at = ps.warnings.indexOf(standStill.text);
+    if (at >= 0) ps.warnings[at] = standStill.restate(staging.from);
+  }
 
   // The stack exists whether or not a leftover reached it (#102): holds and captures may take the
   // whole income, and an 80-stack must not stand idle for want of one spare army.
@@ -2250,6 +2314,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- #167: lead strikes (plan/strike.ts) ----
   const { leadSpareFor } = leadStrikes(pc, ps, book, threats, hd, tgt, caps, holdLocked, strikeStack);
+
+  // ---- 5b. a neutral the leftover pays for (#218) (plan/after-leftover.ts) ----
+  // The strike stack concentrates for its strike, and a step's source saves toward it: neither spends.
+  const keepWhole = new Set([...(strikeStack ? [strikeStack.id] : []), ...(staging ? [staging.from] : [])]);
+  afterLeftoverCaptures(pc, ps, book, threats, hd, tgt, caps, beforeLeftover, keepWhole, poolDeployed);
 
   // ---- efficient sizes (S2) ----
   // An attack below its next kill breakpoint is topped up to it from armies that would sit

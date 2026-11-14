@@ -51,6 +51,19 @@ export type Fail =
   | { kind: 'size' };
 
 /**
+ * #235: the Standing-still warning (`text`, as pushed) about step `t`, explained by the source
+ * `named` (`undefined` when none can reach it): once the leftover stages on another source for that
+ * step, `restate` names that source. It is found again by its text, never by its index: warnings
+ * pushed before it may be spliced out before the restatement (a conceded border held after all).
+ */
+export interface StandStillNote {
+  t: number;
+  text: string;
+  named: number | undefined;
+  restate: (stage: number) => string;
+}
+
+/**
  * The helpers rule 4e works with, over the plan as it stands when each is called: what reaches a
  * step, trying one (and undoing it), what a capture loses and leaves exposed, and why a step was
  * not taken. Creating them changes nothing.
@@ -373,7 +386,7 @@ export function neverStandStill(
   hd: Holds,
   tgt: Targets,
   caps: Captures,
-): { saveStep: SaveStep | undefined } {
+): { saveStep: SaveStep | undefined; standStill: StandStillNote | undefined } {
   const {
     g, s, opts, income, foe, profile, auto, goal, deployOf, territories: state, label, bonusName, mine, mineSet,
     armiesOf, unitsAt, uncounted, defenceAt, bonusTs, guard, costAt, toTake, leadLever, clearLeader,
@@ -389,6 +402,8 @@ export function neverStandStill(
    * the leftover saves toward it (rule 5) and idle stacks stage toward it (rule 6).
    */
   let saveStep: { t: number; bonusId: number; cost: number } | undefined;
+  /** #235: the stand-still warning, restated once the leftover has chosen where it stages. */
+  let standStill: StandStillNote | undefined;
   if (goal !== 'complete-bonus' && captured.size === 0) {
     const early = profile.phase === 'opening' || profile.phase === 'expansion';
     // In a 1v1 the strike stack (rule 0p.3c, #102) is contact's own answer: it attacks every turn.
@@ -791,8 +806,20 @@ export function neverStandStill(
             ? `Standing still: no capture is planned, and the cheapest expansion (${label(top.st.t)}, ${top.st.cost} armies, toward bonus ${bonusName(top.st.id)})`
             : `Standing still: no capture is planned, and the cheapest capture (${label(top.st.t)}, ${top.st.cost} armies, a territory of player ${top.st.player})`;
         const tail = `${failText(top.st, failed.get(top.st.t))}.`;
-        warnings.push(`${head} ${tail}`);
+        const text = `${head} ${tail}`;
+        warnings.push(text);
         const why = failed.get(top.st.t);
+        // #235: the source the warning explains the miss by (a failed attempt's, else the best reach).
+        const named = why && 'from' in why ? why.from : top.st.from;
+        standStill = {
+          t: top.st.t,
+          text,
+          named,
+          restate: (stage: number) =>
+            why?.kind === 'hold'
+              ? `${head} is not taken this turn: the plan stages on ${label(stage)} toward it (the leftover saves there); taking it now would leave ${label(why.from)} unable to hold its border (${holdText(why)}).`
+              : `${head} ${failText(top.st, why)}; the plan stages on ${label(stage)} toward it (the leftover saves there).`,
+        };
         if (top.kind === 'neutral' && (why === undefined || why.kind === 'size'))
           saveStep = { t: top.st.t, bonusId: top.st.id, cost: top.st.cost };
       }
@@ -822,5 +849,5 @@ export function neverStandStill(
       if (dropped.length) rationale.push(`Other candidates not taken: ${dropped.join('; ')}.`);
     }
   }
-  return { saveStep };
+  return { saveStep, standStill };
 }

@@ -238,8 +238,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
-  outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'
-  acceptance — / `still_playing` after an undo — GameFeed has no pending state — / `unchanged`; lobbies refused), never from the reply, which has no result.
+  outcome from GameFeed (`surrendered` / `pending` — the others' acceptance is needed when the game's
+  `InstantSurrender` says so, and MAY be needed with more than two players when it is unread (#228) — /
+  `still_playing` after an undo — GameFeed has no pending state — / `unchanged`; lobbies refused), never from the reply, which has no result.
 - **A speed first turn hides the board until Begin.** With MoveOrder `NoLuckCycle` war.app sends
   no standing on turn 1 (or while picking) until the player presses Begin, which starts their
   turn timer; the live tools say so instead of the lobby error. `warapp_begin_turn` sends
@@ -363,7 +364,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   The threat at a border (#128, `forceAt`) is the larger of one attack of a player's stacks plus
   its deploy and the single attack equal to its stacks attacking separately (each rounds on its
   own); opponents on one team combine, FFA players do not (a warning when two together could take
-  a border); teammates are never a threat or a target; under Local Deployment an opponent's
+  a border; when I lead an FFA (#201) every adjacent opponent combines, but only while that hold pays —
+  a border whose joint hold fails rule 1a's tests while its hold against the strongest single opponent
+  passes is sized for that opponent, never conceded on the two together, #235; a held bonus is judged whole: its
+  members are sized so when its joint unit costs more than the income and its single-opponent unit pays, and a
+  bonus funded neither so nor whole up front leaves each member the per-border test on its value without that
+  bonus — the judgement it gets with no bonus); teammates are never a threat or a target; under Local Deployment an opponent's
   visible bonus pools reach only their own territories (its free base income still lands anywhere,
   even when its estimate leaves the pools out). A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also
@@ -388,12 +394,32 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). **The fog
   prior (#119):** in a 1v1 or (#226) a free-for-all that started even (no teams, every seated
   player still playing — not once a player is out; `PlanGameContext.symmetricStart`, set by
-  `warapp_plan_turn` from `symmetricStart(settings, map)`: any distribution but a map scenario),
+  `warapp_plan_turn` from `symmetricStart(settings)`: any distribution but a custom scenario —
+  DistributionMode -3 or a `CustomScenario` setting; #235: a map's "scenario" distribution only says
+  where each player starts, and the client gives every player the same count at the same armies),
   every opponent bordering the fog is estimated at least at my own income (card armies out) — or, on
   turns 1–4 when the award of picks proved all its starts, at the income the pick advisor's opening
   simulation gives it from them when that is larger (`openingIncome`, `PlanGameContext.opening`, #166) — capped
-  at what it could earn on the board, and the warning calls it a prior — every observed figure is
-  a lower bound under fog, and without it a finished game's true deploys read 2–3× low. Each border
+  at what it could earn on the board (#235: in a free-for-all at an even share, 1 of its opponents, of
+  the territories the board hides and of the bonuses it could still hold, its own in full), and the
+  warning calls it a prior — every observed figure is
+  a lower bound under fog, and without it a finished game's true deploys read 2–3× low. #235: the
+  prior shrinks with evidence: with a usable track it keeps `PRIOR_EVIDENCE_TURNS` (4) / (4 + its
+  consecutive observed turns up to the newest board — a run that stopped earlier counts none — × the
+  visible share of its edge) of its lead over the tracked figure (or the visible one, when larger;
+  `priorBlend`; the warning names both figures). This applies in a 1v1 too,
+  pulling #119's prior back toward the tracked figures #119 found 2–3× low (8 turns with the whole
+  edge in view keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
+  against a finished 1v1. A
+  free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`, or a player
+  out; a player out is never listed among the opponents beside the fog). The newest observed turn
+  never lifts a usable track (#235 1c): a stack walking in beside the fog is not income (#123 lesson
+  5). When the track ends on this board and #123's bound (twice what it carried before that turn,
+  `ObservedTurn.expected`; never the prior) cut armies beside the fog on its newest turn, a warning
+  labels the cut reading — "reads up to +N if the armies that arrived beside the fog were deploys …;
+  the estimate keeps ~T (tracked) because a stack walking in is not income" — and suggests
+  `warapp_check_plan`'s `enemy_deploy` to test it (`EnemyDeployEstimate.newestCut`); the planner reads
+  that turn with the track's own bound, so its observed line agrees with the track. Each border
   is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to
   land), not a double count.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
@@ -418,7 +444,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   best fit the income gap, within reach and affordable, none listed when too many fit — see the
   #123 rules below; candidates, never asserted). With 2+ observed turns the planner uses
   the tracked income in place of the single-turn observed figure (`PlanInput.tracks`) and says so
-  in its rationale; fewer, and the plan is exactly what it was without tracking.
+  in its rationale (a newest turn its bound cut is labelled, never counted: #235 1c, see the fog prior
+  above); fewer, and the plan is exactly what it
+  was without tracking.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in
@@ -436,9 +464,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Triage by protected value.** A threatened border's protected value is my complete
     bonuses containing it, plus bonuses I'd lose all access to, plus its share (value × members
     held ÷ size) of a bonus I am building — every missing member a visible neutral, finishing it
-    economic (#122) — plus per-territory income; its
-    **worth** adds the armies a hold saves as income (armies / `PAYBACK_TURNS`), so a big stack
-    is topped up rather than abandoned. Holds go in order of worth per army of hold cost. A
+    economic (#122) — plus per-territory income, plus (#235) the income of what its loss cuts off
+    from the rest of my holdings (every part but the largest when it is a cut vertex; named in the rationale
+    only with income or at least `PAYBACK_TURNS` armies); its
+    **worth** adds the armies a hold saves as income (armies / `PAYBACK_TURNS`), those cut off
+    included, so a big stack is topped up rather than abandoned. Holds go in order of worth per army of hold cost. A
     border is **conceded** when holding costs more than `CONCEDE_FACTOR` (3) × its worth or than the income left
     (a warning either way; in the opening, never on worth when the hold costs no more than the
     armies already there, #122): triage deploys nothing there (unless every territory I hold is
@@ -518,7 +548,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     expansion (pass 3) repays its losses with the income it adds within `PAYBACK_TURNS`, or loses
     at most `PLAIN_EXPANSION_LOSS` (2) for +0. Turns to finish are never fewer than a bonus's depth.
     A capture rule 4e/4f names but cannot afford gets the leftover on its source, and idle stacks
-    facing no enemy stage one step toward it.
+    facing no enemy stage one step toward it; "cannot afford" counts what holds that source's border
+    once the step is taken (#218 comment: a source that grew enough to pay for the step by size alone
+    stopped saving, under any goal).
   - **One surplus per territory (#121).** A border that holds at the start of the turn keeps
     what holds it, as my commander's territory does: a capture from it spends only the armies
     above that (plus deploys), so a capture never leaves a safe border takeable. Idle armies
@@ -576,6 +608,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     bonuses), and counts toward the step; with no enemy territory in view the leftover stays on the
     territory central to what I hold (fewest hops through my land to my farthest border) rather than
     ride an expansion stack more than `CENTRE_SLACK` hops farther out whose attacks land without it.
+    #218 (rule 5b, `src/analysis/plan/after-leftover.ts`): once it is placed, a territory the leftover
+    reached takes a neutral beside it from what stands above its hold (pass 3's economy test and
+    sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,
+    and against two opponents together when it holds that now; never the strike stack, a saving
+    source, a source attacking a player, under No-Split or `complete-bonus`).
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and
@@ -592,7 +629,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **One-off movements are not income (#123, `observeDeploy`).** Growth on its territory next
     to the fog and the surplus of a capture whose visible attacker shrank are ambiguous: both read
     as deploy up to one bound, `HIDDEN_INCOME_FACTOR` (2) × what it was expected to deploy
-    (visible income, the fog prior in the planner, or tracked/carried income — so a steady hidden
+    (visible income, plus the tracked/carried income, or the fog prior in the planner when no track is
+    usable — so a steady hidden
     bonus is still seen; a carry only bound-cut readings reached ends at a later turn read in full
     that observed less) and at most what it could earn; beyond it, a stack out of the fog. A capture from me is
     priced at the guard unless my cached orders say what stood there. Each observed turn has a low–high range for the ambiguity. The
@@ -705,7 +743,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`src/direct/session.ts`), the router is pinned to the browser bridge whatever `WARAPP_TRANSPORT`
   says (`createDirectFirstBridge`), and no hint suggests linking; `mint.yaml` keeps the bridge.
 - **End of game (#178).** `Game.endRules` holds the surrender, boot and AI settings; whether a surrender
-  needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback).
+  needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback;
+  #228: the surrender preview reads the game with `settings: true`, which carries it — without them it
+  always fell back — and unread with more than two players `acceptance.needed` is `null`: it MAY be
+  needed, the result reading unchanged).
   `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json`
   (`warapp_get_game` adds the final result); the surrender preview reads the latest from there.
   An opponent the outlook cannot measure (nothing in view now, or no observed income) gets a
@@ -716,6 +757,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   then), else my opening board, else the default territory limit (3) at the starting armies — never
   the territories I hold on a later board; my income before my first board ramps up from that
   opening's.
+  #228: the likely high is generous to the opponent (every army received, none lost: a game I lead read
+  0.05×), so `losing` on it needs mine at most `LIKELY_LOSING_RATIO` (1/(2.4 × 2)) of it AND
+  corroboration — the main front grinding me down, or my income at most `BEHIND_RATIO` × the most an
+  opponent is tracked earning; the turn carries `estimated: true` and `lowLikely`, and the basis says
+  which (or, uncorroborated, why it is no loss). That front is always forecast on the incomes read off
+  my boards, never the plan's (#228 review): the planner reads the outlook before it plans, and the
+  reported one is re-read with the plan's front, so the losing state the plan acts on (rule 3d's decided
+  horizon, its line calling it an estimate) is the one shown and logged. `warapp_plan_turn` passes the plan's profile standing
+  back (`standing`): an `even`/`stalemate` outlook beside `ahead`/`behind` says why the two differ.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { gameOutlook, OUTLOOK_RATIO, OUTLOOK_TURNS, peerPace } from '../../src/analysis/outlook.js';
+import { gameOutlook, LIKELY_INCOME_MARGIN, OUTLOOK_RATIO, OUTLOOK_TURNS, peerPace } from '../../src/analysis/outlook.js';
 import type { TurnBoard } from '../../src/analysis/opponents.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
@@ -566,6 +566,110 @@ describe('gameOutlook (#178)', () => {
       it('tracked opponents are labelled tracked', () => {
         const o = gameOutlook({ graph: big, me: ME, boards: turns(8, [shape(), shape(), shape()]), game: ffa4 });
         expect(o.turns.at(-1)!.likely!.source).toBe('tracked');
+      });
+    });
+
+    describe('#228: a likely ratio far below parity reads losing, on the estimate', () => {
+      /** Me on 1–4 (one bonus, income 10, 5 armies each: strength 50); the foe's stack on 54 in view. */
+      const small = (foeArmies: number) =>
+        board(shape(foeArmies).territories.map((t) => (t.territoryId > 4 && t.territoryId <= 52 ? neutral(t.territoryId, 2) : t.territoryId <= 4 ? mine(t.territoryId, 5) : t)));
+
+      it("the issue's shape: an opponent deploying 20 a turn against my 10 reads losing, labelled an estimate, not even", () => {
+        // In view the foe's stack is the least it has (ratio.high above 1/2.4), so the bound alone says even.
+        const o = gameOutlook({ graph: big, me: ME, boards: turns(7, [small(20), small(40), small(60), small(80)]), game: ffa4 });
+        const last = o.turns.at(-1)!;
+        expect(last.mine).toBe(50);
+        expect(last.ratio.high!).toBeGreaterThan(1 / OUTLOOK_RATIO);
+        expect(last.likely!.source).toBe('tracked');
+        expect(last.likely!.ratio).toBeLessThanOrEqual(1 / (OUTLOOK_RATIO * LIKELY_INCOME_MARGIN));
+        expect(last.state).toBe('losing');
+        expect(last.estimated).toBe(true);
+        expect(o.state).toBe('losing');
+        expect(o.basis).toMatch(/losing rests on it/i);
+      });
+
+      it('a likely ratio as low beside a level income and a quiet front stays even, and says what losing on it needs', () => {
+        // Both earn 10: the likely high counts every army the foe could have received at twice its
+        // pace and none lost, so it reads 0.18× here though nothing says I am losing.
+        const o = gameOutlook({ graph: big, me: ME, boards: turns(7, [small(5), small(15), small(25), small(35)]), game: ffa4 });
+        const last = o.turns.at(-1)!;
+        expect(last.likely!.ratio).toBeLessThanOrEqual(1 / (OUTLOOK_RATIO * LIKELY_INCOME_MARGIN));
+        expect(last.state).toBe('even');
+        expect(last.estimated).toBeUndefined();
+        expect(last.lowLikely).toEqual({ myIncome: 10, mostTracked: 10, groundDown: false, losing: false });
+        expect(o.basis).toMatch(/but that alone is no loss/);
+        expect(o.basis).toMatch(/mine 10, the most tracked 10/);
+      });
+
+      it('the same ratio beside a front that grinds me down reads losing (#218 item 2)', () => {
+        // The foe's stack stands next to mine (#5 beside #4) and grows by its income, 10 a turn.
+        const beside = (foeArmies: number) =>
+          board(small(0).territories.map((t) => (t.territoryId === 5 ? foe(5, foeArmies) : t.territoryId === 54 ? neutral(54, 2) : t)));
+        const o = gameOutlook({ graph: big, me: ME, boards: turns(7, [beside(30), beside(40), beside(50), beside(60)]), game: ffa4 });
+        const last = o.turns.at(-1)!;
+        expect(last.front!.outcome).toBe('ground-down');
+        expect(last.lowLikely).toMatchObject({ groundDown: true, losing: true });
+        expect(last.state).toBe('losing');
+        expect(last.estimated).toBe(true);
+        expect(o.basis).toMatch(/Losing on the estimate: .*corroborated by the main front grinding me down/);
+      });
+
+      describe("the planner's read and the reported one agree when the plan's front incomes differ (#228 review)", () => {
+        const beside = (foeArmies: number) =>
+          board(small(0).territories.map((t) => (t.territoryId === 5 ? foe(5, foeArmies) : t.territoryId === 54 ? neutral(54, 2) : t)));
+        /** The first call is what the planner reads; the second, fed the plan's front, is reported and logged. */
+        const withPlanFront = (boards: TurnBoard[], myIncome: number, theirIncome: number) => {
+          const first = gameOutlook({ graph: big, me: ME, boards, game: ffa4 });
+          const f = first.turns.at(-1)!.front!;
+          const second = gameOutlook({
+            graph: big,
+            me: ME,
+            boards,
+            game: ffa4,
+            front: { turn: boards.at(-1)!.turn, from: f.from, at: f.at, myIncome, theirIncome },
+          });
+          return { first: first.turns.at(-1)!, second: second.turns.at(-1)!, firstState: first.state, secondState: second.state, basis: second.basis };
+        };
+
+        it("a front ground down on my boards' incomes but breaking on the plan's stays losing in both", () => {
+          const r = withPlanFront(turns(7, [beside(30), beside(40), beside(50), beside(60)]), 60, 1);
+          expect(r.first.state).toBe('losing');
+          expect(r.second.front!.incomeSource).toBe('plan');
+          expect(r.second.front!.outcome).not.toBe('ground-down');
+          expect(r.second.state).toBe('losing');
+          expect(r.second.estimated).toBe(true);
+          expect(r.secondState).toBe(r.firstState);
+          expect(r.basis).toMatch(/on the incomes read off my boards/);
+        });
+
+        it("a front quiet on my boards' incomes that the plan's grind down stays even in both", () => {
+          // A small foe stack beside mine, its big one away from me: on my boards' incomes nothing grinds
+          // me down; the plan prices the foe at 60 a turn against my 1.
+          const quiet = (foeArmies: number) => board(small(foeArmies).territories.map((t) => (t.territoryId === 5 ? foe(5, 3) : t)));
+          const r = withPlanFront(turns(7, [quiet(5), quiet(15), quiet(25), quiet(35)]), 1, 60);
+          expect(r.first.lowLikely).toMatchObject({ groundDown: false, losing: false });
+          expect(r.first.state).not.toBe('losing');
+          expect(r.second.front!.outcome).toBe('ground-down');
+          // The planner reads only winning and losing (stalemate may follow the reported front, as before).
+          expect(r.second.state).not.toBe('losing');
+          expect(r.second.lowLikely).toMatchObject({ groundDown: false, losing: false });
+          expect(r.secondState === 'losing').toBe(r.firstState === 'losing');
+        });
+      });
+
+      it("explains an even outlook beside the profile's standing when they differ", () => {
+        const o = gameOutlook({
+          graph: big,
+          me: ME,
+          boards: turns(7, [small(5), small(15), small(25), small(35)]),
+          game: ffa4,
+          standing: 'behind',
+        });
+        expect(o.state).toBe('even');
+        expect(o.basis).toMatch(/standing reads behind/i);
+        expect(o.basis).toMatch(/neither the winning nor the losing threshold/i);
+        const same = gameOutlook({ graph: big, me: ME, boards: turns(7, [small(5), small(15), small(25), small(35)]), game: ffa4, standing: 'even' });
+        expect(same.basis).not.toMatch(/standing reads/i);
       });
     });
 

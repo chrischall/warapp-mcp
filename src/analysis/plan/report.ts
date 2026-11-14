@@ -449,10 +449,18 @@ export function reportOffence(
       }. Its own ${f.own} need ${ownTake} to take; ${fix}.`,
     );
   }
+  // #235: the leader's borders sized for the strongest single opponent, when the plan keeps them.
+  // A held bonus's members share one line (#235 review): it is said once.
+  const soloSaid = new Set<string>();
+  for (const [id, line] of [...ps.soloHeld].sort((a, b) => a[0] - b[0]))
+    if (!conceded.has(id) && mineSet.has(id) && !soloSaid.has(line)) {
+      soloSaid.add(line);
+      rationale.push(line);
+    }
   // #201: the FFA leader's borders held against two or more opponents attacking together.
   if (ffaLeader)
     for (const id of [...borders.keys()].sort(byNum)) {
-      if (conceded.has(id) || !mineSet.has(id)) continue;
+      if (conceded.has(id) || !mineSet.has(id) || ps.soloHeld.has(id)) continue;
       const f = forceAt(id, (n) => captured.has(n), { trend: true, allPlayers: true });
       if (!f?.split || f.split.players.length < 2) continue;
       rationale.push(

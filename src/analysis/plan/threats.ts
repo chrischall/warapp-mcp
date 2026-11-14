@@ -69,6 +69,11 @@ export interface Border extends Force {
   id: number;
   /** #201, behind: the worst-case threat when `threat` is the expected attack it is sized for. */
   worst?: number;
+  /**
+   * #235: I lead the FFA (#201) and `threat` is every adjacent opponent together: the strongest
+   * single opponent's threat, lower, which the holds fall back to when the joint hold does not pay.
+   */
+  alone?: number;
 }
 
 /** The threats phase's helpers, for the phases after it. */
@@ -504,7 +509,7 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
   const forceAt = (
     t: number,
     gone: (n: number) => boolean,
-    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean },
+    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean; solo?: boolean },
   ): Force | null => {
     const byPlayer = stacksAt(t, gone, o.trend);
     // B2 (T2, plan/relations.ts): on a truce hold the partner attacks with its stacks alone — no
@@ -537,8 +542,9 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
       if (mates) mates.push(e);
       else groups.push([e]);
     }
-    // #201: the FFA leader holds against every adjacent opponent together.
-    if (o.pileOn || (o.allPlayers && ffaLeader)) groups.splice(0, groups.length, each);
+    // #201: the FFA leader holds against every adjacent opponent together — unless `solo` (#235:
+    // a border whose joint hold does not pay is sized for each opponent alone, as in any FFA).
+    if (o.pileOn || (o.allPlayers && ffaLeader && !o.solo)) groups.splice(0, groups.length, each);
     for (const group of groups) {
       const count = group.reduce((n, e) => n + e.stacks.length, 0);
       if (count < 2) continue;
@@ -580,7 +586,8 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
    * opponent next to it, trend included). `null` with no enemy next to it.
    */
   const threatAt = (t: number, gone: (n: number) => boolean): { player: number; threat: number } | null => {
-    const f = forceAt(t, gone, { trend: true, allPlayers: true });
+    // #235: a leader's border whose joint hold does not pay is judged against each opponent alone.
+    const f = forceAt(t, gone, { trend: true, allPlayers: true, solo: ps.soloHeld.has(t) });
     return f ? { player: f.player, threat: f.threat } : null;
   };
   /**
@@ -617,7 +624,7 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
 /** Rule 1's borders: the strongest force next to each territory of mine, stated in the rationale. */
 export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src: ThreatSources, forces: ThreatForces) {
   const {
-    g, board, game: ctx, foe, custom, estimates, incomePrior, enemyDeploy, territories: state, label, mine, mineSet,
+    g, board, game: ctx, foe, custom, estimates, incomePrior, incomePriorSkipped, enemyDeploy, territories: state, label, mine, mineSet,
     armiesOf, unitsAt, uncounted, uncountedKind, bombOn, toTake, turnNow, holdPasses, myCommanders, s, baseIncome, rates,
   } = pc;
   const { warnings, rationale } = ps;
@@ -637,8 +644,16 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
    * for (its `worst` included, #201) is read from `borders`, never from a side table.
    */
   const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
-    const f = forceAt(t, gone, { trend: true, allPlayers: true });
+    // #235: a leader's border whose joint hold does not pay is sized for each opponent alone.
+    const solo = ps.soloHeld.has(t);
+    const f = forceAt(t, gone, { trend: true, allPlayers: true, solo });
     if (!f) return null;
+    // #235: the leader's joint threat, with the strongest single opponent's beside it.
+    const alone = (): number | undefined => {
+      if (solo || !pc.ffaLeader || !f.split || f.split.players.length < 2) return undefined;
+      const a = forceAt(t, gone, { trend: true, allPlayers: true, solo: true });
+      return a && a.threat < f.threat ? a.threat : undefined;
+    };
     // #201, behind: sized for the expected attack (#59's {@link expectedAt}: every adjacent player's
     // movable armies next to it plus its whole deploy estimate, the largest of them), not the worst
     // case — the trend projection above the deploy. The deploy is counted in full on each border, so
@@ -648,10 +663,11 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     // chains and Bomb sizing are no gamble here (they keep the worst case), nor my commander's
     // territory (rule 1k holds it against the whole deploy), nor an `enemyDeploy` override.
     if (holdPasses === 'expected' && !myCommanders.has(t) && !f.split && !f.chain && !bombOn && !custom) {
-      const e = forceAt(t, gone, { trend: false, allPlayers: true });
+      const e = forceAt(t, gone, { trend: false, allPlayers: true, solo });
       if (e && !e.split && !e.chain && e.threat < f.threat) return { id: t, ...f, threat: e.threat, worst: f.threat };
     }
-    return { id: t, ...f };
+    const a = alone();
+    return { id: t, ...f, ...(a !== undefined ? { alone: a } : {}) };
   };
   for (const t of mine) {
     for (const n of neighborsOf(g, t)) {
@@ -716,6 +732,14 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
       // #199: a player whose only threat is a chain has its deploy inside that chain: explain it too.
       const estimated = new Set(facing);
       for (const b of borders.values()) if (b.chain && estimates.has(b.chain.player)) estimated.add(b.chain.player);
+      // #235: a free-for-all with no teams whose opponents border the fog, and no prior: say why.
+      // A player out (eliminated, booted, surrendered) is no opponent the prior skips, whatever it still holds.
+      const out = new Set((ctx.players ?? []).filter((p) => (p.state ?? 'Playing') !== 'Playing').map((p) => p.id));
+      const fogged = [...estimates.values()].filter((e) => foe(e.playerId) && e.fogBeside && !out.has(e.playerId)).map((e) => e.playerId).sort(byNum);
+      if (incomePriorSkipped && fogged.length)
+        warnings.push(
+          `No fog prior for the opponents beside the fog (${fogged.length === 1 ? 'player' : 'players'} ${fogged.join(', ')}) in this free-for-all: ${incomePriorSkipped}; their estimates rest on what the board shows, each a lower bound under fog.`,
+        );
       for (const p of [...estimated].sort(byNum)) {
         const e = estimates.get(p)!;
         const visible = `base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}`;
@@ -795,6 +819,15 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
         // #164: the income behind the estimate; a card the clock adds is named on top of it.
         const income = e.estimate - (e.card?.armies ?? 0);
         const withCard = e.card ? `, plus +${e.card.armies} from its Reinforcement card (~${e.estimate} in all)` : '';
+        // #235 1c: the track's newest turn read more with the armies beside the fog as deploys: a label,
+        // never income (#123 lesson 5); the higher figure is the caller's to test.
+        const cut = e.newestCut;
+        if (cut && e.source !== 'exact' && cut.reading > income)
+          warnings.push(
+            `Player ${p}'s newest turn (turn ${cut.from} → turn ${cut.to}) reads up to +${cut.reading} if the armies that arrived beside the fog were deploys (+${cut.observed} with those beyond twice the ~${cut.expected ?? '?'} it was expected to deploy read as moves); the estimate keeps ~${income} (${
+              e.source === 'tracked' ? 'tracked' : e.source === 'prior' ? 'the fog prior' : 'its visible base + bonuses'
+            }) because a stack walking in is not income (#123). To test the higher figure, pass enemy_deploy ${cut.reading} to warapp_check_plan.`,
+          );
         if (e.source === 'exact') {
           warnings.push(
             `Enemy deploy estimate for player ${p}: ~${income} (exact: under ${ctx.fog} every territory's owner shows, so its income is ${visible}${e.observed !== null && e.observed > income ? `; the +${e.observed} observed above it is a card or armies the board misread, not income` : ''}); only the army cap, Sanctions and a Reinforcement card are unknown.`,
@@ -807,7 +840,17 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               (incomePrior!.opening?.get(p) ?? -1) > incomePrior!.myIncome
                 ? `its opening simulated from the starts the award of picks proved earns ${incomePrior!.opening!.get(p)} this turn`
                 : `in ${incomePrior!.format === 'ffa' ? 'a free-for-all that started even (no teams, every player still in)' : 'a 1v1 that started even'}, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
-            }, capped at the most it could earn on this board, ${e.couldEarn}; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''})${withCard}; observed deploys are lower bounds under fog, and it could deploy more.`,
+            }, ${
+              e.priorCap !== null
+                ? `capped at an even share (1 of ${incomePrior!.opponents} opponents) of what the board hides, ${e.priorCap} (all of it would be ${e.couldEarn})`
+                : `capped at the most it could earn on this board, ${e.couldEarn}`
+            }${
+              e.priorBlend
+                ? ` — shrunk toward its ${
+                    e.priorBlend.toward === e.tracked ? `tracked ~${e.tracked}` : `visible ${e.priorBlend.toward}`
+                  } by the evidence: ${e.priorBlend.turns} observed ${e.priorBlend.turns === 1 ? 'turn' : 'turns'} with ${Math.round(e.priorBlend.share * 100)}% of its edge in view keep ${Math.round(e.priorBlend.weight * 100)}% of the gap from ${e.priorBlend.prior}`
+                : ''
+            }; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''})${withCard}; observed deploys are lower bounds under fog, and it could deploy more.`,
           );
           continue;
         }

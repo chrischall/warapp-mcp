@@ -42,6 +42,7 @@ import {
   AHEAD_PRESSURE_FACTOR,
   PRESSURE_FACTOR,
   symmetricStart,
+  unevenStart,
   trackGame,
   trackOpponents,
   type MyOrders,
@@ -1315,7 +1316,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
         cards: rules.inPlay.length > 0,
         // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
-        symmetricStart: symmetricStart(game.settings, map),
+        symmetricStart: symmetricStart(game.settings),
+        // #235: why not, when it was not (the plan says so in a free-for-all).
+        ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
         // #166: the opponent's opening simulated from the starts the award proved, as the prior.
         ...(opening ? { opening } : {}),
         // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
@@ -1363,10 +1366,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...cardPieceOption(game.settings, hand),
         },
       });
-      if (plan.front && turn !== null)
+      // #228: and the plan's profile standing, so an `even` outlook beside `behind` says why they differ.
+      // Neither changes whether the turn reads winning or losing (the state the plan acted on): losing
+      // on the estimate reads the front on my boards' incomes, never the plan's (#228 review); only a
+      // stalemate may follow the plan's front, which the planner ignores.
+      if (turn !== null && (plan.front || plan.profile.standing === 'ahead' || plan.profile.standing === 'behind'))
         outlook = gameOutlook({
           ...outlookInput,
-          front: { turn, from: plan.front.from, at: plan.front.at, myIncome: plan.front.myIncome, theirIncome: plan.front.theirIncome },
+          ...(plan.front
+            ? { front: { turn, from: plan.front.from, at: plan.front.at, myIncome: plan.front.myIncome, theirIncome: plan.front.theirIncome } }
+            : {}),
+          standing: plan.profile.standing,
         });
       // #194: since last turn — this turn's income (cards aside) against the next income the previous
       // turn's plan expected, and what was lost since the previous board. Read before this turn's write.
