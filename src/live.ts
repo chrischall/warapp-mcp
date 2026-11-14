@@ -16,6 +16,7 @@ import type { BoardSpecialUnit, BoardState, TerritoryOwner, TerritoryState } fro
 import type { Player } from './normalize.js';
 import type { DecoderReport } from './protocol/bundle.js';
 import type { Reader } from './protocol/codec.js';
+import { fields, isObj, type DecodedRecord } from './protocol/decoded.js';
 import type { ReadBudget } from './protocol/interp.js';
 
 export const LATEST_GAME_INFO = 'warlight.shared.LatestGameInfo';
@@ -102,9 +103,7 @@ export class LiveBoardFormatError extends McpToolError {
   }
 }
 
-type Obj = Record<string, unknown> & { $type?: unknown };
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-const fields = (o: Obj): unknown[] => Object.entries(o).filter(([k]) => k !== '$type').map(([, v]) => v);
+type Obj = DecodedRecord;
 const isType = (v: unknown, type: string): v is Obj => isObj(v) && v.$type === type;
 
 /** `[key, value]` pairs of a decoded dict, or the items of a list. */
@@ -120,6 +119,10 @@ const GUID = /^[0-9a-f]{32}$/i;
 /** One decoded special unit: its class names the kind; GUID and owner are its last two fields. */
 function specialUnitOf(u: unknown): LiveSpecialUnit {
   if (!isObj(u) || typeof u.$type !== 'string') throw new LiveBoardFormatError('a special unit is not a unit');
+  // A constructor the interpreter could not run leaves a half-built record (#131, #133).
+  if (typeof u.$ctorError === 'string') {
+    throw new LiveBoardFormatError(`a special unit (${u.$type}): the client's constructor failed (${u.$ctorError})`);
+  }
   const values = fields(u);
   const [id, owner] = values.slice(-2);
   if (typeof id !== 'string' || !GUID.test(id) || typeof owner !== 'number') {

@@ -446,6 +446,12 @@ describe('special units', () => {
     expect(reading(7)).toThrow(/special unit/);
   });
 
+  it('rejects a unit whose constructor failed: a half-built record is not read (#133)', () => {
+    const half = { $type: 'warlight.shared.Commander', g: CMDR_A, o: 5, $ctorError: 'boom' };
+    expect(reading(half)).toThrow(LiveBoardFormatError);
+    expect(reading(half)).toThrow(/constructor failed/);
+  });
+
   it('BoardState carries the units, owners keyed by GameFeed id', () => {
     const me = player('3312345644', 'Me');
     const board = boardStateFromLive(

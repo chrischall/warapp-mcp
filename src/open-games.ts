@@ -19,6 +19,7 @@ import { colorIndexOf } from './join-color.js';
 import type { ClassReader } from './live.js';
 import type { GameSettings } from './normalize.js';
 import { Reader } from './protocol/codec.js';
+import { fields, isObj } from './protocol/decoded.js';
 import type { ReadBudget } from './protocol/interp.js';
 import { carriesTeam } from './teams.js';
 
@@ -150,13 +151,6 @@ export interface OpenGamesPage {
   note?: string;
 }
 
-type Obj = Record<string, unknown> & { $type?: unknown };
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-const META_KEYS = new Set(['$type', '$ctorError']);
-const fields = (o: Obj): unknown[] =>
-  Object.entries(o)
-    .filter(([k]) => !META_KEYS.has(k))
-    .map(([, v]) => v);
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean';

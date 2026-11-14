@@ -13,6 +13,7 @@
 
 import type { ClassReader } from './live.js';
 import { Reader } from './protocol/codec.js';
+import { fields, isObj, type DecodedRecord } from './protocol/decoded.js';
 import { GAME_COLOR_COUNT } from './protocol/methods.js';
 
 export const GAME_COLOR = 'warlight.shared.GameColor';
@@ -75,13 +76,7 @@ export interface AccountColors {
   secondary?: number;
 }
 
-type Obj = Record<string, unknown> & { $type?: unknown };
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-const META_KEYS = new Set(['$type', '$ctorError']);
-const fields = (o: Obj): unknown[] =>
-  Object.entries(o)
-    .filter(([k]) => !META_KEYS.has(k))
-    .map(([, v]) => v);
+type Obj = DecodedRecord;
 
 /** A GameColor record's index; `null` for an absent colour; `undefined` when it is neither. */
 export function colorIndexOf(v: unknown): number | null | undefined {

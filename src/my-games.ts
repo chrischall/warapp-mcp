@@ -10,6 +10,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { ClassReader } from './live.js';
 import type { Reader } from './protocol/codec.js';
+import { fields, isObj } from './protocol/decoded.js';
 
 export const MY_GAMES_RETURN = 'warlight.shared.MyGamesReturn';
 export const GAME_INFO = 'warlight.shared.GameInfo';
@@ -78,16 +79,6 @@ export class MyGamesFormatError extends McpToolError {
   }
 }
 
-type Obj = Record<string, unknown> & { $type?: unknown };
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-// The interpreter adds `$type` (and `$ctorError` when a constructor threw); every other key is a
-// field in read order. Minified field names can start with `$` too (`$c`, `$a` live), so drop
-// only those two.
-const META_KEYS = new Set(['$type', '$ctorError']);
-const fields = (o: Obj): unknown[] =>
-  Object.entries(o)
-    .filter(([k]) => !META_KEYS.has(k))
-    .map(([, v]) => v);
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isStr = (v: unknown): v is string | null => v === null || typeof v === 'string';
 
