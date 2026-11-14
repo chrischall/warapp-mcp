@@ -53,6 +53,12 @@
           "description": "Where the linked direct-transport session is stored (default <data dir>/session.json). Local-only, file mode 0600.",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "WARAPP_PLAYER_RECORD",
+          "description": "The name-free cross-game record of how other players kept truces (salted hashes, no names). On by default; set off to turn it off.",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

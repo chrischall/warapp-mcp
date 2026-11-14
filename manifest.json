@@ -37,7 +37,8 @@
         "WARAPP_WS_PORT": "${user_config.ws_port}",
         "WARAPP_TRANSPORT": "${user_config.transport}",
         "WARAPP_SESSION_FILE": "${user_config.session_file}",
-        "WARAPP_ENV_FILE": "${user_config.env_file}"
+        "WARAPP_ENV_FILE": "${user_config.env_file}",
+        "WARAPP_PLAYER_RECORD": "${user_config.player_record}"
       }
     }
   },
@@ -77,6 +78,12 @@
       "type": "string",
       "title": "Direct-transport session file (optional)",
       "description": "Where the linked direct-transport session is stored (default <data dir>/session.json). Local-only; a full-account credential kept at file mode 0600.",
+      "required": false
+    },
+    "player_record": {
+      "type": "string",
+      "title": "Player record (optional)",
+      "description": "The name-free record of how other players kept truces, across games (salted hashes, no names). On by default; 'off' turns it off.",
       "required": false
     }
   },
