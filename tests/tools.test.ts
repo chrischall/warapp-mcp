@@ -166,7 +166,7 @@ describe('warapp_get_map', () => {
     expect(p.bonusesShown).toBe('25 of 316');
     // #70: the compact table hides zero- and negative-value bonuses, and says how many.
     expect(p.bonusesHidden).toMatch(/^56 zero- or negative-value bonuses not listed/);
-    for (let i = 1; i < bonuses.length; i++) expect(bonuses[i - 1]!.score).toBeGreaterThanOrEqual(bonuses[i]!.score);
+    for (let i = 1; i < bonuses.length; i++) expect(bonuses[i - 1]!.score).toBeGreaterThanOrEqual(bonuses[i]!.score!);
     expect(Object.keys(bonuses[0]!).sort()).toEqual(
       ['bonusId', 'borders', 'entryPoints', 'name', 'score', 'territories', 'value', 'valuePerTerritory'].sort(),
     );

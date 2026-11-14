@@ -128,8 +128,8 @@ export function parseBundle(src: string): ParsedBundle {
   const typeNameOf = new Map<string, string>();
   const varOf = new Map<string, string>();
   for (const m of src.matchAll(/W\["([\w.$]+)"\]=([\w$]+);/g)) {
-    if (!typeNameOf.has(m[2])) typeNameOf.set(m[2], m[1]);
-    if (!varOf.has(m[1])) varOf.set(m[1], m[2]);
+    if (!typeNameOf.has(m[2]!)) typeNameOf.set(m[2]!, m[1]!);
+    if (!varOf.has(m[1]!)) varOf.set(m[1]!, m[2]!);
   }
   return { src, typeNameOf, varOf };
 }
@@ -995,11 +995,11 @@ export class BundleInterpreter {
       else statics.set(key, [at]);
     }
     const ctors = new Map<string, number>();
-    for (const m of src.matchAll(/function ([\w$]+)\(/g)) if (!ctors.has(m[1])) ctors.set(m[1], m.index);
+    for (const m of src.matchAll(/function ([\w$]+)\(/g)) if (!ctors.has(m[1]!)) ctors.set(m[1]!, m.index);
     // Where each class's first registration (`W["<type name>"]=<var>;`) sits.
     const registrations = new Map<string, number>();
     for (const m of src.matchAll(/W\["([\w.$]+)"\]=([\w$]+);/g)) {
-      if (!registrations.has(m[2]) && typeNameOf.get(m[2]) === m[1]) registrations.set(m[2], m.index);
+      if (!registrations.has(m[2]!) && typeNameOf.get(m[2]!) === m[1]) registrations.set(m[2]!, m.index);
     }
     this.defs = { statics, ctors, registrations };
     return this.defs;
@@ -1034,9 +1034,9 @@ export class BundleInterpreter {
     const built: Array<[fn: string, cls: string, sup: string]> = [];
     const builders = new Map<string, number>();
     for (const m of src.matchAll(/(?<![\w$.])([\w$]+)\.prototype\s*=(?!=)\s*(?:([\w$]+)\(\s*([\w$]+)\.prototype\s*,)?/g)) {
-      protoOwners.add(m[1]);
+      protoOwners.add(m[1]!);
       if (m[2] && m[3]) {
-        built.push([m[2], m[1], m[3]]);
+        built.push([m[2], m[1]!, m[3]]);
         builders.set(m[2], (builders.get(m[2]) ?? 0) + 1);
       }
     }
@@ -1049,10 +1049,10 @@ export class BundleInterpreter {
     // the most classes (each class's prototype names itself under it).
     const linked = new Map<string, Set<string>>();
     for (const m of src.matchAll(/[{,]([\w$]+):([\w$]+)(?=\s*[,}])/g)) {
-      if (!protoOwners.has(m[2])) continue;
-      const set = linked.get(m[1]);
-      if (set) set.add(m[2]);
-      else linked.set(m[1], new Set([m[2]]));
+      if (!protoOwners.has(m[2]!)) continue;
+      const set = linked.get(m[1]!);
+      if (set) set.add(m[2]!);
+      else linked.set(m[1]!, new Set([m[2]!]));
     }
     const ranked = [...linked].sort((a, b) => b[1].size - a[1].size);
     const top = ranked[0];
@@ -1212,7 +1212,7 @@ export class BundleInterpreter {
       if (!sites) throw new InterpError('no-definition', `no definition for ${where}`);
       // Prefer the definition that follows the class's registration.
       const from = this.definitions().registrations.get(cls) ?? 0;
-      const at = sites.find((p) => p >= from) ?? sites[0];
+      const at = sites.find((p) => p >= from) ?? sites[0]!;
       const resolved = { node: this.parseFunctionAt(at, where), where };
       this.fnCache.set(where, resolved);
       return resolved;
@@ -1391,7 +1391,7 @@ export class BundleInterpreter {
         if (i < 0) i = st.cases.findIndex((c) => !c.test);
         if (i < 0) return undefined;
         for (; i < st.cases.length; i++) {
-          const c = this.execBlock(st.cases[i].consequent, scope, where);
+          const c = this.execBlock(st.cases[i]!.consequent, scope, where);
           if (c?.type === 'break') return undefined;
           if (c) return c;
         }
@@ -1731,8 +1731,8 @@ function walkAst(
   };
   push(root);
   while (stack.length) {
-    const top = stack[stack.length - 1];
-    if (top.i < top.c.length) push(top.c[top.i++]);
+    const top = stack[stack.length - 1]!;
+    if (top.i < top.c.length) push(top.c[top.i++]!);
     else {
       stack.pop();
       visit.leave?.(top.n);
@@ -1758,6 +1758,7 @@ function hoistedVars(fn: FunctionExpression, charge: Charge): string[] {
         const id = n.id as AstNode;
         if (id.type === 'Identifier') names.add(id.name as string);
       }
+      return true;
     },
   });
   out = [...names];
@@ -1845,6 +1846,7 @@ function ownStaticCalls(fn: FunctionExpression, cls: string, charge: Charge): st
           out.add(p.name as string);
         }
       }
+      return true;
     },
   });
   return [...out];
@@ -1944,7 +1946,7 @@ function stringLiterals(node: AcornNode, maxChars: number): { literals: string[]
       chars += v.value.length + 1;
     }
     const children = Object.entries(v).filter(([k]) => k !== 'type');
-    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i][1]);
+    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]![1]);
   }
   return { literals, nodes };
 }

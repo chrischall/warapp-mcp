@@ -211,7 +211,7 @@ export class Writer {
     const canonical = Array.from({ length: 16 }, (_, i) => parseInt(hex.slice(i * 2, i * 2 + 2), 16));
     const out = new Uint8Array(16);
     GUID_ORDER.forEach((src, i) => {
-      out[src] = canonical[i];
+      out[src] = canonical[i]!;
     });
     return this.raw(out);
   }
@@ -268,7 +268,7 @@ export class Reader {
 
   u8(): number {
     this.need(1);
-    return this.buf[this.pos++];
+    return this.buf[this.pos++]!;
   }
 
   /**
@@ -370,7 +370,7 @@ export class Reader {
   /** A GUID as 32 lowercase hex digits in canonical order. */
   guid(): string {
     const b = this.raw(16);
-    return GUID_ORDER.map((i) => b[i].toString(16).padStart(2, '0')).join('');
+    return GUID_ORDER.map((i) => b[i]!.toString(16).padStart(2, '0')).join('');
   }
 
   private count(): number | null {

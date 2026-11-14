@@ -75,7 +75,7 @@ const SAFE_VERSION = /^[A-Za-z0-9._-]{1,64}$/;
 export function discoverBundleUrl(html: string, pageUrl: string): BundleSource {
   const m = SCRIPT_RE.exec(html);
   if (!m) throw new BundleError('no-script', `no ujs.js script tag on ${pageUrl}`);
-  const src = m[1].replace(/&amp;/g, '&');
+  const src = m[1]!.replace(/&amp;/g, '&');
   const url = new URL(src, pageUrl);
   if (url.protocol !== 'https:') throw new BundleError('bad-url', `bundle URL is not https: ${url.href}`);
   if (url.host !== BUNDLE_HOST || url.username || url.password) {
