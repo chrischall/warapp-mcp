@@ -747,7 +747,9 @@
 //     "Hold X against a stack two steps away (kept N on X: player P can reach it next turn from Y
 //     via Z …)" once, at the end, with the stay the plan ends on (an order that keeps it names it
 //     without numbers); kept short of what it needs (next turn's deploy makes up the rest), it
-//     adds "bring K more next turn".
+//     adds "bring K more next turn". When the one-step hold (or #128's) already needs at least as
+//     much, the line claims no "kept N" (#192): it says "already held against the adjacent stack
+//     (~T; it needs M to hold)" and what the two-step reach needs.
 //     Under No-Split a transfer that must keep some (this hold, or #128's) is not made: it would
 //     send the whole stack.
 //     Staging (#125): when the leftover saved toward a step (rule 5), idle armies on my other
@@ -3823,7 +3825,23 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const kept = finalStayAt(t);
     const units = unitsAt(t);
     const short = h.needs - units - kept;
+    const near = nearHoldAt(t);
+    // #192: the one-step hold (or #128's) already pins at least what the reach needs: "kept N"
+    // would read as if this hold claimed them, so the line says they are held already.
+    if (near && near.needs >= h.needs)
+      return `already held against the adjacent stack (~${near.threat}; it needs ${near.needs} to hold): player ${r.opponent} can reach it next turn from ${label(r.from)} via ${label(r.via)} (~${r.attackers} attacking; the two-step reach needs ${h.needs}${short > 0 ? `; bring ${short} more next turn` : ''})`;
     return `kept ${kept} on ${label(t)}${units ? ` (with its special units, worth ${units})` : ''}: player ${r.opponent} can reach it next turn from ${label(r.from)} via ${label(r.via)} (~${r.attackers} attacking; it needs ${h.needs} to hold${short > 0 ? `; bring ${short} more next turn` : ''})`;
+  };
+  /**
+   * #192: the one-step hold on my `t` once every order has run — against the stacks beside it
+   * this turn's captures leave, or (#128) while an attack on a player beside it is pending, as if
+   * those attacks fail — as what it needs (special units included) and the threat; `null` with
+   * no enemy beside it.
+   */
+  const nearHoldAt = (t: number): { needs: number; threat: number } | null => {
+    const pending = neighborsOf(g, t).some((x) => captured.has(x) && state.get(x)?.owner.kind === 'player');
+    const b = pending ? borderAt(t, () => false) : borderAt(t, (x) => captured.has(x));
+    return b ? { needs: holdArmies(b.threat), threat: b.threat } : null;
   };
   /**
    * Fill `threatened` from `borders`, judging each by the armies that stay on it (its
