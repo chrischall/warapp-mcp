@@ -26,7 +26,7 @@ import { bfsDistances, neighborsOf } from '../graph.js';
 import type { GameFormat } from '../profile.js';
 import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
-import type { PlanAdvice, PlanInput, PlanRelation, PlanRelationView, TruceWatchReason } from './shared.js';
+import { CONCEDE_FACTOR, type PlanAdvice, type PlanInput, type PlanRelation, type PlanRelationView, type TruceWatchReason } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
@@ -272,26 +272,53 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
 const NOTICE_REASONS: readonly TruceWatchReason[] = ['endgame', 'outgrowing'];
 
 /**
+ * T2's armies freed on `relaxed` (one relation's): per border, the full hold's shortfall less the
+ * truce hold's — only where the plan without the truce would have funded the full hold. A border
+ * this plan concedes against the smaller threat is conceded against the full one too, and one whose
+ * full hold rule 1a would refuse (more than {@link CONCEDE_FACTOR} × its worth, or more than my
+ * income) gets nothing there either way: neither frees an army. At most my income in all.
+ */
+export function armiesFreed(pc: PlanCtx, threats: Threats, relaxed: readonly number[], hold: { conceded: ReadonlySet<number>; valueOf: (t: number) => number }): number {
+  const { armiesOf, unitsAt, income, paybackTurns, profile } = pc;
+  const { forceAt, holdArmies } = threats;
+  /** What a hold of `t` needs beyond the armies there against `threat`. */
+  const short = (t: number, threat: number) => Math.max(0, holdArmies(threat) - armiesOf(t) - unitsAt(t));
+  let freed = 0;
+  for (const t of relaxed) {
+    if (hold.conceded.has(t)) continue;
+    const full = forceAt(t, () => false, { trend: true, allPlayers: true, full: true });
+    const now = forceAt(t, () => false, { trend: true, allPlayers: true });
+    if (!full || !now) continue;
+    const fullShort = short(t, full.threat);
+    const worth = hold.valueOf(t) + armiesOf(t) / paybackTurns;
+    // Rule 1a's economic test, as holdBasics' `uneconomic` reads it (#122: not in the opening when
+    // the hold costs no more than the armies already there).
+    const uneconomic = fullShort > CONCEDE_FACTOR * worth && !(profile.phase === 'opening' && fullShort <= armiesOf(t));
+    if (fullShort > income || uneconomic) continue;
+    freed += Math.max(0, fullShort - short(t, now.threat));
+  }
+  return Math.min(freed, income);
+}
+
+/**
  * The report (T2's armies freed, T3's full holds, T5's moves, T7's advice, T8's breaks), and the
- * warnings and rationale that say what the truces did. Run before the plan is finished; with no
- * relations it returns nothing and says nothing.
+ * warnings and rationale that say what the truces did. Run before the plan is finished — also for a
+ * plan holding no territory (`tp` undefined, nothing relaxed); with no relations it returns nothing
+ * and says nothing. `freedOn` is {@link armiesFreed} for one relation's relaxed borders.
  */
 export function reportTruce(
   pc: PlanCtx,
   ps: PlanState,
-  threats: Threats,
   tp: TrucePass | undefined,
+  freedOn: (relaxed: readonly number[]) => number,
 ): { relations: PlanRelationView[]; advice: PlanAdvice[] } | undefined {
-  const { truce, label, armiesOf, unitsAt, turnNow } = pc;
+  const { truce, label, turnNow } = pc;
   if (!truce.given.length) return undefined;
   const { warnings, rationale } = ps;
-  const { forceAt, holdArmies } = threats;
   if (truce.status.some((s) => s === 'ignored'))
     warnings.push(
       `Truces ignored (B2): ${truce.format === 'teams' ? 'this is a team game' : 'only two players are in this game'}, and the planner honours a truce only in a free-for-all; every player is planned as an ordinary opponent.`,
     );
-  /** What a hold of `t` needs beyond the armies there against `threat`. */
-  const short = (t: number, threat: number) => Math.max(0, holdArmies(threat) - armiesOf(t) - unitsAt(t));
   const advice: PlanAdvice[] = [];
   const relations = truce.given.map((r, i): PlanRelationView => {
     const st = truce.status[i]!;
@@ -304,12 +331,7 @@ export function reportTruce(
           .map(([territory, f]) => ({ territory, why: f.why }))
           .sort((a, b) => a.territory - b.territory)
       : [];
-    let armiesFreed = 0;
-    for (const t of mineRelaxed) {
-      const full = forceAt(t, () => false, { trend: true, allPlayers: true, full: true });
-      const now = forceAt(t, () => false, { trend: true, allPlayers: true });
-      if (full && now) armiesFreed += short(t, full.threat) - short(t, now.threat);
-    }
+    const freed = mineRelaxed.length ? freedOn(mineRelaxed) : 0;
     if (st === 'broken' && r.breach)
       warnings.push(
         `${name} is broken by them: ${r.breach.term} on turn ${r.breach.turn}${r.breach.territories.length ? ` (${r.breach.territories.map(label).join(', ')})` : ''} — ${r.breach.evidence}. Player ${r.player} is planned as an ordinary opponent from this turn (T8).`,
@@ -328,7 +350,7 @@ export function reportTruce(
       );
       if (mineRelaxed.length)
         rationale.push(
-          `${name}: ${mineRelaxed.map(label).join(', ')} ${mineRelaxed.length === 1 ? 'faces' : 'face'} only player ${r.player}, so ${mineRelaxed.length === 1 ? 'it is' : 'they are'} held against its visible stacks there attacking with no deploy (T2) — a break needs a visible build-up first; ${armiesFreed} ${armiesFreed === 1 ? 'army' : 'armies'} freed this turn.`,
+          `${name}: ${mineRelaxed.map(label).join(', ')} ${mineRelaxed.length === 1 ? 'faces' : 'face'} only player ${r.player}, so ${mineRelaxed.length === 1 ? 'it is' : 'they are'} held against its visible stacks there attacking with no deploy (T2) — a break needs a visible build-up first; ${freed} ${freed === 1 ? 'army' : 'armies'} freed this turn.`,
         );
       const why = { commander: 'my commander stands there', value: `it protects more than ${TRUCE_RELAX_VALUE} × my income`, watch: `the trust is watch (${flags.join(', ') || 'a flag'})` } as const;
       for (const f of fullHold)
@@ -352,7 +374,7 @@ export function reportTruce(
       ...(r.endsTurn !== undefined ? { endsTurn: r.endsTurn } : {}),
       relaxed: mineRelaxed,
       fullHold,
-      armiesFreed,
+      armiesFreed: freed,
       ...(tp?.capMoved.get(i)?.length ? { capMoved: tp.capMoved.get(i)! } : {}),
       ...(r.breach ? { breach: r.breach } : {}),
     };

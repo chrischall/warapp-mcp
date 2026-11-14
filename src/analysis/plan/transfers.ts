@@ -72,8 +72,9 @@ export function transfers(
         if (step === undefined) continue;
         // #172: what a stack two steps away needs it to keep stays (the step below says so).
         const far = twoStepHold(t);
-        // #179: nor what covers a finished-off player's exit.
-        const k = n - Math.max(twoStepKeep(t), coverOf(t), centralKeep.get(t) ?? 0, truceKeep(pc, threats, t) - guardAt(t));
+        // #179: nor what covers a finished-off player's exit. B2 (T4): nor what holds it beside a truce's covered territory.
+        const truceStay = truceKeep(pc, threats, t) - guardAt(t);
+        const k = n - Math.max(twoStepKeep(t), coverOf(t), centralKeep.get(t) ?? 0, truceStay);
         // No-Split (#124): the whole stack or nothing.
         if (k <= 0 || (noSplit && k < n)) continue;
         if (orderOf(t)) {
@@ -86,7 +87,11 @@ export function transfers(
         arrived.set(step, (arrived.get(step) ?? 0) + k);
         rationale.push(
           `Move ${k} from ${label(t)} to ${label(step)}: ${reason} (${st.cost} to take from ${label(st.from)}, not affordable this turn)${
-            k < n && far ? twoStepCite(t, far, (c) => `; the rest stay: ${c}`) : ''
+            k < n && far
+              ? twoStepCite(t, far, (c) => `; the rest stay: ${c}`)
+              : k < n && truceStay > 0
+              ? '; the rest stay: they hold it beside a truce\'s covered territory'
+              : ''
           }.`,
         );
       }

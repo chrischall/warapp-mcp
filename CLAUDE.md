@@ -211,7 +211,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `forceAt`) unless my commander stands there, it protects more than 0.25 × income, or trust is `watch`
   (T3); the partner is no front for rule 0p.2 or rule 6, and a territory beside a covered one keeps its
   hold (T4); a border cap moves the excess one step back after rule 6 (T5); `enforced` (T9) makes the
-  player no foe — read from the agreement only, never from the unverified active-card decoder. **No
+  player no foe — `planRelationsFrom` never sets it (the ledger's field is ignored until a decoder-backed,
+  turn-bounded source exists). `armiesFreed` counts a relaxed border only where the full hold would have
+  been funded (not conceded, not refused by rule 1a or my income). **No
   relations, no change:** every hook is false or absent then, and the golden corpus must stay
   byte-identical. Not yet: T6 (`lossIfBroken`, `safeIfTruceHolds`), `warapp_submit_turn`'s
   `break_agreement`, and writing `broken-by-them` to the ledger (the plan says to record it).

@@ -1064,8 +1064,10 @@
 //           (`foe`), so its threat is 0 and no attack on any of its territories is planned.
 //     The plan's `relations` reports each truce: its state, whether it binds, the trust and its
 //     flags, the borders relaxed and kept full (and why), the armies the relaxed holds free (per
-//     border, what its full hold needs beyond the armies there less what the truce hold needs) and
-//     the armies the cap moved.
+//     border, what its full hold needs beyond the armies there less what the truce hold needs —
+//     only where the full hold would have been funded: not on a border this plan concedes, nor one
+//     whose full hold rule 1a would refuse; at most my income) and the armies the cap moved. A plan
+//     holding no territory still reports each truce given.
 // Local Deployment (`localDeployments`): a held bonus's value is a pool deployable
 // only on that bonus's territories (a superbonus's on all of its territories, beside
 // its member bonuses' pools); the rest of the income (base, per-territory, card
@@ -1169,7 +1171,7 @@ import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
 import { newPlanState } from './plan/state.js';
-import { applyBorderCaps, reportTruce, trucePass } from './plan/relations.js';
+import { applyBorderCaps, armiesFreed, reportTruce, trucePass } from './plan/relations.js';
 
 export * from './plan/shared.js';
 export { alliesOf, planEnemyEstimates } from './plan/estimates.js';
@@ -1288,7 +1290,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     staged, incoming,
   } = ps;
 
-  if (!mine.length) return emptyPlan(pc, ps);
+  if (!mine.length) {
+    const empty = emptyPlan(pc, ps);
+    // B2: each truce given is still reported, as the plan treated it (nothing to relax or cap).
+    const report = reportTruce(pc, ps, undefined, () => 0);
+    if (report) {
+      empty.relations = report.relations;
+      if (report.advice.length) empty.advice = report.advice;
+    }
+    return empty;
+  }
 
   // ---- the deploy book (plan/orders.ts): budget, guard, deploys, pools, protected value ----
   const book = deployBook(pc, ps);
@@ -2435,7 +2446,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const { slotOf, facesEnemy, exits } = scheduleOrders(pc, ps, threats, hd, caps, struck, strikeCard, strikeWho);
 
   // ---- B2: what the truces did (plan/relations.ts) ----
-  const truceReport = reportTruce(pc, ps, threats, ps.truce);
+  const truceReport = reportTruce(pc, ps, ps.truce, (r) => armiesFreed(pc, threats, r, { conceded, valueOf: book.valueOf }));
   // ---- the plan: offence list, #172's final check, #201 retaliation, #167 exchanges, #179 ETAs (plan/report.ts) ----
   const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
   // #218: the main front's forecast at my whole income, for the game outlook to share.

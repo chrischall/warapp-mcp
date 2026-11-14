@@ -312,9 +312,13 @@ modules calling it (`noTarget` at every attack source, the truce hold in `forceA
 state `broken` with its `breach` (T8: the planner reports it and plans the partner as an ordinary
 opponent; the ledger is not written — the plan says to record `broken-by-them`). A territory beside a
 covered one keeps what holds it there (T4: once the partner is no front, rule 6 would otherwise walk the
-garrison off). T9's `enforced` is read from the agreement only: the active-card decoder (#163) is
-unverified, so it is never "sure" and gives today's warning. `armiesFreed` is per relaxed border the
-full hold's shortfall less the truce hold's. Not yet (B2b): T6 (`lossIfBroken`, `safeIfTruceHolds`) and
+garrison off). T9's `enforced` is never set by `planRelationsFrom`: the ledger's field is ignored (no tool
+writes it, and a hand-edited file must not make a player no foe indefinitely), and the active-card
+decoder (#163) is unverified, so it is never "sure" and gives today's warning; part D supplies the
+decoder-backed, turn-bounded source. `armiesFreed` is per relaxed border the full hold's shortfall less
+the truce hold's, counted only where the plan without the truce would have funded the full hold — not on
+a border this plan concedes, nor one whose full hold rule 1a's economic test or my income refuses — and
+at most my income. A plan holding no territory still reports each truce given. Not yet (B2b): T6 (`lossIfBroken`, `safeIfTruceHolds`) and
 `warapp_submit_turn`'s `break_agreement`. With no relations the golden corpus is byte-identical
 (`GOLDEN_FULL=1`), and the seeded legality property test also plans its boards under a truce.
 

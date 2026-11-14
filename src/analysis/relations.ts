@@ -644,8 +644,9 @@ const WATCH_KINDS = ['broken', 'cap-exceeded', 'massing', 'outgrowing'] as const
  * B2: the agreements the planner reads this turn — every one agreed and `active` or in `notice`,
  * with its covered territories on both sides (on `board`), its watch flags, the trust and why,
  * and the border cap; one the partner broke (a `broken` flag, never ambiguous) as `broken` with
- * the evidence (T8: an ordinary opponent at once). `enforced` comes from the agreement only (part
- * D); an active Diplomacy card is not read in (its decoder is unverified, #163). Also the tacit
+ * the evidence (T8: an ordinary opponent at once). `enforced` is never set: the ledger's field
+ * is ignored until part D supplies a decoder-backed, turn-bounded source, and an active Diplomacy
+ * card is not read in (its decoder is unverified, #163). Also the tacit
  * truces with every neighbour no open agreement names: reported, never planned on.
  */
 export function planRelationsFrom(input: PlanRelationsInput): { relations: PlanRelation[]; tacit: TacitTruce[] } {
@@ -684,7 +685,8 @@ export function planRelationsFrom(input: PlanRelationsInput): { relations: PlanR
       ...(a.terms.borderCap !== undefined ? { borderCap: a.terms.borderCap } : {}),
       trust: verdict.level,
       ...(watch.length ? { watch } : {}),
-      ...(a.enforced ? { enforced: true } : {}),
+      // T9: `a.enforced` is never read in. No tool writes it, and only a Diplomacy card the decoder is
+      // sure of (part D) may make a player no foe; a hand-edited ledger must not do it indefinitely.
       agreement: a.id,
       ...(a.status === 'notice-by-me' ? { noticeBy: 'me' as const } : a.status === 'notice-by-them' ? { noticeBy: 'them' as const } : {}),
       ...(broke

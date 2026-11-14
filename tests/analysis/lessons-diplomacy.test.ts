@@ -120,6 +120,18 @@ describe('B2 T2: a truce hold frees armies', () => {
     expect(why(p)).toMatch(/T1 \(#1\) faces only player 20, so it is held against its visible stacks there attacking with no deploy \(T2\).*3 armies freed/);
   });
 
+  it('a relaxed border conceded with or without the truce frees nothing', () => {
+    // T1 (2) cannot be held against the partner's 39 movable armies, deploy or not: the plan without
+    // the truce concedes it too, so the truce frees no army there.
+    const b = { board: at(mine(1, 2)) };
+    const plain = planTurn(input(undefined, b));
+    const p = planTurn(input([truce()], b));
+    expect(plain.conceded).toContain(1);
+    expect(p.conceded).toContain(1);
+    expect(p.relations![0]).toMatchObject({ relaxed: [1], armiesFreed: 0 });
+    expect(why(p)).toMatch(/0 armies freed this turn/);
+  });
+
   it('the partner massing (trust watch) restores the full hold', () => {
     const p = planTurn(input([truce({ trust: 'watch', watch: ['massing'] })]));
     expect(deployedTo(p, 1)).toBeGreaterThanOrEqual(3);
@@ -359,9 +371,127 @@ describe('B2 T4: the partner is no second front', () => {
   });
 });
 
+describe('B2 T4: idle armies do not walk toward a covered territory (rule 6)', () => {
+  // A line: the partner's T2 (10) — my T5 (12) — my T6 (8, idle) — my T7 (1) — my T8 (3) — player
+  // 30's T9 (2). From T6 the partner's T2 is two steps away, player 30's T9 three. The truce covers
+  // T2 and my T5.
+  const g5 = buildGraph(
+    makeMap(
+      [2, 5, 6, 7, 8, 9],
+      [
+        [2, 5],
+        [5, 6],
+        [6, 7],
+        [7, 8],
+        [8, 9],
+      ],
+      [],
+    ),
+  );
+  const line = (relations?: PlanRelation[]): PlanInput => ({
+    graph: g5,
+    board: board([enemy(2, 10, PARTNER), mine(5, 12), mine(6, 8), mine(7, 1), mine(8, 3), enemy(9, 2, OTHER)]),
+    me: ME,
+    income: 5,
+    settings: STD,
+    game: { players: FFA, turn: 8 },
+    options: { adapt: true, enemyDeploy: 3 },
+    ...(relations ? { relations } : {}),
+  });
+  const covering = truce({ coveredMine: [5], coveredTheirs: [2] });
+  const transfersFrom = (p: TurnPlan, t: number) => p.moves.filter((m) => m.kind === 'transfer' && m.from === t);
+
+  it('without the truce, the interior stack heads for the partner, its nearest foe', () => {
+    const p = planTurn(line());
+    expect(transfersFrom(p, 6).map((m) => m.to)).toEqual([5]);
+  });
+
+  it('with the truce, it heads for the other front instead', () => {
+    const p = planTurn(line([covering]));
+    expect(transfersFrom(p, 6).map((m) => m.to)).toEqual([7]);
+    expect(p.moves.some((m) => m.to === 2)).toBe(false);
+  });
+
+  it('the territory beside the covered one keeps its truce-level hold', () => {
+    const i = line([covering]);
+    const p = planTurn(i);
+    // T5 is no front with the truce (player 30's T9 is four steps away), so rule 6 may move armies
+    // off it, but never below what holds it against the partner's 9 movable armies with no deploy.
+    expect(p.relations![0]!.relaxed).toEqual([5]);
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 5, to: 6, armies: 6, kind: 'transfer' }));
+    expect(endsAt(p, i, 5)).toBe(6);
+    expect(why(p)).toMatch(/Transfer 6 from T5 \(#5\) to T6 \(#6\): moves idle interior armies toward the front \(6 stay: they hold it beside a truce's covered territory\)/);
+  });
+
+  it('a stack beside a covered territory stages toward a capture, keeping its truce-level hold (#125)', () => {
+    // economy.test.ts's #125 staging scenario (30/75 kill rates): T5, a 4-neutral, is the last member
+    // of B100 (+5); my 11 on T3 is two steps from it. Here T3 also borders the partner's T11 (6):
+    // without the truce it faces an enemy and stays; with it, it stages but keeps what holds T3
+    // against the partner's 5 movable armies with no deploy.
+    const R = { offensiveKillRate: 30, defensiveKillRate: 75, oneArmyStandsGuard: true };
+    const g6 = buildGraph(
+      makeMap(
+        [1, 2, 3, 5, 6, 7, 8, 9, 10, 11],
+        [
+          [1, 2],
+          [2, 5],
+          [2, 3],
+          [3, 6],
+          [3, 7],
+          [1, 8],
+          [8, 9],
+          [9, 10],
+          [3, 11],
+        ],
+        [[100, 5, [1, 2, 5]]],
+      ),
+    );
+    const stage = (relations?: PlanRelation[]): PlanInput => ({
+      graph: g6,
+      board: board([
+        mine(1, 1),
+        mine(2, 1),
+        mine(3, 11),
+        neutral(5, 4),
+        neutral(6, 4),
+        neutral(7, 4),
+        neutral(8, 4),
+        neutral(9, 4),
+        enemy(10, 5, OTHER),
+        enemy(11, 6, PARTNER),
+      ]),
+      me: ME,
+      income: 5,
+      settings: R,
+      game: { players: FFA, turn: 4 },
+      options: { adapt: true, enemyDeploy: 3 },
+      ...(relations ? { relations } : {}),
+    });
+    const plain = planTurn(stage());
+    expect(plain.moves.filter((m) => m.from === 3)).toEqual([]);
+    const i = stage([truce({ coveredMine: [3], coveredTheirs: [11] })]);
+    const p = planTurn(i);
+    // 3 on T3 need 10 to take at a 30% offensive kill rate: above the partner's 5 movable.
+    expect(p.moves).toEqual([expect.objectContaining({ from: 3, to: 2, armies: 8, kind: 'transfer' })]);
+    expect(endsAt(p, i, 3)).toBe(3);
+    expect(why(p)).toMatch(/Move 8 from T3 \(#3\) to T2 \(#2\): stages toward T5 \(#5\).*; the rest stay: they hold it beside a truce's covered territory\./);
+  });
+});
+
 describe('B2: truces only in a free-for-all; none given changes nothing', () => {
   it('an empty list plans exactly what no list does', () => {
     expect(planTurn(input([]))).toEqual(planTurn(input()));
+  });
+
+  it('holding no territory, the plan still reports each truce given', () => {
+    const none = board([enemy(1, 5, OTHER), enemy(2, 40, PARTNER), neutral(3, 2), neutral(4, 4), neutral(5, 2), enemy(9, 3, OTHER)]);
+    const p = planTurn(input([truce()], { board: none }));
+    expect(p.deploys).toEqual([]);
+    expect(p.moves).toEqual([]);
+    expect(p.relations).toEqual([
+      { player: PARTNER, state: 'active', honoured: true, enforced: false, trust: 'clear', flags: [], relaxed: [], fullHold: [], armiesFreed: 0 },
+    ]);
+    expect(planTurn(input(undefined, { board: none })).relations).toBeUndefined();
   });
 
   it('in a two-player game a truce is ignored with a warning, the plan otherwise unchanged', () => {

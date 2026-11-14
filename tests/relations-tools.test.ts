@@ -392,6 +392,19 @@ describe('warapp_plan_turn — the truces in the ledger (B2)', () => {
     expect(ledger.usage['3']).toEqual([{ agreementId: 'a1', armiesFreed: expect.any(Number), lossIfBroken: null }]);
   });
 
+  it('never honours an `enforced` flag written into the ledger: no decoder vouches for it (T9)', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    // A hand-edited (or future-written) file claiming a Diplomacy card holds Bob.
+    const file = join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`);
+    const ledger = JSON.parse(readFileSync(file, 'utf8')) as { agreements: Array<Record<string, unknown>> };
+    ledger.agreements[0]!.enforced = true;
+    writeFileSync(file, JSON.stringify(ledger));
+    const p = await planTurn();
+    expect(p.relations).toEqual([expect.objectContaining({ agreement: 'a1', honoured: true, enforced: false })]);
+    expect(p.rationale.join('\n')).not.toMatch(/Diplomacy card is in effect/);
+  });
+
   it('a covered territory Bob took is a break: an ordinary opponent the same turn, with the evidence (T8)', async () => {
     h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
     payload(await record({ with: 'Bob', status: 'agreed' }));

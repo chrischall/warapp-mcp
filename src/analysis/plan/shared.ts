@@ -364,7 +364,8 @@ export type TruceWatchReason = 'broken' | 'cap-exceeded' | 'massing' | 'outgrowi
  * terms cover on each side; `state` `active` or `notice` binds (a notice until `endsTurn`, the first
  * turn it no longer binds), `broken` (T8: broken by them, `breach` saying how) does not. `trust`
  * `watch` (with its reasons) keeps every border's full hold (T3). `enforced` (T9): a Diplomacy card
- * the decoder is sure of — that player cannot attack me, nor I it.
+ * the decoder is sure of — that player cannot attack me, nor I it. `warapp_plan_turn` never sets it
+ * yet (the ledger's field is ignored until part D's decoder-backed source).
  */
 export interface PlanRelation {
   player: number;
@@ -402,7 +403,9 @@ export interface PlanRelationView {
   fullHold: { territory: number; why: 'commander' | 'value' | 'watch' }[];
   /**
    * The armies the relaxed holds need less this turn: per relaxed border, what its full hold needs
-   * beyond the armies there less what the truce hold needs.
+   * beyond the armies there less what the truce hold needs — only where the full hold would have
+   * been funded (not a border this plan concedes, nor one rule 1a's economic test or my income
+   * refuses the full hold); at most my income.
    */
   armiesFreed: number;
   /** T5: the armies moved back from a covered border to keep at most the cap there. */
