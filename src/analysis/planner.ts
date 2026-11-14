@@ -785,6 +785,10 @@
 //     size against what a neighbour can spare for it, or that it is no target of the plan's (rule 2;
 //     under another goal, naming the player's territories other rules do attack). The first
 //     NOT_ATTACKING_REASONS (by id) get a reason, the rest are named.
+//     Retaliation (#201; an FFA with two or more opponents): a capture that breaks a positive bonus
+//     a player held in full, while that player keeps a visible territory or one beside the fog, is a
+//     warning ("Breaking player … without eliminating it invites retaliation"): what it has left is
+//     likeliest aimed at whoever broke it. In a 1v1 it attacks me anyway, so no warning there.
 //     Wastelands (#167, `settings.wastelands`): a fogged missing member of a bonus is costed at the
 //     costliest visible missing member plus the expected surcharge of being a wasteland
 //     (ceil(count ÷ the map's territories × (a wasteland's capture cost − that))), with a rationale line.
@@ -9916,8 +9920,32 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     pass.viaFinal.set(v, !conceded.has(v) && b !== undefined && (toTake(ends + unitsAt(v)) ?? Infinity) > b.threat);
   }
 
+  // ---- #201: a break without an elimination invites retaliation (FFA) ----
+  // In an FFA a player whose bonus I break and leave standing aims what it has left at me; in a
+  // 1v1 it does anyway, so no warning there.
+  if (profile.format === 'ffa' && profile.opponents >= 2) {
+    for (const [p, ts] of [...ownedBy].sort((a, b) => a[0] - b[0])) {
+      if (!foe(p)) continue;
+      const broken = g.map.bonuses
+        .filter((b) => b.value > 0)
+        .filter((b) => {
+          const members = bonusTerritories(g, b.id);
+          return members.length > 0 && members.every((t) => ownerOf(t) === p) && members.some((t) => captured.has(t));
+        })
+        .sort((a, b) => a.id - b.id);
+      if (!broken.length) continue;
+      const left = ts.filter((t) => !captured.has(t));
+      if (!left.length && !fogEdge(p).length) continue;
+      const armies = left.reduce((n, t) => n + armiesOf(t), 0);
+      const value = broken.reduce((n, b) => n + b.value, 0);
+      warnings.push(
+        `Breaking player ${p}'s bonus${broken.length === 1 ? '' : 'es'} ${broken.map((b) => `${b.name} (+${b.value})`).join(', ')} without eliminating it invites retaliation (#201): it keeps ${left.length} territor${left.length === 1 ? 'y' : 'ies'} in view (${armies} armies)${fogEdge(p).length ? ' and more in the fog' : ''} and a ~${deployOf(p)} deploy, and loses +${value} a turn to me — in a free-for-all what it has left is likeliest aimed at whoever broke it.`,
+      );
+    }
+  }
+
   // ---- #167: the exchange of each attack on a player ----
-  const exchanges: ExchangeView[] = moves.flatMap((m): ExchangeView[] => {
+  const exchanges: ExchangeView[] =moves.flatMap((m): ExchangeView[] => {
     const st = state.get(m.to);
     if (m.kind !== 'attack' || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) return [];
     const p = st.owner.playerId;
