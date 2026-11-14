@@ -14,6 +14,7 @@
 //   1e, 1s, #165, 0p.3c strike stack, #102 spend, #167 lead ..... plan/strike.ts
 //   4e. never stand still ...................................... plan/stand-still.ts
 //   5. the leftover deploy, 3b's short borders (#121) ........... plan/leftover.ts
+//   5b. a neutral the leftover pays for (#218) ................. plan/after-leftover.ts
 //   6. transfers, #125 staging ................................. plan/transfers.ts
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
 //   7r. reports, the offence report, 1i (#109), the final plan .. plan/report.ts
@@ -923,6 +924,22 @@
 //     the leftover stays on that centre ("no front to go to: it stays central …"; rule 6 moves
 //     the armies already there, never the leftover) — else the
 //     border with the most fogged neighbours, else my biggest stack.
+//  5b. A neutral the leftover pays for (#218; live: a capture ruled out because its source "stays
+//     to hold its border", then the leftover put 8 on that source as its comfortable margin, and
+//     nothing took the 1-army neutral beside it). After the leftover, the strike stack's orders and
+//     the lead strikes, a territory of mine the leftover reached (not conceded, not my commander's,
+//     not the strike stack nor the step's source it saves on, attacking no player's territory: the
+//     #226 margin sizes those; never under No-Split or `complete-bonus`) takes a neutral beside it
+//     from what stands above its hold, by pass 3's order, eligibility and economy test (#125),
+//     sized as any capture (the target's cost, R3 and rule 4d through pass 3's capture, which
+//     deploys nothing: the leftover is spent). What it keeps: the hold against the threat beside
+//     it as if this turn's attacks on players there failed, without armies withdrawn into it
+//     unless I am known to move first (#215, as `keepFor`); what holds it against two opponents
+//     attacking together when it holds that now (#128); and at least its two-step keep (#172), an
+//     exit's cover (#179), the leftover kept central (#218) and a Local Deployment pool's armies
+//     (#103). The attack's line gives the arithmetic ("the leftover pays for (#218): of the N on
+//     S …, the C sent leave L, above the H that hold it …"); a capture removes rule 4e's
+//     stand-still warning, and a refused try leaves no line.
 //  6. Idle armies on interior territories transfer one step toward the front,
 //     only into territories held at the start of the turn and never into, or
 //     measured through, a conceded border
@@ -1211,6 +1228,7 @@ import { threatsPhase } from './plan/threats.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
+import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { transfers } from './plan/transfers.js';
@@ -1325,7 +1343,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   } = pc;
   const {
     territories: state, label, bonusName, mine, mineSet, incomeGain, nextIncomeWith, armiesOf, unitsAt, defenceAt,
-    bonusTs, completedBy, territoryShare, plainWorth, inFocus,
+    bonusTs, completedBy, inFocus,
   } = pc;
   const {
     guard, rates, chanceOf, chanceAt, costAt, toTake, luck, noSplit,
@@ -1373,7 +1391,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const tgt = targetsPhase(pc, ps, input, threats, hd);
   const {
     breakable, counterAt, targets, leadSteps, targetScoreCost, landScoreCost, offence, skipOffence, plans,
-    economicMember, uneconomicMember, negativeMember, ratio, committing, byCloseness, retakeChecks, retakeWarning,
+    ratio, committing, byCloseness, retakeChecks, retakeWarning,
   } = tgt;
   // #215 review: rule 1a's triage (run with the strikes, below) leaves pending a border in a bonus
   // these plans may complete this turn.
@@ -2063,15 +2081,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- pass 3: other expansion ----
   if (goal !== 'complete-bonus') {
     const rest = [...targets.values()]
-      .filter(
-        (t) =>
-          !captured.has(t.id) &&
-          !(balanced && t.enemy) &&
-          // #125: a member of an uneconomic bonus is still a territory worth its per-territory income.
-          (economicMember.has(t.id) ||
-            !uneconomicMember.has(t.id) ||
-            (territoryShare(1) > 0 && !negativeMember.has(t.id))),
-      )
+      // #125: a member of an uneconomic bonus is still a territory worth its per-territory income.
+      .filter((t) => !captured.has(t.id) && plainEligible(pc, tgt, t.id, t.enemy))
       .sort((a, b) => targetScoreCost(a.id) - targetScoreCost(b.id) || a.cost - b.cost || a.id - b.id);
     // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
     for (const t of rest) {
@@ -2080,10 +2091,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // #125: its own economy test. A member of an economic bonus is judged by that bonus; any
       // other capture pays for the armies it loses with the income it adds within PAYBACK_TURNS,
       // and one that adds none may lose at most PLAIN_EXPANSION_LOSS.
-      if (!inFocus(t.id) && !economicMember.has(t.id)) {
-        const lost = straightKills(defenceAt(t.id), rates.defensiveKillRate);
-        const worth = plainWorth(t.id, gain);
-        if (worth > 0 ? lost > paybackTurns * worth : lost > PLAIN_EXPANSION_LOSS) {
+      {
+        const refused = plainEconomy(pc, tgt, t.id, gain);
+        if (refused) {
+          const { lost, worth } = refused;
           const reach = Math.max(...neighborsOf(g, t.id).filter((x) => avail.has(x)).map((x) => (avail.get(x) ?? 0) + roomAt(x)));
           if (reach >= t.cost)
             rationale.push(
@@ -2201,6 +2212,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- concentrate (#72, rule 0p.3c): the 1v1 strike stack's border (plan/strike.ts) ----
   const { stack, smallExpansion } = chooseStrikeStack(pc, ps, book, threats, open, stays);
   // ---- 5. the leftover deploy (plan/leftover.ts) ----
+  /** The deploys before the leftover: rule 5b's sources are the territories it reached. */
+  const beforeLeftover = new Map(ps.deployed);
   const leftover = leftoverDeploy(pc, ps, book, threats, hd, tgt, saveStep, stack, open, stays);
   let { strikeStack } = leftover;
   const { poolDeployed, staging } = leftover;
@@ -2274,6 +2287,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- #167: lead strikes (plan/strike.ts) ----
   const { leadSpareFor } = leadStrikes(pc, ps, book, threats, hd, tgt, caps, holdLocked, strikeStack);
+
+  // ---- 5b. a neutral the leftover pays for (#218) (plan/after-leftover.ts) ----
+  // The strike stack concentrates for its strike, and a step's source saves toward it: neither spends.
+  const keepWhole = new Set([...(strikeStack ? [strikeStack.id] : []), ...(staging ? [staging.from] : [])]);
+  afterLeftoverCaptures(pc, ps, book, threats, hd, tgt, caps, beforeLeftover, keepWhole, poolDeployed);
 
   // ---- efficient sizes (S2) ----
   // An attack below its next kill breakpoint is topped up to it from armies that would sit

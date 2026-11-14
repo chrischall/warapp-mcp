@@ -599,6 +599,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     bonuses), and counts toward the step; with no enemy territory in view the leftover stays on the
     territory central to what I hold (fewest hops through my land to my farthest border) rather than
     ride an expansion stack more than `CENTRE_SLACK` hops farther out whose attacks land without it.
+    #218 (rule 5b, `src/analysis/plan/after-leftover.ts`): once it is placed, a territory the leftover
+    reached takes a neutral beside it from what stands above its hold (pass 3's economy test and
+    sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,
+    and against two opponents together when it holds that now; never the strike stack, a saving
+    source, a source attacking a player, under No-Split or `complete-bonus`).
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and
