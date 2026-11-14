@@ -4,14 +4,14 @@
 // 4c(c), rule 4d's frontier budget). planPass runs the passes, the strikes and pass 3 with them.
 import { bonusTerritories } from '../bonuses.js';
 import { armiesToTake, straightKills } from '../combat.js';
-import { captureCost, type BonusPlan, type TwoStepPass } from '../planner.js';
+import { captureCost, type BonusPlan, type TwoStepPass } from './shared.js';
 import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
 import type { Threats } from './threats.js';
+import { byNum } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
 
 /** Why the last tryCapture refused (R3, No-Split on a source that could take it); else size. */
 export type Refusal =

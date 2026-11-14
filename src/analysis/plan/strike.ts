@@ -17,16 +17,15 @@ import {
   visibleState,
   type PlanInput,
   type PlannedMove,
-} from '../planner.js';
+} from './shared.js';
 import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Breakable, Targets } from './targets.js';
 import type { Threats } from './threats.js';
+import { byNum, pct } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
-const pct = (p: number) => `${Math.round(p * 1000) / 10}%`;
 
 /** The strike stack rule 0p.3c built this turn (#72), and the leftover it got. */
 export interface StrikeStack {

@@ -46,11 +46,11 @@ import {
   type PlanInput,
   type PlannerSettings,
   type TurnPlan,
-} from '../planner.js';
+} from './shared.js';
 import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type ProfilePlayer } from '../profile.js';
 import type { BoardCtx, CombatCtx, OpponentsCtx, PlanCtx, PlanState, StandingCtx } from './state.js';
+import { byNum } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
 
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was

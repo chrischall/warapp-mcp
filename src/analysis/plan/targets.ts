@@ -19,12 +19,12 @@ import {
   type OffenceEntry,
   type PlanInput,
   type Target,
-} from '../planner.js';
+} from './shared.js';
 import type { Holds } from './holds.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
+import { byNum } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
 
 export interface Breakable {
   bonusId: number;

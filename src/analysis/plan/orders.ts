@@ -7,10 +7,10 @@ import { bonusTerritories } from '../bonuses.js';
 import { neighborsOf } from '../graph.js';
 import { chargeDeploys, deployPools } from '../local-deploy.js';
 import { territoryIncome } from '../player.js';
-import { WASTELAND_FACTOR, type PlannedMove } from '../planner.js';
+import { WASTELAND_FACTOR, type PlannedMove } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
+import { byNum } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
 
 /** The deploy book: the helpers every phase deploys, moves and values territories through. */
 export type DeployBook = ReturnType<typeof deployBook>;

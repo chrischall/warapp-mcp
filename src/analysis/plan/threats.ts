@@ -17,11 +17,11 @@ import {
   ownerShown,
   visibleState,
   type PlanInput,
-} from '../planner.js';
+} from './shared.js';
 import { simTerritories } from '../turn-sim.js';
 import type { PlanCtx, PlanState } from './state.js';
+import { byNum } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
 
 /** A visible enemy stack next to me that grew since the previous board (rule 1t): its armies then and now. */
 export interface Growth {
@@ -114,7 +114,7 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
     rates, toTake, turnNow,
   } = pc;
   const { warnings, rationale } = ps;
-  // ---- 0. threat trend ----
+  // ---- 1t. threat trend ----
   // Growth of each visible enemy territory next to me since the previous board
   // (visible both times, same owner, grown): its armies per turn of build-up.
   const growthOf = new Map<number, Growth>();

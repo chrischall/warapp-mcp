@@ -5,15 +5,15 @@
 // planPass runs it where it ran before: after pass 3, before rule 4g's card-piece capture.
 import { straightKills } from '../combat.js';
 import { neighborsOf } from '../graph.js';
-import type { PlannedMove } from '../planner.js';
+import type { PlannedMove } from './shared.js';
 import type { Captures, MustHold } from './captures.js';
 import type { Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
 import type { Threats } from './threats.js';
+import { byNum } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
 
 /** #125: the step rule 4e ranked first and could not afford this turn (its size, nothing else). */
 export interface SaveStep {

@@ -20,7 +20,7 @@ import type {
   PlannedMove,
   PlannerSettings,
   PlanOptions,
-} from '../planner.js';
+} from './shared.js';
 
 /** The opponents, their estimates, the game profile and the goal it picks (rule 0p). */
 export interface OpponentsCtx {

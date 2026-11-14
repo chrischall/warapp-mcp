@@ -17,12 +17,12 @@ import {
   type PlannedMove,
   type TwoStepHoldAt,
   type TwoStepPass,
-} from '../planner.js';
+} from './shared.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
+import { byNum } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
 
 /** A territory of mine with a threat next to it (rule 1): what it has, what it faces, what holding it costs. */
 export interface Threatened {

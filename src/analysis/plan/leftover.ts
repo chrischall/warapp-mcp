@@ -8,7 +8,7 @@
 // strike stack is spent.
 import { neighborsOf } from '../graph.js';
 import { chargeDeploys } from '../local-deploy.js';
-import { COMFORT_MARGIN, type PlannedMove } from '../planner.js';
+import { COMFORT_MARGIN, type PlannedMove } from './shared.js';
 import type { Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { SaveStep } from './stand-still.js';

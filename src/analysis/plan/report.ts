@@ -28,7 +28,7 @@ import {
   type PlannedMove,
   type TurnPlan,
   type TwoStepPass,
-} from '../planner.js';
+} from './shared.js';
 import type { MoveSlot } from '../schedule.js';
 import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
@@ -36,9 +36,8 @@ import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
 import type { Threats } from './threats.js';
+import { byNum, pct } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
-const pct = (p: number) => `${Math.round(p * 1000) / 10}%`;
 
 /** What the plan expects once every order is in, as the report and the plan read it. */
 export interface Expected {

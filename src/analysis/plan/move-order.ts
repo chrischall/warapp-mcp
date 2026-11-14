@@ -11,15 +11,15 @@ import {
   ORDER_PRIORITY_MIN_ARMIES,
   type OpponentExits,
   type PlannedMove,
-} from '../planner.js';
+} from './shared.js';
 import { straightKills } from '../combat.js';
 import { indexAfterAll, MoveSlot, opponentOrdersBefore, scheduleMoves, type MoverPosition } from '../schedule.js';
 import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
+import { byNum } from './util.js';
 
-const byNum = (a: number, b: number) => a - b;
 
 /** Order Priority for a strike (rule 1s): `strikeCard` when the threat to my commander advised the card. */
 export function strikeOrderPriority(pc: PlanCtx, ps: PlanState, threats: Threats, hd: Holds, struck: ReadonlySet<number>) {
