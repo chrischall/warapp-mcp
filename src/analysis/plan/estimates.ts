@@ -5,6 +5,7 @@
 // rationale and warnings that state them. Pure: it reads the input and writes only
 // `state.warnings` / `state.rationale`.
 import type { BoardState } from '../../board.js';
+import { holdsSeat } from '../../player-states.js';
 import { carriesTeam } from '../../teams.js';
 import { bonusTerritories } from '../bonuses.js';
 import { CHAIN_MAX_STEPS } from '../chains.js';
@@ -51,10 +52,6 @@ import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type ProfilePlayer } from '../p
 import type { BoardCtx, CombatCtx, OpponentsCtx, PlanCtx, PlanState, StandingCtx } from './state.js';
 import { byNum } from './util.js';
 
-
-/** Players that never took a seat: they started nothing, so they leave the start even. */
-const NEVER_SEATED = new Set(['Invited', 'Declined', 'RemovedByHost']);
-
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
  * symmetric (`symmetricStart`), with no teams, and every seated player still playing — a 1v1 (one
@@ -65,7 +62,7 @@ const NEVER_SEATED = new Set(['Invited', 'Declined', 'RemovedByHost']);
  */
 function fogPrior(board: BoardState, me: number, ctx: PlanGameContext, myIncome: number): EnemyIncomePrior | undefined {
   if (ctx.symmetricStart !== true) return undefined;
-  const players = (ctx.players ?? []).filter((p) => !NEVER_SEATED.has(p.state ?? 'Playing'));
+  const players = (ctx.players ?? []).filter((p) => holdsSeat(p.state));
   if (players.some((p) => carriesTeam(p.team))) return undefined;
   if (players.some((p) => (p.state ?? 'Playing') !== 'Playing' && p.id !== me)) return undefined;
   const opponents = players.length

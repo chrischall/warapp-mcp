@@ -625,7 +625,9 @@
 //     player's territory whose owner may deploy there (not a combined capture; not under No-Split,
 //     which sends the whole stack already) takes the armies still on its source beyond what holds
 //     it (`spareBeyondHold`; and, as rule 6's #128 keep, what holds the source against the threat
-//     beside it as if this turn's attacks on players there failed), the target with the most
+//     beside it as if this turn's attacks on players there failed — each such target then also
+//     holding its owner's stacks beside it that are not beside the source, which may move in
+//     before my attack runs), the target with the most
 //     defenders first: sized to the exact kill count at an estimate the plan calls a floor, it
 //     would otherwise fail to one army more deployed while those armies sit idle. A rationale
 //     line ("Margin on the attack on …") says how much deploy it now covers; when that is the
@@ -2269,7 +2271,26 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // what holds it against the threat there as if those attacks failed.
       const pending = neighborsOf(g, m.from).filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player');
       const ifFail = pending.length ? borderAt(m.from, () => false) : null;
-      const keep128 = ifFail ? Math.max(0, threats.holdArmies(ifFail.threat) - unitsAt(m.from)) : 0;
+      // #226 review: each such target's owner may move its stacks beside the target into it before
+      // my attack runs (its stacks beside the source are in the threat already), so the attack
+      // fails and the target then holds them too: the keep counts their movable armies (and units).
+      const fromSide = new Set([m.from, ...neighborsOf(g, m.from)]);
+      let reinforce = 0;
+      const counted = new Set<number>();
+      const movedIn: string[] = [];
+      for (const x of pending) {
+        const owner = (state.get(x)!.owner as { playerId: number }).playerId;
+        let into = 0;
+        for (const n of neighborsOf(g, x)) {
+          const st = state.get(n);
+          if (fromSide.has(n) || counted.has(n) || st?.owner.kind !== 'player' || st.owner.playerId !== owner || st.armies === null) continue;
+          counted.add(n);
+          into += Math.max(0, st.armies - guard) + unitsAt(n);
+        }
+        reinforce += into;
+        if (into > 0) movedIn.push(`player ${owner} first moves the ${into} armies beside ${label(x)} into it`);
+      }
+      const keep128 = ifFail ? Math.max(0, threats.holdArmies(ifFail.threat + reinforce) - unitsAt(m.from)) : 0;
       const add = Math.min(spareBeyondHold(m.from), Math.max(0, hd.stayAt(m.from) - keep128));
       if (add <= 0) continue;
       const d = defenceAt(m.to);
@@ -2308,7 +2329,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       }
       const owner = (state.get(m.to)!.owner as { playerId: number }).playerId;
       rationale.push(
-        `Margin on the attack on ${label(m.to)} from ${label(m.from)} (#226): up from ${before} to ${m.armies} with the ${add} armies that would otherwise sit idle there (no hold needs them, even if the attack fails)${
+        `Margin on the attack on ${label(m.to)} from ${label(m.from)} (#226): up from ${before} to ${m.armies} with the ${add} armies that would otherwise sit idle there (no hold needs them, even if the attack fails${movedIn.length ? `, or ${movedIn.join(' and ')}` : ''})${
           hi >= 0
             ? `: ${m.armies} take it even if player ${owner} deploys up to ${covered} there first, against the ~${extra} estimate, which is a floor`
             : ''

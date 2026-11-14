@@ -498,7 +498,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     none can strike), and fog pressure paid outright from idle armies is not priced against
     expansion (`PRESSURE_FACTOR`). #226: once the transfers have run, such an attack (not a
     combined capture, not under No-Split) also takes the armies still idle on its source beyond
-    what holds it — even if the attacks on players beside it fail (#128) — as a margin over an
+    what holds it — even if the attacks on players beside it fail (#128), the owner's other stacks
+    beside each target having moved in first — as a margin over an
     estimate that is only a floor; a "Margin on the attack on …" line says what deploy it covers.
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,

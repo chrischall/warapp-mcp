@@ -1025,7 +1025,8 @@ export function observeSigned(
       ? failedAttackKills(g, previous, board, context.me, playerId, context.myOrders, rates)
       : new Map<number, number>();
   const killsAt = (id: number) => kills.get(id) ?? 0;
-  const mineBothTimes = (id: number) => {
+  /** Held by the observed player (`playerId`, not me) and shown with armies on both boards. */
+  const heldBothTimes = (id: number) => {
     const a = visibleState(now.get(id));
     const b = visibleState(before.get(id));
     return a?.owner.kind === 'player' && a.owner.playerId === playerId && b?.owner.kind === 'player' && b.owner.playerId === playerId;
@@ -1033,11 +1034,13 @@ export function observeSigned(
   /**
    * What each of its territories shown with armies on both boards visibly sent away (its
    * shrink): the most a capture next to it can have received from it. A capture draws on it
-   * (ascending ids), so two captures never both claim the same armies.
+   * (ascending ids), so two captures never both claim the same armies. What my failed attack killed
+   * there (#226: these are exactly {@link failedAttackKills}' targets) is a loss, not armies sent
+   * away, so it is taken out of the shrink.
    */
   const shrinkLeft = new Map<number, number>();
   for (const t of board.territories)
-    if (g.territoryById.has(t.territoryId) && mineBothTimes(t.territoryId))
+    if (g.territoryById.has(t.territoryId) && heldBothTimes(t.territoryId))
       shrinkLeft.set(t.territoryId, Math.max(0, visibleState(before.get(t.territoryId))!.armies! - t.armies! - killsAt(t.territoryId)));
   /** Not shown with armies on both boards: armies could have left it unseen. */
   const hidden = (id: number) => !visibleState(now.get(id)) || !visibleState(before.get(id));

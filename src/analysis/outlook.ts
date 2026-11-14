@@ -68,6 +68,7 @@
 // way only (#201): once winning or losing, its payback tests count the turns the game has left.
 
 import type { BoardState } from '../board.js';
+import { holdsSeat } from '../player-states.js';
 import { carriesTeam } from '../teams.js';
 import { neighborsOf, type MapGraph } from './graph.js';
 import { DEFAULT_TERRITORY_LIMIT, trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
@@ -165,9 +166,6 @@ interface OutlookInput {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** GameFeed states of a listed player who never took a seat (as in profile.ts). */
-const NEVER_SEATED = new Set(['Invited', 'Declined', 'RemovedByHost']);
-
 const fullyVisible = (g: MapGraph, b: BoardState) => {
   const seen = new Set<number>();
   for (const t of b.territories) if (t.owner.kind !== 'unknown' && t.armies !== null) seen.add(t.territoryId);
@@ -234,7 +232,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   // starting territory had. Only seated players split the map: GameFeed also lists players who
   // never took a seat (Invited, Declined, RemovedByHost), and counting them would shrink the share.
   const game = input.game;
-  const seated = game ? game.players.filter((p) => !NEVER_SEATED.has(p.state ?? 'Playing')).length : 0;
+  const seated = game ? game.players.filter((p) => holdsSeat(p.state)).length : 0;
   const share = seated > 0 ? Math.ceil(g.territoryById.size / seated) : null;
   const start = game?.start
     ? game.start.territories * game.start.armiesPerTerritory

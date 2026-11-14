@@ -150,6 +150,17 @@ describe('(d) my failed attack: its kills count back into the defender observed 
     expect(observeDeploy(small, after, before, A, STD, { me: ME }).deploy).toBe(68);
   });
 
+  it('the armies my attack killed were not sent away: they explain no capture beside the target', () => {
+    // T2 (300) sent nothing and lost 282 to my attack: it shows 18. The 39 now on T3, which it took
+    // from 2 neutrals, cannot have come from T2, so they came out of the fog beside T3 (a move, not
+    // income), never a deploy on T2 that then attacked.
+    const fogGraph = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [2, 3], [1, 4], [3, 5]], []));
+    const b0 = board([mine(1, 600), enemy(2, 300), neutral(3, 2), mine(4, 3), fogged(5)]);
+    const b1 = board([mine(1, 130), enemy(2, 18), enemy(3, 39), mine(4, 3), fogged(5)]);
+    const o = observeDeploy(fogGraph, b1, b0, A, STD, { me: ME, myOrders: orders });
+    expect(o).toMatchObject({ attackKills: 282, deploy: 1, fromFog: [3] });
+  });
+
   it('a source that fell this turn measures nothing', () => {
     const lost = board([enemy(1, 50), enemy(2, 199), neutral(3, 2), mine(4, 3)]);
     expect(observeDeploy(small, lost, before, A, STD, { me: ME, myOrders: orders }).attackKills).toBe(0);
@@ -219,12 +230,13 @@ describe('(c) a margin on an attack on a player from armies that would sit idle 
   it('the break sized at the estimate takes the idle armies on its source, and says what it now covers', () => {
     const p = plan([...base, mine(6, 3)]);
     const attack = p.moves.find((x) => x.from === 1 && x.to === 2)!;
-    // 534 + 20 deployed − the guard, less what holds T1 if the attack fails (#128: 131 + ~10 beside it).
+    // 534 + 20 deployed − the guard, less what holds T1 if the attack fails (#128: 131 + ~10 beside
+    // it, and the 9 that T3 could move into T2 first, #226 review).
     const left = 534 + 20 - attack.armies;
-    expect(attack.armies).toBe(469);
-    expect(armiesToTake(left, STD)).toBeGreaterThan(130 + 10);
+    expect(attack.armies).toBe(464);
+    expect(armiesToTake(left, STD)).toBeGreaterThan(130 + 10 + 9);
     expect(p.rationale.join('\n')).toMatch(
-      /Margin on the attack on T2 \(#2\) from T1 \(#1\) \(#226\): up from 235 to 469 with the 234 armies that would otherwise sit idle there \(no hold needs them, even if the attack fails\): 469 take it even if player 20 deploys up to \d+ there first, against the ~10 estimate, which is a floor\./,
+      /Margin on the attack on T2 \(#2\) from T1 \(#1\) \(#226\): up from 235 to 464 with the 229 armies that would otherwise sit idle there \(no hold needs them, even if the attack fails, or player 20 first moves the 9 armies beside T2 \(#2\) into it\): 464 take it even if player 20 deploys up to \d+ there first, against the ~10 estimate, which is a floor\./,
     );
   });
 
@@ -239,6 +251,29 @@ describe('(c) a margin on an attack on a player from armies that would sit idle 
     expect(armiesToTake(stays, STD)).toBeGreaterThan(59 + 5);
     // The margin still went in: T2 gets more than the 235 its #120 size needs.
     expect(attack!.armies).toBeGreaterThan(235);
+  });
+
+  it("keeps what holds the source if its owner's stack beside the target moves in first (#226 review)", () => {
+    // A 1v1: my T1 (534) beside A's weak T2 (3), and A's T3 (600) beside T2 but not T1. If T3's
+    // 600 move into T2 before my attack runs, the attack fails: T1 must still hold what T2 then
+    // has. The margin must not strip T1 down to a handful (before the fix it left 8).
+    const m2 = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7], [[1, 2], [2, 3], [1, 4], [3, 5], [1, 6], [1, 7]], [[900, 5, [2, 3]]]));
+    const p = planTurn({
+      graph: m2,
+      board: board([mine(1, 534), enemy(2, 3), enemy(3, 600), mine(4, 3), fogged(5), mine(6, 3), mine(7, 3)]),
+      me: ME,
+      income: 20,
+      settings: STD,
+      turn: 4,
+      options: { adapt: true },
+      game: { players: [{ id: ME }, { id: A }], turn: 4 },
+    });
+    const sent = p.moves.filter((x) => x.from === 1).reduce((n, x) => n + x.armies, 0);
+    const deployed = p.deploys.filter((d) => d.territoryId === 1).reduce((n, d) => n + d.armies, 0);
+    const stays = 534 + deployed - sent;
+    // T2's 2 movable, T3's 599 and A's ~10 deploy: what stays on T1 must beat them all.
+    expect(armiesToTake(stays, STD)).toBeGreaterThan(2 + 599 + 10);
+    expect(p.rationale.join('\n')).toMatch(/even if the attack fails, or player 20 first moves the 599 armies beside T2 \(#2\) into it/);
   });
 
   it('No-Split sends the whole stack already: no margin line', () => {
