@@ -86,6 +86,7 @@ describe('warapp_begin_turn', () => {
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.begun).toEqual([{ gameId: GAME_ID, left: 0 }]);
     expect(p).toMatchObject({ status: 'begun', game: { id: GAME_ID, name: 'Synthetic Race' }, territoriesVisible: 2 });
+    expect(p.outcome).toBe('confirmed');
     expect(String(p.next)).toMatch(/warapp_plan_turn/);
   });
 
@@ -95,6 +96,7 @@ describe('warapp_begin_turn', () => {
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.begun).toHaveLength(1);
     expect(p.status).toBe('unconfirmed');
+    expect(p.outcome).toBe('unconfirmed');
     expect(String(p.warning)).toMatch(/warapp_get_live_board/);
   });
 
@@ -104,6 +106,7 @@ describe('warapp_begin_turn', () => {
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.begun).toHaveLength(1);
     expect(p.status).toBe('unknown');
+    expect(p.outcome).toBe('unknown');
     expect(String(p.warning)).toMatch(/may already/i);
   });
 
@@ -112,6 +115,7 @@ describe('warapp_begin_turn', () => {
     h = await liveHarness({ pages: SIGNED_IN, feed: [feedGame()], warapp: s.warapp });
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(p.status).toBe('begun');
+    expect(p.outcome).toBe('confirmed');
   });
 
   it('error 4 with the board still hidden is not begun, never "probably running" (#130)', async () => {
@@ -121,6 +125,7 @@ describe('warapp_begin_turn', () => {
     expect(res.isError).toBeFalsy();
     const p = payload(res);
     expect(p.status).toBe('not_begun');
+    expect(p.outcome).toBe('not_applied');
     expect(String(p.warning)).toMatch(/error 4/);
     expect(String(p.warning)).not.toMatch(/probably running/);
   });
@@ -132,6 +137,7 @@ describe('warapp_begin_turn', () => {
     expect(res.isError).toBeFalsy();
     const p = payload(res);
     expect(p.status).toBe('unconfirmed');
+    expect(p.outcome).toBe('unconfirmed');
     expect(String(p.warning)).toMatch(/could not be read/);
     expect(String(p.warning)).not.toMatch(/did not take effect/);
   });
@@ -178,7 +184,7 @@ describe('warapp_begin_turn', () => {
     });
     const res = await h.call('warapp_begin_turn', { game_id: GAME_ID });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toMatch(/not playing in/i);
+    expect(textOf(res)).toMatch(/signed-in war\.app account is not a player in game/i);
     await h.harness.close();
     h = await liveHarness({ pages: {}, feed: [feedGame()], warapp: s.warapp });
     const unknown = await h.call('warapp_begin_turn', { game_id: GAME_ID });

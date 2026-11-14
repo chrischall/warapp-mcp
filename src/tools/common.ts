@@ -147,6 +147,12 @@ export const mapSummary = (map: GameMap) => ({
   bonuses: map.bonuses.length,
 });
 
+/** A territory by id with its map name (the id when the map has none). */
+export const namer = (map: GameMap) => {
+  const names = new Map(map.territories.map((t) => [t.id, t.name]));
+  return (id: number) => ({ id, name: names.get(id) ?? String(id) });
+};
+
 export const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /**

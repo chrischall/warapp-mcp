@@ -1084,6 +1084,7 @@ describe('warapp_submit_turn', () => {
       ),
     );
     expect(p).toMatchObject({ status: 'resolved', game: GAME, turn: 3 });
+    expect(p.outcome).toBe('confirmed');
     expect(JSON.stringify(p)).not.toMatch(/vacation/i);
   });
 
@@ -1097,6 +1098,7 @@ describe('warapp_submit_turn', () => {
     const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
     expect(s.sent).toHaveLength(1);
     expect(p).toMatchObject({ status: 'committed', turn: 3 });
+    expect(p.outcome).toBe('confirmed');
   });
 
   it('reports unknown (never success from the reply bool) when game state shows neither', async () => {
@@ -1104,6 +1106,7 @@ describe('warapp_submit_turn', () => {
     h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
     const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
     expect(p.status).toBe('unknown');
+    expect(p.outcome).toBe('unconfirmed');
     expect(p.warning).toMatch(/warapp_get_game|warapp_get_live_board/);
     // #130: the recovery read names the turn the way warapp_get_game reports it.
     expect(p.warning).toMatch(/`turn` above 3 means this turn resolved/);
@@ -1119,6 +1122,7 @@ describe('warapp_submit_turn', () => {
     const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
     expect(s.sent).toHaveLength(1);
     expect(p.status).toBe('unknown');
+    expect(p.outcome).toBe('unconfirmed');
     expect(p.warning).toMatch(/Do not resend/i);
   });
 
@@ -1130,6 +1134,7 @@ describe('warapp_submit_turn', () => {
     });
     const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
     expect(p.status).toBe('unknown');
+    expect(p.outcome).toBe('unknown');
     expect(p.warning).toMatch(/may already have been committed/);
     expect(p.warning).toMatch(/Do not resend/i);
   });
@@ -1147,6 +1152,7 @@ describe('warapp_submit_turn', () => {
     });
     const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
     expect(p.status).toBe('unknown');
+    expect(p.outcome).toBe('unknown');
     expect(p.warning).toMatch(/may already have run/);
     expect(p.warning).toMatch(/Reload or focus a war\.app tab/);
     expect(p.warning).toMatch(/Do not resend/i);

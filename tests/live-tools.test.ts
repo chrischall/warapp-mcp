@@ -439,7 +439,7 @@ describe('warapp_submit_picks', () => {
     h = await liveHarness({ feed: [game('DistributingTerritories')] });
     const res = await h.call('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161] });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toMatch(/signed-in account/i);
+    expect(textOf(res)).toMatch(/Could not tell which war\.app account is signed in/);
     expect(h.exchanges).toEqual([]);
   });
 
@@ -480,6 +480,8 @@ describe('warapp_submit_picks', () => {
     const p = payload(res);
     expect(s.sent).toEqual([{ gameId: GAME, ids: [161, 159, 135], tail: [false, false] }]);
     expect(p).toMatchObject({ sent: true, verified: true, game: GAME, readBack: [161, 159, 135] });
+    expect(p.outcome).toBe('confirmed');
+    expect(p.status).toBe('verified');
     expect(p.picks).toEqual([
       { id: 161, name: mapName(161) },
       { id: 159, name: mapName(159) },
@@ -496,6 +498,8 @@ describe('warapp_submit_picks', () => {
       pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
     const p = payload(await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159] }));
     expect(p.verified).toBe(false);
+    expect(p.outcome).toBe('unconfirmed');
+    expect(p.status).toBe('unconfirmed');
     expect(p.readBack).toEqual([159, 161]);
     expect(p.warning).toMatch(/did not read back exactly/);
     // What war.app holds is what the award will use: that is the list kept (#166).
@@ -538,12 +542,28 @@ describe('warapp_submit_picks', () => {
     expect(p.warning).toMatch(/warapp_get_my_picks/);
   });
 
+  it('a send war.app does not answer is unknown: nothing is read back, and the picks are not claimed (#133)', async () => {
+    const s = picksServer();
+    const warapp = (req: DecodedRequest, n: number) =>
+      req.method === Method.SendTerritoryPicks ? ({ msgNum: 999 } as ReplyFrame) : s.warapp(req, n);
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp });
+    const res = await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159] });
+    expect(res.isError).toBeFalsy();
+    const p = payload(res);
+    expect(p).toMatchObject({ outcome: 'unknown', status: 'unknown', verified: false, readBack: null });
+    expect(p).not.toHaveProperty('sent');
+    expect(p.warning).toMatch(/may already have been saved.*warapp_get_my_picks/);
+    expect(h.exchanges.map((e) => e.request.method)).not.toContain(Method.GetTerritoryPicks);
+  });
+
   it('a shorter read-back is not verified', async () => {
     const s = picksServer([161]);
     h = await liveHarness({
       pages: SIGNED_IN_ANN, feed: [game('DistributingTerritories')], warapp: s.warapp });
     const p = payload(await confirmed('warapp_submit_picks', { game_id: GAME, player: 'Ann', territories: [161, 159] }));
     expect(p.verified).toBe(false);
+    expect(p.outcome).toBe('unconfirmed');
+    expect(p.status).toBe('unconfirmed');
   });
 
   it('refuses a territory that is not pickable on the live board', async () => {
@@ -708,7 +728,7 @@ describe('warapp_send_chat', () => {
 
   it('previews a public message and sends nothing until confirmed', async () => {
     const s = chatServer();
-    h = await liveHarness({ warapp: s.warapp });
+    h = await liveHarness({ pages: SIGNED_IN_ANN, warapp: s.warapp });
     const preview = payload(await h.call('warapp_send_chat', { game_id: GAME, message: 'gl hf' }));
     expect(JSON.stringify(preview)).toContain('everyone in the game');
     expect(s.sent).toEqual([]);
@@ -736,9 +756,10 @@ describe('warapp_send_chat', () => {
 
   it('posts publicly on channel -1 with no recipient', async () => {
     const s = chatServer();
-    h = await liveHarness({ warapp: s.warapp });
+    h = await liveHarness({ pages: SIGNED_IN_ANN, warapp: s.warapp });
     const p = payload(await confirmed('warapp_send_chat', { game_id: GAME, message: 'gl hf' }));
     expect(p).toMatchObject({ status: 'sent', game: GAME, to: 'everyone in the game' });
+    expect(p.outcome).toBe('accepted');
     expect(s.sent).toEqual([
       { gameId: GAME, text: 'gl hf', channel: -1, recipient: null, group: false, m1: null, m2: null, d1: false, d2: false, left: 0 },
     ]);
@@ -746,7 +767,7 @@ describe('warapp_send_chat', () => {
 
   it('posts privately to a named player by in-game id', async () => {
     const s = chatServer();
-    h = await liveHarness({ feed: [game('Playing')], warapp: s.warapp });
+    h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp: s.warapp });
     const p = payload(await confirmed('warapp_send_chat', { game_id: GAME, message: 'truce?', to: 'Bob' }));
     expect(p).toMatchObject({ status: 'sent', to: 'Bob' });
     expect(s.sent[0]).toMatchObject({ text: 'truce?', channel: -1, recipient: BOB.inGame });
@@ -754,7 +775,7 @@ describe('warapp_send_chat', () => {
 
   it('a server refusal is an error (nothing was posted)', async () => {
     const s = chatServer({ error: { code: 36, message: 'slow down' } });
-    h = await liveHarness({ warapp: s.warapp });
+    h = await liveHarness({ pages: SIGNED_IN_ANN, warapp: s.warapp });
     const res = await confirmed('warapp_send_chat', { game_id: GAME, message: 'spam' });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/sending too many messages .*\(war\.app error 36\)/);
@@ -762,11 +783,22 @@ describe('warapp_send_chat', () => {
 
   it('an unconfirmed outcome is reported as unknown, not as safe to retry', async () => {
     h = await liveHarness({
+      pages: SIGNED_IN_ANN,
       warapp: routes({ [Method.SendChat]: () => ({ msgNum: 999 }) }),
     });
     const p = payload(await confirmed('warapp_send_chat', { game_id: GAME, message: 'hello' }));
     expect(p.status).toBe('unknown');
+    expect(p.outcome).toBe('unknown');
     expect(p.warning).toMatch(/may already have been posted\. Check warapp_get_chat/);
+  });
+
+  it('refuses when the signed-in account cannot be read, before any preview or send (#133)', async () => {
+    const s = chatServer();
+    h = await liveHarness({ pages: {}, warapp: s.warapp });
+    const res = await h.call('warapp_send_chat', { game_id: GAME, message: 'hello' });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Could not tell which war\.app account is signed in, so nothing was sent/);
+    expect(s.sent).toEqual([]);
   });
 
   it('refuses an empty message', async () => {

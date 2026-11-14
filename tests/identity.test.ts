@@ -296,7 +296,7 @@ describe('a write previews for the account that will act', () => {
     expect(second.confirmToken).toEqual(expect.any(String));
     const third = await h.call('warapp_surrender', { game_id: GAME_ID });
     expect(third.isError).toBe(true);
-    expect(textOf(third)).toMatch(/not playing in/i);
+    expect(textOf(third)).toMatch(/not a player in game/i);
   });
 
   /** A game where both A and B hold a seat, so each passes the precondition checks. */
@@ -525,7 +525,7 @@ describe('a write previews for the account that will act', () => {
       tool: 'warapp_begin_turn',
       args: { game_id: GAME_ID },
       feed: [gameWithA({ numberOfTurns: '0', settings: { ...(lobbyFixture().settings as object), MoveOrder: 'NoLuckCycle' } })],
-      refusal: /not playing in game 4001/i,
+      refusal: /not a player in game 4001/i,
     },
     {
       tool: 'warapp_join_game',
@@ -546,7 +546,7 @@ describe('a write previews for the account that will act', () => {
       tool: 'warapp_submit_picks',
       args: { game_id: GAME_ID, territories: [1] },
       feed: [gameWithA({ state: 'DistributingTerritories', numberOfTurns: '-1' })],
-      refusal: /say which player/i,
+      refusal: /signed-in war\.app account is not a player in game/i,
     },
     {
       // `player` named: the signed-in check itself is fresh.

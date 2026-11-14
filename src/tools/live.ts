@@ -1,7 +1,7 @@
 // Live-game tools over the web-client protocol (through the user's signed-in
 // war.app tab): the current board, the player's territory picks, and — gated
 // on the user's confirmation — submitting picks.
-import { CONFIRM_INJECTION_RULE, defineWrite, McpToolError, registerWrite, toolAnnotations } from '@chrischall/mcp-utils';
+import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { clientPickLimits } from '../analysis/picks.js';
@@ -20,6 +20,7 @@ import { Method, writeSendTerritoryPicksParams } from '../protocol/methods.js';
 import {
   currentTurn,
   gameIdArg,
+  namer,
   readAnnotations,
   respond,
   shownAccount,
@@ -31,10 +32,11 @@ import {
   untrustedText,
   viewArg,
 } from './common.js';
-import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
+import { lookupMeta, mintMeta } from './hints.js';
 import { loadLiveTerritories, loadPicks, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { mapOf } from './map.js';
 import { resolvePlayer, resolveTerritory } from './resolve.js';
+import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_PICK_ARGS = 200;
@@ -62,25 +64,6 @@ export async function resolveMe(
   return resolvePlayer(players, input);
 }
 
-/**
- * A write through the bridge always acts as the signed-in account, whatever `player` says
- * (issue #7) — so refuse a different player, and refuse when the account is unknown.
- */
-async function assertSignedInAccount(ctx: LiveContext, player: Player): Promise<void> {
-  const token = await ctx.myInviteToken({ fresh: true });
-  if (token === undefined) {
-    throw new McpToolError('Could not tell which account is signed in to war.app, so nothing was sent.', {
-      hint: 'Writes always act as the signed-in account. Make sure a signed-in war.app tab is open and paired, then retry.',
-    });
-  }
-  if (player.id !== token) {
-    throw new McpToolError(
-      `${untrustedText(player.name)} is not the signed-in war.app account, so nothing was sent: writes always act as the signed-in account.`,
-      { hint: 'Omit `player` (it defaults to the signed-in account), or sign in to war.app as that player.' },
-    );
-  }
-}
-
 /** A territory's owner as a person reads it. */
 function ownerLabel(t: LiveTerritory, byInGame: ReadonlyMap<number, Player>): string {
   if (t.fogged) return 'fogged';
@@ -102,8 +85,8 @@ function commanderOn(t: LiveTerritory, byInGame: ReadonlyMap<number, Player>): s
 }
 
 const nameIn = (map: GameMap) => {
-  const names = new Map(map.territories.map((t) => [t.id, t.name]));
-  return (id: number) => names.get(id) ?? String(id);
+  const name = namer(map);
+  return (id: number) => name(id).name;
 };
 
 
@@ -340,144 +323,158 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
     me: number;
   }
 
-  withToolConfig(
+  defineGatedWrite(
     server,
     {
       title: 'Submit territory picks in a war.app game',
       _meta: mintMeta('change', ['submit my picks', 'pick territories', 'choose starting territories']),
     },
-    () =>
-      registerWrite(
-        server,
-        defineWrite({
-          name: 'warapp_submit_picks',
-          description:
-            'Submit your territory picks for a war.app (Warzone) game in manual distribution, in priority order — ' +
-            'they replace any picks you submitted before. Every territory must be pickable on the live board; a list ' +
-            "longer than war.app's client allows (players × territories per player) or shorter than the territories " +
-            'each player is granted is warned about in the preview. After sending, the picks are read back and ' +
-            `reported verified only if they match exactly. ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
-          annotations: toolAnnotations({
-            title: 'Submit war.app picks',
-            readOnly: false,
-            destructive: true,
-            idempotent: true,
-            openWorld: true,
-          }),
-          inputSchema: submitSchema,
-          async plan({ game_id, player, territories }) {
-            const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
-            const map = mapOf(game);
-            const me = await resolveMe(ctx, game.players, player, { fresh: true });
-            await assertSignedInAccount(ctx, me);
-            const picks = territories.map((t) => resolveTerritory(map, t));
-            const seen = new Set<number>();
-            for (const t of picks) {
-              if (seen.has(t.id)) {
-                throw new McpToolError(`${untrustedText(t.name)} (${t.id}) is listed twice.`, { hint: 'List each territory once.' });
-              }
-              seen.add(t.id);
-            }
-            const board = await loadLiveTerritories(ctx, game);
-            const owner = new Map(board.map((t) => [t.territoryId, t]));
-            const unpickable = picks.filter((t) => {
-              const s = owner.get(t.id);
-              return !s || s.fogged || s.owner !== OWNER_PICKABLE;
-            });
-            if (unpickable.length) {
-              throw new McpToolError(
-                `Not pickable on the live board: ${untrustedList(unpickable, UNTRUSTED_LIST_MAX, (t) => `${untrustedText(t.name)} (${t.id})`)}.`,
-                {
-                  hint:
-                    game.state === 'DistributingTerritories'
-                      ? 'Pick only territories warapp_get_live_board lists as "pickable".'
-                      : `Picks are only open while the game distributes territories (game state: ${game.state}).`,
-                },
-              );
-            }
-            // The list's length is checked against the client's own bounds (#129) as a warning:
-            // its picking UI stops at the maximum, and its validation rejects a list shorter
-            // than the minimum, but neither is verified against the server.
-            const pickable = board.filter((t) => !t.fogged && t.owner === OWNER_PICKABLE).map((t) => t.territoryId);
-            const pickableCount = pickable.length;
-            // Kept for the turns to come: where a player could have started (warapp_locate_opponents).
-            // #201: with the picking board's neutrals, so a fogged one keeps its size later.
-            if (ctx.dataDir) await writePickable(ctx.dataDir, game.id, me.id, pickable, pickingNeutrals(board));
-            const bounds = clientPickLimits({
-              territoryLimit: game.settings?.territoryLimit,
-              players: game.players.length,
-              pickable: pickableCount,
-            });
-            const lengthWarnings: string[] = [];
-            if (bounds && picks.length > bounds.max)
-              lengthWarnings.push(
-                `war.app's client lets a player list at most ${bounds.max} picks here (${game.players.length} players × ${bounds.perPlayer} territories each); got ${picks.length}. The extra picks may be ignored.`,
-              );
-            if (bounds && picks.length < bounds.min)
-              lengthWarnings.push(
-                `war.app expects at least ${bounds.min} picks here (the territories each player is granted); got ${picks.length}, which it may reject.`,
-              );
-            const playerId = inGameId(me);
-            const territoryIds = picks.map((t) => t.id);
-            const named = picks.map((t) => ({ id: t.id, name: t.name }));
-            return {
-              gate: {
-                action: 'warapp.submit_picks',
-                // By id only: player and territory names are other people's words and go,
-                // delimited, in labelled fields.
-                summary: `Submit ${picks.length} territory pick${picks.length === 1 ? '' : 's'} for player ${me.id} in game ${game.id}`,
-                account: writeAccount(me.id),
-                target: game.id,
-                payload: { method: 'SendTerritoryPicks', gameId: game.id, playerId, territoryIds },
-                willSend: {
-                  game: game.id,
-                  player: untrustedText(me.name),
-                  picksInPriorityOrder: named.map((t) => ({ id: t.id, name: untrustedText(t.name) })),
-                },
-                preview: {
-                  account: shownAccount(me.name, me.id),
-                  note: 'Replaces any picks already submitted for this game.',
-                  untrusted: UNTRUSTED_PREVIEW_NOTE,
-                  ...(lengthWarnings.length ? { warnings: lengthWarnings } : {}),
-                },
-              },
-              state: { gameId: game.id, playerId, picks: named, me: me.id } satisfies PicksState,
-            };
+    {
+      name: 'warapp_submit_picks',
+      description:
+        'Submit your territory picks for a war.app (Warzone) game in manual distribution, in priority order — ' +
+        'they replace any picks you submitted before. Every territory must be pickable on the live board; a list ' +
+        "longer than war.app's client allows (players × territories per player) or shorter than the territories " +
+        'each player is granted is warned about in the preview. After sending, the picks are read back and ' +
+        `reported verified only if they match exactly. ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
+      annotations: toolAnnotations({
+        title: 'Submit war.app picks',
+        readOnly: false,
+        destructive: true,
+        idempotent: true,
+        openWorld: true,
+      }),
+      inputSchema: submitSchema,
+      async plan({ game_id, player, territories }) {
+        const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
+        const map = mapOf(game);
+        // A write through the bridge always acts as the signed-in account, whatever `player` says
+        // (issue #7): a different player, an unknown account and an account without a seat are refused.
+        const me = await requireMySeat(ctx, game, { player, playing: false });
+        const picks = territories.map((t) => resolveTerritory(map, t));
+        const seen = new Set<number>();
+        for (const t of picks) {
+          if (seen.has(t.id)) {
+            throw new McpToolError(`${untrustedText(t.name)} (${t.id}) is listed twice.`, { hint: 'List each territory once.' });
+          }
+          seen.add(t.id);
+        }
+        const board = await loadLiveTerritories(ctx, game);
+        const owner = new Map(board.map((t) => [t.territoryId, t]));
+        const unpickable = picks.filter((t) => {
+          const s = owner.get(t.id);
+          return !s || s.fogged || s.owner !== OWNER_PICKABLE;
+        });
+        if (unpickable.length) {
+          throw new McpToolError(
+            `Not pickable on the live board: ${untrustedList(unpickable, UNTRUSTED_LIST_MAX, (t) => `${untrustedText(t.name)} (${t.id})`)}.`,
+            {
+              hint:
+                game.state === 'DistributingTerritories'
+                  ? 'Pick only territories warapp_get_live_board lists as "pickable".'
+                  : `Picks are only open while the game distributes territories (game state: ${game.state}).`,
+            },
+          );
+        }
+        // The list's length is checked against the client's own bounds (#129) as a warning:
+        // its picking UI stops at the maximum, and its validation rejects a list shorter
+        // than the minimum, but neither is verified against the server.
+        const pickable = board.filter((t) => !t.fogged && t.owner === OWNER_PICKABLE).map((t) => t.territoryId);
+        const pickableCount = pickable.length;
+        // Kept for the turns to come: where a player could have started (warapp_locate_opponents).
+        // #201: with the picking board's neutrals, so a fogged one keeps its size later.
+        if (ctx.dataDir) await writePickable(ctx.dataDir, game.id, me.id, pickable, pickingNeutrals(board));
+        const bounds = clientPickLimits({
+          territoryLimit: game.settings?.territoryLimit,
+          players: game.players.length,
+          pickable: pickableCount,
+        });
+        const lengthWarnings: string[] = [];
+        if (bounds && picks.length > bounds.max)
+          lengthWarnings.push(
+            `war.app's client lets a player list at most ${bounds.max} picks here (${game.players.length} players × ${bounds.perPlayer} territories each); got ${picks.length}. The extra picks may be ignored.`,
+          );
+        if (bounds && picks.length < bounds.min)
+          lengthWarnings.push(
+            `war.app expects at least ${bounds.min} picks here (the territories each player is granted); got ${picks.length}, which it may reject.`,
+          );
+        const playerId = inGameId(me);
+        const territoryIds = picks.map((t) => t.id);
+        const named = picks.map((t) => ({ id: t.id, name: t.name }));
+        return {
+          gate: {
+            action: 'warapp.submit_picks',
+            // By id only: player and territory names are other people's words and go,
+            // delimited, in labelled fields.
+            summary: `Submit ${picks.length} territory pick${picks.length === 1 ? '' : 's'} for player ${me.id} in game ${game.id}`,
+            account: writeAccount(me.id),
+            target: game.id,
+            payload: { method: 'SendTerritoryPicks', gameId: game.id, playerId, territoryIds },
+            willSend: {
+              game: game.id,
+              player: untrustedText(me.name),
+              picksInPriorityOrder: named.map((t) => ({ id: t.id, name: untrustedText(t.name) })),
+            },
+            preview: {
+              account: shownAccount(me.name, me.id),
+              note: 'Replaces any picks already submitted for this game.',
+              untrusted: UNTRUSTED_PREVIEW_NOTE,
+              ...(lengthWarnings.length ? { warnings: lengthWarnings } : {}),
+            },
           },
-          async execute({ gameId, playerId, picks, me }: PicksState) {
-            await requireApprovedAccount(ctx, writeAccount(me));
-            const ids = picks.map((p) => p.id);
+          state: { gameId: game.id, playerId, picks: named, me: me.id } satisfies PicksState,
+        };
+      },
+      async execute({ gameId, playerId, picks, me }: PicksState) {
+        await requireApprovedAccount(ctx, writeAccount(me));
+        const ids = picks.map((p) => p.id);
+        const base = { game: gameId, picks };
+        return sendAndVerify({
+          send: async () => {
             await ctx.rpc.call('SendTerritoryPicks', Method.SendTerritoryPicks, (w) =>
               writeSendTerritoryPicksParams(w, gameId, ids),
             );
-            // The send went through: a failed read-back must not hide that (#130).
-            let readBack: number[] | null;
-            let readBackError: string | undefined;
-            try {
-              readBack = await loadPicks(ctx, gameId, playerId);
-            } catch (e) {
-              readBack = null;
-              readBackError = e instanceof Error ? e.message : String(e);
-            }
-            const verified = readBack !== null && readBack.length === ids.length && readBack.every((id, i) => id === ids[i]);
-            // What war.app holds is the list the award will use: kept to read the award from (#166).
-            if (ctx.dataDir && readBack?.length) await writePickList(ctx.dataDir, gameId, me, readBack);
-            return { sent: true, verified, game: gameId, picks, readBack, ...(readBackError ? { readBackError } : {}) };
           },
-          render: (r) =>
-            respond(undefined, ['compact'], () => ({
-              ...r,
-              ...(r.verified
-                ? {}
-                : {
-                    warning:
-                      r.readBack === null
-                        ? 'war.app accepted the picks, but reading them back failed. Check warapp_get_my_picks before resubmitting.'
-                        : 'war.app did not read back exactly these picks. Check warapp_get_my_picks before resubmitting.',
-                  }),
-            })),
-          batchable: false,
-        }),
-      ),
+          unanswered: (failure) => ({
+            status: 'unknown' as const,
+            outcome: 'unknown' as const,
+            verified: false,
+            ...base,
+            readBack: null,
+            warning:
+              `war.app did not confirm the picks (${failure}), so they may already have been saved. ` +
+              'Check warapp_get_my_picks before resubmitting.',
+          }),
+          readBack: () => loadPicks(ctx, gameId, playerId),
+          // The send went through: a failed read-back must not hide that (#130).
+          unreadable: (failure) => ({
+            status: 'unconfirmed' as const,
+            outcome: 'unconfirmed' as const,
+            sent: true,
+            verified: false,
+            ...base,
+            readBack: null,
+            readBackError: failure,
+            warning: 'war.app accepted the picks, but reading them back failed. Check warapp_get_my_picks before resubmitting.',
+          }),
+          classify: async (readBack) => {
+            // What war.app holds is the list the award will use: kept to read the award from (#166).
+            if (ctx.dataDir && readBack.length) await writePickList(ctx.dataDir, gameId, me, readBack);
+            const verified = readBack.length === ids.length && readBack.every((id, i) => id === ids[i]);
+            return verified
+              ? { status: 'verified' as const, outcome: 'confirmed' as const, sent: true, verified, ...base, readBack }
+              : {
+                  status: 'unconfirmed' as const,
+                  outcome: 'unconfirmed' as const,
+                  sent: true,
+                  verified,
+                  ...base,
+                  readBack,
+                  warning: 'war.app did not read back exactly these picks. Check warapp_get_my_picks before resubmitting.',
+                };
+          },
+        });
+      },
+    },
   );
 }

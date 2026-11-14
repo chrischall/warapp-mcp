@@ -12,10 +12,9 @@ import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners, opponentReinforcement } from './card-advice.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
 import { boardStateFromLive } from '../live.js';
-import type { GameMap } from '../normalize.js';
 import { carriesTeam } from '../teams.js';
 import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
-import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
+import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
@@ -50,11 +49,6 @@ export const CHECK_PLAN_NOT_COVERED = [
   'under Multi-Attack, any chain of attacks but the one most damaging per stack',
   'cards, apart from your own Order Priority',
 ] as const;
-
-const namer = (map: GameMap) => {
-  const names = new Map(map.territories.map((t) => [t.id, t.name]));
-  return (id: number) => ({ id, name: names.get(id) ?? String(id) });
-};
 
 export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void {
   server.registerTool(

@@ -12,6 +12,7 @@ import { currentTurn, gameIdArg, readAnnotations, respond, untrustedDescription 
 import { lookupMeta, mintMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
+import { requireMe } from './write-kit.js';
 
 /** Game states in which a player has something to submit (picks or orders). */
 export const ACTION_STATES: ReadonlySet<string> = new Set(['Playing', 'DistributingTerritories']);
@@ -337,14 +338,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           });
         }
       }
-      const token = await ctx.myInviteToken();
-      if (token === undefined) {
-        throw new McpToolError('Could not tell which war.app account is signed in, so there is no turn to wait for.', {
-          hint:
-            'Turns are watched for the account signed in to your war.app tab. Make sure a signed-in war.app tab is ' +
-            'open and paired (ContextMint Bridge), focus or reload it, then retry.',
-        });
-      }
+      // Turns are watched for the account signed in to the war.app tab.
+      const token = await requireMe(ctx, { fresh: false, consequence: 'there is no turn to wait for' });
       const check = async (id: number) => {
         // A turn check reads only the game's state: no map (a cold map is ~190 KB per game, #131).
         const game = await readGame(id);

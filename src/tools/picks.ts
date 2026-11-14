@@ -6,8 +6,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { clientPickLimits, planPicks, type CoverageReport, type PickGroup, type PickSettings } from '../analysis/picks.js';
 import { OWNER_PICKABLE } from '../live.js';
-import type { Game, GameMap, GameSettings } from '../normalize.js';
-import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
+import type { Game, GameSettings } from '../normalize.js';
+import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveTerritories, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
@@ -54,11 +54,6 @@ export function requirePickPhase(game: Game): void {
         : 'Picks are planned only while a manual-distribution game distributes territories.',
   });
 }
-
-const namer = (map: GameMap) => {
-  const names = new Map(map.territories.map((t) => [t.id, t.name]));
-  return (id: number) => ({ id, name: names.get(id) ?? String(id) });
-};
 
 export function registerPickTools(server: McpServer, ctx: LiveContext): void {
   server.registerTool(

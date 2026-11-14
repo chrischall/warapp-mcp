@@ -206,6 +206,7 @@ describe('warapp_join_game', () => {
     const p = payload(await confirmed('warapp_join_game', { game_id: 3001 }));
     expect(s.sent).toEqual([{ gameId: 3001, colour: 5, team: -1, slot: false, modHook: false, left: 0 }]);
     expect(p).toMatchObject({ status: 'joined', game: { id: 3001, name: 'Plain FFA' } });
+    expect(p.outcome).toBe('confirmed');
   });
 
   it('says the join is unconfirmed when neither GameFeed nor my games lists the account', async () => {
@@ -214,6 +215,7 @@ describe('warapp_join_game', () => {
     const p = payload(await confirmed('warapp_join_game', { game_id: 3001 }));
     expect(s.sent).toHaveLength(1);
     expect(p.status).toBe('unconfirmed');
+    expect(p.outcome).toBe('unconfirmed');
     expect(String(p.warning)).toMatch(/could not confirm/i);
   });
 
@@ -222,6 +224,7 @@ describe('warapp_join_game', () => {
     h = await harness({ warapp: s.warapp, feed: [feedGame(3001, true)] });
     const p = payload(await confirmed('warapp_join_game', { game_id: 3001 }));
     expect(p).toMatchObject({ status: 'joined', vacationEnded: true });
+    expect(p.outcome).toBe('confirmed');
   });
 
   it('previews the colour it will send and why', async () => {
@@ -303,6 +306,7 @@ describe('warapp_join_game', () => {
     expect(textOf(res)).toMatch(/team game.*allow_team/is);
     const p = payload(await confirmed('warapp_join_game', { game_id: 3003, allow_team: true }));
     expect(p.status).toBe('joined');
+    expect(p.outcome).toBe('confirmed');
     expect(s.sent[0]).toMatchObject({ gameId: 3003, team: 1 });
   });
 
@@ -361,10 +365,20 @@ describe('warapp_join_game', () => {
     expect(textOf(res)).toMatch(/That color is not available.*color/is);
   });
 
+  it('refuses when the signed-in account cannot be read, before any preview or send (#133)', async () => {
+    const s = joinServer();
+    h = await liveHarness({ pages: { [OPEN_GAMES_URL]: openGamesPage() }, warapp: s.warapp });
+    const res = await h.call('warapp_join_game', { game_id: 3001 });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Could not tell which war\.app account is signed in, so nothing was sent/);
+    expect(s.sent).toEqual([]);
+  });
+
   it('an unanswered join is reported as unknown, not as safe to retry', async () => {
     h = await harness({ warapp: routes({ [Method.AcceptOpenSeat]: () => ({ msgNum: 999 }) }) });
     const p = payload(await confirmed('warapp_join_game', { game_id: 3001 }));
     expect(p.status).toBe('unknown');
+    expect(p.outcome).toBe('unknown');
     expect(String(p.warning)).toMatch(/may already have joined.*warapp_my_games/is);
   });
 });

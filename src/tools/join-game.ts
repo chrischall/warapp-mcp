@@ -4,13 +4,7 @@
 // joined, and the join is reported only once GameFeed (or GetMyGames) shows
 // the account in the game. war.app needs a colour with the join (src/join-color.ts):
 // the account's preferred one, else its secondary, else a standard colour still free.
-import {
-  CONFIRM_INJECTION_RULE,
-  defineWrite,
-  McpToolError,
-  registerWrite,
-  toolAnnotations,
-} from '@chrischall/mcp-utils';
+import { CONFIRM_INJECTION_RULE, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
@@ -24,13 +18,14 @@ import {
   writeAcceptOpenSeatParams,
 } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
-import { gameIdArg, respond, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
+import { gameIdArg, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { noBrowserNote } from './session.js';
-import { mintMeta, withToolConfig } from './hints.js';
-import { failureText, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
+import { mintMeta } from './hints.js';
+import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
 import { openGamesPage } from './open-games.js';
 import { NO_TEAM } from '../teams.js';
+import { accountUnknown, defineGatedWrite, refuse, sendAndVerify } from './write-kit.js';
 
 /** GameFeed player states that do not hold a seat. */
 const NOT_SEATED = new Set(['Declined', 'RemovedByHost']);
@@ -75,12 +70,8 @@ interface JoinState {
   url: string;
   team: number;
   color: number;
-  /** The account the gate bound (its GameFeed id), when the plan could read it. */
-  account?: string;
-}
-
-function refuse(message: string, hint: string): never {
-  throw new McpToolError(message, { kind: 'unknown', hint });
+  /** The account the plan checked and the gate bound (its GameFeed id). */
+  account: string;
 }
 
 /** The open game `gameId`, refused when it cannot (or should not) be joined. */
@@ -119,8 +110,8 @@ function joinable(games: readonly OpenGame[], gameId: number, allowTeam: boolean
 }
 
 /** Refuse a lobby the signed-in account (in-game id `me`) already holds a seat in. */
-function refuseJoined(lobby: OpenLobby | undefined, gameId: number, me: number | undefined): void {
-  if (me !== undefined && lobby?.seatedPlayerIds.includes(me)) {
+function refuseJoined(lobby: OpenLobby | undefined, gameId: number, me: number): void {
+  if (lobby?.seatedPlayerIds.includes(me)) {
     refuse(
       `You have already joined game ${gameId}.`,
       'It is in warapp_my_games; pick another game from warapp_list_open_games.',
@@ -196,155 +187,155 @@ async function confirmSeated(ctx: LiveContext, gameId: number): Promise<boolean>
 }
 
 export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void {
-  withToolConfig(
+  defineGatedWrite(
     server,
     {
       title: 'Join an open war.app game',
       _meta: mintMeta('change', ['join game', 'join a warzone game', 'take an open seat']),
     },
-    () =>
-      registerWrite(
-        server,
-        defineWrite({
-          name: 'warapp_join_game',
-          description:
-            'Join an open war.app (Warzone) game: take an open seat in a game from warapp_list_open_games. The game ' +
-            'is re-read from war.app\'s open games list first; team games, coin entry fees, custom scenarios and mod ' +
-            'games are refused unless allowed (scenario and mod games always), and so is a game you already joined. ' +
-            'It joins with your preferred colour, else your secondary, else a free standard colour (or the color you ' +
-            'pass); the preview shows which, plus a screen from the lobby\'s GameFeed settings (does the cheapest ' +
-            'neutral cost at most one turn of base income; Light Fog) and `policy`: whether the lobby keeps the ' +
-            'joining policy (no Commerce, mods or custom scenarios; that cheap neutral; at most four seats; a boot time ' +
-            'of at least a day) — advisory, the join is not refused for it. You become a player and are expected ' +
-            'to take turns — leaving later means declining or being booted.' +
-            `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
-          annotations: toolAnnotations({
-            title: 'Join an open war.app game',
-            readOnly: false,
-            destructive: true,
-            idempotent: false,
-            openWorld: true,
-          }),
-          inputSchema: z.object({
-            game_id: gameIdArg,
-            allow_team: z.boolean().optional().describe('Allow joining a team game (default false).'),
-            accept_entry_fee: z
-              .boolean()
-              .optional()
-              .describe('Allow paying a coin entry fee (default false: only free games).'),
-            color: z
-              .number()
-              .int()
-              .min(0)
-              .max(GAME_COLOR_COUNT - 1)
-              .optional()
-              .describe(
-                `The colour to play as: a war.app colour index (0–${STANDARD_COLORS - 1} are the standard colours; ` +
-                  'higher ones need an unlock). Default: your preferred colour, else your secondary, else the first ' +
-                  'standard colour no player in the game has.',
-              ),
-          }),
-          async plan({ game_id, allow_team, accept_entry_fee, color: requested }) {
-            const gameId = parseGameId(game_id);
-            // One fresh read gives the account the gate binds and its in-game id (sliced from the
-            // token TEXT, #130), so the already-joined check is for that same account.
-            const [html, me] = await Promise.all([openGamesPage(ctx), ctx.myIdentity({ fresh: true })]);
-            const token = me?.token;
-            const myId = me?.inGameId;
-            const bundle = await ctx.bundle();
-            const parsed = parseOpenGamesPage(html, bundle);
-            const lobby = parsed.lobbies.get(gameId);
-            refuseJoined(lobby, gameId, myId);
-            const game = joinable(parsed.games, gameId, allow_team ?? false, accept_entry_fee ?? false);
-            const { color, source } = joinColor(requested, html, bundle, lobby, gameId);
-            // A no-team game's open seats all carry the no-team value (any other
-            // makes it a team game), so NO_TEAM is what its record holds.
-            const team = game.teamGame ? (game.openSeatTeams?.[0] ?? NO_TEAM) : NO_TEAM;
-            const screened = await lobbyScreen(ctx, gameId);
-            return {
-              gate: {
-                action: 'warapp.join_game',
-                summary: `Join war.app game ${gameId} (${game.pace}, ${game.openSeats} open of ${game.seats} seats)`,
-                account: writeAccount(token),
-                target: gameId,
-                payload: { method: 'AcceptOpenSeat', gameId, team, color },
-                willSend: { game: gameId, team: team === NO_TEAM ? 'none' : team, color },
-                preview: {
-                  game: {
-                    id: game.id,
-                    name: untrustedText(game.name),
-                    url: game.url,
-                    pace: game.pace,
-                    ...(game.bootTime ? { bootTime: game.bootTime } : {}),
-                    players: game.players,
-                    openSeats: game.openSeats,
-                    seats: game.seats,
-                    teamGame: game.teamGame,
-                    entryFeeCoins: game.entryFeeCoins,
-                    prizeCoins: game.prizeCoins,
-                    rules: game.rules,
-                    plannerGaps: [...game.plannerGaps, ...screened.gaps],
-                  },
-                  // #132: worth joining only when the cheapest neutral costs at most a turn of base income.
-                  screen: screened.screen,
-                  ...(screened.note ? { screenNote: screened.note } : {}),
-                  // #134: the owner's joining policy — advisory, the join is not refused for it.
-                  policy: joiningPolicy(game, screened.screen),
-                  color: { index: color, source },
-                  account: token === undefined ? 'the signed-in war.app account (could not be read)' : String(token),
-                  note: 'Joining makes you a player who must take turns until the game ends.',
-                  untrusted: UNTRUSTED_PREVIEW_NOTE,
-                },
-              },
-              state: {
-                gameId,
-                name: game.name,
+    {
+      name: 'warapp_join_game',
+      description:
+        'Join an open war.app (Warzone) game: take an open seat in a game from warapp_list_open_games. The game ' +
+        'is re-read from war.app\'s open games list first; team games, coin entry fees, custom scenarios and mod ' +
+        'games are refused unless allowed (scenario and mod games always), and so is a game you already joined. ' +
+        'It joins with your preferred colour, else your secondary, else a free standard colour (or the color you ' +
+        'pass); the preview shows which, plus a screen from the lobby\'s GameFeed settings (does the cheapest ' +
+        'neutral cost at most one turn of base income; Light Fog) and `policy`: whether the lobby keeps the ' +
+        'joining policy (no Commerce, mods or custom scenarios; that cheap neutral; at most four seats; a boot time ' +
+        'of at least a day) — advisory, the join is not refused for it. You become a player and are expected ' +
+        'to take turns — leaving later means declining or being booted.' +
+        `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
+      annotations: toolAnnotations({
+        title: 'Join an open war.app game',
+        readOnly: false,
+        destructive: true,
+        idempotent: false,
+        openWorld: true,
+      }),
+      inputSchema: z.object({
+        game_id: gameIdArg,
+        allow_team: z.boolean().optional().describe('Allow joining a team game (default false).'),
+        accept_entry_fee: z
+          .boolean()
+          .optional()
+          .describe('Allow paying a coin entry fee (default false: only free games).'),
+        color: z
+          .number()
+          .int()
+          .min(0)
+          .max(GAME_COLOR_COUNT - 1)
+          .optional()
+          .describe(
+            `The colour to play as: a war.app colour index (0–${STANDARD_COLORS - 1} are the standard colours; ` +
+              'higher ones need an unlock). Default: your preferred colour, else your secondary, else the first ' +
+              'standard colour no player in the game has.',
+          ),
+      }),
+      async plan({ game_id, allow_team, accept_entry_fee, color: requested }) {
+        const gameId = parseGameId(game_id);
+        // One fresh read gives the account the gate binds and its in-game id (sliced from the
+        // token TEXT, #130), so the already-joined check is for that same account. A join always
+        // acts as the signed-in account, so it is refused when that cannot be read (#133).
+        const [html, me] = await Promise.all([openGamesPage(ctx), ctx.myIdentity({ fresh: true })]);
+        if (me === undefined) throw accountUnknown(ctx.hosted);
+        const { token, inGameId: myId } = me;
+        const bundle = await ctx.bundle();
+        const parsed = parseOpenGamesPage(html, bundle);
+        const lobby = parsed.lobbies.get(gameId);
+        refuseJoined(lobby, gameId, myId);
+        const game = joinable(parsed.games, gameId, allow_team ?? false, accept_entry_fee ?? false);
+        const { color, source } = joinColor(requested, html, bundle, lobby, gameId);
+        // A no-team game's open seats all carry the no-team value (any other
+        // makes it a team game), so NO_TEAM is what its record holds.
+        const team = game.teamGame ? (game.openSeatTeams?.[0] ?? NO_TEAM) : NO_TEAM;
+        const screened = await lobbyScreen(ctx, gameId);
+        return {
+          gate: {
+            action: 'warapp.join_game',
+            summary: `Join war.app game ${gameId} (${game.pace}, ${game.openSeats} open of ${game.seats} seats)`,
+            account: writeAccount(token),
+            target: gameId,
+            payload: { method: 'AcceptOpenSeat', gameId, team, color },
+            willSend: { game: gameId, team: team === NO_TEAM ? 'none' : team, color },
+            preview: {
+              game: {
+                id: game.id,
+                name: untrustedText(game.name),
                 url: game.url,
-                team,
-                color,
-                ...(token === undefined ? {} : { account: writeAccount(token) }),
-              } satisfies JoinState,
-            };
+                pace: game.pace,
+                ...(game.bootTime ? { bootTime: game.bootTime } : {}),
+                players: game.players,
+                openSeats: game.openSeats,
+                seats: game.seats,
+                teamGame: game.teamGame,
+                entryFeeCoins: game.entryFeeCoins,
+                prizeCoins: game.prizeCoins,
+                rules: game.rules,
+                plannerGaps: [...game.plannerGaps, ...screened.gaps],
+              },
+              // #132: worth joining only when the cheapest neutral costs at most a turn of base income.
+              screen: screened.screen,
+              ...(screened.note ? { screenNote: screened.note } : {}),
+              // #134: the owner's joining policy — advisory, the join is not refused for it.
+              policy: joiningPolicy(game, screened.screen),
+              color: { index: color, source },
+              account: String(token),
+              note: 'Joining makes you a player who must take turns until the game ends.',
+              untrusted: UNTRUSTED_PREVIEW_NOTE,
+            },
           },
-          async execute({ gameId, name, url, team, color, account }: JoinState) {
-            await requireApprovedAccount(ctx, account);
-            const game = { id: gameId, name, url };
-            let vacationEnded = false;
-            try {
-              const env = await ctx.rpc.call('AcceptOpenSeat', Method.AcceptOpenSeat, (w) =>
-                writeAcceptOpenSeatParams(w, { gameId, team, color }),
-              );
-              vacationEnded = readAcceptOpenSeatReturn(env.body)?.vacationEnded ?? false;
-            } catch (e) {
-              if (e instanceof WarappServerError) {
-                if (e.code !== ALREADY_JOINED) {
-                  const wording = joinErrorWording(e);
-                  throw wording ? new WarappServerError(e.code, `${wording} (war.app error ${e.code})`) : e;
-                }
-              } else {
-                return {
-                  status: 'unknown' as const,
-                  game,
-                  warning:
-                    `war.app did not confirm the join (${failureText(e)}), so you may ` +
-                    'already have joined. Check warapp_my_games before trying again.',
-                };
-              }
-            }
-            const extra = vacationEnded ? { vacationEnded: true } : {};
-            if (await confirmSeated(ctx, gameId)) return { status: 'joined' as const, game, ...extra };
-            return {
-              status: 'unconfirmed' as const,
-              game,
-              ...extra,
-              warning:
-                'war.app accepted the join, but neither GameFeed nor your games list shows you in the game yet, so ' +
-                'this could not confirm it. Check warapp_my_games shortly.',
-            };
+          state: {
+            gameId,
+            name: game.name,
+            url: game.url,
+            team,
+            color,
+            account: String(token),
+          } satisfies JoinState,
+        };
+      },
+      async execute({ gameId, name, url, team, color, account }: JoinState) {
+        await requireApprovedAccount(ctx, account);
+        const game = { id: gameId, name, url };
+        let vacationEnded = false;
+        const extra = () => (vacationEnded ? { vacationEnded: true } : {});
+        const notShown = () => ({
+          status: 'unconfirmed' as const,
+          outcome: 'unconfirmed' as const,
+          game,
+          ...extra(),
+          warning:
+            'war.app accepted the join, but neither GameFeed nor your games list shows you in the game yet, so ' +
+            'this could not confirm it. Check warapp_my_games shortly.',
+        });
+        return sendAndVerify({
+          send: async () => {
+            const env = await ctx.rpc.call('AcceptOpenSeat', Method.AcceptOpenSeat, (w) =>
+              writeAcceptOpenSeatParams(w, { gameId, team, color }),
+            );
+            vacationEnded = readAcceptOpenSeatReturn(env.body)?.vacationEnded ?? false;
           },
-          render: (r) => respond(undefined, ['compact'], () => r),
-          batchable: false,
-        }),
-      ),
+          // "Already in the game": the client treats it as a successful join.
+          refused: (e) => {
+            if (e.code === ALREADY_JOINED) return 'ignore';
+            const wording = joinErrorWording(e);
+            return wording ? new WarappServerError(e.code, `${wording} (war.app error ${e.code})`) : undefined;
+          },
+          unanswered: (failure) => ({
+            status: 'unknown' as const,
+            outcome: 'unknown' as const,
+            game,
+            warning:
+              `war.app did not confirm the join (${failure}), so you may ` +
+              'already have joined. Check warapp_my_games before trying again.',
+          }),
+          // Never throws: a failed read is "not shown".
+          readBack: () => confirmSeated(ctx, gameId),
+          unreadable: () => notShown(),
+          classify: (seated) => (seated ? { status: 'joined' as const, outcome: 'confirmed' as const, game, ...extra() } : notShown()),
+        });
+      },
+    },
   );
 }
