@@ -150,20 +150,16 @@ describe('#214: a lead step toward the closest bonus funded on a conceded source
     expect(valid(p, i)).toEqual([]);
   });
 
-  it('advances the closest bonus from a conceded source with deploys when the completion does not fit', () => {
-    // At 12 both steps (10 + 5 deploys) do not fit: the completion is undone, and the advance takes
-    // T2, funded on the conceded T1 and sized for the attack — not the farther bonus's step.
+  it('advances the closest bonus from the held border when only one step fits and it needs less deploy', () => {
+    // At 12 both steps (10 + 5 deploys) do not fit: the completion is undone. One capture either
+    // way, so the advance weighs where the deploy goes (#214 review): T3 from the held T4 for 5
+    // leaves more than T2 from the conceded T1 for 10. Not the farther bonus's step either.
     const i = input(12);
     const p = planTurn(i);
-    const hit = attacks(p).find((m) => m.to === 2);
-    expect(hit).toMatchObject({ from: 1 });
-    expect(hit!.reason).toMatch(/advances bonus B901 \(#901\).*player 20's member, taken on my army lead/);
-    expect(attacks(p).map((m) => m.to)).not.toContain(6);
-    expect(deployedAt(p, 1)).toBe(hit!.armies);
-    expect(staysAt(p, i, 1)).toBe(1);
-    expect(why(p)).toMatch(
-      /T1 \(#1\) is conceded, but the deploy there leaves with the attack on T2 \(#2\): a lead step into a bonus \(rule 4f's order\) may be funded on a conceded source, the deploy sized for the attack alone \(#214\)\./,
-    );
+    expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[4, 3]]);
+    expect(attacks(p).find((m) => m.to === 3)!.reason).toMatch(/advances bonus B901 \(#901\).*player 20's member, taken on my army lead/);
+    expect(deployedAt(p, 1)).toBe(0);
+    expect(why(p)).not.toMatch(/is conceded, but the deploy there leaves with the attack/);
     expect(valid(p, i)).toEqual([]);
   });
 
@@ -263,6 +259,84 @@ describe('#214: a lead step toward the closest bonus funded on a conceded source
     expect(to).not.toContain(6);
     expect(attacks(p).find((m) => m.to === 2)!.from).toBe(1);
     expect(why(p)).not.toMatch(/Do not complete bonus B901/);
+    expect(valid(p, i)).toEqual([]);
+  });
+
+  it('advances from the held border, not the conceded one, when only one step of the closest bonus fits', () => {
+    // T2 (player 20, 3) beside the conceded T1 (2), T3 (neutral, 4) beside the held T4 (21), income
+    // 13. Both steps do not fit. Taking T2 alone sank 12 of 13 into the conceded T1 for one capture;
+    // T3 from T4 (a few deploys) leaves the rest for B902's T6 — two captures.
+    const i = swept(
+      [[1, 10, 2], [2, 20, 3], [3, 0, 4], [4, 10, 21], [5, 10, 1], [6, 0, 5], [7, 0, 7], [8, 10, 64], [9, 0, 9],
+        [11, 10, 1], [12, 10, 2], [20, 20, 11], [30, 30, 14], [31, 30, 12]],
+      13, 3, 3,
+    );
+    const p = planTurn(i);
+    expect(attacks(p).map((m) => m.to)).not.toContain(2);
+    expect(attacks(p).find((m) => m.to === 3)).toMatchObject({ from: 4 });
+    expect(attacks(p).map((m) => m.to)).toContain(6);
+    expect(deployedAt(p, 1)).toBe(0);
+    expect(why(p)).not.toMatch(/is conceded, but the deploy there leaves with the attack/);
+    expect(valid(p, i)).toEqual([]);
+  });
+
+  it('keeps the cheaper sibling step and the farther bonus\'s step rather than sinking the deploy into a conceded border', () => {
+    const i = swept(
+      [[1, 10, 5], [2, 20, 6], [3, 20, 6], [4, 10, 29], [5, 10, 3], [6, 0, 5], [7, 0, 8], [8, 10, 157], [9, 0, 2],
+        [11, 10, 3], [12, 10, 1], [20, 20, 4], [30, 30, 19], [31, 30, 20]],
+      16, 3, 4,
+    );
+    const p = planTurn(i);
+    expect(attacks(p).map((m) => m.to)).not.toContain(2);
+    expect(attacks(p).find((m) => m.to === 3)).toMatchObject({ from: 4 });
+    expect(attacks(p).map((m) => m.to)).toContain(6);
+    expect(deployedAt(p, 1)).toBe(0);
+    expect(valid(p, i)).toEqual([]);
+  });
+
+  it('funds the step on the conceded source when it needs less deploy than its sibling, leaving the rest for another capture', () => {
+    // T2 (player 20, 2) beside the conceded T1 (5) needs 7 deploys; T3 (player 20, 7) beside the
+    // held T4 (28) needs all 17. One B901 capture either way: T2 leaves 10 of the deploy, so it
+    // goes first, sized for the attack alone, and the rest takes B902's T6.
+    const i = swept(
+      [[1, 10, 5], [2, 20, 2], [3, 20, 7], [4, 10, 28], [5, 10, 3], [6, 0, 7], [7, 0, 4], [8, 10, 140], [9, 0, 3],
+        [11, 10, 2], [12, 10, 1], [20, 20, 5], [30, 30, 18], [31, 30, 28]],
+      17, 3, 3,
+    );
+    const p = planTurn(i);
+    const hit = attacks(p).find((m) => m.to === 2);
+    expect(hit).toMatchObject({ from: 1 });
+    expect(hit!.reason).toMatch(/advances bonus B901 \(#901\).*player 20's member, taken on my army lead/);
+    expect(attacks(p).map((m) => m.to)).toContain(6);
+    expect(attacks(p).map((m) => m.to)).not.toContain(3);
+    expect(deployedAt(p, 1)).toBe(hit!.armies - 4);
+    expect(staysAt(p, i, 1)).toBe(1);
+    expect(why(p)).toMatch(
+      /T1 \(#1\) is conceded, but the deploy there leaves with the attack on T2 \(#2\): a lead step into a bonus \(rule 4f's order\) may be funded on a conceded source, the deploy sized for the attack alone \(#214\)\./,
+    );
+    expect(valid(p, i)).toEqual([]);
+  });
+
+  it('says once that the closest bonus is not completed when both passes refuse it for income (rule 4c)', () => {
+    // B907 (+2, T6 alone) is closer and completes first. B906 (−3: T3 and T6) then makes B901's
+    // completion lower income. Pass 1 refuses it, and pass 2's retry (its conceded-funded step T2
+    // tried last) refuses it again: the line is said once.
+    const m = {
+      ...map,
+      bonuses: [
+        ...map.bonuses,
+        { id: 906, name: 'B906', value: -3, territoryIds: [3, 6], bonusIds: [] },
+        { id: 907, name: 'B907', value: 2, territoryIds: [6], bonusIds: [] },
+      ],
+    };
+    const b = board([
+      mine(1, 1), enemy(2, 1, 20), enemy(3, 1, 20), mine(4, 24), mine(5, 2), neutral(6, 2), neutral(7, 8), mine(8, 120),
+      neutral(9, 8), mine(11, 1), mine(12, 1), enemy(20, 10, 20), enemy(30, 12, 30), enemy(31, 20, 30),
+    ]);
+    const i: PlanInput = { ...input(16), graph: buildGraph(m), board: b };
+    const p = planTurn(i);
+    const lines = p.rationale.filter((l) => l.startsWith('Do not complete bonus B901 (#901) (+2): with this turn\'s other captures it changes income'));
+    expect(lines).toHaveLength(1);
     expect(valid(p, i)).toEqual([]);
   });
 

@@ -746,9 +746,9 @@ export function bonusPasses(
     if (ok && !p.focus && incomeGain(heldNow()) < before) {
       const net = incomeGain(heldNow()) - before;
       restore();
-      rationale.push(
-        `Do not complete bonus ${bonusName(p.bonusId)} (${worth}): with this turn's other captures it changes income by ${net} (its members complete negative bonuses).`,
-      );
+      const line = `Do not complete bonus ${bonusName(p.bonusId)} (${worth}): with this turn's other captures it changes income by ${net} (its members complete negative bonuses).`;
+      // Pass 2's retry (#214) may refuse what pass 1 already did: say it once.
+      if (!rationale.includes(line)) rationale.push(line);
       return;
     }
     if (ok) {
@@ -851,44 +851,85 @@ export function bonusPasses(
     const todo = p.remaining
       .filter((t) => bonusTarget(t) && !captured.has(t))
       .sort((a, b) => targetScoreCost(a) - targetScoreCost(b) || targets.get(a)!.cost - targets.get(b)!.cost || a - b);
-    /** Whether a completion was tried in place of a step funded on a conceded source (once). */
+    /**
+     * Whether a step funded on a conceded source was met (once: its bonus's completion was tried,
+     * then the step was weighed; any later one is taken as it comes).
+     */
     let whole = false;
-    for (const t of todo) {
-      const lead = leadSteps.get(t);
-      // #203: a lead step never lowers income (as a lead strike).
-      if (lead && gainWith([t]) < 0) continue;
-      const stepping = !lead && !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
-      if (stepping === null) continue;
-      const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
-      const reason =
-        (stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${toFinish(p.cost, p.fogged, p.fogEach)})`) + leadNote(t);
-      // Only a lead step (#203) can be funded on a conceded source.
-      const before = whole || !lead ? undefined : snapshot();
-      const tried = before && new Map(leadTry);
-      if (!tryExpand(t, reason)) continue;
-      if (before && fundedOnConceded.has(t)) {
-        /*
-         * #214: a step funded on a conceded source completes nothing on its own, and taken first it
-         * can block the completion: rule 1c's guard then judges the sibling's capture with the deploy
-         * already sunk into the conceded border (and refuses it), or the sibling alone is stopped by
-         * rule 4d. The bonus is completed whole instead when pass 1 can with that step last (it then
-         * completes the bonus under #122's exception, and the guard judges the completion as such);
-         * only otherwise is the step taken alone.
-         */
-        whole = true;
-        before();
-        complete(p, t);
-        if (p.remaining.every((x) => captured.has(x))) return;
+    /** Everything a run of steps changes, for {@link weigh}; the result undoes it. */
+    const checkpoint = () => {
+      const restore = snapshot();
+      const tried = new Map(leadTry);
+      const stops = stopped.length;
+      const refused = new Set(unstaged);
+      return () => {
+        restore();
         leadTry.clear();
-        for (const [k, v] of tried!) leadTry.set(k, v);
+        for (const [k, v] of tried) leadTry.set(k, v);
+        stopped.length = stops;
+        unstaged.clear();
+        for (const k of refused) unstaged.add(k);
+      };
+    };
+    /**
+     * #214 review: a step funded on a conceded source alone, its bonus's completion refused, is
+     * taken now or after the bonus's other steps, whichever plans more captures (a tie: whichever
+     * leaves more of this turn's deploy; a tie again: after). Taken first, it could sink most of
+     * the deploy into the conceded border and crowd out a sibling a held border funds for less;
+     * taken last, it could lose a pair that fits only in its order. Runs the rest of `queue` too.
+     */
+    const weigh = (t: number, rest: number[]) => {
+      const back = checkpoint();
+      run([t, ...rest]);
+      const now = { captures: captured.size, budget: ps.budget };
+      back();
+      run([...rest, t]);
+      if (captured.size > now.captures || (captured.size === now.captures && ps.budget >= now.budget)) return;
+      back();
+      run([t, ...rest]);
+    };
+    const run = (queue: number[]) => {
+      for (let i = 0; i < queue.length; i++) {
+        const t = queue[i]!;
+        if (captured.has(t)) continue;
+        const lead = leadSteps.get(t);
+        // #203: a lead step never lowers income (as a lead strike).
+        if (lead && gainWith([t]) < 0) continue;
+        const stepping = !lead && !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
+        if (stepping === null) continue;
+        const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
+        const reason =
+          (stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${toFinish(p.cost, p.fogged, p.fogEach)})`) + leadNote(t);
+        // Only a lead step (#203) can be funded on a conceded source.
+        const before = whole || !lead ? undefined : snapshot();
+        const tried = before && new Map(leadTry);
         if (!tryExpand(t, reason)) continue;
+        if (before && fundedOnConceded.has(t)) {
+          /*
+           * #214: a step funded on a conceded source completes nothing on its own, and taken first it
+           * can block the completion: rule 1c's guard then judges the sibling's capture with the deploy
+           * already sunk into the conceded border (and refuses it), or the sibling alone is stopped by
+           * rule 4d. The bonus is completed whole instead when pass 1 can with that step last (it then
+           * completes the bonus under #122's exception, and the guard judges the completion as such);
+           * only otherwise is the step weighed against the bonus's other steps.
+           */
+          whole = true;
+          before();
+          complete(p, t);
+          if (p.remaining.every((x) => captured.has(x))) return;
+          leadTry.clear();
+          for (const [k, v] of tried!) leadTry.set(k, v);
+          weigh(t, queue.slice(i + 1));
+          return;
+        }
+        ps.anchor ??= moves[moves.length - 1]!.from;
+        if (stepping) {
+          staged.set(t, p.bonusId);
+          rationale.push(stepping.note);
+        }
       }
-      ps.anchor ??= moves[moves.length - 1]!.from;
-      if (stepping) {
-        staged.set(t, p.bonusId);
-        rationale.push(stepping.note);
-      }
-    }
+    };
+    run(todo);
   };
   return { snapshot, complete, unstaged, stage, stopped, stoppedLine, outgrows, tryExpand, advance };
 }

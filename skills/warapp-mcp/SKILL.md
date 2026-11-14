@@ -474,7 +474,8 @@ do not send a backlog of turns unread. Override it when one of these shows up:
    profile's FFA `ranking` (when there is one), the rule is off and idle stacks take the weak
    enemy territories beside them ("army lead: …") — one in a bonus is a step into it, funded
    from the deploy in closest-bonus order, even out of a border that must keep its hold (the
-   deploy covers both) or a conceded one (the deploy covers the attack alone); a clear leader who
+   deploy covers both) or a conceded one (the deploy covers the attack alone, and it goes first only
+   when that plans more captures, or leaves more of the deploy, than its bonus's other steps); a clear leader who
    is not the user (the
    profile's `ranking`) is never a second front. Judge yourself when a leader must be attacked by several
    fronts at once. Weigh any "Attack on enemy … assumes its owner does not reinforce it first

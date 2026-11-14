@@ -67,8 +67,11 @@
 //          turn ("T is conceded, but the deploy there leaves with the attack …"). Pass 2 takes such
 //          a step alone only when the bonus cannot be completed whole with it last: taken first, it
 //          could make rule 1c's guard refuse its sibling's completion (or leave the sibling to rule
-//          4d), sinking the deploy into a conceded border for half a bonus. One those passes do not
-//          take is an ordinary enemy territory again for every later rule
+//          4d), sinking the deploy into a conceded border for half a bonus. When it cannot, the step
+//          is taken before or after the bonus's other steps, whichever plans more captures (a tie:
+//          whichever leaves more of the deploy; a tie again: after), so it never crowds out a
+//          sibling a held border funds for less. One those passes do not take is an ordinary enemy
+//          territory again for every later rule
 //          (rule 4e's fallback, 4g's card pieces, the lead strikes): its plain size, no sure sizing;
 //          its "Not attacking" line still ends with why its bonus's step failed (the hold it had to
 //          keep, the deploy that could reach it, or why no neighbour could attack).
