@@ -1,6 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { McpToolError } from '@chrischall/mcp-utils';
+import { MAX_MAP_AGE_MS, MAX_STORED_MAPS, mapStorePath, readGameMapId, readStoredMap, rememberGameMap, writeStoredMap } from '../src/map-store.js';
 import { MapCache, parseGameId, PROBE_GAME_ID, WarappClient, WarappNotFoundError } from '../src/client.js';
 
 const FIXTURE_TEXT = readFileSync(new URL('./fixtures/gamefeed-lobby-map39905.json', import.meta.url), 'utf8');
@@ -25,8 +28,8 @@ function stubFetch(...replies: Reply[]) {
   return { calls, fetchImpl };
 }
 
-function client(fetchImpl: typeof fetch, mapCache = new MapCache(), env: Record<string, string> = CREDS) {
-  return new WarappClient({ env, fetchImpl, sleep: noSleep, mapCache });
+function client(fetchImpl: typeof fetch, mapCache = new MapCache(), env: Record<string, string> = CREDS, dataDir?: string) {
+  return new WarappClient({ env, fetchImpl, sleep: noSleep, mapCache, ...(dataDir ? { dataDir: () => dataDir } : {}) });
 }
 
 /** The fixture as war.app answers with GetMap=false: an empty map object. */
@@ -128,6 +131,172 @@ describe('WarappClient.getGame', () => {
     cache.clear();
     await c.getGame(12345678);
     expect(calls[1]!.url).not.toContain('GetMap');
+  });
+
+  describe('with a data directory (the persistent map store)', () => {
+    const tmp = () => mkdtempSync(join(tmpdir(), 'warapp-client-maps-'));
+
+    it('writes a map read with GetMap to <dir>/maps/<mapId>.json, base values, and the game to the index', async () => {
+      const dir = tmp();
+      const game = await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(await readStoredMap(dir, 39905)).toEqual(game.map);
+      expect(await readGameMapId(dir, 12345678)).toBe(39905);
+    });
+
+    it('after a restart (a fresh MapCache) asks a known game GetMap=false and attaches the stored map', async () => {
+      const dir = tmp();
+      const first = await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const { calls, fetchImpl } = stubFetch({ body: WITHOUT_MAP });
+      const cache = new MapCache();
+      const again = await client(fetchImpl, cache, CREDS, dir).getGame(12345678);
+      expect(calls[0]!.url).toBe('https://war.app/API/GameFeed?GameID=12345678&GetMap=false');
+      expect(again.map).toEqual(first.map);
+      expect(cache.get(39905)).toBe(again.map);
+    });
+
+    it('attaches the stored map to a new game whose settings name it, without a download', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const { calls, fetchImpl } = stubFetch({ body: { ...WITHOUT_MAP, id: '999' } });
+      const game = await client(fetchImpl, new MapCache(), CREDS, dir).getGame(999, { settings: true, map: false });
+      expect(calls[0]!.url).toContain('GetMap=false');
+      expect(game.map?.id).toBe(39905);
+      // A caller that never uses the map always asks GetMap=false: no index entry is spent on it.
+      expect(await readGameMapId(dir, 999)).toBeUndefined();
+    });
+
+    it('downloads the map again (GetMap) for a known game once the stored copy is older than the maximum age', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const path = join(dir, 'maps', '39905.json');
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as { storedAt: number };
+      raw.storedAt -= MAX_MAP_AGE_MS + 1;
+      writeFileSync(path, JSON.stringify(raw));
+      const { calls, fetchImpl } = stubFetch({ body: FIXTURE });
+      await client(fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(calls[0]!.url).not.toContain('GetMap');
+      const fresh = JSON.parse(readFileSync(path, 'utf8')) as { storedAt: number };
+      expect(Date.now() - fresh.storedAt).toBeLessThan(60_000);
+    });
+
+    it('spends no index entry on a finished game (map statistics read many)', async () => {
+      const dir = tmp();
+      const game = await client(stubFetch({ body: { ...FIXTURE, state: 'Finished' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(game.map?.id).toBe(39905);
+      expect(await readGameMapId(dir, 12345678)).toBeUndefined();
+    });
+
+    it('downloads the map again when the stored file is bad, and replaces it', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      writeFileSync(join(dir, 'maps', '39905.json'), 'garbage');
+      const { calls, fetchImpl } = stubFetch({ body: FIXTURE });
+      const game = await client(fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(calls[0]!.url).not.toContain('GetMap');
+      expect(await readStoredMap(dir, 39905)).toEqual(game.map);
+    });
+
+    it('still serves the game when the data directory cannot be written', async () => {
+      const dir = tmp();
+      writeFileSync(join(dir, 'maps'), 'a file, not a folder');
+      const game = await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(game.map?.id).toBe(39905);
+    });
+
+    it(`keeps the map of a game served from memory while ${MAX_STORED_MAPS + 5} other maps are stored (replay needs it)`, async () => {
+      const dir = tmp();
+      const { fetchImpl } = stubFetch({ body: FIXTURE }, { body: WITHOUT_MAP });
+      const c = client(fetchImpl, new MapCache(), CREDS, dir);
+      await c.getGame(12345678);
+      const path = mapStorePath(dir, 39905);
+      const now = Date.now() / 1000;
+      utimesSync(path, now - 10_000, now - 10_000);
+      for (let i = 1; i <= MAX_STORED_MAPS + 5; i++) {
+        await writeStoredMap(dir, { id: i, name: `Other ${i}`, territories: [], bonuses: [], distributionModes: [] });
+        utimesSync(mapStorePath(dir, i), now - 5_000 + i, now - 5_000 + i);
+        // The active game is read again; its map is a memory hit.
+        await c.getGame(12345678);
+      }
+      expect(existsSync(path)).toBe(true);
+      expect(await readStoredMap(dir, 39905)).toBeDefined();
+    });
+
+    it('stores the map again on a memory hit when its file has gone', async () => {
+      const dir = tmp();
+      const { fetchImpl } = stubFetch({ body: FIXTURE }, { body: WITHOUT_MAP });
+      const c = client(fetchImpl, new MapCache(), CREDS, dir);
+      const game = await c.getGame(12345678);
+      const { unlinkSync } = await import('node:fs');
+      unlinkSync(mapStorePath(dir, 39905));
+      await c.getGame(12345678);
+      expect(await readStoredMap(dir, 39905)).toEqual(game.map);
+    });
+
+    it('moves a game read back from the index after a restart to the newest entry', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      await rememberGameMap(dir, 777, 1);
+      await client(stubFetch({ body: WITHOUT_MAP }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const index = JSON.parse(readFileSync(join(dir, 'maps', 'games.json'), 'utf8')) as { games: number[][] };
+      expect(index.games.at(-1)).toEqual([12345678, 39905]);
+    });
+
+    it('downloads the map again when the feed names a territory the stored map lacks (an edited map)', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const map = FIXTURE.map as { territories: Record<string, unknown>[] };
+      const added = { ...map.territories[0]!, id: 999_999_999, name: 'New land' };
+      const edited = { ...FIXTURE, map: { ...map, territories: [...map.territories, added] } };
+      const standing = { '999999999': { armies: 2 } };
+      const { calls, fetchImpl } = stubFetch({ body: { ...WITHOUT_MAP, standing } }, { body: { ...edited, standing } });
+      const game = await client(fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]!.url).toContain('GetMap=false');
+      expect(calls[1]!.url).not.toContain('GetMap');
+      expect(game.map?.territories.some((t) => t.id === 999_999_999)).toBe(true);
+      expect((await readStoredMap(dir, 39905))?.territories.some((t) => t.id === 999_999_999)).toBe(true);
+    });
+
+    it('downloads an edited map at most once per process, even if the new copy still lacks the territory', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const standing = { '999999999': { armies: 2 } };
+      const { calls, fetchImpl } = stubFetch({ body: { ...WITHOUT_MAP, standing } }, { body: { ...FIXTURE, standing } }, { body: { ...WITHOUT_MAP, standing } });
+      const c = client(fetchImpl, new MapCache(), CREDS, dir);
+      await c.getGame(12345678);
+      await c.getGame(12345678);
+      expect(calls).toHaveLength(3);
+      expect(calls[2]!.url).toContain('GetMap=false');
+    });
+
+    it('keeps the first read and the stored map when the edited-map download fails', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const standing = { '999999999': { armies: 2 } };
+      const { fetchImpl } = stubFetch({ body: { ...WITHOUT_MAP, standing } }, { body: { termsOfUse: 'x', error: 'Something broke' } });
+      const game = await client(fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(game.map?.id).toBe(39905);
+    });
+
+    it('keeps the stored map when every territory the feed names is on it', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const first = (FIXTURE.map as { territories: { id: unknown }[] }).territories[0]!.id;
+      const { calls, fetchImpl } = stubFetch({ body: { ...WITHOUT_MAP, standing: { [String(first)]: { armies: 2 } } } });
+      await client(fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(calls).toHaveLength(1);
+    });
+
+    it('does not rewrite the store for a map and game already known in this process', async () => {
+      const dir = tmp();
+      const cache = new MapCache();
+      const { fetchImpl } = stubFetch({ body: FIXTURE }, { body: WITHOUT_MAP });
+      const c = client(fetchImpl, cache, CREDS, dir);
+      await c.getGame(12345678);
+      writeFileSync(join(dir, 'maps', '39905.json'), 'garbage');
+      await c.getGame(12345678);
+      expect(await readStoredMap(dir, 39905)).toBeUndefined();
+    });
   });
 
   it('rejects an invalid game id before any request', async () => {

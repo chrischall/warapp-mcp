@@ -38,6 +38,7 @@ import { entryKey, legacyEntryKey, playerRecordEnabled, playerRecordState, readP
 import { emptyLedger, nextAgreementId, readLedger, readLedgerForWrite, withLedgerLock, writeLedger, type RelationsLedger } from '../relations-store.js';
 import { carriesTeam } from '../teams.js';
 import { readBoardHistory, readCachedOrders, writeBoardCache } from '../trend.js';
+import { writeGameRecord } from '../replay.js';
 import { currentTurn, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
@@ -257,7 +258,10 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           const board: BoardState = boardStateFromLive(territories, me, game.players);
           boards = [...boards.filter((b) => b.turn !== turn), { turn, board }];
           live = true;
-          if (ctx.dataDir) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+          if (ctx.dataDir) {
+            await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+            await writeGameRecord(ctx.dataDir, game);
+          }
         } catch {
           notes.push(`The live board could not be read: flags come from the cached boards only (turns ${boards.map((b) => b.turn).join(', ') || 'none'}).`);
         }

@@ -106,8 +106,13 @@ state:
     ($MCP_DATA_DIR/relations: the truces recorded per game) lives there too, and
     so does the cross-game player record (relations/players.json and its salt:
     owner decision D5, on hosted as well, name-free and keyed by a salted hash;
-    WARAPP_PLAYER_RECORD=off switches it off). The per-map GameFeed cache lives in
-    memory and needs no state.
+    WARAPP_PLAYER_RECORD=off switches it off). GameFeed maps are kept at
+    $MCP_DATA_DIR/maps/<mapId>.json (public map data, base bonus values, at most
+    40, re-downloaded after 30 days) with maps/games.json naming each game's map,
+    so a known game is not downloaded with its map again after a cold start; and
+    each planned game's settings are kept name-free at
+    $MCP_DATA_DIR/games/<gameId>.json (players by id only), so the cached boards
+    can be replayed offline.
 
 egress:
   allow:

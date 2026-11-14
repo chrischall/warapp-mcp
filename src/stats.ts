@@ -9,7 +9,7 @@
 //
 // Source: war.app's game-ID feed for a ladder (`WarappClient.getGameIds`), then
 // GameFeed with `GetHistory=true` per game (`WarappClient.getGame`, without the map: a map
-// already cached is attached by its id, and only a finished game on an uncached map costs one more
+// already cached — in memory or in the shared map store, `<dataDir>/maps/` — is attached by its id, and only a finished game on an uncached map costs one more
 // request, for the map) — every request through WarappClient. At most `maxNewGames` new games per call, at
 // least {@link MIN_GAP_MS} between requests, and a finished game is cached
 // forever at `<dataDir>/stats/<mapId>/<gameId>.json` (its compact

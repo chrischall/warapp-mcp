@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { INFER_REACH, MAX_LISTED_COMBINATIONS, TRACKED_MIN_TURNS, trackGame, trackOpponents, type ObservedTurn } from '../analysis/index.js';
 import { boardStateFromLive } from '../live.js';
 import { CACHED_TURNS, writeBoardCache } from '../trend.js';
+import { writeGameRecord } from '../replay.js';
 import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
@@ -68,7 +69,10 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
       const history = await boardHistory(ctx, game, me, turn);
       const boards = turn !== null ? [...history.boards, { turn, board }] : [{ turn: 0, board }];
       const tracks = trackOpponents(graph, boards, me.id, settings, trackGame(game.players, game.settings, map));
-      if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+      if (ctx.dataDir && turn !== null) {
+        await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+        await writeGameRecord(ctx.dataDir, game);
+      }
       const name = namer(map);
       const players = new Map(game.players.map((p) => [p.id, p.name]));
       const bonusOf = (id: number) => {

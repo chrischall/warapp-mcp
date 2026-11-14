@@ -7,6 +7,7 @@ import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { readGameRecord } from '../src/replay.js';
 import { writeOrdersCache } from '../src/trend.js';
 
 let h: Harness | undefined;
@@ -146,6 +147,7 @@ describe('warapp_track_opponents', () => {
     expect(bob.notes.join(' ')).toMatch(/its visible base \+ bonuses, observed 5–5 over turns 3–4/);
     const cached = JSON.parse(readFileSync(join(dir, 'boards', `${GAME}.json`), 'utf8')) as { turns: object };
     expect(Object.keys(cached.turns)).toEqual(['3', '4', '5']);
+    expect((await readGameRecord(dir, GAME))?.numberOfTurns).toBe(4);
   });
 
   it('#123: a stack that may have walked in from the fog reads as a move, with the range', async () => {

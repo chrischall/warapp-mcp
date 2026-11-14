@@ -92,6 +92,7 @@ import {
   writeOrdersCache,
   type TrendSource,
 } from '../trend.js';
+import { writeGameRecord } from '../replay.js';
 import { gameOutlook } from '../analysis/outlook.js';
 import { cardArmyCeiling } from '../strategy/card-clock.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
@@ -1276,6 +1277,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const whatIf = goal !== undefined || enemy_deploy !== undefined;
       if (ctx.dataDir && turn !== null)
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
+      if (ctx.dataDir && turn !== null) await writeGameRecord(ctx.dataDir, game);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       const name = namer(map);
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,

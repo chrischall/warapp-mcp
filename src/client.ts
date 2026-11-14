@@ -13,9 +13,15 @@
 // string this module surfaces — raw, JSON-escaped, percent- and form-encoded,
 // the email in any letter case (src/redact.ts).
 //
-// Maps are immutable per map id and large (761 territories on map 39905), and
-// the feed's terms ask callers to cache — so a map is kept per process and a
-// game whose map is cached is fetched with GetMap=false.
+// Maps are large (761 territories on map 39905) and the feed's terms ask callers
+// to cache — so a map is kept per process and a game whose map is cached is
+// fetched with GetMap=false. With a data directory (`dataDir`, wired by
+// tools/index.ts) the cache is also kept on disk (src/map-store.ts:
+// `<dataDir>/maps/`, base values, LRU-bounded), so a known map is not
+// downloaded again after a restart — for at most MAX_MAP_AGE_MS (30 days), since
+// a map maker can edit a map under the same id and GameFeed sends no version.
+// The game → map index is written only for a caller that wants the map, on a
+// game not finished.
 
 import {
   createApiClient,
@@ -27,6 +33,7 @@ import {
 } from '@chrischall/mcp-utils';
 import { readCredentials, TOKEN_URL, WarappConfigError, type WarappCredentials } from './config.js';
 import { feedErrorOf, normalizeGame, normalizeMap, type Game, type GameMap } from './normalize.js';
+import { readGameMapId, readStoredMap, rememberGameMap, touchStoredMap, writeStoredMap } from './map-store.js';
 import { scrubSecrets, type SecretValue } from './redact.js';
 import { asInt } from './scalars.js';
 
@@ -68,10 +75,15 @@ export function parseGameId(v: unknown): number {
   return n;
 }
 
-/** Per-process map cache: map id → map, plus game id → map id. */
+/**
+ * Map cache: map id → map, plus game id → map id, in memory per process. Given a data directory, a
+ * miss is read back from the persistent store (src/map-store.ts) and a new map or game is written
+ * there, best effort: the disk never makes a call fail.
+ */
 export class MapCache {
   readonly #maps = new Map<number, GameMap>();
   readonly #gameMaps = new Map<number, number>();
+  readonly #refreshed = new Set<number>();
 
   get(mapId: number): GameMap | undefined {
     return this.#maps.get(mapId);
@@ -91,10 +103,70 @@ export class MapCache {
     this.#gameMaps.set(gameId, mapId);
   }
 
+  /** {@link get}, else the map stored under `dir` (then kept in memory). */
+  async load(mapId: number, dir: string | undefined): Promise<GameMap | undefined> {
+    const hit = this.#maps.get(mapId);
+    if (hit && dir !== undefined) await touchStoredMap(dir, hit);
+    if (hit || dir === undefined) return hit;
+    const stored = await readStoredMap(dir, mapId);
+    if (stored) this.set(stored);
+    return stored;
+  }
+
+  /**
+   * {@link forGame}, else the map the store under `dir` names for the game (the map then kept in
+   * memory). A game found only in the stored index is not remembered here, so the caller's
+   * {@link storeGame} moves its index entry to the newest.
+   */
+  async loadForGame(gameId: number, dir: string | undefined): Promise<GameMap | undefined> {
+    const mapId = this.#gameMaps.get(gameId);
+    if (mapId !== undefined && this.#maps.has(mapId)) return this.load(mapId, dir);
+    if (dir === undefined) return undefined;
+    const id = mapId ?? (await readGameMapId(dir, gameId));
+    return id === undefined ? undefined : this.load(id, dir);
+  }
+
+  /**
+   * Keep `map` in memory and, when it is new to this process (or `replace`), under `dir`; a map
+   * already known is only marked recently used there.
+   */
+  async store(map: GameMap, dir: string | undefined, replace = false): Promise<void> {
+    const known = this.#maps.has(map.id);
+    this.set(map);
+    if (dir === undefined) return;
+    if (!known || replace) await writeStoredMap(dir, map);
+    else await touchStoredMap(dir, map);
+  }
+
+  /** Whether `mapId` was already downloaded again this process because the feed named land it lacked. */
+  wasRefreshed(mapId: number): boolean {
+    return this.#refreshed.has(mapId);
+  }
+
+  markRefreshed(mapId: number): void {
+    this.#refreshed.add(mapId);
+  }
+
+  /** Remember the game's map in memory and, when that is new to this process, under `dir`. */
+  async storeGame(gameId: number, mapId: number, dir: string | undefined): Promise<void> {
+    const known = this.#gameMaps.get(gameId) === mapId;
+    this.rememberGame(gameId, mapId);
+    if (!known && dir !== undefined) await rememberGameMap(dir, gameId, mapId);
+  }
+
   clear(): void {
     this.#maps.clear();
     this.#gameMaps.clear();
+    this.#refreshed.clear();
   }
+}
+
+/** Whether the game's standing names a territory `map` does not have. */
+function lacksTerritory(map: GameMap, game: Game): boolean {
+  const territories = game.standing?.territories;
+  if (!territories?.length) return false;
+  const ids = new Set(map.territories.map((t) => t.id));
+  return territories.some((t) => !ids.has(t.territoryId));
 }
 
 /** The process-wide default cache. */
@@ -120,6 +192,11 @@ export interface WarappClientOptions {
   /** Injectable retry sleep (tests). */
   sleep?: (ms: number) => Promise<void>;
   mapCache?: MapCache;
+  /**
+   * The data directory whose `maps/` keeps the map cache across restarts (src/map-store.ts);
+   * absent, or answering `undefined`, the cache is in memory only.
+   */
+  dataDir?: () => string | undefined;
   /** Per-attempt timeout, ms. Default 30 s. */
   timeoutMs?: number;
 }
@@ -127,12 +204,14 @@ export interface WarappClientOptions {
 export class WarappClient {
   readonly #env: EnvSource | undefined;
   readonly #cache: MapCache;
+  readonly #dataDir: (() => string | undefined) | undefined;
   readonly #api: ApiClient;
   #secrets: SecretValue[] = [];
 
   constructor(opts: WarappClientOptions = {}) {
     this.#env = opts.env;
     this.#cache = opts.mapCache ?? defaultMapCache;
+    this.#dataDir = opts.dataDir;
     this.#api = createApiClient({
       baseUrl: BASE_URL,
       serviceName: SERVICE,
@@ -207,29 +286,57 @@ export class WarappClient {
   }
 
   /**
-   * Load a game, normalized. The map comes from the per-process cache when
-   * this game's map is already known (fetched with GetMap=false), else from
-   * the feed (and is then cached).
+   * Load a game, normalized. The map comes from the cache (memory, else the data directory's
+   * store) when this game's map is already known (fetched with GetMap=false), else from the
+   * feed (and is then cached).
    */
   async getGame(id: unknown, opts: GetGameOptions = {}): Promise<Game> {
     const gameId = parseGameId(id);
-    const known = this.#cache.forGame(gameId);
-    const body = await this.#feed(gameId, { ...opts, noMap: known !== undefined || opts.map === false });
-    const game = normalizeGame(body);
+    const dir = this.#dir();
+    let known = await this.#cache.loadForGame(gameId, dir);
+    let body = await this.#feed(gameId, { ...opts, noMap: known !== undefined || opts.map === false });
+    let game = normalizeGame(body);
+    // GameFeed sends no map version, so an edited map shows as land the cached copy lacks: download
+    // it once more (once per map per process, in case the loose standing parser misreads an id).
+    let replace = false;
+    if (known && opts.map !== false && lacksTerritory(known, game) && !this.#cache.wasRefreshed(known.id)) {
+      this.#cache.markRefreshed(known.id);
+      // A failed refresh keeps the first read and the known map: the extra request is a check, not the read.
+      const fresher = await this.#feed(gameId, { ...opts, noMap: false }).catch(() => undefined);
+      if (fresher) {
+        body = fresher;
+        game = normalizeGame(body);
+        known = undefined;
+        replace = true;
+      }
+    }
 
     let map = known;
     const rawMap = body.map;
     if (!map && rawMap && typeof rawMap === 'object' && Array.isArray((rawMap as { territories?: unknown }).territories)) {
       const fresh = normalizeMap(rawMap);
-      map = this.#cache.get(fresh.id) ?? fresh;
-      this.#cache.set(map);
+      map = replace ? fresh : (this.#cache.get(fresh.id) ?? fresh);
+      await this.#cache.store(map, dir, replace);
     }
-    if (!map && game.settings?.mapId !== undefined) map = this.#cache.get(game.settings.mapId);
+    if (!map && game.settings?.mapId !== undefined) map = await this.#cache.load(game.settings.mapId, dir);
     if (map) {
-      this.#cache.rememberGame(gameId, map.id);
+      // The index only saves a map download for a caller that wants the map, on a game still played:
+      // a `map: false` caller always asks GetMap=false, and a finished game (map statistics read many)
+      // would only push live games out of the bounded index.
+      const index = opts.map !== false && game.state !== 'Finished';
+      await this.#cache.storeGame(gameId, map.id, index ? dir : undefined);
       game.map = map;
     }
     return game;
+  }
+
+  /** The data directory for the map store, or `undefined` (memory only); never throws. */
+  #dir(): string | undefined {
+    try {
+      return this.#dataDir?.();
+    } catch {
+      return undefined;
+    }
   }
 
   /**
