@@ -348,8 +348,19 @@ describe('gameOutlook (#178)', () => {
         const late = hide([56]);
         const o = gameOutlook({ graph: big, me: ME, boards: turns(9, [late(withStack(92)), late(withStack(92)), withStack(92)]), game: ffa4 });
         const last = o.turns.at(-1)!;
-        expect(last.likely).toMatchObject({ playerId: O2, high: 790, source: 'prior' });
+        expect(last.likely).toMatchObject({ playerId: O2, high: 790, source: 'prior', why: 'unmeasured' });
         expect(o.basis).toMatch(/no observed income/i);
+      });
+
+      it('an unmeasured opponent is never more hopeful than the same opponent measured: twice its visible income at least', () => {
+        // O2 visibly holds 61–120 (15 bonuses: visible income 80).
+        const wide = board(shape().territories.map((t) => (t.territoryId >= 61 && t.territoryId <= 120 ? foe(t.territoryId, 3, O2) : t)));
+        const lone = gameOutlook({ graph: big, me: ME, boards: turns(8, [wide]), game: ffa4 }).turns[0]!;
+        const pair = gameOutlook({ graph: big, me: ME, boards: turns(7, [wide, wide]), game: ffa4 }).turns.at(-1)!;
+        expect(lone.likely).toMatchObject({ playerId: O2, source: 'prior', why: 'unmeasured' });
+        expect(pair.likely).toMatchObject({ playerId: O2, source: 'tracked' });
+        expect(lone.likely!.high).toBeGreaterThanOrEqual(pair.likely!.high);
+        expect(lone.likely!.high).toBeLessThanOrEqual(lone.strongest!.high!);
       });
 
       it('a prior can still show an estimated win when I am far ahead of it, labelled a prior', () => {
