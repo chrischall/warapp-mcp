@@ -59,10 +59,12 @@
 //          bonus passes (rules 4, 4a, 4f) with the same sure sizing, funded from this turn's deploy
 //          in rule 4f's order — the closest bonus's enemy member gets the deploy before a farther
 //          bonus does ("… player P's member, taken on my army lead", whichever pass takes it). #212:
-//          its source may be a border held under `balanced` (never a conceded one or my commander's
-//          territory): the border keeps what holds it once the step is taken, the deploy covers the
-//          attack and the hold together, and the hold is then funded ("T keeps N to hold its border
-//          …"). One those passes do not take is an ordinary enemy territory again for every later rule
+//          its source may be a border held under `balanced` (never my commander's territory): the
+//          border keeps what holds it once the step is taken, the deploy covers the attack and the
+//          hold together, and the hold is then funded ("T keeps N to hold its border …"). #214: or a
+//          conceded border (never my commander's territory): this turn's deploy funds the attack
+//          alone and its hold stays conceded unless rule 1c keeps it for a bonus completed this
+//          turn ("T is conceded, but the deploy there leaves with the attack …"). One those passes do not take is an ordinary enemy territory again for every later rule
 //          (rule 4e's fallback, 4g's card pieces, the lead strikes): its plain size, no sure sizing;
 //          its "Not attacking" line still ends with why its bonus's step failed (the hold it had to
 //          keep, the deploy that could reach it, or why no neighbour could attack).
@@ -369,9 +371,10 @@
 //     Triage deploys nothing to a conceded border (unless every territory I hold is
 //     conceded): it may still attack out with the armies already on it, since they
 //     are lost anyway if they stay, but no capture is funded there. A conceded border
-//     can still get deploys two ways: as a finish-off source (rule 1e runs before
-//     triage, and its attacks keep the deploys they were sized with), and, under Local
-//     Deployment, from its held bonus's own pool, which lands only inside that bonus (rule 1b).
+//     can still get deploys three ways: as a finish-off source (rule 1e runs before
+//     triage, and its attacks keep the deploys they were sized with), under Local
+//     Deployment, from its held bonus's own pool, which lands only inside that bonus (rule 1b),
+//     and (#214) as the source of a lead step (#203, rule 0p.2), sized for the attack alone.
 //     Under `balanced` a hold is not deployed here: it competes in the greedy
 //     step (rule 4a), and a threatened border it might hold makes no attacks.
 //  1h. Held bonuses (under `balanced` and `defend`; issue #51). Every bonus I hold in
@@ -487,7 +490,9 @@
 //     completed this turn (not already withdrawn from) is kept (its concession warning
 //     dropped, a rationale line added), never withdrawn from, and garrisoned from the leftover
 //     (rule 5); a warning says so when the leftover still cannot make it hold. A conceded
-//     border may fund (be deployed to for) a capture that completes a bonus it is in.
+//     border may fund (be deployed to for) a capture that completes a bonus it is in — with the
+//     members already taken, or (#214) with the sibling steps the same completion (pass 1, all or
+//     nothing: undone whole if one fails) plans this turn.
 //  1g. Garrison a completion (under `balanced` and `defend`; #122). Once a capture completes a
 //     bonus, its members I held at the start that face an enemy and would fall are held whole
 //     right away, before any later capture — a held bonus's unit tests (cost ≤ PAYBACK_TURNS ×

@@ -50,10 +50,11 @@ export interface Counter {
  */
 /**
  * #212: why a neighbour of mine could not attack a lead step at all. `locked` cannot fire today
- * (a locked, unconceded border that is not my commander's is a lead step's hold source, and
- * No-Split, the only other way a source is unusable, turns lead steps off); it is the fallback.
+ * (a locked, unconceded border that is not my commander's is a lead step's hold source, a
+ * conceded one is funded from deploy (#214), and No-Split, the only other way a source is
+ * unusable, turns lead steps off); it is the fallback.
  */
-export type LeadBlock = 'conceded' | 'commander' | 'order' | 'locked';
+export type LeadBlock = 'commander' | 'order' | 'locked';
 
 export type LeadTry =
   | {
