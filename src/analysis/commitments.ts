@@ -11,15 +11,23 @@
 //   order this turn must. Only this turn: no plan covers a later one.
 // - `notice`: I am ending agreement A. It must be agreed (or already in my notice); the truce binds
 //   until its agreed notice has run, so no order this turn may attack a covered territory, and a turn
-//   the message names as its end may not come before the notice allows.
+//   the message names as its end must be the one the agreed notice gives: earlier is a surprise break,
+//   later a promise the ledger does not keep (it frees the territories when the notice has run).
 // - `propose` / `accept`: a truce on structured terms. No order this turn may attack a territory it
-//   covers. On send it creates or advances the agreement as warapp_record_agreement would.
+//   covers. On send it creates or advances the agreement as warapp_record_agreement would. A truce
+//   whose last turn (`untilTurn`) is before this one is refused; an accept compares only the terms it
+//   restates.
+//
+// Fog: a territory a promise names (an explicit scope) whose owner is not shown may be the player's,
+// so an order attacking it conflicts; under the scope `all`, orders into territories whose owner is not
+// shown are named in the carried sentence as not checked.
 //
 // Pure and deterministic like the planner (ids ascending, no I/O). Sentences name players and
 // territories by id only: names are third-party text.
 import type { BoardState } from '../board.js';
 import type { MapGraph } from './graph.js';
 import { ownerShown } from './plan/shared.js';
+import { bonusTerritories } from './bonuses.js';
 import {
   agreementState,
   coveredTerritories,
@@ -49,7 +57,8 @@ export type Commitment =
   | { kind: 'will-attack'; with?: number; territory?: number; turn?: number }
   | { kind: 'notice'; agreement: string; endsTurn?: number }
   | { kind: 'propose'; with: number; terms: AgreementTerms }
-  | { kind: 'accept'; agreement?: string; with?: number; terms?: AgreementTerms };
+  /** `terms`: what the message restates; a field not given is not compared (new terms take the defaults). */
+  | { kind: 'accept'; agreement?: string; with?: number; terms?: Partial<AgreementTerms> };
 
 /** A commitment as the ledger keeps it: name-free, with the turn it was sent and the turns it binds. */
 export type RecordedCommitment = { id: string; sentTurn: number } & (
@@ -113,16 +122,41 @@ const ownerOf = (board: BoardState, t: number): number | null => {
 const heldBy = (board: BoardState, p: number): Set<number> =>
   new Set(board.territories.filter((t) => ownerShown(t) && t.owner.kind === 'player' && t.owner.playerId === p).map((t) => t.territoryId));
 
+/** The territories `scope` names (none for `all`) whose owner my board does not show: they may be anyone's. */
+function unseenNamed(graph: MapGraph, board: BoardState, scope: AgreementScope): Set<number> {
+  if (scope === 'all') return new Set();
+  const ids = 'territories' in scope ? scope.territories : scope.bonuses.flatMap((b) => [...bonusTerritories(graph, b)]);
+  const shown = new Map(board.territories.map((t) => [t.territoryId, t]));
+  return new Set(ids.filter((t) => !ownerShown(shown.get(t))));
+}
+
+/** Every territory on the map whose owner my board does not show. */
+function unseenAll(graph: MapGraph, board: BoardState): Set<number> {
+  const shown = new Map(board.territories.map((t) => [t.territoryId, t]));
+  return new Set([...graph.territoryById.keys()].filter((t) => !ownerShown(shown.get(t))));
+}
+
+const intoFog = (hit: readonly { index: number; from: number; to: number }[]) =>
+  `${hit.map((h) => `move ${h.index + 1} (${h.from} → ${h.to})`).join(', ')} ${hit.length === 1 ? 'goes into a territory' : 'go into territories'} whose owner is not shown`;
+
 /** The orders among `moves` that attack one of `targets` (by index), transfers-only aside. */
 function attacksOn(moves: readonly OrderMove[], targets: ReadonlySet<number>): { index: number; from: number; to: number }[] {
   return moves.flatMap((m, index) => (!m.transferOnly && targets.has(m.to) ? [{ index, from: m.from, to: m.to }] : []));
 }
 
-const sameTerms = (a: AgreementTerms, b: AgreementTerms) => JSON.stringify(normTerms(a)) === JSON.stringify(normTerms(b));
-function normTerms(t: AgreementTerms) {
-  const scope = t.scope === 'all' ? 'all' : 'territories' in t.scope ? { territories: [...t.scope.territories].sort((x, y) => x - y) } : { bonuses: [...t.scope.bonuses].sort((x, y) => x - y) };
-  return [scope, t.noticeTurns, t.borderCap ?? null, t.untilTurn ?? null, t.untilPlayerOut ?? null, t.against ?? null];
+const normScope = (s: AgreementScope) =>
+  JSON.stringify(s === 'all' ? 'all' : 'territories' in s ? { territories: [...s.territories].sort((x, y) => x - y) } : { bonuses: [...s.bonuses].sort((x, y) => x - y) });
+/** Whether `given` (the terms an accept restates) agrees with `t` on every field it gives. */
+function sameGivenTerms(given: Partial<AgreementTerms>, t: AgreementTerms): boolean {
+  return (Object.keys(given) as (keyof AgreementTerms)[]).every((k) =>
+    given[k] === undefined ? true : k === 'scope' ? normScope(given.scope!) === normScope(t.scope) : given[k] === t[k],
+  );
 }
+/** New terms from what an accept gives: the scope `all` and 1 turn of notice unless stated. */
+const fullTerms = (t: Partial<AgreementTerms>): AgreementTerms => ({ ...t, scope: t.scope ?? 'all', noticeTurns: t.noticeTurns ?? 1 });
+/** A truce whose last turn has passed is over before it begins. */
+const pastUntil = (t: AgreementTerms, turn: number) =>
+  t.untilTurn !== undefined && t.untilTurn < turn ? `the truce would bind only until turn ${t.untilTurn}, before this turn (${turn})` : undefined;
 
 const openWith = (agreements: readonly Agreement[], p: number) => agreements.find((a) => a.with === p && !TERMINAL_STATUSES.has(a.status));
 
@@ -151,7 +185,7 @@ export function agreementChange(
     return move(a, 'notice-by-me');
   }
   if (c.kind === 'propose') {
-    const why = party(c.with) ?? scopeBad(c.terms);
+    const why = party(c.with) ?? scopeBad(c.terms) ?? pastUntil(c.terms, turn);
     if (why) return { refused: why };
     const open = openWith(agreements, c.with);
     if (!open) return { agreement: newAgreement(o.nextAgreementId(agreements), c.with, 'proposed-by-me', turn, c.terms), before: undefined, created: true };
@@ -178,16 +212,17 @@ export function agreementChange(
   if (target) {
     if (target.status !== 'proposed-by-me' && target.status !== 'proposed-by-them')
       return { refused: `agreement ${target.id} is ${target.status}: only a proposal is accepted` };
-    if (c.terms && !sameTerms(c.terms, target.terms))
+    if (c.terms && !sameGivenTerms(c.terms, target.terms))
       return { refused: `the terms differ from agreement ${target.id}'s: a counter-offer is a propose, not an accept` };
-    const why = party(target.with);
+    const why = party(target.with) ?? pastUntil(target.terms, turn);
     if (why) return { refused: why };
     return move(target, 'agreed');
   }
   if (!c.terms) return { refused: `no proposal from player ${c.with} is recorded: give the terms accepted` };
-  const why = party(c.with!) ?? scopeBad(c.terms);
+  const terms = fullTerms(c.terms);
+  const why = party(c.with!) ?? scopeBad(terms) ?? pastUntil(terms, turn);
   if (why) return { refused: why };
-  return { agreement: newAgreement(o.nextAgreementId(agreements), c.with!, 'agreed', turn, c.terms), before: undefined, created: true };
+  return { agreement: newAgreement(o.nextAgreementId(agreements), c.with!, 'agreed', turn, terms), before: undefined, created: true };
 }
 
 /**
@@ -205,6 +240,9 @@ export function checkCommitments(
   const named = (a: { from: number; to: number; index: number }) => `the ${orders} move ${a.index + 1} (${a.from} → ${a.to})`;
   const checks: CommitmentCheck[] = [];
   const player = (p: number) => players.find((x) => x.id === p);
+  // Under the scope `all`, orders into territories whose owner is not shown are said, never assumed safe.
+  const fogAll = attacksOn(moves, unseenAll(graph, board));
+  const unchecked = (scope: AgreementScope) => (scope === 'all' && fogAll.length ? `; ${intoFog(fogAll)}, which ${fogAll.length === 1 ? 'was' : 'were'} not checked` : '');
   input.commitments.forEach((c, index) => {
     const out = (rest: Omit<CommitmentCheck, 'index' | 'kind'>) => checks.push({ index, kind: c.kind, ...rest });
     if (c.kind === 'no-attack') {
@@ -215,9 +253,11 @@ export function checkCommitments(
       const covered = new Set(coveredTerritories(graph, c.scope, heldBy(board, c.with)));
       const hit = attacksOn(moves, covered);
       if (hit.length) return out({ refused: `${named(hit[0]!)} attacks player ${c.with}'s territory ${hit[0]!.to}, which the promise covers` });
+      const fog = attacksOn(moves, unseenNamed(graph, board, c.scope));
+      if (fog.length) return out({ refused: `${named(fog[0]!)} attacks territory ${fog[0]!.to}, which the promise names and whose owner is not shown: it may be player ${c.with}'s` });
       const toTurn = turn + c.turns - 1;
       return out({
-        carried: `no ${orders} order this turn attacks player ${c.with}'s territories it covers (${covered.size} on the board now); it binds through turn ${toTurn}`,
+        carried: `no ${orders} order this turn attacks player ${c.with}'s territories it covers (${covered.size} on the board now); it binds through turn ${toTurn}${unchecked(c.scope)}`,
         record: { sentTurn: turn, kind: 'no-attack', with: c.with, scope: c.scope, fromTurn: turn, toTurn },
       });
     }
@@ -242,7 +282,10 @@ export function checkCommitments(
       }
       const hit = attacksOn(moves, targets);
       const what = c.territory !== undefined ? `territory ${c.territory}` : `player ${c.with}`;
-      if (!hit.length) return out({ refused: `no ${orders} order this turn attacks ${what}` });
+      if (!hit.length) {
+        const fog = attacksOn(moves, unseenAll(graph, board));
+        return out({ refused: `no ${orders} order this turn attacks ${what}${fog.length ? ` (${intoFog(fog)}, which does not count)` : ''}` });
+      }
       return out({
         carried: `${named(hit[0]!)} attacks ${what}`,
         record: {
@@ -260,29 +303,34 @@ export function checkCommitments(
     const a = change.agreement;
     const covered = new Set(coveredTerritories(graph, a.terms.scope, heldBy(board, a.with)));
     const hit = attacksOn(moves, covered);
+    const fog = attacksOn(moves, unseenNamed(graph, board, a.terms.scope));
+    const fogText = (what: string) => `${named(fog[0]!)} attacks territory ${fog[0]!.to}, which ${what} names and whose owner is not shown: it may be player ${a.with}'s`;
     if (c.kind === 'notice') {
       const state = agreementState(a, turn, players);
       if (state.phase !== 'notice' || state.endsTurn === undefined)
         return out({ refused: `agreement ${a.id} is over (${state.reason ?? state.phase}): there is nothing to give notice on` });
-      if (c.endsTurn !== undefined && c.endsTurn < state.endsTurn)
+      if (c.endsTurn !== undefined && c.endsTurn !== state.endsTurn)
         return out({
           refused:
             `agreement ${a.id} carries ${a.terms.noticeTurns} turn${a.terms.noticeTurns === 1 ? '' : 's'} of notice: given on turn ${a.noticeTurn}, ` +
-            `it binds until turn ${state.endsTurn}, so the message cannot say it ends on turn ${c.endsTurn}`,
+            `it binds until turn ${state.endsTurn}, so the message cannot say it ends on turn ${c.endsTurn}` +
+            (c.endsTurn > state.endsTurn ? ` (the ledger frees its territories on turn ${state.endsTurn}: to keep the truce longer, propose new terms)` : ''),
         });
       if (hit.length) return out({ refused: `${named(hit[0]!)} attacks territory ${hit[0]!.to}, which agreement ${a.id} covers while its notice runs` });
+      if (fog.length) return out({ refused: fogText(`agreement ${a.id}`) });
       agreements = [...agreements.filter((x) => x.id !== a.id), a];
       return out({
-        carried: `agreement ${a.id} with player ${a.with}: notice from turn ${a.noticeTurn}, binding until turn ${state.endsTurn}, and no ${orders} order this turn attacks a territory it covers`,
+        carried: `agreement ${a.id} with player ${a.with}: notice from turn ${a.noticeTurn}, binding until turn ${state.endsTurn}, and no ${orders} order this turn attacks a territory it covers${unchecked(a.terms.scope)}`,
         record: { sentTurn: turn, kind: 'notice', agreement: a.id, with: a.with, endsTurn: state.endsTurn },
         change,
       });
     }
     if (hit.length)
       return out({ refused: `${named(hit[0]!)} attacks player ${a.with}'s territory ${hit[0]!.to}, which the ${c.kind === 'propose' ? 'proposed' : 'accepted'} truce covers` });
+    if (fog.length) return out({ refused: fogText(`the ${c.kind === 'propose' ? 'proposed' : 'accepted'} truce`) });
     agreements = [...agreements.filter((x) => x.id !== a.id), a];
     return out({
-      carried: `agreement ${a.id} with player ${a.with} (${a.status}), and no ${orders} order this turn attacks a territory it covers`,
+      carried: `agreement ${a.id} with player ${a.with} (${a.status}), and no ${orders} order this turn attacks a territory it covers${unchecked(a.terms.scope)}`,
       record: { sentTurn: turn, kind: c.kind, agreement: a.id, with: a.with },
       change,
     });
@@ -320,12 +368,21 @@ export function commitmentWarnings(input: {
   const out: CommitmentWarning[] = [];
   const said = (c: RecordedCommitment) => `commitment ${c.id} (sent turn ${c.sentTurn})`;
   const list = (hit: { index: number; from: number; to: number }[]) => hit.map((h) => `move ${h.index + 1} (${h.from} → ${h.to})`).join(', ');
+  // A territory the scope names whose owner is not shown may be the partner's: an attack there counts.
+  const hitsOn = (scope: AgreementScope, p: number) => {
+    const covered = new Set(coveredTerritories(graph, scope, heldBy(board, p)));
+    const unseen = unseenNamed(graph, board, scope);
+    const hit = attacksOn(moves, new Set([...covered, ...unseen]));
+    const fogged = [...new Set(hit.filter((h) => unseen.has(h.to)).map((h) => h.to))];
+    const note = fogged.length ? ` (territory ${fogged.join(', ')}'s owner is not shown)` : '';
+    return { hit, note };
+  };
   for (const c of [...input.commitments].sort((x, y) => x.id.localeCompare(y.id, 'en', { numeric: true }))) {
     if (c.kind === 'no-attack') {
       if (turn < c.fromTurn || turn > c.toTurn || c.with === me) continue;
-      const hit = attacksOn(moves, new Set(coveredTerritories(graph, c.scope, heldBy(board, c.with))));
+      const { hit, note } = hitsOn(c.scope, c.with);
       if (hit.length)
-        out.push({ commitment: c.id, kind: c.kind, with: c.with, moves: hit, text: `${said(c)} promised player ${c.with} no attack there through turn ${c.toTurn}: ${list(hit)} attacks it` });
+        out.push({ commitment: c.id, kind: c.kind, with: c.with, moves: hit, text: `${said(c)} promised player ${c.with} no attack there through turn ${c.toTurn}: ${list(hit)} attacks it${note}` });
     } else if (c.kind === 'will-attack') {
       if (c.turn !== turn) continue;
       const targets = c.territory !== undefined ? new Set([c.territory]) : heldBy(board, c.with!);
@@ -341,9 +398,9 @@ export function commitmentWarnings(input: {
     } else if (c.kind === 'propose') {
       const a = input.agreements.find((x) => x.id === c.agreement);
       if (!a || (a.status !== 'proposed-by-me' && a.status !== 'proposed-by-them')) continue;
-      const hit = attacksOn(moves, new Set(coveredTerritories(graph, a.terms.scope, heldBy(board, a.with))));
+      const { hit, note } = hitsOn(a.terms.scope, a.with);
       if (hit.length)
-        out.push({ commitment: c.id, kind: c.kind, with: a.with, moves: hit, text: `${said(c)} proposed truce ${a.id} to player ${a.with}, still open: ${list(hit)} attacks a territory it covers` });
+        out.push({ commitment: c.id, kind: c.kind, with: a.with, moves: hit, text: `${said(c)} proposed truce ${a.id} to player ${a.with}, still open: ${list(hit)} attacks a territory it covers${note}` });
     }
   }
   return out;

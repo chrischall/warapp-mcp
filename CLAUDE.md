@@ -251,7 +251,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   never parsed — and its plan step checks each against this turn's orders (`livePlanSetup` with `award: false`,
   then `planTurn`; the orders this server submitted this turn, `readCachedOrders`, stand in when there are any)
   and the ledger (`agreementChange`: the same rule `recordCommitments` re-applies after the send). One not
-  carried refuses the send. With commitments the game is read with its map and the turn must be in play. Once
+  carried refuses the send. A notice's `ends_turn` must be the turn the agreed notice gives; an accept compares only
+  the terms it restates; a truce whose `until_turn` is past is refused; an attack on a territory a promise names
+  whose owner is fogged conflicts (scope `all`: named as unchecked). The submitted orders are `MyOrders.sent`
+  (every move, Transfer Only flagged), not `moves`. With commitments the game is read with its map and the turn must be in play. Once
   the message is `confirmed` or `accepted` (war.app took it; `unconfirmed`/`unknown` record nothing and say so)
   they go into the ledger's `commitments` as mine (ids and turns only, at most 200), a propose/accept/notice
   through warapp_record_agreement's path (player record included). `warapp_submit_turn` warns (never refuses)

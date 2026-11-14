@@ -905,6 +905,9 @@ export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
         ? [{ from: o.from, to: o.to, armies: o.armies }]
         : [],
     ),
+    sent: orders.flatMap((o) =>
+      o.kind === 'move' ? [{ from: o.from, to: o.to, ...(o.mode === AttackTransferMode.Transfer ? { transferOnly: true as const } : {}) }] : [],
+    ),
   };
 }
 

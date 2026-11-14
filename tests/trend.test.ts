@@ -224,6 +224,18 @@ describe('orders cache (#119: my own orders as measurements)', () => {
     expect(await readCachedOrders(dir, 42, ANN.id)).toEqual(new Map());
   });
 
+  it('keeps every move sent with its mode (B4), and reads it loosely', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    const sent = [{ from: 1, to: 2, transferOnly: true as const }, { from: 1, to: 3 }];
+    await writeOrdersCache(dir, 42, ANN.id, 3, { ...orders(3), sent });
+    expect((await readCachedOrders(dir, 42, ANN.id)).get(3)).toEqual({ ...orders(3), sent });
+    writeFileSync(
+      boardCachePath(dir, 42),
+      JSON.stringify({ gameId: 42, playerId: ANN.id, turns: {}, orders: { '3': { ...orders(3), sent: [{ from: 1, to: 2, transferOnly: 'yes' }, { from: 'x', to: 2 }, null] } } }),
+    );
+    expect((await readCachedOrders(dir, 42, ANN.id)).get(3)).toEqual({ ...orders(3), sent: [{ from: 1, to: 2 }] });
+  });
+
   it('drops one turn\'s orders (an uncommit), keeping the other turns and the boards', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
     await writeBoardCache(dir, 42, ANN.id, 4, board);

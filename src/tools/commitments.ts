@@ -59,7 +59,12 @@ export const commitmentArg = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('notice').describe('I am ending our truce.'),
       agreement: z.string().trim().min(1).max(20).describe('The agreement (e.g. "a1") notice is given on.'),
-      ends_turn: z.coerce.number().int().min(1).optional().describe('The turn the message names as the first one it no longer binds.'),
+      ends_turn: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe('The turn the message names as the first one it no longer binds: it must be the one the agreed notice gives.'),
     })
     .describe('Notice on an agreed truce.'),
   z
@@ -76,7 +81,10 @@ export const commitmentArg = z.discriminatedUnion('kind', [
       player: ref.optional().describe('The partner (name or GameFeed id), when no agreement id is given.'),
       ...termsArgs,
     })
-    .describe('A truce accepted: a recorded proposal, or terms the player offered.'),
+    .describe(
+      'A truce accepted: a recorded proposal (any terms given must match it; those left out are not compared), or terms ' +
+        'the player offered (left out: all territories, 1 turn of notice).',
+    ),
 ]);
 export type CommitmentArg = z.infer<typeof commitmentArg>;
 export const commitmentsArg = z
@@ -108,6 +116,16 @@ function termsOf(map: GameMap, a: { territories?: (string | number)[] | undefine
 const termsGiven = (a: Record<string, unknown>) =>
   ['territories', 'bonuses', 'notice_turns', 'border_cap', 'until_turn'].some((k) => a[k] !== undefined);
 
+/** Only the terms an accept restates: compared field by field with a recorded proposal's. */
+function givenTermsOf(map: GameMap, a: Parameters<typeof termsOf>[1]): Partial<AgreementTerms> {
+  return {
+    ...(a.territories !== undefined || a.bonuses !== undefined ? { scope: scopeFrom(map, a.territories, a.bonuses) } : {}),
+    ...(a.notice_turns !== undefined ? { noticeTurns: a.notice_turns } : {}),
+    ...(a.border_cap !== undefined ? { borderCap: a.border_cap } : {}),
+    ...(a.until_turn !== undefined ? { untilTurn: a.until_turn } : {}),
+  };
+}
+
 /** The commitments by id, resolved against the game (names to ids). Throws on an unknown name. */
 export function resolveCommitments(game: Game, map: GameMap, args: readonly CommitmentArg[]): Commitment[] {
   const pid = (r: string | number) => resolvePlayer(game.players, r).id;
@@ -131,7 +149,7 @@ export function resolveCommitments(game: Game, map: GameMap, args: readonly Comm
           kind: 'accept',
           ...(a.agreement !== undefined ? { agreement: a.agreement } : {}),
           ...(a.player !== undefined ? { with: pid(a.player) } : {}),
-          ...(termsGiven(a) ? { terms: termsOf(map, a) } : {}),
+          ...(termsGiven(a) ? { terms: givenTermsOf(map, a) } : {}),
         };
     }
   });
@@ -176,7 +194,8 @@ export async function checkMessageCommitments(ctx: LiveContext, game: Game, me: 
   let moves: OrderMove[];
   let source: 'plan' | 'submitted';
   if (submitted) {
-    moves = submitted.moves.map((m) => ({ from: m.from, to: m.to }));
+    // `sent` keeps every move with its mode; a cache written before it has only the plain moves.
+    moves = submitted.sent ? submitted.sent.map((m) => ({ ...m })) : submitted.moves.map((m) => ({ from: m.from, to: m.to }));
     source = 'submitted';
   } else {
     moves = planTurn(setup.input).moves.map((m) => ({ from: m.from, to: m.to, ...(m.kind === 'transfer' ? { transferOnly: true } : {}) }));

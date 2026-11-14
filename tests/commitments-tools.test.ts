@@ -157,6 +157,18 @@ describe('warapp_send_chat commitments', () => {
       expect(preview.preview.commitments.checkedAgainst).toBe('the orders already submitted');
       expect(preview.preview.commitments.carried[0]!.carried).toMatch(/^the submitted move 1 \(159 → 158\) attacks player/);
     });
+
+    it('submitted orders keep their mode: a Transfer Only order attacks nothing, an Attack Only one does', async () => {
+      await start(quiet);
+      const me = Number(ANN.feed);
+      await writeOrdersCache(h!.dataDir, GAME, me, TURN, { deploys: [], moves: [], sent: [{ from: 159, to: 158, transferOnly: true }] });
+      expect(payload<{ preview: { commitments: { checkedAgainst: string } } }>(await send([{ kind: 'no-attack', player: 'Bob', turns: 1 }])).preview.commitments).toMatchObject({
+        checkedAgainst: 'the orders already submitted',
+      });
+      // An Attack Only order is not in `moves` (it may not run), but it is an attack the promise would break.
+      await writeOrdersCache(h!.dataDir, GAME, me, TURN, { deploys: [], moves: [], sent: [{ from: 159, to: 158 }] });
+      expect(textOf(await send([{ kind: 'no-attack', player: 'Bob', turns: 1 }]))).toMatch(/the submitted move 1 \(159 → 158\) attacks player \d+'s territory 158/);
+    });
   });
 
   describe('notice', () => {
@@ -182,6 +194,9 @@ describe('warapp_send_chat commitments', () => {
       expect(textOf(await send([{ kind: 'notice', agreement: 'a1', ends_turn: TURN + 1 }]))).toMatch(
         /carries 2 turns of notice: given on turn 3, it binds until turn 5, so the message cannot say it ends on turn 4/,
       );
+      expect(textOf(await send([{ kind: 'notice', agreement: 'a1', ends_turn: TURN + 9 }]))).toMatch(
+        /it binds until turn 5, so the message cannot say it ends on turn 12 \(the ledger frees its territories on turn 5/,
+      );
       expect(textOf(await send([{ kind: 'notice', agreement: 'a7' }]))).toMatch(/no agreement a7/);
       expect(s.sent).toEqual([]);
       expect((await ledger())?.agreements[0]?.status).toBe('agreed');
@@ -205,6 +220,21 @@ describe('warapp_send_chat commitments', () => {
       payload(await h!.call('warapp_record_agreement', { game_id: GAME, player: 'Ann', with: 'Bob', status: 'proposed-by-them' }));
       payload(await confirmed([{ kind: 'accept', agreement: 'a1' }]));
       expect((await ledger())?.agreements[0]).toMatchObject({ id: 'a1', status: 'agreed', agreedTurn: TURN });
+    });
+
+    it('an accept that restates only some of a proposal\'s terms is compared on those alone', async () => {
+      await start(quiet);
+      payload(
+        await h!.call('warapp_record_agreement', { game_id: GAME, player: 'Ann', with: 'Bob', status: 'proposed-by-them', territories: [159, 158], notice_turns: 2 }),
+      );
+      payload(await confirmed([{ kind: 'accept', agreement: 'a1', notice_turns: 2 }]));
+      expect((await ledger())?.agreements[0]).toMatchObject({ id: 'a1', status: 'agreed', terms: { scope: { territories: [158, 159] }, noticeTurns: 2 } });
+    });
+
+    it('a truce whose last turn is already past is refused', async () => {
+      const s = await start(quiet);
+      expect(textOf(await send([{ kind: 'propose', player: 'Bob', until_turn: TURN - 1 }]))).toMatch(/bind only until turn 2, before this turn \(3\)/);
+      expect(s.sent).toEqual([]);
     });
 
     it('refused while the plan attacks what the truce would cover, and for a counter-offer passed as an accept', async () => {

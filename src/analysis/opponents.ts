@@ -112,6 +112,12 @@ export interface TurnBoard {
 export interface MyOrders {
   deploys: readonly { territoryId: number; armies: number }[];
   moves: readonly { from: number; to: number; armies: number }[];
+  /**
+   * B4: every move order sent, in order, a Transfer Only one flagged (it attacks nothing); percentage
+   * and Attack Only orders kept, which `moves` leaves out. What a chat commitment is checked against.
+   * Absent in caches written before it. Never read by opponent tracking.
+   */
+  sent?: readonly { from: number; to: number; transferOnly?: true }[];
 }
 
 /** Observed turns (the latest) feeding the income estimate (#99: {@link trackedIncome}). */

@@ -448,12 +448,22 @@ untouched. Choices and departures:
   is given; 1–10 turns, this one included); `will-attack { player | territory, turn }` — only this turn, since
   no plan covers a later one; `notice { agreement, ends_turn? }` — on an agreed truce (or restating my notice),
   refused when no notice can run any more, when this turn's orders attack a covered territory, or when the
-  message's `ends_turn` comes before the agreed notice allows; `propose { player, terms }` — a new proposal, or
-  new terms on an open proposal (a counter-offer to theirs); `accept { agreement | player, terms? }` — a
-  recorded proposal (terms, when given, must match it) or, with terms, an offer not recorded yet. Propose and
-  accept are refused while this turn's orders attack a territory the truce would cover, and for a partner
-  `partyRefusal` refuses. Commitments in one message are checked in order, each seeing the ledger changes
-  of the ones before it.
+  message's `ends_turn` is not the turn the agreed notice gives (earlier is a surprise break; later a promise
+  the ledger would not keep, since it frees the territories when the notice has run); `propose { player, terms }`
+  — a new proposal, or new terms on an open proposal (a counter-offer to theirs); `accept { agreement | player,
+  terms? }` — a recorded proposal (the terms given must match it, field by field; those left out are not
+  compared) or, with terms, an offer not recorded yet (left out: all territories, 1 turn of notice). Propose and
+  accept are refused while this turn's orders attack a territory the truce would cover, for a partner
+  `partyRefusal` refuses, and when the truce's `until_turn` is before this turn. Commitments in one message are
+  checked in order, each seeing the ledger changes of the ones before it.
+- **Fog.** A territory a promise or truce names (territories or bonuses) whose owner my board does not show may
+  be the partner's: an order attacking it is refused (and warned on at submit). Under the scope `all`, orders
+  into territories whose owner is not shown are named in the carried sentence as not checked; a will-attack on
+  a player is not carried by an attack into the fog.
+- **Submitted orders keep their mode.** The orders cache keeps every move sent (`MyOrders.sent`: a Transfer
+  Only one flagged; percentage and Attack Only orders, which `moves` leaves out for opponent tracking, kept), so
+  a Transfer Only order does not count as an attack and an Attack Only one does. A cache written before it falls
+  back to `moves`.
 - **When recorded.** On `confirmed` or `accepted` (war.app took the message, whether or not its reply could
   be read): a message that went out made its promises. `unconfirmed` and `unknown` record nothing and say how
   to record by hand. The ledger is re-read under its lock and each propose/accept/notice re-applied to it, so

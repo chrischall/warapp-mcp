@@ -1231,6 +1231,11 @@ describe('warapp_submit_turn', () => {
               { from: 161, to: 157, armies: 4 },
               { from: 159, to: 158, armies: 8 },
             ],
+            // B4: every move with its mode, for the chat commitments check.
+            sent: [
+              { from: 161, to: 157 },
+              { from: 159, to: 158 },
+            ],
           },
         ],
       ]),

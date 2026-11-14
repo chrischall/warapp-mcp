@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { checkCommitments, commitmentWarnings, type Commitment, type OrderMove, type RecordedCommitment } from '../../src/analysis/commitments.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { newAgreement, transitionAgreement, type Agreement, type AgreementTerms, type RelationPlayer } from '../../src/analysis/relations.js';
-import { board, mine, neutral, tinyMap } from './helpers.js';
+import { board, fogged, mine, neutral, tinyMap } from './helpers.js';
 
 // tinyMap: 1─2, 1─3, 2─3, 3─4─5─6─7. Me 10 on 1–4, partner 20 on 5–6, 7 neutral.
 const graph = buildGraph(tinyMap());
@@ -93,6 +93,16 @@ describe('notice', () => {
     expect(one({ kind: 'notice', agreement: 'a1', endsTurn: 7 }, [], [agreed({ noticeTurns: 2 })]).refused).toBeUndefined();
   });
 
+  it('a stated end later than the agreed notice is refused: the ledger would free the territories first (D3)', () => {
+    const c = one({ kind: 'notice', agreement: 'a1', endsTurn: 20 }, [], [agreed({ noticeTurns: 1 })]);
+    expect(c.refused).toBe(
+      'agreement a1 carries 1 turn of notice: given on turn 5, it binds until turn 6, so the message cannot say it ends on turn 20 ' +
+        '(the ledger frees its territories on turn 6: to keep the truce longer, propose new terms)',
+    );
+    expect(c.record).toBeUndefined();
+    expect(c.change).toBeUndefined();
+  });
+
   it('is refused while an order attacks a covered territory, on a proposal, and on an unknown agreement', () => {
     expect(one({ kind: 'notice', agreement: 'a1' }, [ATTACK_5], [agreed()]).refused).toMatch(/attacks territory 5, which agreement a1 covers while its notice runs/);
     expect(one({ kind: 'notice', agreement: 'a1' }, [], [newAgreement('a1', P, 'proposed-by-me', 2, terms())]).refused).toMatch(/is proposed-by-me/);
@@ -157,6 +167,66 @@ describe('propose and accept', () => {
     ]);
     expect(checks.map((c) => c.refused)).toEqual([undefined, undefined]);
     expect(agreements).toEqual([expect.objectContaining({ id: 'a1', status: 'agreed' })]);
+  });
+});
+
+describe('a territory whose owner is not shown (fog)', () => {
+  // 6 is fogged: it may be player 20's.
+  const fb = board([mine(1, 3), mine(2, 3), mine(3, 3), mine(4, 9), mine(5, 4, P), fogged(6), neutral(7, 2)]);
+  const onFog = (c: Commitment, moves: OrderMove[], agreements: Agreement[] = []) =>
+    checkCommitments({ graph, board: fb, me: ME, turn: TURN, players, agreements, nextAgreementId: next, commitments: [c], moves, source: 'plan' }).checks[0]!;
+  const INTO_6: OrderMove = { from: 5, to: 6 };
+
+  it('a no-attack naming it is refused when an order attacks it', () => {
+    expect(onFog({ kind: 'no-attack', with: P, scope: { territories: [6] }, turns: 1 }, [INTO_6]).refused).toBe(
+      "the planned move 1 (5 → 6) attacks territory 6, which the promise names and whose owner is not shown: it may be player 20's",
+    );
+    expect(onFog({ kind: 'no-attack', with: P, scope: { bonuses: [103] }, turns: 1 }, [INTO_6]).refused).toMatch(/whose owner is not shown/);
+    expect(onFog({ kind: 'no-attack', with: P, scope: { territories: [6] }, turns: 1 }, [{ ...INTO_6, transferOnly: true }]).refused).toBeUndefined();
+  });
+
+  it('a promise over all its territories says the orders into the fog were not checked', () => {
+    const c = onFog({ kind: 'no-attack', with: P, scope: 'all', turns: 1 }, [INTO_6]);
+    expect(c.refused).toBeUndefined();
+    expect(c.carried).toMatch(/; move 1 \(5 → 6\) goes into a territory whose owner is not shown, which was not checked/);
+  });
+
+  it('a truce naming it is refused when an order attacks it', () => {
+    expect(onFog({ kind: 'propose', with: P, terms: terms({ scope: { territories: [5, 6] } }) }, [INTO_6]).refused).toMatch(
+      /attacks territory 6, which the proposed truce names and whose owner is not shown/,
+    );
+  });
+
+  it('a promised attack on a player is not carried by an attack into the fog, and says why', () => {
+    expect(onFog({ kind: 'will-attack', with: P }, [INTO_6]).refused).toBe(
+      'no planned order this turn attacks player 20 (move 1 (5 → 6) goes into a territory whose owner is not shown, which does not count)',
+    );
+  });
+
+  it('commitmentWarnings: an attack on a fogged territory a no-attack names', () => {
+    const c = { id: 'c1', sentTurn: 4, kind: 'no-attack', with: P, scope: { territories: [6] }, fromTurn: 4, toTurn: 6 } as RecordedCommitment;
+    expect(commitmentWarnings({ commitments: [c], agreements: [], graph, board: fb, me: ME, turn: TURN, moves: [INTO_6] })).toEqual([
+      expect.objectContaining({ commitment: 'c1', moves: [{ index: 0, from: 5, to: 6 }], text: expect.stringMatching(/move 1 \(5 → 6\) attacks it \(territory 6's owner is not shown\)/) }),
+    ]);
+  });
+});
+
+describe('the end of a truce, and terms restated on an accept', () => {
+  it('a truce whose last turn is before this one is refused, on propose and accept', () => {
+    expect(one({ kind: 'propose', with: P, terms: terms({ untilTurn: 4 }) }).refused).toBe('the truce would bind only until turn 4, before this turn (5)');
+    expect(one({ kind: 'accept', with: P, terms: terms({ untilTurn: 4 }) }).refused).toMatch(/until turn 4, before this turn/);
+    const stale = newAgreement('a1', P, 'proposed-by-them', 2, terms({ untilTurn: 3 }));
+    expect(one({ kind: 'accept', agreement: 'a1' }, [], [stale]).refused).toMatch(/until turn 3, before this turn/);
+    expect(one({ kind: 'propose', with: P, terms: terms({ untilTurn: 5 }) }).refused).toBeUndefined();
+  });
+
+  it('an accept compares only the terms it restates', () => {
+    const theirs = newAgreement('a1', P, 'proposed-by-them', 4, terms({ scope: { territories: [5] }, noticeTurns: 2 }));
+    expect(one({ kind: 'accept', agreement: 'a1', terms: { noticeTurns: 2 } }, [], [theirs]).change).toMatchObject({ agreement: { status: 'agreed' } });
+    expect(one({ kind: 'accept', agreement: 'a1', terms: { noticeTurns: 1 } }, [], [theirs]).refused).toMatch(/counter-offer/);
+    expect(one({ kind: 'accept', agreement: 'a1', terms: { scope: 'all' } }, [], [theirs]).refused).toMatch(/counter-offer/);
+    // New terms accepted: what is not given takes the defaults (all, 1 turn of notice).
+    expect(one({ kind: 'accept', with: P, terms: { noticeTurns: 3 } }).change?.agreement.terms).toEqual({ scope: 'all', noticeTurns: 3 });
   });
 });
 
