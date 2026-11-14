@@ -76,6 +76,7 @@ import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { guessOrdersOf, guessView } from './guess-view.js';
+import { guessSalt } from '../guess-salt.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 import {
@@ -1279,7 +1280,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         estimates,
         ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
         ...(gameContext.players ? { players: gameContext.players } : {}),
-        seed: guessSeed(game.id, turn),
+        seed: guessSeed(game.id, turn, await guessSalt(ctx.dataDir)),
       });
       const guess = guessed.kind === 'guess' ? guessed : undefined;
       const guessOrders = guess ? guessOrdersOf(orders, guess) : undefined;

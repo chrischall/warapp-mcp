@@ -28,9 +28,10 @@ function game(turn = 3, settings: Record<string, unknown> = {}): Record<string, 
   return { ...f, state: 'Playing', numberOfTurns: String(turn - 1), players, settings: { ...(f.settings as object), ...settings } };
 }
 
-async function live(territories: SyntheticTerritory[], feed: Record<string, unknown>): Promise<Harness> {
+async function live(territories: SyntheticTerritory[], feed: Record<string, unknown>, dataDir?: string): Promise<Harness> {
   return liveHarness({
     feed: [feed],
+    ...(dataDir ? { dataDir } : {}),
     warapp: (req: DecodedRequest): Partial<ReplyFrame> => {
       if (req.method !== Method.GetLatestGameInfo) throw new Error(`unexpected method ${req.method}`);
       return { body: (w) => writeLatestGameInfo(w, territories, [ANN.inGame]) };
@@ -116,9 +117,11 @@ describe('warapp_plan_turn — the border guess', () => {
         moves: go.filter((o) => o.kind === 'move').map((o) => ({ from: T(o.from!), to: T(o.to!), armies: o.armies! })),
       }),
     ).toEqual({ warnings: [] });
-    // Re-planning the same turn draws the same split; the full view carries the mix.
+    // Re-planning the same turn with the same data directory (its salt) draws the same split; the
+    // full view carries the mix.
+    const dir = h.dataDir;
     await h.harness.close();
-    h = await live(board(12), game());
+    h = await live(board(12), game(), dir);
     const again = await plan(h, 'full');
     expect(again.guessOrders).toEqual(go);
     expect(again.guess!.mix).toEqual(expect.any(Array));

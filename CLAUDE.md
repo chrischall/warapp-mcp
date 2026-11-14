@@ -466,7 +466,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       when an order sends less than the whole stack.
 - **The border guess (`src/analysis/guess.ts`, `warapp_plan_turn`'s `guess` / `guessOrders`)** is a
   randomized deploy split against an opponent who would read a fixed one: pure and deterministic like
-  the planner (seeded by `guessSeed(game, turn)`, mulberry32), solved exactly as a small matrix game
+  the planner (seeded by `guessSeed(game, turn, salt)`, mulberry32; the salt is a local secret at `<dataDir>/guess-salt`, `src/guess-salt.ts`, because the code is public), solved exactly as a small matrix game
   (allocations at threshold levels × the border the deploy lands beside, a simplex). Only when exactly
   one opponent has visible stacks next to 2–7 of my borders, combat is exact, Local Deployment is off,
   no fixed split holds them all and the mix beats it by `MIN_GUESS_GAIN` of the worth at stake. It

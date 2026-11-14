@@ -128,8 +128,10 @@ const skip = (reason: GuessSkipReason, message: string): GuessSkipped => ({ kind
 const round = (x: number) => Math.round(x * 1e6) / 1e6;
 
 /** A 32-bit seed from a game id and a turn (FNV-1a): re-planning a turn draws the same sample. */
-export function guessSeed(gameId: number, turn: number | null): number {
-  const text = `warapp-guess:${gameId}:${turn ?? 'none'}`;
+export function guessSeed(gameId: number, turn: number | null, salt = ''): number {
+  // The salt is a local secret (src/guess-salt.ts): without it, anyone who reads this public code
+  // could reproduce the draw from the game id and turn.
+  const text = `warapp-guess:${salt}:${gameId}:${turn ?? 'none'}`;
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
   return h >>> 0;

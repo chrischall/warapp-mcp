@@ -887,7 +887,7 @@ best fixed split's worst case, the mix's expected loss, the plan's own split's w
 sampled split) and `guessOrders` (the plan's `orders` with that split in place of the plan's deploys
 on those borders) only when no fixed split holds every border and the mix beats the best fixed split by
 at least 5% of the worth at stake (`MIN_GUESS_GAIN`). The plan's own `orders` are unchanged; the
-guess is the user's choice. The draw is seeded by the game and turn, so re-planning a turn gives
+guess is the user's choice. The draw is seeded by the game, the turn and a secret kept in the data directory, so re-planning a turn gives
 the same split.
 
 Measured on the planner's own test positions (350 usable, no Local Deployment, exact combat): 179
