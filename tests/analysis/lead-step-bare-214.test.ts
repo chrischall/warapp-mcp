@@ -210,6 +210,27 @@ describe('#214 item 1: a lead step the sure cost cannot fund is retried at its b
   it('is deterministic', () => {
     expect(JSON.stringify(planTurn(input(LOW, 4)))).toBe(JSON.stringify(planTurn(input(LOW, 4))));
   });
+
+  // #240 review: a lead step my attacks failed on repeatedly, its owner reinforcing it, is attacked
+  // only at the size that lands: never retried at its bare cost.
+  it('never retries a repulsed step at its bare cost (#240)', () => {
+    const repulsed = [
+      {
+        territoryId: 3,
+        playerId: 20,
+        attacks: [
+          { turn: 8, armies: 9, before: 5, after: 6, kills: 5 },
+          { turn: 9, armies: 9, before: 6, after: 7, kills: 5 },
+        ],
+      },
+    ];
+    const i = { ...input(MID, 7), repulsed };
+    const p = planTurn(i);
+    expect(attacks(p).filter((m) => m.to === 3)).toEqual([]);
+    expect(p.warnings.join('\n')).not.toMatch(/T3 \(#3\) assumes its owner does not reinforce/);
+    expect(p.rationale.join('\n')).toMatch(/My attacks on T3 \(#3\) failed on turns 8 and 9/);
+    expect(valid(p, i)).toEqual([]);
+  });
 });
 
 // #214 review: the same family with T1 = 1, T2 = 5, T3 = 12 and T4 = 5 (income 30). T4 is the one

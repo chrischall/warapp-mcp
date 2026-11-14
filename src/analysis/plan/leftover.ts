@@ -56,7 +56,7 @@ export function leftoverDeploy(
   const { orderOf, deploy, pools, roomAt, valueOf } = book;
   const { borders } = threats;
   const { conceded, kept, garrisoned, stood, threatened, stayAt } = hd;
-  const { committing, byCloseness, bonusTarget, targets } = tgt;
+  const { committing, byCloseness, bonusTarget, targets, repulsed } = tgt;
   // As the deploy book reads it, restated here so TypeScript narrows `pools` wherever it is tested.
   const local = pools !== null && pools.bonuses.length > 0;
   /** The strike stack rule 0p.3c built this turn (#72), and the leftover it got. */
@@ -300,15 +300,50 @@ export function leftoverDeploy(
     return takenBack;
   };
   /**
+   * #240 review: what the attacks out of `id` on repulsed territories paid at capture time beyond
+   * their plain size (the sure size over what takes the defenders standing there now).
+   */
+  const repulsedSurplus = (id: number) =>
+    moves
+      .filter((m) => m.from === id && m.kind === 'attack')
+      .reduce((sum, m) => {
+        const rep = repulsed.get(m.to);
+        const plain = rep ? pc.costAt(m.to) : null;
+        return rep && plain !== null && m.armies >= rep.cost ? sum + Math.max(0, rep.cost - plain) : sum;
+      }, 0);
+  /**
+   * #226 review: the leftover deployed on `id` for defence or saving is kept from the #226 margin —
+   * except (#240 review) on the source of an attack on a repulsed territory: the plain plan pays the
+   * surplus of its sure size from the armies beyond the hold there, and its margin takes the rest
+   * beyond the hold, so the margin still takes what the hold does not need (never fewer armies on the
+   * attack than without the evidence).
+   */
+  const keepFromMargin = (id: number) => {
+    if (repulsedSurplus(id) <= 0) ps.leftoverKept.add(id);
+  };
+  /**
    * The open borders short of a comfortable margin, most at stake first (rule 5). `back`: the
    * withdrawals the revival took back, still counted where they were going, as when this was
    * judged before the revival.
    */
-  const shortOf = (bs: Iterable<Border>, back: Map<number, number> = new Map()) =>
+  const shortOf = (bs: Iterable<Border>, back: Map<number, number> = new Map(), asPlain = false) =>
     [...bs]
       // No-Split (#124): a deploy on a territory that issues an order leaves with it, holding nothing.
       .filter((b) => open(b.id) && !orderOf(b.id))
-      .map((b) => ({ ...b, take: toTake(stays(b.id) + (back.get(b.id) ?? 0) + unitsAt(b.id)) }))
+      .map((b) => {
+        const at = stays(b.id) + (back.get(b.id) ?? 0) + unitsAt(b.id);
+        const take = toTake(at);
+        // #240 review: an attack out of it on a repulsed territory paid its sure size at capture
+        // time, where the plain plan pays the surplus over the plain size later, from the armies
+        // beyond the hold (#120). A border that holds is judged for comfort as the plain plan
+        // judged it, with that surplus still on it, so the evidence never shrinks the attack. One
+        // that would fall without the surplus stays short (the leftover makes it hold), except
+        // `asPlain`, which judges every border as the plain plan did (whether to revive a conceded
+        // border first).
+        if (take === null || (take <= b.threat && !asPlain)) return { ...b, take };
+        const surplus = repulsedSurplus(b.id);
+        return { ...b, take: surplus > 0 ? toTake(at + surplus) : take };
+      })
       .filter((b) => b.take !== null && b.take <= COMFORT_MARGIN * b.threat)
       .sort((a, b) => valueOf(b.id) - valueOf(a.id) || a.take! / a.threat - b.take! / b.threat || a.id - b.id);
   /** #218: the enemy territories next to `id` (visible, not captured this turn), sorted. */
@@ -376,7 +411,8 @@ export function leftoverDeploy(
   // The revival runs only where the leftover would otherwise buy comfort margins (no strike
   // stack, a border short of its margin), and then before the worse-order holds; otherwise the
   // worse-order holds go first, as before.
-  const reviving = !stack && ps.budget > 0 && shortOf(comfortPool).length > 0;
+  // #240 review: judged as the plain plan judged it, so a repulsed attack's sure size revives nothing.
+  const reviving = !stack && ps.budget > 0 && shortOf(comfortPool, new Map(), true).length > 0;
   if (!reviving) worseOrderHolds();
   if (ps.budget > 0) {
     const foggedNext = (id: number) =>
@@ -426,7 +462,7 @@ export function leftoverDeploy(
           } (protects +${valueOf(b.id)}).`,
         );
         deploy(b.id, d);
-        ps.leftoverKept.add(b.id);
+        keepFromMargin(b.id);
       }
     let where: number;
     let why: string;
@@ -469,7 +505,7 @@ export function leftoverDeploy(
           );
           deploy(b.id, d);
           locked.add(b.id);
-          ps.leftoverKept.add(b.id);
+          keepFromMargin(b.id);
           spread = true;
         }
       lock = true;
@@ -550,7 +586,7 @@ export function leftoverDeploy(
         );
         deploy(second.id, half);
         locked.add(second.id);
-        if (defends) ps.leftoverKept.add(second.id);
+        if (defends) keepFromMargin(second.id);
         n = roomAt(where);
       }
     }
@@ -561,7 +597,7 @@ export function leftoverDeploy(
       // interior" armies. Only when it got deploys (under Local Deployment it may get none).
       if (lock) locked.add(where);
       if (central) ps.centralKeep.set(where, (ps.centralKeep.get(where) ?? 0) + n);
-      if (defends) ps.leftoverKept.add(where);
+      if (defends) keepFromMargin(where);
     }
     if (stack) strikeStack = { ...stack, deployed: Math.max(0, n) };
     // Local Deployment: what is left of each bonus pool stays inside its bonus, on its

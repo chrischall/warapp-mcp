@@ -349,11 +349,12 @@ export function captureHelper(
     // #214: a step toward the closest bonus (or in a completion) the turn cannot fund at its sure
     // cost is retried at its bare cost — a sure capture of the defenders standing there now, the
     // basis rule 4f ranks the bonuses on. No worst case: #120's warning then says what it faces if
-    // the owner deploys there first. Only a funding shortfall retries (an R3 or trade refusal of the
+    // the owner deploys there first. Never a territory my attacks failed on repeatedly (#240 review:
+    // it is attacked only at the size that lands). Only a funding shortfall retries (an R3 or trade refusal of the
     // sure step stands), and the target keeps its sure cost for every later try.
     // #214 review: shortAt is set before tryCombined runs, so a combined capture refused for a
     // below-even trade (belowEven) or by R3 (combinedR3, which sets no refusal) is a refusal too.
-    if (bareOn && lead !== undefined && sure && bare && !ok && shortAt !== undefined && ps.refusal === undefined && belowEven === undefined && !combinedR3) {
+    if (bareOn && lead !== undefined && !repulsed.has(t) && sure && bare && !ok && shortAt !== undefined && ps.refusal === undefined && belowEven === undefined && !combinedR3) {
       const tg = targets.get(t)!;
       const cheap = costAt(t);
       const note = leadNote(t);

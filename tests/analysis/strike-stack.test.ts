@@ -394,6 +394,27 @@ describe('a strike stack is spent even when holds take all the income', () => {
     expect(why(p)).toMatch(/No leftover reaches the strike stack T1 \(#1\)/);
     expect(p.offence.find((o) => o.kind === 'strike' && o.target === 1)).toMatchObject({ taken: true, cost: 0 });
   });
+
+  // #240 review: T2 repulsed twice is costed at its sure size (9 + 8: 28) when the stack picks it,
+  // so the stack's #120 up-sizing has nothing left to add. It is still sized for the deploy: no
+  // "assumes" warning, and the rationale says what it is sized for.
+  it('a repulsed T2 is attacked at its sure size with no "assumes" warning (#240)', () => {
+    const repulsed = [
+      {
+        territoryId: 2,
+        playerId: ENEMY,
+        attacks: [
+          { turn: 1, armies: 12, before: 9, after: 9, kills: 7 },
+          { turn: 2, armies: 12, before: 9, after: 9, kills: 7 },
+        ],
+      },
+    ];
+    const p = planTurn({ ...input(8), repulsed });
+    expect(attacks(p).find((m) => m.from === 1 && m.to === 2)?.armies).toBe(28);
+    expect(p.warnings.join('\n')).not.toMatch(/T2 \(#2\) assumes its owner does not reinforce/);
+    expect(why(p)).toMatch(/Attack T2 \(#2\) from the strike stack T1 \(#1\) with 28 \(win chance 100% — sized for its 9 defenders plus the ~8 player 20 may deploy there first \(15 would take it as it stands\)\)/);
+    valid(input(8), p);
+  });
 });
 
 // A stack with no deploys whose strike leaves it interior keeps what it holds. Under Local

@@ -1264,8 +1264,6 @@ export function spendStrikeStack(
         sent += c.cost;
         captured.add(c.id);
         survivorsAt.set(c.id, c.cost - straightKills(defenceAt(c.id), rates.defensiveKillRate));
-        const rep = tgt.repulsed.get(c.id);
-        if (rep) worstCase.set(c.id, rep.defenders + rep.extra);
         captureOrder.push(c.id);
         again = true;
         break;
@@ -1275,6 +1273,14 @@ export function spendStrikeStack(
     // first, in the order taken, while the stack still covers it and keeps its hold after every
     // attack. One the stack cannot cover keeps its size (its warning gives the reinforced odds).
     const reinforced = new Map<number, number>();
+    // #240 review: a repulsed territory was costed at that size when the stack took it (and No-Split
+    // sends at least as much): it is sized for its owner's deploy already, and says so.
+    for (const x of taken) {
+      const rep = tgt.repulsed.get(x.c.id);
+      if (!rep || x.armies < rep.cost) continue;
+      worstCase.set(x.c.id, rep.defenders + rep.extra);
+      reinforced.set(x.c.id, rep.extra);
+    }
     if (!noSplit) {
       const { need } = holdAfter(new Set());
       const room = () => Math.min(avail.get(S)! - Math.max(pinned, coverOf(S)), avail.get(S)! + guardAt(S) + (incoming.get(S) ?? 0) - need);
@@ -1333,7 +1339,7 @@ export function spendStrikeStack(
       const sized =
         extra === undefined
           ? ''
-          : ` — sized for its ${defenceAt(c.id)} defenders plus the ~${extra} player ${strikeStack.player} may deploy there first (${c.cost} would take it as it stands)`;
+          : ` — sized for its ${defenceAt(c.id)} defenders plus the ~${extra} player ${strikeStack.player} may deploy there first (${costAt(c.id) ?? c.cost} would take it as it stands)`;
       rationale.push(
         `Attack ${label(c.id)} from the strike stack ${label(S)} with ${armies} (win chance ${pct(chance)}${sized}): ${
           effect ?? 'it can take this adjacent enemy territory'

@@ -605,7 +605,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     of the last three turns, its owner reinforcing it each time (its armies after plus my kills above
     its armies before; still that player's now), is captured only at that sure size — its cost is its
     defenders plus the owner's deploy (every pass: targets, rule 4e's fallback, the 1v1 strike stack),
-    so it ranks by that and is not made when it does not fit — and a rationale line names the failed turns.
+    so it ranks by that and is not made when it does not fit, never retried at its bare cost (#214) — and a
+    rationale line names the failed turns. The evidence never shrinks the attack: rule 5 judges its source's
+    comfort (and whether to revive a conceded border) as the plan without it would, with the surplus over the
+    plain size still on it, and the leftover there is not kept from the #226 margin (`repulsedSurplus`,
+    `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes".
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can

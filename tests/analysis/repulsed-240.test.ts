@@ -221,3 +221,45 @@ describe('#240: a further attack on a repulsed territory is sized for its ownerâ
     expect(valid(p, small)).toEqual([]);
   });
 });
+
+// #240 review: evidence that the owner reinforces must never shrink the attack below the plan without
+// it. My T1 (20) borders player 20's T3 (4), which completes B9 (+5) with T1; income 5. Without the
+// history the attack goes out at 6, #120 lifts it to the sure 15 (4 + 5 defenders) and the #226 margin
+// adds the 4 idle armies: 19. With it, the sure 15 is paid at capture time: rule 5 must not then read
+// T1 as short of a comfortable margin it had in the plain plan, and keep the leftover from the margin.
+describe('#240 review: a repulsed target never gets fewer armies than with no evidence', () => {
+  const small = makeMap([1, 2, 3], [[1, 2], [1, 3]], [[9, 'B9', 5, [1, 3]]]);
+  const sg = buildGraph(small);
+  const P = 20;
+  const b = board([mine(1, 20), neutral(2, 1), player(3, 4, P)]);
+  const rep: RepulsedTarget[] = [
+    {
+      territoryId: 3,
+      playerId: P,
+      attacks: [
+        { turn: 4, armies: 6, before: 4, after: 4, kills: 4 },
+        { turn: 5, armies: 6, before: 4, after: 4, kills: 4 },
+      ],
+    },
+  ];
+  const inp = (goal: 'complete-bonus' | 'balanced', repulsed?: RepulsedTarget[]): PlanInput => ({
+    graph: sg,
+    board: b,
+    me: ME,
+    income: 5,
+    settings: STD,
+    ...(repulsed ? { repulsed } : {}),
+    options: { goal },
+  });
+
+  for (const goal of ['complete-bonus', 'balanced'] as const) {
+    it(`${goal}: the margin still joins the attack (at least the plain plan's armies)`, () => {
+      const plain = planTurn(inp(goal));
+      const p = planTurn(inp(goal, rep));
+      const sent = (x: ReturnType<typeof planTurn>) => attacksOn(x, 3).reduce((s, m) => s + m.armies, 0);
+      expect(sent(plain)).toBeGreaterThan(armiesToTake(4 + 5, RATES)!);
+      expect(sent(p)).toBeGreaterThanOrEqual(sent(plain));
+      expect(p.warnings.join('\n')).not.toMatch(/T3 \(#3\) assumes its owner does not reinforce/);
+    });
+  }
+});

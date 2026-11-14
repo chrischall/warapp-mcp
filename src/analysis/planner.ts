@@ -677,7 +677,12 @@
 //     to deploy there, is a target only at that sure size: its capture cost is its defenders plus
 //     the owner's deploy (rule 2's targets, rule 4e's fallback and the 1v1 strike stack alike;
 //     a worst case, so no warning and no bare retry), so it ranks by that cost and is not made
-//     when it does not fit; a rationale line names the failed turns.
+//     when it does not fit; a rationale line names the failed turns. The evidence never shrinks
+//     the attack (#240 review): rule 5 judges its source's comfort, and whether to revive a
+//     conceded border, as the plan without it would (`repulsedSurplus`: the sure size's surplus
+//     over the plain one still on the source; one that would fall without it stays short), and
+//     the leftover put there is not kept from the #226 margin; the strike stack reports such an
+//     attack as sized for the deploy.
 //     #226, a margin: once the transfers (rule 6) have moved what they move, an attack on a
 //     player's territory whose owner may deploy there (not a combined capture; not under No-Split,
 //     which sends the whole stack already) takes the armies still on its source beyond what holds
