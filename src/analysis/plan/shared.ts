@@ -1482,17 +1482,25 @@ export function enemyDeployEstimates(
     const track = tracks?.find((t) => t.playerId === playerId);
     const usable = track && track.income !== null && track.turns.length >= TRACKED_MIN_TURNS ? track : undefined;
     const tracked = usable ? usable.income : null;
+    // #235 review: does the track end on this board? Its newest observed turn then ends at the turn
+    // being planned (the newest board's turn, when that is not given: tracks end on `board`).
+    const newestTurn = when.turn ?? usable?.lastTurn ?? null;
+    const trackEndsNow = usable !== undefined && usable.turns.at(-1)?.to === newestTurn;
     // #123: what it was expected to deploy before this observation (its visible income, and its
     // tracked income when it has a usable track, else the prior): ambiguous armies beyond twice that
     // are moves out of the fog ({@link ambiguousBound}); a capture from me is priced at the guard.
     // #235 review: with a track the prior stays out of the bound. The newest turn is evidence the
     // prior shrinks toward, so reading it against twice the prior would turn a one-off arrival from
-    // the fog into income above the prior (lesson 5).
+    // the fog into income above the prior (lesson 5). And a track that ends on this board has read
+    // the newest turn already, against what it carried before it, and its income includes that
+    // reading: read against twice that income, a one-off walk-in beside the fog would count twice
+    // over. The newest turn is then read with the track's own bound, so the two agree.
+    const ownBound = trackEndsNow ? usable!.turns.at(-1)!.expected : undefined;
     const observation = previous
       ? observeDeploy(g, board, previous, playerId, settings, {
           me,
           guard: (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
-          expected: Math.max(visible, tracked ?? priorFigure ?? 0),
+          expected: ownBound !== undefined ? Math.max(visible, ownBound) : Math.max(visible, tracked ?? priorFigure ?? 0),
           most: couldEarn,
           ...(when.previousOrders ? { myOrders: when.previousOrders } : {}),
         })
@@ -1519,9 +1527,10 @@ export function enemyDeployEstimates(
     if (priorFigure !== null && usable) {
       const toward = Math.max(tracked!, observed ?? 0, visible);
       if (priorFigure > toward) {
-        let turns = 1;
+        // The consecutive observed turns up to the newest board; a run that stopped earlier is none.
+        let turns = trackEndsNow ? 1 : 0;
         const run = usable.turns;
-        for (let i = run.length - 1; i > 0 && run[i - 1]!.from === run[i]!.from - 1; i--) turns++;
+        for (let i = run.length - 1; turns > 0 && i > 0 && run[i - 1]!.from === run[i]!.from - 1; i--) turns++;
         const edge = new Set<number>();
         for (const t of theirs) for (const n of neighborsOf(g, t)) if (!theirs.has(n)) edge.add(n);
         const share = edge.size ? [...edge].filter((n) => ownerShown(seenNow.get(n)) !== undefined).length / edge.size : 0;

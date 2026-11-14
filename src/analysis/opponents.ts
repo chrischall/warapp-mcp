@@ -136,6 +136,12 @@ export interface ObservedTurn {
   /** The observed deploy before the cap ({@link ObservedTurn.measured} included). */
   raw: number;
   /**
+   * #123: what it was expected to deploy that turn, the base of the bound on its ambiguous armies
+   * (twice this): its visible income or the income carried before the turn, whichever is more.
+   * Absent when the reading had no bound. The planner re-reads the newest turn with it (#235 review).
+   */
+  expected?: number;
+  /**
    * What my own orders on the earlier turn measured (#119, {@link measureOrders}), added to the
    * board's reading before the floor at 0 and to `losses`: the defenders my failed attacks killed,
    * on a hold of mine that fell, what its defenders really killed, and the attackers it lost on a
@@ -1045,6 +1051,7 @@ export function trackOpponents(
         to,
         observed: seenObserved,
         raw,
+        ...(context.expected !== undefined ? { expected: context.expected } : {}),
         measured,
         broken: broken.map((b) => b.id),
         brokenValue: broken.reduce((sum, b) => sum + b.value, 0),
