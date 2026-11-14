@@ -58,9 +58,14 @@
 //          #203: before that, such a territory in a positive bonus is a step into the bonus in the
 //          bonus passes (rules 4, 4a, 4f) with the same sure sizing, funded from this turn's deploy
 //          in rule 4f's order — the closest bonus's enemy member gets the deploy before a farther
-//          bonus does ("… player P's member, taken on my army lead", whichever pass takes it). One
-//          those passes do not take is an ordinary enemy territory again for every later rule (rule
-//          4e's fallback, 4g's card pieces, the lead strikes): its plain size, no sure sizing.
+//          bonus does ("… player P's member, taken on my army lead", whichever pass takes it). #212:
+//          its source may be a border held under `balanced` (never a conceded one or my commander's
+//          territory): the border keeps what holds it once the step is taken, the deploy covers the
+//          attack and the hold together, and the hold is then funded ("T keeps N to hold its border
+//          …"). One those passes do not take is an ordinary enemy territory again for every later rule
+//          (rule 4e's fallback, 4g's card pieces, the lead strikes): its plain size, no sure sizing;
+//          its "Not attacking" line still ends with why its bonus's step failed (the hold it had to
+//          keep, the deploy that could reach it, or why no neighbour could attack).
 //       2f. Front outlook (#167; adapting, contact and late phases): rule 4a's expansion share stands
 //          only when the main front (the biggest enemy stack next to me against my biggest stack
 //          beside it) is no worse than a stand-off with the income less the share deployed there each

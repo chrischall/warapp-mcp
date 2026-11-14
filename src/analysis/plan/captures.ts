@@ -8,7 +8,7 @@ import { captureCost, type BonusPlan, type TwoStepPass } from './shared.js';
 import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
 import type { PlanCtx, PlanState } from './state.js';
-import type { Targets } from './targets.js';
+import type { LeadBlock, LeadTry, Targets } from './targets.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
 
@@ -217,8 +217,8 @@ export function captureHelper(
     captureUndo, incoming,
   } = ps;
   const { coverOf, orderOf, warnSplit, deploy, spareAt, local } = book;
-  const { borderAt, safeAtStart } = threats;
-  const { conceded, keepFor, stayAt, twoStepBound, twoStepCite, twoStepHold, twoStepKeep } = hd;
+  const { borderAt, safeAtStart, holdArmies } = threats;
+  const { conceded, heldBorders, keepFor, stayAt, twoStepBound, twoStepCite, twoStepHold, twoStepKeep } = hd;
   const { targets, leadSteps, leadTry, skipOffence, badTrades } = tgt;
   const { defensible, mustHold, warnHold } = prev;
   // ---- capture helper ----
@@ -254,6 +254,23 @@ export function captureHelper(
       const ts = bonusTerritories(g, b.id);
       return b.value > 0 && ts.includes(x) && ts.includes(t) && ts.every((y) => y === t || mineSet.has(y) || captured.has(y));
     });
+  /**
+   * #212: a lead step (#203) may attack out of a border held under `balanced` — locked so its armies
+   * stay put for its hold — when this turn's deploy covers the attack and the hold together. Left
+   * locked, the closest bonus's enemy member beside a held stack had no source at all, and the
+   * deploy went to a farther bonus. Never my commander's territory (rule 1k: nothing leaves it).
+   */
+  const holdSource = (x: number, t: number) => leadSteps.has(t) && locked.has(x) && !conceded.has(x) && !myCommanders.has(x);
+  /**
+   * What a held border `x` keeps once the lead step on `t` leaves (in `avail` terms; it may exceed
+   * the armies there: the deploy covers the rest): what holds it against the threat left once `t`
+   * is taken, and at least what {@link keepOf} keeps.
+   */
+  const holdKeep = (x: number, t: number) => {
+    const b = borderAt(x, (n) => captured.has(n) || n === t);
+    const need = b ? Math.max(0, holdArmies(b.threat) - unitsAt(x)) : 0;
+    return Math.max(need - (stayAt(x) - avail.get(x)!), keepOf(x, t));
+  };
   /** Enemy commanders' territories attacked as a commander strike (rule 1s): exempt from R3. */
   const strikes = new Set<number>();
   /**
@@ -287,7 +304,7 @@ export function captureHelper(
     if (sure && !ok) worstCase.delete(t);
     if (lead) {
       // Set inside captureOnce (control flow does not see it).
-      const short = shortAt as { from?: number; spare: number; reach: number } | undefined;
+      const short = shortAt as Omit<Extract<LeadTry, { kind: 'short' }>, 'kind'> | undefined;
       const r = ps.refusal;
       if (ok) leadTry.delete(t);
       else if (r?.kind === 'r3') leadTry.set(t, { kind: 'r3' });
@@ -296,8 +313,11 @@ export function captureHelper(
     }
     return ok;
   };
-  /** #203: the source the last {@link captureOnce} found short, what it could spare and what deploy could reach it then. */
-  let shortAt: { from?: number; spare: number; reach: number } | undefined;
+  /**
+   * #203: the source the last {@link captureOnce} found short, what it could spare and what deploy
+   * could reach it then; #212: for a held border, `hold` is what its hold still lacked (its spare is 0).
+   */
+  let shortAt: Omit<Extract<LeadTry, { kind: 'short' }>, 'kind'> | undefined;
   const captureOnce = (
     t: number,
     reason: string,
@@ -309,7 +329,14 @@ export function captureHelper(
     const tg = targets.get(t)!;
     // My commander's territory keeps what holds it (rule 1k). Under No-Split nothing is kept: the
     // whole stack moves, and a territory that must hold issues no order (#124).
-    const spare = (x: number) => (noSplit ? avail.get(x)! : force ? avail.get(x)! - Math.max(force.keep, coverOf(x)) : movableFor(x, t));
+    const spare = (x: number) =>
+      noSplit
+        ? avail.get(x)!
+        : force
+          ? avail.get(x)! - Math.max(force.keep, coverOf(x))
+          : holdSource(x, t)
+            ? avail.get(x)! - holdKeep(x, t)
+            : movableFor(x, t);
     if (force && orderOf(force.from)) return false;
     /** No-Split: why `x` must hold instead (it would send at least the capture's cost). */
     const held = (x: number) => mustHold(x, t, Math.max(avail.get(x)!, tg.cost));
@@ -322,7 +349,7 @@ export function captureHelper(
       }
     }
     const open = (x: number) =>
-      !locked.has(x) && (!conceded.has(x) || x === fromConceded || concededSource(x, t, tg.cost));
+      (!locked.has(x) || (!force && holdSource(x, t))) && (!conceded.has(x) || x === fromConceded || concededSource(x, t, tg.cost));
     // No-Split (#124): a covered exit (#179) issues no order — it would send its whole stack.
     const usable = (x: number) => open(x) && !held(x) && !(noSplit && coverOf(x) > 0);
     const sources = force
@@ -330,13 +357,44 @@ export function captureHelper(
       : tg.sources.filter((x) => usable(x) && !orderOf(x)).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
     const needAt = (x: number) => Math.max(0, tg.cost - spare(x));
     // Sorted by armies, the first source needs the fewest deploys; under Local Deployment
-    // another may have more room (its bonus pool), so take the first that can afford it.
-    const src = local ? (sources.find((x) => needAt(x) <= spareAt(x)) ?? sources[0]) : sources[0];
+    // another may have more room (its bonus pool), so take the first that can afford it. #212: a
+    // held border's armies are not all free, so a lead step takes the first source that can afford
+    // it, else the one needing the fewest deploys.
+    const src =
+      local || leadSteps.has(t)
+        ? (sources.find((x) => needAt(x) <= spareAt(x)) ??
+          (leadSteps.has(t) ? [...sources].sort((a, b) => needAt(a) - needAt(b) || a - b)[0] : sources[0]))
+        : sources[0];
     const need = src === undefined ? Infinity : needAt(src);
     // No single source can afford it: try a combined capture (never for a forced source).
     if (src === undefined || need > spareAt(src)) {
       shortAt =
-        src === undefined ? { spare: 0, reach: 0 } : { from: src, spare: Math.max(0, spare(src)), reach: Math.max(0, spareAt(src)) };
+        src === undefined
+          ? {
+              spare: 0,
+              reach: 0,
+              // #212: why no neighbour could attack it, for the skip line.
+              ...(leadSteps.has(t)
+                ? {
+                    blocked: [...tg.sources].sort(byNum).map((x) => ({
+                      from: x,
+                      why: (conceded.has(x)
+                        ? 'conceded'
+                        : myCommanders.has(x)
+                          ? 'commander'
+                          : orderOf(x)
+                            ? 'order'
+                            : 'locked') as LeadBlock,
+                    })),
+                  }
+                : {}),
+            }
+          : {
+              from: src,
+              spare: Math.max(0, spare(src)),
+              reach: Math.max(0, spareAt(src)),
+              ...(holdSource(src, t) && spare(src) < 0 ? { hold: -spare(src) } : {}),
+            };
       if (force) return false;
       if (tryCombined(t, reason)) return true;
       const trade = belowEven;
@@ -358,7 +416,9 @@ export function captureHelper(
       return false;
     }
     // #121: the deploys beyond what the attack alone needs keep a safe border holding.
-    const forHold = noSplit || force ? 0 : Math.min(need, keepOf(src, t));
+    // #212: a held border's are what it keeps for its hold.
+    const fromHold = !force && holdSource(src, t);
+    const forHold = noSplit || force || fromHold ? 0 : Math.min(need, keepOf(src, t));
     // #172: the source keeps what a stack two steps away needs (when that binds, not its border's hold).
     const far = noSplit || force || ps.spendKeeps || pass.relaxAttacks ? null : twoStepHold(src, (n) => n === t);
     const farKeep = far ? twoStepKeep(src, (n) => n === t) : 0;
@@ -392,7 +452,15 @@ export function captureHelper(
         sent > tg.cost ? `, the whole stack (No-Split; ${tg.cost} would take it)` : ''
       }: ${reason}.`,
     );
-    if (farBinds) rationale.push(twoStepCite(src, far!, (c) => `The attack on ${label(t)} leaves ${label(src)} ${c}.`));
+    if (fromHold) {
+      // #212: the deploy garrisons it too: its hold is funded (no hold pass deploys there again).
+      heldBorders.add(src);
+      const th = borderAt(src, (n) => captured.has(n));
+      if (th)
+        rationale.push(
+          `${label(src)} keeps ${stayAt(src)} to hold its border against the ~${th.threat} threat once the attack on ${label(t)} leaves: it is held, and the deploy covers the attack and the hold together (#212).`,
+        );
+    } else if (farBinds) rationale.push(twoStepCite(src, far!, (c) => `The attack on ${label(t)} leaves ${label(src)} ${c}.`));
     else if (forHold > 0) {
       const th = borderAt(src, (n) => captured.has(n));
       if (th)
@@ -571,7 +639,7 @@ export function bonusPasses(
     warnings, rationale, deployed, avail, captured, combined, moves, survivorsAt, captureOrder, staged, incoming,
   } = ps;
   const { heldNow, gainWith } = book;
-  const { keptIncome, stayAt } = hd;
+  const { heldBorders, keptIncome, stayAt } = hd;
   const {
     targets, leadSteps, leadTry, leadNote, bonusTarget, frontierDelta, targetScoreCost, frontierOf, startHold,
     toFinish,
@@ -590,6 +658,7 @@ export function bonusPasses(
       survivorsAt: new Map(survivorsAt),
       staged: new Map(staged),
       worstCase: new Map(worstCase),
+      heldBorders: new Set(heldBorders),
       captureOrder: captureOrder.length,
       moves: moves.length,
       rationale: rationale.length,
@@ -613,6 +682,9 @@ export function bonusPasses(
       // A lead step's sure sizing (#203) goes with its undone capture.
       worstCase.clear();
       for (const [k, v] of snap.worstCase) worstCase.set(k, v);
+      // A held border a lead step garrisoned (#212) is owed its hold again.
+      heldBorders.clear();
+      for (const k of snap.heldBorders) heldBorders.add(k);
       captureOrder.length = snap.captureOrder;
       rationale.length = snap.rationale;
       warnings.length = snap.warnings;

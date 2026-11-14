@@ -34,9 +34,17 @@ import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
-import type { Targets } from './targets.js';
+import type { LeadBlock, Targets } from './targets.js';
 import type { Threats } from './threats.js';
 import { byNum, pct } from './util.js';
+
+/** #212: why a neighbour of mine could not attack a lead step, as the skip line says it. */
+const BLOCKED: Record<LeadBlock, string> = {
+  conceded: 'is conceded: it attacks out only with the armies on it, unless the step completes a bonus it is in',
+  commander: 'holds my commander: nothing leaves it (rule 1k)',
+  order: 'already issues an order',
+  locked: 'keeps its armies where they are this turn',
+};
 
 
 /** What the plan expects once every order is in, as the report and the plan read it. */
@@ -379,13 +387,41 @@ export function reportOffence(
       const need = costAt(n);
       const extra = reinforcementAt(n);
       const sure = extra > 0 ? costAt(n, defenceAt(n) + extra) : need;
+      // #203: why its bonus's step failed, as measured when that pass tried it (later deploys,
+      // counted in the spares below, could not fund it then). #212: said whichever line follows,
+      // so a step tried and refused never reads as standing armies alone.
+      const tried = leadTry.get(n);
+      const deployText =
+        tried === undefined
+          ? ''
+          : tried.kind === 'r3'
+            ? `; its bonus's step was refused: what survives the attack would not hold it next turn (R3)`
+            : tried.kind === 'trade'
+              ? `; its bonus's step was refused: a trade below even (~${tried.lost} lost for ${tried.killed} killed)`
+              : tried.kind === 'frontier'
+                ? `; its bonus's step was stopped by rule 4d's frontier budget: it adds a border facing an enemy`
+                : tried.from === undefined
+                  ? `; when its bonus's step was tried, no neighbour of mine was free to attack it${
+                      tried.blocked?.length
+                        ? ` (${tried.blocked
+                            .map(({ from, why }) => `${label(from)} ${BLOCKED[why]}`)
+                            .join('; ')})`
+                        : ''
+                    }`
+                  : tried.hold !== undefined
+                    ? `; when its bonus's step was tried, ${label(tried.from)} holds its border, and with the step gone its hold needed ${tried.hold} more than it had; this turn's deploy could add at most ${tried.reach} there${local ? ' (Local Deployment)' : ''}: ${Math.max(0, tried.reach - tried.hold)} left for the attack`
+                    : `; when its bonus's step was tried, ${label(tried.from)} could spare ${tried.spare} for it and ${
+                        tried.reach === 0
+                          ? 'none of this turn\'s deploy could still reach it'
+                          : `this turn's deploy could add at most ${tried.reach} there${local ? ' (Local Deployment)' : ''}: ${tried.spare + tried.reach} in all`
+                      }`;
       const best = neighborsOf(g, n)
         .filter((x) => mineSet.has(x))
         .map((x) => ({ x, spare: spareNow(x, n) }))
         .sort((a, b) => b.spare - a.spare || a.x - b.x)[0]!;
       if (need === null) return 'no attack can take it at these kill rates';
       if (best.spare < need)
-        return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}`;
+        return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}${deployText}`;
       if (goal !== 'balanced') {
         // Rule 4e's fallback (and a lead) can still take a player's territory under another goal.
         const others = [...attacked].filter((t) => t !== n && state.get(t)?.owner.kind === 'player').sort(byNum);
@@ -400,25 +436,6 @@ export function reportOffence(
           .filter((x) => mineSet.has(x))
           .map((x) => ({ x, spare: leadSpareFor(x, n) }))
           .sort((a, b) => b.spare - a.spare || a.x - b.x)[0]!;
-        // #203: why its bonus's step failed, as measured when that pass tried it (later deploys,
-        // counted in the spare above, could not fund it then).
-        const tried = leadTry.get(n);
-        const deployText =
-          tried === undefined
-            ? ''
-            : tried.kind === 'r3'
-              ? `; its bonus's step was refused: what survives the attack would not hold it next turn (R3)`
-              : tried.kind === 'trade'
-                ? `; its bonus's step was refused: a trade below even (~${tried.lost} lost for ${tried.killed} killed)`
-                : tried.kind === 'frontier'
-                  ? `; its bonus's step was stopped by rule 4d's frontier budget: it adds a border facing an enemy`
-                  : tried.from === undefined
-                    ? `; when its bonus's step was tried, no neighbour of mine was free to attack it`
-                    : `; when its bonus's step was tried, ${label(tried.from)} could spare ${tried.spare} for it and ${
-                        tried.reach === 0
-                          ? 'none of this turn\'s deploy could still reach it'
-                          : `this turn's deploy could add at most ${tried.reach} there${local ? ' (Local Deployment)' : ''}: ${tried.spare + tried.reach} in all`
-                      }`;
         if (lead.spare < sure)
           return `a lead strike (my army lead is ${leadText()}, over ${SECOND_FRONT_LEAD}×) needs ${sure} — sized for its ${defenceAt(n)} defenders plus player ${p}'s ~${extra} deploy — and the most a neighbour of mine can spare for it is ${lead.spare}${lead.spare > 0 ? ` (${label(lead.x)})` : ''}${deployText}`;
       }

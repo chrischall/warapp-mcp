@@ -470,7 +470,8 @@ do not send a backlog of turns unread. Override it when one of these shows up:
    3× the visible armies and special units of the largest opponent in view, and first in the
    profile's FFA `ranking` (when there is one), the rule is off and idle stacks take the weak
    enemy territories beside them ("army lead: …") — one in a bonus is a step into it, funded
-   from the deploy in closest-bonus order; a clear leader who is not the user (the
+   from the deploy in closest-bonus order, even out of a border that must keep its hold (the
+   deploy covers both); a clear leader who is not the user (the
    profile's `ranking`) is never a second front. Judge yourself when a leader must be attacked by several
    fronts at once. Weigh any "Attack on enemy … assumes its owner does not reinforce it first
    (win chance N%)" warning.

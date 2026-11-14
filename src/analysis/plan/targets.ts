@@ -48,8 +48,20 @@ export interface Counter {
  * reach it, both measured then; no source: none was free), refused by R3 or a trade below even,
  * or stopped by rule 4d's frontier budget. A try that succeeds clears it.
  */
+/** #212: why a neighbour of mine could not attack a lead step at all. */
+export type LeadBlock = 'conceded' | 'commander' | 'order' | 'locked';
+
 export type LeadTry =
-  | { kind: 'short'; from?: number; spare: number; reach: number }
+  | {
+      kind: 'short';
+      from?: number;
+      spare: number;
+      reach: number;
+      /** #212: a held border's hold still lacked this much once the step left (its spare is 0). */
+      hold?: number;
+      /** #212: with no source, why each neighbour of mine could not attack (by id). */
+      blocked?: { from: number; why: LeadBlock }[];
+    }
   | { kind: 'r3' }
   | { kind: 'trade'; lost: number; killed: number }
   | { kind: 'frontier' };
