@@ -1157,9 +1157,12 @@ export function floorTier(
 
 /**
  * #215: I am known to move first (#127) — from a source the hold sizing trusts: one the user gave,
- * not the award of picks' unverified rule (`movesFirstUnverified`, #215 review).
+ * not the award of picks' unverified rule (`movesFirstUnverified`, #215 review) — and no opponent
+ * may hold an Order Priority card (`opponentsMayHoldOrderPriority`, #215 review): played, it puts
+ * its first order (an all-in on a border) before my first.
  */
-export const knownFirst = (pc: PlanCtx) => pc.opts.movesFirst === true && pc.opts.movesFirstUnverified !== true;
+export const knownFirst = (pc: PlanCtx) =>
+  pc.opts.movesFirst === true && pc.opts.movesFirstUnverified !== true && pc.opts.opponentsMayHoldOrderPriority !== true;
 
 /**
  * #215: the armies withdrawn into my `id` this turn (rule 1b) that a hold may count only if I move

@@ -427,15 +427,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     expansion (`PRESSURE_FACTOR`).
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
-    the leftover first makes each open border that falls without them hold on its own (when it can
-    afford the whole hold; whether the leftover then buys comfort margins, and so revives a conceded
-    border under #121, is judged as before those deploys), what a border keeps from captures and
+    the leftover makes each open border that falls without them hold on its own (when it can
+    afford the whole hold) — after #121 has held a conceded border after all when the leftover would
+    buy comfort margins (a conceded border falls whoever moves first; that one falls only if the
+    opponent does), and #121 may then take back a withdrawal the border it went to needs, paying the
+    deploy that holds that border without it (spent either way) — what a border keeps from captures and
     top-ups (`keepFor`) leaves them out, and a border that still holds only with them is warned
     "holds only if I move first" (naming why no deploy was made only when that was the reason).
     Known to move first, they count as before (#127). Known means the user said so (`first_mover`,
     now or on a remembered turn): a first move only the award of picks gives (the wiki's rule, not
     verified live) still orders the moves and decides card advice, but holds treat it as unknown
-    (`movesFirstUnverified`) and the warning names the award. Idle armies rule 6 transfers into a
+    (`movesFirstUnverified`) and the warning names the award; so do they when an opponent may hold
+    an Order Priority card (`opponentsMayHoldOrderPriority`: played, its first order runs before mine). Idle armies rule 6 transfers into a
     border never count toward its hold; when the border holds only with them the same warning says
     so (moving first, only my first order lands before the opponent's first: it names the one transfer
     that must be that order; known to move first, "holds only if my first order is …").

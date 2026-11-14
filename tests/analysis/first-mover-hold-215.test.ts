@@ -78,7 +78,7 @@ const field = (o: { y?: number; e?: number; w?: number; t9?: number } = {}): Boa
     at(10, 2, FOE),
     at(11, 2, FOE),
   ]);
-type Shape = { income?: number; movesFirst?: boolean; unverified?: boolean; y?: number; e?: number; w?: number; t9?: number };
+type Shape = { income?: number; movesFirst?: boolean; unverified?: boolean; opOrderPriority?: boolean; y?: number; e?: number; w?: number; t9?: number; dep?: number };
 const input = (o: Shape = {}): PlanInput => ({
   graph: g,
   board: field(o),
@@ -87,9 +87,10 @@ const input = (o: Shape = {}): PlanInput => ({
   settings: RATES,
   game: { players: [{ id: ME }, { id: FOE }], turn: 10 },
   options: {
-    enemyDeploy: 5,
+    enemyDeploy: o.dep ?? 5,
     ...(o.movesFirst !== undefined ? { movesFirst: o.movesFirst } : {}),
     ...(o.unverified ? { movesFirstUnverified: true } : {}),
+    ...(o.opOrderPriority ? { opponentsMayHoldOrderPriority: true } : {}),
   },
 });
 const deployedOn = (p: TurnPlan, id: number) => p.deploys.filter((d) => d.territoryId === id).reduce((n, d) => n + d.armies, 0);
@@ -102,7 +103,7 @@ const lostIfOpponentFirst = (p: TurnPlan, o: Shape = {}, firstMover: 'opponent' 
     me: ME,
     deploys: p.deploys,
     moves: p.moves,
-    opponents: [{ id: FOE, deploy: 5 }],
+    opponents: [{ id: FOE, deploy: o.dep ?? 5 }],
     settings: RATES,
     firstMover,
     lookAhead: false,
@@ -147,6 +148,21 @@ describe('#215: a hold is sized for the worse move order when the first mover is
     expect(deployedOn(p, 3)).toBe(13);
     expect(p.rationale.join('\n')).toMatch(/so it holds whoever moves first/);
     expect(lostIfOpponentFirst(p)).not.toContain(3);
+  });
+
+  it('sizes the hold for the worse order when an opponent may hold Order Priority, even moving first (#215 review)', () => {
+    // Its Order Priority puts its first order (the all-in on T3) ahead of my first.
+    const p = planTurn(input({ movesFirst: true, opOrderPriority: true }));
+    expect(deployedOn(p, 3)).toBe(13);
+    expect(p.rationale.join('\n')).toMatch(/so it holds whoever moves first/);
+    expect(lostIfOpponentFirst(p)).not.toContain(3);
+  });
+
+  it("says so when the hold depends on a first move an opponent's Order Priority may take away", () => {
+    const p = planTurn(input({ income: 12, movesFirst: true, opOrderPriority: true }));
+    expect(p.warnings.join('\n')).toMatch(
+      /T3 \(#3\) holds only if I move first: 26 of its armies are withdrawn into it this turn, and if player 20 moves first its attack \(~33\) lands before them \(I move first, but an opponent may hold an Order Priority card, which puts its first order before mine\)\./,
+    );
   });
 
   it('says so when the hold depends on a first move the award says I have, unverified', () => {
@@ -214,6 +230,68 @@ describe('#215 review: the worse-order hold does not stop a conceded border bein
       expect(lost).not.toContain(3);
       expect(lost).not.toContain(9);
     }
+  });
+});
+
+describe('#215 review: a conceded border held after all comes before a hold only the worse order needs', () => {
+  // T1 8 (hopeless against the 60, withdraws 7 into T3), T3 10 facing player 20's 28-stack (~31
+  // with its deploy of 3), T9 3 (conceded at triage, withdraws 2 into T7). T9 falls whoever moves
+  // first unless the leftover holds it after all (#121); T3 falls only if player 20 moves first,
+  // before the 7 withdrawn into it land. The worse-order step took 12 for T3 first, leaving the
+  // revival short of T9's 17, and the plan lost T9 under both orders where it used to lose neither.
+  const big: Shape = { income: 30, w: 8, y: 10, e: 28, t9: 3, dep: 3 };
+  const small: Shape = { income: 14, w: 8, y: 4, e: 12, t9: 3, dep: 3 };
+
+  it('holds T9 after all, then sizes T3 for the worse order from what is left', () => {
+    const p = planTurn(input(big));
+    expect(p.rationale.join('\n')).toMatch(/Hold T9 \(#9\) after all \(not conceded\): deploy 17 there, and keep the 2 that would have withdrawn/);
+    expect(deployedOn(p, 9)).toBe(17);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 12 to T3 \(#3\) so it holds whoever moves first/);
+    expect(deployedOn(p, 3)).toBe(12);
+    // T3 has its comfortable margin with the 7 withdrawn into it: the last army goes to the expansion stack.
+    expect(deployedOn(p, 7)).toBe(1);
+    expect(p.moves.some((m) => m.from === 9)).toBe(false);
+  });
+
+  for (const [name, shape] of [
+    ['income 30', big],
+    ['income 14', small],
+  ] as const)
+    it(`loses neither T3 nor T9 whoever moves first (${name})`, () => {
+      const p = planTurn(input(shape));
+      for (const who of ['opponent', 'me'] as const) {
+        const lost = lostIfOpponentFirst(p, shape, who);
+        expect(lost).not.toContain(3);
+        expect(lost).not.toContain(9);
+      }
+    });
+});
+
+describe('#215 review: a border held after all may still pay for the hold its withdrawal was making', () => {
+  // T1 27 withdraws 26 into T3 (4, facing player 20's 12-stack, ~15). T3 holds with the 26 and not
+  // without them, so #121 used to refuse to hold T1 after all. Unless I am known to move first, the
+  // 26 may land too late anyway and T3 needs 6 of its own: paying those 6 too, T1 is held after all
+  // (12) and every border holds whoever moves first.
+  const shape: Shape = { income: 20, w: 27, y: 4, e: 12, t9: 8, dep: 3 };
+  it('deploys on T3 what holds it without the withdrawal, and holds T1 after all', () => {
+    const p = planTurn(input(shape));
+    expect(p.rationale.join('\n')).toMatch(
+      /Deploy 6 to T3 \(#3\) so it holds without the 26 T1 \(#1\) would have withdrawn into it/,
+    );
+    expect(p.rationale.join('\n')).toMatch(/Hold T1 \(#1\) after all \(not conceded\): deploy 12 there, and keep the 26/);
+    expect(withdrawal(p)).toBeUndefined();
+    for (const who of ['opponent', 'me'] as const) {
+      const lost = lostIfOpponentFirst(p, shape, who);
+      expect(lost).not.toContain(1);
+      expect(lost).not.toContain(3);
+      expect(lost).not.toContain(9);
+    }
+  });
+
+  it('keeps #127 when I am known to move first: the withdrawal holds T3, and T1 is not held after all', () => {
+    const p = planTurn(input({ ...shape, movesFirst: true }));
+    expect(withdrawal(p)?.armies).toBe(26);
+    expect(p.rationale.join('\n')).not.toMatch(/Hold T1 \(#1\) after all/);
   });
 });
 

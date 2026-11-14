@@ -807,13 +807,16 @@
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border. #215: armies withdrawn into a border (rule 1b) land by my own
 //     order, after the opponent's first attack when it moves first, so unless `movesFirst` the
-//     leftover first makes each open border that falls without them hold on its own ("so it holds
-//     whoever moves first", most protected value first, only when it can afford the whole hold),
+//     leftover makes each open border that falls without them hold on its own ("so it holds
+//     whoever moves first", most protected value first, only when it can afford the whole hold;
+//     after #121's hold after all below, when that runs: a conceded border falls whoever moves
+//     first, this one only if the opponent does),
 //     and a border's keep (`keepFor`: what a capture, a top-up or rule 4e's fallback may not spend)
 //     leaves them out too; a border that still holds only with them gets a warning ("holds only
 //     if I move first", with the deploy that would hold it either way). #215 review: "known to move
 //     first" means `movesFirst` from the user (`movesFirstUnverified` unset: the award of picks'
-//     first mover is the wiki's rule, and holds treat it as unknown, the warning naming it); and
+//     first mover is the wiki's rule, and holds treat it as unknown, the warning naming it) and no
+//     opponent that may hold Order Priority (`opponentsMayHoldOrderPriority`, named likewise); and
 //     idle armies rule 6 transfers in never count toward a hold — a border that holds only with
 //     them gets the same warning, naming the one transfer that must be my first order (moving
 //     first, only that one lands before the opponent's first; when I am known to move first, the
@@ -822,10 +825,11 @@
 //     only when that was the reason. Then it goes to the held
 //     border with the highest protected value still short of COMFORT_MARGIN × its threat (counting
 //     armies withdrawn into it) — but first (#121), when it would go to such margins (no strike stack;
-//     #215 review: judged without the worse-order deploys above, so a border they made comfortable
-//     does not stop it), a conceded border the leftover can make hold is held after all, from what is left once
+//     #215 review: judged and run before the worse-order deploys above), a conceded border the leftover can make hold is held after all, from what is left once
 //     every held border that would fall as it stands has its hold (best worth per army; its
-//     withdrawal taken back unless the territory it went to needs it to hold; never one that
+//     withdrawal taken back unless the territory it went to needs it to hold — #215 review: unless
+//     I am known to move first, it may still be taken back when the leftover also pays what holds
+//     that territory without it, which the worse-order step would spend anyway; never one that
 //     attacks out or whose garrison already stays); with two or more such borders, each is first brought to that
 //     margin in the same order (#121: two symmetric borders at an exact hold ended as 16 and 7),
 //     the rest to the first — else (#125) it saves toward a capture this turn cannot afford:

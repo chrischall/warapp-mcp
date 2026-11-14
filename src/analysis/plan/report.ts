@@ -427,10 +427,13 @@ export function reportOffence(
           ? `${f.idle} of its armies are idle armies transferred into it`
           : `${f.late + f.idle} of its armies are withdrawn or transferred into it`;
     // #215 review: a first move only the award of picks says I have is the wiki's rule, unverified.
+    // An opponent's Order Priority would put its first order before my first (#215 review).
     const award =
       pc.opts.movesFirst === true && pc.opts.movesFirstUnverified
         ? " (the award of picks says I move first: the wiki's rule, not verified live)"
-        : '';
+        : pc.opts.movesFirst === true && pc.opts.opponentsMayHoldOrderPriority
+          ? ' (I move first, but an opponent may hold an Order Priority card, which puts its first order before mine)'
+          : '';
     warnings.push(
       `${label(id)} holds only if I move first: ${moved} this turn, and ${
         pc.opts.movesFirst === false ? `player ${f.player} moves first, so its attack` : `if player ${f.player} moves first its attack`
