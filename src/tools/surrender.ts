@@ -126,7 +126,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
         "game's InstantSurrender setting asks for acceptance (unread with more than two players: it may) the surrender " +
         'waits for the others to accept it (reported `pending`); `undo: true` takes back such a pending ' +
         'surrender. The preview shows what bears on the decision: the outlook warapp_plan_turn last logged and ' +
-        'its basis, AI opponents, whether acceptance is needed, what your land becomes (AI or neutral) and ' +
+        'its basis, AI opponents, whether acceptance is needed (`acceptance.needed`: true, false, or null when the setting is unread and it may be), what your land becomes (AI or neutral) and ' +
         'opponents close to a boot. The game is read from GameFeed first (finished games and games you are not ' +
         'playing are refused) and the outcome is read back from GameFeed.' +
         `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
