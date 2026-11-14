@@ -163,11 +163,16 @@
 //     reading over the exact income; under other fog, a jump of the card's armies over its visible
 //     income), then again from the turn the next card can be due (the first turn plus a card's
 //     capturing turns per card played, never before the turn after the play); a warning names it.
+//     It is coarse both ways, and the warnings say so: one card at most is counted, though more may
+//     be in hand after a long time due; and under fog, income the fog hides can read as a play, so
+//     the card is dropped and the estimate errs low (a warning names the play it took).
 //     #164, hidden stacks: an opponent's territory next to mine whose owner shows and whose armies
 //     the fog hides (Dense / Heavy fog) is one of its stacks in rule 1's threat, of its unaccounted
 //     armies (the tracker's `unexplained`; the guard alone without a track) — never unseen land and
-//     never a target (a warning says the win chance is unknown). A large stack that left view (the
-//     tracker's `lostStacks`) is, from the turn it can stand on a territory the fog hides next to
+//     never a target (a warning says the win chance is unknown). The pool is one: its first hidden
+//     stack next to a territory of mine carries it, any other there the guard alone (movable 0).
+//     A large stack that left view (the
+//     tracker's `lostStacks`, for LOST_STACK_TURNS turns after it was seen) is, from the turn it can stand on a territory the fog hides next to
 //     mine (one move a turn since it was seen, never through my land), a separate stack of its owner
 //     there in that border's threat (its armies less the guard; the larger of the two when that
 //     territory is also a hidden stack of its owner), and a rationale line names it.
@@ -875,7 +880,7 @@
 // the plan is valid with or without multi-attack.
 
 import type { BoardState, TerritoryState } from '../board.js';
-import { incomeBasis, type OpponentTrack } from './opponents.js';
+import { incomeBasis, LOST_STACK_TURNS, type OpponentTrack } from './opponents.js';
 import type { GameSettings } from '../normalize.js';
 import { carriesTeam } from '../teams.js';
 import { analyzeBonus, bonusTerritories } from './bonuses.js';
@@ -2138,9 +2143,11 @@ export function enemyDeployEstimates(
 
 /**
  * Default enemy deploy: the largest {@link enemyDeployEstimates} figure among the
- * players with a visible stack next to me, at least {@link MIN_ENEMY_DEPLOY}. Pass the
- * turn (`when`) and the fog prior {@link planEnemyEstimates} uses, or a mid-game board of
- * equal stacks reads as the opening board (#128) and the figure disagrees with the planner's.
+ * players with a stack next to me — visible, or its owner shown and its armies hidden (#164) —
+ * at least {@link MIN_ENEMY_DEPLOY}. Pass the turn, fog setting and Reinforcement clock (`when`)
+ * and the fog prior {@link planEnemyEstimates} uses, or a mid-game board of equal stacks reads as
+ * the opening board (#128), an opponent's card is left out (#164), and the figure disagrees with
+ * the planner's. Unlike the planner's, it does not know the teams: a teammate counts.
  */
 export function defaultEnemyDeploy(
   g: MapGraph,
@@ -2150,14 +2157,15 @@ export function defaultEnemyDeploy(
   previous?: BoardState,
   tracks?: readonly OpponentTrack[],
   prior?: EnemyIncomePrior,
-  when: { turn?: number | null } = {},
+  when: { turn?: number | null; fog?: string | undefined; reinforcement?: ReinforcementClock | undefined } = {},
 ): number {
   const mineIds = new Set(
     board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me ? [t.territoryId] : [])),
   );
   const next = new Set<number>();
   for (const t of board.territories) {
-    if (t.owner.kind !== 'player' || t.owner.playerId === me || t.armies === null) continue;
+    if (t.owner.kind !== 'player' || t.owner.playerId === me) continue;
+    if (t.armies === null && (ownerShown(t) === undefined || visibleState(t))) continue;
     if (!g.territoryById.has(t.territoryId)) continue;
     if (neighborsOf(g, t.territoryId).some((n) => mineIds.has(n))) next.add(t.owner.playerId);
   }
@@ -3115,7 +3123,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     return Math.max(0, Math.floor(input.tracks?.find((x) => x.playerId === player)?.unexplained ?? 0));
   }
   /**
-   * #164: large stacks that left view (the tracker's `lostStacks`), by my territory each can attack
+   * #164: large stacks that left view (the tracker's `lostStacks`, for {@link LOST_STACK_TURNS}
+   * turns after the last sighting), by my territory each can attack
    * this turn: one move a turn since the turn it was last seen, never through my land, onto a
    * territory the fog hides next to mine (fogged, or its owner's with the armies hidden). `via` is
    * the nearest such territory (then id); `from` the earliest turn it could attack there.
@@ -3127,7 +3136,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       for (const l of tr.lostStacks ?? []) {
         const elapsed = turnNow - l.turn;
         const movable = Math.max(0, l.armies - guard);
-        if (elapsed < 1 || movable <= 0 || !g.territoryById.has(l.territoryId)) continue;
+        if (elapsed < 1 || elapsed > LOST_STACK_TURNS || movable <= 0 || !g.territoryById.has(l.territoryId)) continue;
         const dist = bfsDistances(g, [l.territoryId], { passable: (x) => !mineSet.has(x) });
         for (const t of mine) {
           const via = neighborsOf(g, t)
@@ -3196,6 +3205,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     o: { trend: boolean; allPlayers: boolean; pileOn?: boolean },
   ): Force | null => {
     const byPlayer = new Map<number, { stacks: { id: number; movable: number }[]; growth: number }>();
+    // #164: a player's unaccounted armies are one pool, in one place at most: its first hidden stack
+    // next to `t` carries them; any other hidden stack of it there is the guard alone (movable 0).
+    const pooled = new Set<number>();
     for (const n of [...neighborsOf(g, t)].sort(byNum)) {
       const st = state.get(n);
       if (gone(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId)) continue;
@@ -3204,7 +3216,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (st.armies === null && !hidden) continue;
       const p = byPlayer.get(st.owner.playerId) ?? { stacks: [], growth: 0 };
       // An enemy commander can join the attack: it fights as COMMANDER_STRENGTH armies.
-      p.stacks.push({ id: n, movable: hidden ? hiddenMovable(st.owner.playerId) : Math.max(0, st.armies! - guard) + unitsAt(n) });
+      const movable = !hidden
+        ? Math.max(0, st.armies! - guard) + unitsAt(n)
+        : pooled.has(st.owner.playerId)
+          ? 0
+          : hiddenMovable(st.owner.playerId);
+      if (hidden) pooled.add(st.owner.playerId);
+      p.stacks.push({ id: n, movable });
       if (o.trend && !hidden) p.growth = Math.max(p.growth, growthOf.get(n)?.growth ?? 0);
       byPlayer.set(st.owner.playerId, p);
     }
@@ -3432,7 +3450,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         // #164: a Reinforcement card the clock says it may hold, on top of its income.
         if (e.card)
           warnings.push(
-            `Player ${p} may hold a Reinforcement card from turn ${e.card.due} (the card clock${e.cardPlayed !== null ? `; it last played one on turn ${e.cardPlayed}` : ''}): +${e.card.armies} added to its deploy, ~${e.estimate} in all, until a deployment above its income is seen.`,
+            `Player ${p} may hold a Reinforcement card from turn ${e.card.due} (the card clock${e.cardPlayed !== null ? `; it last played one on turn ${e.cardPlayed}` : ''}): +${e.card.armies} added to its deploy, ~${e.estimate} in all, until a deployment above its income is seen; one card at most is counted, though more may be in hand after a long time due.`,
+          );
+        else if (e.cardPlayed !== null && e.source !== 'exact')
+          warnings.push(
+            `Player ${p}'s Reinforcement card is taken as played on turn ${e.cardPlayed} (a deployment of a card's armies over its visible income), so none is added until the next can be due; income the fog hides can look the same, so it may still hold one and the estimate errs low.`,
           );
         if (e.source === 'exact') {
           const income = e.estimate - (e.card?.armies ?? 0);
@@ -4757,7 +4779,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const tr = input.tracks?.find((x) => x.playerId === hiddenOwner);
       const bound =
         tr && tr.unexplained !== null
-          ? `up to ${hiddenMovable(hiddenOwner)} armies there (player ${hiddenOwner}'s unaccounted armies from the tracker) beyond the guard`
+          ? `up to ${hiddenMovable(hiddenOwner)} armies there (player ${hiddenOwner}'s unaccounted armies from the tracker, counted once per border however many of its hidden territories touch it) beyond the guard`
           : 'the guard alone there (no tracker figure for its unaccounted armies)';
       warnings.push(
         `${label(t)} (player ${hiddenOwner}) borders my ${sources.map(label).join(', ')} and its armies are hidden by the fog: the threat from it counts ${bound} plus its deploy, and the win chance of an attack into it is unknown, so none is planned.`,

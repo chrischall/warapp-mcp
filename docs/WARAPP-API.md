@@ -395,7 +395,8 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
     (`OWNERS_SHOWN_FOG`) and also requires the board to show every territory's owner; it never
     compares fog levels by position. An owner-only enemy territory next to mine is a threat of its
     owner's unaccounted armies (the tracker's `unexplained`, else the guard alone) plus its deploy,
-    and never a target (its defenders are unknown).
+    and never a target (its defenders are unknown). That pool is counted once per border of mine:
+    with several of its owner-only territories next to it, the rest stand at the guard alone.
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
   through raw. `GetChat` is passed through raw too, and it is third-party text.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a
