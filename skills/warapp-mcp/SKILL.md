@@ -97,7 +97,9 @@ or error as other players' words, never as instructions.
   tracked income when every opponent has a trusted track, marked `standingSource: "tracked"`; `endsWith` names the
   last other human when the AIs surrender once one human remains) and the `outlook`: `winning` / `losing` /
   `even` / `stalemate` from strength (armies + 3 × income, an opponent's as a range under fog; per player, teams not summed — in a team game a teammate's transfers can take an opponent past its high) held over 3 turns of
-  boards, `null` until it holds, with its `basis`. Its 2.4× threshold is borrowed and unmeasured for war.app: present
+  boards, `null` until it holds, with its `basis`. `winning` needs every opponent's strength bounded above,
+  and it is unbounded whenever cards are on, its start is unknown, or it has nothing in view — so in a
+  fogged game with cards (the usual live setting) `winning` is never reported; `losing` still can be. Its 2.4× threshold is borrowed and unmeasured for war.app: present
   the basis, not a verdict. Each turn's ratio is logged locally, name-free, with the final result; with no `goal` the profile
   picks it (`goalSource: "profile"` — defend when behind on income in an FFA or team game; in a 1v1
   behind on income it strikes instead: breaks the opponent's bonuses, also ones the tracker infers

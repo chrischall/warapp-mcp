@@ -993,7 +993,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
-          'armies + 3 × income held over 3 turns of boards, with its `basis`; thresholds unmeasured, so advice, not a verdict). With no `goal` the profile picks and tunes it (`goalSource` ' +
+          'armies + 3 × income held over 3 turns of boards, with its `basis`; thresholds unmeasured, so advice, not a verdict; ' +
+          'an opponent with cards on, an unknown start or nothing in view has no upper bound, so `winning` is never read in a fogged card game). With no `goal` the profile picks and tunes it (`goalSource` ' +
           '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
           'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
           `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
