@@ -184,21 +184,21 @@ describe('Dense and Heavy fog: an enemy next to me whose armies are hidden (#164
   });
   it("the tracker's unaccounted armies bound the hidden stack, and the hold is sized for them", () => {
     const small = planTurn({ graph: g, board: b, me: ME, income: 30, settings: STD, turn: 6, game: { turn: 6, fog: 'VeryFoggy' }, tracks: [track(FOE, { unexplained: 0 })], options: { goal: 'defend' } });
-    const big = planTurn({ graph: g, board: b, me: ME, income: 30, settings: STD, turn: 6, game: { turn: 6, fog: 'VeryFoggy' }, tracks: [track(FOE, { unexplained: 12 })], options: { goal: 'defend' } });
+    const big = planTurn({ graph: g, board: b, me: ME, income: 30, settings: STD, turn: 6, game: { turn: 6, fog: 'VeryFoggy' }, tracks: [track(FOE, { unexplained: 10 })], options: { goal: 'defend' } });
     expect(why(small)).toMatch(/Deploy 1 to T2 \(#2\) so it holds .*above the ~5 threat/);
-    expect(why(big)).toMatch(/Deploy 8 to T2 \(#2\) so it holds .*above the ~17 threat/);
-    expect(why(big)).toMatch(/up to 12/);
+    expect(why(big)).toMatch(/Deploy 7 to T2 \(#2\) so it holds .*above the ~15 threat/);
+    expect(why(big)).toMatch(/up to 10/);
   });
   it("several hidden neighbours of one opponent share its unaccounted armies: counted once, not once per stack", () => {
-    // 2 borders 2, 3 or 4 hidden territories of the same opponent: its 12 unaccounted armies are in
-    // one place at most, so the threat on 2 stays ~17 (12 + its ~5 deploy) however many there are.
+    // 2 borders 2, 3 or 4 hidden territories of the same opponent: its 10 unaccounted armies are in
+    // one place at most, so the threat on 2 stays ~15 (10 + its ~5 deploy) however many there are.
     for (const k of [2, 3, 4]) {
       const ids = [1, 2, ...Array.from({ length: k }, (_, i) => 3 + i)];
       const edges: [number, number][] = [[1, 2], ...Array.from({ length: k }, (_, i) => [2, 3 + i] as [number, number])];
       const gk = buildGraph(makeMap(ids, edges, [[101, 6, [1, 2]]]));
       const bk = board([mine(1, 1), mine(2, 3), ...Array.from({ length: k }, (_, i) => ownerOnly(3 + i))]);
-      const plan = planTurn({ graph: gk, board: bk, me: ME, income: 60, settings: STD, turn: 6, game: { turn: 6, fog: 'ModerateFog' }, tracks: [track(FOE, { unexplained: 12 })], options: { goal: 'defend' } });
-      expect(why(plan), `${k} hidden neighbours`).toMatch(/Deploy 8 to T2 \(#2\) so it holds .*above the ~17 threat/);
+      const plan = planTurn({ graph: gk, board: bk, me: ME, income: 60, settings: STD, turn: 6, game: { turn: 6, fog: 'ModerateFog' }, tracks: [track(FOE, { unexplained: 10 })], options: { goal: 'defend' } });
+      expect(why(plan), `${k} hidden neighbours`).toMatch(/Deploy 7 to T2 \(#2\) so it holds .*above the ~15 threat/);
     }
   });
   it('defaultEnemyDeploy counts an opponent whose only border with me is hidden, as the plan does', () => {
@@ -230,9 +230,10 @@ describe('stacks that leave view (#164)', () => {
     const t = tracks.find((x) => x.playerId === FOE)!;
     expect(t.lostStacks).toEqual([{ territoryId: 5, turn: 3, armies: 30 }]);
   });
-  it('a stack seen again (its territory in view) is not lost', () => {
+  it('a stack seen again where it stood (its territory in view, the stack still there) is not lost', () => {
+    // (A stack seen again much smaller, its armies gone into the fog, did leave view: see the Normal fog cases.)
     const seen = board([mine(1, 5), mine(7, 2), neutral(2, 2), neutral(3, 2), foe(4, 3), foe(5, 30), foe(6, 2)]);
-    const back = board([mine(1, 5), mine(7, 2), neutral(2, 2), fogged(3), fogged(4), foe(5, 2), fogged(6)]);
+    const back = board([mine(1, 5), mine(7, 2), neutral(2, 2), fogged(3), fogged(4), foe(5, 30), fogged(6)]);
     const t = trackOpponents(g, [
       { turn: 3, board: seen },
       { turn: 4, board: back },
@@ -316,5 +317,99 @@ describe('stacks that leave view (#164)', () => {
     const at = (turn: number) => planTurn({ graph: g, board: now, me: ME, income: 20, settings: STD, turn, game: { turn }, tracks: lost, options: { goal: 'defend' } });
     expect(why(at(last))).toMatch(/left view/);
     expect(why(at(last + 1))).not.toMatch(/left view/);
+  });
+});
+
+describe('Dense fog over many turns: the hidden pool is not lifetime earnings (#164 review)', () => {
+  // A 20-territory line. I hold 1-3; the opponent holds 4.. (owner shown, armies hidden) and takes
+  // one hidden neutral a turn eastwards. Exact income 5 (base, no bonus of its). My bonus 1-3 (+3).
+  const N = 20;
+  const ids = Array.from({ length: N }, (_, i) => i + 1);
+  const gl = buildGraph(makeMap(ids, ids.slice(1).map((i) => [i - 1, i] as [number, number]), [[101, 3, [1, 2, 3]]]));
+  const hiddenNeutral = (territoryId: number): TerritoryState => ({ territoryId, owner: { kind: 'neutral' }, armies: null, fogLevel: 'OwnerOnly' });
+  const at = (turn: number) =>
+    board(ids.map((id) => (id <= 3 ? mine(id, 5) : id < 7 + turn ? ownerOnly(id) : hiddenNeutral(id))));
+  const history = Array.from({ length: 10 }, (_, i) => ({ turn: i + 2, board: at(i + 2) }));
+  const tracks = trackOpponents(gl, history, ME, STD, { players: [{ id: ME }, { id: FOE }] });
+  const t = tracks.find((x) => x.playerId === FOE)!;
+  it('each owner-only territory it visibly took is credited: the guard left there and what the capture cost', () => {
+    // 9 turns × (5 earned − 1 guard left − 1 the hidden neutral cost at least) = 27, not 45.
+    expect(t.unexplained).toBe(27);
+  });
+  it('the hidden stack is bounded by a few turns of its income, so the border is held, not conceded', () => {
+    const plan = planTurn({ graph: gl, board: at(11), me: ME, income: 6, settings: STD, turn: 12, game: { turn: 12, fog: 'ModerateFog' }, tracks, options: { goal: 'defend' } });
+    expect(why(plan)).toMatch(/up to 10 armies there .*at most 2 turns of its income/);
+    expect(deployedTo(plan, 3)).toBeGreaterThan(0);
+    expect(why(plan)).not.toMatch(/conceded/);
+    // Uncapped (all 27 at T4), holding T3 would cost more than its bonus is worth: conceded.
+    const uncapped = planTurn({ graph: gl, board: at(11), me: ME, income: 6, settings: STD, turn: 12, game: { turn: 12, fog: 'ModerateFog' }, tracks: tracks.map((x) => ({ ...x, unexplained: 27, income: 14 })), options: { goal: 'defend' } });
+    expect(why(uncapped)).toMatch(/up to 27 armies/);
+  });
+});
+
+describe('stacks that leave view under Normal fog (#164 review)', () => {
+  // A line: 1 (mine) - 2 - 3 - 4 - 5 - 6; 7 a spare neutral next to 1. Normal fog: what borders me shows.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7], [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [1, 7]], [[101, 3, [1, 7]]]));
+  const players = { players: [{ id: ME }, { id: FOE }] };
+  it('a large stack that shrank where I can see it, its armies gone into the fog, left view', () => {
+    // Turn 3: 30 on 2, next to my 1. Turn 4: 2 still shows, with 2; 3 behind it is fogged: 28 left.
+    const seen = board([mine(1, 5), mine(7, 2), foe(2, 30), fogged(3), fogged(4), fogged(5), fogged(6)]);
+    const shrank = board([mine(1, 5), mine(7, 2), foe(2, 2), fogged(3), fogged(4), fogged(5), fogged(6)]);
+    const t = trackOpponents(g, [
+      { turn: 3, board: seen },
+      { turn: 4, board: shrank },
+    ], ME, STD, players).find((x) => x.playerId === FOE)!;
+    expect(t.lostStacks).toEqual([{ territoryId: 2, turn: 3, armies: 29 }]);
+  });
+  it('armies that moved to a territory of its in view did not leave it', () => {
+    const g2 = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [1, 3], [2, 3], [3, 4]], []));
+    const seen = board([mine(1, 5), foe(2, 30), foe(3, 4), fogged(4)]);
+    const moved = board([mine(1, 5), foe(2, 2), foe(3, 32), fogged(4)]);
+    const t = trackOpponents(g2, [
+      { turn: 3, board: seen },
+      { turn: 4, board: moved },
+    ], ME, STD, players).find((x) => x.playerId === FOE)!;
+    expect(t.lostStacks).toEqual([]);
+  });
+  it('a stack that shrank beside a fight (another stack next to it shrank too) is not taken as gone', () => {
+    const seen = board([mine(1, 20), mine(7, 2), foe(2, 30), fogged(3), fogged(4), fogged(5), fogged(6)]);
+    const fought = board([mine(1, 4), mine(7, 2), foe(2, 8), fogged(3), fogged(4), fogged(5), fogged(6)]);
+    const t = trackOpponents(g, [
+      { turn: 3, board: seen },
+      { turn: 4, board: fought },
+    ], ME, STD, players).find((x) => x.playerId === FOE)!;
+    expect(t.lostStacks).toEqual([]);
+  });
+  it('a lost stack that can stand next to my border by next turn is warned of a turn ahead', () => {
+    // Normal fog: 2 (next to my 1) shows a 2-army neutral. The 30 last seen on 4 on turn 3 can be on 3
+    // by now and on 2 by next turn, attacking my 1 the turn after.
+    const now = board([mine(1, 5), mine(7, 2), neutral(2, 2), fogged(3), fogged(4), fogged(5), fogged(6)]);
+    const lost = [track(FOE, { lostStacks: [{ territoryId: 4, turn: 3, armies: 30 }] })];
+    const plan = planTurn({ graph: g, board: now, me: ME, income: 5, settings: STD, turn: 4, game: { turn: 4, fog: 'Foggy' }, tracks: lost });
+    expect(plan.warnings.join('\n')).toMatch(/stack of 30 armies last seen on T4 \(#4\) on turn 3 .*can stand on T2 \(#2\), next to my T1 \(#1\), by next turn/);
+    // Not yet a threat this turn: it cannot reach a territory next to mine unseen.
+    expect(why(plan)).not.toMatch(/left view: it can attack/);
+  });
+  it('the lost-stack lines say a Multi-attack game can bring it sooner', () => {
+    const now = board([mine(1, 5), mine(7, 2), fogged(2), fogged(3), fogged(4), fogged(5), fogged(6)]);
+    const lost = [track(FOE, { lostStacks: [{ territoryId: 5, turn: 3, armies: 30 }] })];
+    const plan = planTurn({ graph: g, board: now, me: ME, income: 20, settings: { ...STD, multiAttack: true }, turn: 6, game: { turn: 6 }, tracks: lost, options: { goal: 'defend' } });
+    expect(why(plan)).toMatch(/left view: .*Multi-attack/);
+    const single = planTurn({ graph: g, board: now, me: ME, income: 20, settings: STD, turn: 6, game: { turn: 6 }, tracks: lost, options: { goal: 'defend' } });
+    expect(why(single)).not.toMatch(/Multi-attack/);
+  });
+});
+
+describe('a lost stack is part of its owner unaccounted armies: never counted twice on one border (#164 review)', () => {
+  // My 1 borders 2 (owner-only, the opponent's: carries its pool of 12) and 3 (fogged); its stack of
+  // 30 was last seen on 4, behind 3, on turn 3.
+  const g = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [1, 3], [3, 4]], []));
+  const now = board([mine(1, 5), ownerOnly(2), fogged(3), fogged(4)]);
+  it('the pool is what is left after the lost stack, so the two together are the larger, not the sum', () => {
+    const tracks = [track(FOE, { unexplained: 12, lostStacks: [{ territoryId: 4, turn: 3, armies: 30 }] })];
+    const plan = planTurn({ graph: g, board: now, me: ME, income: 60, settings: STD, turn: 5, game: { turn: 5, fog: 'VeryFoggy' }, tracks, options: { goal: 'defend' } });
+    // 29 movable + its ~5 deploy: the pool (10 after the cap) is inside the 29, not beside it (39).
+    expect(why(plan)).toMatch(/player 20 has 29 movable armies next to it plus ~5 deploy/);
+    expect(why(plan)).toMatch(/more than the 34 that can reach it/);
   });
 });

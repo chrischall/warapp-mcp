@@ -168,14 +168,21 @@
 //     the card is dropped and the estimate errs low (a warning names the play it took).
 //     #164, hidden stacks: an opponent's territory next to mine whose owner shows and whose armies
 //     the fog hides (Dense / Heavy fog) is one of its stacks in rule 1's threat, of its unaccounted
-//     armies (the tracker's `unexplained`; the guard alone without a track) — never unseen land and
-//     never a target (a warning says the win chance is unknown). The pool is one: its first hidden
-//     stack next to a territory of mine carries it, any other there the guard alone (movable 0).
-//     A large stack that left view (the
-//     tracker's `lostStacks`, for LOST_STACK_TURNS turns after it was seen) is, from the turn it can stand on a territory the fog hides next to
-//     mine (one move a turn since it was seen, never through my land), a separate stack of its owner
-//     there in that border's threat (its armies less the guard; the larger of the two when that
-//     territory is also a hidden stack of its owner), and a rationale line names it.
+//     armies (the tracker's `unexplained`, at most HIDDEN_POOL_INCOMES turns of its income; the
+//     guard alone without a track) — never unseen land and never a target (a warning says the win
+//     chance is unknown). The pool is one: its first hidden stack next to a territory of mine
+//     carries it, any other there the guard alone (movable 0).
+//     A large stack that left view (the tracker's `lostStacks`, for LOST_STACK_TURNS turns after it
+//     was seen: a stack whose territory the fog hid, or, under Normal fog, one that walked off a
+//     territory still in view into the fog) is, from the turn it can stand on a territory the fog
+//     hides next to mine (one move a turn since it was seen, never through my land), a separate
+//     stack of its owner there in that border's threat (its armies less the guard; the larger of
+//     the two when that territory is also a hidden stack of its owner; its armies are part of the
+//     pool, so the pool's carrier on that border keeps only what the lost stacks leave of it), and
+//     a rationale line names it. Under Normal fog every territory next to mine shows, so it never
+//     stands there unseen: where it can stand beside a border of mine by next turn, a warning says
+//     so a turn ahead (not counted in this turn's holds). Arrivals assume one move a turn; with
+//     Multi-attack on it can come sooner, and the lines say so.
 //     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
 //     enemy territory next to me that was visible then (owner and armies, #69) under the same owner and
@@ -935,6 +942,14 @@ export const TRACKED_MIN_TURNS = 2;
 
 /** Fog reveals named in the observed-deploy rationale before "and N more". */
 const MAX_NAMED_REVEALS = 6;
+/**
+ * #164: a stack the fog hides (Dense / Heavy fog) moves at most this many turns of its owner's
+ * income beyond the guard, however many armies the tracker cannot account for: those are spread
+ * over its hidden territories, and its income under fog that shows every owner is exact. A larger
+ * bank on one border is possible and the fog cannot show it; the cap is a judgement, said in the
+ * warning.
+ */
+export const HIDDEN_POOL_INCOMES = 2;
 /** A border is conceded when holding it costs more than this many times the income it protects. */
 export const CONCEDE_FACTOR = 3;
 /** A held border is comfortable once taking it needs more than this many times its threat. */
@@ -3120,7 +3135,20 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    * (`unexplained`: earned and not seen since), the guard staying; 0 without a track (the guard alone).
    */
   function hiddenMovable(player: number): number {
-    return Math.max(0, Math.floor(input.tracks?.find((x) => x.playerId === player)?.unexplained ?? 0));
+    const pool = hiddenPool(player);
+    return pool.cap === null ? pool.unexplained : Math.min(pool.unexplained, pool.cap);
+  }
+  /**
+   * #164: the tracker's unaccounted armies of `player` and the cap on what one hidden stack moves,
+   * {@link HIDDEN_POOL_INCOMES} turns of its income (`null` without an income figure).
+   */
+  function hiddenPool(player: number): { unexplained: number; cap: number | null } {
+    const tr = input.tracks?.find((x) => x.playerId === player);
+    const income = Math.max(tr?.income ?? 0, estimates.get(player)?.estimate ?? 0);
+    return {
+      unexplained: Math.max(0, Math.floor(tr?.unexplained ?? 0)),
+      cap: income > 0 ? HIDDEN_POOL_INCOMES * income : null,
+    };
   }
   /**
    * #164: large stacks that left view (the tracker's `lostStacks`, for {@link LOST_STACK_TURNS}
@@ -3130,6 +3158,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    * the nearest such territory (then id); `from` the earliest turn it could attack there.
    */
   const lostAt = new Map<number, { player: number; seenOn: number; turn: number; armies: number; movable: number; via: number; from: number }[]>();
+  /** #164: lost stacks that cannot attack my `t` this turn but can stand beside it (`via`) by next turn. */
+  const lostSoon: { player: number; seenOn: number; turn: number; armies: number; movable: number; t: number; via: number }[] = [];
+  /** #164: arrivals assume one move a turn; under Multi-attack a stack can chain moves and come sooner. */
+  const multiNote = s.multiAttack ? ' (one move a turn assumed: with Multi-attack on it can arrive sooner)' : '';
   if (turnNow !== null)
     for (const tr of [...(input.tracks ?? [])].sort((a, b) => a.playerId - b.playerId)) {
       if (!foe(tr.playerId)) continue;
@@ -3147,7 +3179,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
               return o === undefined || (o.kind === 'player' && o.playerId === tr.playerId);
             })
             .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
-          if (via === undefined) continue;
+          if (via === undefined) {
+            // Not there yet: where it can stand next to `t` by next turn (a territory beside `t`
+            // it can reach in one more move), warned of a turn ahead.
+            if (elapsed + 1 > LOST_STACK_TURNS) continue;
+            const soon = neighborsOf(g, t)
+              .filter((n) => !mineSet.has(n) && (dist.get(n) ?? Infinity) <= elapsed + 1)
+              .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
+            if (soon !== undefined)
+              lostSoon.push({ player: tr.playerId, seenOn: l.territoryId, turn: l.turn, armies: l.armies, movable, t, via: soon });
+            continue;
+          }
           lostAt.set(t, [
             ...(lostAt.get(t) ?? []),
             { player: tr.playerId, seenOn: l.territoryId, turn: l.turn, armies: l.armies, movable, via, from: l.turn + dist.get(via)! },
@@ -3168,7 +3210,21 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     for (const { l, at } of byStack.values()) {
       const more = at.length > MAX_NAMED_REVEALS ? ` and ${at.length - MAX_NAMED_REVEALS} more` : '';
       rationale.push(
-        `Player ${l.player}'s stack of ${l.armies} armies last seen on ${label(l.seenOn)} on turn ${l.turn} left view: it can attack ${at.slice(0, MAX_NAMED_REVEALS).join(', ')}${more}, so each one's worst case counts it as a separate threat of ${l.movable}.`,
+        `Player ${l.player}'s stack of ${l.armies} armies last seen on ${label(l.seenOn)} on turn ${l.turn} left view: it can attack ${at.slice(0, MAX_NAMED_REVEALS).join(', ')}${more}, so each one's worst case counts it as a separate threat of ${l.movable}${multiNote}.`,
+      );
+    }
+    // A turn ahead: one warning per stack, naming each border it can stand beside by next turn.
+    const soonBy = new Map<string, { l: (typeof lostSoon)[number]; at: string[] }>();
+    for (const l of lostSoon) {
+      const key = `${l.player}|${l.seenOn}|${l.turn}`;
+      const e = soonBy.get(key) ?? { l, at: [] };
+      e.at.push(`${label(l.via)}, next to my ${label(l.t)}`);
+      soonBy.set(key, e);
+    }
+    for (const { l, at } of soonBy.values()) {
+      const more = at.length > MAX_NAMED_REVEALS ? ` and ${at.length - MAX_NAMED_REVEALS} more` : '';
+      warnings.push(
+        `Player ${l.player}'s stack of ${l.armies} armies last seen on ${label(l.seenOn)} on turn ${l.turn} is out of view and can stand on ${at.slice(0, MAX_NAMED_REVEALS).join('; ')}${more}, by next turn, and attack the turn after with up to ${l.movable} plus its deploy: not counted in this turn's holds${multiNote}.`,
       );
     }
   }
@@ -3208,6 +3264,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // #164: a player's unaccounted armies are one pool, in one place at most: its first hidden stack
     // next to `t` carries them; any other hidden stack of it there is the guard alone (movable 0).
     const pooled = new Set<number>();
+    const carrier = new Map<number, number>();
     for (const n of [...neighborsOf(g, t)].sort(byNum)) {
       const st = state.get(n);
       if (gone(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId)) continue;
@@ -3221,6 +3278,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         : pooled.has(st.owner.playerId)
           ? 0
           : hiddenMovable(st.owner.playerId);
+      if (hidden && !pooled.has(st.owner.playerId)) carrier.set(st.owner.playerId, n);
       if (hidden) pooled.add(st.owner.playerId);
       p.stacks.push({ id: n, movable });
       if (o.trend && !hidden) p.growth = Math.max(p.growth, growthOf.get(n)?.growth ?? 0);
@@ -3234,6 +3292,18 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (there) there.movable = Math.max(there.movable, l.movable);
       else p.stacks.push({ id: l.via, movable: l.movable });
       byPlayer.set(l.player, p);
+    }
+    // #164: a lost stack's armies left the visible total, so they are part of its owner's
+    // unaccounted armies: the pool's carrier keeps only what the lost stacks elsewhere on this
+    // border leave of it, so the two together are never more than the larger.
+    for (const [player, id] of carrier) {
+      const p = byPlayer.get(player)!;
+      const lostElsewhere = (lostAt.get(t) ?? []).filter((l) => l.player === player && l.via !== id && !gone(l.via));
+      if (!lostElsewhere.length) continue;
+      const c = p.stacks.find((x) => x.id === id)!;
+      const pool = hiddenMovable(player);
+      if (c.movable > pool) continue; // a lost stack via the carrier itself already set it
+      c.movable = Math.max(0, pool - lostElsewhere.reduce((n, l) => n + l.movable, 0));
     }
     if (!byPlayer.size) return null;
     const each = [...byPlayer]
@@ -4777,9 +4847,15 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (hiddenOwner !== undefined) {
       // #164: Dense / Heavy fog shows the owner and hides the armies.
       const tr = input.tracks?.find((x) => x.playerId === hiddenOwner);
+      const pool = hiddenPool(hiddenOwner);
+      const capped = pool.cap !== null && pool.unexplained > pool.cap;
       const bound =
         tr && tr.unexplained !== null
-          ? `up to ${hiddenMovable(hiddenOwner)} armies there (player ${hiddenOwner}'s unaccounted armies from the tracker, counted once per border however many of its hidden territories touch it) beyond the guard`
+          ? `up to ${hiddenMovable(hiddenOwner)} armies there (player ${hiddenOwner}'s unaccounted armies from the tracker${
+              capped
+                ? `, ${pool.unexplained} in all, at most ${HIDDEN_POOL_INCOMES} turns of its income in one place: the rest is taken as spread over its hidden territories, and a larger bank there would not show`
+                : ''
+            }, counted once per border however many of its hidden territories touch it) beyond the guard`
           : 'the guard alone there (no tracker figure for its unaccounted armies)';
       warnings.push(
         `${label(t)} (player ${hiddenOwner}) borders my ${sources.map(label).join(', ')} and its armies are hidden by the fog: the threat from it counts ${bound} plus its deploy, and the win chance of an attack into it is unknown, so none is planned.`,

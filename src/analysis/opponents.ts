@@ -33,7 +33,12 @@
 //
 // Stacks that left view (#164): each territory's last sighting of a large stack of its (at least
 // {@link LOST_STACK_INCOMES} × its visible income that turn, beyond the guard) that no later board
-// showed again — fogged, or its armies hidden — is kept with its turn (`lostStacks`); the planner
+// showed again — fogged, or its armies hidden — is kept with its turn (`lostStacks`), and so is a
+// large stack that walked off a territory still in view (Normal fog: what borders me never leaves
+// view) into the fog: the shrink beyond what its neighbours in view gained, with a neighbour the
+// fog hides, and no fight beside it. Under fog that hides every stack, an owner-only territory it
+// took counts in its army change at the guard, and the capture at what the defenders killed
+// (NEUTRAL_CAPTURE_LOSS when hidden), so its unaccounted armies are not all it earned; the planner
 // counts it at every border of mine it can reach by now, for {@link LOST_STACK_TURNS} turns. A
 // stack is tracked by territory, so each large stack of its that came into view after (not large
 // there on the board before) within the lost one's reach (one move a turn) is taken as it, or the
@@ -470,7 +475,21 @@ function armyChange(g: MapGraph, before: BoardState, after: BoardState, playerId
     if (!g.territoryById.has(id)) continue;
     const a = visibleState(now.get(id));
     const b = visibleState(was.get(id));
-    if (!a || !b) continue;
+    if (!a || !b) {
+      // #164: under fog that hides the stacks (Dense / Heavy fog), a territory whose owner shows on
+      // both boards and that it took is still a capture in view: it left at least the guard there,
+      // and the capture cost what the defenders killed (their armies when shown, a capture from me
+      // priced at the guard; a hidden defender NEUTRAL_CAPTURE_LOSS at least). Without this its
+      // unaccounted armies under Dense fog would be everything it earned.
+      const ao = ownerShown(now.get(id));
+      const bo = ownerShown(was.get(id));
+      if (!ao || !bo || ao.owner.kind !== 'player' || ao.owner.playerId !== playerId) continue;
+      if (bo.owner.kind === 'player' && bo.owner.playerId === playerId) continue;
+      net += a ? a.armies! : guard;
+      const fromMe = bo.owner.kind === 'player' && bo.owner.playerId === me;
+      losses += b ? straightKills(fromMe ? Math.min(b.armies!, guard) : b.armies!, defensive) : NEUTRAL_CAPTURE_LOSS;
+      continue;
+    }
     const mineNow = a.owner.kind === 'player' && a.owner.playerId === playerId;
     const mineThen = b.owner.kind === 'player' && b.owner.playerId === playerId;
     if (mineNow && mineThen) net += a.armies! - b.armies!;
@@ -1214,6 +1233,49 @@ export function trackOpponents(
         last = armies !== null ? { turn, armies } : null;
       }
       if (last && last.turn === lastShown && last.turn < lastTurn) candidates.push({ territoryId: id, turn: last.turn, armies: last.armies });
+    }
+    // Under Normal fog a territory next to mine never leaves view, so a stack that walks off it into
+    // the fog shows as a shrink, not a hidden territory: a large stack of its that shrank between two
+    // consecutive boards (its territory in view on both), beyond what its neighbours in view gained
+    // (its own that grew, captures of its, the defenders those killed), with a neighbour the fog
+    // hides on the later board, left view with what went missing (the guard counted on top, as on a
+    // standing stack). A shrink beside a fight — a neighbour in view of anyone else's that shrank or
+    // changed hands — is skipped: the board cannot tell a lost attack from a move.
+    const defensive = settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
+    for (let i = 1; i < turns.length; i++) {
+      const from = turns[i - 1]!;
+      const to = turns[i]!;
+      if (to !== from + 1 || lastTurn - from > LOST_STACK_TURNS) continue;
+      const was = shownOn(from);
+      const now = shownOn(to);
+      const its = (st: BoardState['territories'][number] | undefined) =>
+        st !== undefined && st.owner.kind === 'player' && st.owner.playerId === playerId;
+      for (const id of [...g.territoryById.keys()].sort(byNum)) {
+        const b = visibleState(was.get(id));
+        const a = visibleState(now.get(id));
+        if (!its(b) || !its(a) || !largeAt(from, b!.armies!)) continue;
+        const drop = b!.armies! - a!.armies!;
+        if (drop <= 0) continue;
+        let inView = 0;
+        let fight = false;
+        let hiddenNext = false;
+        for (const n of neighborsOf(g, id)) {
+          const nb = visibleState(was.get(n));
+          const na = visibleState(now.get(n));
+          if (!na) {
+            hiddenNext = true;
+            continue;
+          }
+          if (its(na)) {
+            if (its(nb)) inView += Math.max(0, na.armies! - nb!.armies!);
+            else inView += na.armies! + (nb ? straightKills(nb.armies!, defensive) : 0);
+          } else if (nb && (its(nb) || nb.owner.kind !== na.owner.kind || (nb.owner.kind === 'player' && na.owner.kind === 'player' && nb.owner.playerId !== na.owner.playerId) || na.armies! < nb.armies!))
+            fight = true;
+        }
+        const gone = drop - inView;
+        if (fight || !hiddenNext || gone <= 0 || !largeAt(from, gone + guard)) continue;
+        candidates.push({ territoryId: id, turn: from, armies: gone + guard });
+      }
     }
     // A stack is tracked by territory, so one that moved into view elsewhere would still read as
     // lost. Each large stack of its that appeared in view after a lost one (not large there on the

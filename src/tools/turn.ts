@@ -1005,7 +1005,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'base income plus its visible bonuses, or its observed deploy when larger — its tracked income, carried across turns, once ' +
           'warapp_track_opponents has 2+ turns of it — and in an even-start 1v1 at least your income when it borders the fog; ' +
           'exact where the fog shows every owner (No, Light, Dense fog); plus its Reinforcement card from the turn the card clock says it can hold one; ' +
-          'a neighbour whose armies the fog hides counts its unaccounted armies, and a large stack that left view counts where it can reach; ' +
+          'a neighbour whose armies the fog hides counts its unaccounted armies (at most two turns of its income), and a large stack that left view counts where it can reach, with a warning a turn ahead where it can stand beside a border next turn; ' +
           'growth beside the fog beyond twice what it was expected to deploy reads as a move out of the fog, not a deploy). Obeys the kill rates, luck, rounding, Local ' +
           'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement (in a team ' +
           "game only when cards must be shed: the hand is the team's), and Order Priority only when the plan advises it (a " +
