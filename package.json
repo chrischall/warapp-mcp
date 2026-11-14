@@ -41,7 +41,7 @@
     "dev": "node dist/bundle.js",
     "test": "npm run typecheck && npm run lint && vitest run",
     "test:watch": "vitest",
-    "test:coverage": "npm run typecheck && vitest run --coverage",
+    "test:coverage": "npm run typecheck && npm run lint && vitest run --coverage",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "lint": "biome lint --error-on-warnings"
   },

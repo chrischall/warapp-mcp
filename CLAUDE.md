@@ -593,5 +593,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 
 ## Commands
 
-`npm run build` (tsc --noEmit + esbuild bundle) · `npm test` (typecheck + vitest) ·
-`npm run test:coverage` · `npm run typecheck`.
+`npm run build` (tsc --noEmit + esbuild bundle) · `npm test` (typecheck + lint + vitest) ·
+`npm run test:coverage` (what CI runs: `npm test` plus the coverage thresholds in `vitest.config.ts`) · `npm run typecheck` ·
+`npm run lint` (Biome, lint only — no formatter; `biome.json` turns off the house-style rules such as
+`noNonNullAssertion`, which `noUncheckedIndexedAccess` makes the idiom). `exactOptionalPropertyTypes`
+is off until `src/analysis/planner.ts` is clean under it.
