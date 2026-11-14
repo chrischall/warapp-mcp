@@ -74,6 +74,25 @@ describe('planTurn with the guard off (#165)', () => {
     expect(p.rationale.join('\n')).toMatch(/One Army Must Stand Guard is off: [^\n]*T3 \(#3\)/);
   });
 
+  it('pays the army a territory at 0 next to an enemy is owed before any other deploy', () => {
+    // T3 starts at 0 next to an enemy at 4; T1 and T2 hold 6 each.
+    const b = board([mine(1, 6), mine(2, 6), mine(3, 0), mine(4, 4, FOE), mine(5, 3, FOE), neutral(6, 9)]);
+    for (const goal of ['balanced', 'expand', 'defend'] as const) {
+      const p = plan(b, 5, OFF, { goal });
+      expect(p.deploys.find((d) => d.territoryId === 3)?.armies ?? 0, goal).toBeGreaterThanOrEqual(1);
+      expect(left(b, p, 3), goal).toBeGreaterThanOrEqual(1);
+      expect(guardOffExposure({ graph: G, board: b, me: ME, deploys: p.deploys, moves: p.moves }).emptied, goal).toEqual([]);
+      expect(p.rationale.join('\n'), goal).toMatch(/One Army Must Stand Guard is off: [^\n]*T3 \(#3\)/);
+    }
+  });
+
+  it('does not claim a territory at 0 keeps one army when there is nothing to deploy there', () => {
+    const b = board([mine(1, 6), mine(2, 6), mine(3, 0), mine(4, 4, FOE), mine(5, 3, FOE), neutral(6, 9)]);
+    const p = plan(b, 0);
+    expect(left(b, p, 3)).toBe(0);
+    expect(p.rationale.join('\n')).not.toMatch(/One Army Must Stand Guard is off: [^\n]*T3 \(#3\)/);
+  });
+
   it('under No-Split an order still sends the whole stack', () => {
     const b = board([mine(1, 1), mine(2, 1), mine(3, 4), mine(4, 9, FOE), mine(5, 3, FOE), neutral(6, 2)]);
     const p = plan(b, 0, { ...OFF, noSplit: true });
@@ -90,9 +109,23 @@ describe('planTurn with the guard off (#165)', () => {
       if (goal !== 'balanced') {
         expect(hit[0]!.armies, goal).toBe(1);
         expect(hit[0]!.reason, goal).toMatch(/One Army Must Stand Guard is off/);
+        // A later rule may size the attack up, so the reason does not promise one army.
+        expect(hit[0]!.reason, goal).toMatch(/: an attack breaks player 20's bonus/);
       }
       expect(p.expected.captures, goal).toContain(4);
       expect(left(b, p, 3), goal).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('breaks a bonus from a territory at 0 only after paying its own army', () => {
+    // T3 starts at 0 between my T2 and an empty enemy T4 whose loss breaks B100.
+    const b = board([mine(1, 1), mine(2, 1), mine(3, 0), mine(4, 0, FOE), mine(5, 6, FOE), neutral(6, 9)]);
+    for (const goal of ['balanced', 'expand', 'defend'] as const) {
+      const p = plan(b, 2, OFF, { goal, enemyDeploy: 12 });
+      expect(left(b, p, 3), goal).toBeGreaterThanOrEqual(1);
+      const short = plan(b, 1, OFF, { goal, enemyDeploy: 12 });
+      expect(left(b, short, 3), goal).toBeGreaterThanOrEqual(1);
+      expect(short.moves.filter((m) => m.from === 3), goal).toEqual([]);
     }
   });
 
@@ -162,6 +195,16 @@ describe('planTurn with the guard off (#165)', () => {
         const out = p.moves.some((m) => m.from === t.territoryId);
         const nextToFoe = G.neighbors.get(t.territoryId)!.some((n) => owners[n - 1] === FOE);
         if (out && nextToFoe) expect(left(b, p, t.territoryId), `board ${i}, territory ${t.territoryId}`).toBeGreaterThanOrEqual(1);
+        // A territory at 0 next to an enemy is paid its army first, when the income covers them all.
+        const owed = b.territories.filter(
+          (x) =>
+            x.owner.kind === 'player' &&
+            x.owner.playerId === ME &&
+            x.armies === 0 &&
+            G.neighbors.get(x.territoryId)!.some((n) => owners[n - 1] === FOE),
+        ).length;
+        if (nextToFoe && t.armies === 0 && income >= owed)
+          expect(left(b, p, t.territoryId), `board ${i}, territory ${t.territoryId} (owed)`).toBeGreaterThanOrEqual(1);
       }
     }
   });

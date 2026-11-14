@@ -2657,10 +2657,6 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   );
   /** Armies that stay on my `id` whatever its orders: the guard, or (#165) the army kept next to an enemy. */
   const guardAt = (id: number) => (guard || sentinel.has(id) ? 1 : 0);
-  if (sentinel.size)
-    rationale.push(
-      `One Army Must Stand Guard is off: every army may move, but an empty territory falls to any single army, so ${[...sentinel].sort(byNum).map(label).join(', ')} ${sentinel.size === 1 ? 'keeps' : 'each keep'} one army (next to an enemy).`,
-    );
   // May start at −1 (a 0-army territory still owes its guard): deploys there pay for it first.
   const avail = new Map(mine.map((id) => [id, armiesOf(id) - guardAt(id)]));
   const locked = new Set<number>();
@@ -2779,6 +2775,19 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   };
   /** Armies a capture may still deploy on `id`: its room, less the reserve. */
   const spareAt = (id: number) => Math.min(budget - reserve, roomAt(id));
+  // #165: a sentinel that starts the turn at 0 owes its army: paid from the income before any other
+  // deploy (the reserve holds back captures only). One the income (or its pool) cannot pay stays at
+  // 0, and the rationale does not claim it keeps one army.
+  for (const id of [...sentinel].sort(byNum)) {
+    const owed = -avail.get(id)!;
+    if (owed > 0) deploy(id, Math.min(owed, roomAt(id)));
+  }
+  const sentinelHeld = [...sentinel].filter((id) => avail.get(id)! >= 0).sort(byNum);
+  const paid = sentinelHeld.filter((id) => armiesOf(id) === 0);
+  if (sentinelHeld.length)
+    rationale.push(
+      `One Army Must Stand Guard is off: every army may move, but an empty territory falls to any single army, so ${sentinelHeld.map(label).join(', ')} ${sentinelHeld.length === 1 ? 'keeps' : 'each keep'} one army (next to an enemy)${paid.length ? `; ${paid.map(label).join(', ')} ${paid.length === 1 ? 'starts at 0, so its army is' : 'start at 0, so their armies are'} deployed first` : ''}.`,
+    );
   if (local) {
     rationale.push(
       `Local Deployment: ${pools.anywhere} of the ${income} income may be deployed anywhere; each held bonus's armies stay inside it.`,
@@ -3080,7 +3089,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     else split = undefined;
     // #163: a Bomb halves my stack before the attack (the smaller half stays; a commander is
     // unharmed), so it holds only with twice the armies: the threat becomes the attack that the
-    // doubled stack just holds against.
+    // doubled stack just holds against. Where toTake is flat across 2·armies+u−1 and 2·armies+u
+    // (luck, weighted rounding) no threat maps to a hold of exactly 2·armies+u, so this rounds up
+    // to the next hold a threat can express: larger, never smaller.
     if (bombOn) {
       const u = mineSet.has(t) ? unitsAt(t) : 0;
       const armies = Math.max(0, holdArmies(threat) - u);
@@ -6304,7 +6315,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       let src = near.map((x) => ({ x, spare: spareOf(x) })).filter((o) => o.spare >= 1).sort((a, b) => b.spare - a.spare || a.x - b.x)[0]?.x;
       let bought = 0;
       if (src === undefined && budget - reserve >= 1) {
-        src = near.filter((x) => !conceded.has(x) && roomAt(x) >= 1).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b)[0];
+        src = near.filter((x) => !conceded.has(x) && avail.get(x)! >= 0 && roomAt(x) >= 1).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b)[0];
         if (src !== undefined) {
           deploy(src, 1);
           bought = 1;
@@ -6318,7 +6329,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       captureOrder.push(n);
       captureUndo.set(n, () => avail.set(from, avail.get(from)! + 1));
       if (!targets.has(n)) targets.set(n, { id: n, cost: 1, enemy: true, sources: near });
-      const reason = `One Army Must Stand Guard is off and ${label(n)} stands at 0: one army breaks player ${e.playerId}'s bonus ${bonusName(e.bonusId)} (+${e.value}) unless it deploys there first`;
+      const reason = `One Army Must Stand Guard is off and ${label(n)} stands at 0: an attack breaks player ${e.playerId}'s bonus ${bonusName(e.bonusId)} (+${e.value}) unless it deploys there first`;
       moves.push({ from, to: n, armies: 1, kind: 'attack', reason, winChance: chanceOf(1, 0) });
       rationale.push(`Attack ${label(n)} from ${label(from)} with 1${bought ? ' (deploy 1 there)' : ''}: ${reason}.`);
     }
