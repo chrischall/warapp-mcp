@@ -119,3 +119,87 @@ describe('#201: absorb a smaller neighbour only when it closes the gap to the le
     expect(attacks(run(10, false)).some((m) => m.to === 2)).toBe(true);
   });
 });
+
+describe('#201: the FFA leader holds against every adjacent opponent together', () => {
+  // My T1 (+5 bonus B801) faces player 20's T2 and player 30's T3, each 9 armies. Each alone (8
+  // movable + its ~5 deploy = 13) cannot take my 12 (16 to take); together they can. I lead on
+  // strength (my 60-stack T4 far away), so T1 is held against both at once.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5],
+      [
+        [1, 2],
+        [1, 3],
+        [1, 4],
+        [4, 5],
+      ],
+      [[801, 5, [1]]],
+    ),
+  );
+  const run = (adapt: boolean, myStack = 60) =>
+    planTurn({
+      graph: g,
+      board: board([mine(1, 12), enemy(2, 9, 20), enemy(3, 9, 30), mine(4, myStack), neutral(5, 50)]),
+      me: ME,
+      income: 10,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: adapt ? { adapt: true, enemyDeploy: 5 } : { goal: 'balanced', enemyDeploy: 5 },
+    });
+  const at = (p: TurnPlan, t: number) => p.deploys.filter((d) => d.territoryId === t).reduce((n, d) => n + d.armies, 0);
+
+  it('leading, the border is sized for both opponents together', () => {
+    const p = run(true);
+    expect(p.profile.ranking?.leader).toBe(ME);
+    expect(at(p, 1)).toBeGreaterThan(0);
+    expect(p.rationale.join('\n')).toMatch(/I lead this free-for-all \(#201\): T1 \(#1\) is held against players 20 and 30 attacking together/);
+  });
+
+  it('not adapting, each player is judged alone (the pile-on is a warning)', () => {
+    const p = run(false);
+    expect(p.rationale.join('\n')).not.toMatch(/I lead this free-for-all/);
+  });
+});
+
+describe('#201: the FFA leader sizes a break to land against one deploy', () => {
+  // My 40 on T1 beside player 20's T2 (2 armies), a member of its +4 B802 (T2, T3). Player 20's
+  // ~6 deploy can land on T2 first: the leader's break is sized for 2 + 6. Player 30 holds T5, T6.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5, 6],
+      [
+        [1, 2],
+        [2, 3],
+        [3, 4],
+        [1, 5],
+        [5, 6],
+      ],
+      [[802, 4, [2, 3]]],
+    ),
+  );
+  const run = (adapt: boolean) =>
+    planTurn({
+      graph: g,
+      board: board([mine(1, 40), enemy(2, 2, 20), enemy(3, 2, 20), enemy(4, 3, 20), enemy(5, 3, 30), enemy(6, 3, 30)]),
+      me: ME,
+      income: 12,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: adapt ? { adapt: true, enemyDeploy: 6 } : { goal: 'balanced', enemyDeploy: 6 },
+    });
+
+  it('leading: the break attack takes 2 + 6 defenders for certain', () => {
+    const p = run(true);
+    expect(p.profile.ranking?.leader).toBe(ME);
+    const a = attacks(p).find((m) => m.to === 2);
+    expect(a).toBeDefined();
+    // 8 defenders: 13 take them for certain at 60% (13 × 0.6 = 7.8, rounded to 8).
+    expect(a!.armies).toBeGreaterThanOrEqual(13);
+    expect(a!.reason).toMatch(/sized to land against player 20's ~6 deploy \(#201: I lead this free-for-all\)/);
+  });
+
+  it('not adapting: the break is sized for the defenders as they stand', () => {
+    const a = attacks(run(false)).find((m) => m.to === 2);
+    expect(a?.reason ?? '').not.toMatch(/#201/);
+  });
+});

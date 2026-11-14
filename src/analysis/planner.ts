@@ -97,7 +97,10 @@
 //     softeners + what the last (the deploy on it) takes, best last stack (`forceAt`).
 //     Opponents on one team attack together (their stacks and deploys combine); two FFA
 //     players are judged alone, and a border that holds against each but not against both in
-//     one turn gets a warning. Teammates (the game's team list) are never a threat, an
+//     one turn gets a warning — except (#201) when I lead an FFA on strength (adapting, two or more
+//     opponents left): the others may combine against the leader, so every adjacent opponent's
+//     stacks and deploys count together, like a team's, and a rationale line names each border held
+//     so ("I lead this free-for-all …"). Teammates (the game's team list) are never a threat, an
 //     estimate or a target. Under Local Deployment an opponent's visibly held bonus pays
 //     only into its own territories: what reaches T is its estimate less its visible pools
 //     plus the pools that contain one of its stacks next to T. An enemy commander counts in
@@ -558,7 +561,9 @@
 //     bonus (#72: sized to land, not to survive — aimed at its cheapest visible member, worth
 //     BREAK_WEIGHT / opponents × (its value + the armies retaking it costs, at least
 //     armiesToTake(my survivors), / PAYBACK_TURNS) over its capture cost plus the frontier it
-//     changes without its own hold need, warning when it can be retaken), or a counter-attack
+//     changes without its own hold need, warning when it can be retaken; #201: when I lead an FFA,
+//     sized to land for certain against its owner's one deploy there, as rule 1e sizes a target, and
+//     its reason says so), or a counter-attack
 //     (scored like a break worth no bonus). Every break and counter-attack considered is
 //     reported in `offence` with whether it was made and why (a bonus broken through another
 //     member, by any path, counts as made). A threatened border whose only
@@ -2710,6 +2715,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (!(opts.adapt === true && opts.goal === undefined) || !r || r.commonThreat === null || r.players.length < 2) return undefined;
     return r.players[0]!.strength >= AHEAD_RATIO * r.players[1]!.strength ? r.commonThreat : undefined;
   })();
+  /**
+   * #201: I lead this free-for-all on strength (adapting, two or more opponents left): the others
+   * may combine against me, so a border is held against every adjacent opponent together, and a
+   * break is sized to land against its owner's one deploy.
+   */
+  const ffaLeader = opts.adapt === true && opts.goal === undefined && profile.format === 'ffa' && profile.opponents >= 2 && profile.ranking?.leader === me;
   /** "3.3×" */
   const leadText = () => (Number.isFinite(armyLead.ratio) ? `${(Math.round(armyLead.ratio * 10) / 10).toFixed(1)}×` : 'unbounded (no opponent army in view)');
   /** My territories where my own commander stands: must-hold (rule 1k). */
@@ -3463,7 +3474,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (mates) mates.push(e);
       else groups.push([e]);
     }
-    if (o.pileOn) groups.splice(0, groups.length, each);
+    // #201: the FFA leader holds against every adjacent opponent together.
+    if (o.pileOn || (o.allPlayers && ffaLeader)) groups.splice(0, groups.length, each);
     for (const group of groups) {
       const count = group.reduce((n, e) => n + e.stacks.length, 0);
       if (count < 2) continue;
@@ -6968,7 +6980,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
     // A break is sized to land (#72): its score leaves out what holding it would need.
     const breakOption = (t: number) => {
-      const cost = targets.get(t)!.cost;
+      // #201: the FFA leader's break is sized to land for certain against its owner's one deploy.
+      const landing = ffaLeader ? defenceAt(t) + reinforcementAt(t) : undefined;
+      const cost = (landing !== undefined ? captureCost(landing, s) : null) ?? targets.get(t)!.cost;
       const survivors = cost - straightKills(defenceAt(t), rates.defensiveKillRate);
       const counter = counterThreat(t);
       const take = toTake(survivors);
@@ -7093,7 +7107,18 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         run: spend(() => {
           // Already broken (by a border attacking its only threat): one capture is enough.
           if (broken(b)) return;
-          if (!tryCapture(o.t, breakReason(b))) return;
+          if (ffaLeader && o.cost > targets.get(o.t)!.cost) {
+            const tg = targets.get(o.t)!;
+            const was = worstCase.get(o.t);
+            targets.set(o.t, { ...tg, cost: o.cost });
+            worstCase.set(o.t, defenceAt(o.t) + reinforcementAt(o.t));
+            if (!tryCapture(o.t, `${breakReason(b)}, sized to land against player ${b.player}'s ~${reinforcementAt(o.t)} deploy (#201: I lead this free-for-all)`)) {
+              targets.set(o.t, tg);
+              if (was === undefined) worstCase.delete(o.t);
+              else worstCase.set(o.t, was);
+              return;
+            }
+          } else if (!tryCapture(o.t, breakReason(b))) return;
           anchor ??= moves[moves.length - 1]!.from;
           warnRetake(b, o);
         }),
@@ -9587,6 +9612,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const take = toTake(have + unitsAt(id));
     warnings[i] += ` Before this turn's deploys: the plan deploys ${n} there, leaving ${have} armies (${take ?? 'none can'} to take${take !== null && take > threat ? `, more than the ${threat} that can reach it: it holds` : `; the ${threat} that can reach it still could`}).`;
   }
+  // #201: the FFA leader's borders held against two or more opponents attacking together.
+  if (ffaLeader)
+    for (const id of [...borders.keys()].sort(byNum)) {
+      if (conceded.has(id) || !mineSet.has(id)) continue;
+      const f = forceAt(id, (n) => captured.has(n), { trend: true, allPlayers: true });
+      if (!f?.split || f.split.players.length < 2) continue;
+      rationale.push(
+        `I lead this free-for-all (#201): ${label(id)} is held against players ${f.split.players.join(' and ')} attacking together (${f.split.attacks.join(' then ')}, up to ${f.split.takes} armies), not each alone: the others may combine against the leader.`,
+      );
+    }
   // #128: a border that holds against each opponent alone but not against two of them attacking
   // it in the same turn (FFA players do not coordinate, so this is a warning, not a hold).
   for (const id of [...borders.keys()].sort(byNum)) {
