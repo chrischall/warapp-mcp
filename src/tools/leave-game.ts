@@ -25,8 +25,9 @@ const LOBBY = 'WaitingForPlayers';
 
 /**
  * The DeclineGame refusals the client words (read from the bundle). It also swallows 17
- * (NotInGame), 4 and 7 (InvalidPlayerState) without a word; here 17 and 7 are read back from
- * game state like an accepted leave, and 4 — the game has begun, so the seat was kept — is worded.
+ * (NotInGame), 4 and 7 (InvalidPlayerState) without a word; here all three are read back from
+ * game state like an accepted leave ({@link READ_BACK_ERRORS}), so game state, not a guessed
+ * wording, says whether the seat is gone.
  */
 const LEAVE_ERRORS: Readonly<Record<number, string>> = {
   191: 'You cannot leave an open game you created; delete it in war.app instead.',
