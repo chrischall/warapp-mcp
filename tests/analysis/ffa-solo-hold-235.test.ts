@@ -115,9 +115,111 @@ describe('#235: a border whose loss cuts my holdings in two protects what it cut
     expect(p.rationale.join('\n')).toMatch(/Deploy \d+ to T1 \(#1\) so it holds \(protects \+2\)/);
   });
 
+  it('a cut that leaves only a 1-army leaf, no income, is not named (it cannot change the judgement)', () => {
+    // T1 now cuts off only T6's 1 army (T4 joins via T8): worth 1 / PAYBACK_TURNS, nothing to say.
+    const p = planTurn({
+      graph: buildGraph(makeMap([1, 2, 4, 5, 6, 7, 8], [[1, 2], [1, 4], [1, 6], [4, 8], [7, 8], [4, 5]], [[901, 2, [4]]])),
+      board: board([mine(1, 5), enemy(2, 9, 20), mine(4, 60), neutral(5, 80), mine(6, 1), mine(7, 1), mine(8, 1)]),
+      me: ME,
+      income: 7,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }], turn: 8 },
+      options: { goal: 'balanced', enemyDeploy: 5 },
+    });
+    expect(p.rationale.join('\n')).not.toMatch(/links my holdings/);
+  });
+
   it('with another link (T4–T8), nothing is cut off: conceded as before', () => {
     const p = run(false);
     expect(p.conceded).toContain(1);
     expect(p.rationale.join('\n')).not.toMatch(/links my holdings/);
+  });
+});
+
+describe('#235 review: the FFA leader judges a held bonus on the strongest single opponent', () => {
+  // The triangle above with T4 = 90 and T1 = 9; players 20 and 30 hold 8 each beside T1. Each alone
+  // (7 + its ~5 deploy = 12) cannot take T1's 9 (15 to take); the two together can. With the +1
+  // bonus B901 = {T1, T6} held in full, rule 1h's unit judged T1 on the two together and conceded
+  // the bonus — a held bonus left less protected than the same border without one.
+  const g = (bonus: boolean) =>
+    buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 6],
+        [
+          [1, 2],
+          [1, 3],
+          [1, 4],
+          [1, 6],
+          [4, 6],
+          [4, 5],
+        ],
+        bonus ? [[901, 1, [1, 6]]] : [],
+      ),
+    );
+  const run = (bonus: boolean) =>
+    planTurn({
+      graph: g(bonus),
+      board: board([mine(1, 9), enemy(2, 8, 20), enemy(3, 8, 30), mine(4, 90), neutral(5, 50), mine(6, 2)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: { adapt: true, enemyDeploy: 5 },
+    });
+
+  it('without a bonus: T1 holds against each alone (the baseline)', () => {
+    const p = run(false);
+    expect(p.profile.ranking?.leader).toBe(ME);
+    expect(p.conceded).not.toContain(1);
+  });
+
+  it('with the held bonus: not conceded, the bonus kept, sized for the single opponent', () => {
+    const p = run(true);
+    expect(p.profile.ranking?.leader).toBe(ME);
+    expect(p.conceded).not.toContain(1);
+    expect(outOf(p, 1)).toEqual([]);
+    const w = p.warnings.join('\n');
+    expect(w).not.toMatch(/T1 \(#1\) cannot be held/);
+    expect(w).not.toMatch(/conced\w* bonus B901/);
+    expect(p.rationale.join('\n')).toMatch(
+      /I lead this free-for-all \(#201\), but holding bonus B901 \(#901\) \(\+1\) against players attacking together needs \d+: more than the 5 I can deploy, so its borders are sized for the strongest single opponent, as FFA players attack alone \(#235\): they hold on what they have/,
+    );
+  });
+});
+
+describe('#235 review sweep: a held bonus never leaves its border less protected than no bonus', () => {
+  const edges: [number, number][] = [
+    [1, 2],
+    [1, 3],
+    [1, 4],
+    [1, 6],
+    [4, 6],
+    [4, 5],
+  ];
+  const plan = (bonus: boolean, e: number, t1: number, income: number) =>
+    planTurn({
+      graph: buildGraph(makeMap([1, 2, 3, 4, 5, 6], edges, bonus ? [[901, 1, [1, 6]]] : [])),
+      board: board([mine(1, t1), enemy(2, e, 20), enemy(3, e, 30), mine(4, 90), neutral(5, 50), mine(6, 2)]),
+      me: ME,
+      income,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: { adapt: true, enemyDeploy: 5 },
+    });
+
+  it('over enemies 8–20, T1 5–40, income 5 or 10: the bonus run concedes T1 only when the plain run does', () => {
+    const worse: string[] = [];
+    let soloBonus = 0;
+    for (const income of [5, 10])
+      for (let e = 8; e <= 20; e += 2)
+        for (let t1 = 5; t1 <= 40; t1 += 5) {
+          const plain = plan(false, e, t1, income);
+          const held = plan(true, e, t1, income);
+          if (held.rationale.some((l) => l.includes('holding bonus B901'))) soloBonus++;
+          if (held.conceded.includes(1) && !plain.conceded.includes(1)) worse.push(`income ${income}, enemies ${e}, T1 ${t1}`);
+        }
+    expect(worse).toEqual([]);
+    // The sweep reaches the new path.
+    expect(soloBonus).toBeGreaterThan(0);
   });
 });

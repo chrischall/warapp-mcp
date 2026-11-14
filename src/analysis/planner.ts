@@ -193,8 +193,12 @@
 //     joint hold costs more than CONCEDE_FACTOR × its worth (rule 1a) or the whole income, while
 //     its hold against the strongest single opponent passes both, is sized for that opponent
 //     (`soloHeld`, read by `borderAt` and `threatAt`), as in any FFA, with #128's pile-on warning;
-//     never my commander's territory, nor a member of a bonus I hold in full (rule 1h's units
-//     judge those). A rationale line says so ("… as FFA players attack alone (#235)") when the plan
+//     never my commander's territory. A member of a bonus I hold in full is judged with its bonus
+//     (#235 review): when the unit sized for them together costs more than the income (rule 1h
+//     could never hold it whole) while the unit sized for the strongest single opponent pays, the
+//     members that sizing lowers are sized so ("holding bonus … against players attacking together
+//     …"), unless another held bonus that fits the income holds them too; a joint unit within the
+//     income keeps #201's sizing (rule 1h contests it, #118). A rationale line says so ("… as FFA players attack alone (#235)") when the plan
 //     keeps it (live: a 23-stack that held against each neighbour alone, even at a 40 deploy, was
 //     conceded on the two together and withdrawn as the first order). Teammates (the game's team list) are never a threat, an
 //     estimate or a target. Under Local Deployment an opponent's visibly held bonus pays
@@ -413,7 +417,9 @@
 //     protects what it cuts off — every part but the largest (most territories, then armies, then
 //     id): their income (positive bonuses held in full inside them, plus their per-territory
 //     income) in its protected value, their armies in its worth (/ PAYBACK_TURNS) — and a
-//     rationale line names the cut ("… links my holdings: losing it cuts off …"). Its hold cost is the fewest
+//     rationale line names the cut ("… links my holdings: losing it cuts off …") when it can change
+//     the judgement: income, or at least PAYBACK_TURNS armies (never a 1-army leaf). The cut's
+//     per-territory share uses my start-of-turn count, as the border's own does. Its hold cost is the fewest
 //     deploys making `armiesToTake(armies + d) > threat`. Every border facing one
 //     opponent is sized for that opponent's whole deploy (#69): it picks where to land
 //     after I commit, so that is each border's worst case, and a sure hold of several

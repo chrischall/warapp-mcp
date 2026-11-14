@@ -181,12 +181,19 @@ export function holdBasics(pc: PlanCtx, ps: PlanState, book: DeployBook, threats
  * passes both, is sized for that opponent instead (`ps.soloHeld`, read by `borderAt`), as in any FFA: two players landing
  * on it in one turn is #128's warning, never the cost that concedes it (live: a 23-stack that held
  * against each neighbour alone was conceded on the two together and withdrawn as the first order).
- * Never my commander's territory (rule 1k holds it against everything), nor a member of a bonus I
- * hold in full: rule 1h's units judge those whole, and may hold them when they do not pay (#118).
+ * Never my commander's territory (rule 1k holds it against everything). A member of a bonus I hold
+ * in full is judged with its bonus, as rule 1h's unit judges it (#235 review): when the unit sized for
+ * them together costs more than the income — it can never be held whole, so rule 1h concedes it — while
+ * the unit sized for the strongest single opponent pays (within PAYBACK_TURNS × its value and
+ * CONCEDE_FACTOR × its worth, and the income), every member that sizing lowers is sized so, unless
+ * another bonus I hold that can be held whole on the joint sizing also holds it. A joint unit within
+ * the income keeps #201's sizing even when it does not pay: rule 1h contests it and holds it whole from
+ * what the captures leave (#118). So a held bonus never leaves its border less protected than the
+ * same border with no bonus.
  */
 export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, threats: Threats, prev: HoldsUpTo0) {
-  const { g, ffaLeader, paybackTurns, label, unitsAt, toTake, myCommanders } = pc;
-  const { valueOf, stakeAt } = book;
+  const { g, ffaLeader, paybackTurns, label, bonusName, unitsAt, toTake, myCommanders } = pc;
+  const { valueOf, stakeAt, pools } = book;
   const { borders, borderAt, safeAtStart } = threats;
   const { uneconomic, stayAt } = prev;
   if (!ffaLeader) return;
@@ -201,6 +208,15 @@ export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, th
     let d = 0;
     while ((toTake(have + d) ?? Infinity) <= threat) d++;
     return d;
+  };
+  /** Size my `id` for its strongest single opponent (`line` says why), as `borderAt` reads it. */
+  const soloSize = (id: number, line: string) => {
+    const have = stayAt(id);
+    const units = unitsAt(id);
+    ps.soloHeld.set(id, line);
+    const solo = borderAt(id, () => false);
+    if (solo) borders.set(id, solo);
+    if ((toTake(have + units) ?? Infinity) > (solo?.threat ?? 0)) safeAtStart.add(id);
   };
   for (const b of [...borders.values()].sort((x, y) => x.id - y.id)) {
     if (b.alone === undefined || !b.split || myCommanders.has(b.id) || inHeldBonus(b.id)) continue;
@@ -223,10 +239,59 @@ export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, th
       `I lead this free-for-all (#201), but holding ${label(b.id)} against players ${b.split.players.join(' and ')} attacking together needs ${joint} (protects +${value}, worth ~${Math.round(worth * 10) / 10}): ${
         dear ? 'more than CONCEDE_FACTOR × its worth' : `more than the ${ps.budget} I can deploy`
       }, so it is sized for the strongest single opponent (~${b.alone}), as FFA players attack alone (#235)${single ? `: it needs ${single}` : ': it holds on what it has'}.`;
-    ps.soloHeld.set(b.id, line);
-    const solo = borderAt(b.id, () => false);
-    if (solo) borders.set(b.id, solo);
-    if ((toTake(have + units) ?? Infinity) > (solo?.threat ?? 0)) safeAtStart.add(b.id);
+    soloSize(b.id, line);
+  }
+  // #235 review: a bonus I hold in full, judged whole as rule 1h's unit judges it.
+  const local = pools !== null && pools.bonuses.length > 0;
+  /** Each held bonus: its members the single-opponent sizing lowers, and whether its joint unit fits the income. */
+  const judged: { bonusId: number; lowered: number[]; fits: boolean }[] = [];
+  /** The line each bonus sized for the strongest single opponent gives its members. */
+  const soloLines = new Map<number, string>();
+  for (const bonus of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
+    const ts = bonusTerritories(g, bonus.id);
+    if (bonus.value <= 0 || !ts.length || !ts.every((x) => ps.holdings.has(x))) continue;
+    // Its threatened members, my commander's left out (rule 1k holds it whatever it costs).
+    const members = ts.filter((t) => borders.has(t) && !myCommanders.has(t)).sort(byNum);
+    if (!members.length) continue;
+    let joint = 0;
+    let single = 0;
+    let worth = bonus.value;
+    let recent = false;
+    const lowered: number[] = [];
+    for (const t of members) {
+      const b = borders.get(t)!;
+      const have = stayAt(t) + unitsAt(t);
+      const j = costFor(have, b.threat);
+      const one = b.alone !== undefined && b.split ? costFor(have, b.alone) : j;
+      joint += j;
+      single += one;
+      if (one < j) lowered.push(t);
+      worth += (stayAt(t) + stakeAt(t)) / paybackTurns;
+      const from = threats.recentlyTakenFrom(t);
+      if (from !== undefined && from === b.player) recent = true;
+    }
+    const pool = local ? (pools.bonuses.find((p) => p.bonusId === bonus.id)?.value ?? 0) : 0;
+    const pays = (cost: number) => {
+      const net = Math.max(0, cost - pool);
+      return net <= paybackTurns * bonus.value && (recent || net <= CONCEDE_FACTOR * worth) && cost <= ps.budget;
+    };
+    const fits = joint <= ps.budget;
+    judged.push({ bonusId: bonus.id, lowered, fits });
+    if (!fits && lowered.length && pays(single)) {
+      soloLines.set(
+        bonus.id,
+        `I lead this free-for-all (#201), but holding bonus ${bonusName(bonus.id)} (+${bonus.value}) against players attacking together needs ${joint}: more than the ${ps.budget} I can deploy, so its borders are sized for the strongest single opponent, as FFA players attack alone (#235)${single ? `: they need ${single}` : ': they hold on what they have'}.`,
+      );
+    }
+  }
+  for (const j of judged) {
+    const line = soloLines.get(j.bonusId);
+    if (!line) continue;
+    for (const t of j.lowered) {
+      // A border another held bonus can hold whole against them together keeps #201's sizing.
+      if (judged.some((o) => o !== j && o.fits && bonusTerritories(g, o.bonusId).includes(t))) continue;
+      if (!ps.soloHeld.has(t)) soloSize(t, line);
+    }
   }
 }
 
@@ -467,9 +532,11 @@ export function holdOrConcede(
       let d = 1;
       while ((toTake(have + units + d) ?? Infinity) <= b.threat) d++;
       const value = valueOf(b.id);
-      // #235: a border whose loss cuts my holdings in two protects what it cuts off.
+      // #235: a border whose loss cuts my holdings in two protects what it cuts off. Named only when
+      // that can change the judgement: income, or at least PAYBACK_TURNS armies (one army of worth) —
+      // never a 1-army leaf (its 0.1 of worth was named on most plans, #235 review).
       const cut = cutOff(b.id);
-      if (cut && (cut.armies > 0 || cut.income > 0) && !cutNoted.has(b.id)) {
+      if (cut && (cut.income > 0 || cut.armies >= paybackTurns) && !cutNoted.has(b.id)) {
         cutNoted.add(b.id);
         const named = cut.ids.slice(0, MAX_CUT_NAMED).map(label).join(', ');
         const more = cut.ids.length > MAX_CUT_NAMED ? ` and ${cut.ids.length - MAX_CUT_NAMED} more` : '';

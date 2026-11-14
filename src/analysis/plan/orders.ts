@@ -194,8 +194,9 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
         const ts = bonusTerritories(g, b.id);
         if (b.value > 0 && ts.length && ts.every((x) => off.has(x))) inc += b.value;
       }
+      // On the same base as protectedValue's own per-territory share (#235 review): my start-of-turn count.
       const per = s.bonusArmyPer ?? 0;
-      const n = ps.holdings.size;
+      const n = mine.length;
       if (per > 0) inc += territoryIncome(n, baseIncome, per) - territoryIncome(n - ids.length, baseIncome, per);
       cut = { ids, armies: armies(ids), income: inc };
     }
