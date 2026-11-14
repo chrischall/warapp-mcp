@@ -792,6 +792,53 @@ describe('warapp_send_chat', () => {
     expect(p.warning).toMatch(/may already have been posted\. Check warapp_get_chat/);
   });
 
+  // The elicitation rail (#133): a client that declares form elicitation confirms in one call, with
+  // no preview or confirmToken; every other write test here uses the token rail.
+  describe('confirmed by elicitation', () => {
+    type Answer = { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, boolean> };
+    async function elicited(answer: Answer) {
+      const s = chatServer();
+      const asked: string[] = [];
+      h = await liveHarness({
+        pages: SIGNED_IN_ANN,
+        warapp: s.warapp,
+        elicitation: (req) => {
+          asked.push(JSON.stringify(req));
+          return answer;
+        },
+      });
+      const res = await h.call('warapp_send_chat', { game_id: GAME, message: 'gl hf' });
+      return { s, asked, res };
+    }
+
+    it('accepted: asks once, naming the message and the account, then sends it once', async () => {
+      const { s, asked, res } = await elicited({ action: 'accept', content: { confirmed: true } });
+      expect(res.isError).toBeFalsy();
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toContain('gl hf');
+      expect(asked[0]).toContain(ANN.feed);
+      const p = payload(res);
+      expect(p).toMatchObject({ status: 'sent', game: GAME, outcome: 'accepted' });
+      expect(p.confirmToken).toBeUndefined();
+      expect(s.sent).toHaveLength(1);
+      expect(s.sent[0]).toMatchObject({ gameId: GAME, text: 'gl hf', channel: -1, recipient: null });
+    });
+
+    for (const [label, answer] of [
+      ['declined', { action: 'decline' }],
+      ['cancelled', { action: 'cancel' }],
+      ['accepted unchecked', { action: 'accept', content: { confirmed: false } }],
+    ] as const) {
+      it(`${label}: sends nothing and says so`, async () => {
+        const { s, asked, res } = await elicited(answer);
+        expect(asked).toHaveLength(1);
+        expect(res.isError).toBeFalsy();
+        expect(payload(res)).toMatchObject({ cancelled: true });
+        expect(s.sent).toEqual([]);
+      });
+    }
+  });
+
   it('refuses when the signed-in account cannot be read, before any preview or send (#133)', async () => {
     const s = chatServer();
     h = await liveHarness({ pages: {}, warapp: s.warapp });
