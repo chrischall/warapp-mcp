@@ -35,7 +35,11 @@
 //     does it change the plan (each rule a rationale line when it fires):
 //       1. 1v1 in contact: a break is weighted like a completion of equal value (weight 1),
 //          and an advance (expansion that completes no bonus) ranks below every hold, unit,
-//          break and completion, and never defers a hold for the expansion share.
+//          break and completion, and never defers a hold for the expansion share. #215: a
+//          contested held bonus (rule 1h, #118: its hold pays back within PAYBACK_TURNS but costs
+//          more than CONCEDE_FACTOR × its worth, so the captures go first) is held whole before the
+//          first advance when what is left covers it (best worth per army first, never weighed
+//          against spreading: `settleContested(true)`); the rest stays contested as before.
 //       2. FFA with two or more opponents left: no second front — a break (also from a held
 //          border, rule 4a) against a player that can take no member of a bonus I hold next
 //          turn and loses nothing to this turn's strike / finishing off is skipped when a
@@ -383,7 +387,23 @@
 //     Deployment, from its held bonus's own pool, which lands only inside that bonus (rule 1b),
 //     and (#214) as the source of a lead step (#203, rule 0p.2), sized for the attack alone.
 //     Under `balanced` a hold is not deployed here: it competes in the greedy
-//     step (rule 4a), and a threatened border it might hold makes no attacks.
+//     step (rule 4a), and a threatened border it might hold makes no attacks. #215: one whose
+//     hold costs more than the whole deploy left is conceded here as under every other goal (the
+//     greedy step could never fund it; left pending, a border just taken from a weak opponent —
+//     exempt from the economic test — kept its armies home beside a 2-army member of an enemy
+//     bonus), and a pending hold the greedy step concedes is unlocked: every break and counter
+//     candidate next to it that has not yet captured runs again, in its order, before rule 1b
+//     withdraws (the breaks were tried while it was still locked, so its armies would otherwise
+//     only withdraw). Except (#215 review) a border in a bonus this turn's captures may complete
+//     without it (every missing member a capture target next to another territory of mine, its
+//     armies to finish within the income plus the armies there): it stays a pending hold, and once conceded it
+//     stays locked until the greedy step ends; then it is unlocked (and its breaks retried) only if
+//     no capture completed that bonus — else rule 1c keeps it and the leftover garrisons it (an
+//     attack out first, under No-Split with its whole stack, left the kept border empty). Only the
+//     lock triage itself added is lifted. The "Not attacking" line gives what a conceded neighbour
+//     can still send once its orders leave ("has left for it … conceded"; the guard-off cover's
+//     army excluded; under No-Split, one whose order already carries its whole stack says so),
+//     never "spare once it holds its border".
 //  1h. Held bonuses (under `balanced` and `defend`; issue #51). Every bonus I hold in
 //     full with a threatened border is one unit: its threatened borders are all held
 //     or none (holding some while conceding another breaks it anyway). Its hold cost
@@ -785,12 +805,37 @@
 //     finisher keep what holds a safe border too; in rule 4e a step
 //     that fails only because of a keep is reported as the hold it would leave short.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
-//     goes to a conceded border: it goes to the held border with the highest
-//     protected value still short of COMFORT_MARGIN × its threat (counting armies
-//     withdrawn into it) — but first (#121), when it would go to such margins (no strike stack),
-//     a conceded border the leftover can make hold is held after all, from what is left once
+//     goes to a conceded border. #215: armies withdrawn into a border (rule 1b) land by my own
+//     order, after the opponent's first attack when it moves first, so unless `movesFirst` the
+//     leftover makes each open border that falls without them hold on its own ("so it holds
+//     whoever moves first", most protected value first, only when it can afford the whole hold —
+//     #215 review: then its own orders have not run either, so the armies it sends out still
+//     stand and only the withdrawal less those is left out (`lateNet`), and it never spends what
+//     another open border needs to hold whoever moves first: moving first, only my first order
+//     lands before the opponent's first, so a border another withdrawal goes into needs its
+//     worse-order hold either way, kept back from the one my first order goes into (two such
+//     borders go most at stake first, neither reserving for the other);
+//     after #121's hold after all below, when that runs: a conceded border falls whoever moves
+//     first, this one only if the opponent does),
+//     and a border's keep (`keepFor`: what a capture, a top-up or rule 4e's fallback may not spend)
+//     leaves them out too; a border that still holds only with them gets a warning ("holds only
+//     if I move first", with the deploy that would hold it either way). #215 review: "known to move
+//     first" means `movesFirst` from the user (`movesFirstUnverified` unset: the award of picks'
+//     first mover is the wiki's rule, and holds treat it as unknown, the warning naming it) and no
+//     opponent that may hold Order Priority (`opponentsMayHoldOrderPriority`, named likewise); and
+//     idle armies rule 6 transfers in never count toward a hold — a border that holds only with
+//     them gets the same warning, naming the one transfer that must be my first order (moving
+//     first, only that one lands before the opponent's first; when I am known to move first, the
+//     warning is "holds only if my first order is …"). The warning names why the leftover made no
+//     deploy there (too little left, Local Deployment, No-Split sending the stack with its order)
+//     only when that was the reason. Then it goes to the held
+//     border with the highest protected value still short of COMFORT_MARGIN × its threat (counting
+//     armies withdrawn into it) — but first (#121), when it would go to such margins (no strike stack;
+//     #215 review: judged and run before the worse-order deploys above), a conceded border the leftover can make hold is held after all, from what is left once
 //     every held border that would fall as it stands has its hold (best worth per army; its
-//     withdrawal taken back unless the territory it went to needs it to hold; never one that
+//     withdrawal taken back unless the territory it went to needs it to hold — #215 review: unless
+//     I am known to move first, it may still be taken back when the leftover also pays what holds
+//     that territory without it, which the worse-order step would spend anyway; never one that
 //     attacks out or whose garrison already stays); with two or more such borders, each is first brought to that
 //     margin in the same order (#121: two symmetric borders at an exact hold ended as 16 and 7),
 //     the rest to the first — else (#125) it saves toward a capture this turn cannot afford:
@@ -1141,8 +1186,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const hd = holdsPhase(pc, ps, book, threats, pass);
   const {
     acting, conceded, concedeUnaffordable, floorOrConcede, fundNearMiss, fundUnit, garrisonCompleted, heldBorders,
-    heldStack, hold, holds, keepFor, kept, keptShort, leftFor, mayHold, noteRecent, reconsider, settleContested,
-    twoStepBound, twoStepKeep, uneconomic, units, withdraw,
+    heldStack, hold, holds, keepFor, kept, keptShort, leftFor, mayComplete, mayHold, noteRecent, pendingLocks, reconsider,
+    settleContested, twoStepBound, twoStepKeep, uneconomic, units, withdraw,
   } = hd;
 
   // ---- 2. targets, 4d. frontier cost, bonus scoring, #101 (plan/targets.ts) ----
@@ -1151,6 +1196,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     breakable, counterAt, targets, leadSteps, targetScoreCost, landScoreCost, offence, skipOffence, plans,
     economicMember, uneconomicMember, negativeMember, ratio, committing, byCloseness, retakeChecks, retakeWarning,
   } = tgt;
+  // #215 review: rule 1a's triage (run with the strikes, below) leaves pending a border in a bonus
+  // these plans may complete this turn.
+  for (const p of plans) if (p.completable) hd.completable.set(p.bonusId, p.cost);
 
   // ---- R3, No-Split, capture helper, 3a. combined, passes 1 and 2 (plan/captures.ts) ----
   const caps = capturesPhase(pc, ps, pass, book, threats, hd, tgt);
@@ -1264,11 +1312,35 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       focus: boolean;
       /** External borders of the bonus (fewer is easier to keep); 0 for holds. */
       borders: number;
+      /** A break's or counter's territory to capture (#215: retried once a source is unlocked). */
+      target?: number;
       run: () => void;
     }
     const rank = { unit: 0, hold: 0, complete: 1, advance: 2, break: 3, counter: 3 } as const;
     const candidates: Candidate[] = [];
     const deferred: Threatened[] = [];
+    /** #215: pending holds this step conceded and unlocked, whose armies may still attack out. */
+    const unlocked = new Set<number>();
+    /** #215 review: conceded pending holds left locked until the captures are known (`mayComplete`). */
+    const parked = new Set<number>();
+    /** #215: unlock a pending hold triage locked (only that lock: never one another rule added). */
+    const unlockPending = (id: number) => {
+      if (!pendingLocks.delete(id)) return;
+      locked.delete(id);
+      unlocked.add(id);
+    };
+    /**
+     * #215: a pending hold (locked by triage until this step decides) conceded here is unlocked: as
+     * any conceded border, it may still attack out with the armies on it (rule 1a). One in a bonus
+     * this turn's captures may complete stays locked until they are known: rule 1c keeps it for a
+     * completed bonus, and an attack out would have emptied it first.
+     */
+    const concedePending = (t: Threatened, room: number) => {
+      concedeUnaffordable(t, room);
+      if (heldBorders.has(t.id)) return;
+      if (mayComplete(t.id)) parked.add(t.id);
+      else unlockPending(t.id);
+    };
     let expansionLeft = 0;
     let expansionSpent = 0;
     let topValue = 0;
@@ -1416,6 +1488,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         value: b.value,
         focus: false,
         borders: analyzeBonus(g, b.bonusId)!.borderTerritoryIds.length,
+        target: o.t,
         run: spend(() => {
           // Already broken (by a border attacking its only threat): one capture is enough.
           if (broken(b)) return;
@@ -1453,6 +1526,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         value: worth,
         focus: false,
         borders: 0,
+        target: t,
         run: spend(() => {
           if (captured.has(t)) return;
           if (!tryCapture(t, reason)) return;
@@ -1533,7 +1607,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           const pending =
             expansionLeft > 0 && t.worth < topValue && t.recentFrom === undefined ? Math.max(0, floor - expansionSpent) : 0;
           const room = roomAt(t.id);
-          if (t.holdCost > room) return concedeUnaffordable(t, room);
+          // #215: conceded, its armies may attack out (rule 1a) in the passes still to run.
+          if (t.holdCost > room) return concedePending(t, room);
           if (t.holdCost > room - pending) {
             deferred.push(t);
             rationale.push(
@@ -1689,8 +1764,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const runPostponed = () => {
       for (const c of postponed.splice(0)) c.run();
     };
+    /** #215, rule 0p.1: the contested units were held whole (where they fit) before the first advance. */
+    let contestedDue = false;
     candidates.forEach((c, i) => {
       if (done.has(c)) return;
+      // #215, rule 0p.1: an advance ranks below every hold, a contested held bonus's included
+      // (#118 lets the captures go first, but in a 1v1 in contact not one that completes nothing):
+      // live, a +4 bonus's one border was left to fall while 15 went to a bonus 47 armies from done.
+      if (oneVsOne && c.kind === 'advance' && !c.focus && !contestedDue) {
+        contestedDue = true;
+        settleContested(true);
+      }
       if ((c.kind === 'advance' || c.kind === 'break' || c.kind === 'counter') && !c.focus && !unitsDue) {
         unitsDue = true;
         // Those waiting for the expansion share outscore everything still to run.
@@ -1739,9 +1823,26 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     for (const t of deferred) {
       if (heldBorders.has(t.id)) continue;
       const room = roomAt(t.id);
-      if (t.holdCost > room) concedeUnaffordable(t, room);
+      if (t.holdCost > room) concedePending(t, room);
       else hold(t);
     }
+    // #215 review: a parked concession is unlocked now unless this turn's captures complete a bonus
+    // it is in (rule 1c keeps that one, locked, and the leftover garrisons it).
+    for (const x of [...parked].sort(byNum)) {
+      if (heldBorders.has(x) || !conceded.has(x)) continue;
+      const holdings = new Set([...mine, ...captured]);
+      const completes = g.map.bonuses.some((b) => {
+        const ts = bonusTs.get(b.id)!;
+        return b.value > 0 && ts.includes(x) && ts.every((y) => holdings.has(y)) && !ts.every((y) => mineSet.has(y));
+      });
+      if (!completes) unlockPending(x);
+    }
+    // #215: a break or counter tried while a pending hold still locked its source runs again, in
+    // its order, once the greedy step has conceded and unlocked that hold: the border's armies
+    // attack out before rule 1b withdraws them (one already taken returns at once).
+    if (unlocked.size)
+      for (const c of candidates)
+        if (c.target !== undefined && !captured.has(c.target) && targets.get(c.target)?.sources.some((x) => unlocked.has(x))) c.run();
     settleContested();
     reconsider();
     withdraw();

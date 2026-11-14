@@ -221,6 +221,13 @@ export interface PlanOptions {
    */
   movesFirst?: boolean;
   /**
+   * #215 review: {@link movesFirst} comes from a source not verified live (the award of picks: the
+   * wiki's rule). The schedule and card advice still use it; hold sizing treats the first mover as
+   * unknown (armies moved into a border count as landing after the opponent's first attack), and a
+   * hold that depends on it says so. Default false.
+   */
+  movesFirstUnverified?: boolean;
+  /**
    * An opponent may hold an Order Priority card this turn (#179): the card clock says one can
    * exist by now and its hand is hidden. Two played cards cancel, so even moving first, mine is
    * what keeps the killing strike (rule 1e) or the commander strike (rule 1s) first. Default false.

@@ -1242,6 +1242,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
           // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
           ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
+          // #215 review: from the award (unverified), the schedule and card advice use it, holds do not.
+          ...(mover.firstMover !== undefined && !mover.verified ? { movesFirstUnverified: true } : {}),
           ...(opponentCanHold(game.settings, 'Order Priority', turn) ? { opponentsMayHoldOrderPriority: true } : {}),
           // #163: an opponent may hold a Bomb by now: holds are sized as if halved, two stacks over one.
           ...(opponentCanHold(game.settings, 'Bomb', turn) ? { opponentsMayHoldBomb: true } : {}),

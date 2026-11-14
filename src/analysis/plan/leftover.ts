@@ -1,6 +1,8 @@
-// Rule 5, the leftover deploy (#72, #102, #103, #121, #124, #125, #163; #133): the income no
-// capture or hold took goes, in order, to the borders short of their hold before the strike stack,
-// to a conceded border it can make hold after all (its withdrawal taken back), then to the strike
+// Rule 5, the leftover deploy (#72, #102, #103, #121, #124, #125, #163, #215; #133): the income no
+// capture or hold took goes, in order, to a conceded border it can make hold after all (its
+// withdrawal taken back; only without a strike stack, where the leftover would buy comfort), to
+// the borders that fall without the armies withdrawn into them unless I am known to move first
+// (#215), to the borders short of their hold before the strike stack, then to the strike
 // stack, the short borders' comfortable margins, the step it saves toward, the expansion stack,
 // the most fogged border or the biggest stack — split against a Bomb when it concentrates for
 // nothing — and under Local Deployment each pool's rest inside its bonus. planPass runs it where
@@ -9,13 +11,13 @@
 import { neighborsOf } from '../graph.js';
 import { chargeDeploys } from '../local-deploy.js';
 import { COMFORT_MARGIN, type PlannedMove } from './shared.js';
-import type { Holds } from './holds.js';
+import { knownFirst, lateArrivals, lateNet, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { SaveStep } from './stand-still.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { StrikeStack } from './strike.js';
 import type { Targets } from './targets.js';
-import type { Threats } from './threats.js';
+import type { Border, Threats } from './threats.js';
 
 /** #125: the step the leftover saved toward, and its source, which idle stacks stage toward (rule 6). */
 export interface Staging {
@@ -88,19 +90,222 @@ export function leftoverDeploy(
   };
   /** Set by the leftover deploy (rule 5): the step it saved toward, which idle stacks stage toward (rule 6). */
   let staging: Staging | undefined;
+  /**
+   * #215: armies withdrawn into a border hold it only if I move first: when the opponent moves
+   * first, its first order (an all-in there) runs before my transfer in. Unless I am known to
+   * move first, the leftover makes each open border that falls without them hold on its own — the
+   * worse order — most at stake first, when it can afford it whole. The steps after it still
+   * count the withdrawal (their holds and comfortable margins are judged in the order where it
+   * lands in time). One that holds only with the withdrawal is named in the report.
+   */
+  const worseOrderHolds = () => {
+    /**
+     * #215 review: what my open `x` (no order of its own under No-Split) needs to hold, or
+     * `undefined` when the leftover could not make it hold anyway. `worse`: in the order that is
+     * worse for it, the hold this step sizes (`stays − lateNet`: its own orders not yet run,
+     * nothing withdrawn into it arrived); otherwise after all my orders (`stays`), the hold the
+     * later steps size.
+     */
+    const fallNeed = (x: Border, worse: boolean): number | undefined => {
+      const first = stays(x.id) - (worse ? lateNet(pc, ps, x.id) : 0) + unitsAt(x.id);
+      let d = 0;
+      while ((toTake(first + d) ?? Infinity) <= x.threat) {
+        d++;
+        if (d > ps.budget || d > roomAt(x.id)) return undefined;
+      }
+      return d;
+    };
+    /**
+     * #215 review: the border my first order withdraws into, unless the opponent is known to move
+     * first. Moving first, only that withdrawal lands before the opponent's first order (the
+     * zigzag gives it two orders before my second), so a border any other withdrawal goes into
+     * falls whoever moves first without its worse-order hold. The schedule puts the largest early
+     * move first (ties in decision order, schedule.ts); the withdrawals are the early moves known here.
+     */
+    const firstInto =
+      pc.opts.movesFirst === false
+        ? undefined
+        : moves
+            .filter((m) => m.kind === 'transfer' && m.reason === 'withdraws from a conceded border' && lateArrivals(pc, ps, m.to) > 0)
+            .reduce<PlannedMove | undefined>((a, m) => (!a || m.armies > a.armies ? m : a), undefined)?.to;
+    const order = [...borders.values()].sort((x, y) => valueOf(y.id) - valueOf(x.id) || x.id - y.id);
+    for (const [i, b] of order.entries()) {
+      const late = lateArrivals(pc, ps, b.id);
+      // No-Split (#124): a deploy on a territory that issues an order leaves with it, holding nothing.
+      if (late <= 0) continue;
+      if (!open(b.id) || orderOf(b.id)) {
+        ps.firstOnlySkip.set(b.id, orderOf(b.id) ? 'order' : 'closed');
+        continue;
+      }
+      // #215 review: its own orders have not run either when the opponent moves first.
+      const net = lateNet(pc, ps, b.id);
+      const own = stays(b.id) - net + unitsAt(b.id);
+      if ((toTake(own) ?? Infinity) > b.threat) continue;
+      let d = 0;
+      while ((toTake(own + d) ?? Infinity) <= b.threat) d++;
+      // #215 review: never from what another open border needs to hold whoever moves first — the
+      // leftover may be what holds it in both orders, and a border that holds only if I move
+      // first is not bought with one that then falls whoever does. For a border with nothing
+      // withdrawn into it, or the one my first order goes into, that is what the later steps give
+      // it (after all my orders). A border another withdrawal goes into falls whoever moves first
+      // without its worse-order hold, which it gets here or not at all: it is kept back only from
+      // the border my first order goes into, and only while still to come. Two such borders take
+      // their turns most at stake first (keeping each one's hold back from the other, neither
+      // was held), and one this step has passed had its turn.
+      let reserve = 0;
+      for (const [j, x] of order.entries()) {
+        if (j === i || conceded.has(x.id) || !open(x.id) || orderOf(x.id)) continue;
+        if (x.id === firstInto || lateArrivals(pc, ps, x.id) <= 0) reserve += fallNeed(x, false) ?? 0;
+        else if (b.id === firstInto && j > i) reserve += fallNeed(x, true) ?? 0;
+      }
+      if (d > ps.budget - reserve || d > roomAt(b.id)) {
+        ps.firstOnlySkip.set(b.id, d > ps.budget - reserve ? 'budget' : 'room');
+        continue;
+      }
+      const sent = late - net;
+      rationale.push(
+        `Deploy ${d} to ${label(b.id)} so it holds whoever moves first (protects +${valueOf(b.id)}): the ${late} withdrawn into it land after player ${b.player}'s attack if it moves first, and without them its ${own + d - unitsAt(b.id)}${sent > 0 ? ` (the ${sent} its own orders send out not yet gone)` : ''} need ${toTake(own + d)} to take, above the ~${b.threat} threat.`,
+      );
+      deploy(b.id, d);
+      locked.add(b.id);
+    }
+  };
+  /**
+   * #121: before any comfort margin, a conceded border that the leftover can make hold is held
+   * after all (live, a border short by 2 was conceded while 5 went to one that already held,
+   * and it fell with 15 armies). Only where the leftover would otherwise buy comfort margins
+   * (no strike stack), from what is left once every held border that would fall as it stands
+   * has its hold; best worth per army first. Its withdrawal is taken back, unless the
+   * territory it went to needs those armies to hold; a border that attacks out, my
+   * commander's, or one whose garrison already stays is not revived.
+   * #215 review: it runs before the worse-order step. A conceded border falls whoever moves
+   * first, a border the worse-order step sizes only if the opponent does: the worse-order step
+   * taking the budget first left the revival short and lost the conceded border under both
+   * orders (and, deployed first, made a border read as comfortable so the revival never ran).
+   */
+  const holdAfterAll = (): Map<number, number> => {
+    /** The withdrawals taken back, by the territory they went to. */
+    const takenBack = new Map<number, number>();
+    let falling = 0;
+    for (const b of borders.values()) {
+      if (conceded.has(b.id) || orderOf(b.id)) continue;
+      let d = 0;
+      while ((toTake(stayAt(b.id) + d + unitsAt(b.id)) ?? Infinity) <= b.threat) d++;
+      falling += d;
+    }
+    /**
+     * #215 review: unless I am known to move first, a withdrawal into an open border without an
+     * order lands too late to count when the opponent moves first, so the worse-order step would
+     * deploy there what holds it without them. A revival whose withdrawal that border needs may
+     * then still go ahead, paying that deploy too: the armies it would need to hold without the
+     * withdrawal (0 when it holds anyway or when this does not apply; -1 when it never holds).
+     */
+    const refillFor = (out: PlannedMove): number => {
+      if (knownFirst(pc)) return 0;
+      const dest = borders.get(out.to);
+      if (!dest || conceded.has(out.to) || !open(out.to) || orderOf(out.to)) return 0;
+      const at = stayAt(out.to) + unitsAt(out.to);
+      if ((toTake(at) ?? Infinity) <= dest.threat) return 0;
+      let n = 0;
+      while ((toTake(at - out.armies + n) ?? Infinity) <= dest.threat) {
+        n++;
+        if (n > ps.budget) return -1;
+      }
+      return n;
+    };
+    const revivable = threatened
+      .filter(
+        (t) =>
+          conceded.has(t.id) &&
+          !stood.has(t.id) &&
+          !moves.some((m) => m.from === t.id && m.reason !== 'withdraws from a conceded border'),
+      )
+      .map((t) => {
+        const b = borders.get(t.id)!;
+        const out = moves.find((m) => m.from === t.id);
+        const back = out?.armies ?? 0;
+        let d = 0;
+        while ((toTake(stayAt(t.id) + back + d + unitsAt(t.id)) ?? Infinity) <= b.threat) d++;
+        return { t, d, out, threat: b.threat, refill: out ? refillFor(out) : 0 };
+      })
+      .filter(({ out, refill }) => {
+        if (!out || refill > 0) return true;
+        // The territory the withdrawal went to keeps holding without it.
+        const dest = borders.get(out.to);
+        if (!dest || conceded.has(out.to)) return true;
+        const at = stayAt(out.to) + unitsAt(out.to);
+        const heldWith = (toTake(at) ?? Infinity) > dest.threat;
+        return !heldWith || (toTake(at - out.armies) ?? Infinity) > dest.threat;
+      })
+      .sort(
+        (a, b) =>
+          b.t.worth / Math.max(1, b.d + b.refill) - a.t.worth / Math.max(1, a.d + a.refill) ||
+          a.d + a.refill - (b.d + b.refill) ||
+          a.t.id - b.t.id,
+      );
+    for (const { t, d, out, threat, refill } of revivable) {
+      // A refill is judged again: an earlier revival may have deployed on the same territory.
+      const r = out && refill > 0 ? refillFor(out) : 0;
+      if (r < 0 || d + r > ps.budget - falling || d > roomAt(t.id) || (out && r > roomAt(out.to))) continue;
+      if (out) {
+        takenBack.set(out.to, (takenBack.get(out.to) ?? 0) + out.armies);
+        moves.splice(moves.indexOf(out), 1);
+        avail.set(t.id, avail.get(t.id)! + out.armies);
+        const inc = (incoming.get(out.to) ?? 0) - out.armies;
+        if (inc > 0) incoming.set(out.to, inc);
+        else incoming.delete(out.to);
+        const line = rationale.findIndex((l) => l.startsWith(`Withdraw ${out.armies} from ${label(t.id)} to `));
+        if (line >= 0) rationale.splice(line, 1);
+        const w = warnings.findIndex((l) => l.startsWith(`The withdrawal from ${label(t.id)} only executes`));
+        if (w >= 0) warnings.splice(w, 1);
+      }
+      if (out && r > 0) {
+        deploy(out.to, r);
+        locked.add(out.to);
+        rationale.push(
+          `Deploy ${r} to ${label(out.to)} so it holds without the ${out.armies} ${label(t.id)} would have withdrawn into it (${stayAt(out.to) + unitsAt(out.to)} armies need ${toTake(stayAt(out.to) + unitsAt(out.to))} to take, above the ~${borders.get(out.to)!.threat} threat): unless I am known to move first they could land too late to count, so this is spent either way, and ${label(t.id)} is held after all.`,
+        );
+      }
+      conceded.delete(t.id);
+      const conceding = `${label(t.id)} cannot be held `;
+      for (let i = warnings.length - 1; i >= 0; i--)
+        if (warnings[i]!.startsWith(conceding) && warnings[i]!.endsWith(': conceded')) warnings.splice(i, 1);
+      if (d > 0) deploy(t.id, d);
+      locked.add(t.id);
+      rationale.push(
+        `Hold ${label(t.id)} after all (not conceded): deploy ${d} there${out ? `, and keep the ${out.armies} that would have withdrawn` : ''}; the leftover covers it before any comfort margin (${stayAt(t.id) + unitsAt(t.id)} armies need ${toTake(stayAt(t.id) + unitsAt(t.id))} to take, above the ~${threat} threat; protects +${t.value}).`,
+      );
+    }
+    if (ps.cardAdvice === 'order-priority' && !moves.some((m) => conceded.has(m.from))) ps.cardAdvice = null;
+    return takenBack;
+  };
+  /**
+   * The open borders short of a comfortable margin, most at stake first (rule 5). `back`: the
+   * withdrawals the revival took back, still counted where they were going, as when this was
+   * judged before the revival.
+   */
+  const shortOf = (bs: Iterable<Border>, back: Map<number, number> = new Map()) =>
+    [...bs]
+      // No-Split (#124): a deploy on a territory that issues an order leaves with it, holding nothing.
+      .filter((b) => open(b.id) && !orderOf(b.id))
+      .map((b) => ({ ...b, take: toTake(stays(b.id) + (back.get(b.id) ?? 0) + unitsAt(b.id)) }))
+      .filter((b) => b.take !== null && b.take <= COMFORT_MARGIN * b.threat)
+      .sort((a, b) => valueOf(b.id) - valueOf(a.id) || a.take! / a.threat - b.take! / b.threat || a.id - b.id);
   // ---- leftover deploy ----
+  // The borders the comfort steps may pick: open before any border is held after all (a revived
+  // border's hold is its whole share of the leftover).
+  const comfortPool = [...borders.values()].filter((b) => open(b.id));
+  // The revival runs only where the leftover would otherwise buy comfort margins (no strike
+  // stack, a border short of its margin), and then before the worse-order holds; otherwise the
+  // worse-order holds go first, as before.
+  const reviving = !stack && ps.budget > 0 && shortOf(comfortPool).length > 0;
+  if (!reviving) worseOrderHolds();
   if (ps.budget > 0) {
     const foggedNext = (id: number) =>
       neighborsOf(g, id).filter((n) => {
         const st = state.get(n);
         return !captured.has(n) && (!st || st.owner.kind === 'unknown' || st.armies === null);
       }).length;
-    const short = [...borders.values()]
-      // No-Split (#124): a deploy on a territory that issues an order leaves with it, holding nothing.
-      .filter((b) => open(b.id) && !orderOf(b.id))
-      .map((b) => ({ ...b, take: toTake(stays(b.id) + unitsAt(b.id)) }))
-      .filter((b) => b.take !== null && b.take <= COMFORT_MARGIN * b.threat)
-      .sort((a, b) => valueOf(b.id) - valueOf(a.id) || a.take! / a.threat - b.take! / b.threat || a.id - b.id);
     /** No-Split (#124): an attack that only softens its target; deploys there would leave with it, killing nothing more that matters. */
     const softens = (m: PlannedMove) =>
       noSplit && moves.some((o, i) => i > moves.indexOf(m) && o.kind === 'attack' && o.to === m.to);
@@ -114,6 +319,9 @@ export function leftoverDeploy(
     const saving = stepSource(open, notSoftening);
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
+    const takenBack = reviving ? holdAfterAll() : undefined;
+    if (reviving) worseOrderHolds();
+    const short = shortOf(comfortPool, takenBack);
     // Holds before the strike stack: a border kept for the bonus this turn completes (rule 1c:
     // the leftover is its only garrison) is topped up to a comfortable margin, and any other
     // open border that would fall (its take at or below the threat) to just hold. The stack
@@ -141,71 +349,6 @@ export function leftoverDeploy(
         );
         deploy(b.id, d);
       }
-    // #121: before any comfort margin, a conceded border that the leftover can make hold is held
-    // after all (live, a border short by 2 was conceded while 5 went to one that already held,
-    // and it fell with 15 armies). Only where the leftover would otherwise buy comfort margins
-    // (no strike stack), from what is left once every held border that would fall as it stands
-    // has its hold; best worth per army first. Its withdrawal is taken back, unless the
-    // territory it went to needs those armies to hold; a border that attacks out, my
-    // commander's, or one whose garrison already stays is not revived.
-    if (!stack && short.length) {
-      let falling = 0;
-      for (const b of borders.values()) {
-        if (conceded.has(b.id) || orderOf(b.id)) continue;
-        let d = 0;
-        while ((toTake(stayAt(b.id) + d + unitsAt(b.id)) ?? Infinity) <= b.threat) d++;
-        falling += d;
-      }
-      const revivable = threatened
-        .filter(
-          (t) =>
-            conceded.has(t.id) &&
-            !stood.has(t.id) &&
-            !moves.some((m) => m.from === t.id && m.reason !== 'withdraws from a conceded border'),
-        )
-        .map((t) => {
-          const b = borders.get(t.id)!;
-          const out = moves.find((m) => m.from === t.id);
-          const back = out?.armies ?? 0;
-          let d = 0;
-          while ((toTake(stayAt(t.id) + back + d + unitsAt(t.id)) ?? Infinity) <= b.threat) d++;
-          return { t, d, out, threat: b.threat };
-        })
-        .filter(({ out }) => {
-          if (!out) return true;
-          // The territory the withdrawal went to keeps holding without it.
-          const dest = borders.get(out.to);
-          if (!dest || conceded.has(out.to)) return true;
-          const at = stayAt(out.to) + unitsAt(out.to);
-          const heldWith = (toTake(at) ?? Infinity) > dest.threat;
-          return !heldWith || (toTake(at - out.armies) ?? Infinity) > dest.threat;
-        })
-        .sort((a, b) => b.t.worth / Math.max(1, b.d) - a.t.worth / Math.max(1, a.d) || a.d - b.d || a.t.id - b.t.id);
-      for (const { t, d, out, threat } of revivable) {
-        if (d > ps.budget - falling || d > roomAt(t.id)) continue;
-        if (out) {
-          moves.splice(moves.indexOf(out), 1);
-          avail.set(t.id, avail.get(t.id)! + out.armies);
-          const inc = (incoming.get(out.to) ?? 0) - out.armies;
-          if (inc > 0) incoming.set(out.to, inc);
-          else incoming.delete(out.to);
-          const r = rationale.findIndex((l) => l.startsWith(`Withdraw ${out.armies} from ${label(t.id)} to `));
-          if (r >= 0) rationale.splice(r, 1);
-          const w = warnings.findIndex((l) => l.startsWith(`The withdrawal from ${label(t.id)} only executes`));
-          if (w >= 0) warnings.splice(w, 1);
-        }
-        conceded.delete(t.id);
-        const conceding = `${label(t.id)} cannot be held `;
-        for (let i = warnings.length - 1; i >= 0; i--)
-          if (warnings[i]!.startsWith(conceding) && warnings[i]!.endsWith(': conceded')) warnings.splice(i, 1);
-        if (d > 0) deploy(t.id, d);
-        locked.add(t.id);
-        rationale.push(
-          `Hold ${label(t.id)} after all (not conceded): deploy ${d} there${out ? `, and keep the ${out.armies} that would have withdrawn` : ''}; the leftover covers it before any comfort margin (${stayAt(t.id) + unitsAt(t.id)} armies need ${toTake(stayAt(t.id) + unitsAt(t.id))} to take, above the ~${threat} threat; protects +${t.value}).`,
-        );
-      }
-      if (ps.cardAdvice === 'order-priority' && !moves.some((m) => conceded.has(m.from))) ps.cardAdvice = null;
-    }
     let where: number;
     let why: string;
     let lock = false;

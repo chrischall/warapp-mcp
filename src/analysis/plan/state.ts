@@ -210,6 +210,13 @@ export interface PlanState {
    * have stripped (its hold check then reports it, as before #121).
    */
   spendKeeps: boolean;
+  /**
+   * #215 review: why the leftover's worse-order step (plan/leftover.ts) made no deploy on a border
+   * that holds only with the armies withdrawn into it — `budget` (it could not afford it whole),
+   * `room` (Local Deployment), `order` (No-Split: it issues an order, which its deploys would leave with) or `closed` (conceded) — so
+   * the report names the real reason.
+   */
+  firstOnlySkip: Map<number, 'budget' | 'room' | 'order' | 'closed'>;
 }
 
 /** An empty plan state: nothing deployed, moved, captured or said yet. */
@@ -240,5 +247,6 @@ export function newPlanState(): PlanState {
     refusal: undefined,
     evenTradesOnly: false,
     spendKeeps: false,
+    firstOnlySkip: new Map(),
   };
 }

@@ -4,7 +4,8 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { planTurn } from '../src/analysis/planner.js';
 import { openingIncome } from '../src/analysis/picks.js';
 import { readFirstMover } from '../src/move-order.js';
 import { normalizeGame, normalizeMap } from '../src/normalize.js';
@@ -17,6 +18,12 @@ import { pickSettings } from '../src/tools/picks.js';
 import { boardCachePath } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+
+// A pass-through spy: every plan is the real planner's; the tests below read the options the tool passed.
+vi.mock('../src/analysis/planner.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/analysis/planner.js')>();
+  return { ...actual, planTurn: vi.fn(actual.planTurn) };
+});
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -406,5 +413,38 @@ describe('warapp_plan_turn — who moves first, kept between turns (#127)', () =
     expect((await planOn(game(4, { MoveOrder: 'Random' }), dir)).firstMover).toBeNull();
     expect((await planOn(game(3, {}, 3), dir, { first_mover: 'me' })).firstMover).toEqual({ who: 'you', source: 'explicit' });
     expect(await readFirstMover(dir, GAME, ME)).toBeUndefined();
+  });
+});
+
+describe('warapp_plan_turn — a first mover only the award says is not trusted for holds (#215 review)', () => {
+  /** The move-order options of the last plan the tool made. */
+  const lastOptions = () => {
+    const calls = vi.mocked(planTurn).mock.calls;
+    const o = calls[calls.length - 1]![0].options ?? {};
+    return { movesFirst: o.movesFirst, movesFirstUnverified: o.movesFirstUnverified };
+  };
+
+  it('passes the award\'s "you move first" as unverified, so the hold is sized for the worse order', async () => {
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, [159, 158, 157, 161]);
+    h = await live(board({ 157: FOG }), game(1), dir);
+    await plan(h);
+    await h.harness.close();
+    // Turn 2: the opponent moved first on turn 1 (the award), so I move first now — the wiki's rule.
+    h = await live(board({ 157: FOG }, 9), game(2), dir);
+    vi.mocked(planTurn).mockClear();
+    const p = payload<PlanPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.firstMover).toEqual({ who: 'you', source: 'award' });
+    expect(lastOptions()).toEqual({ movesFirst: true, movesFirstUnverified: true });
+  });
+
+  it('trusts a first mover the user gives', async () => {
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, [159, 158, 157, 161]);
+    h = await live(board({ 157: FOG }, 9), game(2), dir);
+    vi.mocked(planTurn).mockClear();
+    const p = payload<PlanPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', first_mover: 'me' }));
+    expect(p.firstMover).toEqual({ who: 'you', source: 'explicit' });
+    expect(lastOptions()).toEqual({ movesFirst: true, movesFirstUnverified: undefined });
   });
 });

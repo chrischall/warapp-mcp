@@ -132,7 +132,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   they are fogged (owner, plus the starting armies on turn 1); the board cache and opponent tracking keep the
   board war.app showed. The move order (`award.firstMover`, `Cycle` only: under `NoLuckCycle` play speed sets
   the first order, not the award) and the commander start are the wiki's rules, not verified live: never used
-  to narrow the stress test or to place a commander; `warapp_plan_turn` defaults its first mover to it.
+  to narrow the stress test, to place a commander or to size a hold (#215); `warapp_plan_turn` defaults its first mover to it.
 - **Who moved first is kept between turns (#127, `src/move-order.ts`).** In a two-player game under `Cycle`
   or `NoLuckCycle` the first mover alternates every turn, so `warapp_plan_turn` keeps one known turn at
   `<dataDir>/move-order/<gameId>.json` (turn, `me`/`opponent`, source) and later turns default to it,
@@ -425,6 +425,35 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     goes to the border with the most to spare after its best such strike (most armies only when
     none can strike), and fog pressure paid outright from idle armies is not priced against
     expansion (`PRESSURE_FACTOR`).
+  - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
+    own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
+    the leftover makes each open border that falls without them hold on its own (when it can
+    afford the whole hold; the armies the border's own orders send out still stand then, since the
+    opponent's first order precedes all of mine, so it leaves out only the withdrawal less those,
+    `lateNet`; never from what another open border needs to hold whoever moves first: moving
+    first, only my first order lands before the opponent's first, so a border another withdrawal
+    goes into needs its worse-order hold either way, and it is kept back from the one my first
+    order goes into; two such borders go most at stake first, neither reserving for the other) — after #121 has held a conceded border after all when the leftover would
+    buy comfort margins (a conceded border falls whoever moves first; that one falls only if the
+    opponent does), and #121 may then take back a withdrawal the border it went to needs, paying the
+    deploy that holds that border without it (spent either way) — what a border keeps from captures and
+    top-ups (`keepFor`) leaves them out, and a border that still holds only with them is warned
+    "holds only if I move first" (naming why no deploy was made only when that was the reason).
+    Known to move first, they count as before (#127). Known means the user said so (`first_mover`,
+    now or on a remembered turn): a first move only the award of picks gives (the wiki's rule, not
+    verified live) still orders the moves and decides card advice, but holds treat it as unknown
+    (`movesFirstUnverified`) and the warning names the award; so do they when an opponent may hold
+    an Order Priority card (`opponentsMayHoldOrderPriority`: played, its first order runs before mine). Idle armies rule 6 transfers into a
+    border never count toward its hold; when the border holds only with them the same warning says
+    so (moving first, only my first order lands before the opponent's first: it names the one transfer
+    that must be that order; known to move first, "holds only if my first order is …").
+  - **A contested held bonus comes before an advance in a 1v1 in contact (#215, rule 0p.1).** A held
+    bonus whose hold pays back within `PAYBACK_TURNS` but costs more than `CONCEDE_FACTOR` × its
+    worth is contested (#118: the captures go first). Under rule 0p.1 an advance ranks below every
+    hold, so before the first advance it is held whole when what is left covers it (best worth per
+    army first, never weighed against spreading); otherwise it stays contested as before. Live, a +4
+    bonus's one border was floored and spread on 9 armies while 15 went to an advance into a bonus
+    47 armies from done, and fell to the 33 that could reach it whoever moved first.
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin (with several, each is brought to its margin first, and a conceded border the leftover
     can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies

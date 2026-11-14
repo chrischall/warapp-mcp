@@ -31,7 +31,7 @@ import {
 } from './shared.js';
 import type { MoveSlot } from '../schedule.js';
 import type { Captures } from './captures.js';
-import type { Holds } from './holds.js';
+import { knownFirst, lateArrivals, lateNet, withdrawnInto, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { LeadBlock, Targets } from './targets.js';
@@ -303,11 +303,11 @@ export function reportOffence(
     defenceAt, costAt, toTake, noSplit, leadLever, ffaLeader, leadText, myCommanders,
   } = pc;
   const { warnings, rationale, deployed, avail, spared, unabsorbed, captured, moves } = ps;
-  const { gainWith, orderOf, pools } = book;
+  const { gainWith, orderOf, pools, coverOf } = book;
   // As the deploy book reads it (Local Deployment).
   const local = pools !== null && pools.bonuses.length > 0;
   const { reinforcementAt, forceAt, borders, borderAt } = threats;
-  const { conceded, keepFor, stayAt, threatWarnings, twoStepKeep } = hd;
+  const { conceded, stood, keepFor, stayAt, threatWarnings, twoStepKeep } = hd;
   const { offenceSkip, badTrades, leadTry } = tgt;
 
   // ---- offence report (#72) ----
@@ -318,6 +318,52 @@ export function reportOffence(
       );
   /** What the final orders send at `t` (a top-up of idle armies can raise a capture's size). */
   const sentAt = (t: number) => moves.reduce((n, m) => (m.kind === 'attack' && m.to === t ? n + m.armies : n), 0);
+  /**
+   * #215: a border of mine that holds only with the armies withdrawn into it, which land after the
+   * opponent's first attack when it moves first (unless I am known to move first, {@link lateArrivals}):
+   * the extra deploy that would hold it whoever moves first, the threat and the player; `null` when
+   * it holds either way, falls either way, or is conceded. `atStart` is the threat warned of before
+   * the deploys (its worst case, #201), judged once this turn's captures are done (#212).
+   */
+  const firstOnlyAt = (
+    id: number,
+    atStart: number,
+  ): {
+    late: number;
+    idle: number;
+    first: PlannedMove | null;
+    known: boolean;
+    own: number;
+    d: number;
+    threat: number;
+    player: number;
+  } | null => {
+    if (!mineSet.has(id) || conceded.has(id)) return null;
+    // Withdrawn into it (rule 1b, counted in what stays there) and, #215 review, idle armies
+    // transferred in by rule 6 (never counted in a hold): both my own orders, late in the worse order.
+    const known = knownFirst(pc);
+    // Known to move first, a withdrawal keeps #127's reading (it is scheduled as my first order).
+    if (known && withdrawnInto(ps, id) > 0) return null;
+    const late = lateArrivals(pc, ps, id);
+    const into = moves.filter((m) => m.kind === 'transfer' && m.to === id);
+    const idle = Math.max(0, into.reduce((n, m) => n + m.armies, 0) - withdrawnInto(ps, id));
+    const after = borderAt(id, (x) => captured.has(x));
+    if (late + idle <= 0 || !after) return null;
+    const threat = Math.min(atStart, after.worst ?? after.threat);
+    const base = stayAt(id) - late + unitsAt(id);
+    // #215 review: when the opponent moves first, its own orders have not run either (lateNet).
+    const own = stayAt(id) - lateNet(pc, ps, id) + unitsAt(id);
+    // #215 review: moving first, only my first order runs before the opponent's first (the zigzag),
+    // so with idle transfers in, only one move into it can land in time: the largest. (Withdrawals
+    // alone keep #127's reading — the withdrawal is scheduled as my first order.)
+    const first = idle > 0 ? [...into].sort((a, b) => b.armies - a.armies || a.from - b.from)[0]! : null;
+    const inTime = first ? first.armies : late;
+    if ((toTake(base + inTime) ?? Infinity) <= threat || (toTake(own) ?? Infinity) > threat) return null;
+    let d = 0;
+    while ((toTake(own + d) ?? Infinity) <= threat) d++;
+    // Known to move first, the one transfer that can land in time is named even when it is alone.
+    return { late, idle, first: into.length > 1 || known ? first : null, known, own: own - unitsAt(id), d, threat, player: after.player };
+  };
   // A border warned about before the deploys may have been deployed to since: say what the
   // plan leaves there, so the warning does not contradict the hold, floor or spread lines.
   for (let i = 0; i < warnings.length; i++) {
@@ -333,6 +379,8 @@ export function reportOffence(
     // sized is called short against a stack it takes this turn.
     const after = borderAt(id, (x) => captured.has(x));
     const threat = after ? Math.min(atStart, after.worst ?? after.threat) : 0;
+    // #215: one that holds only with the armies withdrawn into it says so (the warning below).
+    const firstOnly = firstOnlyAt(id, atStart)?.known === false;
     // The opponents' territories beside it that this turn's attacks take.
     const takenNear = neighborsOf(g, id)
       .filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player')
@@ -343,9 +391,60 @@ export function reportOffence(
       !after
         ? `; nothing can reach it${once ? ` ${once}` : ''}: it holds`
         : take !== null && take > threat
-          ? `, more than the ${threat} that can ${lower ? `still reach it ${once}` : 'reach it'}: it holds`
+          ? `, more than the ${threat} that can ${lower ? `still reach it ${once}` : 'reach it'}: it holds${firstOnly ? ' only if I move first' : ''}`
           : `; ${lower ? `even ${once}, ` : ''}the ${threat} that can reach it still could`
     }).`;
+  }
+  // #215: every border that holds only if I move first, and what would hold it either way (the
+  // leftover sizes such a hold when it can, plan/leftover.ts: one named here it could not afford).
+  for (const id of [...borders.keys()].sort(byNum)) {
+    const b = borders.get(id)!;
+    const f = firstOnlyAt(id, b.worst ?? b.threat);
+    if (!f) continue;
+    const ownTake = toTake(f.own + unitsAt(id));
+    if (f.known && f.first) {
+      // #215 review: known to move first, only my first order lands before the opponent's first.
+      warnings.push(
+        `${label(id)} holds only if my first order is the ${f.first.armies} from ${label(f.first.from)}: ${f.idle} of its armies are idle armies transferred into it this turn, and I move first, so only my first order runs before player ${f.player}'s first attack (~${f.threat}). Its own ${f.own} need ${ownTake} to take; ${f.d} more deployed there would hold it with no transfer in.`,
+      );
+      continue;
+    }
+    // #215 review: why the leftover made no deploy there (plan/leftover.ts records it); idle
+    // transfers come after it (rule 6), so no deploy was sized for them.
+    const skip = f.idle > 0 ? undefined : ps.firstOnlySkip.get(id);
+    const fix =
+      skip === 'order'
+        ? // #215 review: its own count includes the stack its order sends, which still stands when
+          // the opponent moves first; deploys there would stand too, then leave with that order.
+          `${f.d} more deployed there would hold it whoever moves first (until its order runs: No-Split sends every army there with it, deploys included); the plan sizes no deploy for that on a territory that issues an order`
+        : `${f.d} more deployed there would hold it whoever moves first${
+            skip === 'budget'
+              ? ', more than the plan had left to deploy there'
+              : skip === 'room'
+                ? ', more than Local Deployment lets the plan deploy there'
+                : ''
+          }`;
+    const moved =
+      f.idle <= 0
+        ? `${f.late} of its armies are withdrawn into it`
+        : f.late <= 0
+          ? `${f.idle} of its armies are idle armies transferred into it`
+          : `${f.late + f.idle} of its armies are withdrawn or transferred into it`;
+    // #215 review: a first move only the award of picks says I have is the wiki's rule, unverified.
+    // An opponent's Order Priority would put its first order before my first (#215 review).
+    const award =
+      pc.opts.movesFirst === true && pc.opts.movesFirstUnverified
+        ? " (the award of picks says I move first: the wiki's rule, not verified live)"
+        : pc.opts.movesFirst === true && pc.opts.opponentsMayHoldOrderPriority
+          ? ' (I move first, but an opponent may hold an Order Priority card, which puts its first order before mine)'
+          : '';
+    warnings.push(
+      `${label(id)} holds only if I move first: ${moved} this turn, and ${
+        pc.opts.movesFirst === false ? `player ${f.player} moves first, so its attack` : `if player ${f.player} moves first its attack`
+      } (~${f.threat}) lands before them${award}${
+        f.first ? `; moving first, only my first order runs before its first, so it holds only if that is the ${f.first.armies} from ${label(f.first.from)}` : ''
+      }. Its own ${f.own} need ${ownTake} to take; ${fix}.`,
+    );
   }
   // #201: the FFA leader's borders held against two or more opponents attacking together.
   if (ffaLeader)
@@ -375,12 +474,20 @@ export function reportOffence(
   // One rationale line lists each visible enemy territory next to a territory I held at the start
   // that no order attacks, with the first reason that applies: a special unit there, a reason the
   // offence report already gave (rule 0p.2's second front among them), a capture that lowers income,
-  // its size against the most any neighbour of mine can spare once it holds its border, or that it is
+  // its size against the most any neighbour of mine can spare once it holds its border (#215: a conceded
+  // one, its garrison not standing, offers what it can still send once its orders leave), or that it is
   // no target of the plan's (rule 2: a player's territory is attacked to break a bonus, counter-attack,
   // finish a player off, strike, or as rule 4e's fallback; adapting in an FFA, the lead strikes).
   {
+    /** #215: a conceded border whose garrison does not stand (rule 1b): it keeps nothing back (my commander's never is: rule 1k). */
+    const givenUp = (x: number) => conceded.has(x) && !stood.has(x);
     const spareNow = (x: number, n: number) => {
-      if (!mineSet.has(x) || holdLocked.has(x) || conceded.has(x) || myCommanders.has(x) || orderOf(x)) return 0;
+      if (!mineSet.has(x) || myCommanders.has(x) || orderOf(x)) return 0;
+      // #215: a conceded border (its garrison not standing) holds nothing: what it can still send
+      // once its orders leave (an attack out, rule 1b's withdrawal) is free — every army on it but
+      // what the guard-off cover keeps there (coverOf), so it is below what stays on it.
+      if (givenUp(x)) return Math.max(0, avail.get(x)! - coverOf(x));
+      if (holdLocked.has(x)) return 0;
       const gone = (m: number) => m === n;
       return Math.max(0, avail.get(x)! - Math.max(keepFor(x, gone), twoStepKeep(x, gone)));
     };
@@ -437,7 +544,15 @@ export function reportOffence(
         .sort((a, b) => b.spare - a.spare || a.x - b.x)[0]!;
       if (need === null) return 'no attack can take it at these kill rates';
       if (best.spare < need)
-        return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}${deployText}`;
+        return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and ${
+          givenUp(best.x)
+            ? `the most a neighbour of mine has left for it is ${best.spare} (${label(best.x)}, conceded: ${
+                orderOf(best.x)
+                  ? `No-Split sends its whole stack on its other order`
+                  : 'what it can still send once its other orders leave'
+              })`
+            : `the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}`
+        }${deployText}`;
       if (goal !== 'balanced') {
         // Rule 4e's fallback (and a lead) can still take a player's territory under another goal.
         const others = [...attacked].filter((t) => t !== n && state.get(t)?.owner.kind === 'player').sort(byNum);

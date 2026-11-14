@@ -29,7 +29,7 @@ interface FirstMoverSeen {
   source: FirstMoverSource;
 }
 
-interface ResolvedFirstMover {
+export interface ResolvedFirstMover {
   firstMover: FirstMover;
   /** `remembered`: alternated from the turn kept in `from`. */
   source: FirstMoverSource | 'remembered';
@@ -105,6 +105,15 @@ export function resolveFirstMover(input: {
   // Keep what is newly known, unless a better-ranked turn is kept already.
   const record = used.record && (!kept || RANK[used.record.source] >= RANK[kept.source]) && !same(used.record, kept) ? used.record : undefined;
   return { resolved: used.resolved, ...(record ? { record } : {}), warnings };
+}
+
+/**
+ * #215 review: a first mover the user gave (`first_mover`, now or on a remembered turn, alternated)
+ * is verified; one read from the award of picks — the wiki's rule, not verified live — is not, and
+ * the planner's hold sizing treats it as unknown (`movesFirstUnverified`).
+ */
+export function verifiedFirstMover(resolved: ResolvedFirstMover): boolean {
+  return resolved.source === 'explicit' || (resolved.source === 'remembered' && resolved.from?.source === 'explicit');
 }
 
 const same = (a: FirstMoverSeen, b: FirstMoverSeen | undefined) =>

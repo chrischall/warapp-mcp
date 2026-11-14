@@ -6,7 +6,7 @@ import { openingIncome, PICK_HORIZON } from '../analysis/picks.js';
 import type { BoardState, TerritoryState } from '../board.js';
 import { FOG_LEVEL_NAMES, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_VISIBLE } from '../live.js';
 import type { Game, Player } from '../normalize.js';
-import { readFirstMover, resolveFirstMover, writeFirstMover, type FirstMover, type FirstMoverSource } from '../move-order.js';
+import { readFirstMover, resolveFirstMover, verifiedFirstMover, writeFirstMover, type FirstMover, type FirstMoverSource } from '../move-order.js';
 import { readPickRecord, writeAward } from '../pick-list.js';
 import { pickSettings } from './picks.js';
 
@@ -225,7 +225,7 @@ export async function firstMoverFor(
   turn: number | null,
   explicit: FirstMover | undefined,
   award: AwardContext | undefined,
-): Promise<{ firstMover?: FirstMover; view: FirstMoverView | null; warnings: string[] }> {
+): Promise<{ firstMover?: FirstMover; verified?: boolean; view: FirstMoverView | null; warnings: string[] }> {
   const cyclicDuel = game.players.length === 2 && isCyclicMoveOrder(game.settings?.moveOrder);
   const remembered = dataDir && cyclicDuel ? await readFirstMover(dataDir, game.id, me.id) : undefined;
   const { resolved, record, warnings } = resolveFirstMover({
@@ -239,6 +239,8 @@ export async function firstMoverFor(
   if (!resolved) return { view: null, warnings };
   return {
     firstMover: resolved.firstMover,
+    // #215 review: only a first mover the user gave is verified; the award's is the wiki's rule.
+    verified: verifiedFirstMover(resolved),
     view: { who: resolved.firstMover === 'me' ? 'you' : 'opponent', source: resolved.source, ...(resolved.from ? { from: resolved.from } : {}) },
     warnings,
   };

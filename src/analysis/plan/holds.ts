@@ -91,6 +91,17 @@ export interface HoldBook {
   kept: Set<number>;
   /** #122: members garrisoned so: like a border rule 1c keeps, the leftover tops them up to a comfortable margin first. */
   garrisoned: Set<number>;
+  /**
+   * #215: the pending holds rule 1a's triage itself locked (under `balanced`), so the greedy step
+   * unlocks only those when it concedes one — never a lock some other rule added.
+   */
+  pendingLocks: Set<number>;
+  /**
+   * #215 review: the bonuses this turn's captures may complete — every missing member a capture
+   * target — by their armies to finish (rule 4's bonus plans; filled once the targets are known,
+   * before rule 1a's triage runs).
+   */
+  completable: Map<number, number>;
 }
 
 /** The holds phase's helpers, for planPass to run. */
@@ -102,7 +113,10 @@ export type Holds = ReturnType<typeof holdsPhase>;
  * garrisonCompleted where the capture passes need them.
  */
 export function holdsPhase(pc: PlanCtx, ps: PlanState, book: DeployBook, threats: Threats, pass: TwoStepPass) {
-  const hb: HoldBook = { threatened: [], conceded: new Set(), units: [], holds: [], kept: new Set(), garrisoned: new Set() };
+  const hb: HoldBook = {
+    threatened: [], conceded: new Set(), units: [], holds: [], kept: new Set(), garrisoned: new Set(),
+    pendingLocks: new Set(), completable: new Map(),
+  };
   const h0 = holdBasics(pc, ps, book, threats);
   const h1 = { ...h0, ...twoStepHolds(pc, ps, book, threats, hb, pass, h0) };
   const h2 = { ...h1, ...holdOrConcede(pc, ps, book, threats, hb, h1) };
@@ -138,7 +152,8 @@ export function holdBasics(pc: PlanCtx, ps: PlanState, book: DeployBook, threats
    * left out: once taken they threaten nothing); 0 with no enemy next to it. When it cannot
    * hold on what it has: everything on my commander's territory (rule 1k: nothing leaves it),
    * else everything only if `room` deploys would make it hold, and nothing otherwise (triage
-   * would concede it, so keeping its armies home saves nothing).
+   * would concede it, so keeping its armies home saves nothing). Armies withdrawn into it count
+   * only when I am known to move first (#215, {@link lateArrivals}).
    */
   const keepFor = (x: number, gone: (n: number) => boolean, room = Infinity) => {
     const a = avail.get(x)!;
@@ -146,7 +161,8 @@ export function holdBasics(pc: PlanCtx, ps: PlanState, book: DeployBook, threats
     const b = borderAt(x, (n) => captured.has(n) || gone(n));
     if (!b) return covering;
     const need = Math.max(0, holdArmies(b.threat) - unitsAt(x));
-    const short = need - stayAt(x);
+    // #215: armies withdrawn into it hold it only if I move first: sized for the worse order.
+    const short = need - (stayAt(x) - lateArrivals(pc, ps, x));
     if (short > room && !myCommanders.has(x)) return covering;
     return Math.max(covering, a - Math.max(0, Math.min(a, -short)));
   };
@@ -677,12 +693,30 @@ export function floorTier(
   hb: HoldBook,
   prev: HoldsUpTo3,
 ) {
-  const { goal, balanced, guarded, paybackTurns, label, bonusName, toTake } = pc;
-  const { warnings, rationale, locked, captured } = ps;
+  const { g, goal, balanced, guarded, paybackTurns, label, bonusName, toTake, bonusTs, mineSet, income } = pc;
+  const { warnings, rationale, locked, captured, avail } = ps;
   const { deploy, undeploy, pools, roomAt } = book;
   const local = pools !== null && pools.bonuses.length > 0;
   const { chainAt, stacksAt, borders } = threats;
-  const { threatened, conceded, units, holds } = hb;
+  const { threatened, conceded, units, holds, pendingLocks, completable } = hb;
+  /**
+   * #215 review: `id` is a member of a positive bonus this turn's captures may complete without
+   * it — every missing member a capture target next to another territory of mine, and its armies
+   * to finish within this turn's income plus the armies on those territories (kept, `id` sends
+   * none) — so rule 1c may keep `id` (and the leftover garrison it) once the captures are known.
+   */
+  const mayComplete = (id: number) =>
+    g.map.bonuses.some((b) => {
+      const cost = completable.get(b.id);
+      const ts = bonusTs.get(b.id) ?? [];
+      if (cost === undefined || b.value <= 0 || !ts.includes(id)) return false;
+      const sourcesOf = (x: number) => neighborsOf(g, x).filter((n) => mineSet.has(n) && n !== id);
+      const missing = ts.filter((x) => !mineSet.has(x));
+      // A member only `id` reaches is completed out of `id` itself: no reason to keep it locked.
+      if (missing.some((x) => !sourcesOf(x).length)) return false;
+      const near = new Set(missing.flatMap(sourcesOf));
+      return cost <= income + [...near].reduce((n, x) => n + avail.get(x)!, 0);
+    });
   const {
     uneconomic, acting, concedeUnaffordable, heldStack, hold, heldBorders, commanderHeld, buildUnits, unitBorders,
     concedeUnit, leftFor, fundUnit, fundNearMiss,
@@ -870,8 +904,14 @@ export function floorTier(
   };
   const bestResponseLoss = (us: readonly Unit[], have: ReadonlyMap<Threatened, number>, short: (m: Threatened) => boolean) =>
     bestResponse(us, have, short).loss;
-  const settleContested = () => {
-    const open = units.filter((u) => u.contested && !u.conceded);
+  /**
+   * `wholeOnly` (#215, rule 0p.1: a 1v1 in contact, before the first advance): only hold each
+   * contested unit whole that pays back within PAYBACK_TURNS (one CONCEDE_FACTOR made contested)
+   * and that what is left covers (best worth per army first, never weighed against spreading) — no
+   * concession, no spread — leaving the rest contested for the call after the captures.
+   */
+  const settleContested = (wholeOnly = false) => {
+    const open = units.filter((u) => u.contested && !u.conceded && (!wholeOnly || u.loss !== 'payback'));
     if (!open.length) return;
     const need = (u: Unit) => u.members.filter((m) => !heldBorders.has(m.id)).reduce((n, m) => n + m.holdCost, 0);
     const ratio = (u: Unit) => u.worth / Math.max(1, need(u));
@@ -916,7 +956,8 @@ export function floorTier(
       }
       return lost + bestResponseLoss(floored, have, (m) => (left.get(m) ?? 0) > 0);
     };
-    const spreadFloored = !local && open.some((u) => u.floored) && simulate(false) < simulate(true);
+    // wholeOnly: whole holds first, whatever spreading would save — what is left is spread after the captures.
+    const spreadFloored = !wholeOnly && !local && open.some((u) => u.floored) && simulate(false) < simulate(true);
     for (const u of order) {
       if (u.floored && spreadFloored) continue;
       const more = need(u);
@@ -932,12 +973,17 @@ export function floorTier(
         fundUnit(
           u,
           undefined,
-          `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: ${floored ? 'past its floor ' : ''}its ${unitBorders(u)} need${u.members.length === 1 ? 's' : ''} ${more}${floored ? ' more' : ''}${why ? ` (${why})` : ''}, and nothing else this turn uses those armies.`,
+          `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: ${floored ? 'past its floor ' : ''}its ${unitBorders(u)} need${u.members.length === 1 ? 's' : ''} ${more}${floored ? ' more' : ''}${why ? ` (${why})` : ''}, ${
+            wholeOnly
+              ? 'before any expansion that completes no bonus (1v1 in contact: an advance ranks below every hold).'
+              : 'and nothing else this turn uses those armies.'
+          }`,
         )
       ) {
         u.contested = false;
         continue;
       }
+      if (wholeOnly) continue;
       // Not floored (one target for the deploy): the old concession, now that the captures had their turn.
       if (!u.floored) {
         u.contested = false;
@@ -946,6 +992,7 @@ export function floorTier(
         for (const m of u.members) if (conceded.has(m.id)) locked.delete(m.id);
       }
     }
+    if (wholeOnly) return;
     const short = units
       .filter((u) => u.contested && !u.conceded)
       .flatMap((u) => u.members.filter((m) => !heldBorders.has(m.id)).map((m) => ({ m, u })));
@@ -1042,8 +1089,21 @@ export function floorTier(
         return;
       }
       if (balanced) {
+        // #215: a hold no deploy this turn can pay for is conceded now, not left to the greedy
+        // step: locked as a pending hold, its armies could not attack out (a border taken last
+        // turn from a weak opponent, exempt from the economic test, sat on 7 armies beside a 2-army
+        // member of an enemy bonus while the deploy went elsewhere). The budget only shrinks from
+        // here, so the greedy step could never have held it.
+        // Never quiet here: under `balanced` this triage runs only non-quietly (quiet concessions
+        // go through the greedy step's `singleNow` / `singleLate`).
+        // #215 review: not a member of a bonus this turn's captures may complete — conceded now, it
+        // attacked out (under No-Split with its whole stack) before rule 1c kept it for the completed
+        // bonus, empty. Left pending, the greedy step concedes it and decides once the captures are
+        // known (planner.ts `concedePending`).
+        if (t.holdCost > left && !mayComplete(t.id)) return concedeUnaffordable(t, left);
         // Its armies stay put until the greedy step decides: holding assumes they are all there.
         holds.push(t);
+        if (!locked.has(t.id)) pendingLocks.add(t.id);
         locked.add(t.id);
         return;
       }
@@ -1092,7 +1152,57 @@ export function floorTier(
       if (!fundUnit(it.unit) && !fundNearMiss(it.unit)) floorOrConcede(it.unit, leftFor(it.unit), single);
     }
   };
-  return { keptShort, floorOrConcede, settleContested, triage };
+  return { keptShort, floorOrConcede, settleContested, triage, mayComplete };
+}
+
+/**
+ * #215: I am known to move first (#127) — from a source the hold sizing trusts: one the user gave,
+ * not the award of picks' unverified rule (`movesFirstUnverified`, #215 review) — and no opponent
+ * may hold an Order Priority card (`opponentsMayHoldOrderPriority`, #215 review): played, it puts
+ * its first order (an all-in on a border) before my first.
+ */
+export const knownFirst = (pc: PlanCtx) =>
+  pc.opts.movesFirst === true && pc.opts.movesFirstUnverified !== true && pc.opts.opponentsMayHoldOrderPriority !== true;
+
+/**
+ * #215: the armies withdrawn into my `id` this turn (rule 1b) that a hold may count only if I move
+ * first. A transfer in is my own order: when the opponent moves first, its first order — an all-in
+ * on `id` — runs before any of mine. So unless I am known to move first (#127, {@link knownFirst})
+ * they are late, and a hold sized for the worse order leaves them out. 0 when I am known to move first.
+ */
+export function lateArrivals(pc: PlanCtx, ps: PlanState, id: number): number {
+  return knownFirst(pc) ? 0 : withdrawnInto(ps, id);
+}
+
+/**
+ * #215 review: the armies a worse-order hold on my `id` leaves out. When the opponent moves first,
+ * its first order runs before ALL of mine: the armies withdrawn into `id` are not there yet, and
+ * the armies `id` sends out by its own orders are still there. After my orders have run, the
+ * withdrawal is in and those armies are gone (the hold #127 sized). A move out of a territory is
+ * scheduled after the moves into it (schedule.ts), so the worse of the two is the withdrawal less
+ * what leaves: `max(0, late − sent out)`. 0 when I am known to move first.
+ */
+export function lateNet(pc: PlanCtx, ps: PlanState, id: number): number {
+  const late = lateArrivals(pc, ps, id);
+  return late <= 0 ? 0 : Math.max(0, late - sentOut(ps, id));
+}
+
+/** #215 review: the armies my `id` sends out by its own orders this turn (attacks and transfers). */
+export function sentOut(ps: PlanState, id: number): number {
+  return ps.moves.reduce((n, m) => (m.from === id ? n + m.armies : n), 0);
+}
+
+/**
+ * #215: the armies withdrawn into my `id` this turn (rule 1b), whatever the move order. Only
+ * withdrawal transfers count (#215 review): `incoming` also carries a softener's survivors that come
+ * home and No-Split extras, which beside an idle transfer in (rule 6) would read as withdrawn.
+ */
+export function withdrawnInto(ps: PlanState, id: number): number {
+  const sent = ps.moves.reduce(
+    (n, m) => (m.kind === 'transfer' && m.to === id && m.reason === 'withdraws from a conceded border' ? n + m.armies : n),
+    0,
+  );
+  return Math.max(0, Math.min(ps.incoming.get(id) ?? 0, sent));
 }
 
 /** Rule 1b: withdraw from conceded borders (and Order Priority when a withdrawal must go first). */
