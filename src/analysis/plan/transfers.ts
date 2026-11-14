@@ -24,7 +24,7 @@ export function transfers(
   staging: Staging | undefined,
 ): void {
   const { g, me, s, foe, territories: state, label, bonusName, mine, mineSet, unitsAt, noSplit, myCommanders } = pc;
-  const { rationale, avail, locked, coverKeep, captured, moves } = ps;
+  const { rationale, avail, locked, coverKeep, centralKeep, captured, moves } = ps;
   const { guardAt, coverOf, orderOf, warnSplit } = book;
   const { holdArmies, borderAt, ownerOf } = threats;
   const { arrived, conceded, stayAt, twoStepCite, twoStepHold, twoStepKeep } = hd;
@@ -71,7 +71,7 @@ export function transfers(
         // #172: what a stack two steps away needs it to keep stays (the step below says so).
         const far = twoStepHold(t);
         // #179: nor what covers a finished-off player's exit.
-        const k = n - Math.max(twoStepKeep(t), coverOf(t));
+        const k = n - Math.max(twoStepKeep(t), coverOf(t), centralKeep.get(t) ?? 0);
         // No-Split (#124): the whole stack or nothing.
         if (k <= 0 || (noSplit && k < n)) continue;
         if (orderOf(t)) {
@@ -119,7 +119,13 @@ export function transfers(
       // this turn and attack it next. The larger hold binds (never the two added together).
       const far = twoStepHold(t);
       const twoStep = far !== null && far.stay > keep128 ? far : null;
-      const keep = Math.max(keep128, twoStep?.stay ?? 0, coverKeep.has(t) ? coverKeep.get(t)! + guardAt(t) : 0);
+      const keep = Math.max(
+        keep128,
+        twoStep?.stay ?? 0,
+        coverKeep.has(t) ? coverKeep.get(t)! + guardAt(t) : 0,
+        // #218 (comment): the leftover kept central stays; the armies already there may still go.
+        centralKeep.has(t) ? centralKeep.get(t)! + guardAt(t) : 0,
+      );
       // No-Split (#124): a transfer sends the whole stack, so one that must keep some sends none.
       const part = Math.min(n, Math.max(0, stayAt(t) - keep));
       const k = noSplit && part < n ? 0 : part;
@@ -146,6 +152,8 @@ export function transfers(
         `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${
           k < n && twoStep
             ? twoStepCite(t, twoStep, (c) => ` (the rest stay: ${c})`)
+            : k < n && !ifFail && centralKeep.has(t)
+            ? ` (the ${centralKeep.get(t)!} of the leftover kept central stay)`
             : k < n
             ? ` (${stayAt(t)} stay: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat})`
             : ''

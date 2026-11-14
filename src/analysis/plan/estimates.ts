@@ -5,6 +5,7 @@
 // rationale and warnings that state them. Pure: it reads the input and writes only
 // `state.warnings` / `state.rationale`.
 import type { BoardState } from '../../board.js';
+import { holdsSeat } from '../../player-states.js';
 import { carriesTeam } from '../../teams.js';
 import { bonusTerritories } from '../bonuses.js';
 import { CHAIN_MAX_STEPS } from '../chains.js';
@@ -19,7 +20,7 @@ import {
   winChance,
 } from '../combat.js';
 import { neighborsOf, type MapGraph } from '../graph.js';
-import type { OpponentTrack } from '../opponents.js';
+import type { MyOrders, OpponentTrack } from '../opponents.js';
 import { OUTLOOK_TURNS } from '../outlook.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from '../player.js';
 import {
@@ -51,23 +52,28 @@ import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type ProfilePlayer } from '../p
 import type { BoardCtx, CombatCtx, OpponentsCtx, PlanCtx, PlanState, StandingCtx } from './state.js';
 import { byNum } from './util.js';
 
-
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
- * symmetric (`symmetricStart`) and it is a 1v1 — two players in the game, the other still
- * playing, no teams (the players in sight when no player list is given). An FFA down to two
- * gets none: either survivor may have absorbed the eliminated players' territories.
+ * symmetric (`symmetricStart`), with no teams, and every seated player still playing — a 1v1 (one
+ * opponent), or (#226) a free-for-all, where every opponent beside the fog gets the same prior. A
+ * game with a player out (eliminated, booted, surrendered) gets none: a survivor may have absorbed
+ * its territories, or I may have, so the start no longer says who earns what. Without a player list,
+ * only one opponent in sight counts (a 1v1 as far as the board tells).
  */
 function fogPrior(board: BoardState, me: number, ctx: PlanGameContext, myIncome: number): EnemyIncomePrior | undefined {
   if (ctx.symmetricStart !== true) return undefined;
-  const players = ctx.players ?? [];
+  const players = (ctx.players ?? []).filter((p) => holdsSeat(p.state));
   if (players.some((p) => carriesTeam(p.team))) return undefined;
-  if (players.length > 2) return undefined;
+  if (players.some((p) => (p.state ?? 'Playing') !== 'Playing' && p.id !== me)) return undefined;
   const opponents = players.length
-    ? players.filter((p) => p.id !== me && (p.state ?? 'Playing') === 'Playing').length
+    ? players.filter((p) => p.id !== me).length
     : new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId !== me ? [t.owner.playerId] : []))).size;
-  if (opponents !== 1) return undefined;
-  return { myIncome: Math.max(0, myIncome), ...(ctx.opening ? { opening: ctx.opening } : {}) };
+  if (opponents < 1 || (!players.length && opponents !== 1)) return undefined;
+  return {
+    myIncome: Math.max(0, myIncome),
+    ...(opponents > 1 ? { format: 'ffa' as const } : {}),
+    ...(ctx.opening ? { opening: ctx.opening } : {}),
+  };
 }
 
 /** The players on `me`'s team (#128), from the game's player list; none in a no-team game. */
@@ -91,6 +97,8 @@ export function planEnemyEstimates(input: {
   income: number;
   settings?: PlannerSettings;
   previousBoard?: BoardState;
+  /** #226: my orders on the turn `previousBoard` was played: a failed attack's kills count back. */
+  previousOrders?: MyOrders;
   tracks?: readonly OpponentTrack[];
   game?: PlanGameContext;
   turn?: number | null;
@@ -102,6 +110,7 @@ export function planEnemyEstimates(input: {
     turn,
     fog: ctx.fog,
     reinforcement: ctx.reinforcement,
+    ...(input.previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
   });
   return { estimates, prior };
 }
@@ -127,6 +136,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     income: income - Math.max(0, Math.floor(input.cardArmies ?? 0)),
     settings: s,
     ...(input.previousBoard ? { previousBoard: input.previousBoard } : {}),
+    ...(input.previousOrders ? { previousOrders: input.previousOrders } : {}),
     ...(input.tracks ? { tracks: input.tracks } : {}),
     game: ctx,
     turn: turnNow,

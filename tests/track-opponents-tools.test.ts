@@ -325,9 +325,10 @@ describe('warapp_plan_turn with a tracked history', () => {
     const duel = await plan(true);
     expect(duel.enemyDeploy).toBe(7);
     expect(duel.warnings.join('\n')).toMatch(/Enemy deploy estimate for player \d+: ~7 \(a prior, not an observation/);
-    // The fixture's full lobby is an FFA: no prior.
+    // The fixture's full lobby is a free-for-all that started even, every player still in: the
+    // prior too (#226), named for a free-for-all.
     const ffa = await plan(false);
-    expect(ffa.warnings.join('\n')).not.toMatch(/a prior/);
+    expect(ffa.warnings.join('\n')).toMatch(/~7 \(a prior, not an observation: in a free-for-all that started even/);
   });
 
   it('one observed turn: no tracked line (today\'s behaviour)', async () => {

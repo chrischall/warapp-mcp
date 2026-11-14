@@ -5,6 +5,7 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { clientPickLimits, planPicks, type CoverageReport, type PickGroup, type PickSettings } from '../analysis/picks.js';
+import { DEFAULT_TERRITORY_LIMIT } from '../analysis/opponents.js';
 import { OWNER_PICKABLE } from '../live.js';
 import type { Game, GameSettings } from '../normalize.js';
 import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
@@ -18,8 +19,8 @@ import { keepPickable } from './where.js';
 const VIEWS = ['compact', 'full'] as const;
 /** The only GameFeed state in which territories are picked. */
 export const PICK_PHASE_STATE = 'DistributingTerritories';
-/** TerritoryLimit assumed when the settings do not say (war.app's usual default). */
-export const DEFAULT_TERRITORY_LIMIT = 3;
+/** TerritoryLimit assumed when the settings do not say (war.app's usual default; shared with the outlook). */
+export { DEFAULT_TERRITORY_LIMIT };
 
 /** The pick scorer's view of the game settings. */
 export function pickSettings(s: GameSettings | undefined): PickSettings {

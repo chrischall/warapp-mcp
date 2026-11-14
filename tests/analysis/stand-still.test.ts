@@ -13,7 +13,7 @@ import { planTurn, type PlanGameContext, type PlannerSettings, type TurnPlan } f
 import { OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap, GameSettings } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
-import { board, mine, neutral } from './helpers.js';
+import { board, mine, neutral, sizedBeforeMargin } from './helpers.js';
 
 const ME = 10;
 const P2 = 30;
@@ -664,7 +664,9 @@ describe('#107: in contact, never stand still either', () => {
     const b = contactBoard();
     const p = run(b, { map: plain });
     // 1 to take; sized for its owner's ~5 deploy from the idle stack (#120): 8.
-    expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, armies: 8, kind: 'attack' })]);
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 2, to: 23, kind: 'attack' })]);
+    // #226: idle armies on 2 then join it as a margin.
+    expect(sizedBeforeMargin(p, 2, 23)).toBe(8);
     expect(valid(p, b, 5, plain)).toEqual([]);
   });
 
@@ -708,7 +710,8 @@ describe('#107: in contact, never stand still either', () => {
     ]);
     // Holds intact, and 23 still sized for its 0 defenders plus player 40's ~5 deploy (#120).
     expect(p.conceded).toEqual([]);
-    expect(attacks(p).find((m) => m.to === 23)).toEqual(expect.objectContaining({ from: 2, to: 23, armies: 8, kind: 'attack' }));
+    expect(attacks(p).find((m) => m.to === 23)).toEqual(expect.objectContaining({ from: 2, to: 23, kind: 'attack' }));
+    expect(sizedBeforeMargin(p, 2, 23)).toBe(8);
     const r = p.rationale.join('\n');
     expect(r).toMatch(/FFA army lead: my 30 armies in view are 4\.3× player 30's 7/);
     expect(r).toMatch(/Attack T22 \(#22\) from T1 \(#1\) with 15 \(deploy 1 there\): advances bonus Delta \(#501\) .*player 30's member, taken on my army lead \(4\.3×\): sure even if player 30 deploys its ~5 there first/);

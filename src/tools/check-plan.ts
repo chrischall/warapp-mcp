@@ -205,6 +205,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         income,
         settings,
         ...(history.previous ? { previousBoard: history.previous.board } : {}),
+        // #226: my orders on that turn, when this server sent them, as warapp_plan_turn has them.
+        ...(history.previous && turn !== null && history.boards.find((b) => b.turn === turn - 1)?.orders
+          ? { previousOrders: history.boards.find((b) => b.turn === turn - 1)!.orders! }
+          : {}),
         ...(tracks ? { tracks } : {}),
         // The fog prior in a 1v1 that started even (#119) and the turn (#128), as warapp_plan_turn has them.
         game: {

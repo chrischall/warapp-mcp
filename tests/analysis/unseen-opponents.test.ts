@@ -256,6 +256,13 @@ describe('trackGame and the caveats on the bound (#94 review)', () => {
     expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] }).startArmiesPerTerritory).toBeUndefined();
   });
 
+  it('#214 review: says when the even share is the real start (full distribution), not only a bound', () => {
+    expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: -1, cards: [] }).fullDistribution).toBe(true);
+    // Without TerritoryLimit the share is only a bound: picks may have granted far fewer.
+    expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 4, distributionMode: 0, cards: [] }).fullDistribution).toBeUndefined();
+    expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] }).fullDistribution).toBeUndefined();
+  });
+
   it('manual or automatic distribution keeps TerritoryLimit × InitialPlayerArmiesPerTerritory', () => {
     const game = trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] });
     expect(game.start).toEqual({ territories: 3, armiesPerTerritory: 2 });

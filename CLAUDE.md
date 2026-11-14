@@ -341,13 +341,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `unknown`, not `null` armies, not fog level `Fogged`/`OwnerOnly`/`3`/`4`) — live, fog lifting
   over existing stacks read as +119 and conceded six held-bonus borders. The observed figure is
   capped at base + every bonus none of whose territories someone else visibly holds (a warning
-  says when), and a rationale line names the turns compared and the reveals skipped. The
+  says when; #226: with per-territory income the base counts every territory it could hold — its
+  visible ones and every one whose owner is hidden — and a reveal whose armies exceed its estimate
+  is named in a warning, still not income), and a rationale line names the turns compared and the
+  reveals skipped. #226: given my orders on the previous turn (`PlanInput.previousOrders`, from the
+  cached orders), the defenders my failed attack killed on a territory that stayed its count back
+  into its growth there (`failedAttackKills`, shared with `measureOrders`; within #123's bound
+  beside the fog). The
   estimate is max(visible-bonus figure, observed)
   and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). **The fog
-  prior (#119):** in a 1v1 that started even (two players in the game, no teams — not an FFA
-  down to two; `PlanGameContext.symmetricStart`, set by `warapp_plan_turn` from
-  `symmetricStart(settings, map)`: any distribution but a map scenario),
-  an opponent bordering the fog is estimated at least at my own income (card armies out) — or, on
+  prior (#119):** in a 1v1 or (#226) a free-for-all that started even (no teams, every seated
+  player still playing — not once a player is out; `PlanGameContext.symmetricStart`, set by
+  `warapp_plan_turn` from `symmetricStart(settings, map)`: any distribution but a map scenario),
+  every opponent bordering the fog is estimated at least at my own income (card armies out) — or, on
   turns 1–4 when the award of picks proved all its starts, at the income the pick advisor's opening
   simulation gives it from them when that is larger (`openingIncome`, `PlanGameContext.opening`, #166) — capped
   at what it could earn on the board, and the warning calls it a prior — every observed figure is
@@ -464,7 +470,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     and expansion phases, completions and advances go to the bonus fewest turns from completion
     first (equally close ones by score); a bonus advanced last turn keeps priority unless another
     is strictly closer. "N armies to finish" counts fogged members at the bonus's costliest
-    visible missing member.
+    visible missing member. An FFA lead step into it (an enemy member, #203) is sized to land
+    even if its owner deploys there first; when the turn cannot fund that for the closest bonus or
+    a completion, it is taken at the bare cost that ranking used (#214), after every sibling's
+    sure try, with #120's warning — only while rule 4f commits to the closest bonus, and never
+    with the armies a hold gets: `planTurn` plans again without bare steps and keeps that plan
+    (saying so) when the bare one leaves a border it holds without its hold.
   - **The economy test charges armies lost (#125).** A capture costs the economy the armies its
     attackers lose plus the one left on it (waived when an idle stack beside it, facing no enemy,
     takes it), not the armies sent; a bonus's worth adds its members' per-territory income; plain
@@ -485,7 +496,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     reinforce" warning gives the win chance against the reinforced target. The 1v1 strike stack
     goes to the border with the most to spare after its best such strike (most armies only when
     none can strike), and fog pressure paid outright from idle armies is not priced against
-    expansion (`PRESSURE_FACTOR`).
+    expansion (`PRESSURE_FACTOR`). #226: once the transfers have run, such an attack (not a
+    combined capture, not under No-Split) also takes the armies still idle on its source beyond
+    what holds it — even if the attacks on players beside it fail (#128), the owner's other stacks
+    beside each target having moved in first — as a margin over an
+    estimate that is only a floor (never from a source rule 5's leftover went to for a comfortable
+    margin, a hold or saving toward a step: those armies are not idle); a "Margin on the attack on …" line says what deploy it covers.
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can
@@ -518,7 +534,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin (with several, each is brought to its margin first, and a conceded border the leftover
     can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies
-    next to it" rule picked the hopeless border).
+    next to it" rule picked the hopeless border). #218: once every short border has its margin, the
+    rest goes to the source of the step the leftover would save toward (#125) when that source is a
+    border of equal defensive value (same player, threat, enemy territories, protected value and
+    bonuses), and counts toward the step; with no enemy territory in view the leftover stays on the
+    territory central to what I hold (fewest hops through my land to my farthest border) rather than
+    ride an expansion stack more than `CENTRE_SLACK` hops farther out whose attacks land without it.
+  - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
+    forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
+    against my biggest beside it). The plan reports `front` (that forecast with my whole income and
+    the opponent's estimate; both sides every turn's income, so a Reinforcement card played this
+    turn is left out of mine, as it is of theirs), and `warapp_plan_turn` feeds it to the outlook for the turn being played,
+    so the two read the same; the plan's line says how the whole-income outcome differs from the
+    income-less-the-share one, and the outlook's `basis` names the front and the incomes it assumed.
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
     the threat (see the threat model above), and warns "is building" — less what a visible
     neighbour of the same owner sent (unless it shrank beside another player's shrinking stack:
@@ -644,6 +672,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback).
   `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json`
   (`warapp_get_game` adds the final result); the surrender preview reads the latest from there.
+  An opponent the outlook cannot measure (nothing in view now, or no observed income) gets a
+  peer-paced likely high (#214, `peerPace` in `src/analysis/outlook.ts`, pure and exported for the
+  planner): each turn 2 × the higher of my income and the most any opponent was tracked earning, the
+  map's even share only a ceiling — never sized by the map; it can still block `winning`. Every likely
+  high starts symmetric: the given start, the even share under full distribution (the real start
+  then), else my opening board, else the default territory limit (3) at the starting armies — never
+  the territories I hold on a later board; my income before my first board ramps up from that
+  opening's.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

@@ -197,19 +197,22 @@ describe('#212: a lead step out of a border that must keep its hold', () => {
     expect(valid(p, c)).toEqual([]);
   });
 
-  it('says what the conceded border lacked once the held border took the deploy (#214: no longer a conceded gate)', () => {
-    // #214: a lead step may be funded on a conceded source, so T1 is no longer refused outright;
-    // the held border's step on T3 takes most of the deploy first, and the line says what was left.
+  it('completes the bonus at the steps\' bare cost when the sure ones do not fit beside the held border\'s hold (#214 item 1)', () => {
+    // Without bonus B904, T1 is conceded. Before #214 item 1, the held border's sure step on T3
+    // could not be funded with T2's, and the line said what the conceded T1 lacked. Now the
+    // completion retries both at their bare cost (T3's 3 defenders, T2's 1): B901 completes, and
+    // #120's warnings say what each faces if player 20 deploys there first.
     const i = input();
     const map = { ...i.graph.map, bonuses: i.graph.map.bonuses.filter((b) => b.id !== 904) };
     const c: PlanInput = { ...i, income: 25, graph: buildGraph(map) };
     const p = planTurn(c);
-    expect(attacks(p).map((m) => m.to)).not.toContain(2);
+    expect(attacks(p).find((m) => m.to === 2)).toMatchObject({ from: 1, armies: 2 });
+    expect(attacks(p).find((m) => m.to === 3)).toMatchObject({ from: 4 });
+    for (const t of [2, 3])
+      expect(attacks(p).find((m) => m.to === t)!.reason).toMatch(/completes bonus B901 \(#901\).*more than this turn can fund \(#214\)/);
+    expect(p.warnings.join('\n')).toMatch(/Attack on enemy T2 \(#2\) assumes its owner does not reinforce it first: if player 20 deploys its ~5 there, 2 attack 6/);
     const line = p.rationale.find((l) => l.startsWith('Not attacking')) ?? '';
-    expect(line).toMatch(
-      /T2 \(#2\) \(player 20, 1 armies\): taking it needs 2 .*; when its bonus's step was tried, T1 \(#1\) could spare 0 for it and this turn's deploy could add at most (\d+) there: \1 in all;/,
-    );
-    expect(line).not.toMatch(/is conceded/);
+    expect(line).not.toMatch(/T2 \(#2\)|T3 \(#3\)/);
     expect(valid(p, c)).toEqual([]);
   });
 

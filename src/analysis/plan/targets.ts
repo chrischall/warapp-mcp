@@ -223,12 +223,18 @@ export function captureTargets(
   const leadSteps = new Map<number, { player: number; defenders: number; extra: number }>();
   const leadStepsOn = auto && balanced && profile.format === 'ffa' && profile.opponents >= 2 && leadLever && !noSplit;
   const leadTry = new Map<number, LeadTry>();
-  /** #203: a lead step's capture reason names it, in every bonus pass that takes it. */
-  const leadNote = (t: number) => {
+  /**
+   * #203: a lead step's capture reason names it, in every bonus pass that takes it. #214: `sure`
+   * given, the step was retried at its bare cost (the sure one could not be funded): the note says
+   * what it is sized for, and what would be sure.
+   */
+  const leadNote = (t: number, sure?: number) => {
     const lead = leadSteps.get(t);
-    return lead
-      ? ` — player ${lead.player}'s member, taken on my army lead (${leadText()}): sure even if player ${lead.player} deploys its ~${lead.extra} there first (${lead.defenders} + ${lead.extra} defenders)`
-      : '';
+    if (!lead) return '';
+    const head = ` — player ${lead.player}'s member, taken on my army lead (${leadText()}): `;
+    return sure === undefined
+      ? `${head}sure even if player ${lead.player} deploys its ~${lead.extra} there first (${lead.defenders} + ${lead.extra} defenders)`
+      : `${head}sized for the ${lead.defenders} defenders there now: ${sure} would be sure even if player ${lead.player} deploys its ~${lead.extra} there first, more than this turn can fund (#214)`;
   };
   for (const t of [...g.territoryById.keys()].sort(byNum)) {
     if (mineSet.has(t)) continue;

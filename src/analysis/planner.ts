@@ -74,8 +74,27 @@
 //          4d), sinking the deploy into a conceded border for half a bonus. When it cannot, the step
 //          is taken before or after the bonus's other steps, whichever plans more captures (a tie:
 //          whichever leaves more of the deploy; a tie again: after), so it never crowds out a
-//          sibling a held border funds for less. One those passes do not take is an ordinary enemy
-//          territory again for every later rule
+//          sibling a held border funds for less. #214: when the turn cannot fund a step toward the
+//          closest bonus (or in a completion) at that sure size, it is retried at its bare cost, a sure
+//          capture of the defenders standing there now — the cost rule 4f ranks the bonuses on — with
+//          no worst case: #120's warning says what it faces if the owner deploys there first, and the
+//          reason says what would be sure ("sized for the N defenders there now: S would be sure …,
+//          more than this turn can fund"). Only a funding shortfall retries (an R3 or trade refusal of
+//          the sure step stands — a combined capture refused for a below-even trade or by R3 included),
+//          and only after every step had its sure try: pass 1 retries a
+//          completion with each step sure first and the ones that failed bare, pass 2 runs the closest
+//          bonus's leftover steps again bare once its sure round is done, so a bare step never takes
+//          the deploy a sibling's sure size would have had. Pass 2's retry runs only while rule 4f
+//          commits to the closest bonus (otherwise its order is the score order, with no closest
+//          bonus). #214 review: nor does a bare step take a hold's armies. Holds are sized after the
+//          captures (a contested held bonus is held whole from what they leave, #118), so planTurn
+//          checks the plan: when one with bare steps leaves a border of mine still threatened after
+//          its captures without a hold — conceded, short at the end, or a floored member — that the
+//          plan made without bare steps deploys to (or holds) and holds, that plan stands, with a
+//          rationale line "Lead step … not taken at its bare cost (#214 review): taking it would
+//          leave … without the hold this plan gives it". A failed completion retry leaves the skip
+//          line what the sure try said (a bare step it undid erased its member's entry). One those
+//          passes do not take is an ordinary enemy territory again for every later rule
 //          (rule 4e's fallback, 4g's card pieces, the lead strikes): its plain size, no sure sizing;
 //          its "Not attacking" line still ends with why its bonus's step failed (the hold it had to
 //          keep, the deploy that could reach it, or why no neighbour could attack).
@@ -87,7 +106,13 @@
 //          down so, the share is 0 this turn and holds come first. A front my stack breaks only if
 //          pressed counts as one only when the orders already take that stack; otherwise the share
 //          also goes when the border pins more than the income less the share (pressed, I am ground
-//          down). A rationale line gives the outcome, the turn and the income the border pins.
+//          down). A rationale line gives the outcome, the turn and the income the border pins (or
+//          that not even the whole income keeps it). #218: the front is `mainFront` (exchange.ts),
+//          shared with the game outlook; the plan reports `front`, the same front forecast with my
+//          whole income, which warapp_plan_turn feeds back to the outlook (my income there, as the
+//          opponent's, is every turn's: a Reinforcement card played this turn is left out, #164), and when that outcome
+//          differs the line says what it is ("With my whole N a turn there (as the outlook's front
+//          forecast deploys it) …").
 //       3. Behind on income: pressure (rule 1e) is sized with no margin. Outside a 1v1 the goal
 //          is `defend`; in a 1v1 (#72) it stays `balanced` — strike: rule 1's ordering puts
 //          breaks before expansion that completes nothing, and held-bonus units that pay for
@@ -193,7 +218,16 @@
 //     (fogged, or under a fog level that hid its armies) is a fog reveal, never growth or a
 //     capture (issue #69). The observed figure is capped
 //     at what the opponent could earn on this board: its base income plus every bonus none of
-//     whose territories someone else visibly holds, owner-only included (a warning says when). A rationale line names
+//     whose territories someone else visibly holds, owner-only included (a warning says when) —
+//     #226: with per-territory income the base counts every territory it could hold (its visible
+//     ones and every one whose owner the board hides), so the cap and the fog prior are not held
+//     at the base its few visible territories pay; a fog reveal stays no income, but one whose
+//     armies exceed its estimate in such a game is named in a warning (stacks that size say it
+//     holds more than is in view). #226: given my orders on the previous turn
+//     (`previousOrders`, what warapp_submit_turn cached), the defenders my failed attack killed
+//     on a territory that stayed its count back into its growth there (after = before + deploy
+//     − kills, kills straight-rounded at the offensive kill rate; beside the fog an ambiguous
+//     growth like any other, within #123's bound), and a rationale line says so. A rationale line names
 //     the turns compared and the territories counted vs skipped as reveals; the warning
 //     names which source won. Given `tracks` (`trackOpponents` over my board history, S3), an
 //     opponent observed over at least TRACKED_MIN_TURNS turns gets its tracked income (the
@@ -205,8 +239,9 @@
 //     measurements; #119) in place of the
 //     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
 //     The fog prior (#119, `EnemyIncomePrior`): when `game.symmetricStart` says every player
-//     started even and it is a 1v1 (two players in the game, no teams; an FFA down to two is
-//     not: a survivor may have absorbed the others), an opponent
+//     started even, with no teams and every seated player still playing — a 1v1, or (#226) a
+//     free-for-all, each opponent alike (a game with a player out is not: a survivor, or I, may
+//     have absorbed its territories; a player that never took its seat does not count) — an opponent
 //     bordering the fog (a territory next to one of its own shows no owner) is estimated at
 //     least at my own income (card armies out), capped at what it could earn on this board —
 //     every observed figure is a lower bound under fog, and the estimates read 2–3× low
@@ -592,6 +627,18 @@
 //     target is a player's or it is not certain, else an attack between breakpoints is named;
 //     and an attack on a player's still sized below that deploy keeps the warning, which then
 //     gives its win chance against the reinforced target and the size that would be sure.
+//     #226, a margin: once the transfers (rule 6) have moved what they move, an attack on a
+//     player's territory whose owner may deploy there (not a combined capture; not under No-Split,
+//     which sends the whole stack already) takes the armies still on its source beyond what holds
+//     it (`spareBeyondHold`; never from a source rule 5's leftover went to for a comfortable margin,
+//     a hold before the strike stack or saving toward a step, `leftoverKept`; and, as rule 6's #128 keep, what holds the source against the threat
+//     beside it as if this turn's attacks on players there failed — each such target then also
+//     holding its owner's stacks beside it that are not beside the source, which may move in
+//     before my attack runs), the target with the most
+//     defenders first: sized to the exact kill count at an estimate the plan calls a floor, it
+//     would otherwise fail to one army more deployed while those armies sit idle. A rationale
+//     line ("Margin on the attack on …") says how much deploy it now covers; when that is the
+//     whole estimate the "assumes" warning goes.
 //  3a. Combined (multi-source) captures (R4). When no single source can afford a
 //     target (its movable armies plus the deploys left), two or more of my
 //     sources held at the start of the turn (not locked, not conceded) attack it
@@ -838,14 +885,24 @@
 //     that territory without it, which the worse-order step would spend anyway; never one that
 //     attacks out or whose garrison already stays); with two or more such borders, each is first brought to that
 //     margin in the same order (#121: two symmetric borders at an exact hold ended as 16 and 7),
-//     the rest to the first — else (#125) it saves toward a capture this turn cannot afford:
+//     the rest to the first — #218: unless the step it would save toward (below) has its source on
+//     an open border of equal defensive value (the same player's threat, the same size, from the
+//     same enemy territories, protecting as much, in the same bonuses): then every short border
+//     first gets its margin (a lone one too), and the rest goes to that source, saving toward the
+//     step; a margin itself stays on its border — else (#125) it saves toward a capture this turn cannot afford:
 //     rule 4e's top-ranked step when it stood still for want of armies, else (rule 4f committing)
 //     the closest bonus's cheapest missing member in reach when this turn made no capture into
 //     that bonus, and only when its armies free plus what may still be deployed there fall short
 //     of it (a step refused for another reason — R3, rule 4c or 4d — is no reason to save); it
 //     goes to my territory beside that member with the most armies free (open, not a softener, no
 //     order under No-Split; "save toward …, the next step of bonus …") — else the
-//     source of the top expansion (a capture's finisher; it then makes no transfer), else the
+//     source of the top expansion (a capture's finisher; it then makes no transfer) — #218: but
+//     with no enemy territory in view (no front to go to), when that source's attacks land for
+//     sure and it lies more than CENTRE_SLACK hops farther from my farthest border than the
+//     territory central to what I hold (open, issuing no order; my largest connected holding,
+//     then the fewest hops through my land to its farthest border, then the least sum, then id),
+//     the leftover stays on that centre ("no front to go to: it stays central …"; rule 6 moves
+//     the armies already there, never the leftover) — else the
 //     border with the most fogged neighbours, else my biggest stack.
 //  6. Idle armies on interior territories transfer one step toward the front,
 //     only into territories held at the start of the turn and never into, or
@@ -1054,7 +1111,7 @@ import {
   straightKills,
 } from './combat.js';
 import { neighborsOf } from './graph.js';
-import { forecastBorder } from './exchange.js';
+import { forecastBorder, mainFront, type FrontStack } from './exchange.js';
 import { byNum, pct } from './plan/util.js';
 import {
   BREAK_WEIGHT,
@@ -1131,7 +1188,37 @@ function settledPass(
  * (a fixed point, so no cut reach is still there); without one, the plan that cuts nothing.
  */
 export function planTurn(input: PlanInput): TurnPlan {
-  const shared: TwoStepShared = {};
+  const plan = planRun(input, false);
+  const bare = runOutcome.get(plan);
+  if (!bare || !bare.bareSteps.length) return plan;
+  // #214 review: a lead step retried at its bare cost is not sure to land, so it may never take the
+  // armies a hold gets in the plan without bare steps. The planner sizes holds after captures (a
+  // contested held bonus is held whole from what they leave, #118), so this is checked on the two
+  // plans: when the bare one leaves a border that the other holds (funded there) without its hold,
+  // the plan without bare steps stands, and says why.
+  const sure = planRun(input, true);
+  const kept = runOutcome.get(sure);
+  if (!kept) return plan;
+  const lost = [...kept.held].filter((x) => bare.unheld.has(x)).sort((a, b) => a - b);
+  if (!lost.length) return plan;
+  const label = (id: number) => `${input.graph.territoryById.get(id)!.name} (#${id})`;
+  const list = (ids: number[]) => ids.map(label).join(', ');
+  const one = bare.bareSteps.length === 1;
+  sure.rationale.push(
+    `Lead step${one ? '' : 's'} ${list(bare.bareSteps)} not taken at ${one ? 'its' : 'their'} bare cost (#214 review): taking ${one ? 'it' : 'them'} would leave ${list(lost)} without the hold this plan gives ${lost.length === 1 ? 'it' : 'them'} — a bare step lands only if its owner does not deploy there first, and never takes a hold's armies.`,
+  );
+  return sure;
+}
+
+/**
+ * #214 review: per plan, the lead steps it takes at their bare cost, the borders it deploys to (or
+ * funds a hold on) that end holding, and the borders of mine still threatened once its captures
+ * land that end without a hold.
+ */
+const runOutcome = new WeakMap<TurnPlan, { bareSteps: number[]; held: Set<number>; unheld: Set<number> }>();
+
+function planRun(input: PlanInput, noBare: boolean): TurnPlan {
+  const shared: TwoStepShared = noBare ? { noBare } : {};
   const { plan, used } = settledPass(input, shared, new Set(), false);
   if (!used) return plan;
   const free = settledPass(input, shared, new Set(), true).plan;
@@ -1544,49 +1631,60 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // against that stack on the opponent's whole deploy (`forecastBorder`). Ground down so, the share
     // is dropped this turn and holds come first.
     if (floor > 0 && auto && (profile.phase === 'contact' || profile.phase === 'late')) {
-      let front: { theirs: number; at: number; player: number; mine: number; from: number } | undefined;
-      for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
-        if (st.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
-        const mineNext = neighborsOf(g, id).filter((n) => mineSet.has(n));
-        if (!mineNext.length) continue;
-        const from = [...mineNext].sort((x, y) => armiesOf(y) - armiesOf(x) || x - y)[0]!;
-        const theirs = st.armies + unitsAt(id);
-        if (!front || theirs > front.theirs)
-          front = { theirs, at: id, player: st.owner.playerId, mine: armiesOf(from) + unitsAt(from), from };
-      }
+      // #218: one definition of the main front, shared with the game outlook (`mainFront`).
+      const enemies: FrontStack[] = [];
+      for (const [id, st] of state)
+        if (st.owner.kind === 'player' && foe(st.owner.playerId) && st.armies !== null)
+          enemies.push({ id, armies: st.armies + unitsAt(id), player: st.owner.playerId });
+      const front = mainFront(g, (x) => mineSet.has(x), enemies, (x) => armiesOf(x) + unitsAt(x));
       if (front) {
-        const f = forecastBorder({
-          mine: front.mine,
-          theirs: front.theirs,
-          myIncome: income,
-          // Every turn's income, not this turn's deploy: a card is played once (#164).
-          theirIncome: incomeOfPlayer(front.player),
-          myDeploy: income - floor,
-          settings: { offensiveKillRate: rates.offensiveKillRate, defensiveKillRate: rates.defensiveKillRate, oneArmyStandsGuard: guard === 1 },
-        });
-        const pair = `my ${front.mine} on ${label(front.from)} against player ${front.player}'s ${front.theirs} on ${label(front.at)}, each deploying there every turn`;
+        const settingsF = { offensiveKillRate: rates.offensiveKillRate, defensiveKillRate: rates.defensiveKillRate, oneArmyStandsGuard: guard === 1 };
+        // Every turn's income, not this turn's deploy: a card is played once (#164).
+        const theirIncome = incomeOfPlayer(front.player);
+        // #218 review: my side likewise — the board income, a Reinforcement card's armies out
+        // (`income` counts them this turn only), and the expansion share taken of that.
+        const every = nextIncomeWith(0);
+        const share = Math.min(floor, Math.ceil(MIN_EXPANSION_SHARE * every));
+        const cardNote = pc.cardArmies > 0 ? ` (my board income: the ${pc.cardArmies} armies of this turn's card are played once)` : '';
+        const f = forecastBorder({ mine: front.mine, theirs: front.theirs, myIncome: every, theirIncome, myDeploy: every - share, settings: settingsF });
+        // #218: the same front with my whole income deployed there every turn — what the game
+        // outlook's front forecast assumes — so the two can be read together.
+        const whole = forecastBorder({ mine: front.mine, theirs: front.theirs, myIncome: every, theirIncome, settings: settingsF, outcomeOnly: true });
+        ps.front = { ...front, myIncome: every, theirIncome, outcome: whole.outcome, turn: whole.turn };
+        const wholeText =
+          whole.outcome === f.outcome && whole.turn === f.turn
+            ? ''
+            : ` With my whole ${every} a turn there (as the outlook's front forecast deploys it) ${
+                whole.outcome === 'ground-down'
+                  ? `I am ground down on turn ${whole.turn}`
+                  : whole.outcome === 'breaks'
+                    ? `my stack breaks it on turn ${whole.turn}`
+                    : 'it is a stand-off'
+              }.`;
+        const pins = f.pinnedHolds ? `the border pins ${f.pinned} of my ${every} income` : `not even my whole ${every} income keeps the border`;
+        const pair = `my ${front.mine} on ${label(front.from)} against player ${front.player}'s ${front.theirs} on ${label(front.at)}, each deploying there every turn${cardNote}`;
         // `breaks` means pressing captures before being pressed grinds me down; the plan commits to
         // pressing only when its orders already take that stack. Otherwise being pressed with the
         // income less the share decides: the border pins more than that, so the share goes.
-        const pressedGrinds = f.pinned > income - floor;
+        const pressedGrinds = f.pinned > every - share;
         const pressing = captured.has(front.at);
         if (f.outcome === 'ground-down') {
           rationale.push(
-            `Front outlook (#167): ${pair}, with ${income - floor} a turn (the income less the ${floor} expansion share) I am ground down on turn ${f.turn} — the border pins ${f.pinned} of my ${income} income. Holds come before the expansion share this turn.`,
+            `Front outlook (#167): ${pair}, with ${every - share} a turn (the income less the ${share} expansion share) I am ground down on turn ${f.turn} — ${pins}. Holds come before the expansion share this turn.${wholeText}`,
           );
           floor = 0;
         } else if (f.outcome === 'breaks' && pressedGrinds && !pressing) {
           rationale.push(
-            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn} only if the plan presses it, and it does not; pressed, with ${income - floor} a turn (the income less the ${floor} expansion share) I am ground down — the border pins ${f.pinned} of my ${income} income. Holds come before the expansion share this turn.`,
+            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn} only if the plan presses it, and it does not; pressed, with ${every - share} a turn (the income less the ${share} expansion share) I am ground down — ${pins}. Holds come before the expansion share this turn.${wholeText}`,
           );
           floor = 0;
         } else if (f.outcome === 'breaks' && pressedGrinds)
           rationale.push(
-            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn}, and the plan presses it this turn (pressed instead, the border pins ${f.pinned} of my ${income} income): the expansion share stands.`,
+            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn}, and the plan presses it this turn (pressed instead, ${pins}): the expansion share stands.${wholeText}`,
           );
         else
           rationale.push(
-            `Front outlook (#167): ${pair}, ${f.outcome === 'breaks' ? `my stack breaks it on turn ${f.turn}` : 'it is a stand-off'} even with ${floor} of income going to expansion (the border pins ${f.pinned}): the expansion share stands.`,
+            `Front outlook (#167): ${pair}, ${f.outcome === 'breaks' ? `my stack breaks it on turn ${f.turn}` : 'it is a stand-off'} even with ${share} of income going to expansion (${f.pinnedHolds ? `the border pins ${f.pinned}` : `not even my whole ${every} keeps the border`}): the expansion share stands.${wholeText}`,
           );
       }
     }
@@ -2183,6 +2281,95 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       `The attack on ${label(m.to)} from ${label(m.from)} sends ${m.armies}, but ${b} already kill ${kills} for sure: the other ${m.armies - b} add no kill (only survivors)${next !== null ? `; the next kill needs ${next}` : ''}.`,
     );
   }
+  // ---- 6. transfers, #125 staging (plan/transfers.ts) ----
+  transfers(pc, ps, book, threats, hd, caps, staging);
+
+  // ---- #226: a margin on attacks on a player from armies that would sit idle ----
+  // An attack on a player's territory is sized to the kill count its defenders plus an ESTIMATED
+  // deploy need (#120), and the estimate is a floor. Once the transfers have moved what they move,
+  // the armies still on its source beyond what holds it (`spareBeyondHold`: none on a hold, a
+  // conceded border or the strike stack; none either where rule 5's leftover went for a comfortable
+  // margin, a hold or saving toward a step) would sit idle: they join the attack (the target with the
+  // most defenders first, then id; No-Split already sends the whole stack).
+  if (!noSplit) {
+    const onPlayers = moves
+      .filter((m) => m.kind === 'attack' && !combined.has(m.to) && state.get(m.to)?.owner.kind === 'player' && reinforcementAt(m.to) > 0)
+      .sort((a, b) => defenceAt(b.to) - defenceAt(a.to) || a.to - b.to);
+    for (const m of onPlayers) {
+      // #226 review: rule 5 deployed the leftover there to defend it (a comfortable margin, a hold)
+      // or to save toward a step: those armies are not idle, and the margin leaves the source alone.
+      if (ps.leftoverKept.has(m.from)) continue;
+      // #128, as the transfers keep it: a source beside an attack on a player that may fail keeps
+      // what holds it against the threat there as if those attacks failed.
+      const pending = neighborsOf(g, m.from).filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player');
+      const ifFail = pending.length ? borderAt(m.from, () => false) : null;
+      // #226 review: each such target's owner may move its stacks beside the target into it before
+      // my attack runs (its stacks beside the source are in the threat already), so the attack
+      // fails and the target then holds them too: the keep counts their movable armies (and units).
+      const fromSide = new Set([m.from, ...neighborsOf(g, m.from)]);
+      let reinforce = 0;
+      const counted = new Set<number>();
+      const movedIn: string[] = [];
+      for (const x of pending) {
+        const owner = (state.get(x)!.owner as { playerId: number }).playerId;
+        let into = 0;
+        for (const n of neighborsOf(g, x)) {
+          const st = state.get(n);
+          if (fromSide.has(n) || counted.has(n) || st?.owner.kind !== 'player' || st.owner.playerId !== owner || st.armies === null) continue;
+          counted.add(n);
+          into += Math.max(0, st.armies - guard) + unitsAt(n);
+        }
+        reinforce += into;
+        if (into > 0) movedIn.push(`player ${owner} first moves the ${into} armies beside ${label(x)} into it`);
+      }
+      const keep128 = ifFail ? Math.max(0, threats.holdArmies(ifFail.threat + reinforce) - unitsAt(m.from)) : 0;
+      const add = Math.min(spareBeyondHold(m.from), Math.max(0, hd.stayAt(m.from) - keep128));
+      if (add <= 0) continue;
+      const d = defenceAt(m.to);
+      const before = m.armies;
+      avail.set(m.from, avail.get(m.from)! - add);
+      m.armies += add;
+      m.winChance = chanceOf(m.armies, d);
+      if (survivorsAt.has(m.to)) survivorsAt.set(m.to, survivorsAt.get(m.to)! + add);
+      const check = retakeChecks.get(m.to);
+      const at = check?.warning === undefined ? -1 : warnings.indexOf(check.warning);
+      if (check && at >= 0) {
+        check.survivors += add;
+        check.warning = retakeWarning(m.to, check.bonusId, check.survivors, check.counter);
+        if (check.warning) warnings[at] = check.warning;
+        else warnings.splice(at, 1);
+      }
+      // The most its owner could deploy there first and still lose it to this attack.
+      const fits = (x: number) => {
+        const c = costAt(m.to, d + x);
+        return c !== null && c <= m.armies;
+      };
+      let lo = 0;
+      let hi = m.armies;
+      if (!fits(0)) hi = -1;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (fits(mid)) lo = mid;
+        else hi = mid - 1;
+      }
+      const covered = Math.max(0, hi);
+      const extra = reinforcementAt(m.to);
+      if (hi >= extra) {
+        worstCase.set(m.to, Math.max(worstCase.get(m.to) ?? 0, d + covered));
+        const w = warnings.indexOf(assumes(m.to));
+        if (w >= 0) warnings.splice(w, 1);
+      }
+      const owner = (state.get(m.to)!.owner as { playerId: number }).playerId;
+      rationale.push(
+        `Margin on the attack on ${label(m.to)} from ${label(m.from)} (#226): up from ${before} to ${m.armies} with the ${add} armies that would otherwise sit idle there (no hold needs them, even if the attack fails${movedIn.length ? `, or ${movedIn.join(' and ')}` : ''})${
+          hi >= 0
+            ? `: ${m.armies} take it even if player ${owner} deploys up to ${covered} there first, against the ~${extra} estimate, which is a floor`
+            : ''
+        }.`,
+      );
+    }
+  }
+
   // #120: an attack on a player's territory still sized below its owner's deploy says what it
   // faces if that deploy lands there first.
   for (const m of moves) {
@@ -2198,8 +2385,6 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     warnings[w] = `Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first: if player ${st.owner.playerId} deploys its ~${extra} there, ${m.armies} attack ${d + extra} (win chance ${pct(chanceOf(m.armies, d + extra))})${full !== null ? `; ${full} would ${aim >= 1 ? 'be sure' : `reach ${pct(aim)}`}` : ''}.`;
   }
 
-  // ---- 6. transfers, #125 staging (plan/transfers.ts) ----
-  transfers(pc, ps, book, threats, hd, caps, staging);
 
   // ---- Order Priority for a strike (rule 1s) (plan/move-order.ts) ----
   const { strikeCard, strikeWho } = strikeOrderPriority(pc, ps, threats, hd, struck);
@@ -2212,5 +2397,32 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const { slotOf, facesEnemy, exits } = scheduleOrders(pc, ps, threats, hd, caps, struck, strikeCard, strikeWho);
 
   // ---- the plan: offence list, #172's final check, #201 retaliation, #167 exchanges, #179 ETAs (plan/report.ts) ----
-  return finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
+  const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
+  // #218: the main front's forecast at my whole income, for the game outlook to share.
+  if (ps.front) plan.front = ps.front;
+  // #214 review: what planTurn compares between the plans with and without bare steps. A border
+  // ends holding when it is not conceded and what the final orders leave there (its armies, deploys
+  // and transfers in, less every order out) beats the threat left once this plan's captures land.
+  const gone = (n: number) => captured.has(n);
+  const holdsAtEnd = (v: number, b: { threat: number }) => {
+    const ends = moves.reduce(
+      (n, m) => n - (m.from === v ? m.armies : 0) + (m.kind === 'transfer' && m.to === v ? m.armies : 0),
+      armiesOf(v) + (ps.deployed.get(v) ?? 0),
+    );
+    return !conceded.has(v) && (toTake(ends + unitsAt(v)) ?? Infinity) > b.threat;
+  };
+  const held = new Set<number>();
+  const unheld = new Set<number>();
+  for (const v of mine) {
+    const b = borderAt(v, gone);
+    if (!b) continue;
+    if (!holdsAtEnd(v, b)) unheld.add(v);
+    else if (heldBorders.has(v) || (ps.deployed.get(v) ?? 0) > 0) held.add(v);
+  }
+  // A held bonus left floored (#118: kept, but short of its whole hold) is short on those borders
+  // whatever the count above says: one shared deploy can still break it.
+  for (const u of units)
+    if (u.contested && !u.conceded) for (const m of u.members) if (!heldBorders.has(m.id)) unheld.add(m.id);
+  runOutcome.set(plan, { bareSteps: [...caps.bareTaken].filter(gone).sort(byNum), held, unheld });
+  return plan;
 }

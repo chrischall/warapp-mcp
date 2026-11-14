@@ -19,7 +19,7 @@ import {
   type TurnPlan,
 } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, fogged, mine, neutral, ruleAttacks } from './helpers.js';
+import { board, fogged, mine, neutral, ruleAttacks, sizedBeforeMargin } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -124,8 +124,11 @@ describe('break an inferred bonus (#72)', () => {
     );
     expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 5]]);
     // 5 − round(0.7 × 3) = 3 survivors, retaken for 5: worth 5 + 5 / 10 = 5.5.
-    // `cost` reads the final orders: the idle-army top-up sends 6 (sized at 5).
+    // `cost` reads the final orders: the idle-army top-up sends 6 (sized at 5). No #226 margin:
+    // the 20-stack on T8 may move into T5 first, and T1 keeps what holds it then (#226 review).
+    expect(sizedBeforeMargin(p, 1, 5)).toBe(6);
     expect(attacks(p).map((m) => m.armies)).toEqual([6]);
+    expect(p.rationale.join('\n')).not.toMatch(/Margin on the attack on T5/);
     expect(p.offence).toEqual([
       expect.objectContaining({ target: 5, kind: 'break', cost: 6, value: 5.5, taken: true }),
     ]);

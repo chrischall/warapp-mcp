@@ -49,8 +49,10 @@ describe('#167: the front outlook and the expansion share', () => {
     const p = planTurn(input(20, 38));
     expect(p.profile.phase).toBe('contact');
     expect(why(p)).toMatch(
-      /Front outlook \(#167\): my 20 on T1 \(#1\) against player 20's 38 on T2 \(#2\), .*with 7 a turn \(the income less the 3 expansion share\) I am ground down on turn 1 — the border pins 10 of my 10 income\. Holds come before the expansion share this turn\./,
+      /Front outlook \(#167\): my 20 on T1 \(#1\) against player 20's 38 on T2 \(#2\), .*with 7 a turn \(the income less the 3 expansion share\) I am ground down on turn 1 — not even my whole 10 income keeps the border\. Holds come before the expansion share this turn\. With my whole 10 a turn there \(as the outlook's front forecast deploys it\) I am ground down on turn 2\./,
     );
+    // #218: the forecast at my whole income, for the game outlook to share.
+    expect(p.front).toEqual({ from: 1, at: 2, mine: 20, theirs: 38, player: 20, myIncome: 10, theirIncome: 8, outcome: 'ground-down', turn: 2 });
     expect(why(p)).not.toMatch(/Hold T1 \(#1\) later/);
   });
 

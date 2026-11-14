@@ -210,7 +210,7 @@ export function captureHelper(
 ) {
   const {
     g, s, reserve, label, mine, mineSet, armiesOf, unitsAt, defenceAt, rates, chanceOf, luck, noSplit, myCommanders,
-    armiesBehind,
+    armiesBehind, costAt,
   } = pc;
   const {
     warnings, rationale, deployed, avail, locked, spared, captured, combined, moves, survivorsAt, captureOrder,
@@ -219,11 +219,20 @@ export function captureHelper(
   const { coverOf, orderOf, warnSplit, deploy, spareAt, local } = book;
   const { borderAt, safeAtStart, holdArmies } = threats;
   const { conceded, heldBorders, keepFor, stayAt, twoStepBound, twoStepCite, twoStepHold, twoStepKeep } = hd;
-  const { targets, leadSteps, leadTry, skipOffence, badTrades } = tgt;
+  const { targets, leadSteps, leadTry, leadNote, skipOffence, badTrades } = tgt;
   const { defensible, mustHold, warnHold } = prev;
   // ---- capture helper ----
   /** How far a combined capture of a player's territory trades below even (see `ps.evenTradesOnly`). */
   let belowEven: { lost: number; killed: number } | undefined;
+  /** #214 review: the last {@link tryCombined} built a combined capture and R3 refused it. */
+  let combinedR3 = false;
+  /** #214 review: bare steps are tried in this run (planTurn's check run turns them off). */
+  const bareOn = !pass.shared.noBare;
+  /**
+   * #214 review: lead steps captured at their bare cost (some may be undone later), for planTurn's
+   * check that they cost no hold, and the entry each one's failed sure try left in `leadTry`.
+   */
+  const bareTaken = new Set<number>();
   /**
    * Armies on my `x` free to attack `t`: my commander's territory keeps what holds it (rule 1k),
    * and so does a border that held at the start of the turn and is not conceded (#121: one surplus
@@ -313,13 +322,15 @@ export function captureHelper(
    * out only with the armies already on it (unless every territory I hold is conceded,
    * when there is nowhere better). `force` names the source (it may be locked) and the
    * armies on it that stay out of the attack. `fromConceded` (rule 4e only) names the one conceded
-   * border that may attack out with deploys too: they leave with the attack.
+   * border that may attack out with deploys too: they leave with the attack. `bare` (#214): a lead
+   * step toward the closest bonus or in a completion, which may be retried at its bare cost.
    */
   const tryCapture = (
     t: number,
     reason: string,
     force?: { from: number; keep: number },
     fromConceded?: number,
+    bare = false,
   ): boolean => {
     // #203: a lead step lands even if its owner deploys there first (its survivors counted so) —
     // assumed while it is tried, kept only when it is taken.
@@ -327,8 +338,29 @@ export function captureHelper(
     const sure = lead !== undefined && !worstCase.has(t);
     if (sure) worstCase.set(t, lead.defenders + lead.extra);
     shortAt = undefined;
-    const ok = captureOnce(t, reason, force, fromConceded);
+    belowEven = undefined;
+    combinedR3 = false;
+    let ok = captureOnce(t, reason, force, fromConceded);
     if (sure && !ok) worstCase.delete(t);
+    // #214: a step toward the closest bonus (or in a completion) the turn cannot fund at its sure
+    // cost is retried at its bare cost — a sure capture of the defenders standing there now, the
+    // basis rule 4f ranks the bonuses on. No worst case: #120's warning then says what it faces if
+    // the owner deploys there first. Only a funding shortfall retries (an R3 or trade refusal of the
+    // sure step stands), and the target keeps its sure cost for every later try.
+    // #214 review: shortAt is set before tryCombined runs, so a combined capture refused for a
+    // below-even trade (belowEven) or by R3 (combinedR3, which sets no refusal) is a refusal too.
+    if (bareOn && sure && bare && !ok && shortAt !== undefined && ps.refusal === undefined && belowEven === undefined && !combinedR3) {
+      const tg = targets.get(t)!;
+      const cheap = costAt(t);
+      const note = leadNote(t);
+      if (cheap !== null && cheap < tg.cost && reason.endsWith(note)) {
+        targets.set(t, { ...tg, cost: cheap });
+        shortAt = undefined;
+        ok = captureOnce(t, reason.slice(0, reason.length - note.length) + leadNote(t, tg.cost), force, fromConceded);
+        targets.set(t, tg);
+        if (ok) bareTaken.add(t);
+      }
+    }
     if (lead) {
       // Set inside captureOnce (control flow does not see it).
       const short = shortAt as Omit<Extract<LeadTry, { kind: 'short' }>, 'kind'> | undefined;
@@ -571,6 +603,7 @@ export function captureHelper(
   };
   const tryCombined = (t: number, reason: string): boolean => {
     belowEven = undefined;
+    combinedR3 = false;
     const plan = combinedPlan(t);
     if (!plan) return false;
     const tg = targets.get(t)!;
@@ -614,6 +647,7 @@ export function captureHelper(
       for (const [k, v] of before.deployed) deployed.set(k, v);
       ps.budget = before.budget;
       captured.delete(t);
+      combinedR3 = true;
       return false;
     }
     survivorsAt.set(t, plan.survivors);
@@ -656,7 +690,7 @@ export function captureHelper(
     );
     return true;
   };
-  return { belowEven, movableFor, keepOf, concededSource, siblings, fundedOnConceded, strikes, worstCase, finishedOff, defendersAt, tryCapture, shortAt, captureOnce, combinedPlan, tryCombined };
+  return { belowEven, movableFor, keepOf, concededSource, siblings, fundedOnConceded, strikes, worstCase, finishedOff, defendersAt, tryCapture, shortAt, captureOnce, combinedPlan, tryCombined, bareOn, bareTaken };
 }
 
 /** Pass 1 (complete a bonus, all or nothing) and pass 2 (advance one a capture at a time, rule 4c(c), 4d). */
@@ -679,9 +713,9 @@ export function bonusPasses(
   const { heldBorders, keptIncome, stayAt } = hd;
   const {
     targets, leadSteps, leadTry, leadNote, bonusTarget, frontierDelta, targetScoreCost, frontierOf, startHold,
-    toFinish,
+    toFinish, byCloseness, committing,
   } = tgt;
-  const { worstCase, tryCapture, siblings, fundedOnConceded } = prev;
+  const { worstCase, tryCapture, siblings, fundedOnConceded, bareOn } = prev;
   // ---- pass 1: complete a bonus this turn (all or nothing) ----
   /** Snapshot the captures, deploys and notes so far; the result undoes everything since. */
   const snapshot = () => {
@@ -740,7 +774,33 @@ export function bonusPasses(
     const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
     // #214: each step counts the others this completion plans (it is undone whole if one fails).
     for (const t of todo) siblings.add(t);
-    const ok = todo.every((t) => tryCapture(t, `completes bonus ${bonusName(p.bonusId)} (${worth})${leadNote(t)}`));
+    const why = (t: number) => `completes bonus ${bonusName(p.bonusId)} (${worth})${leadNote(t)}`;
+    let ok = todo.every((t) => tryCapture(t, why(t)));
+    // #214: when the sure-sized steps cannot all be funded, the completion is tried again: every
+    // step at its sure size first (one that fails is passed over), then the ones that failed with a
+    // lead step retried at its bare cost — so a bare step never takes the deploy another step's
+    // sure size would have had.
+    if (!ok && bareOn && todo.some((t) => leadSteps.has(t))) {
+      // #214 review: a retry that fails too must not leave the skip line reading a state it undid:
+      // a bare step it took erased its member's "its bonus's step …" entry, and a sibling found
+      // short after it was measured with that step's deploy spent. Those go back to what the sure
+      // try said; a refusal the retry found (R3, a trade) stands.
+      const afterSure = new Map(leadTry);
+      restore();
+      const failed = todo.filter((t) => !tryCapture(t, why(t)));
+      let bareLanded = false;
+      ok = failed.every((t) => {
+        const landed = tryCapture(t, why(t), undefined, undefined, true);
+        bareLanded ||= landed;
+        return landed;
+      });
+      if (!ok)
+        for (const t of todo) {
+          const now = leadTry.get(t);
+          const was = afterSure.get(t);
+          if (now === undefined ? was !== undefined : now.kind === 'short' && bareLanded && was !== undefined) leadTry.set(t, was!);
+        }
+    }
     siblings.clear();
     // Rule 4c: completing it must not lower income (its members' negative bonuses included).
     if (ok && !p.focus && incomeGain(heldNow()) < before) {
@@ -836,10 +896,13 @@ export function bonusPasses(
     if (!stopped.some((x) => x.t === t)) stopped.push({ t, holdCost: f.holdCost, income: next });
     return why;
   };
-  /** Capture `t` for expansion, unless rule 4d's frontier budget stops it (then everything is undone). */
-  const tryExpand = (t: number, reason: string): boolean => {
+  /**
+   * Capture `t` for expansion, unless rule 4d's frontier budget stops it (then everything is undone).
+   * `bare` (#214): a lead step toward the closest bonus, which may be retried at its bare cost.
+   */
+  const tryExpand = (t: number, reason: string, bare = false): boolean => {
     const restore = snapshot();
-    if (!tryCapture(t, reason)) return false;
+    if (!tryCapture(t, reason, undefined, undefined, bare)) return false;
     const why = outgrows(t);
     if (why === null) return true;
     restore();
@@ -848,6 +911,14 @@ export function bonusPasses(
     return false;
   };
   const advance = (p: BonusPlan) => {
+    /**
+     * #214: the bonus closest to completion (rule 4f's order: the first with a step still to take),
+     * whose lead steps may be retried at their bare cost — the cost it was ranked on.
+     */
+    // #214 review: only while rule 4f commits to the closest bonus — otherwise `byCloseness` is
+    // just the score order, and its first bonus is not the closest.
+    const closest =
+      bareOn && committing && byCloseness.find((q) => q.remaining.some((x) => bonusTarget(x) && !captured.has(x))) === p;
     const todo = p.remaining
       .filter((t) => bonusTarget(t) && !captured.has(t))
       .sort((a, b) => targetScoreCost(a) - targetScoreCost(b) || targets.get(a)!.cost - targets.get(b)!.cost || a - b);
@@ -878,17 +949,18 @@ export function bonusPasses(
      * the deploy into the conceded border and crowd out a sibling a held border funds for less;
      * taken last, it could lose a pair that fits only in its order. Runs the rest of `queue` too.
      */
-    const weigh = (t: number, rest: number[]) => {
+    const weigh = (t: number, rest: number[], bare: boolean) => {
       const back = checkpoint();
-      run([t, ...rest]);
+      run([t, ...rest], bare);
       const now = { captures: captured.size, budget: ps.budget };
       back();
-      run([...rest, t]);
+      run([...rest, t], bare);
       if (captured.size > now.captures || (captured.size === now.captures && ps.budget >= now.budget)) return;
       back();
-      run([t, ...rest]);
+      run([t, ...rest], bare);
     };
-    const run = (queue: number[]) => {
+    /** `bare` (#214): the closest bonus's second round, its lead steps retried at their bare cost. */
+    const run = (queue: number[], bare = false) => {
       for (let i = 0; i < queue.length; i++) {
         const t = queue[i]!;
         if (captured.has(t)) continue;
@@ -903,7 +975,7 @@ export function bonusPasses(
         // Only a lead step (#203) can be funded on a conceded source.
         const before = whole || !lead ? undefined : snapshot();
         const tried = before && new Map(leadTry);
-        if (!tryExpand(t, reason)) continue;
+        if (!tryExpand(t, reason, bare)) continue;
         if (before && fundedOnConceded.has(t)) {
           /*
            * #214: a step funded on a conceded source completes nothing on its own, and taken first it
@@ -919,7 +991,7 @@ export function bonusPasses(
           if (p.remaining.every((x) => captured.has(x))) return;
           leadTry.clear();
           for (const [k, v] of tried!) leadTry.set(k, v);
-          weigh(t, queue.slice(i + 1));
+          weigh(t, queue.slice(i + 1), bare);
           return;
         }
         ps.anchor ??= moves[moves.length - 1]!.from;
@@ -930,6 +1002,9 @@ export function bonusPasses(
       }
     };
     run(todo);
+    // #214: the closest bonus's lead steps the sure sizing could not fund are retried at their bare
+    // cost, once every step has had its sure try (a bare step never takes a sure one's deploy).
+    if (closest) run(todo.filter((t) => leadSteps.has(t) && !captured.has(t)), true);
   };
   return { snapshot, complete, unstaged, stage, stopped, stoppedLine, outgrows, tryExpand, advance };
 }

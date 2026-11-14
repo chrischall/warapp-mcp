@@ -133,14 +133,21 @@ describe("#203: the closest bonus's enemy member gets the deploy on an army lead
     expect(attacks(p).map((m) => m.to)).not.toContain(5);
   });
 
-  it('under Local Deployment only the free armies reach T1: the step does not fit, and the skip line says what the deploy could add', () => {
-    // B903 (+15) is held: its 15 deploy only on T8; the 5 free armies may go anywhere.
+  it('under Local Deployment only the free armies reach T1: the sure step does not fit, so it is taken at its bare cost (#214)', () => {
+    // B903 (+15) is held: its 15 deploy only on T8; the 5 free armies may go anywhere. T1's 8 to
+    // spare plus 5 is 13, short of the sure 15. Before #214 the step was skipped; its bare cost (1:
+    // the 0 armies standing there now) fits, and #120's warning says what it faces if player 20
+    // deploys there first.
     const i = input({ ...OFF, localDeployments: true });
     const p = planTurn(i);
-    expect(attacks(p).map((m) => m.to)).not.toContain(3);
-    expect(why(p)).toMatch(
-      /T3 \(#3\) \(player 20, 0 armies\): a lead strike \(my army lead is [\d.]+×, over 3×\) needs 15 — sized for its 0 defenders plus player 20's ~5 deploy — and the most a neighbour of mine can spare for it is \d+ \(T1 \(#1\)\); when its bonus's step was tried, T1 \(#1\) could spare 8 for it and this turn's deploy could add at most 5 there \(Local Deployment\): 13 in all/,
+    const hit = attacks(p).find((m) => m.to === 3);
+    expect(hit).toMatchObject({ from: 1 });
+    expect(hit!.armies).toBeLessThan(15);
+    expect(hit!.reason).toMatch(
+      /advances bonus B901 \(#901\).*sized for the 0 defenders there now: 15 would be sure even if player 20 deploys its ~5 there first, more than this turn can fund \(#214\)/,
     );
+    expect(p.warnings.join('\n')).toMatch(/Attack on enemy T3 \(#3\) assumes its owner does not reinforce it first: if player 20 deploys its ~5 there, \d+ attack 5 \(win chance 0%\); 15 would be sure\./);
+    expect(why(p)).not.toMatch(/T3 \(#3\) \(player 20, 0 armies\): a lead strike/);
     expect(valid(p, i)).toEqual([]);
   });
 

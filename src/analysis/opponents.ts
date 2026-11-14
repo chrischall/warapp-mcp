@@ -77,7 +77,7 @@ import { carriesTeam } from '../teams.js';
 import { bonusTerritories } from './bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
-import { enemyDeployEstimates, observeSigned, ownerShown, visibleState, type PlannerSettings } from './planner.js';
+import { enemyDeployEstimates, failedAttackKills, observeSigned, ownerShown, visibleState, type PlannerSettings } from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 
 /** #164: a stack is large when its armies are at least this many turns of its visible income. */
@@ -246,6 +246,12 @@ export interface TrackGame {
    * started with at most ⌈territories ÷ players⌉ of them, an upper bound for the outlook.
    */
   startArmiesPerTerritory?: number;
+  /**
+   * #214 review: full distribution split every territory among the players, so the even share
+   * (⌈territories ÷ seated players⌉ × `startArmiesPerTerritory`) is every player's real start, not
+   * only a bound on it.
+   */
+  fullDistribution?: true;
   /** Settings under which the base income each turn may not be a floor (e.g. Sanctions), said in the note. */
   incomeCaveats?: string[];
 }
@@ -366,6 +372,7 @@ export function trackGame(
       ...base,
       startUnknown: 'the game uses full distribution, which splits every territory among the players whatever the territory limit',
       ...perTerritory,
+      fullDistribution: true,
     };
   const mode = map?.distributionModes.find((d) => d.id === settings?.distributionMode);
   if (mode?.type !== undefined && mode.type !== 'normal')
@@ -378,6 +385,9 @@ export function trackGame(
     return { ...base, startUnknown: 'the settings do not give the armies each starting territory had (InitialPlayerArmiesPerTerritory)' };
   return { ...base, start: { territories, armiesPerTerritory: Math.max(0, armiesPerTerritory) } };
 }
+
+/** TerritoryLimit assumed when the settings do not say (war.app's usual default). */
+export const DEFAULT_TERRITORY_LIMIT = 3;
 
 /** GameFeed's DistributionMode for full distribution (unverified, docs/WARAPP-API.md). */
 const FULL_DISTRIBUTION = -1;
@@ -648,13 +658,10 @@ export function measureOrders(
   for (const d of orders.deploys) deployed.set(d.territoryId, (deployed.get(d.territoryId) ?? 0) + Math.max(0, d.armies));
   const sent = new Map<number, number>();
   for (const m of orders.moves) sent.set(m.from, (sent.get(m.from) ?? 0) + Math.max(0, m.armies));
+  // My failed attacks (a source that fell this turn may have been taken before my attack ran: not
+  // measured): the same count the planner's single-turn reading uses (#226, failedAttackKills).
   let measured = 0;
-  for (const m of orders.moves) {
-    // A source that fell this turn may have been taken before my attack ran: not measured.
-    if (!g.territoryById.has(m.to) || !owns(visibleState(was.get(m.from)), me) || !owns(visibleState(now.get(m.from)), me)) continue;
-    if (owns(visibleState(was.get(m.to)), playerId) && owns(visibleState(now.get(m.to)), playerId))
-      measured += straightKills(Math.max(0, m.armies), offensive);
-  }
+  for (const k of failedAttackKills(g, before, after, me, playerId, orders, { offensiveKillRate: offensive }).values()) measured += k;
   const ids = [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum);
   for (const id of ids) {
     if (!g.territoryById.has(id)) continue;

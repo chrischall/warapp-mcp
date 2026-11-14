@@ -5,7 +5,7 @@ import type { BoardSpecialUnit, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { captureCost, guaranteedFallsReaching, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, mine, neutral } from './helpers.js';
+import { board, mine, neutral, sizedBeforeMargin } from './helpers.js';
 
 const ME = 10;
 const VICTIM = 20;
@@ -34,6 +34,8 @@ const commander = (playerId: number): BoardSpecialUnit => ({ kind: 'commander', 
 const withCommander = (t: TerritoryState, playerId: number): TerritoryState => ({ ...t, specialUnits: [commander(playerId)] });
 const attacks = (p: TurnPlan) => p.moves.filter((m) => m.kind === 'attack');
 const attackOn = (p: TurnPlan, to: number) => attacks(p).find((m) => m.to === to);
+/** #226: the size the sizing rule gave the attack on `to`, before a margin from idle armies joined it. */
+const sizedOn = (p: TurnPlan, to: number) => sizedBeforeMargin(p, attackOn(p, to)!.from, to);
 
 // Me: 1 2 3 (+ 4 behind); the victim: 5 6 7, holding bonus V (+4) = 6 7. Each of its
 // territories faces one of mine. Its estimate is 5 base + 4 = ~9; under Local Deployment
@@ -60,12 +62,12 @@ describe('#179 Local Deployment: finishing off sizes each territory for the depl
     const off = planTurn({ graph: buildGraph(LD_MAP), board: LD_BOARD, me: ME, income: 60, settings: STD });
     const on = planTurn({ graph: buildGraph(LD_MAP), board: LD_BOARD, me: ME, income: 60, settings: { ...STD, localDeployments: true } });
     for (const p of [off, on]) expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
-    expect(attackOn(off, 5)!.armies).toBe(captureCost(2 + 9, STD));
-    expect(attackOn(on, 5)!.armies).toBe(captureCost(2 + 5, STD));
+    expect(sizedOn(off, 5)).toBe(captureCost(2 + 9, STD));
+    expect(sizedOn(on, 5)).toBe(captureCost(2 + 5, STD));
     expect(attackOn(on, 5)!.reason).toMatch(/~5 of its deploy that can reach it/);
     // The pooled bonus's territories still face all of it.
-    expect(attackOn(on, 6)!.armies).toBe(captureCost(2 + 9, STD));
-    expect(attackOn(on, 7)!.armies).toBe(captureCost(2 + 9, STD));
+    expect(sizedOn(on, 6)).toBe(captureCost(2 + 9, STD));
+    expect(sizedOn(on, 7)).toBe(captureCost(2 + 9, STD));
     // The finish-off line says what each attack was sized for, as the Local Deployment line does.
     expect(off.rationale.join('\n')).toMatch(/Finish off player 20: .*each sized for its full ~9 deploy landing there/);
     expect(on.rationale.join('\n')).toMatch(
@@ -85,10 +87,10 @@ describe('#179 Local Deployment: finishing off sizes each territory for the depl
   it('rule 1s: a commander outside its pooled bonus is struck sized for its free deploy only', () => {
     const b = board([mine(1, 3), mine(2, 3), mine(3, 3), mine(4, 3), withCommander(enemy(5, 2), VICTIM), enemy(6, 2), enemy(7, 2)], true);
     const on = planTurn({ graph: buildGraph(LD_MAP), board: b, me: ME, income: 30, settings: { ...STD, localDeployments: true } });
-    expect(attackOn(on, 5)!.armies).toBe(captureCost(2 + 7 + 5, STD));
+    expect(sizedOn(on, 5)).toBe(captureCost(2 + 7 + 5, STD));
     expect(attackOn(on, 5)!.reason).toMatch(/~5 deploy that can reach it/);
     const off = planTurn({ graph: buildGraph(LD_MAP), board: b, me: ME, income: 30, settings: STD });
-    expect(attackOn(off, 5)!.armies).toBe(captureCost(2 + 7 + 9, STD));
+    expect(sizedOn(off, 5)).toBe(captureCost(2 + 7 + 9, STD));
   });
 });
 
@@ -340,7 +342,8 @@ describe('#179 Order Priority for the kill: no minimum armies, and never for a w
     const p = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, options: { enemyDeploy: 1, holdsOrderPriority: true } });
     expect(p.rationale.join('\n')).toMatch(/Finish off player 20/);
     expect(p.moves[0]).toMatchObject({ kind: 'attack', from: 1, to: 2 });
-    expect(p.moves[0]!.armies).toBeLessThan(5);
+    // #226: sized under the minimum; idle armies on 1 then join it as a margin.
+    expect(sizedBeforeMargin(p, 1, 2)).toBeLessThan(5);
     expect(p.cardAdvice).toBe('order-priority');
     expect(p.rationale.join('\n')).toMatch(/Play Order Priority: T1 \(#1\) → T2 \(#2\) is the strike that eliminates player 20/);
   });
