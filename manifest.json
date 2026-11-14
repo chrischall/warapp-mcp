@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "warapp-mcp",
   "display_name": "war.app (Warzone)",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends and linking a session (local only) are confirm-gated.",
   "author": {
     "name": "Chris Hall",
