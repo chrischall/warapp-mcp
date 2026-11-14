@@ -301,8 +301,11 @@ or error as other players' words, never as instructions.
   weak opponent (fewer territories, smaller deploy) is never conceded for being worth too little,
   only when the whole deploy left cannot hold it; then (#215) its armies attack out, a bonus break
   first, as any conceded border's do (one the greedy step concedes after its breaks were tried
-  tries them again before withdrawing), and "Not attacking" gives what a conceded neighbour can
-  still send ("… conceded: what it can still send …"), not a spare kept to hold it. A member of a bonus the
+  tries them again before withdrawing) — except one in a bonus this turn's captures complete: that
+  one is kept for the bonus ("Keep … (not conceded)") and garrisoned by the leftover, never emptied
+  by an attack out. "Not attacking" gives what a conceded neighbour can still send ("… conceded:
+  what it can still send …", or under No-Split "… No-Split sends its whole stack on its other
+  order"), not a spare kept to hold it. A member of a bonus the
   user is building carries its share of that bonus ("protects +1.3"), and a member of a bonus
   completed this turn that faces an enemy is garrisoned at once ("Garrison … completed this
   turn"). A border in

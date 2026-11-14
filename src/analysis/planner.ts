@@ -390,8 +390,15 @@
 //     bonus), and a pending hold the greedy step concedes is unlocked: every break and counter
 //     candidate next to it that has not yet captured runs again, in its order, before rule 1b
 //     withdraws (the breaks were tried while it was still locked, so its armies would otherwise
-//     only withdraw). The "Not attacking" line gives what a conceded neighbour can still send
-//     once its orders leave ("has left for it … conceded"; the guard-off cover's army excluded),
+//     only withdraw). Except (#215 review) a border in a bonus this turn's captures may complete
+//     without it (every missing member a capture target next to another territory of mine, its
+//     armies to finish within the income plus the armies there): it stays a pending hold, and once conceded it
+//     stays locked until the greedy step ends; then it is unlocked (and its breaks retried) only if
+//     no capture completed that bonus — else rule 1c keeps it and the leftover garrisons it (an
+//     attack out first, under No-Split with its whole stack, left the kept border empty). Only the
+//     lock triage itself added is lifted. The "Not attacking" line gives what a conceded neighbour
+//     can still send once its orders leave ("has left for it … conceded"; the guard-off cover's
+//     army excluded; under No-Split, one whose order already carries its whole stack says so),
 //     never "spare once it holds its border".
 //  1h. Held bonuses (under `balanced` and `defend`; issue #51). Every bonus I hold in
 //     full with a threatened border is one unit: its threatened borders are all held
@@ -1150,8 +1157,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const hd = holdsPhase(pc, ps, book, threats, pass);
   const {
     acting, conceded, concedeUnaffordable, floorOrConcede, fundNearMiss, fundUnit, garrisonCompleted, heldBorders,
-    heldStack, hold, holds, keepFor, kept, keptShort, leftFor, mayHold, noteRecent, reconsider, settleContested,
-    twoStepBound, twoStepKeep, uneconomic, units, withdraw,
+    heldStack, hold, holds, keepFor, kept, keptShort, leftFor, mayComplete, mayHold, noteRecent, pendingLocks, reconsider,
+    settleContested, twoStepBound, twoStepKeep, uneconomic, units, withdraw,
   } = hd;
 
   // ---- 2. targets, 4d. frontier cost, bonus scoring, #101 (plan/targets.ts) ----
@@ -1160,6 +1167,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     breakable, counterAt, targets, leadSteps, targetScoreCost, landScoreCost, offence, skipOffence, plans,
     economicMember, uneconomicMember, negativeMember, ratio, committing, byCloseness, retakeChecks, retakeWarning,
   } = tgt;
+  // #215 review: rule 1a's triage (run with the strikes, below) leaves pending a border in a bonus
+  // these plans may complete this turn.
+  for (const p of plans) if (p.completable) hd.completable.set(p.bonusId, p.cost);
 
   // ---- R3, No-Split, capture helper, 3a. combined, passes 1 and 2 (plan/captures.ts) ----
   const caps = capturesPhase(pc, ps, pass, book, threats, hd, tgt);
@@ -1282,13 +1292,25 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const deferred: Threatened[] = [];
     /** #215: pending holds this step conceded and unlocked, whose armies may still attack out. */
     const unlocked = new Set<number>();
+    /** #215 review: conceded pending holds left locked until the captures are known (`mayComplete`). */
+    const parked = new Set<number>();
+    /** #215: unlock a pending hold triage locked (only that lock: never one another rule added). */
+    const unlockPending = (id: number) => {
+      if (!pendingLocks.delete(id)) return;
+      locked.delete(id);
+      unlocked.add(id);
+    };
     /**
      * #215: a pending hold (locked by triage until this step decides) conceded here is unlocked: as
-     * any conceded border, it may still attack out with the armies on it (rule 1a).
+     * any conceded border, it may still attack out with the armies on it (rule 1a). One in a bonus
+     * this turn's captures may complete stays locked until they are known: rule 1c keeps it for a
+     * completed bonus, and an attack out would have emptied it first.
      */
     const concedePending = (t: Threatened, room: number) => {
       concedeUnaffordable(t, room);
-      if (!heldBorders.has(t.id) && locked.delete(t.id)) unlocked.add(t.id);
+      if (heldBorders.has(t.id)) return;
+      if (mayComplete(t.id)) parked.add(t.id);
+      else unlockPending(t.id);
     };
     let expansionLeft = 0;
     let expansionSpent = 0;
@@ -1765,6 +1787,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const room = roomAt(t.id);
       if (t.holdCost > room) concedePending(t, room);
       else hold(t);
+    }
+    // #215 review: a parked concession is unlocked now unless this turn's captures complete a bonus
+    // it is in (rule 1c keeps that one, locked, and the leftover garrisons it).
+    for (const x of [...parked].sort(byNum)) {
+      if (heldBorders.has(x) || !conceded.has(x)) continue;
+      const holdings = new Set([...mine, ...captured]);
+      const completes = g.map.bonuses.some((b) => {
+        const ts = bonusTs.get(b.id)!;
+        return b.value > 0 && ts.includes(x) && ts.every((y) => holdings.has(y)) && !ts.every((y) => mineSet.has(y));
+      });
+      if (!completes) unlockPending(x);
     }
     // #215: a break or counter tried while a pending hold still locked its source runs again, in
     // its order, once the greedy step has conceded and unlocked that hold: the border's armies

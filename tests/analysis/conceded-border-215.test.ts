@@ -160,3 +160,121 @@ describe('#215: a hopeless border that protects nothing is conceded and attacks 
     }
   });
 });
+
+// Review of #215: a border conceded at triage that is a member of a bonus this turn's captures
+// complete. Conceded early, it attacked out with its whole stack under No-Split (or all but its guard),
+// and rule 1c then kept it for the completed bonus — empty, the leftover deploy that garrisoned it gone
+// elsewhere, the rationale still saying it is kept. My T1 is in my bonus B930 (T1, T5, neutral T15);
+// player 20's stack is on T2; T3 is a member of its +3 bonus B900 (T3, T4).
+describe('#215 review: a conceded border in a bonus completed this turn is kept, not emptied', () => {
+  const map2 = makeMap(
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    [
+      [1, 2],
+      [1, 3],
+      [3, 4],
+      [1, 5],
+      [5, 6],
+      [6, 7],
+      [7, 8],
+      [2, 9],
+      [9, 10],
+      [8, 10],
+      [5, 11],
+      [11, 12],
+      [12, 13],
+      [6, 14],
+      [14, 15],
+    ],
+    [
+      [900, 3, [3, 4]],
+      [950, 6, [2, 9]],
+      [910, 4, [6, 7, 8]],
+      [920, 5, [11, 12, 13]],
+      [930, 4, [1, 5, 15]],
+    ],
+  );
+  const g2 = buildGraph(map2);
+  const input2 = (o: { x: number; big: number; t3: number; income: number; t15?: number; settings: Partial<PlannerSettings> }): PlanInput => {
+    const board = boardOf([
+      at(1, o.x, ME),
+      at(2, o.big, FOE),
+      at(3, o.t3, FOE),
+      at(4, 2, FOE),
+      at(5, 3, ME),
+      at(6, 4, ME),
+      at(7, 4, ME),
+      at(8, 6, ME),
+      at(9, 3, FOE),
+      at(10, 8, FOE),
+      at(11, 3, ME),
+      at(12, 4, 'neutral'),
+      at(13, 3, 'neutral'),
+      at(14, 3, ME),
+      at(15, o.t15 ?? 2, 'neutral'),
+    ]);
+    return {
+      graph: g2,
+      board,
+      me: ME,
+      income: o.income,
+      settings: { ...RATES, ...o.settings },
+      game: { players: [{ id: ME }, { id: FOE }], turn: 10 },
+      options: { adapt: true },
+      previousBoard: before(board),
+    };
+  };
+  /** Armies left on T1 once its own orders leave (deploys, incoming transfers counted). */
+  const leftOnT1 = (p: TurnPlan, x: number) =>
+    x +
+    p.deploys.filter((d) => d.territoryId === 1).reduce((n, d) => n + d.armies, 0) +
+    p.moves.filter((m) => m.to === 1).reduce((n, m) => n + m.armies, 0) -
+    p.moves.filter((m) => m.from === 1).reduce((n, m) => n + m.armies, 0);
+
+  it('under No-Split, completes B930 with T1 garrisoned instead of sending its whole stack out', () => {
+    const p = planTurn(input2({ x: 7, big: 20, t3: 1, income: 20, settings: { noSplit: true } }));
+    expect(p.expected.bonusesCompleted).toContain(930);
+    expect(p.rationale.join('\n')).toMatch(/Keep T1 \(#1\) \(not conceded\): this turn's captures complete bonus B930/);
+    // Kept: no order empties it, and the leftover garrisons it.
+    expect(attacksFrom(p, 1)).toEqual([]);
+    expect(p.deploys.find((d) => d.territoryId === 1)?.armies ?? 0).toBeGreaterThan(0);
+    expect(p.warnings.join('\n')).not.toMatch(/T1 \(#1\) is kept for the bonus this turn completes, but its 0 armies/);
+  });
+
+  it('with the guard on, completes B930 instead of draining T1 to break B900', () => {
+    const p = planTurn(input2({ x: 7, big: 6, t3: 4, income: 5, settings: { oneArmyStandsGuard: true } }));
+    expect(p.expected.bonusesCompleted).toContain(930);
+    expect(p.warnings.join('\n')).not.toMatch(/completing B930 \(#930\) leaves T1 \(#1\) indefensible/);
+  });
+
+  it('a border kept for the completed bonus is never left empty (No-Split, guard, Local, balanced)', () => {
+    // Under No-Split any attack out empties T1, so a kept T1 sends none; under every setting the
+    // "kept ... but its 0 armies" contradiction never appears.
+    let kept = 0;
+    for (const settings of [{}, { noSplit: true }, { oneArmyStandsGuard: true }, { localDeployments: true }])
+      for (const x of [3, 7, 14, 30])
+        for (const big of [6, 20, 50])
+          for (const [t3, income] of [[1, 20], [4, 5], [2, 35]] as const) {
+            const p = planTurn(input2({ x, big, t3, income, settings }));
+            const at = `${JSON.stringify(settings)} x=${x} big=${big} t3=${t3} income=${income}`;
+            expect(p.warnings.join('\n'), at).not.toMatch(/T1 \(#1\) is kept for the bonus this turn completes, but its 0 armies/);
+            if (!p.rationale.some((l) => l.startsWith('Keep T1 (#1) (not conceded)'))) continue;
+            kept++;
+            expect(leftOnT1(p, x), at).toBeGreaterThan(0);
+            if ('noSplit' in settings) expect(attacksFrom(p, 1), at).toEqual([]);
+          }
+    expect(kept).toBeGreaterThan(20);
+  });
+
+  it('when B930 is out of reach this turn, the conceded T1 still attacks out (No-Split)', () => {
+    // T15 at 30 neutrals: nothing completes B930, so T1 is conceded and breaks B900 with its stack.
+    const p = planTurn(input2({ x: 7, big: 20, t3: 1, income: 20, t15: 30, settings: { noSplit: true } }));
+    expect(p.expected.bonusesCompleted).not.toContain(930);
+    expect(p.warnings.join('\n')).toMatch(/T1 \(#1\) cannot be held with the \d+ armies left to deploy/);
+    expect(attacksFrom(p, 1).map((m) => m.to)).toEqual([3]);
+    // The skip line for T2 says T1's whole stack already left, not "what it can still send".
+    expect(notAttacking(p)).toMatch(
+      /T2 \(#2\).*the most a neighbour of mine has left for it is 0 \(T1 \(#1\), conceded: No-Split sends its whole stack on its other order\)/,
+    );
+  });
+});

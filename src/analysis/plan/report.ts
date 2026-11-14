@@ -380,8 +380,8 @@ export function reportOffence(
   // no target of the plan's (rule 2: a player's territory is attacked to break a bonus, counter-attack,
   // finish a player off, strike, or as rule 4e's fallback; adapting in an FFA, the lead strikes).
   {
-    /** #215: a conceded border whose garrison does not stand (rule 1b): it keeps nothing back. */
-    const givenUp = (x: number) => conceded.has(x) && !stood.has(x) && !myCommanders.has(x);
+    /** #215: a conceded border whose garrison does not stand (rule 1b): it keeps nothing back (my commander's never is: rule 1k). */
+    const givenUp = (x: number) => conceded.has(x) && !stood.has(x);
     const spareNow = (x: number, n: number) => {
       if (!mineSet.has(x) || myCommanders.has(x) || orderOf(x)) return 0;
       // #215: a conceded border (its garrison not standing) holds nothing: what it can still send
@@ -447,7 +447,11 @@ export function reportOffence(
       if (best.spare < need)
         return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and ${
           givenUp(best.x)
-            ? `the most a neighbour of mine has left for it is ${best.spare} (${label(best.x)}, conceded: what it can still send once its other orders leave)`
+            ? `the most a neighbour of mine has left for it is ${best.spare} (${label(best.x)}, conceded: ${
+                orderOf(best.x)
+                  ? `No-Split sends its whole stack on its other order`
+                  : 'what it can still send once its other orders leave'
+              })`
             : `the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}`
         }${deployText}`;
       if (goal !== 'balanced') {

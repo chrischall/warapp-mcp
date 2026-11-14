@@ -91,6 +91,17 @@ export interface HoldBook {
   kept: Set<number>;
   /** #122: members garrisoned so: like a border rule 1c keeps, the leftover tops them up to a comfortable margin first. */
   garrisoned: Set<number>;
+  /**
+   * #215: the pending holds rule 1a's triage itself locked (under `balanced`), so the greedy step
+   * unlocks only those when it concedes one — never a lock some other rule added.
+   */
+  pendingLocks: Set<number>;
+  /**
+   * #215 review: the bonuses this turn's captures may complete — every missing member a capture
+   * target — by their armies to finish (rule 4's bonus plans; filled once the targets are known,
+   * before rule 1a's triage runs).
+   */
+  completable: Map<number, number>;
 }
 
 /** The holds phase's helpers, for planPass to run. */
@@ -102,7 +113,10 @@ export type Holds = ReturnType<typeof holdsPhase>;
  * garrisonCompleted where the capture passes need them.
  */
 export function holdsPhase(pc: PlanCtx, ps: PlanState, book: DeployBook, threats: Threats, pass: TwoStepPass) {
-  const hb: HoldBook = { threatened: [], conceded: new Set(), units: [], holds: [], kept: new Set(), garrisoned: new Set() };
+  const hb: HoldBook = {
+    threatened: [], conceded: new Set(), units: [], holds: [], kept: new Set(), garrisoned: new Set(),
+    pendingLocks: new Set(), completable: new Map(),
+  };
   const h0 = holdBasics(pc, ps, book, threats);
   const h1 = { ...h0, ...twoStepHolds(pc, ps, book, threats, hb, pass, h0) };
   const h2 = { ...h1, ...holdOrConcede(pc, ps, book, threats, hb, h1) };
@@ -677,12 +691,30 @@ export function floorTier(
   hb: HoldBook,
   prev: HoldsUpTo3,
 ) {
-  const { goal, balanced, guarded, paybackTurns, label, bonusName, toTake } = pc;
-  const { warnings, rationale, locked, captured } = ps;
+  const { g, goal, balanced, guarded, paybackTurns, label, bonusName, toTake, bonusTs, mineSet, income } = pc;
+  const { warnings, rationale, locked, captured, avail } = ps;
   const { deploy, undeploy, pools, roomAt } = book;
   const local = pools !== null && pools.bonuses.length > 0;
   const { chainAt, stacksAt, borders } = threats;
-  const { threatened, conceded, units, holds } = hb;
+  const { threatened, conceded, units, holds, pendingLocks, completable } = hb;
+  /**
+   * #215 review: `id` is a member of a positive bonus this turn's captures may complete without
+   * it — every missing member a capture target next to another territory of mine, and its armies
+   * to finish within this turn's income plus the armies on those territories (kept, `id` sends
+   * none) — so rule 1c may keep `id` (and the leftover garrison it) once the captures are known.
+   */
+  const mayComplete = (id: number) =>
+    g.map.bonuses.some((b) => {
+      const cost = completable.get(b.id);
+      const ts = bonusTs.get(b.id) ?? [];
+      if (cost === undefined || b.value <= 0 || !ts.includes(id)) return false;
+      const sourcesOf = (x: number) => neighborsOf(g, x).filter((n) => mineSet.has(n) && n !== id);
+      const missing = ts.filter((x) => !mineSet.has(x));
+      // A member only `id` reaches is completed out of `id` itself: no reason to keep it locked.
+      if (missing.some((x) => !sourcesOf(x).length)) return false;
+      const near = new Set(missing.flatMap(sourcesOf));
+      return cost <= income + [...near].reduce((n, x) => n + avail.get(x)!, 0);
+    });
   const {
     uneconomic, acting, concedeUnaffordable, heldStack, hold, heldBorders, commanderHeld, buildUnits, unitBorders,
     concedeUnit, leftFor, fundUnit, fundNearMiss,
@@ -1049,9 +1081,14 @@ export function floorTier(
         // here, so the greedy step could never have held it.
         // Never quiet here: under `balanced` this triage runs only non-quietly (quiet concessions
         // go through the greedy step's `singleNow` / `singleLate`).
-        if (t.holdCost > left) return concedeUnaffordable(t, left);
+        // #215 review: not a member of a bonus this turn's captures may complete — conceded now, it
+        // attacked out (under No-Split with its whole stack) before rule 1c kept it for the completed
+        // bonus, empty. Left pending, the greedy step concedes it and decides once the captures are
+        // known (planner.ts `concedePending`).
+        if (t.holdCost > left && !mayComplete(t.id)) return concedeUnaffordable(t, left);
         // Its armies stay put until the greedy step decides: holding assumes they are all there.
         holds.push(t);
+        if (!locked.has(t.id)) pendingLocks.add(t.id);
         locked.add(t.id);
         return;
       }
@@ -1100,7 +1137,7 @@ export function floorTier(
       if (!fundUnit(it.unit) && !fundNearMiss(it.unit)) floorOrConcede(it.unit, leftFor(it.unit), single);
     }
   };
-  return { keptShort, floorOrConcede, settleContested, triage };
+  return { keptShort, floorOrConcede, settleContested, triage, mayComplete };
 }
 
 /** Rule 1b: withdraw from conceded borders (and Order Priority when a withdrawal must go first). */
