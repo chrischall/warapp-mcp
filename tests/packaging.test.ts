@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestHarness, type TestHarness } from '@chrischall/mcp-utils/test';
 import { registerAllTools } from '../src/tools/index.js';
@@ -554,5 +554,87 @@ describe('packaging for map statistics (S6)', () => {
     const section = api.slice(start, end === -1 ? undefined : end);
     expect(section).toContain('/API/GameIDFeed');
     expect(section).toMatch(/UNVERIFIED/);
+  });
+});
+
+describe('docs agree on the confirm-gated writes (#133)', () => {
+  const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  // The writes, counted from the code: every tool registered through `defineGatedWrite`.
+  const toolsDir = new URL('../src/tools/', import.meta.url);
+  const gated = readdirSync(toolsDir)
+    .filter((f) => f.endsWith('.ts') && f !== 'write-kit.ts')
+    .flatMap((f) => {
+      const src = readFileSync(new URL(f, toolsDir), 'utf8');
+      return [...src.matchAll(/defineGatedWrite\([\s\S]*?name: '(warapp_\w+)'/g)].map((m) => m[1]!);
+    })
+    .sort();
+  const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+  // How the store-facing prose names each write.
+  const plain: Record<string, RegExp> = {
+    warapp_begin_turn: /\bbegin/i,
+    warapp_join_game: /\bjoin/i,
+    warapp_link_session: /\blink/i,
+    warapp_send_chat: /\bchat/i,
+    warapp_submit_picks: /\bpicks\b/i,
+    warapp_submit_turn: /\bturn orders\b/i,
+    warapp_surrender: /\bsurrender/i,
+    warapp_uncommit_turn: /\bwithdraw/i,
+  };
+  const sentenceWith = (text: string, re: RegExp) => text.split(/(?<=[.:])\s+/).find((s) => re.test(s)) ?? '';
+
+  it('finds the writes in the code, each with a plain-words name', () => {
+    expect(gated.length).toBeGreaterThan(0);
+    expect(Object.keys(plain).sort()).toEqual(gated);
+  });
+
+  it('CLAUDE.md and the skill give the count and name every write', () => {
+    for (const [name, text] of [
+      ['CLAUDE.md', doc('../CLAUDE.md')],
+      ['SKILL.md', doc('../skills/warapp-mcp/SKILL.md')],
+    ] as const) {
+      const at = text.indexOf(`${words[gated.length]} tools write, all confirm-gated`);
+      expect(at, name).toBeGreaterThan(-1);
+      const list = text.slice(at, text.indexOf('.', text.indexOf('warapp_', at)) + 400);
+      for (const tool of gated) expect(list, `${name}: ${tool}`).toContain(`\`${tool}\``);
+    }
+  });
+
+  it('README lists every write as the only non-reads and as confirmation-gated', () => {
+    const readme = doc('../README.md');
+    const reads = readme.slice(readme.indexOf('Everything except'), readme.indexOf('only reads'));
+    const gate = readme.slice(readme.indexOf('## Confirming writes'), readme.indexOf('are confirmation-gated'));
+    for (const tool of gated) {
+      expect(reads, tool).toContain(`\`${tool}\``);
+      expect(gate, tool).toContain(`\`${tool}\``);
+    }
+  });
+
+  it('the manifest, the marketplace entry and the server banner name every write as confirm-gated', () => {
+    const manifest = (read('../manifest.json') as { description: string }).description;
+    const market = (read('../.claude-plugin/marketplace.json') as { metadata: { description: string } }).metadata
+      .description;
+    const index = doc('../src/index.ts');
+    const banner = index.slice(index.indexOf('banner:'), index.indexOf('});', index.indexOf('banner:')));
+    for (const [name, text] of [
+      ['manifest.json', manifest],
+      ['marketplace.json', market],
+      ['banner', banner],
+    ] as const) {
+      const sentence = sentenceWith(text, /confirm-gated/);
+      for (const tool of gated) expect(sentence, `${name}: ${tool}`).toMatch(plain[tool]!);
+    }
+  });
+
+  it('mint.yaml names every write a hosted server registers (warapp_link_session is local-only)', () => {
+    const mint = doc('../mint.yaml');
+    const summary = mint.slice(mint.indexOf('\nsummary:'), mint.indexOf('\nexamples:')).replace(/\s+/g, ' ');
+    const sentence = sentenceWith(summary, /after you confirm/);
+    for (const tool of gated.filter((t) => t !== 'warapp_link_session')) expect(sentence, tool).toMatch(plain[tool]!);
+  });
+
+  it('no doc still says the tracked income is a median (#100: the maximum)', () => {
+    for (const p of ['../CLAUDE.md', '../skills/warapp-mcp/SKILL.md', '../README.md', '../docs/PLAN-STRATEGY.md']) {
+      expect(doc(p), p).not.toMatch(/income estimate \(median/i);
+    }
   });
 });

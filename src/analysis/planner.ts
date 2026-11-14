@@ -337,9 +337,12 @@
 //     they replace), a threatened border protects +0 and is conceded: early in a game
 //     `defend` holds nothing and withdraws from every threatened border, keeping armies for
 //     expansion.
-//     A conceded border is never deployed to (unless every territory I hold is
+//     Triage deploys nothing to a conceded border (unless every territory I hold is
 //     conceded): it may still attack out with the armies already on it, since they
-//     are lost anyway if they stay, but no capture is funded there.
+//     are lost anyway if they stay, but no capture is funded there. A conceded border
+//     can still get deploys two ways: as a finish-off source (rule 1e runs before
+//     triage, and its attacks keep the deploys they were sized with), and, under Local
+//     Deployment, from its held bonus's own pool, which lands only inside that bonus (rule 1b).
 //     Under `balanced` a hold is not deployed here: it competes in the greedy
 //     step (rule 4a), and a threatened border it might hold makes no attacks.
 //  1h. Held bonuses (under `balanced` and `defend`; issue #51). Every bonus I hold in

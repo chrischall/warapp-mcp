@@ -142,12 +142,12 @@ active. `warapp_healthcheck` reports the same.
 | `warapp_session_status` | Whether a war.app session is linked for the [direct transport](#direct-transport-no-browser), when it was captured and how old it is, and which transport is active. Never shows the session cookie. |
 | `warapp_link_session` | **Writes (locally).** Capture your signed-in war.app session cookie once and store it on this machine for the direct transport. Confirm-gated; stores a full-account credential locally (file mode `0600`) and never shows or sends it anywhere but war.app. |
 
-Everything except `warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn` only reads. Player, game, map
+Everything except `warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn` and `warapp_link_session` only reads. Player, game, map
 and chat text comes back marked as untrusted third-party content.
 
 ## Confirming writes
 
-`warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn` are confirmation-gated:
+`warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn` and `warapp_link_session` are confirmation-gated:
 
 - **Clients that support MCP elicitation** show a confirmation prompt describing the change.
 - **Other clients** make **no** change on the first call: it returns a preview and a
