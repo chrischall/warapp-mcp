@@ -35,7 +35,11 @@
 //     does it change the plan (each rule a rationale line when it fires):
 //       1. 1v1 in contact: a break is weighted like a completion of equal value (weight 1),
 //          and an advance (expansion that completes no bonus) ranks below every hold, unit,
-//          break and completion, and never defers a hold for the expansion share.
+//          break and completion, and never defers a hold for the expansion share. #215: a
+//          contested held bonus (rule 1h, #118: its hold pays back within PAYBACK_TURNS but costs
+//          more than CONCEDE_FACTOR × its worth, so the captures go first) is held whole before the
+//          first advance when what is left covers it (best worth per army first, never weighed
+//          against spreading: `settleContested(true)`); the rest stays contested as before.
 //       2. FFA with two or more opponents left: no second front — a break (also from a held
 //          border, rule 4a) against a player that can take no member of a bonus I hold next
 //          turn and loses nothing to this turn's strike / finishing off is skipped when a
@@ -807,7 +811,12 @@
 //     whoever moves first", most protected value first, only when it can afford the whole hold),
 //     and a border's keep (`keepFor`: what a capture, a top-up or rule 4e's fallback may not spend)
 //     leaves them out too; a border that still holds only with them gets a warning ("holds only
-//     if I move first", with the deploy that would hold it either way). Then it goes to the held
+//     if I move first", with the deploy that would hold it either way). #215 review: "known to move
+//     first" means `movesFirst` from the user (`movesFirstUnverified` unset: the award of picks'
+//     first mover is the wiki's rule, and holds treat it as unknown, the warning naming it); and
+//     idle armies rule 6 transfers in never count toward a hold — a border that holds only with
+//     them gets the same warning, naming the one transfer that must be my first order (moving
+//     first, only that one lands before the opponent's first). Then it goes to the held
 //     border with the highest protected value still short of COMFORT_MARGIN × its threat (counting
 //     armies withdrawn into it) — but first (#121), when it would go to such margins (no strike stack),
 //     a conceded border the leftover can make hold is held after all, from what is left once
@@ -1741,8 +1750,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const runPostponed = () => {
       for (const c of postponed.splice(0)) c.run();
     };
+    /** #215, rule 0p.1: the contested units were held whole (where they fit) before the first advance. */
+    let contestedDue = false;
     candidates.forEach((c, i) => {
       if (done.has(c)) return;
+      // #215, rule 0p.1: an advance ranks below every hold, a contested held bonus's included
+      // (#118 lets the captures go first, but in a 1v1 in contact not one that completes nothing):
+      // live, a +4 bonus's one border was left to fall while 15 went to a bonus 47 armies from done.
+      if (oneVsOne && c.kind === 'advance' && !c.focus && !contestedDue) {
+        contestedDue = true;
+        settleContested(true);
+      }
       if ((c.kind === 'advance' || c.kind === 'break' || c.kind === 'counter') && !c.focus && !unitsDue) {
         unitsDue = true;
         // Those waiting for the expansion share outscore everything still to run.

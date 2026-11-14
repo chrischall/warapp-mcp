@@ -11,8 +11,10 @@ import {
   projectFirstMover,
   readFirstMover,
   resolveFirstMover,
+  verifiedFirstMover,
   writeFirstMover,
 } from '../src/move-order.js';
+import { firstMoverFor } from '../src/tools/award.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'warapp-mcp-move-order-'));
 const GAME = 4101;
@@ -96,6 +98,28 @@ describe('resolveFirstMover', () => {
       warnings: [],
     });
     expect(resolveFirstMover({ ...base, turn: null, award: 'me' }).resolved).toBeNull();
+  });
+});
+
+describe('verifiedFirstMover (#215 review)', () => {
+  it('counts only a first mover given explicitly, now or on a remembered turn', () => {
+    expect(verifiedFirstMover({ firstMover: 'me', source: 'explicit' })).toBe(true);
+    expect(verifiedFirstMover({ firstMover: 'me', source: 'remembered', from: { turn: 3, source: 'explicit' } })).toBe(true);
+    // The award's move order is the wiki's rule, not verified live.
+    expect(verifiedFirstMover({ firstMover: 'me', source: 'award' })).toBe(false);
+    expect(verifiedFirstMover({ firstMover: 'me', source: 'remembered', from: { turn: 3, source: 'award' } })).toBe(false);
+    expect(verifiedFirstMover({ firstMover: 'me', source: 'remembered' })).toBe(false);
+  });
+});
+
+describe('firstMoverFor marks what holds may trust (#215 review)', () => {
+  const game = { id: GAME, players: [{ id: ME }, { id: 7700000022 }], settings: { moveOrder: 'Cycle' } } as never;
+  const me = { id: ME } as never;
+  it('a first mover from the award is not verified; one the user gave is', async () => {
+    const award = await firstMoverFor(undefined, game, me, 4, undefined, { firstMover: 'me' } as never);
+    expect(award).toMatchObject({ firstMover: 'me', verified: false });
+    const told = await firstMoverFor(undefined, game, me, 4, 'me', { firstMover: 'opponent' } as never);
+    expect(told).toMatchObject({ firstMover: 'me', verified: true });
   });
 });
 

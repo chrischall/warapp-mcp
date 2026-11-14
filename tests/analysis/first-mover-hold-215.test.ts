@@ -78,14 +78,18 @@ const field = (o: { y?: number; e?: number } = {}): BoardState =>
     at(10, 2, FOE),
     at(11, 2, FOE),
   ]);
-const input = (o: { income?: number; movesFirst?: boolean; y?: number; e?: number } = {}): PlanInput => ({
+const input = (o: { income?: number; movesFirst?: boolean; unverified?: boolean; y?: number; e?: number } = {}): PlanInput => ({
   graph: g,
   board: field(o),
   me: ME,
   income: o.income ?? 30,
   settings: RATES,
   game: { players: [{ id: ME }, { id: FOE }], turn: 10 },
-  options: { enemyDeploy: 5, ...(o.movesFirst !== undefined ? { movesFirst: o.movesFirst } : {}) },
+  options: {
+    enemyDeploy: 5,
+    ...(o.movesFirst !== undefined ? { movesFirst: o.movesFirst } : {}),
+    ...(o.unverified ? { movesFirstUnverified: true } : {}),
+  },
 });
 const deployedOn = (p: TurnPlan, id: number) => p.deploys.filter((d) => d.territoryId === id).reduce((n, d) => n + d.armies, 0);
 const withdrawal = (p: TurnPlan) => p.moves.find((m) => m.kind === 'transfer' && m.from === 1 && m.to === 3);
@@ -135,6 +139,20 @@ describe('#215: a hold is sized for the worse move order when the first mover is
     expect(deployedOn(p, 7)).toBe(30);
     expect(p.rationale.join('\n')).not.toMatch(/whoever moves first/);
     expect(p.warnings.join('\n')).not.toMatch(/only if I move first/);
+  });
+
+  it('treats a first move only the award of picks says (unverified) as unknown for the hold (#215 review)', () => {
+    const p = planTurn(input({ movesFirst: true, unverified: true }));
+    expect(deployedOn(p, 3)).toBe(13);
+    expect(p.rationale.join('\n')).toMatch(/so it holds whoever moves first/);
+    expect(lostIfOpponentFirst(p)).not.toContain(3);
+  });
+
+  it('says so when the hold depends on a first move the award says I have, unverified', () => {
+    const p = planTurn(input({ income: 12, movesFirst: true, unverified: true }));
+    expect(p.warnings.join('\n')).toMatch(
+      /T3 \(#3\) holds only if I move first: 26 of its armies are withdrawn into it this turn, and if player 20 moves first its attack \(~33\) lands before them \(the award of picks says I move first: the wiki's rule, not verified live\)\./,
+    );
   });
 
   it('says plainly that the hold depends on moving first when the leftover cannot afford it', () => {
