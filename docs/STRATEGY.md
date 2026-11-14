@@ -329,7 +329,8 @@ Each note is marked **encoded** (where the server acts on it) or **advice only**
 basis: *source* — the linked page states the idea; *derived* — our reasoning from the rule or
 advice the linked page gives. A note is offered only in games where it applies: its condition
 (`NoteCondition` in `src/strategy/notes.ts`) tests the format, the phase, the standing, the fog
-level, the move order, the distribution, the kill rates, the guard, and which cards are in play.
+level, the move order, the distribution, the kill rates, the guard, which cards are in play, and
+whether private messaging is on (`PrivateMessaging`; a game that does not state it fits neither).
 Where a note describes something `warapp_submit_turn` cannot send — an Order Delay above other
 orders — its text says so and points to the game client. A note on an attack-only or transfer-only
 order, an order by percentage, an order that carries the commander or treats a teammate as an
@@ -1032,6 +1033,62 @@ Format:
   **Advice only.** Derived. Source: <https://war.app/wiki/Team_Games>
 - `teams-no-march-through` — an order into a teammate's territory hands the armies over, so its land is a
   wall for your stacks. **Advice only.** Derived. Source: <https://war.app/wiki/Team_Games>
+
+## Diplomacy: truces and deals in a free-for-all (fourth pass)
+
+A fourth pass on 2026-11-14 (PLAN-TEAMS part E) read the site rules, the wiki's pages on private
+messaging, team games and diplomacy games, and forum threads on truces, their breaking and hidden
+teaming in free-for-alls. Each note's page was then fetched again and checked against the note, and
+claims the page did not carry were dropped. Notes from other games' writing (Diplomacy, Conquer Club)
+were left out: no note rests on a page outside war.app. Every note keeps to what the tools send: a
+chat message (`warapp_send_chat`, confirm-gated), an agreement record (`warapp_record_agreement`) and
+the board; none advises a card play. Whether a relation is active is not a condition: the strategy
+tool reads GameFeed alone and does not know the signed-in account's agreements
+(`warapp_advise_diplomacy` and `warapp_plan_turn` carry those).
+
+- `diplomacy-site-rules` — working together breaks no site rule and is not reportable; only a second
+  account in the game or a rigged game does; etiquette is unenforced. **Advice only.** Source:
+  <https://war.app/wiki/Rules>
+- `diplomacy-private-off` — with private messaging off, most players read it as no hidden deals:
+  propose nothing in chat; a quiet border is still accepted. **Advice only** (`warapp_send_chat` also
+  refuses a private message there). Derived. Source:
+  <https://war.app/Forum/759391-ffa-private-chat-etiquette>
+- `diplomacy-read-description` — read the host's description first; where it rules out alliances,
+  make and accept none. **Advice only** (`warapp_advise_diplomacy` shows the description). Derived.
+  Source: <https://war.app/Forum/759391-ffa-private-chat-etiquette>
+- `diplomacy-first-contact` — a truce with the first neighbour met is valued in a large free-for-all;
+  a bottleneck holds one, a flankable border does not. **Advice only.** Source:
+  <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced>
+- `diplomacy-truce-scope-end` — name the territories or bonuses a truce covers and its end; record it.
+  **Advice only.** Source: <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced?Offset=20>
+- `diplomacy-truce-two-left` — a truce until "two are left" ended when others surrendered; tie the end
+  to a turn or notice. **Advice only.** Source: <https://war.app/Forum/4467-fair-blacklist-here>
+- `diplomacy-stack-behind` — whoever stacked most near the line wins the break: keep the hold or the
+  cap plus a stack behind, and read a partner's stacks as a warning. **Advice only.** Derived. Source:
+  <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced>
+- `diplomacy-notice-early` — expect a notice at the last moment: read chat before committing; give
+  yours early with the agreed turns. **Advice only.** Derived. Source:
+  <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced>
+- `diplomacy-betrayal-cost` — an unannounced attack is legal but remembered: retaliation and blocking.
+  **Advice only.** Source: <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced?Offset=20>
+- `diplomacy-restate-terms` — slow games forget; restate terms and say whether border stacking is a
+  breach. **Advice only.** Source: <https://war.app/Forum/2981-psychology>
+- `diplomacy-no-gang-up-calls` — calls to gang up on the leader are resented and get senders blocked;
+  speak to your own position. **Advice only.** Derived. Source:
+  <https://war.app/Forum/759391-ffa-private-chat-etiquette>
+- `diplomacy-unspoken-truce` — three or four turns of no deploys on a shared border read as an unspoken
+  truce; it binds nobody. **Advice only.** Source: <https://war.app/Forum/546500-ffa-competition-league>
+- `diplomacy-others-dealing` — a neighbour left alone where attacking would pay suggests two players
+  teaming; unprovable, legal, answered by a deal of your own. **Advice only.** Source:
+  <https://war.app/Forum/669761-playing-team-ffa>
+- `diplomacy-two-against-one` — with three players, two against one is common; do not be the one.
+  **Advice only.** Derived. Source: <https://war.app/Forum/4723-best-way-quality-ffa-games>
+- `diplomacy-fog-checkable-terms` — diplomacy games use no or light fog; under heavier fog agree only
+  terms you can see. **Advice only.** Derived. Source: <https://war.app/wiki/PE>
+- `diplomacy-card-farming` — a territory traded every turn with few losses may be card farming, a deal.
+  **Advice only.** Source: <https://war.app/wiki/PE>
+- `teams-team-chat` — each team has a chat only it reads: plan there (`channel: "team"`). **Advice
+  only.** Source: <https://war.app/wiki/Team_Games>
 
 ## Map (general)
 

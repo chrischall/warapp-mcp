@@ -113,6 +113,7 @@ describe('noteContext: what the notes need from the game settings', () => {
       percentageAllowed: false,
       commerce: false,
       wastelands: false,
+      privateMessaging: true,
     });
   });
 

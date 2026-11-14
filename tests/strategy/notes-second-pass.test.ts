@@ -241,7 +241,8 @@ describe('second-pass notes: each is offered only where it applies', () => {
           for (const fog of ['NoFog', 'LightFog', 'Foggy', 'ModerateFog']) {
             for (const distribution of ['manual', 'automatic'] as const) {
               for (const flip of [false, true]) {
-                const p = profile({ format, phase, standing }, { fog, cards: true, commanders: !flip, luck: flip ? 16 : 0, rounding: flip ? 'WeightedRandom' : 'StraightRound', localDeployments: flip, noSplit: flip });
+                // Two or three opponents: some free-for-all notes are for three players only.
+                const p = profile({ format, phase, standing, opponents: format === '1v1' ? 1 : flip ? 2 : 3 }, { fog, cards: true, commanders: !flip, luck: flip ? 16 : 0, rounding: flip ? 'WeightedRandom' : 'StraightRound', localDeployments: flip, noSplit: flip });
                 // Each cyclic order too: a note can be for Cycle only (the award settles the first mover there).
                 for (const moveOrder of flip ? ['Random'] : ['NoLuckCycle', 'Cycle']) {
                 const x: NoteContext = {
@@ -258,6 +259,7 @@ describe('second-pass notes: each is offered only where it applies', () => {
                   commerce: true,
                   wastelands: true,
                   negativeBonus: true,
+                  privateMessaging: !flip,
                 };
                 for (const id of ids(p, x)) reached.add(id);
                 }

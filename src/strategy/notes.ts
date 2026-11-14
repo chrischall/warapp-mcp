@@ -11,7 +11,7 @@ import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE 
 import { cardRules } from '../cards.js';
 import type { GameSettings } from '../normalize.js';
 
-export const NOTE_TOPICS = ['format', 'settings', 'cards', 'reading', 'opening', 'timing', 'fighting', 'map'] as const;
+export const NOTE_TOPICS = ['format', 'settings', 'cards', 'reading', 'opening', 'timing', 'fighting', 'diplomacy', 'map'] as const;
 type NoteTopic = (typeof NOTE_TOPICS)[number];
 
 /** The pages the notes were researched from (read 2026-11; paraphrased, never copied): the war.app wiki and forum, and community guides they link to. */
@@ -101,6 +101,16 @@ export const STRATEGY_SOURCES = {
   forumTellingSurrender: 'https://war.app/Forum/118844-telling-opponent-surrender',
   forumTougherOpponents: 'https://war.app/Forum/297674-strategy-facing-tougher-opponents',
   forumTurningAi: 'https://war.app/Forum/3768-turningai-issue',
+  // The diplomacy pass (read 2026-11-14, PLAN-TEAMS part E): the site rules on players working
+  // together, the wiki's page on diplomacy games, and forum threads on truces in free-for-alls.
+  rules: 'https://war.app/wiki/Rules',
+  diplomacyGames: 'https://war.app/wiki/PE',
+  forumFfaChatEtiquette: 'https://war.app/Forum/759391-ffa-private-chat-etiquette',
+  forumTreatyBreaking: 'https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced',
+  forumTreatyBreakingLater: 'https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced?Offset=20',
+  forumTruceTwoLeft: 'https://war.app/Forum/4467-fair-blacklist-here',
+  forumTrucePsychology: 'https://war.app/Forum/2981-psychology',
+  forumHiddenTeaming: 'https://war.app/Forum/669761-playing-team-ffa',
 } as const;
 
 /** Game facts a note may need that the profile does not carry. */
@@ -133,6 +143,8 @@ export interface NoteContext {
   wastelands?: boolean;
   /** Completing some bonus would cut income in this game ({@link hasCostlyBonus} on the game's map). */
   negativeBonus?: boolean;
+  /** Players may message each other privately (`PrivateMessaging`); absent when the game did not say. */
+  privateMessaging?: boolean;
 }
 
 /**
@@ -171,6 +183,8 @@ export interface NoteCondition {
   commerce?: true;
   wastelands?: true;
   negativeBonus?: true;
+  /** Private messaging is on (true) or off (false); a game that does not state it fits neither. */
+  privateMessaging?: boolean;
 }
 
 /** Whether a game with this profile and these settings meets a note's condition. */
@@ -200,6 +214,7 @@ export function noteMatches(c: NoteCondition, p: GameProfile, x: NoteContext = {
   if (c.commerce && x.commerce !== true) return false;
   if (c.wastelands && x.wastelands !== true) return false;
   if (c.negativeBonus && x.negativeBonus !== true) return false;
+  if (c.privateMessaging !== undefined && x.privateMessaging !== c.privateMessaging) return false;
   return true;
 }
 
@@ -245,6 +260,7 @@ export function noteContext(settings: GameSettings | undefined): NoteContext {
   if (transferOnly !== undefined) out.transferOnlyAllowed = transferOnly;
   const percentage = flag(raw.AllowPercentageAttacks);
   if (percentage !== undefined) out.percentageAllowed = percentage;
+  if (settings.privateMessaging !== undefined) out.privateMessaging = settings.privateMessaging;
   // An empty `Commerce` object is a game without it (the lobby fixture); what a commerce game
   // sends there is not verified, so any content counts as on.
   const commerce = raw.Commerce;
@@ -2117,6 +2133,193 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     source: S.teamGames,
     basis: 'derived',
   },
+  // ---- diplomacy: deals between players who are not on a team (PLAN-TEAMS part E) ----
+  {
+    id: 'diplomacy-site-rules',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'Players working together breaks no site rule and is not to be reported; what does is one person ' +
+      'playing two accounts in a game, or a rigged game nobody consented to. Etiquette players set is not ' +
+      'enforced like the rules, so a deal holds only while both sides keep it.',
+    source: S.rules,
+    basis: 'source',
+  },
+  {
+    id: 'diplomacy-private-off',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'], privateMessaging: false }),
+    text:
+      'With private messaging off, most posters in a long forum debate read it as the host asking for no ' +
+      'hidden deals, by mail or anywhere else; a few call mail fair. Propose nothing in chat then: the offer ' +
+      'such players still accept is a border left quiet, with no deploys or attacks on it.',
+    source: S.forumFfaChatEtiquette,
+    basis: 'derived',
+  },
+  {
+    id: 'diplomacy-read-description',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      "Read the host's description before any deal (warapp_advise_diplomacy shows it when the feed carries " +
+      'one). Where it rules out alliances or diplomacy, make none and accept none. Players disagree on what a ' +
+      'bare "FFA" allows; several say such a rule only counts when the description states it.',
+    source: S.forumFfaChatEtiquette,
+    basis: 'derived',
+  },
+  {
+    id: 'diplomacy-first-contact',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'], phase: ['opening', 'expansion', 'contact'] }),
+    text:
+      'In a large free-for-all a forum veteran calls a truce with the first neighbour you meet essential: ' +
+      'fighting it head-on usually costs you both (another disputes it). A truce across a bottleneck with even ' +
+      'stacks is the safe kind; one across a border where you can be flanked is not.',
+    source: S.forumTreatyBreaking,
+    basis: 'source',
+  },
+  {
+    id: 'diplomacy-truce-scope-end',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'Put the scope and the end in a truce: name the territories or bonuses it covers, since an attack ' +
+      'outside them is no breach, and a turn limit or the notice to end it. Posters say a truce with no end ' +
+      'should be expected to break any turn. Record the terms with warapp_record_agreement.',
+    source: S.forumTreatyBreakingLater,
+    basis: 'source',
+  },
+  {
+    id: 'diplomacy-truce-two-left',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'A truce "until we two are the only ones left" was ended the turn the others surrendered, and the ' +
+      'posters held that its letter was kept: nobody had said when a player counts as gone. Tie the end to a ' +
+      'turn or to notice, and read the game again before committing while players are leaving.',
+    source: S.forumTruceTwoLeft,
+    basis: 'source',
+  },
+  {
+    id: 'diplomacy-stack-behind',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
+    text:
+      'Whoever has stacked most near a truce border usually wins when it breaks, and players admit keeping ' +
+      'big stacks just behind one. Keep what holds the border (or the agreed cap, with a stack one step back) ' +
+      "and read a partner's stacks arriving there as a warning, whatever chat says.",
+    source: S.forumTreatyBreaking,
+    basis: 'derived',
+  },
+  {
+    id: 'diplomacy-notice-early',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
+    text:
+      'One player admits ending truces in the last seconds of a turn so the partner cannot change orders; ' +
+      'others ask for a turn\'s warning. Read chat (warapp_get_chat) again just before you commit, and give ' +
+      'your own notice early, with the turns agreed, never with the attack.',
+    source: S.forumTreatyBreaking,
+    basis: 'derived',
+  },
+  {
+    id: 'diplomacy-betrayal-cost',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'Attacking without warning breaks no site rule, but it is remembered: a betrayed player may turn its ' +
+      'armies on the breaker for the rest of the game and block it from later ones. Count that before ending ' +
+      'any deal, and end one only with the notice agreed.',
+    source: S.forumTreatyBreakingLater,
+    basis: 'source',
+  },
+  {
+    id: 'diplomacy-restate-terms',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'In multi-day games players forget what they agreed: one was asked for a truce agreed six turns ' +
+      'earlier. Restate the terms in chat when they come to matter, and say in them whether stacking on the ' +
+      'shared border counts as a breach, since players read that differently.',
+    source: S.forumTrucePsychology,
+    basis: 'source',
+  },
+  {
+    id: 'diplomacy-no-gang-up-calls',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
+    text:
+      'Calling the others to gang up on the leader, or posting its income, is resented by many: posters call ' +
+      'it a popularity contest and block whoever sends it. Leave the board to make the case, and keep any ' +
+      'message to your own position and your own border.',
+    source: S.forumFfaChatEtiquette,
+    basis: 'derived',
+  },
+  {
+    id: 'diplomacy-unspoken-truce',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'Two neighbours who deploy nothing on their shared border for three or four turns are read as having ' +
+      'an unspoken truce, which even a league that banned deals accepted while no words passed. It binds ' +
+      'nobody: keep that border held as if it were live.',
+    source: S.forumFfaLeague,
+    basis: 'source',
+  },
+  {
+    id: 'diplomacy-others-dealing',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
+    text:
+      'A neighbour left alone where attacking it would plainly pay is the sign posters cite of two players ' +
+      'teaming. It cannot be proven and breaks no rule, and nothing in the game punishes it; the answer they ' +
+      'give is a deal of your own, where the game allows one.',
+    source: S.forumHiddenTeaming,
+    basis: 'source',
+  },
+  {
+    id: 'diplomacy-two-against-one',
+    topic: 'diplomacy',
+    when: (p) => p.format === 'ffa' && p.opponents === 2,
+    text:
+      'With three players, two against one is common. The skill is not being the one: watch which pair has ' +
+      'stopped fighting, and if it is the other two, offer one of them a reason to turn, such as a quiet ' +
+      'border, before both reach you.',
+    source: S.forumFfaGames,
+    basis: 'derived',
+  },
+  {
+    id: 'diplomacy-fog-checkable-terms',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'], fog: ['Foggy', 'VeryFoggy', 'ExtremeFog'] }),
+    text:
+      'Diplomacy-style games mostly use no fog or light fog so players can see that the rules are kept. Under ' +
+      'heavier fog you see only what borders you: agree terms you can check there (no attacks across named ' +
+      'territories, a cap on the border armies), not promises about land out of sight.',
+    source: S.diplomacyGames,
+    basis: 'derived',
+  },
+  {
+    id: 'diplomacy-card-farming',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'], anyCards: true }),
+    text:
+      'A territory that changes hands between the same two players every turn with few armies lost may be ' +
+      'card farming: friendly neighbours let one take it and the other retake it the same turn, so both earn ' +
+      'card pieces. Read it as a deal between them, not a war.',
+    source: S.diplomacyGames,
+    basis: 'source',
+  },
+  {
+    id: 'teams-team-chat',
+    topic: 'format',
+    when: on({ format: ['teams'] }),
+    text:
+      'Besides the public chat each team has its own, read only by the team. Plan there, never in public: ' +
+      'send with `channel: "team"` in warapp_send_chat, and read it every turn with warapp_get_chat.',
+    source: S.teamGames,
+    basis: 'source',
+  },
 ];
 
 /** Every note, or one topic's, in the table's order. */
@@ -2170,6 +2373,7 @@ export const TOPIC_TITLES: Record<NoteTopic, string> = {
   opening: 'The opening: picks and the first turns',
   timing: 'Timing: the order of orders within a turn',
   fighting: 'Fighting: stacks in contact, ahead and behind',
+  diplomacy: 'Diplomacy: truces and deals in a free-for-all',
   map: 'The map',
 };
 
