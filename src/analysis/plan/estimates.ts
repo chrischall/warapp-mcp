@@ -6,7 +6,7 @@
 // `state.warnings` / `state.rationale`.
 import type { BoardState } from '../../board.js';
 import { holdsSeat } from '../../player-states.js';
-import { carriesTeam } from '../../teams.js';
+import { isTeamGame, teammatesOf } from '../../teams.js';
 import { bonusTerritories } from '../bonuses.js';
 import { CHAIN_MAX_STEPS } from '../chains.js';
 import {
@@ -69,7 +69,7 @@ function fogPrior(
   myIncome: number,
 ): { prior: EnemyIncomePrior | undefined; skipped?: string } {
   const players = (ctx.players ?? []).filter((p) => holdsSeat(p.state));
-  if (players.some((p) => carriesTeam(p.team))) return { prior: undefined };
+  if (isTeamGame(players)) return { prior: undefined };
   const ffa = players.filter((p) => p.id !== me).length > 1;
   const why = (reason: string) => ({ prior: undefined, ...(ffa ? { skipped: reason } : {}) });
   if (ctx.symmetricStart !== true) return why(ctx.unevenStart ?? 'the game does not say every player started even');
@@ -93,9 +93,8 @@ function fogPrior(
 
 /** The players on `me`'s team (#128), from the game's player list; none in a no-team game. */
 export function alliesOf(me: number, players: readonly ProfilePlayer[] | undefined): Set<number> {
-  const team = players?.find((p) => p.id === me)?.team;
-  if (!carriesTeam(team)) return new Set();
-  return new Set((players ?? []).filter((p) => p.id !== me && p.team === team).map((p) => p.id));
+  const mine = players?.find((p) => p.id === me);
+  return new Set(mine ? teammatesOf(players ?? [], mine).map((p) => p.id) : []);
 }
 
 /**

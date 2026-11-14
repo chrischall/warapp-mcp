@@ -38,7 +38,7 @@ import { boardStateFromLive } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
 import { entryKey, legacyEntryKey, playerRecordEnabled, playerRecordState, readPlayerRecord, updatePlayerRecord } from '../player-record-store.js';
 import { emptyLedger, nextAgreementId, nextCommitmentId, readLedger, readLedgerForWrite, withLedgerLock, writeLedger, type RelationsLedger } from '../relations-store.js';
-import { carriesTeam } from '../teams.js';
+import { isTeamGame } from '../teams.js';
 import { readBoardHistory, readCachedOrders, writeBoardCache } from '../trend.js';
 import { writeGameRecord } from '../replay.js';
 import { currentTurn, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
@@ -136,7 +136,7 @@ async function cachedBoards(dir: string, game: Game, me: Player): Promise<TurnBo
 
 /** The game's format for a record entry: players seated, teams, and the free-for-all's size still playing. */
 const formatOf = (game: Game): RecordEntry['format'] => {
-  const teams = game.players.some((p) => carriesTeam(p.team));
+  const teams = isTeamGame(game.players);
   return { players: game.players.length, teams, ffaSize: teams ? null : game.players.filter(alive).length };
 };
 

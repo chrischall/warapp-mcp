@@ -83,7 +83,7 @@
 
 import type { BoardState } from '../board.js';
 import { holdsSeat } from '../player-states.js';
-import { carriesTeam } from '../teams.js';
+import { carriesTeam, isTeamGame } from '../teams.js';
 import { neighborsOf, type MapGraph } from './graph.js';
 import { DEFAULT_TERRITORY_LIMIT, trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
 import { ownerShown, type PlannerSettings } from './planner.js';
@@ -253,7 +253,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   const players = input.game?.players ?? [];
   const myTeam = players.find((p) => p.id === me)?.team;
   const ally = (id: number) => id === me || (carriesTeam(myTeam) && players.find((p) => p.id === id)?.team === myTeam);
-  const teamGame = players.some((p) => carriesTeam(p.team));
+  const teamGame = isTeamGame(players);
   const stillPlaying = (id: number) => (players.find((p) => p.id === id)?.state ?? 'Playing') === 'Playing';
   const rules = { base: Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME)), per: settings.bonusArmyPer ?? 0 };
   const allBonuses = [...g.bonusById.values()].reduce((s, b) => s + Math.max(0, b.value), 0);

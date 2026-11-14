@@ -73,7 +73,7 @@
 // warning says when the bound beats my largest stack, and separately my total visible armies.
 import type { BoardState } from '../board.js';
 import type { GameMap, GameSettings } from '../normalize.js';
-import { carriesTeam } from '../teams.js';
+import { carriesTeam, isTeamGame } from '../teams.js';
 import { bonusTerritories } from './bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
@@ -965,7 +965,7 @@ export function trackOpponents(
     return m;
   };
   const players = game?.players ?? [];
-  const teams = players.some((p) => carriesTeam(p.team));
+  const teams = isTeamGame(players);
   const myTeam = players.find((p) => p.id === me)?.team;
   const ally = (p: TrackPlayer) => p.id === me || (teams && carriesTeam(myTeam) && p.team === myTeam);
   // A teammate in view is not an opponent either (given the game's players).

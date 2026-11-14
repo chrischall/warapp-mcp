@@ -8,7 +8,7 @@
 
 import type { BoardState } from '../board.js';
 import { holdsSeat } from '../player-states.js';
-import { carriesTeam } from '../teams.js';
+import { carriesTeam, isTeamGame } from '../teams.js';
 import { armiesToTake } from './combat.js';
 import { neighborsOf, type MapGraph } from './graph.js';
 
@@ -159,7 +159,7 @@ export function gameProfile(input: ProfileInput): GameProfile {
     players = [{ id: me }, ...[...new Set(owners.values())].filter((p) => p !== me).sort((a, b) => a - b).map((id) => ({ id }))];
     notes.push('No player list: the opponents are the players in sight on the board.');
   }
-  const teams = players.some((p) => carriesTeam(p.team));
+  const teams = isTeamGame(players);
   const myTeam = players.find((p) => p.id === me)?.team;
   /** Players on my side (me, and my teammates in a team game). */
   const ally = (id: number) =>

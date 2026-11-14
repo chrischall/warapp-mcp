@@ -59,7 +59,7 @@ import {
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
-import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
+import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
 import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
@@ -108,6 +108,7 @@ import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
 import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
 import { recordBrokenByMe } from './relations.js';
+import { teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -221,7 +222,7 @@ export { currentTurn, turnsCompleted } from './common.js';
 
 /** My teammates' GameFeed ids (empty outside a team game; GameFeed's team field is unverified). */
 export function friendsOf(players: readonly Player[], me: Player): Set<number> {
-  return new Set(me.team !== undefined && me.team >= 0 ? players.filter((p) => p.id !== me.id && p.team === me.team).map((p) => p.id) : []);
+  return new Set(teammatesOf(players, me).map((p) => p.id));
 }
 
 /** Throw unless the game is in a turn phase. */
@@ -1925,12 +1926,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             });
           }
         }
-        // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
-        const teammates = new Set(
-          me.team !== undefined && me.team >= 0
-            ? game.players.filter((p) => p !== me && p.team === me.team).map((p) => inGameId(p))
-            : [],
-        );
+        // A move into a teammate's territory is a transfer (GameFeed's team field is unverified). The live
+        // board keys owners by in-game id; a teammate without a GameFeed player id (an AI seat) owns nothing by one.
+        const teammates = new Set([...playersByInGameId(teammatesOf(game.players, me)).keys()]);
         // #165: each move's options, refused unless the game allows them.
         const deployedOn = new Map<number, number>();
         for (const d of deploys) deployedOn.set(d.territory.id, (deployedOn.get(d.territory.id) ?? 0) + d.armies);

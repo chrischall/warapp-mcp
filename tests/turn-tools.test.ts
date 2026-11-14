@@ -2524,6 +2524,27 @@ describe('the submit preview sizes each attack (#130)', () => {
     expect(JSON.stringify(preview)).not.toMatch(/cannot capture/);
   });
 
+  it('in a team game an AI teammate (no GameFeed player id) does not stop a submit (C1)', async () => {
+    const players = [
+      ...(game('Playing').players as Array<Record<string, string>>).map((p, i) => (i < 2 ? { ...p, team: '0' } : p)),
+      { id: '7', name: 'AI 7', isAI: 'True', humanTurnedIntoAI: 'False', hasCommittedOrders: 'False', state: 'Playing', team: '0' },
+    ];
+    h = await liveHarness({
+      feed: [game('Playing', { settings: modelledSettings(), players })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 159, to: 158, armies: 1 },
+      ],
+    });
+    expect(textOf(res)).not.toMatch(/not a GameFeed player id/);
+    expect(res.isError).toBeFalsy();
+  });
+
   it('a sure capture carries no warning; a transfer and a fogged target are not listed', async () => {
     h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const preview = payload<{ preview: { attacks?: Array<Record<string, unknown>> } }>(
