@@ -349,18 +349,16 @@ describe('rule 0p.3: behind defends first in an FFA', () => {
     options,
   });
 
-  it('picks defend, plans as goal defend but with holds sized for the expected case (#201), and says why', () => {
+  it('picks defend, plans exactly as goal defend, and says why', () => {
     const p = planTurn(input({ adapt: true }));
     expect(p.profile.standing).toBe('behind');
     expect(p.goal).toBe('defend');
     const d = planTurn(input({ goal: 'defend' }));
-    // #201: behind, the enemy's one ~5 deploy lands on one of the 2 territories of mine it faces:
-    // T2 and T3 are sized against its 2-stacks beside them (they hold as they stand), so the income
-    // completes B801 instead of holding T2 against all of the deploy as goal defend does.
-    expect(d.deploys).toEqual([{ territoryId: 2, armies: 3 }]);
-    expect(d.expected.bonusesCompleted).toEqual([]);
-    expect(p.expected.bonusesCompleted).toEqual([801]);
-    expect(p.warnings.join('\n')).toMatch(/Behind \(#201\): the borders facing player \d+ are sized for the expected case — its one ~5 deploy lands on one of the 2 territories of mine it faces/);
+    // #201: behind, each border is sized for the expected attack (movable + the whole deploy); with
+    // no growth trend on this board that is the worst case too, so the plan is goal defend's.
+    expect(p.deploys).toEqual(d.deploys);
+    expect(p.moves).toEqual(d.moves);
+    expect(p.warnings.join('\n')).not.toMatch(/Behind \(#201\)/);
     expect(why(p)).toMatch(/Goal defend from the game profile \(ffa, contact, behind\): behind on income \(3 against ~5\)/);
   });
 

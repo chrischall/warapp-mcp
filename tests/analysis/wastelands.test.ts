@@ -60,6 +60,13 @@ describe('#201: a fogged neutral the picking board showed keeps its size', () =>
     expect(why(p)).toMatch(/\+5, 1[89] armies to finish/);
   });
 
+  it('a remembered member of two bonuses is said once, naming both', () => {
+    const g2 = buildGraph({ ...map, bonuses: [...map.bonuses, { id: 702, name: 'B702', value: 4, territoryIds: [3, 2], bonusIds: [] }] });
+    const p = planTurn({ graph: g2, board: b, me: ME, income: 5, settings: STD, game: { turn: 4 }, options: { rememberedNeutrals: new Map([[3, 10]]) } });
+    expect(why(p).match(/fogged now, was a neutral of 10 on the picking board/g)).toHaveLength(1);
+    expect(why(p)).toMatch(/B701 \(#701\), B702 \(#702\): T3 \(#3\), fogged now, was a neutral of 10 on the picking board \(#201\): costed at that\./);
+  });
+
   it('a territory not remembered keeps the old costing', () => {
     expect(why(remembered([[6, 4]]))).toMatch(/\+5, 6 armies to finish \(1 fogged member counted at 3 each\)/);
   });
