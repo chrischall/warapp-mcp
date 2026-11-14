@@ -206,13 +206,15 @@ const NO_ARMY_CARDS = new Set([
 
 const FIXED_MODES = new Set(['0', 'fixed']);
 
-/** {@link CardArmyCeiling} from the game's card settings; `undefined` when cards are not bounded (or none is in play). */
+/** {@link CardArmyCeiling} from the game's card settings; `undefined` when cards are not bounded (or none is in play, or the cards a turn are not stated). */
 export function cardArmyCeiling(settings: GameSettings | undefined): CardArmyCeiling | undefined {
   const clock = cardClock(settings);
   if (!clock) return undefined;
   const r = clock.cards.find((c) => c.card === 'Reinforcement');
   if (clock.cards.some((c) => c.card !== 'Reinforcement' && !NO_ARMY_CARDS.has(c.card))) return undefined;
   if (!r) return { armiesPerCard: 0, pieces: 1, initialPieces: 0, piecesPerTurn: 0 };
+  // Without NumberOfCardsToReceiveEachTurn the random pieces a turn are unknown, so no ceiling.
+  if (!clock.piecesPerTurnKnown) return undefined;
   const raw = settings!.raw.ReinforcementCard as Rec;
   const fixed = asInt(raw.FixedArmies);
   if (fixed === undefined || fixed <= 0) return undefined;

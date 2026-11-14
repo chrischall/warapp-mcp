@@ -212,6 +212,19 @@ describe('gameOutlook (#178)', () => {
       expect(scenario.state).not.toBe('winning');
     });
 
+    it('a player who never took a seat (Invited, Declined, RemovedByHost) does not shrink the even share', () => {
+      const game = { ...ffa, startUnknown: 'full distribution', startArmiesPerTerritory: 5 };
+      const unseated = [
+        { id: 41, state: 'Declined' },
+        { id: 42, state: 'RemovedByHost' },
+        { id: 43, state: 'Invited' },
+      ];
+      const listed = { ...game, players: [...ffa.players, ...unseated] };
+      const o = gameOutlook({ graph: g, me: ME, boards: turns(2, [fog(40), fog(40), fog(40)]), game: listed });
+      // Still ⌈8 ÷ 3⌉ = 3 territories × 5, not ⌈8 ÷ 6⌉ = 2 × 5: high 50, as with the seated three alone.
+      expect(o.turns.at(-1)!.strongest).toMatchObject({ high: 50 });
+    });
+
     it('cards on: a fixed Reinforcement card adds at most what the card clock lets it hold', () => {
       const start = { territories: 2, armiesPerTerritory: 5 };
       const cardArmies = { armiesPerCard: 5, pieces: 4, initialPieces: 0, piecesPerTurn: 1 };

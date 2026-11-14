@@ -1218,6 +1218,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           : undefined;
       // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
       // #201: the planner reads it too — a decided game shortens its payback horizon.
+      const cardArmies = cardArmyCeiling(game.settings);
       const outlook = gameOutlook({
         graph,
         me: me.id,
@@ -1226,7 +1227,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         game: trackGame(game.players, game.settings, map),
         cards: rules.inPlay.length > 0,
         // #205: what the card clock lets cards add, so a fogged card game can still be bounded.
-        ...(cardArmyCeiling(game.settings) ? { cardArmies: cardArmyCeiling(game.settings)! } : {}),
+        ...(cardArmies ? { cardArmies } : {}),
       });
       const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).

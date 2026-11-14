@@ -102,6 +102,9 @@ export interface OutlookInput {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/** GameFeed states of a listed player who never took a seat (as in profile.ts). */
+const NEVER_SEATED = new Set(['Invited', 'Declined', 'RemovedByHost']);
+
 const fullyVisible = (g: MapGraph, b: BoardState) => {
   const seen = new Set<number>();
   for (const t of b.territories) if (t.owner.kind !== 'unknown' && t.armies !== null) seen.add(t.territoryId);
@@ -165,9 +168,11 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     return b ? boardCap(b, playerId) : ceiling;
   };
   // Its starting armies: given, or (#205) at most an even share of the map at the armies each
-  // starting territory had.
+  // starting territory had. Only seated players split the map: GameFeed also lists players who
+  // never took a seat (Invited, Declined, RemovedByHost), and counting them would shrink the share.
   const game = input.game;
-  const share = game && game.players.length > 0 ? Math.ceil(g.territoryById.size / game.players.length) : null;
+  const seated = game ? game.players.filter((p) => !NEVER_SEATED.has(p.state ?? 'Playing')).length : 0;
+  const share = seated > 0 ? Math.ceil(g.territoryById.size / seated) : null;
   const start = game?.start
     ? game.start.territories * game.start.armiesPerTerritory
     : game?.startArmiesPerTerritory !== undefined && share !== null

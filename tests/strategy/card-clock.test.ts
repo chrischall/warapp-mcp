@@ -190,5 +190,7 @@ describe('cardArmyCeiling (#205)', () => {
       cardArmyCeiling(settings({ NumberOfCardsToReceiveEachTurn: 1, ReinforcementCard: card({ FixedArmies: 5, Mode: 'ProgressiveByNumberOfTurns' }) })),
     ).toBeUndefined();
     expect(cardArmyCeiling(settings({ ReinforcementCard: 'none' }))).toBeUndefined();
+    // Without NumberOfCardsToReceiveEachTurn the random pieces a turn are unknown: no ceiling.
+    expect(cardArmyCeiling(settings({ ReinforcementCard: card({ FixedArmies: 5, MinimumPiecesPerTurn: 1 }) }))).toBeUndefined();
   });
 });
