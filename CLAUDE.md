@@ -38,7 +38,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
   preview names it, and `execute` refuses if it changed (`requireApprovedAccount`, `src/tools/live-context.ts`),
-  so an approval for one account never acts as another. `warapp_submit_picks` validates against the live board and reports
+  so an approval for one account never acts as another. The shared pieces are in `src/tools/write-kit.ts`:
+  `requireMe` / `requireMySeat` (every write refuses an unreadable signed-in account, one wording),
+  `sendAndVerify` (a refusal throws; no answer is `unknown` and is never read back or resent), and
+  `defineGatedWrite`. Every write result carries `outcome` (`confirmed`, `accepted`, `unconfirmed`,
+  `unknown`, `not_applied`; the per-tool mapping is in that file's header) beside its own `status`,
+  which callers still read. `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
   is read-only, `warapp_plan_turn` and `warapp_track_opponents` included. The two-step token
   confirmation verifies no person — on a client that cannot prompt it is advisory (the model itself
