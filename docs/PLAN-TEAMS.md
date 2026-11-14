@@ -568,8 +568,9 @@ income plus each playing teammate's estimate (the planner now passes teammates' 
 named and left out, a lower bound) against each enemy team's summed estimate, and the armies in view are
 summed the same way for the overrule. The outlook (`src/analysis/outlook.ts`) sums my team's strength
 (`minePlayers`) and each enemy team's low, high and likely high (`strongest.team` / `players`, `likely.team`);
-the corroborating incomes are summed by team too. A player with no team stays its own side. No 1v1 or FFA
-figure or note changes.
+the corroborating incomes are summed by team too. A player with no team stays its own side. An enemy still
+playing with no estimate (out of view) is named and its side's sum is a lower bound: `behind` and `even`
+stand, `ahead` reads `unknown`. No 1v1 or FFA figure or note changes.
 
 ### C4. The team brief and joining
 

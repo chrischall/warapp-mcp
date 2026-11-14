@@ -336,6 +336,27 @@ export function gameProfile(input: ProfileInput): GameProfile {
     );
   }
 
+  // PLAN-TEAMS C3 (absent means unknown): an enemy-team member still playing with no estimate (out
+  // of view) is no part of its side's sum, so the enemy figure is a lower bound. Behind and even
+  // stand as lower bounds of the gap; ahead is unproven and reads unknown.
+  if (teams) {
+    const unestimated = players
+      .filter((p) => !ally(p.id) && playing(p) && !enemies.some((e) => e.playerId === p.id))
+      .sort((a, b) => a.id - b.id);
+    if (unestimated.length) {
+      const named = unestimated.map((p) => (sideKey(p.id) === `player ${p.id}` ? `Player ${p.id}` : `Player ${p.id}, on ${sideKey(p.id)},`)).join('; ');
+      const one = unestimated.length === 1;
+      notes.push(
+        `${named} ${one ? 'has' : 'have'} no income estimate and ${one ? 'is' : 'are'} not counted in the enemy side: its income is a lower bound.`,
+      );
+      if (standing === 'ahead') {
+        notes.push(`Standing unknown, not ahead: the income comparison says ahead, but an enemy still playing is not counted.${unseen}`);
+        standing = 'unknown';
+        standingSource = null;
+      }
+    }
+  }
+
   // ---- the armies on the board overrule an income comparison ----
   // An opponent's visible armies are a lower bound on what it has, and mine are exact, so being
   // outnumbered in view is certain where an income estimate is not. Live, the standing read

@@ -327,6 +327,11 @@ describe('gameProfile: standing', () => {
           board: withMate,
           income: 10,
           players: [{ id: ME, team: 0 }, { id: 11, team: 0 }, { id: 20, team: 1 }, { id: 21, team: 1 }],
+          // Player 21 needs an estimate: an enemy still playing without one forbids ahead.
+          estimates: [
+            { playerId: 20, estimate: 5 },
+            { playerId: 21, estimate: 1 },
+          ],
         }),
       );
       expect(p.standing).toBe('ahead');
@@ -513,6 +518,45 @@ describe('gameProfile: team standing (PLAN-TEAMS C3)', () => {
       }),
     );
     expect(p.standing).toBe('behind');
+  });
+
+  it('an enemy-team member still playing with no estimate is named, and the standing is never ahead without it', () => {
+    // Player 21 is out of view (8 fogged) and has no estimate. My team's 5 + 5 = 10 against
+    // player 20's ~6 alone would read ahead; team 1's true income could be anything above 6.
+    const fog = board([mine(1, 5), mine(2, 5), enemy(3, 5, MATE), neutral(4, 2), neutral(5, 2), enemy(6, 5, 20), enemy(7, 5, 20), fogged(8)]);
+    const p = gameProfile(
+      base({
+        board: fog,
+        players: PLAYERS,
+        income: 5,
+        estimates: [
+          { playerId: MATE, estimate: 5 },
+          { playerId: 20, estimate: 6 },
+        ],
+      }),
+    );
+    expect(p.standing).toBe('unknown');
+    expect(p.standingSource).toBeNull();
+    const notes = p.notes.join('\n');
+    expect(notes).toMatch(/Player 21, on team 1, has no income estimate/);
+    expect(notes).toMatch(/not ahead/i);
+  });
+
+  it('a missing enemy-team member leaves a behind standing as it is: the enemy side is a lower bound', () => {
+    const fog = board([mine(1, 5), mine(2, 5), enemy(3, 5, MATE), neutral(4, 2), neutral(5, 2), enemy(6, 5, 20), enemy(7, 5, 20), fogged(8)]);
+    const p = gameProfile(
+      base({
+        board: fog,
+        players: PLAYERS,
+        income: 2,
+        estimates: [
+          { playerId: MATE, estimate: 2 },
+          { playerId: 20, estimate: 9 },
+        ],
+      }),
+    );
+    expect(p.standing).toBe('behind');
+    expect(p.notes.join('\n')).toMatch(/Player 21, on team 1, has no income estimate/);
   });
 
   it('a teammate with no estimate is said to be left out', () => {
