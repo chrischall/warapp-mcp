@@ -43,6 +43,10 @@
 // stack is tracked by territory, so each large stack of its that came into view after (not large
 // there on the board before) within the lost one's reach (one move a turn) is taken as it, or the
 // part of it in view: it offsets the lost armies once, and what is left stays lost while large.
+// #201: an attack out of the fog fixes where a lost stack is. The boards carry no attack events, but
+// a territory of mine taken by the player with none of its territories in view beside it (a
+// neighbour the fog hid) was attacked from the fog: the largest lost stack of its that could stand
+// beside it then is counted as last seen on that territory on that turn.
 //
 // One-off movements (#123): each observed turn carries a low and a high reading of its deploy
 // (`observeDeploy`): growth next to the fog and the surplus of a capture whose visible attacking
@@ -1305,6 +1309,37 @@ export function trackOpponents(
       }
       if (armies === l.armies) lostStacks.push(l);
       else if (largeAt(l.turn, armies)) lostStacks.push({ ...l, armies });
+    }
+    // #201: an attack out of the fog fixes where a lost stack is. A territory of mine on one board
+    // that is this player's on the next, with no territory of its in view beside it on the first
+    // (so the attack came from a neighbour the fog hid), places the stack that made it: it stood next
+    // to that territory during that turn, so it is counted as last seen there on that turn (its reach
+    // from there covers every border it can reach from wherever it attacked from). The largest lost
+    // stack of its that could have stood beside it by then is taken, each attack fixing one stack,
+    // and the latest attack wins.
+    for (let i = 1; i < turns.length; i++) {
+      const from = turns[i - 1]!;
+      const to = turns[i]!;
+      if (to !== from + 1) continue;
+      const was = shownOn(from);
+      const now = shownOn(to);
+      for (const c of [...g.territoryById.keys()].sort(byNum)) {
+        const b = was.get(c);
+        const a = now.get(c);
+        if (b?.owner.kind !== 'player' || b.owner.playerId !== me || a?.owner.kind !== 'player' || a.owner.playerId !== playerId) continue;
+        const nexts = neighborsOf(g, c).map((n) => was.get(n));
+        if (nexts.some((n) => n?.owner.kind === 'player' && n.owner.playerId === playerId)) continue;
+        if (!nexts.some((n) => !visibleState(n) && (!n || n.owner.kind === 'unknown'))) continue;
+        const k = lostStacks
+          .map((l, idx) => ({ l, idx }))
+          .filter(({ l }) => l.turn <= from && (bfsDistances(g, [l.territoryId]).get(c) ?? Infinity) <= from - l.turn + 1)
+          .sort((x, y) => y.l.armies - x.l.armies || x.l.territoryId - y.l.territoryId)[0];
+        if (!k || (k.l.territoryId === c && k.l.turn === from)) continue;
+        lostStacks[k.idx] = { ...k.l, territoryId: c, turn: from };
+        notes.push(
+          `Its stack of ${k.l.armies} (last seen on territory ${k.l.territoryId} on turn ${k.l.turn}) attacked territory ${c} out of the fog between turns ${from} and ${to} (#201): it stood next to ${c} then, so it is counted from there.`,
+        );
+      }
     }
     // The planner drops a stack seen more than LOST_STACK_TURNS turns ago, so drop it here before the
     // cut: a stale large stack must never push a fresh one out of the MAX_LOST_STACKS kept. (Aged

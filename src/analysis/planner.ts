@@ -197,7 +197,8 @@
 //     of it, and at least a lost stack that can stand on the carrier itself), and
 //     a rationale line names it. Under Normal fog every territory next to mine shows, so it never
 //     stands there unseen: where it can stand beside a border of mine by next turn, a warning says
-//     so a turn ahead (not counted in this turn's holds). Arrivals assume one move a turn; with
+//     so a turn ahead (not counted in this turn's holds). #201: a capture of mine out of the fog fixes
+//     where it is (the tracker counts it from the territory it took, on that turn). Arrivals assume one move a turn; with
 //     Multi-attack on it can come sooner, and the lines say so.
 //     #199: under Multi-Attack an attack's survivors carry on, so a visible enemy stack's chain
 //     (chains.ts, shared with check_plan's stress test: its deploy that reaches it, less the
