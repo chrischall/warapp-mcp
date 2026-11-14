@@ -128,6 +128,20 @@ describe('#240: repulsedAttacks reads failed attacks of mine whose target its ow
     expect(repulsedAttacks(g, gap, ME, RATES).map((x) => x.attacks.map((a) => a.turn))).toEqual([]);
   });
 
+  it('the armies shown count only the moves whose kills were counted (a source mine on both boards)', () => {
+    // #240 review: on turn 16 a second attack on C came from 4, which I held then and lost by turn 17
+    // (it may have fallen before my attack ran): failedAttackKills counts neither its kills nor, now,
+    // its armies.
+    const with4 = (c: number, four: TerritoryState): BoardState =>
+      board([...at(c).territories.filter((t) => t.territoryId !== 4), four]);
+    const boards: TurnBoard[] = [
+      { turn: 16, board: with4(12, mine(4, 9)), orders: { deploys: [], moves: [{ from: 2, to: 3, armies: 20 }, { from: 4, to: 3, armies: 8 }] } },
+      { turn: 17, board: with4(15, player(4, 3, P2)), orders: attackC(25) },
+      { turn: 18, board: with4(17, player(4, 3, P2)) },
+    ];
+    expect(repulsedAttacks(g, boards, ME, RATES)[0]!.attacks[0]).toEqual({ turn: 16, armies: 20, before: 12, after: 15, kills: 12 });
+  });
+
   it('a territory taken since, or now another playerâ€™s, is not reported', () => {
     const lost: TurnBoard[] = [...LIVE.slice(0, 3), { turn: 18, board: board([...at(17).territories.filter((t) => t.territoryId !== 3), player(3, 17, P3)]) }];
     // Turn 17's attack hit a territory that changed hands: only turn 16's counts, one is no evidence.
@@ -222,6 +236,43 @@ describe('#240: a further attack on a repulsed territory is sized for its ownerâ
   });
 });
 
+// #240 review, second round: a sure size the turn cannot fund when the capture is planned may still be
+// paid from the leftover, as the plan without the evidence pays its #120 sizing. B holds 28 (27
+// movable) and income 10 with a reserve of 6 held out of captures: at capture time 31 reach C, short of
+// the sure 36; by the end of the turn the leftover reaches B. The capture is taken at its plain size,
+// pending, and kept once it reaches 36; with B at 30 and the reserve at 5 the leftover goes to the
+// border with the most at stake and the attack stays at 30: it is dropped, never sent below 36.
+describe('#240 review: a repulsed capture pending its sure size, kept or dropped at the end of the turn', () => {
+  const rep = repulsedAttacks(g, LIVE, ME, RATES);
+  const withReserve = (b: number, one: number, reserve: number, repulsed?: readonly RepulsedTarget[]): PlanInput => ({
+    ...input(repulsed, board([...at(17, b).territories.filter((t) => t.territoryId !== 1), mine(1, one)])),
+    options: { goal: 'balanced', minWinChance: 1, reserve },
+  });
+
+  it('kept: the leftover brings it to the sure size, as the plan without the evidence sends it', () => {
+    const plain = planTurn(withReserve(28, 8, 6));
+    expect(attacksOn(plain, 3).map((m) => m.armies)).toEqual([36]);
+    const p = planTurn(withReserve(28, 8, 6, rep));
+    expect(attacksOn(p, 3).map((m) => m.armies)).toEqual([36]);
+    expect(p.warnings.join('\n')).not.toMatch(/T3 \(#3\) assumes its owner does not reinforce/);
+    expect(p.rationale.join('\n')).not.toMatch(/Drop the attack on T3/);
+    expect(valid(p, withReserve(28, 8, 6).board)).toEqual([]);
+  });
+
+  it('dropped: still short of the sure size once the margin has run, so no attack is made', () => {
+    const plain = planTurn(withReserve(30, 8, 5));
+    expect(attacksOn(plain, 3).map((m) => m.armies)).toEqual([30]);
+    const p = planTurn(withReserve(30, 8, 5, rep));
+    expect(attacksOn(p, 3)).toEqual([]);
+    expect(p.warnings.join('\n')).not.toMatch(/Attack on enemy T3 \(#3\)/);
+    expect(p.rationale.join('\n')).toMatch(
+      /Drop the attack on T3 \(#3\): it could send only 30 by the end of the turn, short of the 36 that take it even if player 30 deploys its ~5 there first, and my attacks on it failed before, its owner reinforcing it \(#240\); its armies stay where they are\./,
+    );
+    expect(p.rationale.join('\n')).not.toMatch(/^Attack T3 \(#3\) /m);
+    expect(valid(p, withReserve(30, 8, 5).board)).toEqual([]);
+  });
+});
+
 // #240 review: evidence that the owner reinforces must never shrink the attack below the plan without
 // it. My T1 (20) borders player 20's T3 (4), which completes B9 (+5) with T1; income 5. Without the
 // history the attack goes out at 6, #120 lifts it to the sure 15 (4 + 5 defenders) and the #226 margin
@@ -262,4 +313,46 @@ describe('#240 review: a repulsed target never gets fewer armies than with no ev
       expect(p.warnings.join('\n')).not.toMatch(/T3 \(#3\) assumes its owner does not reinforce/);
     });
   }
+});
+
+// #240 review: the guard-off pass (#165) sends one army at an empty enemy territory that breaks a
+// bonus "unless it deploys there first". On a territory whose owner has reinforced it against my
+// attacks twice, that is the attack the evidence says fails: the pass skips it and says why.
+describe('#240 review: the guard-off one-army attack skips a repulsed territory', () => {
+  const m = makeMap([1, 2, 3], [[1, 2], [2, 3]], [[7, 'Moor', 3, [2, 3]]]);
+  const mg = buildGraph(m);
+  const P = 20;
+  const b = board([mine(1, 6), player(2, 0, P), player(3, 3, P)]);
+  const OFF: PlannerSettings = { ...STD, oneArmyStandsGuard: false };
+  const rep: RepulsedTarget[] = [
+    {
+      territoryId: 2,
+      playerId: P,
+      attacks: [
+        { turn: 4, armies: 1, before: 0, after: 0, kills: 1 },
+        { turn: 5, armies: 1, before: 0, after: 0, kills: 1 },
+      ],
+    },
+  ];
+  const inp = (repulsed?: RepulsedTarget[]): PlanInput => ({
+    graph: mg,
+    board: b,
+    me: ME,
+    income: 5,
+    settings: OFF,
+    ...(repulsed ? { repulsed } : {}),
+    options: { goal: 'balanced' },
+  });
+
+  it('without the evidence an army breaks Moor; with it, no one-army attack, and the rationale says why', () => {
+    const plain = planTurn(inp());
+    // One army, topped up from the idle armies beside it (#120), still sized for the board as it stands.
+    expect(attacksOn(plain, 2).map((x) => x.reason.startsWith('One Army Must Stand Guard is off'))).toEqual([true]);
+    const p = planTurn(inp(rep));
+    expect(attacksOn(p, 2).some((x) => x.reason.startsWith('One Army Must Stand Guard is off'))).toBe(false);
+    const line = p.rationale.find((l) => l.startsWith('My attacks on T2 (#2) failed'))!;
+    const sure = Number(/defenders, (\d+) armies\), or not made/.exec(line)![1]);
+    for (const a of attacksOn(p, 2)) expect(a.armies).toBeGreaterThanOrEqual(sure);
+    expect(p.rationale.join('\n')).toMatch(/One Army Must Stand Guard is off and T2 \(#2\) stands at 0, but my attacks on it failed before, its owner reinforcing it: no one-army attack there \(#240\)\./);
+  });
 });

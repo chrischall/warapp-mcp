@@ -603,10 +603,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     **Repeated failure is evidence (#240):** `warapp_plan_turn` reads my cached orders over the board
     history (`repulsedAttacks`, `PlanInput.repulsed`): a territory my attacks failed on, on two or more
     of the last three turns, its owner reinforcing it each time (its armies after plus my kills above
-    its armies before; still that player's now), is captured only at that sure size — its cost is its
-    defenders plus the owner's deploy (every pass: targets, rule 4e's fallback, the 1v1 strike stack),
-    so it ranks by that and is not made when it does not fit, never retried at its bare cost (#214) — and a
-    rationale line names the failed turns. The evidence never shrinks the attack: rule 5 judges its source's
+    its armies before; still that player's now), is attacked only at that sure size — its defenders plus
+    the owner's deploy (every pass: targets, rule 4e's fallback, the 1v1 strike stack, finishing off and
+    fog pressure, which never press it with a share of the deploy; the guard-off one-army break skips it
+    and says so) — or not at all, never retried at its bare cost (#214); a rationale line names the failed
+    turns. It still ranks on its plain cost (the sure size only decides what fits, `sizeOf`, and what is
+    sent; rule 4e's contact trial and its survivors read it as the plain plan does): ranked on the sure
+    size, targets that fitted dropped behind worse ones. One the turn cannot fund at capture time, but its
+    source and the whole budget could reach, is taken pending at its plain size and dropped after the
+    #226 margin if still short ("Drop the attack on …"), since the plain plan pays the sure size from
+    the leftover. The evidence never shrinks the attack: rule 5 judges its source's
     comfort (and whether to revive a conceded border) as the plan without it would, with the surplus over the
     plain size still on it, and the leftover there is not kept from the #226 margin (`repulsedSurplus`,
     `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes".

@@ -674,15 +674,24 @@
 //     over my board history and cached orders: my attacks on it failed on REPULSE_MIN (2) or more
 //     of the last REPULSE_WINDOW (3) turns, its owner reinforcing it each time — its armies after
 //     plus my kills above its armies before), still that player's, next to mine and its owner able
-//     to deploy there, is a target only at that sure size: its capture cost is its defenders plus
-//     the owner's deploy (rule 2's targets, rule 4e's fallback and the 1v1 strike stack alike;
-//     a worst case, so no warning and no bare retry), so it ranks by that cost and is not made
-//     when it does not fit; a rationale line names the failed turns. The evidence never shrinks
-//     the attack (#240 review): rule 5 judges its source's comfort, and whether to revive a
-//     conceded border, as the plan without it would (`repulsedSurplus`: the sure size's surplus
-//     over the plain one still on the source; one that would fall without it stays short), and
-//     the leftover put there is not kept from the #226 margin; the strike stack reports such an
-//     attack as sized for the deploy.
+//     to deploy there, is attacked only at that sure size: its defenders plus the owner's deploy
+//     (a worst case, so no warning and no bare retry), or not at all; a rationale line names the
+//     failed turns. Every pass: rule 2's targets and the bonus, break and counter passes, rule 4e's
+//     fallback, the 1v1 strike stack, finishing off and fog pressure (rule 1e: its only sizing, or
+//     not attacked — never a share of the deploy) and the guard-off one-army break (#165: skipped,
+//     with a line saying why). It ranks on its PLAIN cost (#240 review: ranked on the sure size, a
+//     target that fitted dropped behind a worse one, most often under No-Split, where the whole stack
+//     goes anyway): the sure size only decides what fits (`sizeOf`) and what is sent, rule 4e's
+//     contact ranking tries it at its plain size (`ps.plainRepulsed`), and its survivors and trade are
+//     read against the defenders there now (`defendersSeen`), as without the evidence. One whose sure
+//     size the turn cannot fund when it is taken, but its source and the whole budget could reach,
+//     is taken at its plain size pending (`ps.repulsedPending`) — the plan without the evidence pays
+//     its sure size from the leftover (#120, #226) — and dropped once the margin has run if it is
+//     still short ("Drop the attack on …"). The evidence never shrinks the attack (#240 review):
+//     rule 5 judges its source's comfort, and whether to revive a conceded border, as the plan
+//     without it would (`repulsedSurplus`: the sure size's surplus over the plain one still on the
+//     source; one that would fall without it stays short), and the leftover put there is not kept
+//     from the #226 margin; the strike stack reports such an attack as sized for the deploy.
 //     #226, a margin: once the transfers (rule 6) have moved what they move, an attack on a
 //     player's territory whose owner may deploy there (not a combined capture; not under No-Split,
 //     which sends the whole stack already) takes the armies still on its source beyond what holds
@@ -1630,7 +1639,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const affordable = (t: number) => {
       const tg = targets.get(t)!;
       const free = tg.sources.filter((x) => !locked.has(x) && !orderOf(x)).reduce((n, x) => n + Math.max(0, avail.get(x)!), 0);
-      return free + Math.max(0, ps.budget - reserve) >= tg.cost;
+      // #240 review: a repulsed territory's sure size (it ranks on its plain cost).
+      return free + Math.max(0, ps.budget - reserve) >= tgt.sizeOf(t);
     };
     const broken = (b: Breakable) => bonusTerritories(g, b.bonusId).some((x) => captured.has(x));
     const breakReason = (b: Breakable) =>
@@ -2532,6 +2542,38 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         }.`,
       );
     }
+  }
+
+  // ---- #240 review: a repulsed territory taken pending its sure size ----
+  // Taken at its plain size because the sure size could not be funded when it was captured
+  // (`ps.repulsedPending`): #120, the No-Split leftover and the #226 margin have now added what they
+  // add. At its sure size it is sized for its owner's deploy (no "assumes" warning); still short, the
+  // attack is dropped — a territory my attacks failed on is attacked only at the size that lands —
+  // and its armies stay where they are.
+  for (const t of [...ps.repulsedPending].sort(byNum)) {
+    const rep = tgt.repulsed.get(t)!;
+    if (!captured.has(t) || combined.has(t)) continue;
+    const at = moves.filter((m) => m.kind === 'attack' && m.to === t);
+    const sent = at.reduce((n, m) => n + m.armies, 0);
+    if (sent >= rep.cost) {
+      worstCase.set(t, Math.max(worstCase.get(t) ?? 0, rep.defenders + rep.extra));
+      const w = warnings.indexOf(assumes(t));
+      if (w >= 0) warnings.splice(w, 1);
+      continue;
+    }
+    // Every army the attack carries goes home, those #120 or the margin added included.
+    for (const m of at) avail.set(m.from, avail.get(m.from)! + m.armies);
+    captured.delete(t);
+    survivorsAt.delete(t);
+    for (let i = moves.length - 1; i >= 0; i--) if (moves[i]!.kind === 'attack' && moves[i]!.to === t) moves.splice(i, 1);
+    const heads = [`Attack ${label(t)} `, `Size the attack on ${label(t)} `, `Top up the attack on ${label(t)} `, `Margin on the attack on ${label(t)} `];
+    for (let i = rationale.length - 1; i >= 0; i--) if (heads.some((h) => rationale[i]!.startsWith(h))) rationale.splice(i, 1);
+    for (let i = warnings.length - 1; i >= 0; i--)
+      if (warnings[i]!.startsWith(`Attack on enemy ${label(t)} `) || warnings[i]!.startsWith(`${label(t)} can be retaken `))
+        warnings.splice(i, 1);
+    rationale.push(
+      `Drop the attack on ${label(t)}: it could send only ${sent} by the end of the turn, short of the ${rep.cost} that take it even if player ${rep.player} deploys its ~${rep.extra} there first, and my attacks on it failed before, its owner reinforcing it (#240); its armies stay where they are.`,
+    );
   }
 
   // #120: an attack on a player's territory still sized below its owner's deploy says what it

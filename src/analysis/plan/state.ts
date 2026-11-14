@@ -221,6 +221,18 @@ export interface PlanState {
    */
   evenTradesOnly: boolean;
   /**
+   * #240 review: set only while rule 4e's contact ranking tries each candidate to see what its
+   * capture leaves exposed: a repulsed territory is then tried at its plain size, so it ranks as the
+   * plan without the evidence ranks it (its real try still sends the sure size, or nothing).
+   */
+  plainRepulsed: boolean;
+  /**
+   * #240 review: repulsed territories captured at their plain size because the turn could not fund
+   * the sure size when they were taken (the leftover may: the plan without the evidence pays it there,
+   * #120 and #226). Once the margin has run, one still below its sure size is dropped (planTurn).
+   */
+  repulsedPending: Set<number>;
+  /**
    * Set only while rule 4e retries a step that failed on its size, to name the border it would
    * have stripped (its hold check then reports it, as before #121).
    */
@@ -271,6 +283,8 @@ export function newPlanState(): PlanState {
     assumeGone: () => false,
     refusal: undefined,
     evenTradesOnly: false,
+    plainRepulsed: false,
+    repulsedPending: new Set(),
     spendKeeps: false,
     firstOnlySkip: new Map(),
     soloHeld: new Map(),
