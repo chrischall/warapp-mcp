@@ -561,7 +561,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     (players' teams — the shared `carriesTeam` test in `src/teams.ts` — and who is still
     playing), phase, standing (my income vs the strongest opponent's estimate; the armies on
     the board overrule it — never `ahead` while my visible armies are below 0.8 × an opponent's
-    in view, and `behind` when below half, fog or not, since what it shows is the least it has)
+    in view, and `behind` when below half, fog or not, since what it shows is the least it has;
+    in a team game both incomes and armies are summed by team, PLAN-TEAMS C3, as is the outlook)
     and the strategy settings. `warapp_plan_turn` passes `adapt: true`: with no `goal` the profile picks
     it (behind → `defend`, else `balanced`) and its rules fire (1v1 in contact: advances rank
     below holds and breaks; FFA with 2+ opponents: no second front; behind: no pressure margin;

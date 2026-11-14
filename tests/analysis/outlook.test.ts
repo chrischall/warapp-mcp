@@ -174,10 +174,12 @@ describe('gameOutlook (#178)', () => {
     expect(o.basis).not.toMatch(/transfer/i);
   });
 
-  it('in a team game, says a teammate\'s transfers can take an opponent past its high', () => {
+  it('in a team game, sums by team, so a teammate\'s transfers stay inside its team\'s high (PLAN-TEAMS C3)', () => {
     const players = [{ id: ME, team: 1 }, { id: FOE, team: 2 }, { id: 30, team: 2 }];
     const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [apart(20, 5), apart(20, 5), apart(20, 5)]), game: { players } });
-    expect(o.basis).toMatch(/teammate can transfer armies.*not a ceiling/i);
+    expect(o.basis).toMatch(/summed, a teammate's transfers stay inside its team's high/i);
+    expect(o.basis).toMatch(/at 2\.4× the strongest enemy team or more/);
+    expect(o.basis).not.toMatch(/not a ceiling/i);
   });
 
   it('counts an opponent still playing with nothing in view as unbounded without its start, and (#205) bounds it by what it received with one', () => {
@@ -696,5 +698,43 @@ describe('gameOutlook (#178)', () => {
     const a = gameOutlook(input);
     expect(a.turns.at(-1)!.strongest!.playerId).toBe(FOE);
     expect(gameOutlook(input)).toEqual(a);
+  });
+});
+
+describe('gameOutlook: team strength is summed (PLAN-TEAMS C3)', () => {
+  const MATE = 11;
+  const players = [
+    { id: ME, team: 1 },
+    { id: MATE, team: 1 },
+    { id: FOE, team: 2 },
+    { id: 21, team: 2 },
+  ];
+  /** Me on 1–2 (`a` each), my teammate on 3 (`m`), neutrals 4–5, player 20 on 6–7 (`b` each), player 21 on 8 (`c`). */
+  const teams = (a: number, m: number, b: number, c: number) =>
+    board([mine(1, a), mine(2, a), foe(3, m, MATE), neutral(4, 2), neutral(5, 2), foe(6, b), foe(7, b), foe(8, c, 21)]);
+
+  it("adds my teammate's strength to mine", () => {
+    // Me 2 × 20 + 15 = 55, my teammate 40 + 15 = 55: 110 against team 2's (10 + 15) + (5 + 15) = 45, 2.44×.
+    // Alone, 55 against player 20's 25 is 2.2×: even.
+    const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [teams(20, 40, 5, 5), teams(20, 40, 5, 5), teams(20, 40, 5, 5)]), game: { players } });
+    expect(o.state).toBe('winning');
+    expect(o.turns.at(-1)).toMatchObject({ mine: 110, minePlayers: [ME, MATE], strongest: { playerId: FOE, team: 2, players: [FOE, 21], low: 45, high: 45 } });
+    expect(o.basis).toMatch(/by team/i);
+    expect(o.basis).toMatch(/the strongest enemy team, team 2 \(players 20, 21\)/);
+    expect(o.basis).not.toMatch(/per player/i);
+  });
+
+  it("sums an enemy team's strength against mine", () => {
+    // Me 2 × 25 + 15 = 65 and my teammate 5 + 15 = 20: 85 against team 2's 25 + 20 = 45, 1.89×: even.
+    // Per player, 65 against 25 read 2.6×: winning.
+    const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [teams(25, 5, 5, 5), teams(25, 5, 5, 5), teams(25, 5, 5, 5)]), game: { players } });
+    expect(o.turns.at(-1)!.state).toBe('even');
+    expect(o.turns.at(-1)!.ratio.low).toBeCloseTo(1.89);
+  });
+
+  it('a no-team game carries no team fields', () => {
+    const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [apart(20, 5), apart(20, 5), apart(20, 5)]), game });
+    expect(o.turns.at(-1)!.minePlayers).toBeUndefined();
+    expect(o.turns.at(-1)!.strongest).toEqual({ playerId: FOE, low: 30, high: 30 });
   });
 });

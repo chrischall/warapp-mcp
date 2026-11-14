@@ -75,7 +75,8 @@ export interface ProfileInput {
    * Each visible opponent's estimated income (the planner's per-opponent deploy estimate);
    * `tracked` is its income tracked over several turns (`trackOpponents`), `null` / absent when
    * its track is too short to trust; `source` `'prior'` when the fog prior (#119) set it — a
-   * floor of my own income, not a reading, which the standing note says.
+   * floor of my own income, not a reading, which the standing note says. PLAN-TEAMS C3: in a team
+   * game a teammate's entry is summed into my team's income (never an opponent's).
    */
   estimates: ReadonlyArray<{ playerId: number; estimate: number; tracked?: number | null; source?: string }>;
   /**
@@ -259,7 +260,47 @@ export function gameProfile(input: ProfileInput): GameProfile {
   let standingSource: GameProfile['standingSource'] = null;
   /** How the strongest estimate is described: the fog prior is a floor of my own income (#119). */
   const priorNote = `, a fog prior: assumed to earn at least my own income, so "ahead" is out of reach unless what it could earn on this board caps it`;
-  const fromPrior = strongest?.source === 'prior';
+  // PLAN-TEAMS C3: in a team game the standing compares sides — my team's summed income (mine and
+  // each teammate's still playing that has an estimate) against each enemy team's summed estimate.
+  // Elsewhere a side is one player and every figure and note is what it was.
+  const sideKey = (p: number) => {
+    const team = players.find((x) => x.id === p)?.team;
+    return teams && carriesTeam(team) ? `team ${team}` : `player ${p}`;
+  };
+  const mateEstimates = teams
+    ? input.estimates.filter((e) => e.playerId !== me && ally(e.playerId)).sort((a, b) => a.playerId - b.playerId)
+    : [];
+  const matesPlaying = teams ? players.filter((p) => p.id !== me && ally(p.id) && playing(p)).sort((a, b) => a.id - b.id) : [];
+  const counted = mateEstimates.filter((e) => matesPlaying.some((p) => p.id === e.playerId));
+  const myIncome = input.income + counted.reduce((n, e) => n + e.estimate, 0);
+  const missing = matesPlaying.filter((p) => !counted.some((e) => e.playerId === p.id));
+  if (missing.length)
+    notes.push(
+      `${missing.map((p) => `Player ${p.id}`).join(', ')}, on my team, ${missing.length === 1 ? 'has' : 'have'} no income estimate and ${missing.length === 1 ? 'is' : 'are'} not counted in my team's income: the team standing is a lower bound for my side.`,
+    );
+  const sides = new Map<string, { members: typeof enemies; estimate: number }>();
+  for (const e of enemies) {
+    const k = sideKey(e.playerId);
+    const side = sides.get(k) ?? { members: [], estimate: 0 };
+    side.members.push(e);
+    side.estimate += e.estimate;
+    sides.set(k, side);
+  }
+  const strongestSide = [...sides]
+    .map(([key, v]) => ({ key, ...v, members: [...v.members].sort((a, b) => a.playerId - b.playerId) }))
+    .sort((a, b) => b.estimate - a.estimate || a.members[0]!.playerId - b.members[0]!.playerId)[0];
+  const theirEstimate = teams ? (strongestSide?.estimate ?? 0) : (strongest?.estimate ?? 0);
+  const fromPrior = teams ? !!strongestSide?.members.some((e) => e.source === 'prior') : strongest?.source === 'prior';
+  /** The comparison a standing note states: mine (or my team's) against the strongest opponent (or enemy team). */
+  const against = (basis: string) => {
+    if (!teams) return `my income ${input.income} against the strongest opponent, player ${strongest!.playerId} (~${strongest!.estimate}${fromPrior ? priorNote : ` ${basis}`})`;
+    const mineText = `my team's income ${myIncome} (${[`mine ${input.income}`, ...counted.map((e) => `player ${e.playerId} ~${e.estimate}`)].join(', ')})`;
+    const side = strongestSide!;
+    const rest = fromPrior ? priorNote : `, ${basis}`;
+    return side.key.startsWith('team ')
+      ? `${mineText} against the strongest enemy team, ${side.key} (~${side.estimate}: ${side.members.map((e) => `player ${e.playerId} ~${e.estimate}`).join(', ')}${rest})`
+      : `${mineText} against the strongest enemy, ${side.key} (~${side.estimate}${rest})`;
+  };
   // #97: under fog, a standing from tracked income needs every opponent still playing to be in
   // sight with a trusted track (an unseen one could be anything).
   const unseenEnemies = (input.unseen ?? []).filter((u) => !ally(u.playerId));
@@ -271,11 +312,11 @@ export function gameProfile(input: ProfileInput): GameProfile {
   } else if (notMine.length && foggedCount > notMine.length / 2 && trackedAll) {
     // #97: the fog hides most of the board, but every opponent in the game is in sight with an
     // income tracked over several turns — compare against that, and say it is a tracked figure.
-    const ratio = strongest.estimate > 0 ? input.income / strongest.estimate : Infinity;
+    const ratio = theirEstimate > 0 ? myIncome / theirEstimate : Infinity;
     standing = ratio >= AHEAD_RATIO ? 'ahead' : ratio <= BEHIND_RATIO ? 'behind' : 'even';
     standingSource = 'tracked';
     notes.push(
-      `Standing ${standing} (tracked): my income ${input.income} against the strongest opponent, player ${strongest.playerId} (~${strongest.estimate}${fromPrior ? priorNote : ' tracked over several turns'})${
+      `Standing ${standing} (tracked): ${against('tracked over several turns')}${
         standing === 'ahead' ? `, at least ${AHEAD_RATIO}×` : standing === 'behind' ? `, at most ${BEHIND_RATIO}×` : ''
       }. ${foggedCount} of the ${notMine.length} territories I do not hold are in the fog, so income it hides from its observed deploys is not counted.`,
     );
@@ -285,11 +326,11 @@ export function gameProfile(input: ProfileInput): GameProfile {
       `Standing unknown: ${foggedCount} of the ${notMine.length} territories I do not hold are in the fog, so the opponents' income is mostly unseen.${unseen}`,
     );
   } else {
-    const ratio = strongest.estimate > 0 ? input.income / strongest.estimate : Infinity;
+    const ratio = theirEstimate > 0 ? myIncome / theirEstimate : Infinity;
     standing = ratio >= AHEAD_RATIO ? 'ahead' : ratio <= BEHIND_RATIO ? 'behind' : 'even';
     standingSource = 'visible';
     notes.push(
-      `Standing ${standing}: my income ${input.income} against the strongest opponent, player ${strongest.playerId} (~${strongest.estimate}${fromPrior ? priorNote : ' estimated'})${
+      `Standing ${standing}: ${against('estimated')}${
         standing === 'ahead' ? `, at least ${AHEAD_RATIO}×` : standing === 'behind' ? `, at most ${BEHIND_RATIO}×` : ''
       }.`,
     );
@@ -299,24 +340,39 @@ export function gameProfile(input: ProfileInput): GameProfile {
   // An opponent's visible armies are a lower bound on what it has, and mine are exact, so being
   // outnumbered in view is certain where an income estimate is not. Live, the standing read
   // "ahead (23 against ~12 tracked)" while I held 65 armies against 138 in view, and "unknown"
-  // against 893.
+  // against 893. PLAN-TEAMS C3: in a team game both sides are summed by team.
   const armiesBy = new Map<number, number>();
   for (const t of board.territories)
     if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.armies !== null)
       armiesBy.set(t.owner.playerId, (armiesBy.get(t.owner.playerId) ?? 0) + t.armies);
   const myArmies = armiesBy.get(me) ?? 0;
-  const rival = [...armiesBy].filter(([p]) => !ally(p)).sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
-  if (rival && rival[1] > 0 && mine.length) {
-    const [rivalId, theirArmies] = rival;
-    if (myArmies * 2 < theirArmies && standing !== 'behind') {
+  // Only teammates still playing: one who surrendered or was booted issues no orders with what it left.
+  const sideArmies = teams
+    ? myArmies + matesPlaying.reduce((n, p) => n + (armiesBy.get(p.id) ?? 0), 0)
+    : myArmies;
+  const armiesBySide = new Map<string, { armies: number; first: number }>();
+  for (const [p, a] of armiesBy) {
+    if (ally(p)) continue;
+    const k = teams ? sideKey(p) : `player ${p}`;
+    const side = armiesBySide.get(k) ?? { armies: 0, first: p };
+    side.armies += a;
+    side.first = Math.min(side.first, p);
+    armiesBySide.set(k, side);
+  }
+  const rival = [...armiesBySide].sort((a, b) => b[1].armies - a[1].armies || a[1].first - b[1].first)[0];
+  if (rival && rival[1].armies > 0 && mine.length) {
+    const theirArmies = rival[1].armies;
+    const mineText = teams ? `my team's ${sideArmies}` : `my ${sideArmies}`;
+    const theirsText = `${rival[0]}'s ${theirArmies}`;
+    if (sideArmies * 2 < theirArmies && standing !== 'behind') {
       notes.push(
-        `Standing behind, whatever the incomes (it read ${standing}): my ${myArmies} visible armies are less than half of player ${rivalId}'s ${theirArmies} in view, and what it shows is the least it has.`,
+        `Standing behind, whatever the incomes (it read ${standing}): ${mineText} visible armies are less than half of ${theirsText} in view, and what it shows is the least it has.`,
       );
       standing = 'behind';
       standingSource ??= 'visible';
-    } else if (standing === 'ahead' && myArmies < BEHIND_RATIO * theirArmies) {
+    } else if (standing === 'ahead' && sideArmies < BEHIND_RATIO * theirArmies) {
       notes.push(
-        `Not ahead: the income comparison says so, but my ${myArmies} visible armies are below ${BEHIND_RATIO}× player ${rivalId}'s ${theirArmies} in view. Standing even.`,
+        `Not ahead: the income comparison says so, but ${mineText} visible armies are below ${BEHIND_RATIO}× ${theirsText} in view. Standing even.`,
       );
       standing = 'even';
     }

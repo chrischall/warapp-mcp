@@ -181,8 +181,9 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     ...(ctx.endRules ? { endRules: ctx.endRules } : {}),
     income,
     // #164 x #167: an opponent's Reinforcement card is a one-off deploy, not income: the standing
-    // and the FFA ranking read each estimate less its card.
-    estimates: estimateList.map((e) => ({ ...e, estimate: incomeOf(e) })),
+    // and the FFA ranking read each estimate less its card. PLAN-TEAMS C3: teammates' estimates go
+    // too, for the team standing (the profile keeps them off the opponents' side).
+    estimates: allEstimates.filter((e) => e.playerId !== me).map((e) => ({ ...e, estimate: incomeOf(e) })),
     // #94: opponents the tracker found with nothing in view, for the 'unknown' standing note.
     unseen: (input.tracks ?? []).flatMap((t) =>
       t.earnedAtLeast ? [{ playerId: t.playerId, turnsUnseen: t.turnsUnseen, turnsUnseenAtLeast: t.turnsUnseenAtLeast, earnedAtLeast: t.earnedAtLeast.total }] : [],

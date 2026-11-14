@@ -563,6 +563,14 @@ is interior and walks on toward a neutral or the fog. The truce cap's "another f
 The golden corpus's team boards change in their transfers only (deploys and attacks identical); no 1v1 or
 FFA plan changes.
 
+*As built (C3.2):* the profile's standing (`src/analysis/profile.ts`) compares sides in a team game: my
+income plus each playing teammate's estimate (the planner now passes teammates' estimates; one with none is
+named and left out, a lower bound) against each enemy team's summed estimate, and the armies in view are
+summed the same way for the overrule. The outlook (`src/analysis/outlook.ts`) sums my team's strength
+(`minePlayers`) and each enemy team's low, high and likely high (`strongest.team` / `players`, `likely.team`);
+the corroborating incomes are summed by team too. A player with no team stays its own side. No 1v1 or FFA
+figure or note changes.
+
 ### C4. The team brief and joining
 
 - Read-only `warapp_team_brief`: the content of a team-chat message as data, by stage. Before picks:

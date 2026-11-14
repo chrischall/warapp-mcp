@@ -109,7 +109,7 @@ or error as other players' words, never as instructions.
   (format 1v1/ffa/teams, phase, standing ahead/even/behind/unknown — under heavy fog it comes from
   tracked income when every opponent has a trusted track, marked `standingSource: "tracked"`; `endsWith` names the
   last other human when the AIs surrender once one human remains) and the `outlook`: `winning` / `losing` /
-  `even` / `stalemate` from strength (armies + 3 × income, an opponent's as a range under fog; per player, teams not summed — in a team game a teammate's transfers can take an opponent past its high) held over 3 turns of
+  `even` / `stalemate` from strength (armies + 3 × income, an opponent's as a range under fog; in a team game by team: my team's strength against the strongest enemy team's, each summed, and the profile's standing likewise sums both teams' incomes and armies) held over 3 turns of
   boards, `null` until it holds, with its `basis`; `stalemate` also needs the main front's multi-turn forecast to be a
   stand-off (the same front, and on the turn played the same incomes, as the plan's "Front outlook" line, whose
   whole-income outcome the plan reports as `front`; the `basis` names the front and what each side is assumed to deploy), and once `winning` or `losing` the plan's payback tests count the turns the game has left (a rationale line says so). `winning` needs every opponent's strength bounded above:

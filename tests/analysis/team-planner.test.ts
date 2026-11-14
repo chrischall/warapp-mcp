@@ -58,3 +58,18 @@ describe("C3.1: a teammate's territory is no front for idle armies", () => {
     expect(solo.moves.filter((m) => m.from === 4 && m.kind === 'transfer').map((m) => m.to)).toEqual([3]);
   });
 });
+
+describe("C3.2: the plan's standing sums my team", () => {
+  // Me on 1–2, my teammate on 3–4 (a +6 bonus), neutral 5, player 20 on 6–7, player 21 on 8: all in view.
+  const g = buildGraph({
+    ...lineMap(8),
+    bonuses: [{ id: 101, name: 'B101', value: 6, territoryIds: [3, 4], bonusIds: [] }],
+  });
+  const b = board([mine(1, 5), mine(2, 5), player(3, 5, MATE), player(4, 5, MATE), neutral(5, 2), player(6, 5, 20), player(7, 5, 20), player(8, 5, 21)]);
+  it("counts my teammate's income on my side, and the enemy team's together", () => {
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings: { ...STD, baseIncome: 5 }, game: { players: PLAYERS, turn: 8 }, options: { adapt: true } });
+    // My team 5 + 11 = 16 against team 1's 5 + 5 = 10: ahead (alone, 5 against 5 read even).
+    expect(plan.profile?.standing).toBe('ahead');
+    expect(plan.profile?.notes.join('\n')).toMatch(/my team's income 16 \(mine 5, player 11 ~11\) against the strongest enemy team, team 1 \(~10: player 20 ~5, player 21 ~5/);
+  });
+});
