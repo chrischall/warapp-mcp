@@ -179,7 +179,8 @@ const turnOrderArg = z.discriminatedUnion('kind', [
 ]);
 
 /** A whole turn's orders, as warapp_plan_turn returns them and warapp_submit_turn takes them. */
-export const turnOrdersArg = z.array(turnOrderArg).min(1).max(MAX_ORDERS);
+/** Orders for a turn; empty commits a turn with no orders (valid only when the income to deploy is 0). */
+export const turnOrdersArg = z.array(turnOrderArg).max(MAX_ORDERS);
 
 /** The planner's view of the game settings. */
 export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
@@ -1491,7 +1492,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
     orders: turnOrdersArg.describe(
       'The turn\'s orders (card plays and discards, deploys and attacks/transfers), territories by id or name, cards by id or type ' +
         'name — e.g. the `orders` array warapp_plan_turn returns. Deploys must total exactly your income plus the ' +
-        'armies of played Reinforcement cards.',
+        'armies of played Reinforcement cards. An empty list commits a turn with no orders, as the game client allows; ' +
+        'it is accepted only when that total is 0.',
     ),
   });
 

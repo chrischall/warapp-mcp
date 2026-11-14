@@ -999,7 +999,8 @@ describe('turnOrdersArg', () => {
         { kind: 'move', from: 159, to: '158', armies: 2 },
       ]).success,
     ).toBe(true);
-    expect(turnOrdersArg.safeParse([]).success).toBe(false);
+    // An empty list is a valid turn (no orders); the deploy-total check refuses it when there is income.
+    expect(turnOrdersArg.safeParse([]).success).toBe(true);
     expect(turnOrdersArg.safeParse([{ kind: 'deploy', territory: 1, armies: 0 }]).success).toBe(false);
     expect(turnOrdersArg.safeParse([{ kind: 'attack', from: 1, to: 2, armies: 1 }]).success).toBe(false);
   });
@@ -1045,6 +1046,23 @@ describe('warapp_submit_turn', () => {
     expect(tool.description).toMatch(/reach the game/);
     expect(tool.description).toMatch(/other players see the results/);
     expect(tool.annotations?.readOnlyHint).toBe(false);
+  });
+
+  it('commits an empty turn when there is nothing to deploy (income 0), as the game client allows', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing'), game('Playing'), game('Playing', { numberOfTurns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    await confirmed({ game_id: GAME, orders: [], income: 0 });
+    expect(s.sent).toHaveLength(1);
+    expect(Array.from(s.sent[0]!)).toEqual(Array.from(expectedBytes([], 3)));
+  });
+
+  it('refuses an empty turn when there is income to deploy, sending nothing', async () => {
+    const s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: s.warapp });
+    const r = await h.call('warapp_submit_turn', { game_id: GAME, orders: [] });
+    expect(JSON.stringify(r)).toMatch(/income/i);
+    expect(JSON.stringify(r)).not.toMatch(/confirmToken/);
+    expect(s.sent).toEqual([]);
   });
 
   it('previews every order by name with the turn number, and sends nothing until confirmed', async () => {
