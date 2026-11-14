@@ -243,13 +243,13 @@
 //     that bonus's value, and never above what it could earn; my own orders, when known, are
 //     measurements; #119) in place of the
 //     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
-//     #235: unless the newest turn, observed against the tracked income (#123's bound), reads more:
-//     a track never stands alone below it (source 'observed', "on the newest turn", both named).
-//     With a usable track the fog prior stays out of that bound (#235 review): read against twice
-//     the prior, a one-off arrival from the fog became income above the prior (#123, lesson 5).
-//     And a track that ends on this board has read the newest turn already: the planner re-reads it
-//     with the track's own bound (twice what it carried before that turn, `ObservedTurn.expected`),
-//     never twice the tracked income that reading raised, so a walk-in beside the fog counts once.
+//     The newest observed turn never lifts a usable track (#235 1c): a stack walking in beside
+//     the fog is not income (#123 lesson 5). When the track ends on this board and #123's bound cut
+//     armies beside the fog on its newest turn, a warning labels the cut reading ("reads up to +N
+//     if the armies that arrived beside the fog were deploys …; the estimate keeps ~T") and names
+//     warapp_check_plan's enemy_deploy to test it (`newestCut`). The planner reads that turn with
+//     the track's own bound (`ObservedTurn.expected`), so its observed line agrees with the track.
+//     With a usable track the fog prior stays out of the bound (#235 review).
 //     The fog prior (#119, `EnemyIncomePrior`): when `game.symmetricStart` says every player
 //     started even, with no teams and every seated player still playing — a 1v1, or (#226) a
 //     free-for-all, each opponent alike (a game with a player out is not: a survivor, or I, may
@@ -264,11 +264,12 @@
 //     distribution but a custom scenario (a map's scenario distribution included: it only says where
 //     each player starts); in a free-for-all the cap is an even share (1 of its opponents) of the
 //     territories the board hides and of the bonuses it could still hold (its own in full), and a
-//     free-for-all with no teams that gets no prior says why (`game.unevenStart`, a player out). The
+//     free-for-all with no teams that gets no prior says why (`game.unevenStart`, a player out — never
+//     listed among the opponents beside the fog). The
 //     prior shrinks with evidence: with a usable track it keeps PRIOR_EVIDENCE_TURNS / (PRIOR_EVIDENCE_TURNS
 //     + its consecutive observed turns up to the newest board, none when the run stopped earlier, × the
 //     share of its edge in view) of its lead over the larger of
-//     its tracked income and the newest observed turn (`priorBlend`), and the warning names both.
+//     its tracked income and its visible income (`priorBlend`), and the warning names both.
 //     In a 1v1 too, so it trades #119's prior back toward tracked figures #119 found 2-3x low:
 //     PRIOR_EVIDENCE_TURNS (4) is unmeasured against a finished 1v1.
 //     #164, exact income: under a fog setting that shows every owner (`OWNERS_SHOWN_FOG`: No, Light

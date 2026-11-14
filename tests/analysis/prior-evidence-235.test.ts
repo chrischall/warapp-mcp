@@ -140,6 +140,13 @@ describe('(1) which starts are even: every distribution but a custom scenario', 
     expect(p.warnings.join('\n')).toMatch(/No fog prior for the opponents beside the fog \(players 20, 30\) in this free-for-all: player 50 is out \(Eliminated\)/);
   });
 
+  it('a player out is never listed among the opponents beside the fog', () => {
+    // Player B (30) still holds T6 beside the fog but was booted: out, not an opponent the prior skips.
+    const out = players.map((p) => (p.id === B ? { ...p, state: 'Booted' } : p));
+    const p = planTurn(ffa({ game: { players: out, turn: 12, symmetricStart: true } }));
+    expect(p.warnings.join('\n')).toMatch(/No fog prior for the opponents beside the fog \(player 20\) in this free-for-all: player 30 is out \(Booted\)/);
+  });
+
   it('no such line in a team game, a 1v1, or when no opponent borders the fog', () => {
     const teams = players.map((p, i) => ({ ...p, team: i % 2 }));
     expect(text(planTurn(ffa({ game: { players: teams, turn: 12, symmetricStart: false } })))).not.toMatch(/No fog prior/);
@@ -151,59 +158,38 @@ describe('(1) which starts are even: every distribution but a custom scenario', 
   });
 });
 
-describe('(1) a tracked figure below the newest turn read with it does not stand alone', () => {
+describe('(1) a usable track replaces the newest observed turn: a walk-in is labelled, never income (#235 1c)', () => {
   // Player A's T5 grew 20 → 120 beside the fog (no visible neighbour of its own shrank): ambiguous
-  // (#123), read as deploy up to twice what it was expected to deploy. The track (two observed
-  // turns, the newest 10 → 11) says 20 and has not read turn 11 → 12; the planner reads it, against
-  // the track, and it says more.
+  // (#123). The track (two observed turns, the newest 10 → 11) says 20 and has not read turn 11 → 12.
+  // The planner's own reading of that turn never lifts the estimate above the track: a stack walking
+  // in beside the fog is not income (lesson 5).
   const before = board([mine(1, 40), mine(2, 3), mine(3, 3), mine(4, 40), enemy(5, 20), enemy(6, 30, B), neutral(30, 2), ...fog]);
   const now = board([mine(1, 40), mine(2, 3), mine(3, 3), mine(4, 40), enemy(5, 120), enemy(6, 30, B), neutral(30, 2), ...fog]);
   const behind = (income: number, turns: number) => track(A, income, turns, 10, 11);
   const when = { turn: 12 };
 
-  it('the estimate is at least the newest observed turn, labelled with both figures', () => {
+  it('the estimate is the tracked figure, never the newest turn read above it', () => {
     const [a] = enemyDeployEstimates(g, now, ME, STD, before, [behind(20, 2)], undefined, when);
-    expect(a).toMatchObject({ playerId: A, tracked: 20, observed: 40, estimate: 40, source: 'observed' });
+    expect(a).toMatchObject({ playerId: A, tracked: 20, estimate: 20, source: 'tracked' });
     const p = planTurn(ffa({ board: now, previousBoard: before, tracks: [behind(20, 2)], game: { players, turn: 12, symmetricStart: false } }));
-    expect(p.warnings.join('\n')).toMatch(
-      /Enemy deploy estimate for player 20: ~40 \(observed \+40 on the newest turn, read against its tracked income, above its tracked ~20 over its last 2 observed turns\)/,
-    );
+    expect(p.warnings.join('\n')).not.toMatch(/on the newest turn, read against its tracked income/);
   });
 
-  it('with the fog prior on, the newest turn is read against the track, not the prior (#235 review)', () => {
-    // FFA prior 91 (my income), a six-turn track of 26. The growth 20 -> 120 beside the fog is
-    // ambiguous: read against the prior (bound 2 x 91) it made 100 of it income above the prior,
-    // a one-off arrival from the fog (#123). Read against the track the bound is 2 x 26 = 52. The
-    // run ends at turn 11, one short of the newest board, so it does not shrink the prior.
+  it('with the fog prior on, the prior shrinks toward the track alone, not the newest reading', () => {
+    // FFA prior 91 (my income), a six-turn track of 26 ending at turn 11, one short of the newest
+    // board: no shrink, and the newest turn's reading is no part of `toward`.
     const prior = { myIncome: 91, format: 'ffa' as const, opponents: 3 };
     const a = enemyDeployEstimates(g, now, ME, STD, before, [behind(26, 6)], prior, when).find((e) => e.playerId === A)!;
-    expect(a).toMatchObject({ tracked: 26, observed: 52, prior: 91, source: 'prior', estimate: 91 });
-    expect(a.priorBlend).toMatchObject({ prior: 91, toward: 52, turns: 0, weight: 1, figure: 91 });
-    // Without the prior the same board reads the same 52.
+    expect(a).toMatchObject({ tracked: 26, prior: 91, source: 'prior', estimate: 91 });
+    expect(a.priorBlend).toMatchObject({ prior: 91, toward: 26, turns: 0, weight: 1, figure: 91 });
     const [bare] = enemyDeployEstimates(g, now, ME, STD, before, [behind(26, 6)], undefined, when);
-    expect(bare).toMatchObject({ observed: 52, estimate: 52, source: 'observed' });
-  });
-
-  it('the observed-above-track line counts the turns the track used, as its last N turns', () => {
-    const p = planTurn(ffa({ board: now, previousBoard: before, tracks: [behind(20, 6)], game: { players, turn: 12, symmetricStart: false } }));
-    expect(p.warnings.join('\n')).toMatch(/above its tracked ~20 over its last 3 observed turns\)/);
+    expect(bare).toMatchObject({ estimate: 26, source: 'tracked' });
   });
 
   it('a newest turn below the track leaves the track standing', () => {
     const quiet = board([mine(1, 40), mine(2, 3), mine(3, 3), mine(4, 40), enemy(5, 25), enemy(6, 30, B), neutral(30, 2), ...fog]);
     const [a] = enemyDeployEstimates(g, quiet, ME, STD, before, [behind(20, 2)], undefined, when);
-    expect(a).toMatchObject({ tracked: 20, estimate: 20, source: 'tracked' });
-  });
-
-  it('a track that already read the newest turn is not read again: its own reading stands', () => {
-    // The track ends on this board (11 → 12) and read that turn against twice its visible 10: the
-    // planner reads it with that bound, not again against twice the income the reading raised.
-    const read = track(A, 20, 2);
-    read.turns.at(-1)!.expected = 10;
-    for (const w of [when, undefined]) {
-      const [a] = enemyDeployEstimates(g, now, ME, STD, before, [read], undefined, w);
-      expect(a).toMatchObject({ tracked: 20, observed: 20, estimate: 20, source: 'tracked' });
-    }
+    expect(a).toMatchObject({ tracked: 20, estimate: 20, source: 'tracked', newestCut: null });
   });
 });
 
@@ -234,6 +220,38 @@ describe('(1) a one-off walk-in beside the fog is not income above the track (#1
       const [e] = enemyDeployEstimates(gw, at(120, 130), ME, STD, at(20, 100), tracks, undefined, w);
       expect(e).toMatchObject({ tracked: 60, observed: 60, estimate: 60, source: 'tracked' });
     }
+  });
+
+  it('production shape (tracks include the newest board, prior off): the cut reading is labelled, the estimate unchanged', () => {
+    const [e] = enemyDeployEstimates(gw, at(120, 130), ME, STD, at(20, 100), tracks, undefined, { turn: 5 });
+    // Every ambiguous army read as deploy (+30 on T6, +100 on T5: 130), at most what it could earn:
+    // base 10 + the fogged +100.
+    expect(e).toMatchObject({ tracked: 60, estimate: 60, source: 'tracked' });
+    expect(e!.newestCut).toEqual({ from: 4, to: 5, observed: 60, reading: 110, expected: 30 });
+    const p = planTurn({
+      graph: gw,
+      board: at(120, 130),
+      previousBoard: at(20, 100),
+      tracks,
+      me: ME,
+      income: 15,
+      settings: STD,
+      turn: 5,
+      game: { players: [{ id: ME }, { id: A }], turn: 5, symmetricStart: false },
+      options: { adapt: true },
+    });
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(
+      /Player 20's newest turn \(turn 4 → turn 5\) reads up to \+110 if the armies that arrived beside the fog were deploys \(\+60 with those beyond twice the ~30 it was expected to deploy read as moves\); the estimate keeps ~60 \(tracked\) because a stack walking in is not income \(#123\)\. To test the higher figure, pass enemy_deploy 110 to warapp_check_plan\./,
+    );
+    expect(w).toMatch(/Enemy deploy estimate for player 20: ~60 \(tracked over 3 observed turns/);
+    expect(w).not.toMatch(/on the newest turn, read against/);
+  });
+
+  it('no label when the newest turn was not cut', () => {
+    const quiet = trackOpponents(gw, stacks.slice(0, 4).map(([a5, a6], i) => ({ turn: i + 1, board: at(a5, a6) })), ME, STD);
+    const [e] = enemyDeployEstimates(gw, at(20, 100), ME, STD, at(20, 70), quiet, undefined, { turn: 4 });
+    expect(e).toMatchObject({ tracked: 30, newestCut: null });
   });
 
   it('a 1v1 fog prior below the track does not lift it either', () => {

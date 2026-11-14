@@ -717,7 +717,9 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
       const estimated = new Set(facing);
       for (const b of borders.values()) if (b.chain && estimates.has(b.chain.player)) estimated.add(b.chain.player);
       // #235: a free-for-all with no teams whose opponents border the fog, and no prior: say why.
-      const fogged = [...estimates.values()].filter((e) => foe(e.playerId) && e.fogBeside).map((e) => e.playerId).sort(byNum);
+      // A player out (eliminated, booted, surrendered) is no opponent the prior skips, whatever it still holds.
+      const out = new Set((ctx.players ?? []).filter((p) => (p.state ?? 'Playing') !== 'Playing').map((p) => p.id));
+      const fogged = [...estimates.values()].filter((e) => foe(e.playerId) && e.fogBeside && !out.has(e.playerId)).map((e) => e.playerId).sort(byNum);
       if (incomePriorSkipped && fogged.length)
         warnings.push(
           `No fog prior for the opponents beside the fog (${fogged.length === 1 ? 'player' : 'players'} ${fogged.join(', ')}) in this free-for-all: ${incomePriorSkipped}; their estimates rest on what the board shows, each a lower bound under fog.`,
@@ -801,6 +803,15 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
         // #164: the income behind the estimate; a card the clock adds is named on top of it.
         const income = e.estimate - (e.card?.armies ?? 0);
         const withCard = e.card ? `, plus +${e.card.armies} from its Reinforcement card (~${e.estimate} in all)` : '';
+        // #235 1c: the track's newest turn read more with the armies beside the fog as deploys: a label,
+        // never income (#123 lesson 5); the higher figure is the caller's to test.
+        const cut = e.newestCut;
+        if (cut && e.source !== 'exact' && cut.reading > income)
+          warnings.push(
+            `Player ${p}'s newest turn (turn ${cut.from} → turn ${cut.to}) reads up to +${cut.reading} if the armies that arrived beside the fog were deploys (+${cut.observed} with those beyond twice the ~${cut.expected ?? '?'} it was expected to deploy read as moves); the estimate keeps ~${income} (${
+              e.source === 'tracked' ? 'tracked' : e.source === 'prior' ? 'the fog prior' : 'its visible base + bonuses'
+            }) because a stack walking in is not income (#123). To test the higher figure, pass enemy_deploy ${cut.reading} to warapp_check_plan.`,
+          );
         if (e.source === 'exact') {
           warnings.push(
             `Enemy deploy estimate for player ${p}: ~${income} (exact: under ${ctx.fog} every territory's owner shows, so its income is ${visible}${e.observed !== null && e.observed > income ? `; the +${e.observed} observed above it is a card or armies the board misread, not income` : ''}); only the army cap, Sanctions and a Reinforcement card are unknown.`,
@@ -820,11 +831,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
             }${
               e.priorBlend
                 ? ` — shrunk toward its ${
-                    e.priorBlend.toward === e.tracked
-                      ? `tracked ~${e.tracked}`
-                      : e.priorBlend.toward === e.observed
-                        ? `newest observed +${e.observed}`
-                        : `visible ${e.priorBlend.toward}`
+                    e.priorBlend.toward === e.tracked ? `tracked ~${e.tracked}` : `visible ${e.priorBlend.toward}`
                   } by the evidence: ${e.priorBlend.turns} observed ${e.priorBlend.turns === 1 ? 'turn' : 'turns'} with ${Math.round(e.priorBlend.share * 100)}% of its edge in view keep ${Math.round(e.priorBlend.weight * 100)}% of the gap from ${e.priorBlend.prior}`
                 : ''
             }; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''})${withCard}; observed deploys are lower bounds under fog, and it could deploy more.`,
@@ -834,13 +841,6 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
         if (e.source === 'tracked') {
           warnings.push(
             `Enemy deploy estimate for player ${p}: ~${income} (tracked over ${e.trackedTurns.length} observed turns, more than ${visible})${withCard}; it holds income the fog hides, and could deploy more.`,
-          );
-          continue;
-        }
-        if (e.source === 'observed' && e.tracked !== null) {
-          // #235: the newest turn, read against the tracked income, above it: the track does not stand alone.
-          warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${income} (observed +${e.observed} on the newest turn, read against its tracked income, above its tracked ~${e.tracked} over its last ${e.trackedTurns.length} observed ${e.trackedTurns.length === 1 ? 'turn' : 'turns'})${withCard}; it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }

@@ -836,6 +836,14 @@ export interface EnemyDeployEstimate {
    * `null` otherwise.
    */
   tracked: number | null;
+  /**
+   * #235 1c: the track's newest observed turn, when it ends on this board and #123's bound cut
+   * armies that arrived beside the fog (or joined a capture) as moves: `observed` is its reading,
+   * `reading` the same turn with every ambiguous army a deploy (at most what it could earn that turn),
+   * `expected` the bound's base (twice it). A label, never income: the estimate keeps its figure, and
+   * the warning names `reading` for warapp_check_plan's `enemy_deploy`. `null` otherwise.
+   */
+  newestCut: { from: number; to: number; observed: number; reading: number; expected: number | null } | null;
   /** The observed turns behind `tracked` (`from` turns, oldest first); empty when `tracked` is `null`. */
   trackedTurns: number[];
   /**
@@ -860,8 +868,8 @@ export interface EnemyDeployEstimate {
   prior: number | null;
   /**
    * #235: the prior shrunk toward its own evidence, when it has a usable track and the prior is above
-   * it: `prior` (the figure above) keeps `weight` of its lead over `toward` (the larger of its tracked
-   * income and the newest observed turn), `weight` = {@link PRIOR_EVIDENCE_TURNS} / (PRIOR_EVIDENCE_TURNS
+   * it: `prior` (the figure above) keeps `weight` of its lead over `toward` (its tracked income, or its
+   * visible income when larger), `weight` = {@link PRIOR_EVIDENCE_TURNS} / (PRIOR_EVIDENCE_TURNS
    * + `turns` × `share`), where `turns` is its run of consecutive observed turns up to the newest and
    * `share` the part of its edge in view (the territories next to its visible ones, not its own, whose
    * owner shows). The estimate is then `figure`. `null` otherwise.
@@ -876,10 +884,10 @@ export interface EnemyDeployEstimate {
   /** #235: a territory next to one of its visible ones shows no owner (the fog prior's test). */
   fogBeside: boolean;
   /**
-   * `'tracked'` when the tracked income beat the visible-bonus figure, else `'observed'` when the
-   * single-turn observed figure did (#235: also above a usable track — the newest turn, read against
-   * the tracked income, is evidence too), else `'visible'` — unless the fog prior beat all of them:
-   * `'prior'`.
+   * `'tracked'` when the tracked income beat the visible-bonus figure, else (no usable track)
+   * `'observed'` when the single-turn observed figure did, else `'visible'` — unless the fog prior beat
+   * all of them: `'prior'`. With a usable track the observed figure never counts (#235 1c: a newest turn
+   * its bound cut is labelled, {@link EnemyDeployEstimate.newestCut}).
    */
   source: 'visible' | 'observed' | 'tracked' | 'prior' | 'exact';
   /**
@@ -1485,38 +1493,47 @@ export function enemyDeployEstimates(
     // #235 review: does the track end on this board? Its newest observed turn then ends at the turn
     // being planned (the newest board's turn, when that is not given: tracks end on `board`).
     const newestTurn = when.turn ?? usable?.lastTurn ?? null;
-    const trackEndsNow = usable !== undefined && usable.turns.at(-1)?.to === newestTurn;
+    const newest = usable?.turns.at(-1);
+    const trackEndsNow = newest !== undefined && newest.to === newestTurn;
     // #123: what it was expected to deploy before this observation (its visible income, and its
     // tracked income when it has a usable track, else the prior): ambiguous armies beyond twice that
     // are moves out of the fog ({@link ambiguousBound}); a capture from me is priced at the guard.
-    // #235 review: with a track the prior stays out of the bound. The newest turn is evidence the
-    // prior shrinks toward, so reading it against twice the prior would turn a one-off arrival from
-    // the fog into income above the prior (lesson 5). And a track that ends on this board has read
-    // the newest turn already, against what it carried before it, and its income includes that
-    // reading: read against twice that income, a one-off walk-in beside the fog would count twice
-    // over. The newest turn is then read with the track's own bound, so the two agree.
-    const ownBound = trackEndsNow ? usable!.turns.at(-1)!.expected : undefined;
+    // With a track the prior stays out of the bound, and the reading is no part of the estimate
+    // (#235 1c): the track replaces it. A track that ends on this board has read the newest turn
+    // already, so the turn is read with that track's own bound (`ObservedTurn.expected`), and the
+    // rationale's observed line agrees with the tracker and with the label below.
+    const trackBound = trackEndsNow ? newest!.expected : undefined;
     const observation = previous
       ? observeDeploy(g, board, previous, playerId, settings, {
           me,
           guard: (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
-          expected: ownBound !== undefined ? Math.max(visible, ownBound) : Math.max(visible, tracked ?? priorFigure ?? 0),
+          expected: Math.max(visible, trackBound ?? tracked ?? priorFigure ?? 0),
           most: couldEarn,
           ...(when.previousOrders ? { myOrders: when.previousOrders } : {}),
         })
       : null;
+    // #235 1c: the track's newest turn, when it ends on this board and its bound cut armies that
+    // arrived beside the fog (or joined a capture): what that turn reads with them all as deploys.
+    // A label only: a stack walking in is not income (#123 lesson 5), so the estimate stays.
+    const newestCut: EnemyDeployEstimate['newestCut'] =
+      trackEndsNow && newest!.high > newest!.raw && (newest!.grewFromFog.length > 0 || newest!.reinforced.length > 0)
+        ? {
+            from: newest!.from,
+            to: newest!.to,
+            observed: newest!.observed,
+            reading: Math.min(newest!.high, newest!.cap),
+            expected: newest!.expected ?? null,
+          }
+        : null;
     const observedCap = observation ? couldEarn : null;
     const observedRaw = observation?.deploy ?? null;
     const observed = observation ? Math.min(observation.deploy, observedCap!) : null;
-    // #235: with a usable track the newest turn, read against the tracked income (#123's bound), is
-    // evidence too: a track below it does not stand alone.
+    // A usable track replaces the single-turn observed figure (S3; #235 1c: its newest reading too).
     const seenSource: EnemyDeployEstimate['source'] =
       tracked !== null
-        ? observed !== null && observed > tracked && observed > visible
-          ? 'observed'
-          : tracked > visible
-            ? 'tracked'
-            : 'visible'
+        ? tracked > visible
+          ? 'tracked'
+          : 'visible'
         : observed !== null && observed > visible
           ? 'observed'
           : 'visible';
@@ -1525,7 +1542,7 @@ export function enemyDeployEstimates(
     // of its edge in view, the less of its lead it keeps.
     let priorBlend: EnemyDeployEstimate['priorBlend'] = null;
     if (priorFigure !== null && usable) {
-      const toward = Math.max(tracked!, observed ?? 0, visible);
+      const toward = Math.max(tracked!, visible);
       if (priorFigure > toward) {
         // The consecutive observed turns up to the newest board; a run that stopped earlier is none.
         let turns = trackEndsNow ? 1 : 0;
@@ -1596,6 +1613,7 @@ export function enemyDeployEstimates(
       couldHold,
       observation,
       tracked,
+      newestCut,
       trackedTurns: usable ? usable.incomeTurns : [],
       prior: priorFigure,
       priorBlend,

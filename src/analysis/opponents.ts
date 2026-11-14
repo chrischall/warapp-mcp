@@ -138,7 +138,8 @@ export interface ObservedTurn {
   /**
    * #123: what it was expected to deploy that turn, the base of the bound on its ambiguous armies
    * (twice this): its visible income or the income carried before the turn, whichever is more.
-   * Absent when the reading had no bound. The planner re-reads the newest turn with it (#235 review).
+   * Absent when the reading had no bound. The planner reads the newest turn with it, and its label of
+   * a cut reading names it (#235 1c, `EnemyDeployEstimate.newestCut`).
    */
   expected?: number;
   /**

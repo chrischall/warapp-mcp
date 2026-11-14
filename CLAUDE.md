@@ -401,21 +401,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   a lower bound under fog, and without it a finished game's true deploys read 2–3× low. #235: the
   prior shrinks with evidence: with a usable track it keeps `PRIOR_EVIDENCE_TURNS` (4) / (4 + its
   consecutive observed turns up to the newest board — a run that stopped earlier counts none — × the
-  visible share of its edge) of its lead over the larger of the
-  tracked figure and the newest observed turn (`priorBlend`; the warning names both figures). This applies in a 1v1 too,
+  visible share of its edge) of its lead over the tracked figure (or the visible one, when larger;
+  `priorBlend`; the warning names both figures). This applies in a 1v1 too,
   pulling #119's prior back toward the tracked figures #119 found 2–3× low (8 turns with the whole
   edge in view keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
   against a finished 1v1. A
   free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`, or a player
-  out). A track never stands alone below the newest turn the planner reads against it (#123's bound
-  — never the prior, which stays out of the bound whenever a track is usable, so a one-off arrival
-  from the fog is not read as income above the prior): the estimate is the larger, labelled "observed
-  +N on the newest turn". The bound is the track's own (#235 review): when the track ends on this
-  board it has read the newest turn already, against twice what it carried before it
-  (`ObservedTurn.expected`), and the planner re-reads it with that bound, never twice the tracked
-  income that reading raised — so a one-off walk-in beside the fog counts once, and the newest turn
-  rises above the track only when the track's own reading does; a track that has not read the newest
-  turn is read against twice its income. Each border
+  out; a player out is never listed among the opponents beside the fog). The newest observed turn
+  never lifts a usable track (#235 1c): a stack walking in beside the fog is not income (#123 lesson
+  5). When the track ends on this board and #123's bound (twice what it carried before that turn,
+  `ObservedTurn.expected`; never the prior) cut armies beside the fog on its newest turn, a warning
+  labels the cut reading — "reads up to +N if the armies that arrived beside the fog were deploys …;
+  the estimate keeps ~T (tracked) because a stack walking in is not income" — and suggests
+  `warapp_check_plan`'s `enemy_deploy` to test it (`EnemyDeployEstimate.newestCut`); the planner reads
+  that turn with the track's own bound, so its observed line agrees with the track. Each border
   is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to
   land), not a double count.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
@@ -440,8 +439,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   best fit the income gap, within reach and affordable, none listed when too many fit — see the
   #123 rules below; candidates, never asserted). With 2+ observed turns the planner uses
   the tracked income in place of the single-turn observed figure (`PlanInput.tracks`) and says so
-  in its rationale, unless the newest observed turn, read with the track's own bound, reads more (#235:
-  then that figure, source `observed`, "on the newest turn"; see the fog prior above); fewer, and the plan is exactly what it
+  in its rationale (a newest turn its bound cut is labelled, never counted: #235 1c, see the fog prior
+  above); fewer, and the plan is exactly what it
   was without tracking.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
