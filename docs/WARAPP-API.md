@@ -49,7 +49,11 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   game when any player carries a team other than -1 (the web client's own test, see
   docs/WEB-PROTOCOL.md "Open games"). The in-game `LatestGameInfo` carries no player list (read
   from the client bundle: orders, standings, turn, teammate orders, toasts), so GameFeed is the
-  only source the plan reads; without `team` a team game reads as an FFA.
+  only source the plan reads; without `team` a team game reads as an FFA. Every tool asks one test
+  (`isTeamGame` / `teammatesOf`, `src/teams.ts`; C1). `warapp_get_team` alone falls back on
+  `GetMyGames`' `GameInfoPlayer` team (from the client bundle, UNVERIFIED live) when GameFeed sends
+  none, matching players by in-game id, and reports which source gave the team (V1 in
+  `docs/PLAN-TEAMS.md`).
 - `settings` uses real JSON types (numbers, booleans, objects). A card is enabled when its
   `<Name>Card` value is an object and disabled when the value is the string `"none"`.
   `ArmyCap` is the string `"null"` when there is no cap. `Map` is the map id.

@@ -26,6 +26,7 @@ import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
 import { registerStrategyTool } from './strategy.js';
 import { registerSurrenderTool } from './surrender.js';
+import { registerTeamTool } from './team.js';
 import { registerTurnTools } from './turn.js';
 import { registerUncommitTool } from './uncommit.js';
 import { registerLeaveGameTool } from './leave-game.js';
@@ -120,6 +121,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerWhereTool(server, live, deps.env ? { env: deps.env } : {});
   registerUncommitTool(server, live);
   registerChatTools(server, live, deps.env ? { env: deps.env } : {});
+  registerTeamTool(server, live);
   // The agreement ledger: one read-only tool, and one that writes only the local ledger (not confirm-gated).
   registerRelationsTools(server, live, deps.env ? { env: deps.env } : {});
   // B3: truce advice (read-only): prices a deal by planning with and without it; reads no chat.

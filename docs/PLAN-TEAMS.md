@@ -507,6 +507,14 @@ untouched. Choices and departures:
 - Read-only `warapp_get_team`: who is on my team, human or AI, committed or not, visible income, the
   orders or picks they have entered, the team hand, unread team chat.
 
+*As built (C1):* `isTeamGame` / `teammatesOf` in `src/teams.ts` are the one test (the submit's teammate
+set no longer throws on an AI seat). The GetMyGames fallback (`gameWithTeams`, `src/tools/team.ts`) is
+used by `warapp_get_team` only; the planner and the other tools still read GameFeed's team, so a team game
+GameFeed sends without teams still plans as a free-for-all until V1 is checked. `BoardState.teammateOrders`
+is typed (`src/team-orders.ts` projects it, keyed by GameFeed id) and filled by no plan yet (C3).
+Teammate picks come from `TeammateOrders`' pick list first, then `GetTerritoryPicks`. Team chat is counted
+only from the web chat (GameFeed names no channel).
+
 ### C2. Team-aware picks
 
 In two steps, since `src/analysis/picks.ts` is large.

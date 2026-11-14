@@ -105,7 +105,7 @@ string email                  the signed-in account's email
 | 76 | SendTerritoryPicks | params: int32 gameId, bool present, int list territoryIds (priority order), bool, bool |
 | 77 | SendInProgressPicks | as 76 without the two trailing bools (draft save) |
 | 78 | **BeginFirstTurn** | params: int32 gameId — read from the bundle, not verified live; see [Begin first turn](#begin-first-turn) |
-| 79 | GetTerritoryPicks | |
+| 79 | GetTerritoryPicks | params: int32 gameId, int32 in-game player id; verified for my own id. `warapp_get_team` also asks it with a teammate's id while picking (UNVERIFIED, V6); a refusal reads as unknown |
 | 80 | **UnCommit** | params: int32 gameId — see [UnCommit](#uncommit) |
 | 81 | GetTurns | |
 | 238 | Subscribe | push channel only, **no auth**; params: bool true, list of topic strings, string null; reply dict topic→int32 error |
@@ -296,6 +296,22 @@ current `GameStanding`, the last `GameTurn` and the previous `GameStanding`, and
 appear in all of them. Only the current standing's cards are playable: an instance that survives
 only in the previous standing or the turn's receive/play orders was already played, and playing
 it is refused with error 50 `CardInstanceUnavailable`.
+
+**Teammates' entered orders and picks (C1) — from the client bundle, UNVERIFIED live (V5).** After the
+standings, `LatestGameInfo` carries a dict in-game player id → `warlight.shared.TeammateOrders`
+`{ int32 stamp, list<GameOrder> orders (a turn), list<int32> picks (while distributing) }`, each list
+behind its present flag. The client renders a teammate's picks from the int list when present, else
+its orders, and counts the `GameOrderPlayCard*` and `GameOrderDiscard` orders in it against the team's
+hand. My own pending orders and picks are separate fields of `LatestGameInfo`. `src/team-orders.ts`
+finds the dict by the type name of its values (the reader fills it through a closure, which
+`fieldsReadAs` does not follow) and reads each order by its class and read order: `GameOrderDeploy`
+(territory, free flag, armies), `GameOrderAttackTransfer` (attack-teammates flag, mode byte, by-percent
+flag, from, `Armies`, to), a card play (its own fields, the card GUID; the card from the class name,
+`Abandon` being the Emergency Blockade card), `GameOrderDiscard` (the GUID), each then the base
+(player, optional result, optional standing updates). An order it cannot read is listed as unread; no
+dict, or no entry for a teammate, is unknown — not "nothing entered". Whether war.app fills it before
+the teammate commits is the open question (V5). `warapp_get_team` reports it; the planner does not
+use it yet.
 
 **An unreadable hand (#130) — unverified.** The hand sits under a per-player entry keyed by the
 in-game id. When cards are in play and the current standing has no entry for my id,

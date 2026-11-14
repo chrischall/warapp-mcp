@@ -55,6 +55,7 @@ describe('tool annotations', () => {
       'warapp_get_map',
       'warapp_get_my_picks',
       'warapp_get_relations',
+      'warapp_get_team',
       'warapp_healthcheck',
       'warapp_join_game',
       'warapp_leave_game',

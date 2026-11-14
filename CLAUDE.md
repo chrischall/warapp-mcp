@@ -168,6 +168,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
   is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`. The interpreter's registration
   scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
+- **Team games read (part C1 of `docs/PLAN-TEAMS.md`).** One team test everywhere: `isTeamGame` /
+  `teammatesOf` (`src/teams.ts`, over `carriesTeam`); teammate ids are GameFeed ids at the tool boundary
+  (an AI seat has no in-game id: it owns nothing on the board, never a throw). The read-only
+  `warapp_get_team` (`src/tools/team.ts`) refuses outside a team game; when GameFeed sends no team (V1) it
+  takes GetMyGames' `GameInfoPlayer` team (`myGamesTeams`, by in-game id) and says so — no other tool does
+  yet. Teammate orders and picks come from `LatestGameInfo`'s `TeammateOrders` dict (`src/team-orders.ts`,
+  found by type name, orders by class and read order; `BoardState.teammateOrders` by GameFeed id, filled by
+  no plan yet), picks falling back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
+  the team hand is `readHand` over `handOwners`; unread team chat is counted from the web chat only. All
+  UNVERIFIED live (V1, V5, V6, #163); absent means unknown (`null`), never "none".
 - **The agreement ledger (part A2 of `docs/PLAN-TEAMS.md`).** An agreement (a truce) exists only when
   recorded with `warapp_record_agreement` (structured terms; chat is never parsed into one), at
   `<dataDir>/relations/<gameId>-<playerId>.json` (`src/relations-store.ts`: one file per account, ids,
