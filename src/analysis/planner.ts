@@ -64,7 +64,11 @@
 //          hold together, and the hold is then funded ("T keeps N to hold its border …"). #214: or a
 //          conceded border (never my commander's territory): this turn's deploy funds the attack
 //          alone and its hold stays conceded unless rule 1c keeps it for a bonus completed this
-//          turn ("T is conceded, but the deploy there leaves with the attack …"). One those passes do not take is an ordinary enemy territory again for every later rule
+//          turn ("T is conceded, but the deploy there leaves with the attack …"). Pass 2 takes such
+//          a step alone only when the bonus cannot be completed whole with it last: taken first, it
+//          could make rule 1c's guard refuse its sibling's completion (or leave the sibling to rule
+//          4d), sinking the deploy into a conceded border for half a bonus. One those passes do not
+//          take is an ordinary enemy territory again for every later rule
 //          (rule 4e's fallback, 4g's card pieces, the lead strikes): its plain size, no sure sizing;
 //          its "Not attacking" line still ends with why its bonus's step failed (the hold it had to
 //          keep, the deploy that could reach it, or why no neighbour could attack).

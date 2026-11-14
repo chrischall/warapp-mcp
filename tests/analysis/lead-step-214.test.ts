@@ -216,6 +216,56 @@ describe('#214: a lead step toward the closest bonus funded on a conceded source
     expect(valid(p, i)).toEqual([]);
   });
 
+  /**
+   * A board from the review's sweep (random armies, income and bonus values on this map):
+   * `[territory, owner (0 neutral), armies]`, the income, and B901/B902's values.
+   */
+  const swept = (ts: [number, number, number][], income: number, a: number, b: number): PlanInput => {
+    const m = { ...map, bonuses: map.bonuses.map((x) => (x.id === 901 ? { ...x, value: a } : x.id === 902 ? { ...x, value: b } : x)) };
+    const field = board(ts.map(([id, owner, armies]) => (owner === ME ? mine(id, armies) : owner ? enemy(id, armies, owner) : neutral(id, armies))));
+    return { ...input(income), graph: buildGraph(m), board: field };
+  };
+
+  it('takes the held border\'s sibling first when the conceded-funded step would block the completion', () => {
+    // T2 (player 20, 5) beside the conceded T1 (5), T3 (neutral, 3) beside the held T4 (26), income
+    // 13. Taking T2 first sank 12 of 13 into T1, and then rule 1c's guard refused T3's completion
+    // (it judged T1's exposure as if the completion added it). T3 first, then T2 completes the bonus,
+    // and the guard sees T1 exposed whether or not it is completed.
+    const i = swept(
+      [[1, 10, 5], [2, 20, 5], [3, 0, 3], [4, 10, 26], [5, 10, 3], [6, 0, 6], [7, 0, 4], [8, 10, 114], [9, 0, 9],
+        [11, 10, 1], [12, 10, 2], [20, 20, 3], [30, 30, 16], [31, 30, 30]],
+      13, 2, 5,
+    );
+    const p = planTurn(i);
+    expect(attacks(p).map((m) => [m.from, m.to]).sort((a, b) => a[1]! - b[1]!)).toEqual([
+      [1, 2],
+      [4, 3],
+    ]);
+    expect(why(p)).not.toMatch(/Do not complete bonus B901/);
+    expect(p.warnings.join('\n')).not.toMatch(/completing B901 \(#901\) leaves .*: not completed/);
+    expect(why(p)).toMatch(/Keep T1 \(#1\) \(not conceded\): this turn's captures complete bonus B901 \(#901\)/);
+    expect(valid(p, i)).toEqual([]);
+  });
+
+  it('completes the closest bonus, not the farther one\'s neutral step, when the relaxed pass tries the conceded step first', () => {
+    // T2 (player 20, 5) beside the conceded T1 (2), T3 (neutral, 2) beside the held T4 (22), income
+    // 18. With T2 taken first the guard refused T3, the two-step fixed point settled on the base
+    // plan, and the deploy went to B902's neutral T6 — the issue's outcome.
+    const i = swept(
+      [[1, 10, 2], [2, 20, 5], [3, 0, 2], [4, 10, 22], [5, 10, 2], [6, 0, 7], [7, 0, 7], [8, 10, 147], [9, 0, 4],
+        [11, 10, 3], [12, 10, 3], [20, 20, 6], [30, 30, 17], [31, 30, 8]],
+      18, 2, 4,
+    );
+    const p = planTurn(i);
+    const to = attacks(p).map((m) => m.to);
+    expect(to).toContain(2);
+    expect(to).toContain(3);
+    expect(to).not.toContain(6);
+    expect(attacks(p).find((m) => m.to === 2)!.from).toBe(1);
+    expect(why(p)).not.toMatch(/Do not complete bonus B901/);
+    expect(valid(p, i)).toEqual([]);
+  });
+
   it('is deterministic', () => {
     expect(JSON.stringify(planTurn(input()))).toBe(JSON.stringify(planTurn(input())));
   });
