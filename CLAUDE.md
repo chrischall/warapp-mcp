@@ -693,6 +693,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       exceed the next income and the start-of-turn hold cost ("Frontier grows faster than income").
       Except in the contact/late no-capture fallback (rule 4e, #114), where it is a cost instead:
       the survivors a capture leaves on a border it cannot hold next turn count as armies at risk.
+      In that fallback a capture that completes a bonus this turn is never ranked last for opening a
+      second front (rule 0p.2), and one whose bonus repays its cost within the payback horizon goes
+      first among the affordable candidates (#240); every other keeps the cost order.
   - **Game rules** (`docs/PLAN-PLANNER-4.md`, `tests/analysis/lessons-game-rules.test.ts`; the
     full-rung `settings` echo shows each):
     - **Kill rates (#28).** Every combat computation uses the game's offensive/defensive kill

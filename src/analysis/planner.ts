@@ -838,7 +838,9 @@
 //     frontier stop is a cost, not a veto (#114): each candidate is tried (and undone) to find its
 //     armies at risk — the survivors its capture leaves on a border that cannot hold next turn at
 //     the expected enemy deploy (4d's and R3's arithmetic; 0 when it holds or faces no enemy).
-//     Order (#112, #114): affordable first, then its cost — the armies the capture is expected to
+//     Order (#112, #114): affordable first, then (#240) a capture that completes a bonus this turn
+//     (every other member already mine) whose bonus repays its cost below within the payback horizon
+//     (cost ≤ payback turns × value), then its cost — the armies the capture is expected to
 //     lose (the defenders' kills on its attackers at the game's rates; for a combined capture, the
 //     total over its attacks) plus its armies at risk — then the armies it sends, then one that
 //     breaks a bonus (its owner holds it in full) or advances one of mine (a tie-break only), then
@@ -853,14 +855,17 @@
 //     and, for one that opens a second front, "… taken only because it costs nothing"). Every
 //     candidate considered and not taken is named in one rationale line, "Other candidates not
 //     taken: …", with its reason (refused, does not fit, ranked after the capture taken and at
-//     what cost, or — rule 0p.2 — tried only after every other); an enemy capture refused as a
+//     what cost, or after a completion that repays its cost, or — rule 0p.2 — tried only after every
+//     other); an enemy capture refused as a
 //     trade or for a hold is left to its own warning, and when nothing is taken the top one is in
 //     the stand-still warning instead. In an FFA with two or more opponents (rule 0p.2's setting,
 //     applied here whether or not the plan adapts), a capture against a player that cannot
 //     currently attack me (it could take no territory of mine next turn) opens a second front and
-//     is tried only after every other; the rationale says which ("can already attack me …: opens
-//     no new front" / "cannot attack me now: … opens a second front (no second front in an FFA),
-//     taken only because no neutral capture fits"), and the trade ("kills K for L lost"). Outside
+//     is tried only after every other — unless it completes a bonus this turn (#240: never demoted;
+//     its reason says "completes bonus …"); the rationale says which ("can already attack me …:
+//     opens no new front" / "cannot attack me now: … opens a second front (no second front in an
+//     FFA), taken only because no neutral capture fits" / "cannot attack me now: … completes bonus
+//     … this turn, so the second front is taken for it"), and the trade ("kills K for L lost"). Outside
 //     the contact/late fallback (passes 1–3, the opening/expansion and army-cap fallback) rule 4d
 //     keeps its veto. An enemy capture carries the usual warning that it assumes the owner does
 //     not reinforce first, unless rule 3 sizes it for that deploy (#120).

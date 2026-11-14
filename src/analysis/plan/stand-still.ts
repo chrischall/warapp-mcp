@@ -534,6 +534,19 @@ export function neverStandStill(
         const adv = toward.find(([id]) => bonusTs.get(id)!.includes(t));
         return adv ? { id: adv[0], breaks: false } : undefined;
       };
+      /**
+       * #240: the bonus capturing `t` completes this turn — every other member already mine (the
+       * fallback runs only when nothing is captured) — the most valuable, then the lowest id.
+       */
+      const completesOf = (t: number): number | undefined =>
+        g.map.bonuses
+          .filter(
+            (b) =>
+              b.value > 0 &&
+              bonusTs.get(b.id)!.includes(t) &&
+              bonusTs.get(b.id)!.every((m) => m === t || mineSet.has(m)),
+          )
+          .sort((a, b) => b.value - a.value || a.id - b.id)[0]?.id;
       const enemySteps = enemyTs.map((t) => {
         const p = (state.get(t)!.owner as { playerId: number }).playerId;
         const from = attackableBy(p);
@@ -544,11 +557,15 @@ export function neverStandStill(
           bonus: enemyBonus(t, p),
           /** Its owner can attack me now: the territory of mine it could take. */
           front: from,
+          /** #240: the bonus this capture completes this turn, if any. */
+          completes: completesOf(t),
           secondFront: ffaFronts && from === undefined && p !== clearLeader,
           ...reachOf(t),
         };
       });
       const enemyReason = (e: (typeof enemySteps)[number]) => {
+        if (e.completes !== undefined)
+          return `cheapest capture: completes bonus ${bonusName(e.completes)} (+${g.bonusById.get(e.completes)!.value}) from player ${e.player}`;
         if (!e.bonus) return `cheapest capture: takes a territory of player ${e.player}`;
         const v = g.bonusById.get(e.bonus.id)!.value;
         if (e.bonus.breaks) return `cheapest capture: breaks bonus ${bonusName(e.bonus.id)} (+${v}) of player ${e.player}`;
@@ -560,13 +577,19 @@ export function neverStandStill(
        * above. In contact (#107, #112): the neutral steps and the enemy captures together —
        * affordable first, then the armies lost, then the armies sent, then one that breaks or
        * advances a bonus, then (neutral steps) rule 4e's order, then id; under rule 0p.2 a capture
-       * that opens a second front (its owner cannot attack me now) only after every other.
+       * that opens a second front (its owner cannot attack me now) only after every other. #240: a
+       * capture that completes a bonus this turn is never demoted for a second front, and one whose
+       * bonus repays its ranking cost within the payback horizon goes first among the affordable
+       * candidates (the others keep their order).
        */
       type Pick =
         | { kind: 'neutral'; st: (typeof steps)[number] }
         | { kind: 'enemy'; st: (typeof enemySteps)[number] };
       const shortOf = (x: { cost: number; reach: number }) => Math.max(0, x.cost - x.reach);
       const rank4e = new Map(steps.map((x, i) => [x.t, i]));
+      /** #240: the bonus a candidate completes this turn, if any. */
+      const completedBy = (p: Pick) => (p.kind === 'enemy' ? p.st.completes : completesOf(p.st.t));
+      const completing = (p: Pick) => completedBy(p) !== undefined;
       const picks: Pick[] = [
         ...steps.map((st): Pick => ({ kind: 'neutral', st })),
         ...enemySteps.map((st): Pick => ({ kind: 'enemy', st })),
@@ -596,10 +619,18 @@ export function neverStandStill(
       };
       // In contact (#112, #114): affordable first, then the cost (the armies the capture loses plus
       // its survivors at risk), then the armies it sends; breaking or advancing a bonus is only a
-      // tie-break. Under rule 0p.2 a capture that opens a second front still comes after every other.
+      // tie-break. Under rule 0p.2 a capture that opens a second front still comes after every other
+      // — unless it completes a bonus this turn (#240). A completion whose cost (the same ranking
+      // cost) the bonus repays within the payback horizon goes first among the affordable; one that
+      // does not is ranked like any other capture.
+      const repays = (p: Pick) => {
+        const id = completedBy(p);
+        return id !== undefined && costOfPick(p.st.t) <= pc.paybackTurns * g.bonusById.get(id)!.value;
+      };
       const keyOf = (p: Pick) => [
-        p.kind === 'enemy' && p.st.secondFront ? 1 : 0,
+        p.kind === 'enemy' && p.st.secondFront && !completing(p) ? 1 : 0,
         shortOf(p.st),
+        repays(p) ? 0 : 1,
         costOfPick(p.st.t),
         loss.get(p.st.t)!.sent,
         p.kind === 'enemy' && !p.st.bonus ? 1 : 0,
@@ -764,7 +795,9 @@ export function neverStandStill(
             rationale.push(
               e.front !== undefined
                 ? `Player ${e.player} can already attack me (${label(e.front)}): taking ${label(t)} opens no new front.`
-                : `Player ${e.player} cannot attack me now: taking ${label(t)} opens a second front (no second front in an FFA), taken only because no neutral capture fits this turn.`,
+                : e.completes !== undefined && e.secondFront
+                  ? `Player ${e.player} cannot attack me now: taking ${label(t)} completes bonus ${bonusName(e.completes)} this turn, so the second front is taken for it.`
+                  : `Player ${e.player} cannot attack me now: taking ${label(t)} opens a second front (no second front in an FFA), taken only because no neutral capture fits this turn.`,
             );
         } else {
           // The bonus with the fewest armies to finish was passed over: say why.
@@ -838,8 +871,18 @@ export function neverStandStill(
         if (!taken) return [`${label(t)} ${failText(p.st, undefined)}`];
         if (shortOf(p.st) > 0) return [`${label(t)} ${failText(p.st, undefined)}`];
         const after = `is ranked after ${label(taken.st.t)}`;
-        if (p.kind === 'enemy' && p.st.secondFront && !(taken.kind === 'enemy' && taken.st.secondFront))
+        if (
+          p.kind === 'enemy' &&
+          p.st.secondFront &&
+          !completing(p) &&
+          !(taken.kind === 'enemy' && taken.st.secondFront && !completing(taken))
+        )
           return [`${label(t)} ${after}: player ${p.st.player} cannot attack me now, so it is tried only after every other capture`];
+        // #240: a completion that repays its cost goes first among the affordable candidates.
+        if (repays(taken) && !repays(p))
+          return [
+            `${label(t)} ${after}: taking ${label(taken.st.t)} completes bonus ${bonusName(completedBy(taken)!)} this turn, which repays its cost of ${costOfPick(taken.st.t)} within ${pc.paybackTurns} turns`,
+          ];
         const c = costOfPick(t);
         const tc = costOfPick(taken.st.t);
         return [

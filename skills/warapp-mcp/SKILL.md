@@ -675,7 +675,9 @@ do not send a backlog of turns unread. Override it when one of these shows up:
    bonus's included) without the hold the plan otherwise gives it, the step is not taken and a "not taken at its
    bare cost (#214 review)" line names the border; a clear leader who
    is not the user (the
-   profile's `ranking`) is never a second front. Judge yourself when a leader must be attacked by several
+   profile's `ranking`) is never a second front, and neither is a capture that completes a bonus this turn: when
+   the plan falls back to its cheapest capture, it is never ranked last for opening a second front, and one whose
+   bonus repays its cost within the payback horizon goes before every other affordable capture (#240). Judge yourself when a leader must be attacked by several
    fronts at once. Weigh any "Attack on enemy … assumes its owner does not reinforce it first
    (win chance N%)" warning.
 6. **A reply the plan did not weigh.** Run `warapp_check_plan` on the orders (always after a
