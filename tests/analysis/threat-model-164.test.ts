@@ -413,3 +413,50 @@ describe('a lost stack is part of its owner unaccounted armies: never counted tw
     expect(why(plan)).toMatch(/more than the 34 that can reach it/);
   });
 });
+
+describe('a lost stack via the pool carrier is kept when another lost stack reaches the border elsewhere (#164 review)', () => {
+  // My 1 (and 6) border 2 (owner-only, the opponent's: carries its pool, capped at 10) and 3 (fogged).
+  // Two stacks left view on turn 9: 9 on 4 (behind 2, via the carrier) and 7 on 5 (behind 3).
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5, 6], [[1, 2], [1, 3], [2, 4], [3, 5], [1, 6]], [[101, 5, [1, 6]]]));
+  const lostStacks = [
+    { territoryId: 4, turn: 9, armies: 9 },
+    { territoryId: 5, turn: 9, armies: 7 },
+  ];
+  const tracks = [track(FOE, { unexplained: 30, lostStacks })];
+  const plan = (two: TerritoryState) =>
+    planTurn({ graph: g, board: board([mine(1, 3), mine(6, 3), two, fogged(3), fogged(4), fogged(5)]), me: ME, income: 40, settings: STD, turn: 10, game: { turn: 10, fog: 'VeryFoggy' }, tracks, options: { goal: 'defend' } });
+  it('the carrier keeps the lost stack via it (8), beside the one via 3 (6): 14 movable, not 10', () => {
+    const shown = plan(ownerOnly(2));
+    expect(why(shown)).toMatch(/player 20 has 14 movable armies next to it/);
+  });
+  it('showing the owner of 2 never lowers the threat below the fully fogged board', () => {
+    const shown = plan(ownerOnly(2));
+    const hidden = plan(fogged(2));
+    const threat = (p: { rationale: string[]; warnings: string[] }) => Number(/~(\d+) threat/.exec(why(p))?.[1] ?? NaN);
+    expect(threat(shown)).toBeGreaterThanOrEqual(threat(hidden));
+  });
+});
+
+describe('a due Reinforcement card and the hidden stack cap (#164 review)', () => {
+  const g = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [2, 3], [3, 4]], [[101, 6, [1, 2]]]));
+  const b = board([mine(1, 1), mine(2, 3), ownerOnly(3), ownerOnly(4)]);
+  it('the cap is two turns of its income, the card left out (it is counted once, in the deploy)', () => {
+    const game = { turn: 6, fog: 'VeryFoggy', reinforcement: { firstTurn: 2, armies: 6, turnsPerCard: 3 } };
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 60, settings: STD, turn: 6, game, tracks: [track(FOE, { unexplained: 50 })], options: { goal: 'defend' } });
+    expect(why(plan)).toMatch(/Reinforcement card from turn 2/);
+    expect(why(plan)).toMatch(/up to 10 armies there/);
+  });
+});
+
+describe('a card play read under exact fog is named too (#164 review)', () => {
+  const g = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [2, 3], [3, 4]], []));
+  const b = board([mine(1, 5), mine(2, 5), foe(3, 4), foe(4, 4)]);
+  const clock = { firstTurn: 4, armies: 6, turnsPerCard: 3 };
+  it('the plan says the card is taken as played, and why it may not have been', () => {
+    const turns: OpponentTrack['turns'] = [4, 5].map((from) => ({
+      from, to: from + 1, observed: from === 5 ? 11 : 5, raw: from === 5 ? 11 : 5, cap: 20, counted: [], captured: [], fromFog: [], reveals: [], visibleIncome: 5, earned: 5, net: 0, losses: 0, fogArmies: 0, measured: 0, broken: [], brokenValue: 0, low: from === 5 ? 11 : 5, high: from === 5 ? 11 : 5, reinforced: [], grewFromFog: [], emptied: [], combat: 0,
+    }));
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, turn: 6, game: { turn: 6, fog: 'NoFog', reinforcement: clock }, tracks: [track(FOE, { turns })] });
+    expect(plan.warnings.join('\n')).toMatch(/player 20's Reinforcement card is taken as played on turn 5 \(a deployment above its exact income\).*errs low/i);
+  });
+});

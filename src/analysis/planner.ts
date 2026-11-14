@@ -165,11 +165,12 @@
 //     capturing turns per card played, never before the turn after the play); a warning names it.
 //     It is coarse both ways, and the warnings say so: one card at most is counted, though more may
 //     be in hand after a long time due; and under fog, income the fog hides can read as a play, so
-//     the card is dropped and the estimate errs low (a warning names the play it took).
+//     the card is dropped and the estimate errs low (a warning names the play it took, under exact
+//     income too: armies that came into view or were misread can read as one).
 //     #164, hidden stacks: an opponent's territory next to mine whose owner shows and whose armies
 //     the fog hides (Dense / Heavy fog) is one of its stacks in rule 1's threat, of its unaccounted
-//     armies (the tracker's `unexplained`, at most HIDDEN_POOL_INCOMES turns of its income; the
-//     guard alone without a track) — never unseen land and never a target (a warning says the win
+//     armies (the tracker's `unexplained`, at most HIDDEN_POOL_INCOMES turns of its income, a
+//     Reinforcement card left out; the guard alone without a track) — never unseen land and never a target (a warning says the win
 //     chance is unknown). The pool is one: its first hidden stack next to a territory of mine
 //     carries it, any other there the guard alone (movable 0).
 //     A large stack that left view (the tracker's `lostStacks`, for LOST_STACK_TURNS turns after it
@@ -178,7 +179,8 @@
 //     hides next to mine (one move a turn since it was seen, never through my land), a separate
 //     stack of its owner there in that border's threat (its armies less the guard; the larger of
 //     the two when that territory is also a hidden stack of its owner; its armies are part of the
-//     pool, so the pool's carrier on that border keeps only what the lost stacks leave of it), and
+//     pool, so the pool's carrier on that border keeps only what the lost stacks elsewhere leave
+//     of it, and at least a lost stack that can stand on the carrier itself), and
 //     a rationale line names it. Under Normal fog every territory next to mine shows, so it never
 //     stands there unseen: where it can stand beside a border of mine by next turn, a warning says
 //     so a turn ahead (not counted in this turn's holds). Arrivals assume one move a turn; with
@@ -3144,7 +3146,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    */
   function hiddenPool(player: number): { unexplained: number; cap: number | null } {
     const tr = input.tracks?.find((x) => x.playerId === player);
-    const income = Math.max(tr?.income ?? 0, estimates.get(player)?.estimate ?? 0);
+    // Its income, a Reinforcement card left out: the card is counted once, in the deploy.
+    const e = estimates.get(player);
+    const income = Math.max(tr?.income ?? 0, (e?.estimate ?? 0) - (e?.card?.armies ?? 0));
     return {
       unexplained: Math.max(0, Math.floor(tr?.unexplained ?? 0)),
       cap: income > 0 ? HIDDEN_POOL_INCOMES * income : null,
@@ -3295,15 +3299,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     }
     // #164: a lost stack's armies left the visible total, so they are part of its owner's
     // unaccounted armies: the pool's carrier keeps only what the lost stacks elsewhere on this
-    // border leave of it, so the two together are never more than the larger.
+    // border leave of it, so the two together are never more than the larger. A lost stack via the
+    // carrier itself is a stack seen there: the carrier keeps at least it.
     for (const [player, id] of carrier) {
       const p = byPlayer.get(player)!;
-      const lostElsewhere = (lostAt.get(t) ?? []).filter((l) => l.player === player && l.via !== id && !gone(l.via));
+      const theirs = (lostAt.get(t) ?? []).filter((l) => l.player === player && !gone(l.via));
+      const lostElsewhere = theirs.filter((l) => l.via !== id);
       if (!lostElsewhere.length) continue;
       const c = p.stacks.find((x) => x.id === id)!;
+      const viaCarrier = theirs.filter((l) => l.via === id).reduce((n, l) => Math.max(n, l.movable), 0);
       const pool = hiddenMovable(player);
-      if (c.movable > pool) continue; // a lost stack via the carrier itself already set it
-      c.movable = Math.max(0, pool - lostElsewhere.reduce((n, l) => n + l.movable, 0));
+      c.movable = Math.max(viaCarrier, pool - lostElsewhere.reduce((n, l) => n + l.movable, 0));
     }
     if (!byPlayer.size) return null;
     const each = [...byPlayer]
@@ -3522,9 +3528,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           warnings.push(
             `Player ${p} may hold a Reinforcement card from turn ${e.card.due} (the card clock${e.cardPlayed !== null ? `; it last played one on turn ${e.cardPlayed}` : ''}): +${e.card.armies} added to its deploy, ~${e.estimate} in all, until a deployment above its income is seen; one card at most is counted, though more may be in hand after a long time due.`,
           );
-        else if (e.cardPlayed !== null && e.source !== 'exact')
+        else if (e.cardPlayed !== null)
           warnings.push(
-            `Player ${p}'s Reinforcement card is taken as played on turn ${e.cardPlayed} (a deployment of a card's armies over its visible income), so none is added until the next can be due; income the fog hides can look the same, so it may still hold one and the estimate errs low.`,
+            e.source === 'exact'
+              ? `Player ${p}'s Reinforcement card is taken as played on turn ${e.cardPlayed} (a deployment above its exact income), so none is added until the next can be due; armies the board misread, or that moved into view out of a territory whose armies the fog hid, can look the same, so it may still hold one and the estimate errs low.`
+              : `Player ${p}'s Reinforcement card is taken as played on turn ${e.cardPlayed} (a deployment of a card's armies over its visible income), so none is added until the next can be due; income the fog hides can look the same, so it may still hold one and the estimate errs low.`,
           );
         if (e.source === 'exact') {
           const income = e.estimate - (e.card?.armies ?? 0);
