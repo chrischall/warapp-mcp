@@ -2151,8 +2151,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     when: on({ format: ['ffa'], privateMessaging: false }),
     text:
       'With private messaging off, most posters in a long forum debate read it as the host asking for no ' +
-      'hidden deals, by mail or anywhere else; a few call mail fair. Propose nothing in chat then: the offer ' +
-      'such players still accept is a border left quiet, with no deploys or attacks on it.',
+      'hidden deals, by mail or anywhere else; a few call mail fair. Keep any proposal in the game\'s public ' +
+      'chat, where every player can read it, and never take it to mail.',
     source: S.forumFfaChatEtiquette,
     basis: 'derived',
   },
@@ -2183,11 +2183,11 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'diplomacy',
     when: on({ format: ['ffa'] }),
     text:
-      'Put the scope and the end in a truce: name the territories or bonuses it covers, since an attack ' +
-      'outside them is no breach, and a turn limit or the notice to end it. Posters say a truce with no end ' +
-      'should be expected to break any turn. Record the terms with warapp_record_agreement.',
+      'A truce limited to named territories leaves every other border open: one poster who agreed one was ' +
+      'attacked outside it. Make it cover the whole shared front, or say plainly what it leaves out, and give ' +
+      'it a turn limit or a notice; one with no end may break any turn. Record it with warapp_record_agreement.',
     source: S.forumTreatyBreakingLater,
-    basis: 'source',
+    basis: 'derived',
   },
   {
     id: 'diplomacy-truce-two-left',
@@ -2249,8 +2249,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'diplomacy',
     when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
     text:
-      'Calling the others to gang up on the leader, or posting its income, is resented by many: posters call ' +
-      'it a popularity contest and block whoever sends it. Leave the board to make the case, and keep any ' +
+      'Calling the others to gang up on the leader, or posting its income, is resented by some players: one ' +
+      'calls it a popularity contest and blocks whoever sends it. Leave the board to make the case, and keep any ' +
       'message to your own position and your own border.',
     source: S.forumFfaChatEtiquette,
     basis: 'derived',
@@ -2282,20 +2282,20 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'diplomacy',
     when: (p) => p.format === 'ffa' && p.opponents === 2,
     text:
-      'With three players, two against one is common. The skill is not being the one: watch which pair has ' +
-      'stopped fighting, and if it is the other two, offer one of them a reason to turn, such as a quiet ' +
-      'border, before both reach you.',
+      'With three players, a forum poster says two against one is common and the skill is not being the one, ' +
+      'or breaking up the two. Our reading: the pair that has stopped fighting each other is the two; if it ' +
+      'is the other two, give one of them a reason to turn before both reach you.',
     source: S.forumFfaGames,
     basis: 'derived',
   },
   {
     id: 'diplomacy-fog-checkable-terms',
     topic: 'diplomacy',
-    when: on({ format: ['ffa'], fog: ['Foggy', 'VeryFoggy', 'ExtremeFog'] }),
+    when: on({ format: ['ffa'], fog: ['Foggy', 'ModerateFog', 'VeryFoggy', 'ExtremeFog'] }),
     text:
       'Diplomacy-style games mostly use no fog or light fog so players can see that the rules are kept. Under ' +
-      'heavier fog you see only what borders you: agree terms you can check there (no attacks across named ' +
-      'territories, a cap on the border armies), not promises about land out of sight.',
+      'heavier fog agree only terms you can check from your own side, such as no attacks across named ' +
+      'territories (an attack on you always shows where it came from), not promises about what you cannot see.',
     source: S.diplomacyGames,
     basis: 'derived',
   },

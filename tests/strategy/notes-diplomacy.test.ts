@@ -111,6 +111,9 @@ describe('diplomacy notes: selection', () => {
   it('checkable terms under fog that hides land; card farming only with cards', () => {
     expect(ids(profile())).toContain('diplomacy-fog-checkable-terms');
     expect(ids(profile({}, { fog: 'NoFog' }))).not.toContain('diplomacy-fog-checkable-terms');
+    expect(ids(profile({}, { fog: 'LightFog' }))).not.toContain('diplomacy-fog-checkable-terms');
+    for (const fog of ['ModerateFog', 'VeryFoggy', 'ExtremeFog'])
+      expect(ids(profile({}, { fog }))).toContain('diplomacy-fog-checkable-terms');
     expect(ids(profile())).not.toContain('diplomacy-card-farming');
     expect(ids(profile({}, { cards: true }))).toContain('diplomacy-card-farming');
   });
