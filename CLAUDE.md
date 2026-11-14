@@ -519,6 +519,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `warapp_link_session` is not registered, the session store reads as empty and refuses writes
   (`src/direct/session.ts`), the router is pinned to the browser bridge whatever `WARAPP_TRANSPORT`
   says (`createDirectFirstBridge`), and no hint suggests linking; `mint.yaml` keeps the bridge.
+- **End of game (#178).** `Game.endRules` holds the surrender, boot and AI settings; whether a surrender
+  needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback).
+  `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json`
+  (`warapp_get_game` adds the final result); the surrender preview reads the latest from there.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

@@ -193,6 +193,30 @@ describe('rule 0p.2: an FFA with two or more opponents left', () => {
     expect(why(p)).toMatch(/Not breaking B822 \(#822\) \(\+8 from player 20\): no second front in an FFA/);
   });
 
+  it('#167: the rule scales with my army lead — the neutral must earn similar × lead of the break', () => {
+    // My 6 against player 20's 4 in view (1.5×): the neutral's 1.00 per army is over 0.75 × the
+    // break's 1.28, so the break is skipped and the line says the threshold was scaled.
+    const p = planTurn(even({ adapt: true }));
+    expect(why(p)).toMatch(/\(it needs 0\.75× of it, scaled by my army lead of 1\.5×\)/);
+    // My 9 (2.25×): it needs 1.125× — the break is made.
+    const b9 = board([mine(1, 9), neutral(2, 2), enemy(5, 2), enemy(6, 2), enemy(9, 2, THIRD)]);
+    const p9 = planTurn(even({ adapt: true }, b9));
+    expect(attacks(p9).map((m) => m.to)).toContain(5);
+    expect(why(p9)).not.toMatch(/Not breaking/);
+    // My 14 (3.5×): off, and the plan says so.
+    const b14 = board([mine(1, 14), neutral(2, 2), enemy(5, 2), enemy(6, 2), enemy(9, 2, THIRD)]);
+    expect(why(planTurn(even({ adapt: true }, b14)))).toMatch(/FFA army lead: my 14 armies in view are 3\.5× player 20's 4/);
+  });
+
+  it('#167: a clear leader that is not me is never a second front — the others combine against it', () => {
+    // Player 20: 2 + 10 armies and ~13 income, strength 51; me 6 + 3 × 11 = 39: 1.31×, a clear leader.
+    const lead = board([mine(1, 6), neutral(2, 2), enemy(5, 2), enemy(6, 10), enemy(9, 2, THIRD)]);
+    const p = planTurn(even({ adapt: true }, lead));
+    expect(p.profile.ranking).toMatchObject({ leader: ENEMY, commonThreat: ENEMY, myRank: 2 });
+    expect(attacks(p).map((m) => m.to)).toContain(5);
+    expect(why(p)).not.toMatch(/Not breaking/);
+  });
+
   it('still breaks a player that threatens a bonus of mine', () => {
     // T3 (1 army) is my held B823 (+1), next to the enemy's T5: its 1 + ~5 can take it.
     const g3 = buildGraph(

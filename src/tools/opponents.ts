@@ -137,6 +137,8 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
               usedByPlanner: t.income !== null && t.turns.length >= TRACKED_MIN_TURNS,
             },
             unexplainedArmies: t.unexplained,
+            // #164: large stacks last seen on a territory hidden since (the planner counts each where it can reach).
+            ...(t.lostStacks?.length ? { lostStacks: t.lostStacks } : {}),
             inferredBonuses: t.inferred
               ? {
                   gap: t.inferred.gap,

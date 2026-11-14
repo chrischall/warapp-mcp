@@ -542,6 +542,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'territory does not count. Take the capture when the pieces are worth more than the armies it costs.',
     source: S.cards,
     basis: 'source',
+    encoded:
+      'with no capture planned, warapp_plan_turn takes the cheapest one that loses no more than the Reinforcement pieces a capturing turn brings are worth (fixed armies, or the card in hand when progressive; other cards unvalued; rule 4g, #127)',
   },
   {
     id: 'cards-order-delay',
@@ -812,7 +814,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'first, or you play Order Priority.',
     source: S.bomb,
     basis: 'source',
-    encoded: "warapp_plan_turn warns of borders that hold only while unbombed, once the card clock lets an opponent hold a Bomb (the plan's sizing does not yet halve them)",
+    encoded: 'once the card clock lets an opponent hold a Bomb, warapp_plan_turn sizes each border\'s hold against the attack next turn as if a bomb halved the stack (not two-step holds or the floor tier), splits the leftover over two stacks (not a stack concentrating for an attack), and warns of borders that still hold only while unbombed',
   },
   {
     id: 'cards-bomb-commander',

@@ -3,7 +3,8 @@
 // contact phase needs a real front (#132): an enemy stack that can take a territory of mine
 // as the board stands, or most of my borders facing enemies — not one enemy territory beside me. Pure and deterministic;
 // no I/O. The planner (rule 0p in planner.ts) reads it to pick a default goal and to tune
-// its scoring; the plan echoes it.
+// its scoring; the plan echoes it. #178: it counts the humans still playing and the AI opponents, and names who
+// the game ends with when the AIs surrender to the last human (`endsWith`).
 
 import type { BoardState } from '../board.js';
 import { carriesTeam } from '../teams.js';
@@ -14,6 +15,11 @@ import { neighborsOf, type MapGraph } from './graph.js';
 export const AHEAD_RATIO = 1.25;
 /** Behind when my income is at most this many times the strongest opponent's estimated income. */
 export const BEHIND_RATIO = 0.8;
+/**
+ * A player's strength in a free-for-all ranking (#167): its visible armies plus this many turns of
+ * its income — what it can field over the next few turns.
+ */
+export const STRENGTH_INCOME_TURNS = 3;
 
 export type GameFormat = '1v1' | 'ffa' | 'teams';
 export type GamePhase = 'opening' | 'expansion' | 'contact' | 'late';
@@ -26,6 +32,10 @@ export interface ProfilePlayer {
   team?: number;
   /** GameFeed state, e.g. `Playing`, `Eliminated`; absent counts as `Playing`. */
   state?: string;
+  /** #178: an AI seat (`isAI`). */
+  isAI?: boolean;
+  /** #178: a human whose seat an AI now plays (`humanTurnedIntoAI`). */
+  humanTurnedIntoAI?: boolean;
 }
 
 /** The settings the profile echoes; every one optional (off / unknown when absent). */
@@ -73,6 +83,8 @@ export interface ProfileInput {
    * standing note names them.
    */
   unseen?: ReadonlyArray<{ playerId: number; turnsUnseen: number; turnsUnseenAtLeast?: boolean; earnedAtLeast: number }>;
+  /** #178: the end-of-game settings the profile reads (`Game.endRules`). */
+  endRules?: { aisSurrenderWhenOneHumanRemains?: boolean };
 }
 
 export interface GameProfile {
@@ -96,7 +108,32 @@ export interface GameProfile {
    * most of it, but every opponent's income is tracked over several turns, #97), `null` when unknown.
    */
   standingSource: 'visible' | 'tracked' | null;
+  /**
+   * #167, a free-for-all only: every player in sight ranked by strength (visible armies +
+   * {@link STRENGTH_INCOME_TURNS} × income; an opponent's figures are lower bounds under fog),
+   * strongest first (ties: id). `leader` is the first; `myRank` is 1-based. `commonThreat` is the
+   * leader when it is not me — the player the others combine against.
+   */
+  ranking?: FfaRanking;
+  /** #178: humans still playing, me included (an AI seat, or a human an AI now plays, is not one). */
+  humansAlive: number;
+  /** #178: opponents still playing that an AI plays, by id. */
+  aiOpponents: number[];
+  /**
+   * #178: with `AIsSurrenderWhenOneHumanRemains` on, the one other human still playing (not a
+   * teammate): the AIs give up once one human is left, so the game ends with that player or me.
+   * `null` otherwise.
+   */
+  endsWith: number | null;
   notes: string[];
+}
+
+export interface FfaRanking {
+  leader: number;
+  myRank: number;
+  of: number;
+  commonThreat: number | null;
+  players: { playerId: number; armies: number; income: number; strength: number }[];
 }
 
 /** Player states that never held a seat: they did not start the game. */
@@ -131,6 +168,17 @@ export function gameProfile(input: ProfileInput): GameProfile {
   const opponents = players.filter((p) => !ally(p.id) && playing(p)).length;
   const started = players.filter((p) => !NEVER_SEATED.has(p.state ?? 'Playing')).length;
   const format: GameFormat = teams ? 'teams' : opponents <= 1 ? '1v1' : 'ffa';
+  // #178: who is human, and who the game ends with when the AIs surrender to the last human.
+  const machine = (p: ProfilePlayer) => p.isAI === true || p.humanTurnedIntoAI === true;
+  const humans = players.filter((p) => playing(p) && !machine(p));
+  const humansAlive = humans.length;
+  const aiOpponents = players.filter((p) => playing(p) && machine(p) && !ally(p.id)).map((p) => p.id).sort((a, b) => a - b);
+  const otherHumans = humans.filter((p) => p.id !== me);
+  let endsWith: number | null = null;
+  if (input.endRules?.aisSurrenderWhenOneHumanRemains === true && aiOpponents.length && otherHumans.length === 1 && !ally(otherHumans[0]!.id)) {
+    endsWith = otherHumans[0]!.id;
+    notes.push(`AIs surrender once one human remains: the game ends with player ${endsWith} or me, whatever the AIs hold.`);
+  }
 
   // ---- phase ----
   const mine = [...owners].filter(([, p]) => p === me).map(([t]) => t);
@@ -275,6 +323,28 @@ export function gameProfile(input: ProfileInput): GameProfile {
     }
   }
 
+  // ---- #167: who leads a free-for-all ----
+  let ranking: FfaRanking | undefined;
+  if (format === 'ffa' && mine.length) {
+    const incomeOf = new Map(input.estimates.filter((e) => !ally(e.playerId)).map((e) => [e.playerId, e.estimate]));
+    const rows = [
+      { playerId: me, armies: myArmies, income: input.income },
+      ...[...armiesBy]
+        .filter(([p]) => !ally(p))
+        .map(([p, armies]) => ({ playerId: p, armies, income: incomeOf.get(p) ?? 0 })),
+    ]
+      .map((r) => ({ ...r, strength: r.armies + STRENGTH_INCOME_TURNS * r.income }))
+      .sort((a, b) => b.strength - a.strength || a.playerId - b.playerId);
+    const leader = rows[0]!.playerId;
+    const myRank = rows.findIndex((r) => r.playerId === me) + 1;
+    ranking = { leader, myRank, of: rows.length, commonThreat: leader === me ? null : leader, players: rows };
+    notes.push(
+      leader === me
+        ? `FFA ranking: I lead ${rows.length} players in sight on strength (armies + ${STRENGTH_INCOME_TURNS} × income: ${rows[0]!.strength}${rows[1] ? ` against player ${rows[1].playerId}'s ${rows[1].strength}` : ''}); the others may combine against me.`
+        : `FFA ranking: player ${leader} leads on strength (armies + ${STRENGTH_INCOME_TURNS} × income: ${rows[0]!.strength}); I am ${myRank} of ${rows.length} in sight (${rows[myRank - 1]!.strength}). Opponents' figures are lower bounds under fog.`,
+    );
+  }
+
   return {
     format,
     opponents,
@@ -290,6 +360,10 @@ export function gameProfile(input: ProfileInput): GameProfile {
     phase,
     standing,
     standingSource,
+    ...(ranking ? { ranking } : {}),
+    humansAlive,
+    aiOpponents,
+    endsWith,
     notes,
   };
 }

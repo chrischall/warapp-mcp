@@ -396,3 +396,74 @@ describe('gameProfile: settings', () => {
     });
   });
 });
+
+describe('gameProfile: FFA ranking (#167)', () => {
+  const three = board([mine(1, 20), mine(2, 5), neutral(3, 2), enemy(4, 30, 20), neutral(5, 2), enemy(6, 4, 30), neutral(7, 2), neutral(8, 2)]);
+  const ffa = (over: Partial<ProfileInput> = {}) =>
+    gameProfile(
+      base({
+        board: three,
+        players: [{ id: ME }, { id: 20 }, { id: 30 }],
+        income: 8,
+        estimates: [
+          { playerId: 20, estimate: 6 },
+          { playerId: 30, estimate: 5 },
+        ],
+        ...over,
+      }),
+    );
+
+  it('ranks every player in sight by armies + 3 × income, and names the leader I am not', () => {
+    const p = ffa();
+    // Me 25 + 24 = 49, player 20 30 + 18 = 48, player 30 4 + 15 = 19.
+    expect(p.ranking).toEqual({
+      leader: ME,
+      myRank: 1,
+      of: 3,
+      commonThreat: null,
+      players: [
+        { playerId: ME, armies: 25, income: 8, strength: 49 },
+        { playerId: 20, armies: 30, income: 6, strength: 48 },
+        { playerId: 30, armies: 4, income: 5, strength: 19 },
+      ],
+    });
+    expect(p.notes.join('\n')).toMatch(/FFA ranking: I lead 3 players in sight/);
+    const behind = ffa({ income: 7 });
+    expect(behind.ranking).toMatchObject({ leader: 20, myRank: 2, commonThreat: 20 });
+    expect(behind.notes.join('\n')).toMatch(/FFA ranking: player 20 leads on strength .*; I am 2 of 3 in sight/);
+  });
+
+  it('is absent outside a free-for-all', () => {
+    expect(gameProfile(base()).ranking).toBeUndefined();
+  });
+});
+
+describe('gameProfile: humans, AIs and how the game ends (#178)', () => {
+  it('counts the humans still playing (an AI or a human turned into one is not), and names no end without the rule', () => {
+    const p = gameProfile(
+      base({
+        players: [{ id: ME }, { id: 20, isAI: true }, { id: 30, humanTurnedIntoAI: true }, { id: 40 }, { id: 50, state: 'Eliminated' }],
+      }),
+    );
+    expect(p.humansAlive).toBe(2);
+    expect(p.aiOpponents).toEqual([20, 30]);
+    expect(p.endsWith).toBeNull();
+  });
+
+  it('with AIs surrendering once one human remains, names the last other human as the one to beat', () => {
+    const p = gameProfile(
+      base({
+        players: [{ id: ME }, { id: 20, isAI: true }, { id: 40 }],
+        endRules: { aisSurrenderWhenOneHumanRemains: true },
+      }),
+    );
+    expect(p.endsWith).toBe(40);
+    expect(p.notes.join(' ')).toMatch(/AIs surrender once one human remains: the game ends with player 40 or me/);
+  });
+
+  it('names no one when two or more other humans remain, or none does', () => {
+    const rule = { aisSurrenderWhenOneHumanRemains: true };
+    expect(gameProfile(base({ players: [{ id: ME }, { id: 20 }, { id: 30 }, { id: 40, isAI: true }], endRules: rule })).endsWith).toBeNull();
+    expect(gameProfile(base({ players: [{ id: ME }, { id: 20, isAI: true }], endRules: rule })).endsWith).toBeNull();
+  });
+});

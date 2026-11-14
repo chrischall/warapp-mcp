@@ -83,6 +83,13 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   Cities and per-player income mods are **not detected** (no known settings key says they
   pay income; the `Commerce` key is present, as `{}`, even in a plain lobby game), so a game
   using them still gets the hard refusal and the owner must fall back to the in-game number.
+- **Wastelands and Commerce (#167).** `Wastelands` is `{ NumberOfWastelands, WastelandSize }` (verified
+  as zeros on a lobby game; `normalizeSettings` → `settings.wastelands`). With wastelands on, the planner
+  costs a fogged missing bonus member with the expected surcharge of being one (the picking board, where
+  wastelands are visible in a manual-distribution game, is not kept yet). `Commerce` is `{}` in a plain
+  game; a non-empty object is read as a commerce game (`settings.commerce`) and `warapp_plan_turn` warns
+  that gold, buying armies and cities are not modelled — **UNVERIFIED**: no commerce game's feed has been
+  seen (the bundle's commerce settings are `CommerceArmyCostMultiplier` and `CommerceCityBaseCost`).
 - **Trade-off — Sanctions:** the bundle cuts income only when a Sanctions card is actually
   *active* against the player, but this repo does not decode the live board's active-card list
   (its shape in `GetLatestGameInfo` is unverified), so the warning fires whenever the card is
@@ -380,6 +387,19 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   - The observed-deploy cap counts a bonus out of reach when any of its territories shows
     another owner (a player or a neutral) under a fog level that shows owners — owner-only
     included, whatever its armies.
+  - **Which game fog settings show every owner (#164) — UNVERIFIED live.** From the wiki's Fog
+    page: `NoFog`, `LightFog` and `ModerateFog` (Dense fog) show every territory's owner, so an
+    opponent's income is exactly its base plus the bonuses it holds; `ModerateFog` hides every
+    stack, and `VeryFoggy` (Heavy fog) shows the owner of a territory next to mine but not its
+    armies. The engine lists Dense before Normal, so the planner matches the setting by name
+    (`OWNERS_SHOWN_FOG`) and also requires the board to show every territory's owner; it never
+    compares fog levels by position. An owner-only enemy territory next to mine is a threat of its
+    owner's unaccounted armies (the tracker's `unexplained`, at most two turns of its income in
+    one place; else the guard alone) plus its deploy, and never a target (its defenders are
+    unknown). That pool is counted once per border of mine: with several of its owner-only
+    territories next to it, the rest stand at the guard alone. Under fog that hides every stack the
+    tracker credits each owner-only territory an opponent visibly took (the guard left there and
+    the capture's cost), so `unexplained` is not simply everything it earned.
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
   through raw. `GetChat` is passed through raw too, and it is third-party text.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a
@@ -410,6 +430,28 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
 
 When an in-progress game is captured live, record its shape here, add an anonymized fixture,
 tighten `boardFromStanding`, and set `verified: true`.
+
+## End of game, boot and AI seats — keys verified (lobby), meanings UNVERIFIED (#178)
+
+`parseEndRules` (`Game.endRules`) reads, from `settings`: `InstantSurrender`,
+`SurrenderedPlayersTurnIntoAIs`, `BootedPlayersTurnIntoAIs`, `TimesCanComeBackFromAI`,
+`AIsSurrenderWhenOneHumanRemains`, `DirectBoot` / `AutoBoot` (minutes; `2880.0` on the lobby),
+`BankingBootTimes` (`{ BankAmount, InitialBankInMinutes }`) and `AllowVacations`. The keys and
+types are verified on the lobby fixture.
+
+- `InstantSurrender` came as the **string** `"Instant"`; the client bundle reads the setting as a
+  boolean, and its surrender toast says "has surrendered" when it is on and "'s surrender has been
+  accepted" when off. Read: booleans and `True`/`False`, `Instant` = on, a few spellings of "not
+  instant" = off; any other string is kept (`instantSurrenderRaw`) and treated as unknown.
+  **UNVERIFIED:** the string GameFeed sends when it is off, and whether a two-player game with it off
+  really waits for the opponent to accept. `warapp_surrender` reads acceptance from it, falling back
+  to the player count (more than two players) when it does not read.
+- `AIsSurrenderWhenOneHumanRemains` (wiki): once one human is left the AIs give up, so the profile's
+  `endsWith` names the last other human. **UNVERIFIED** live.
+- Boots (`leavers`): a human still `Playing` who has not committed, with the minutes left until
+  `AutoBoot` / `DirectBoot`, counted from the game's `lastTurnTime`. **UNVERIFIED:** what
+  `lastTurnTime` marks (taken as the moment the turn began); banked boot time and vacations are not
+  counted. A booted seat becomes an AI when `BootedPlayersTurnIntoAIs`, else its land turns neutral.
 
 ## A lobby's settings for the join screen — UNVERIFIED (#132)
 

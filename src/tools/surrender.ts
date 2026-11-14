@@ -14,7 +14,8 @@ import {
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
-import type { Game, Player } from '../normalize.js';
+import { leavers, type Game, type Player } from '../normalize.js';
+import { readOutlookLog } from '../outlook-log.js';
 import { Method, writeSurrenderParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, respond, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
@@ -39,6 +40,38 @@ interface SurrenderState {
   name: string;
   me: number;
   undo: boolean;
+  /** #178: the others must accept the surrender (from the setting, else the player count). */
+  acceptanceNeeded: boolean;
+}
+
+/** #178: opponents close to a boot are listed when the nearest boot is this close (a day). */
+const LEAVER_WINDOW_MINUTES = 24 * 60;
+
+/**
+ * #178: whether the others must accept a surrender — from `InstantSurrender` when it reads, else
+ * from the player count (more than two players still in), as before the setting was read.
+ */
+function acceptanceOf(game: Game, players: number): { needed: boolean; from: 'setting' | 'player count'; note: string } {
+  const instant = game.endRules?.instantSurrender;
+  if (instant === true)
+    return { needed: false, from: 'setting', note: 'Surrender is instant in this game: it takes effect at once, without the others accepting it.' };
+  if (instant === false)
+    return {
+      needed: true,
+      from: 'setting',
+      note:
+        'Surrender is not instant in this game: the others must accept it before it ends your game, and until then ' +
+        'it can be taken back (undo).' +
+        (players <= 2 ? ' UNVERIFIED: whether a two-player game really waits for the opponent to accept.' : ''),
+    };
+  const raw = game.endRules?.instantSurrenderRaw;
+  return {
+    needed: players > 2,
+    from: 'player count',
+    note:
+      `The InstantSurrender setting could not be read${raw !== undefined ? ` (${JSON.stringify(raw)})` : ' (not sent)'}, so this goes by the player count: ` +
+      (players > 2 ? 'with more than two players, the others must accept the surrender.' : 'with two players, a surrender ends the game at once.'),
+  };
 }
 
 function refuse(message: string, hint: string): never {
@@ -80,11 +113,13 @@ function surrenderable(game: Game, me: number, undo: boolean): Player {
       'Check warapp_get_game.',
     );
   }
-  // GameFeed exposes no pending-surrender flag, so this can only refuse the two-player
-  // case (where a surrender ends the game at once); with more players `undo` is sent.
-  if (undo && activePlayers(game).length <= 2) {
+  // GameFeed exposes no pending-surrender flag, so this can only refuse where a surrender is never
+  // pending: an instant surrender (#178: from the setting), else the two-player case.
+  if (undo && !acceptanceOf(game, activePlayers(game).length).needed) {
     refuse(
-      `There is no pending surrender to take back in game ${game.id}: with two players a surrender ends the game at once.`,
+      game.endRules?.instantSurrender === true
+        ? `There is no pending surrender to take back in game ${game.id}: surrender is instant in this game, so it is never pending.`
+        : `There is no pending surrender to take back in game ${game.id}: with two players a surrender ends the game at once.`,
       'Check warapp_get_game.',
     );
   }
@@ -104,10 +139,13 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
         defineWrite({
           name: 'warapp_surrender',
           description:
-            'Surrender a war.app (Warzone) game as the signed-in account: you lose it and cannot rejoin. In a game ' +
-            'of more than two players the surrender waits for the others to accept it (reported `pending`); ' +
-            '`undo: true` takes back such a pending surrender. The game is read from GameFeed first (finished ' +
-            'games and games you are not playing are refused) and the outcome is read back from GameFeed.' +
+            'Surrender a war.app (Warzone) game as the signed-in account: you lose it and cannot rejoin. When the ' +
+            "game's InstantSurrender setting asks for acceptance (unread: with more than two players) the surrender " +
+            'waits for the others to accept it (reported `pending`); `undo: true` takes back such a pending ' +
+            'surrender. The preview shows what bears on the decision: the outlook warapp_plan_turn last logged and ' +
+            'its basis, AI opponents, whether acceptance is needed, what your land becomes (AI or neutral) and ' +
+            'opponents close to a boot. The game is read from GameFeed first (finished games and games you are not ' +
+            'playing are refused) and the outcome is read back from GameFeed.' +
             `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
           annotations: toolAnnotations({
             title: 'Surrender a war.app game',
@@ -137,6 +175,22 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
             const seat = surrenderable(game, me, takeBack);
             const name = gameLabel(game);
             const players = activePlayers(game).length;
+            const acceptance = acceptanceOf(game, players);
+            // #178: what bears on the decision — the outlook warapp_plan_turn last logged, the AI
+            // opponents, what my land becomes, and opponents close to a boot.
+            const log = ctx.dataDir ? await readOutlookLog(ctx.dataDir, gameId, me) : undefined;
+            const outlook = log?.latest
+              ? { turn: log.latest.turn, state: log.latest.state, heldTurns: log.latest.heldTurns, basis: log.latest.basis }
+              : { state: null, note: 'No outlook logged for this game: warapp_plan_turn records one each turn it plans.' };
+            const aiOpponents = game.players
+              .filter((p) => p.id !== me && p.state === PLAYING && (p.isAI || p.humanTurnedIntoAI))
+              .map((p) => ({ id: p.id, name: untrustedText(p.name) }));
+            const surrenderedToAI = game.endRules?.surrenderedTurnIntoAI;
+            const soon = leavers(game, Date.now(), { withinMinutes: LEAVER_WINDOW_MINUTES });
+            const nameOf = (id: number) => untrustedText(game.players.find((p) => p.id === id)?.name ?? '');
+            const leaving = soon.players
+              .filter((l) => l.playerId !== me)
+              .map(({ playerId, ...rest }) => ({ id: playerId, name: nameOf(playerId), ...rest }));
             // The sentences name the game by id only: its name is its creator's words and
             // goes, delimited, in `game.name` (the preview sits beside the confirmToken).
             const summary = takeBack
@@ -156,16 +210,21 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                     : `This ENDS your game ${gameId} — you lose it and cannot rejoin.`,
                   account: shownAccount(seat.name, me),
                   game: { id: gameId, name: game.name === undefined ? null : untrustedText(game.name), state: game.state, playersStillIn: players },
-                  ...(takeBack || players <= 2
+                  ...(takeBack ? {} : { acceptance }),
+                  ...(takeBack || !acceptance.needed
                     ? {}
-                    : { note: 'With more than two players, the others must accept the surrender before it ends your game.' }),
+                    : { note: 'The others must accept the surrender before it ends your game.' }),
+                  outlook,
+                  aiOpponents,
+                  yourLandBecomes: surrenderedToAI === undefined ? null : surrenderedToAI ? 'AI' : 'neutral',
+                  ...(leaving.length ? { leavers: { players: leaving, unverified: soon.unverified } } : {}),
                   untrusted: UNTRUSTED_PREVIEW_NOTE,
                 },
               },
-              state: { gameId, name, me, undo: takeBack } satisfies SurrenderState,
+              state: { gameId, name, me, undo: takeBack, acceptanceNeeded: acceptance.needed } satisfies SurrenderState,
             };
           },
-          async execute({ gameId, name, me, undo }: SurrenderState) {
+          async execute({ gameId, name, me, undo, acceptanceNeeded }: SurrenderState) {
             await requireApprovedAccount(ctx, writeAccount(me));
             const game = { id: gameId, name };
             try {
@@ -214,7 +273,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                     'pending (and is now taken back) cannot be read; if none was, nothing changed.',
                 };
               }
-            } else if (seat?.state === PLAYING && activePlayers(after).length > 2) {
+            } else if (seat?.state === PLAYING && acceptanceNeeded) {
               return {
                 status: 'pending' as const,
                 game,
@@ -223,7 +282,7 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
                 // and the seat is still Playing, which is what a pending surrender looks like.
                 message:
                   'war.app accepted the surrender and you are still playing, so it should be pending: the other ' +
-                  'players must accept it before it ends your game. (GameFeed shows no pending state, so this is ' +
+                  'players must accept it before it ends your game (the game asks for acceptance). (GameFeed shows no pending state, so this is ' +
                   'inferred, not read.)',
               };
             }

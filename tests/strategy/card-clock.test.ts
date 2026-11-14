@@ -2,7 +2,7 @@
 // (pieces per card, starting pieces, guaranteed pieces per turn, pieces handed out per turn).
 import { describe, expect, it } from 'vitest';
 import { normalizeSettings } from '../../src/normalize.js';
-import { cardClock } from '../../src/strategy/card-clock.js';
+import { capturePieceValue, cardClock } from '../../src/strategy/card-clock.js';
 import { fixtureSettings } from '../analysis/helpers.js';
 
 const card = (o: Record<string, unknown>) => ({ NumPieces: 4, InitialPieces: 0, MinimumPiecesPerTurn: 0, Weight: 1, ...o });
@@ -115,5 +115,48 @@ describe('cardClock', () => {
   it('gives no piece value when the Reinforcement card is not a fixed number of armies', () => {
     const clock = cardClock(settings({ NumberOfCardsToReceiveEachTurn: 1, ReinforcementCard: card({ MinimumPiecesPerTurn: 1 }) }))!;
     expect(clock.cards[0]!.pieceValue).toBeUndefined();
+  });
+});
+
+describe('capturePieceValue (#127): what a turn with a capture is worth in card pieces', () => {
+  it('a fixed Reinforcement card: its expected pieces a capturing turn × its armies over its pieces', () => {
+    // 2 pieces a turn, 1 of them always Reinforcement, the other drawn between it and Order Delay
+    // (equal weights): 1.5 Reinforcement pieces a turn, at 5 armies / 4 pieces.
+    const v = capturePieceValue(
+      settings({
+        NumberOfCardsToReceiveEachTurn: 2,
+        ReinforcementCard: card({ NumPieces: 4, MinimumPiecesPerTurn: 1, FixedArmies: 5 }),
+        OrderDelayCard: card({ NumPieces: 5 }),
+      }),
+    );
+    expect(v).toMatchObject({ armies: 1.88, reinforcementPieces: 1.5, armiesPerCard: 5, pieces: 4 });
+    expect(v.why).toMatch(/1\.5 Reinforcement pieces/);
+  });
+
+  it('a progressive card is valued at the armies of the Reinforcement card in hand', () => {
+    const s = fixtureSettings(); // Mode 1, no FixedArmies: 1 + 5 × 1/6 Reinforcement pieces of 5.
+    expect(capturePieceValue(s).armies).toBeNull();
+    expect(capturePieceValue(s).why).toMatch(/not a fixed number of armies/);
+    const v = capturePieceValue(s, 12);
+    expect(v.armies).toBeCloseTo((1 + 5 / 6) * (12 / 5), 1);
+    expect(v.why).toMatch(/the Reinforcement card in hand \(12 armies\)/);
+  });
+
+  it('no Reinforcement card in play: the other cards have no army value here', () => {
+    const v = capturePieceValue(settings({ NumberOfCardsToReceiveEachTurn: 1, BombCard: card({ MinimumPiecesPerTurn: 1 }) }));
+    expect(v.armies).toBeNull();
+    expect(v.why).toMatch(/no Reinforcement card/);
+    expect(capturePieceValue(undefined).armies).toBeNull();
+  });
+
+  it('a Reinforcement card that is never drawn is worth nothing a turn', () => {
+    const v = capturePieceValue(
+      settings({
+        NumberOfCardsToReceiveEachTurn: 1,
+        ReinforcementCard: card({ Weight: 0, FixedArmies: 5 }),
+        BombCard: card({ MinimumPiecesPerTurn: 1 }),
+      }),
+    );
+    expect(v.armies).toBe(0);
   });
 });

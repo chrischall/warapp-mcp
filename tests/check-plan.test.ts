@@ -1,11 +1,18 @@
 // warapp_check_plan: a list of orders stress-tested on the live board against each opponent's
 // single replies. Synthetic board on the anonymized lobby fixture's map; no war.app traffic.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as analysis from '../src/analysis/index.js';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { CHECK_PLAN_NOT_COVERED } from '../src/tools/check-plan.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+
+// A pass-through spy on planEnemyEstimates, to see what warapp_check_plan hands it (#164).
+vi.mock('../src/analysis/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/analysis/index.js')>();
+  return { ...actual, planEnemyEstimates: vi.fn(actual.planEnemyEstimates) };
+});
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -147,6 +154,26 @@ describe('warapp_check_plan', () => {
     const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_check_plan')!;
     expect(tool.annotations?.readOnlyHint).toBe(true);
     expect(tool.description).toMatch(/never submits orders/);
+  });
+
+  it("#164: passes the fog setting and an opponent's Reinforcement clock to the estimates", async () => {
+    const spy = vi.mocked(analysis.planEnemyEstimates);
+    const orders = [{ kind: 'deploy', territory: 159, armies: 5 }];
+    // The fixture's Reinforcement card is progressive with none in hand: what it adds is unknown.
+    h = await live(at(20, 20, 3));
+    spy.mockClear();
+    const plain = await check({ orders });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]![0].game).toMatchObject({ fog: 'Foggy' });
+    expect(spy.mock.calls[0]![0].game).not.toHaveProperty('reinforcement');
+    await h.harness.close();
+    // A fixed 20-army card, in a hand from the start: Bob's deploy carries it.
+    const fixed = { ReinforcementCard: { NumPieces: 1, InitialPieces: 1, MinimumPiecesPerTurn: 1, Weight: 1.0, FixedArmies: 20 } };
+    h = await live(at(20, 20, 3), 'Playing', {}, fixed);
+    spy.mockClear();
+    const carded = await check({ orders });
+    expect(spy.mock.calls[0]![0].game).toMatchObject({ fog: 'Foggy', reinforcement: expect.objectContaining({ armies: 20 }) });
+    expect(carded.enemyDeploy[0]!.deploy).toBe(plain.enemyDeploy[0]!.deploy + 20);
   });
 
   it('finds no harmful reply for orders that leave every border holding', async () => {

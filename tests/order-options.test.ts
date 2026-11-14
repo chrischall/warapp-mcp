@@ -390,11 +390,14 @@ describe('check_plan and plan_turn: order options and the guard (#165)', () => {
     expect(r.warnings.join('\n')).not.toMatch(/Guard is off/);
   });
 
-  it('plan_turn warns when its plan leaves a territory empty with the guard off', async () => {
+  // #165: the planner now keeps one army on a territory next to an enemy (this plan withdraws all
+  // but one from its conceded border), so the "left empty" warning has nothing to name here.
+  it('plan_turn keeps one army next to an enemy with the guard off, and says so', async () => {
     const s = server();
     h = await liveHarness({ feed: [feedGame({ OneArmyStandsGuard: false })], pages: ME_PAGE, warapp: s.warapp });
-    const plan = payload<{ warnings: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    expect(plan.warnings.join('\n')).toMatch(/One Army Must Stand Guard is off/);
+    const plan = payload<{ warnings: string[]; rationale: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+    expect(plan.rationale.join('\n')).toMatch(/One Army Must Stand Guard is off: .* keeps one army \(next to an enemy\)/);
+    expect(plan.warnings.join('\n')).not.toMatch(/these orders leave .* at 0 armies/);
   });
 });
 

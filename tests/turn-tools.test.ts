@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
-import { attackSizes, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
+import { attackSizes, commerceWarning, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { untrustedText } from '../src/tools/common.js';
 import { normalizeMap } from '../src/normalize.js';
 import { AHEAD_PRESSURE_FACTOR, PRESSURE_FACTOR } from '../src/analysis/planner.js';
@@ -14,6 +14,8 @@ import { overlapRawMap } from './analysis/helpers.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import { boardIncome } from '../src/analysis/player.js';
 import { readCachedOrders } from '../src/trend.js';
+import { writeAward, writePickList } from '../src/pick-list.js';
+import { writeFirstMover } from '../src/move-order.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
@@ -630,6 +632,31 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
   });
 
+  it('(h) reports the outlook once 3 turns of boards agree, and logs it name-free per game (#178)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const first = payload<PlanPayload & { outlook: { state: string | null; basis: string } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(first.outlook.state).toBeNull();
+    expect(first.outlook.basis).toMatch(/Only 1 turn of boards/);
+    const dir = h.dataDir;
+    await h.harness.close();
+    let last: { outlook: { state: string | null; basis: string; turns?: unknown[] } } | undefined;
+    for (const done of ['3', '4', '5']) {
+      h = await liveHarness({ dataDir: dir, feed: [game('Playing', { numberOfTurns: done })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+      last = payload(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+      await h.harness.close();
+    }
+    h = undefined;
+    // Nothing changed hands along the Ann ─ Bob front for three turns (four boards: each turn against the one before).
+    expect(last!.outlook.state).toBe('stalemate');
+    expect(last!.outlook.turns).toHaveLength(3);
+    const log = JSON.parse(readFileSync(join(dir, 'outlook', `${GAME}.json`), 'utf8')) as { turns: object; latest: { state: string } };
+    expect(Object.keys(log.turns)).toEqual(['3', '4', '5', '6']);
+    expect(log.latest.state).toBe('stalemate');
+    expect(JSON.stringify(log)).not.toMatch(/Ann|Bob/);
+  });
+
   it('(h) the verified cached board of the previous turn beats an unverified history standing (#131)', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
@@ -853,6 +880,19 @@ describe('plannerSettings', () => {
     // Army cap (#104): armies above it are free to spend; null means no cap.
     expect(plannerSettings({ cards: [], raw: {}, armyCap: 8 })).toEqual({ armyCap: 8 });
     expect(plannerSettings({ cards: [], raw: {}, armyCap: null })).toEqual({});
+    // Wastelands (#167): passed through when there are any.
+    expect(plannerSettings({ cards: [], raw: {}, wastelands: { count: 3, size: 12 } })).toEqual({ wastelands: { count: 3, size: 12 } });
+    expect(plannerSettings({ cards: [], raw: {}, wastelands: { count: 0, size: 0 } })).toEqual({});
+  });
+});
+
+describe('commerceWarning (#167)', () => {
+  it('says gold and cities are not modelled in a commerce game, and nothing otherwise', () => {
+    expect(commerceWarning(undefined)).toEqual([]);
+    expect(commerceWarning({ cards: [], raw: {}, commerce: false })).toEqual([]);
+    const w = commerceWarning({ cards: [], raw: {}, commerce: true });
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(/commerce game.*gold.*cities/i);
   });
 });
 
@@ -1553,6 +1593,39 @@ describe('cards in the turn tools', () => {
     const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.cards).toEqual({ hand: [], maxCardsHold: 5, playRequired: false, plays: [], discards: [], armiesFromCards: 0 });
     expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
+  });
+
+  it('plan_turn values a capture by its card pieces (#127): with no other capture, it takes one worth them', async () => {
+    // Ann holds bonus 118 (159, 161, 157) against Bob's 158 (12); Bob's 134 keeps him from being
+    // finished. 135 is a 12-neutral in a bonus too costly to work on: under `defend` nothing is
+    // captured, unless a capture's card pieces are worth what it loses (8, to a fixed Reinforcement
+    // card of 20 armies, one piece a card). #164: Bob may hold that card too, so 159 holds against
+    // his 11 + 5 + 20 and still has the armies to attack.
+    const quiet: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 60 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 8 },
+      { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 8 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 12 },
+      { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 5 },
+      { id: 135, fogLevel: 1, owner: 0, armies: 12 },
+    ];
+    const withCards = (settings: Record<string, unknown>) =>
+      game('Playing', { settings: { ...modelledSettings(), ...settings } });
+    const call = async () =>
+      payload<CardsPayload>(await h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }));
+    h = await liveHarness({ feed: [withCards({})], warapp: routes({ [Method.GetLatestGameInfo]: board(quiet) }) });
+    const off = await call();
+    expect(off.orders.filter((o) => o.kind === 'move')).toEqual([]);
+    expect(off.rationale.join('\n')).not.toMatch(/card pieces/);
+    await h.harness.close();
+    const fixed = { ReinforcementCard: { NumPieces: 1, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1.0, FixedArmies: 20 } };
+    h = await liveHarness({ feed: [withCards(fixed)], warapp: routes({ [Method.GetLatestGameInfo]: board(quiet) }) });
+    const on = await call();
+    expect(on.orders).toContainEqual(expect.objectContaining({ kind: 'move', from: 159, to: 135 }));
+    expect(on.rationale.join('\n')).toMatch(/Attack Knife Hills \(#135\) from Hornwood \(#159\) with \d+: a capture earns this turn's card pieces, worth ~\d+ armies, and this one loses ~8 \(#127\)/);
+    // #164: the card clock reaches the threat model.
+    expect(on.warnings.join('\n')).toMatch(/may hold a Reinforcement card from turn \d+ \(the card clock\): \+20/);
+    expect(off.warnings.join('\n')).not.toMatch(/Reinforcement card from turn/);
   });
 
   it('plan_turn over the hold limit (6/5) keeps Order Delay and Order Priority: the Spy goes (#163), never playing Blockade or Order Delay', async () => {
@@ -2627,5 +2700,165 @@ describe('Income on an overlapping-bonus map (#85)', () => {
     const res = await h.call('warapp_analyze_board', { game_id: GAME, player: 'Ann' });
     expect(res.isError).toBeFalsy();
     expect(payload<{ income: { total: number } }>(res).income.total).toBe(BOARD_INCOME);
+  });
+});
+
+describe('warapp_plan_turn finishing a player off (#179): the move order, the card clock and the full view', () => {
+  // A duel on turn 3: Bob is down to Bolton Moors (158, 4 armies), between Ann's Hornwood (159)
+  // and Sheepshead Hills (161, 30 each); every other neighbour of 158 is a visible neutral, so
+  // finishing him off is an elimination. Ann holds an Order Priority card.
+  const OP = 'fedcba9876543210fedcba9876543210';
+  const FINISH: SyntheticTerritory[] = [
+    { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 30 },
+    { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 30 },
+    { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 4 },
+    { id: 157, fogLevel: 1, owner: 0, armies: 2 },
+    { id: 135, fogLevel: 1, owner: 0, armies: 2 },
+    { id: 134, fogLevel: 1, owner: 0, armies: 2 },
+  ];
+  const duel = (settings: Record<string, unknown> = {}) => {
+    const f = lobbyFixture();
+    const [a, b] = f.players as Array<Record<string, string>>;
+    return game('Playing', {
+      players: [
+        { ...a, id: ANN.feed, name: 'Ann', state: 'Playing' },
+        { ...b, id: BOB.feed, name: 'Bob', state: 'Playing' },
+      ],
+      settings: { ...modelledSettings(), MoveOrder: 'Cycle', ...settings },
+    });
+  };
+  const warapp = routes({
+    [Method.GetLatestGameInfo]: () =>
+      ({ body: (w) => writeLatestGameInfo(w, FINISH, [ANN.inGame, BOB.inGame], { [ANN.inGame]: [{ id: OP, type: 4 }] }) }) satisfies Partial<ReplyFrame>,
+  });
+  interface FinishPayload extends PlanPayload {
+    eta?: { eliminate: Record<string, { turns: number | null; atLeast: boolean; distance: number; armies: number | null }> };
+    exits?: Array<{ player: number; stacks: Array<{ territory: Named; movable: number; own: Named[]; neutrals: Named[]; mine: Named[] }> }>;
+  }
+  const plan = async (args: Record<string, unknown> = {}) =>
+    payload<FinishPayload>(await h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', ...args }));
+  const COVER = new RegExp(`Cover player ${BOB.feed}'s exits \\(#179\\)`);
+  const FINISHED = new RegExp(`Finish off player ${BOB.feed}`);
+
+  it('the award\'s first mover stands in for first_mover: moving first, no cover and no card', async () => {
+    // Unknown order: the exits are covered and Order Priority is advised for the kill.
+    h = await liveHarness({ feed: [duel()], warapp });
+    const unknown = await plan();
+    expect(unknown.rationale.join('\n')).toMatch(FINISHED);
+    expect(unknown.rationale.join('\n')).toMatch(COVER);
+    expect(unknown.cardAdvice).toBe('order-priority');
+    await h.harness.close();
+
+    // Awarded second under a cyclic order: Ann moves first on turn 3 (#174).
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-finish-'));
+    const me = Number(ANN.feed);
+    await writePickList(dir, GAME, me, [159, 158, 161]);
+    await writeAward(dir, GAME, me, {
+      granted: [159, 161],
+      unlisted: [],
+      opponentStarts: [158],
+      allStartsKnown: true,
+      role: 'second',
+      opponentFirstAward: null,
+    });
+    h = await liveHarness({ feed: [duel()], warapp, dataDir: dir });
+    const first = await plan();
+    expect(first.rationale.join('\n')).toMatch(FINISHED);
+    expect(first.rationale.join('\n')).not.toMatch(COVER);
+    expect(first.cardAdvice).toBeNull();
+    // The caller's word still wins over the award.
+    const second = await plan({ first_mover: 'opponent' });
+    expect(second.rationale.join('\n')).toMatch(COVER);
+    expect(second.cardAdvice).toBe('order-priority');
+  });
+
+  it('moving first, the card clock turns the contested Order Priority advice on', async () => {
+    // Order Priority off: Bob cannot hold one, so moving first needs no card.
+    h = await liveHarness({ feed: [duel()], warapp });
+    const off = await plan({ first_mover: 'me' });
+    expect(off.cardAdvice).toBeNull();
+    await h.harness.close();
+    // In play with every piece at the start: Bob may hold one by now, and two cards cancel.
+    const settings = { OrderPriorityCard: { NumPieces: 1, InitialPieces: 1, MinimumPiecesPerTurn: 0, Weight: 1.0 } };
+    h = await liveHarness({ feed: [duel(settings)], warapp });
+    const on = await plan({ first_mover: 'me' });
+    expect(on.cardAdvice).toBe('order-priority');
+    expect(on.rationale.join('\n')).toMatch(new RegExp(`player ${BOB.feed} may hold an Order Priority card: two cancel`));
+  });
+
+  it('the card clock sizes holds for an opponent\'s Bomb (#163)', async () => {
+    h = await liveHarness({ feed: [duel()], warapp });
+    const off = await plan();
+    expect(off.rationale.join('\n')).not.toMatch(/may hold a Bomb/);
+    await h.harness.close();
+    // In play with every piece at the start: Bob may hold one by now.
+    const settings = { BombCard: { NumPieces: 1, InitialPieces: 1, MinimumPiecesPerTurn: 0, Weight: 1.0 } };
+    h = await liveHarness({ feed: [duel(settings)], warapp });
+    const on = await plan();
+    expect(on.rationale.join('\n')).toMatch(/An opponent may hold a Bomb \(#163\)/);
+    await h.harness.close();
+    // Pieces only from captures, none yet: no Bomb can be in a hand on turn 3.
+    const later = { BombCard: { NumPieces: 10, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1.0 }, NumberOfCardsToReceiveEachTurn: 1 };
+    h = await liveHarness({ feed: [duel(later)], warapp });
+    expect((await plan()).rationale.join('\n')).not.toMatch(/may hold a Bomb/);
+  });
+
+  it('a remembered first mover (#127) drives the #179 card and cover the same way', async () => {
+    // first_mover given on turn 2 as the opponent's: turn 3 alternates to Ann moving first.
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-finish-remembered-'));
+    const me = Number(ANN.feed);
+    await writeFirstMover(dir, GAME, me, { turn: 2, firstMover: 'opponent', source: 'explicit' });
+    h = await liveHarness({ feed: [duel()], warapp, dataDir: dir });
+    const first = await plan();
+    expect((first as unknown as { firstMover: unknown }).firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect(first.rationale.join('\n')).toMatch(FINISHED);
+    expect(first.rationale.join('\n')).not.toMatch(COVER);
+    expect(first.cardAdvice).toBeNull();
+    expect(first.orders.some((o) => o.kind === 'card' && o.card === OP)).toBe(false);
+    await h.harness.close();
+
+    // Remembered as Bob first on turn 3: the exits are covered and the card is advised.
+    const dir2 = mkdtempSync(join(tmpdir(), 'warapp-mcp-finish-remembered-'));
+    await writeFirstMover(dir2, GAME, me, { turn: 1, firstMover: 'opponent', source: 'explicit' });
+    h = await liveHarness({ feed: [duel()], warapp, dataDir: dir2 });
+    const second = await plan();
+    expect(second.rationale.join('\n')).toMatch(COVER);
+    expect(second.cardAdvice).toBe('order-priority');
+  });
+
+  it('under a no-luck cycle the award says nothing of the first mover, so the card stays advised', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-finish-noluck-'));
+    const me = Number(ANN.feed);
+    await writePickList(dir, GAME, me, [159, 158, 161]);
+    await writeAward(dir, GAME, me, {
+      granted: [159, 161],
+      unlisted: [],
+      opponentStarts: [158],
+      allStartsKnown: true,
+      role: 'second',
+      opponentFirstAward: null,
+    });
+    h = await liveHarness({ feed: [duel({ MoveOrder: 'NoLuckCycle' })], warapp, dataDir: dir });
+    const res = await plan();
+    expect((res as unknown as { firstMover: unknown }).firstMover).toBeNull();
+    expect(res.rationale.join('\n')).toMatch(COVER);
+    expect(res.cardAdvice).toBe('order-priority');
+  });
+
+  it('eta and exits come in the full view only, with territory names', async () => {
+    h = await liveHarness({ feed: [duel()], warapp });
+    const compact = await plan();
+    expect(compact).not.toHaveProperty('eta');
+    expect(compact).not.toHaveProperty('exits');
+    const full = await plan({ view: 'full' });
+    expect(full.eta!.eliminate[BOB.feed]).toMatchObject({ turns: 1, atLeast: false, distance: 1 });
+    const bob = full.exits!.find((e) => String(e.player) === BOB.feed)!;
+    const stack = bob.stacks.find((x) => x.territory.id === 158)!;
+    expect(stack.territory).toEqual({ id: 158, name: mapName(158) });
+    expect(stack.movable).toBe(3);
+    expect(stack.own).toEqual([]);
+    // Knife Hills (135) and Widow's Watch (157) are this plan's captures: only 134 is left to flee onto.
+    expect(stack.neutrals).toEqual([{ id: 134, name: mapName(134) }]);
+    expect(full.expected.captures.map((c) => c.id)).toEqual(expect.arrayContaining([135, 157]));
   });
 });

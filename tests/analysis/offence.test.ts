@@ -411,6 +411,19 @@ describe('concentrate the spare deploys on the strongest opponent', () => {
     expect(why(p)).toMatch(/Deploy the leftover 10 to T2 \(#2\): one strike stack on the border facing player 20, the strongest opponent/);
     expect(p.offence).toContainEqual(expect.objectContaining({ target: 2, kind: 'strike', taken: true }));
   });
+
+  it('adapting in a 1v1 while an opponent may hold a Bomb (#163): the strike stack is not split', () => {
+    const one = board([mine(1, 20), mine(2, 30), enemy(5, 2), enemy(6, 2), fogged(7), enemy(8, 2), enemy(9, 2)]);
+    const p = planTurn({
+      ...input({ adapt: true, opponentsMayHoldBomb: true }),
+      board: one,
+      tracks: [track(ENEMY, 12)],
+      game: { players: [{ id: ME }, { id: ENEMY }] },
+    });
+    expect(p.deploys).toEqual([{ territoryId: 2, armies: 10 }]);
+    expect(why(p)).toMatch(/Deploy the leftover 10 to T2 \(#2\): one strike stack on the border facing player 20/);
+    expect(why(p)).not.toMatch(/two stacks rather than one/);
+  });
 });
 
 // Concentrate (rule 0p.3c) is a 1v1 rule: in an FFA the comfort margin on a held bonus border

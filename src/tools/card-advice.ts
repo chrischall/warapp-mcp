@@ -4,12 +4,12 @@
 // (Diplomacy, Sanctions). Read-only; everything here is advice — no card play is added to the
 // orders.
 
-import { adviseOrderDelay, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
+import { adviseOrderDelay, CARD_REINFORCEMENT, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
-import type { TurnPlan } from '../analysis/planner.js';
+import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';
 import type { Game, GameSettings, Player } from '../normalize.js';
-import { cardClock } from '../strategy/card-clock.js';
+import { capturePieceValue, cardClock } from '../strategy/card-clock.js';
 import { carriesTeam } from '../teams.js';
 
 const CARD_BOMB = 13;
@@ -61,7 +61,7 @@ function multiplier(settings: GameSettings | undefined, key: string): number | u
  * Whether an opponent can hold `card` this turn: the card is in play and the card clock lets it
  * be in a hand by `turn` (unknown turn: yes).
  */
-function opponentCanHold(settings: GameSettings | undefined, card: string, turn: number | null): boolean {
+export function opponentCanHold(settings: GameSettings | undefined, card: string, turn: number | null): boolean {
   const entry = cardClock(settings)?.cards.find((c) => c.card === card);
   if (!entry) return false;
   const first = entry.firstPlayableTurn.fastest;
@@ -229,4 +229,35 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
     warnings.push('Active cards are read from the live board by an unverified decoder (#163): check them in the game.');
   }
   return { view, warnings };
+}
+
+/**
+ * #127: the planner's `cardPieceValue` — what a turn with a capture earns in card pieces
+ * (`capturePieceValue`), a progressive Reinforcement card valued at the one in my hand. Empty when the
+ * game does not say (no Reinforcement card in play, or a progressive one and none in hand).
+ */
+export function cardPieceOption(settings: GameSettings | undefined, hand: readonly Card[]): { cardPieceValue?: number } {
+  const inHand = hand.find((c) => c.type === CARD_REINFORCEMENT && c.armies !== undefined && c.armies > 0)?.armies;
+  const v = capturePieceValue(settings, inHand);
+  return v.armies !== null && v.armies > 0 ? { cardPieceValue: v.armies } : {};
+}
+
+/**
+ * #164: an opponent's Reinforcement card for the threat model: the first turn one can be in a hand
+ * (the card clock's fastest), the armies it adds (a fixed card's `FixedArmies`, else the
+ * Reinforcement card in my hand as it is worth now) and the capturing turns each further card
+ * takes. `undefined` when no Reinforcement card is in play or what it adds is unknown.
+ */
+export function opponentReinforcement(settings: GameSettings | undefined, hand: readonly Card[]): ReinforcementClock | undefined {
+  const entry = cardClock(settings)?.cards.find((c) => c.card === 'Reinforcement');
+  const first = entry?.firstPlayableTurn.fastest;
+  if (!entry || first === null || first === undefined) return undefined;
+  const raw = settings!.raw.ReinforcementCard;
+  const fixed = typeof raw === 'object' && raw !== null ? Number((raw as Record<string, unknown>).FixedArmies) : NaN;
+  const inHand = hand.find((c) => c.type === CARD_REINFORCEMENT && c.armies !== undefined && c.armies > 0)?.armies;
+  const armies = Number.isFinite(fixed) && fixed > 0 ? Math.floor(fixed) : inHand;
+  if (armies === undefined || armies <= 0) return undefined;
+  const after = entry.cardsAfter.fastest;
+  const turnsPerCard = after && after.length >= 2 ? Math.max(1, after[1]! - after[0]!) : null;
+  return { firstTurn: first, armies, turnsPerCard };
 }

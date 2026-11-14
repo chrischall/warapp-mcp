@@ -161,6 +161,25 @@ describe('warapp_track_opponents', () => {
     expect(full.opponents.find((o) => o.player.name === 'Bob')!.observed[0]).toMatchObject({ grewFromFog: [{ id: 158 }] });
   });
 
+  it('#164: returns a large stack that left view as lostStacks', async () => {
+    // Turn 3: Bob's 30 on 158 in view. Turn 4: 158 fogged, and no stack of his in view since.
+    const fogged158: SyntheticTerritory[] = boardAt(0).map((t) => (t.id === 158 ? { id: 158, fogLevel: 4, owner: -1, armies: 0, fogged: true } : t));
+    let dir: string | undefined;
+    for (const [i, territories] of [boardAt(30), fogged158].entries()) {
+      await h?.harness.close();
+      h = await liveHarness({ ...(dir ? { dataDir: dir } : {}), feed: [game('Playing', String(i + 2))], warapp: live(territories) });
+      dir = h.dataDir;
+      // Each call caches the board it read.
+      await h.call('warapp_track_opponents', { game_id: GAME, player: 'Ann' });
+    }
+    const p = payload<TrackPayload>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann' }));
+    const bob = p.opponents.find((o) => o.player.name === 'Bob')! as TrackPayload['opponents'][number] & { lostStacks?: unknown };
+    expect(bob.lostStacks).toEqual([{ territoryId: 158, turn: 3, armies: 30 }]);
+    // A stack still in view is not lost: the key is left out.
+    const { last } = await playTurns('warapp_track_opponents', [7, 12]);
+    expect((last as TrackPayload).opponents.find((o) => o.player.name === 'Bob')).not.toHaveProperty('lostStacks');
+  });
+
   it('with one board only, says there is nothing to observe yet', async () => {
     const { last } = await playTurns('warapp_track_opponents', [7]);
     const bob = (last as TrackPayload).opponents.find((o) => o.player.name === 'Bob')!;

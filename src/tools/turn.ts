@@ -55,7 +55,7 @@ import { type Game, type GameMap, type GameSettings, type Player } from '../norm
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
-import { adviseCards, cardGame, handOwners, TEAM_HAND } from './card-advice.js';
+import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
   gameIdArg,
@@ -82,6 +82,8 @@ import {
   writeOrdersCache,
   type TrendSource,
 } from '../trend.js';
+import { gameOutlook } from '../analysis/outlook.js';
+import { recordOutlook } from '../outlook-log.js';
 import type { BoardState } from '../board.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -183,6 +185,7 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.localDeployments) out.localDeployments = true;
   if (s.noSplit) out.noSplit = true;
   if (s.armyCap !== undefined && s.armyCap !== null && s.armyCap > 0) out.armyCap = s.armyCap;
+  if (s.wastelands && s.wastelands.count > 0) out.wastelands = { ...s.wastelands };
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game. The
@@ -364,6 +367,19 @@ export function modsWarning(s: GameSettings | undefined): string[] {
   return [
     `This game runs ${what}: a mod can change the rules (combat, income, orders, cards, special units), so the rules ` +
       'this plan assumes may not hold. Check the mods in the game settings.',
+  ];
+}
+
+/**
+ * #167: a commerce game pays gold and lets players buy armies and cities; the planner plans income as
+ * armies only. Said whenever the feed's `Commerce` object carries settings (the shape a commerce
+ * game sends is unverified: a plain game sends `{}`).
+ */
+export function commerceWarning(s: GameSettings | undefined): string[] {
+  if (!s?.commerce) return [];
+  return [
+    'This looks like a commerce game (its Commerce settings are not empty): the plan models income as armies only — ' +
+      'it does not model gold, buying armies or cities. Check what gold buys before following it.',
   ];
 }
 
@@ -976,7 +992,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'the borders given up (`conceded`), the `frontier` budget, your cards (plays and discards when you must), ' +
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
-          'ahead/even/behind/unknown on income). With no `goal` the profile picks and tunes it (`goalSource` ' +
+          'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
+          'armies + 3 × income held over 3 turns of boards, with its `basis`; thresholds unmeasured, so advice, not a verdict; ' +
+          'an opponent with cards on, an unknown start or nothing in view has no upper bound, so `winning` is never read in a fogged card game). With no `goal` the profile picks and tunes it (`goalSource` ' +
           '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
           'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
           `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
@@ -987,6 +1005,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent: ' +
           'base income plus its visible bonuses, or its observed deploy when larger — its tracked income, carried across turns, once ' +
           'warapp_track_opponents has 2+ turns of it — and in an even-start 1v1 at least your income when it borders the fog; ' +
+          'exact where the fog shows every owner (No, Light, Dense fog); plus its Reinforcement card from the turn the card clock says it can hold one; ' +
+          'a neighbour whose armies the fog hides counts its unaccounted armies (at most two turns of its income), and a large stack that left view counts where it can reach, with a warning a turn ahead where it can stand beside a border next turn; ' +
           'growth beside the fog beyond twice what it was expected to deploy reads as a move out of the fog, not a deploy). Obeys the kill rates, luck, rounding, Local ' +
           'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement (in a team ' +
           "game only when cards must be shed: the hand is the team's), and Order Priority only when the plan advises it (a " +
@@ -1063,7 +1083,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             'Who moves first this turn, when you know (as warapp_check_plan takes it; Cycle and No-Luck Cycle move ' +
               'orders swap the first mover every turn: whoever moved second last turn moves first now). Give the ' +
               "cycle's order, not one an Order Priority or Order Delay card changed. When you move " +
-              "first, your first order already runs before the opponent's, so Order Priority is not advised. In a " +
+              "first, your first order already runs before the opponent's, so Order Priority is not advised (unless the " +
+              'opponent may hold one too and the order ends a player). In a ' +
               'two-player game under a cyclic order it is remembered and later turns default to it, alternated; ' +
               'omitted, the default is that, else the award of picks, else unknown (`firstMover` says which).',
           ),
@@ -1134,7 +1155,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             id: p.id,
             ...(p.team !== undefined ? { team: p.team } : {}),
             ...(p.state !== undefined ? { state: p.state } : {}),
+            ...(p.isAI ? { isAI: true } : {}),
+            ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
           })),
+          ...(game.endRules?.aisSurrenderWhenOneHumanRemains !== undefined
+            ? { endRules: { aisSurrenderWhenOneHumanRemains: game.endRules.aisSurrenderWhenOneHumanRemains } }
+            : {}),
           turn,
           ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
           ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
@@ -1143,6 +1169,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           symmetricStart: symmetricStart(game.settings, map),
           // #166: the opponent's opening simulated from the starts the award proved, as the prior.
           ...(opening ? { opening } : {}),
+          // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
+          ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
         },
         ...(tracks ? { tracks } : {}),
         options: {
@@ -1156,10 +1184,26 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
+          // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
           ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
+          ...(opponentCanHold(game.settings, 'Order Priority', turn) ? { opponentsMayHoldOrderPriority: true } : {}),
+          // #163: an opponent may hold a Bomb by now: holds are sized as if halved, two stacks over one.
+          ...(opponentCanHold(game.settings, 'Bomb', turn) ? { opponentsMayHoldBomb: true } : {}),
+          // #127: what a capture's card pieces are worth, for a plan that would capture nothing.
+          ...cardPieceOption(game.settings, hand),
         },
       });
       if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);
+      // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
+      const outlook = gameOutlook({
+        graph,
+        me: me.id,
+        boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
+        settings,
+        game: trackGame(game.players, game.settings, map),
+        cards: rules.inPlay.length > 0,
+      });
+      if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       const name = namer(map);
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
       // and the cards in effect. Advice only: the orders below are the plan's.
@@ -1184,6 +1228,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         ...(tracks ?? []).flatMap((t) => t.warnings),
         ...plan.warnings,
         ...modsWarning(game.settings),
+        ...commerceWarning(game.settings),
         ...guardOffWarnings(graph, map, board, me.id, friendsOf(game.players, me), game.settings, plan.deploys, plan.moves),
       ];
       // The plan advises Order Priority (a withdrawal, a commander strike): play the one I
@@ -1215,7 +1260,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
                 phase: plan.profile.phase,
                 standing: plan.profile.standing,
                 ...(plan.profile.standingSource === 'tracked' ? { standingSource: 'tracked' as const } : {}),
+                ...(plan.profile.endsWith !== null ? { endsWith: plan.profile.endsWith } : {}),
               },
+        // #178: the outlook and its basis; full adds each turn judged.
+        outlook: rung === 'full' ? outlook : { state: outlook.state, basis: outlook.basis },
         income,
         enemyDeploy: plan.enemyDeploy,
         // #127: who moves first this turn and how it is known; null when unknown.
@@ -1244,6 +1292,27 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               }`,
         // #72: the offensive options considered, full view only.
         ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
+        // #167: each attack on a player judged by its exchange, full view only.
+        ...(rung === 'full' && plan.exchanges
+          ? { exchanges: plan.exchanges.map((e) => ({ ...e, from: name(e.from), to: name(e.to) })) }
+          : {}),
+        // #179: turns to eliminate each visible opponent, full view only.
+        ...(rung === 'full' && plan.eta ? { eta: plan.eta } : {}),
+        // #179: where an opponent down to a few territories can go this turn, full view only.
+        ...(rung === 'full' && plan.exits
+          ? {
+              exits: plan.exits.map((e) => ({
+                player: e.player,
+                stacks: e.stacks.map((x) => ({
+                  territory: name(x.territory),
+                  movable: x.movable,
+                  own: x.own.map(name),
+                  neutrals: x.neutrals.map(name),
+                  mine: x.mine.map(name),
+                })),
+              })),
+            }
+          : {}),
         cards: {
           hand: hand.map(cardView),
           ...(handUnknown ? { handReadable: false } : {}),

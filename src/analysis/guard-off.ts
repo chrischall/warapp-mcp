@@ -1,7 +1,9 @@
 // One Army Must Stand Guard off (#165): every army may move, so a territory can stand at 0. Such a
 // territory falls to any single army, and an enemy territory at 0 is taken by a one-army attack —
-// which, in a bonus its owner holds, breaks the bonus for one army. The planner frees every army to
-// move and makes neither check; this reports both for a list of orders. Pure and deterministic.
+// which, in a bonus its owner holds, breaks the bonus for one army. This reports both for a list of
+// orders: the planner keeps one army next to an enemy and takes such a break itself (#165), so for
+// its own plans this names what is left (a territory next to the fog only, a break no army could
+// spare one for); for hand-written orders, everything. Pure and deterministic.
 import type { BoardState } from '../board.js';
 import type { MapGraph } from './graph.js';
 import { neighborsOf } from './graph.js';

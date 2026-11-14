@@ -1,7 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { WarappClient } from '../client.js';
-import type { Game, GameSettings } from '../normalize.js';
+import { leavers, type Game, type GameSettings } from '../normalize.js';
+import { recordFinalResult } from '../outlook-log.js';
 import { currentTurn, gameIdArg, mapSummary, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 
@@ -37,15 +38,31 @@ function compact(game: Game) {
         ? game.players.filter((p) => p.state === 'Playing' && !p.isAI && !p.hasCommittedOrders).map((p) => p.name)
         : [],
     settings: settingsDigest(game.settings),
+    // #178: how the game ends and what a leaver's seat becomes.
+    endRules: game.endRules ?? null,
     map: game.map ? mapSummary(game.map) : null,
     boardAvailable: game.standing !== undefined,
   };
+  // #178: humans who have not committed, with the time left to each boot (lastTurnTime UNVERIFIED).
+  // Only where a boot setting exists: without AutoBoot or DirectBoot nobody is close to a boot, and
+  // the list would repeat `waitingOn`.
+  const l = leavers(game, Date.now());
+  const booted = l.players.filter((p) => p.autoBootInMinutes !== undefined || p.directBootInMinutes !== undefined);
+  if (booted.length)
+    out.leavers = {
+      players: booted.map(({ playerId, ...rest }) => ({ id: playerId, name: game.players.find((p) => p.id === playerId)?.name ?? null, ...rest })),
+      unverified: l.unverified,
+    };
   if (game.history !== undefined) out.history = game.history;
   if (game.chat !== undefined) out.chat = game.chat;
   return out;
 }
 
-export function registerGameTool(server: McpServer, client: WarappClient): void {
+/**
+ * `dir` is the data directory: a finished game this server planned gets its final result in the
+ * outlook log (#178).
+ */
+export function registerGameTool(server: McpServer, client: WarappClient, dir?: () => string): void {
   server.registerTool(
     'warapp_get_game',
     {
@@ -54,7 +71,9 @@ export function registerGameTool(server: McpServer, client: WarappClient): void 
         'Look up one war.app (Warzone) multiplayer game by id: its state (lobby, distributing, playing, finished), ' +
           'the turn being played (`turn`; `turnsCompleted` counts the finished ones), the players and who has committed orders (who the game is waiting on), and a digest of ' +
           'its settings — fog, kill rates, luck, rounding, base income, army cap, enabled cards — plus which map it ' +
-          'is on and whether the board is available for warapp_analyze_board. Optional game history and chat. ' +
+          'is on and whether the board is available for warapp_analyze_board; the end-of-game, boot and AI settings ' +
+          '(`endRules`) and the humans who have not committed with the time left to each boot (`leavers`, when the game boots; from ' +
+          'lastTurnTime, whose meaning is unverified). Optional game history and chat. ' +
           'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
       ),
       _meta: lookupMeta(['warzone game', 'war.app game', 'whose turn is it', 'game status']),
@@ -80,6 +99,7 @@ export function registerGameTool(server: McpServer, client: WarappClient): void 
         ...(include_history ? { history: true } : {}),
         ...(include_chat ? { chat: true } : {}),
       });
+      if (dir) await recordFinalResult(dir(), game);
       return respond(view, VIEWS, (rung) => {
         if (rung === 'compact') return compact(game);
         if (rung === 'full') return { game: { ...game, map: game.map ? mapSummary(game.map) : undefined } };
