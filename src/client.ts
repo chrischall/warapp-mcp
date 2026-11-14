@@ -301,10 +301,14 @@ export class WarappClient {
     let replace = false;
     if (known && opts.map !== false && lacksTerritory(known, game) && !this.#cache.wasRefreshed(known.id)) {
       this.#cache.markRefreshed(known.id);
-      body = await this.#feed(gameId, { ...opts, noMap: false });
-      game = normalizeGame(body);
-      known = undefined;
-      replace = true;
+      // A failed refresh keeps the first read and the known map: the extra request is a check, not the read.
+      const fresher = await this.#feed(gameId, { ...opts, noMap: false }).catch(() => undefined);
+      if (fresher) {
+        body = fresher;
+        game = normalizeGame(body);
+        known = undefined;
+        replace = true;
+      }
     }
 
     let map = known;

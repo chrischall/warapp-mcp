@@ -269,6 +269,15 @@ describe('WarappClient.getGame', () => {
       expect(calls[2]!.url).toContain('GetMap=false');
     });
 
+    it('keeps the first read and the stored map when the edited-map download fails', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const standing = { '999999999': { armies: 2 } };
+      const { fetchImpl } = stubFetch({ body: { ...WITHOUT_MAP, standing } }, { body: { termsOfUse: 'x', error: 'Something broke' } });
+      const game = await client(fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(game.map?.id).toBe(39905);
+    });
+
     it('keeps the stored map when every territory the feed names is on it', async () => {
       const dir = tmp();
       await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
