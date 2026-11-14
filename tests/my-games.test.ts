@@ -7,6 +7,7 @@ import {
   GAME_INFO_PLAYER,
   MY_GAMES_RETURN,
   MyGamesFormatError,
+  myGamesTeams,
   readMyGames,
   summarizeMyGames,
   type MyGame,
@@ -226,8 +227,8 @@ describe('readMyGames / summarizeMyGames', () => {
     values.forEach((v, i) => (o[`f${i}`] = v));
     return o;
   };
-  const player = (name: unknown, id: unknown, state: unknown, committed: unknown) =>
-    ordered(GAME_INFO_PLAYER, [null, false, committed, 0, false, name, id, state, 0, false]);
+  const player = (name: unknown, id: unknown, state: unknown, committed: unknown, team: unknown = -1) =>
+    ordered(GAME_INFO_PLAYER, [null, false, committed, 0, false, name, id, state, team, false]);
   const info = (over: Record<number, unknown> = {}) => {
     const v: unknown[] = [1, 2, 's', 3, 4, 5, 1, 77, false, null, 39905, 0, null, 'N', 0, null, [], false, false, false, false, null, FINISHED, false, 0, null, 0];
     for (const [i, x] of Object.entries(over)) v[Number(i)] = x;
@@ -264,12 +265,35 @@ describe('readMyGames / summarizeMyGames', () => {
       Wa: 'Ann',
       $a: 123456,
       Xa: 2,
-      Re: 0,
+      Re: -1,
       VF: false,
       $ctorError: 'ignored',
     };
     const [g] = readMyGames(stub(ordered(MY_GAMES_RETURN, [[info({ 16: [live] })], 0])), reader(true));
     expect(g!.players).toEqual([{ id: 123456, name: 'Ann', stateCode: 2, committed: true }]);
+  });
+
+  it("reads a player's team (C1), kept only when it carries one; a team that is not a number is left out", () => {
+    const [g] = readMyGames(
+      stub(
+        ordered(MY_GAMES_RETURN, [
+          [info({ 16: [player('Ann', 1, 2, false, 0), player('Bob', 2, 2, false, 1), player('Cy', 3, 2, false), player('Di', 4, 2, false, 'x')] })],
+          0,
+        ]),
+      ),
+      reader(true),
+    );
+    expect(g!.players).toEqual([
+      { id: 1, name: 'Ann', stateCode: 2, committed: false, team: 0 },
+      { id: 2, name: 'Bob', stateCode: 2, committed: false, team: 1 },
+      { id: 3, name: 'Cy', stateCode: 2, committed: false },
+      { id: 4, name: 'Di', stateCode: 2, committed: false },
+    ]);
+    expect([...myGamesTeams([g!], 77)]).toEqual([
+      [1, 0],
+      [2, 1],
+    ]);
+    expect(myGamesTeams([g!], 78).size).toBe(0);
   });
 
   it('treats a null player list as no players and a null name as empty', () => {

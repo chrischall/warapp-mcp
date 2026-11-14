@@ -14,7 +14,7 @@ import {
 import { normalizePlayer, type Player } from '../src/normalize.js';
 import { Reader, Writer } from '../src/protocol/codec.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { LIVE_BUNDLE, writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { LATEST_GAME_INFO_READER, LIVE_BUNDLE, writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 const bundle = new WarappBundle(LIVE_BUNDLE, 'test');
 
@@ -281,8 +281,7 @@ describe('the army count cannot come out wrong and still read as verified (#148)
 describe('the current standing is the current field, not the first one present (#131)', () => {
   // LatestGameInfo as the client builds it: the current standing, a turn number, then the previous
   // turn's standing, each through a temporary (`e=…;d.f=e`).
-  const LG_LINE =
-    'Lg.Ha=function(a,b,d){null==d&&(d=242);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;e.k3=P.Ya(a);return e};';
+  const LG_LINE = LATEST_GAME_INFO_READER;
   const TWO_STANDINGS =
     'Lg.Ha=function(a,b,d){null==d&&(d=242);return Lg.R(a,d)};' +
     'Lg.R=function(a,b){var d=new Lg,e=a.Ua()?Gs.Ha(a,d,b):null;d.cur=e;e=P.Ya(a);d.turn=e;' +
