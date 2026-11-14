@@ -15,6 +15,7 @@ import { buildGraph } from '../src/analysis/graph.js';
 import { boardIncome } from '../src/analysis/player.js';
 import { readCachedOrders } from '../src/trend.js';
 import { writeAward, writePickList } from '../src/pick-list.js';
+import { writeFirstMover } from '../src/move-order.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
@@ -2800,6 +2801,48 @@ describe('warapp_plan_turn finishing a player off (#179): the move order, the ca
     const later = { BombCard: { NumPieces: 10, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1.0 }, NumberOfCardsToReceiveEachTurn: 1 };
     h = await liveHarness({ feed: [duel(later)], warapp });
     expect((await plan()).rationale.join('\n')).not.toMatch(/may hold a Bomb/);
+  });
+
+  it('a remembered first mover (#127) drives the #179 card and cover the same way', async () => {
+    // first_mover given on turn 2 as the opponent's: turn 3 alternates to Ann moving first.
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-finish-remembered-'));
+    const me = Number(ANN.feed);
+    await writeFirstMover(dir, GAME, me, { turn: 2, firstMover: 'opponent', source: 'explicit' });
+    h = await liveHarness({ feed: [duel()], warapp, dataDir: dir });
+    const first = await plan();
+    expect((first as unknown as { firstMover: unknown }).firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect(first.rationale.join('\n')).toMatch(FINISHED);
+    expect(first.rationale.join('\n')).not.toMatch(COVER);
+    expect(first.cardAdvice).toBeNull();
+    expect(first.orders.some((o) => o.kind === 'card' && o.card === OP)).toBe(false);
+    await h.harness.close();
+
+    // Remembered as Bob first on turn 3: the exits are covered and the card is advised.
+    const dir2 = mkdtempSync(join(tmpdir(), 'warapp-mcp-finish-remembered-'));
+    await writeFirstMover(dir2, GAME, me, { turn: 1, firstMover: 'opponent', source: 'explicit' });
+    h = await liveHarness({ feed: [duel()], warapp, dataDir: dir2 });
+    const second = await plan();
+    expect(second.rationale.join('\n')).toMatch(COVER);
+    expect(second.cardAdvice).toBe('order-priority');
+  });
+
+  it('under a no-luck cycle the award says nothing of the first mover, so the card stays advised', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-finish-noluck-'));
+    const me = Number(ANN.feed);
+    await writePickList(dir, GAME, me, [159, 158, 161]);
+    await writeAward(dir, GAME, me, {
+      granted: [159, 161],
+      unlisted: [],
+      opponentStarts: [158],
+      allStartsKnown: true,
+      role: 'second',
+      opponentFirstAward: null,
+    });
+    h = await liveHarness({ feed: [duel({ MoveOrder: 'NoLuckCycle' })], warapp, dataDir: dir });
+    const res = await plan();
+    expect((res as unknown as { firstMover: unknown }).firstMover).toBeNull();
+    expect(res.rationale.join('\n')).toMatch(COVER);
+    expect(res.cardAdvice).toBe('order-priority');
   });
 
   it('eta and exits come in the full view only, with territory names', async () => {
