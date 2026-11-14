@@ -617,7 +617,7 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
 /** Rule 1's borders: the strongest force next to each territory of mine, stated in the rationale. */
 export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src: ThreatSources, forces: ThreatForces) {
   const {
-    g, board, game: ctx, foe, custom, estimates, incomePrior, enemyDeploy, territories: state, label, mine, mineSet,
+    g, board, game: ctx, foe, custom, estimates, incomePrior, incomePriorSkipped, enemyDeploy, territories: state, label, mine, mineSet,
     armiesOf, unitsAt, uncounted, uncountedKind, bombOn, toTake, turnNow, holdPasses, myCommanders, s, baseIncome, rates,
   } = pc;
   const { warnings, rationale } = ps;
@@ -716,6 +716,12 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
       // #199: a player whose only threat is a chain has its deploy inside that chain: explain it too.
       const estimated = new Set(facing);
       for (const b of borders.values()) if (b.chain && estimates.has(b.chain.player)) estimated.add(b.chain.player);
+      // #235: a free-for-all with no teams whose opponents border the fog, and no prior: say why.
+      const fogged = [...estimates.values()].filter((e) => foe(e.playerId) && e.fogBeside).map((e) => e.playerId).sort(byNum);
+      if (incomePriorSkipped && fogged.length)
+        warnings.push(
+          `No fog prior for the opponents beside the fog (${fogged.length === 1 ? 'player' : 'players'} ${fogged.join(', ')}) in this free-for-all: ${incomePriorSkipped}; their estimates rest on what the board shows, each a lower bound under fog.`,
+        );
       for (const p of [...estimated].sort(byNum)) {
         const e = estimates.get(p)!;
         const visible = `base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}`;
@@ -807,13 +813,34 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               (incomePrior!.opening?.get(p) ?? -1) > incomePrior!.myIncome
                 ? `its opening simulated from the starts the award of picks proved earns ${incomePrior!.opening!.get(p)} this turn`
                 : `in ${incomePrior!.format === 'ffa' ? 'a free-for-all that started even (no teams, every player still in)' : 'a 1v1 that started even'}, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
-            }, capped at the most it could earn on this board, ${e.couldEarn}; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''})${withCard}; observed deploys are lower bounds under fog, and it could deploy more.`,
+            }, ${
+              e.priorCap !== null
+                ? `capped at an even share (1 of ${incomePrior!.opponents} opponents) of what the board hides, ${e.priorCap} (all of it would be ${e.couldEarn})`
+                : `capped at the most it could earn on this board, ${e.couldEarn}`
+            }${
+              e.priorBlend
+                ? ` — shrunk toward its ${
+                    e.priorBlend.toward === e.tracked
+                      ? `tracked ~${e.tracked}`
+                      : e.priorBlend.toward === e.observed
+                        ? `newest observed +${e.observed}`
+                        : `visible ${e.priorBlend.toward}`
+                  } by the evidence: ${e.priorBlend.turns} observed ${e.priorBlend.turns === 1 ? 'turn' : 'turns'} with ${Math.round(e.priorBlend.share * 100)}% of its edge in view keep ${Math.round(e.priorBlend.weight * 100)}% of the gap from ${e.priorBlend.prior}`
+                : ''
+            }; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''})${withCard}; observed deploys are lower bounds under fog, and it could deploy more.`,
           );
           continue;
         }
         if (e.source === 'tracked') {
           warnings.push(
             `Enemy deploy estimate for player ${p}: ~${income} (tracked over ${e.trackedTurns.length} observed turns, more than ${visible})${withCard}; it holds income the fog hides, and could deploy more.`,
+          );
+          continue;
+        }
+        if (e.source === 'observed' && e.tracked !== null) {
+          // #235: the newest turn, read against the tracked income, above it: the track does not stand alone.
+          warnings.push(
+            `Enemy deploy estimate for player ${p}: ~${income} (observed +${e.observed} on the newest turn, read against its tracked income, above its tracked ~${e.tracked} over ${e.trackedTurns.length} observed turns)${withCard}; it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }

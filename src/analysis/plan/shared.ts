@@ -53,6 +53,12 @@ export const MIN_ENEMY_DEPLOY = DEFAULT_BASE_INCOME;
  * single-turn observed figure (S3).
  */
 export const TRACKED_MIN_TURNS = 2;
+/**
+ * #235: how much evidence halves the fog prior's lead over an opponent's own figure: the prior keeps
+ * PRIOR_EVIDENCE_TURNS / (PRIOR_EVIDENCE_TURNS + observed turns × the visible share of its edge) of
+ * the gap. Unmeasured: four observed turns with its whole edge in view meet half-way.
+ */
+export const PRIOR_EVIDENCE_TURNS = 4;
 
 /** Fog reveals named in the observed-deploy rationale before "and N more". */
 export const MAX_NAMED_REVEALS = 6;
@@ -277,11 +283,16 @@ export interface PlanGameContext {
   /** Any card is in play. */
   cards?: boolean;
   /**
-   * Every player started with the same territories and armies (not a map scenario that sets its
-   * own starts): in a 1v1 (#119), or a free-for-all with no teams and every seated player still in
+   * Every player started with the same territories and armies (#235: any distribution but a custom
+   * scenario, a map's scenario distribution included): in a 1v1 (#119), or a free-for-all with no teams and every seated player still in
    * (#226), it turns the fog prior on ({@link EnemyIncomePrior}).
    */
   symmetricStart?: boolean;
+  /**
+   * #235: why the start may not have been even, when `symmetricStart` is false (`unevenStart` in
+   * src/analysis/opponents.ts): a free-for-all's plan names it where it says the prior is off.
+   */
+  unevenStart?: string;
   /**
    * #166: per opponent, its income this turn simulated from the starts the award of picks proved
    * (`openingIncome`); with the fog prior on, that opponent's prior is the larger of it and my income.
@@ -848,9 +859,27 @@ export interface EnemyDeployEstimate {
    */
   prior: number | null;
   /**
+   * #235: the prior shrunk toward its own evidence, when it has a usable track and the prior is above
+   * it: `prior` (the figure above) keeps `weight` of its lead over `toward` (the larger of its tracked
+   * income and the newest observed turn), `weight` = {@link PRIOR_EVIDENCE_TURNS} / (PRIOR_EVIDENCE_TURNS
+   * + `turns` × `share`), where `turns` is its run of consecutive observed turns up to the newest and
+   * `share` the part of its edge in view (the territories next to its visible ones, not its own, whose
+   * owner shows). The estimate is then `figure`. `null` otherwise.
+   */
+  priorBlend: { prior: number; toward: number; turns: number; share: number; weight: number; figure: number } | null;
+  /**
+   * #235: in a free-for-all (`EnemyIncomePrior.opponents`), the cap on the prior: its visible
+   * territories and bonuses plus an even share of the territories the board hides and of the bonuses
+   * it could still hold; `null` otherwise (the prior is capped at `couldEarn`).
+   */
+  priorCap: number | null;
+  /** #235: a territory next to one of its visible ones shows no owner (the fog prior's test). */
+  fogBeside: boolean;
+  /**
    * `'tracked'` when the tracked income beat the visible-bonus figure, else `'observed'` when the
-   * single-turn observed figure did (only without a usable track), else `'visible'` — unless the
-   * fog prior beat all of them: `'prior'`.
+   * single-turn observed figure did (#235: also above a usable track — the newest turn, read against
+   * the tracked income, is evidence too), else `'visible'` — unless the fog prior beat all of them:
+   * `'prior'`.
    */
   source: 'visible' | 'observed' | 'tracked' | 'prior' | 'exact';
   /**
@@ -892,6 +921,12 @@ export interface EnemyIncomePrior {
    * larger of it and `myIncome` (still capped, still only beside the fog, still only raising).
    */
   opening?: ReadonlyMap<number, number>;
+  /**
+   * #235: in a free-for-all, how many opponents share what the board hides: the prior is capped at
+   * an even share of the hidden territories and of the bonuses each could still hold, as `peerPace`'s
+   * ceiling shares the map, not all of it for every one.
+   */
+  opponents?: number;
 }
 
 /**
@@ -1407,6 +1442,8 @@ export function enemyDeployEstimates(
     // (an owner-only territory is visibly held: its owner shows). Both come from this board,
     // so a bonus it lost since last turn is out, though it may have paid for that deploy.
     let possible = 0;
+    /** #235: of `possible`, the bonuses it visibly holds in full (no share of them goes to another). */
+    let possibleOwn = 0;
     for (const b of g.map.bonuses) {
       const ts = bonusTerritories(g, b.id);
       if (b.value <= 0 || !ts.length) continue;
@@ -1415,6 +1452,7 @@ export function enemyDeployEstimates(
         return st !== undefined && !(st.owner.kind === 'player' && st.owner.playerId === playerId);
       });
       if (!taken) possible += b.value;
+      if (!taken && ts.every((t) => theirs.has(t))) possibleOwn += b.value;
     }
     // #226: with per-territory income, the territories it could hold pay at the rate: its visible
     // ones and every one whose owner this board hides (it may hold any of them).
@@ -1432,7 +1470,14 @@ export function enemyDeployEstimates(
     // #166: with its starts proven, its opening simulated from them raises the prior when it earns
     // more than I do; never lowers it (the simulation is a simple player, and #119's evidence read low).
     const priorBase = Math.max(prior?.myIncome ?? 0, prior?.opening?.get(playerId) ?? 0);
-    const priorFigure = prior && fogBeside ? Math.min(Math.max(0, Math.floor(priorBase!)), couldEarn) : null;
+    // #235: in a free-for-all the hidden part of the board is shared: an even share of the hidden
+    // territories and of the bonuses it could still hold (its own in full), never above couldEarn.
+    const k = prior?.format === 'ffa' && (prior.opponents ?? 0) > 1 ? prior.opponents! : 0;
+    const priorCap =
+      prior && k > 0
+        ? Math.min(couldEarn, territoryIncome(held + Math.ceil((couldHold - held) / k), minimum, per) + possibleOwn + Math.ceil((possible - possibleOwn) / k))
+        : null;
+    const priorFigure = prior && fogBeside ? Math.min(Math.max(0, Math.floor(priorBase!)), priorCap ?? couldEarn) : null;
     // A track over enough turns replaces the single-turn observed figure (S3).
     const track = tracks?.find((t) => t.playerId === playerId);
     const usable = track && track.income !== null && track.turns.length >= TRACKED_MIN_TURNS ? track : undefined;
@@ -1452,21 +1497,43 @@ export function enemyDeployEstimates(
     const observedCap = observation ? couldEarn : null;
     const observedRaw = observation?.deploy ?? null;
     const observed = observation ? Math.min(observation.deploy, observedCap!) : null;
+    // #235: with a usable track the newest turn, read against the tracked income (#123's bound), is
+    // evidence too: a track below it does not stand alone.
     const seenSource: EnemyDeployEstimate['source'] =
       tracked !== null
-        ? tracked > visible
-          ? 'tracked'
-          : 'visible'
+        ? observed !== null && observed > tracked && observed > visible
+          ? 'observed'
+          : tracked > visible
+            ? 'tracked'
+            : 'visible'
         : observed !== null && observed > visible
           ? 'observed'
           : 'visible';
     const seen = seenSource === 'tracked' ? tracked! : seenSource === 'observed' ? observed! : visible;
+    // #235: the prior shrinks toward that evidence: the more consecutive observed turns, and the more
+    // of its edge in view, the less of its lead it keeps.
+    let priorBlend: EnemyDeployEstimate['priorBlend'] = null;
+    if (priorFigure !== null && usable) {
+      const toward = Math.max(tracked!, observed ?? 0, visible);
+      if (priorFigure > toward) {
+        let turns = 1;
+        const run = usable.turns;
+        for (let i = run.length - 1; i > 0 && run[i - 1]!.from === run[i]!.from - 1; i--) turns++;
+        const edge = new Set<number>();
+        for (const t of theirs) for (const n of neighborsOf(g, t)) if (!theirs.has(n)) edge.add(n);
+        const share = edge.size ? [...edge].filter((n) => ownerShown(seenNow.get(n)) !== undefined).length / edge.size : 0;
+        const weight = PRIOR_EVIDENCE_TURNS / (PRIOR_EVIDENCE_TURNS + turns * share);
+        const figure = toward + Math.ceil(weight * (priorFigure - toward) - 1e-9);
+        priorBlend = { prior: priorFigure, toward, turns, share, weight, figure };
+      }
+    }
+    const priorUsed = priorBlend ? priorBlend.figure : priorFigure;
     // #164: with every owner shown, its income is base + held bonuses exactly; a deploy above it was
     // a card (or armies the board misread), never income.
     const exact = ownersAll && !opening ? Math.max(0, base + bonusIncome) : null;
     const source: EnemyDeployEstimate['source'] =
-      exact !== null ? 'exact' : priorFigure !== null && priorFigure > seen ? 'prior' : seenSource;
-    const income = source === 'exact' ? exact! : source === 'prior' ? priorFigure! : seen;
+      exact !== null ? 'exact' : priorUsed !== null && priorUsed > seen ? 'prior' : seenSource;
+    const income = source === 'exact' ? exact! : source === 'prior' ? priorUsed! : seen;
     // #164: a Reinforcement card, from the turn the clock says one can be in hand, until a deployment
     // above its income is seen; the next card is due a card's capturing turns after the last one
     // (pieces carry over while a card is held), never before the turn after the play.
@@ -1519,6 +1586,9 @@ export function enemyDeployEstimates(
       tracked,
       trackedTurns: usable ? usable.incomeTurns : [],
       prior: priorFigure,
+      priorBlend,
+      priorCap,
+      fogBeside,
       source,
       exact,
       card,

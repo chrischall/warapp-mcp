@@ -59,21 +59,35 @@ import { truceOf } from './relations.js';
  * opponent), or (#226) a free-for-all, where every opponent beside the fog gets the same prior. A
  * game with a player out (eliminated, booted, surrendered) gets none: a survivor may have absorbed
  * its territories, or I may have, so the start no longer says who earns what. Without a player list,
- * only one opponent in sight counts (a 1v1 as far as the board tells).
+ * only one opponent in sight counts (a 1v1 as far as the board tells). #235: in a free-for-all with
+ * no teams (two or more opponents seated) that gets none, `skipped` says why.
  */
-function fogPrior(board: BoardState, me: number, ctx: PlanGameContext, myIncome: number): EnemyIncomePrior | undefined {
-  if (ctx.symmetricStart !== true) return undefined;
+function fogPrior(
+  board: BoardState,
+  me: number,
+  ctx: PlanGameContext,
+  myIncome: number,
+): { prior: EnemyIncomePrior | undefined; skipped?: string } {
   const players = (ctx.players ?? []).filter((p) => holdsSeat(p.state));
-  if (players.some((p) => carriesTeam(p.team))) return undefined;
-  if (players.some((p) => (p.state ?? 'Playing') !== 'Playing' && p.id !== me)) return undefined;
+  if (players.some((p) => carriesTeam(p.team))) return { prior: undefined };
+  const ffa = players.filter((p) => p.id !== me).length > 1;
+  const why = (reason: string) => ({ prior: undefined, ...(ffa ? { skipped: reason } : {}) });
+  if (ctx.symmetricStart !== true) return why(ctx.unevenStart ?? 'the game does not say every player started even');
+  const out = players.filter((p) => (p.state ?? 'Playing') !== 'Playing' && p.id !== me).sort((a, b) => a.id - b.id);
+  if (out.length)
+    return why(
+      `${out.map((p) => `player ${p.id} is out (${p.state})`).join(', ')}, and a survivor may have absorbed its territories, so the start no longer says who earns what`,
+    );
   const opponents = players.length
     ? players.filter((p) => p.id !== me).length
     : new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId !== me ? [t.owner.playerId] : []))).size;
-  if (opponents < 1 || (!players.length && opponents !== 1)) return undefined;
+  if (opponents < 1 || (!players.length && opponents !== 1)) return { prior: undefined };
   return {
-    myIncome: Math.max(0, myIncome),
-    ...(opponents > 1 ? { format: 'ffa' as const } : {}),
-    ...(ctx.opening ? { opening: ctx.opening } : {}),
+    prior: {
+      myIncome: Math.max(0, myIncome),
+      ...(opponents > 1 ? { format: 'ffa' as const, opponents } : {}),
+      ...(ctx.opening ? { opening: ctx.opening } : {}),
+    },
   };
 }
 
@@ -103,9 +117,9 @@ export function planEnemyEstimates(input: {
   tracks?: readonly OpponentTrack[];
   game?: PlanGameContext;
   turn?: number | null;
-}): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined } {
+}): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined; priorSkipped?: string } {
   const ctx = input.game ?? {};
-  const prior = fogPrior(input.board, input.me, ctx, input.income);
+  const { prior, skipped } = fogPrior(input.board, input.me, ctx, input.income);
   const turn = input.turn ?? ctx.turn ?? null;
   const estimates = enemyDeployEstimates(input.graph, input.board, input.me, input.settings ?? {}, input.previousBoard, input.tracks, prior, {
     turn,
@@ -113,7 +127,7 @@ export function planEnemyEstimates(input: {
     reinforcement: ctx.reinforcement,
     ...(input.previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
   });
-  return { estimates, prior };
+  return { estimates, prior, ...(skipped ? { priorSkipped: skipped } : {}) };
 }
 
 /** The opponents' estimates, the game profile and the goal it picks (rule 0p). */
@@ -130,7 +144,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
   const notAlly = (p: number) => p !== me && !allies.has(p);
   /** The turn being planned, when known (the opening board is the first turn's only, #128). */
   const turnNow = input.turn ?? ctx.turn ?? null;
-  const { estimates: allEstimates, prior: incomePrior } = planEnemyEstimates({
+  const { estimates: allEstimates, prior: incomePrior, priorSkipped: incomePriorSkipped } = planEnemyEstimates({
     graph: g,
     board,
     me,
@@ -262,6 +276,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     truce,
     turnNow,
     incomePrior,
+    incomePriorSkipped,
     estimateList,
     incomeOf,
     profile,

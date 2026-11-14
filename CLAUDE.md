@@ -388,12 +388,22 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). **The fog
   prior (#119):** in a 1v1 or (#226) a free-for-all that started even (no teams, every seated
   player still playing — not once a player is out; `PlanGameContext.symmetricStart`, set by
-  `warapp_plan_turn` from `symmetricStart(settings, map)`: any distribution but a map scenario),
+  `warapp_plan_turn` from `symmetricStart(settings)`: any distribution but a custom scenario —
+  DistributionMode -3 or a `CustomScenario` setting; #235: a map's "scenario" distribution only says
+  where each player starts, and the client gives every player the same count at the same armies),
   every opponent bordering the fog is estimated at least at my own income (card armies out) — or, on
   turns 1–4 when the award of picks proved all its starts, at the income the pick advisor's opening
   simulation gives it from them when that is larger (`openingIncome`, `PlanGameContext.opening`, #166) — capped
-  at what it could earn on the board, and the warning calls it a prior — every observed figure is
-  a lower bound under fog, and without it a finished game's true deploys read 2–3× low. Each border
+  at what it could earn on the board (#235: in a free-for-all at an even share, 1 of its opponents, of
+  the territories the board hides and of the bonuses it could still hold, its own in full), and the
+  warning calls it a prior — every observed figure is
+  a lower bound under fog, and without it a finished game's true deploys read 2–3× low. #235: the
+  prior shrinks with evidence: with a usable track it keeps `PRIOR_EVIDENCE_TURNS` (4) / (4 + its
+  consecutive observed turns × the visible share of its edge) of its lead over the larger of the
+  tracked figure and the newest observed turn (`priorBlend`; the warning names both figures). A
+  free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`, or a player
+  out). A track never stands alone below the newest turn the planner reads against it (#123's bound
+  at the tracked income): the estimate is the larger, labelled "observed +N on the newest turn". Each border
   is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to
   land), not a double count.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that

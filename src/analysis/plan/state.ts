@@ -44,6 +44,8 @@ export interface OpponentsCtx {
   /** The turn being planned, when known (the opening board is the first turn's only, #128). */
   turnNow: number | null;
   incomePrior: EnemyIncomePrior | undefined;
+  /** #235: why a free-for-all with no teams got no fog prior; `undefined` when it did, or is no such game. */
+  incomePriorSkipped: string | undefined;
   /** The deploy estimates of the opponents (teammates out). */
   estimateList: EnemyDeployEstimate[];
   /** An opponent's income: its deploy estimate less the Reinforcement card the clock adds (#164). */

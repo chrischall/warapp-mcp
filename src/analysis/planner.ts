@@ -239,6 +239,8 @@
 //     that bonus's value, and never above what it could earn; my own orders, when known, are
 //     measurements; #119) in place of the
 //     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
+//     #235: unless the newest turn, observed against the tracked income (#123's bound), reads more:
+//     a track never stands alone below it (source 'observed', "on the newest turn", both named).
 //     The fog prior (#119, `EnemyIncomePrior`): when `game.symmetricStart` says every player
 //     started even, with no teams and every seated player still playing — a 1v1, or (#226) a
 //     free-for-all, each opponent alike (a game with a player out is not: a survivor, or I, may
@@ -249,7 +251,14 @@
 //     against a finished game's true deploys without it. When the award of picks proved all its
 //     starts (`game.opening`, #166), the prior is the larger of my income and the income the pick
 //     advisor's opening simulation (`openingIncome`) gives it this turn from those starts. It only raises an
-//     estimate; the warning calls it a prior, not an observation, and says which.
+//     estimate; the warning calls it a prior, not an observation, and says which. #235: "even" is any
+//     distribution but a custom scenario (a map's scenario distribution included: it only says where
+//     each player starts); in a free-for-all the cap is an even share (1 of its opponents) of the
+//     territories the board hides and of the bonuses it could still hold (its own in full), and a
+//     free-for-all with no teams that gets no prior says why (`game.unevenStart`, a player out). The
+//     prior shrinks with evidence: with a usable track it keeps PRIOR_EVIDENCE_TURNS / (PRIOR_EVIDENCE_TURNS
+//     + its consecutive observed turns × the share of its edge in view) of its lead over the larger of
+//     its tracked income and the newest observed turn (`priorBlend`), and the warning names both.
 //     #164, exact income: under a fog setting that shows every owner (`OWNERS_SHOWN_FOG`: No, Light
 //     and Dense fog, matched by name, never by the engine's order) on a board that shows every
 //     territory's owner, an opponent's estimate is its base plus the bonuses it holds, exactly
@@ -777,7 +786,8 @@
 //     top-ranked step and the actual reason: rule 4d's frontier stop, R3 (it completes a bonus
 //     that falls next turn), No-Split, no neighbour able to attack (each named as holding its
 //     border or already ordered), the holds (it would fit without what they took), or its size
-//     (its cost against the movable armies and deploys that can reach it). Army cap (`armyCap`, × income): when my
+//     (its cost against the movable armies and deploys that can reach it); #235: when the leftover
+//     then stages on another source toward that step (rule 5), the warning names that source. Army cap (`armyCap`, × income): when my
 //     armies after deploy exceed cap × income, armies above it are wasted, so the same fallback
 //     fires in any phase, and the rationale says so. The cap's cut to income is not modelled.
 //     Contact and late phases (#107): a plan with no capture at all falls back too — unless the
@@ -2081,7 +2091,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   }
 
   // ---- 4e. never stand still (#104, #107), the contact fallback (plan/stand-still.ts) ----
-  const { saveStep } = neverStandStill(pc, ps, book, threats, hd, tgt, caps);
+  const { saveStep, standStill } = neverStandStill(pc, ps, book, threats, hd, tgt, caps);
 
   // ---- 4g. a capture worth a card piece (#127) ----
   // Any capture this turn earns the turn's card pieces. With none planned (every goal but
@@ -2186,6 +2196,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const leftover = leftoverDeploy(pc, ps, book, threats, hd, tgt, saveStep, stack, open, stays);
   let { strikeStack } = leftover;
   const { poolDeployed, staging } = leftover;
+  // #235: the Standing-still warning names the source the leftover actually stages on.
+  if (staging && standStill && staging.t === standStill.t && staging.from !== standStill.named)
+    ps.warnings[standStill.index] = standStill.restate(staging.from);
 
   // The stack exists whether or not a leftover reached it (#102): holds and captures may take the
   // whole income, and an 80-stack must not stand idle for want of one spare army.

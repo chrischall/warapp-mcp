@@ -42,6 +42,7 @@ import {
   AHEAD_PRESSURE_FACTOR,
   PRESSURE_FACTOR,
   symmetricStart,
+  unevenStart,
   trackGame,
   trackOpponents,
   type MyOrders,
@@ -1315,7 +1316,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
         cards: rules.inPlay.length > 0,
         // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
-        symmetricStart: symmetricStart(game.settings, map),
+        symmetricStart: symmetricStart(game.settings),
+        // #235: why not, when it was not (the plan says so in a free-for-all).
+        ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
         // #166: the opponent's opening simulated from the starts the award proved, as the prior.
         ...(opening ? { opening } : {}),
         // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.

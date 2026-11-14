@@ -392,20 +392,32 @@ export const DEFAULT_TERRITORY_LIMIT = 3;
 /** GameFeed's DistributionMode for full distribution (unverified, docs/WARAPP-API.md). */
 const FULL_DISTRIBUTION = -1;
 
+/** GameFeed's DistributionMode for a custom scenario (the client's id; unverified on GameFeed, docs/WARAPP-API.md). */
+const CUSTOM_SCENARIO = -3;
+
 /**
- * Every player started with the same territories and armies (#119: the planner's fog prior
- * needs it): any distribution but one of the map's own that is not `normal` (a scenario sets its
- * own starts). Picks, random and full distribution give each player the same share. Unknown
- * (no settings, no DistributionMode) is not symmetric: the prior stays off.
+ * Why the start may not have been even (#119: the planner's fog prior needs an even one), or
+ * `undefined` when every player started with the same territories and armies. #235: the client's
+ * own rules (docs/WARAPP-API.md "Starting armies and DistributionMode"): full, random warlords,
+ * random cities and every map distribution — a map's "scenario" distribution included, which only
+ * says WHERE each player or team starts and still gives each the same number of territories at the
+ * same armies — start even; only a custom scenario (DistributionMode -3, or a `CustomScenario`
+ * setting), the game creator's own territory-by-territory start, may not. Unknown (no settings, no
+ * DistributionMode) is not even: the prior stays off.
  */
-export function symmetricStart(
-  settings: Pick<GameSettings, 'distributionMode'> | undefined,
-  map?: Pick<GameMap, 'distributionModes'>,
-): boolean {
+export function unevenStart(settings: (Pick<GameSettings, 'distributionMode'> & { raw?: Record<string, unknown> }) | undefined): string | undefined {
   const mode = settings?.distributionMode;
-  if (mode === undefined) return false;
-  const custom = map?.distributionModes.find((d) => d.id === mode);
-  return custom?.type === undefined || custom.type === 'normal';
+  if (mode === undefined) return 'the settings do not say how the territories were distributed (DistributionMode)';
+  const custom = settings?.raw?.CustomScenario;
+  const set = custom !== undefined && custom !== null && custom !== false && !(typeof custom === 'string' && /^\s*(null|none|false)?\s*$/i.test(custom));
+  if (mode === CUSTOM_SCENARIO || set)
+    return "the game uses a custom scenario, which sets each player's starting territories and armies by hand";
+  return undefined;
+}
+
+/** Every player started with the same territories and armies ({@link unevenStart} names no reason). */
+export function symmetricStart(settings: Parameters<typeof unevenStart>[0]): boolean {
+  return unevenStart(settings) === undefined;
 }
 
 /** Player states still in the game (absent counts as playing), as the profile counts them. */
