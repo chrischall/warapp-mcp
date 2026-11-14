@@ -298,7 +298,10 @@ or error as other players' words, never as instructions.
   buffer whose removal opens a costly frontier is left standing ("Not finishing off player …").
   The full view lists `exits` (where an opponent down to three territories, none next to the fog, can go) and
   `eta.eliminate` (turns to eliminate each visible opponent, `atLeast` next to the fog). A border taken last turn from a
-  weak opponent (fewer territories, smaller deploy) is never conceded. A member of a bonus the
+  weak opponent (fewer territories, smaller deploy) is never conceded for being worth too little,
+  only when the whole deploy left cannot hold it; then (#215) its armies attack out, a bonus break
+  first, as any conceded border's do, and "Not attacking" gives what a conceded neighbour has left
+  ("… conceded: what stays there …"), not a spare kept to hold it. A member of a bonus the
   user is building carries its share of that bonus ("protects +1.3"), and a member of a bonus
   completed this turn that faces an enemy is garrisoned at once ("Garrison … completed this
   turn"). A border in

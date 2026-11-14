@@ -383,7 +383,13 @@
 //     Deployment, from its held bonus's own pool, which lands only inside that bonus (rule 1b),
 //     and (#214) as the source of a lead step (#203, rule 0p.2), sized for the attack alone.
 //     Under `balanced` a hold is not deployed here: it competes in the greedy
-//     step (rule 4a), and a threatened border it might hold makes no attacks.
+//     step (rule 4a), and a threatened border it might hold makes no attacks. #215: one whose
+//     hold costs more than the whole deploy left is conceded here as under every other goal (the
+//     greedy step could never fund it; left pending, a border just taken from a weak opponent —
+//     exempt from the economic test — kept its armies home beside a 2-army member of an enemy
+//     bonus), and a pending hold the greedy step concedes may attack out in the passes after it.
+//     The "Not attacking" line gives a conceded neighbour's armies left once its orders leave
+//     ("has left for it … conceded"), never "spare once it holds its border".
 //  1h. Held bonuses (under `balanced` and `defend`; issue #51). Every bonus I hold in
 //     full with a threatened border is one unit: its threatened borders are all held
 //     or none (holding some while conceding another breaks it anyway). Its hold cost
@@ -1269,6 +1275,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const rank = { unit: 0, hold: 0, complete: 1, advance: 2, break: 3, counter: 3 } as const;
     const candidates: Candidate[] = [];
     const deferred: Threatened[] = [];
+    /**
+     * #215: a pending hold (locked by triage until this step decides) conceded here is unlocked: as
+     * any conceded border, it may still attack out with the armies on it (rule 1a).
+     */
+    const concedePending = (t: Threatened, room: number) => {
+      concedeUnaffordable(t, room);
+      if (!heldBorders.has(t.id)) locked.delete(t.id);
+    };
     let expansionLeft = 0;
     let expansionSpent = 0;
     let topValue = 0;
@@ -1533,7 +1547,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           const pending =
             expansionLeft > 0 && t.worth < topValue && t.recentFrom === undefined ? Math.max(0, floor - expansionSpent) : 0;
           const room = roomAt(t.id);
-          if (t.holdCost > room) return concedeUnaffordable(t, room);
+          // #215: conceded, its armies may attack out (rule 1a) in the passes still to run.
+          if (t.holdCost > room) return concedePending(t, room);
           if (t.holdCost > room - pending) {
             deferred.push(t);
             rationale.push(
@@ -1739,7 +1754,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     for (const t of deferred) {
       if (heldBorders.has(t.id)) continue;
       const room = roomAt(t.id);
-      if (t.holdCost > room) concedeUnaffordable(t, room);
+      if (t.holdCost > room) concedePending(t, room);
       else hold(t);
     }
     settleContested();

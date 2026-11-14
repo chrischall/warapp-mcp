@@ -1042,6 +1042,16 @@ export function floorTier(
         return;
       }
       if (balanced) {
+        // #215: a hold no deploy this turn can pay for is conceded now, not left to the greedy
+        // step: locked as a pending hold, its armies could not attack out (a border taken last
+        // turn from a weak opponent, exempt from the economic test, sat on 7 armies beside a 2-army
+        // member of an enemy bonus while the deploy went elsewhere). The budget only shrinks from
+        // here, so the greedy step could never have held it.
+        if (t.holdCost > left) {
+          if (quiet) conceded.add(t.id);
+          else concedeUnaffordable(t, left);
+          return;
+        }
         // Its armies stay put until the greedy step decides: holding assumes they are all there.
         holds.push(t);
         locked.add(t.id);

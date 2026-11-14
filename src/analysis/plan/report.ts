@@ -303,11 +303,11 @@ export function reportOffence(
     defenceAt, costAt, toTake, noSplit, leadLever, ffaLeader, leadText, myCommanders,
   } = pc;
   const { warnings, rationale, deployed, avail, spared, unabsorbed, captured, moves } = ps;
-  const { gainWith, orderOf, pools } = book;
+  const { gainWith, orderOf, pools, coverOf } = book;
   // As the deploy book reads it (Local Deployment).
   const local = pools !== null && pools.bonuses.length > 0;
   const { reinforcementAt, forceAt, borders, borderAt } = threats;
-  const { conceded, keepFor, stayAt, threatWarnings, twoStepKeep } = hd;
+  const { conceded, stood, keepFor, stayAt, threatWarnings, twoStepKeep } = hd;
   const { offenceSkip, badTrades, leadTry } = tgt;
 
   // ---- offence report (#72) ----
@@ -375,12 +375,19 @@ export function reportOffence(
   // One rationale line lists each visible enemy territory next to a territory I held at the start
   // that no order attacks, with the first reason that applies: a special unit there, a reason the
   // offence report already gave (rule 0p.2's second front among them), a capture that lowers income,
-  // its size against the most any neighbour of mine can spare once it holds its border, or that it is
+  // its size against the most any neighbour of mine can spare once it holds its border (#215: a conceded
+  // one, its garrison not standing, offers what is left on it once its orders leave), or that it is
   // no target of the plan's (rule 2: a player's territory is attacked to break a bonus, counter-attack,
   // finish a player off, strike, or as rule 4e's fallback; adapting in an FFA, the lead strikes).
   {
+    /** #215: a conceded border whose garrison does not stand (rule 1b): it keeps nothing back. */
+    const givenUp = (x: number) => conceded.has(x) && !stood.has(x) && !myCommanders.has(x);
     const spareNow = (x: number, n: number) => {
-      if (!mineSet.has(x) || holdLocked.has(x) || conceded.has(x) || myCommanders.has(x) || orderOf(x)) return 0;
+      if (!mineSet.has(x) || myCommanders.has(x) || orderOf(x)) return 0;
+      // #215: a conceded border (its garrison not standing) holds nothing: what is left on it once
+      // its orders leave (an attack out, rule 1b's withdrawal) is free.
+      if (givenUp(x)) return Math.max(0, avail.get(x)! - coverOf(x));
+      if (holdLocked.has(x)) return 0;
       const gone = (m: number) => m === n;
       return Math.max(0, avail.get(x)! - Math.max(keepFor(x, gone), twoStepKeep(x, gone)));
     };
@@ -437,7 +444,11 @@ export function reportOffence(
         .sort((a, b) => b.spare - a.spare || a.x - b.x)[0]!;
       if (need === null) return 'no attack can take it at these kill rates';
       if (best.spare < need)
-        return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}${deployText}`;
+        return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and ${
+          givenUp(best.x)
+            ? `the most a neighbour of mine has left for it is ${best.spare} (${label(best.x)}, conceded: what stays there once its other orders leave)`
+            : `the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}`
+        }${deployText}`;
       if (goal !== 'balanced') {
         // Rule 4e's fallback (and a lead) can still take a player's territory under another goal.
         const others = [...attacked].filter((t) => t !== n && state.get(t)?.owner.kind === 'player').sort(byNum);
