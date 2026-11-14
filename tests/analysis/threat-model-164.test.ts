@@ -460,3 +460,50 @@ describe('a card play read under exact fog is named too (#164 review)', () => {
     expect(plan.warnings.join('\n')).toMatch(/player 20's Reinforcement card is taken as played on turn 5 \(a deployment above its exact income\).*errs low/i);
   });
 });
+
+describe('the floor tier counts hidden and lost stacks as already next to a border (#164 x #118 review)', () => {
+  // My 1 2 are bonus 101 (+6), 6 armies each. 1 borders 3, 2 borders 4; 3 4 5 6 the opponent's.
+  // With its stacks in view at 20 armies, the floor (beat the 19 movable next to each border) is
+  // out of reach and the bonus is conceded. The same board with the armies hidden, 40 unaccounted
+  // (capped at 20 in one place), must not read 0 next to each border and keep the bonus as floored.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5, 6], [[1, 3], [2, 4], [1, 2], [3, 5], [4, 5], [5, 6]], [[101, 6, [1, 2]], [102, 1, [5, 6]]]));
+  const plan = (them: (id: number) => TerritoryState, tracks: OpponentTrack[]) =>
+    planTurn({ graph: g, board: board([mine(1, 6), mine(2, 6), them(3), them(4), them(5), them(6)]), me: ME, income: 11, settings: STD, turn: 10, game: { turn: 10, fog: 'ModerateFog' }, tracks, options: { goal: 'defend' } });
+  it('a border facing a hidden stack is not floored on a 0: the bonus is conceded, as with the stacks in view', () => {
+    const tracks = [track(FOE, { income: 10, unexplained: 40 })];
+    const seen = plan((id) => foe(id, 20), tracks);
+    const hidden = plan((id) => ownerOnly(id), tracks);
+    expect(why(seen)).toMatch(/conceding bonus B101/);
+    expect(why(hidden)).not.toMatch(/falls only to armies deployed against it/);
+    expect(why(hidden)).not.toMatch(/Floor for bonus B101/);
+    expect(why(hidden)).toMatch(/conceding bonus B101/);
+  });
+  it('a lost stack that can reach a border counts there too', () => {
+    // Fogged 3 4 5 6; a stack of 30 left view on 5 two turns ago, so it can stand on 3 and 4 now.
+    const tracks = [track(FOE, { income: 10, unexplained: 0, lostStacks: [{ territoryId: 5, turn: 8, armies: 30 }] })];
+    const lost = plan((id) => fogged(id), tracks);
+    expect(why(lost)).not.toMatch(/falls only to armies deployed against it/);
+    expect(why(lost)).not.toMatch(/Floor for bonus B101/);
+  });
+});
+
+describe("last turn's deploy is judged against last turn's income, not this turn's (#164 review)", () => {
+  // Bonus 102 (+4) = 4 5. Last turn the opponent held it (income 9) and deployed 9 on 3; since then
+  // player 30 took 5, so its income now is 5. The 9 it deployed was income, not a Reinforcement card.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [2, 3], [3, 4], [4, 5]], [[102, 4, [4, 5]]]));
+  const prev = board([mine(1, 5), mine(2, 5), foe(3, 4), foe(4, 4), foe(5, 4)]);
+  const now = board([mine(1, 5), mine(2, 5), foe(3, 13), foe(4, 4), foe(5, 4, 30)]);
+  const clock = { firstTurn: 2, armies: 6, turnsPerCard: 5 };
+  it('a deploy its previous income paid for is no card play: the card stays counted', () => {
+    const e = enemyDeployEstimates(g, now, ME, STD, prev, undefined, undefined, { turn: 6, fog: 'NoFog', reinforcement: clock }).find((x) => x.playerId === FOE)!;
+    expect(e.observation?.low).toBe(9);
+    expect(e.cardPlayed).toBeNull();
+    expect(e.card).toEqual({ armies: 6, due: 2 });
+  });
+  it('a deploy above its previous income is still a card play', () => {
+    const big = board([mine(1, 5), mine(2, 5), foe(3, 19), foe(4, 4), foe(5, 4, 30)]);
+    const e = enemyDeployEstimates(g, big, ME, STD, prev, undefined, undefined, { turn: 6, fog: 'NoFog', reinforcement: clock }).find((x) => x.playerId === FOE)!;
+    expect(e.cardPlayed).toBe(5);
+    expect(e.card).toBeNull();
+  });
+});

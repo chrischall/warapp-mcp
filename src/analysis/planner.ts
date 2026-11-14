@@ -855,8 +855,10 @@
 // now; whether hands are hidden is not checked, since the plan never sees an opponent's hand). A bomb halves one territory of mine next to the bomber after the deploys and before any
 // move (my stack keeps the smaller half; a commander is unharmed), so every threat to my territory
 // (rule 1's `forceAt`) becomes the attack that twice the armies just hold against: every hold, near
-// miss, keep and comfort margin is sized as if halved first (one bomb, but it may land on any
-// border, so each is sized for it, as each is for the whole deploy). The threat warning names the
+// miss, keep and comfort margin sized against that threat is sized as if halved first (one bomb,
+// but it may land on any border, so each is sized for it, as each is for the whole deploy). Not
+// bomb-adjusted: #172's two-step holds (`twoStepHold`) and #118's floor tier (`floorOf`, against
+// the armies already next to a border). The threat warning names the
 // bombed take. And the leftover deploy (rule 5), when it goes to a border facing an enemy, gives
 // half to a second open border facing an enemy (the same opponent first, then the bigger stack,
 // then id): one bomb halves only one of two stacks. Not a strike, saving or expansion stack: each
@@ -2117,7 +2119,15 @@ export function enemyDeployEstimates(
     if (when.reinforcement) {
       const above = (low: number, income: number) => (exact !== null ? low > income : low >= income + when.reinforcement!.armies);
       for (const x of track?.turns ?? []) if (above(x.low, x.visibleIncome)) played.push(x.from);
-      if (observation && when.turn !== null && when.turn !== undefined && above(observation.low, exact ?? visible)) played.push(when.turn - 1);
+      // Last turn's deploy was paid by last turn's income: what it held on the previous board (a
+      // bonus it lost since paid for it), never below this board's figure.
+      if (observation && previous && when.turn !== null && when.turn !== undefined) {
+        const before = new Set<number>();
+        for (const t of previous.territories)
+          if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.owner.playerId === playerId) before.add(t.territoryId);
+        const paid = boardIncome(g, before, { base: minimum, per }).total;
+        if (above(observation.low, Math.max(exact ?? visible, paid))) played.push(when.turn - 1);
+      }
     }
     let card: EnemyDeployEstimate['card'] = null;
     let cardPlayed: number | null = null;
@@ -3259,11 +3269,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    * `allPlayers`, every opponent next to `t` may attack it in the same turn (worst case); else
    * each opponent alone. `player` is the strongest one alone. `null` with no opponent next to it.
    */
-  const forceAt = (
-    t: number,
-    gone: (n: number) => boolean,
-    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean },
-  ): Force | null => {
+  /**
+   * Per opponent, its stacks next to my `t` (territories in `gone` excluded) and what each may
+   * move: visible stacks their movable armies and units; #164's hidden stacks its unaccounted
+   * armies, once per border (its first hidden stack carries them); stacks that left view
+   * ({@link lostAt}), the pool's carrier keeping what they leave of it. With `trend`, its fastest
+   * growth there. Shared by {@link forceAt} and the floor tier's armies already next to a border.
+   */
+  const stacksAt = (t: number, gone: (n: number) => boolean, trend: boolean) => {
     const byPlayer = new Map<number, { stacks: { id: number; movable: number }[]; growth: number }>();
     // #164: a player's unaccounted armies are one pool, in one place at most: its first hidden stack
     // next to `t` carries them; any other hidden stack of it there is the guard alone (movable 0).
@@ -3285,7 +3298,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (hidden && !pooled.has(st.owner.playerId)) carrier.set(st.owner.playerId, n);
       if (hidden) pooled.add(st.owner.playerId);
       p.stacks.push({ id: n, movable });
-      if (o.trend && !hidden) p.growth = Math.max(p.growth, growthOf.get(n)?.growth ?? 0);
+      if (trend && !hidden) p.growth = Math.max(p.growth, growthOf.get(n)?.growth ?? 0);
       byPlayer.set(st.owner.playerId, p);
     }
     // #164: a large stack that left view and can stand next to `t` by now: a separate stack of its owner.
@@ -3311,6 +3324,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const pool = hiddenMovable(player);
       c.movable = Math.max(viaCarrier, pool - lostElsewhere.reduce((n, l) => n + l.movable, 0));
     }
+    return byPlayer;
+  };
+  const forceAt = (
+    t: number,
+    gone: (n: number) => boolean,
+    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean },
+  ): Force | null => {
+    const byPlayer = stacksAt(t, gone, o.trend);
     if (!byPlayer.size) return null;
     const each = [...byPlayer]
       .sort((a, b) => a[0] - b[0])
@@ -4091,15 +4112,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // borders could take none. So a held bonus first gets its floor — every threatened border beats
   // the armies already next to it — and, when it is not then held whole, what is left is spread
   // over its borders so the deploy must be aimed at a border to break it.
-  /** The most movable armies (special units included) one visible enemy player has next to my `t`. */
+  /**
+   * The most movable armies (special units included) one enemy player has next to my `t`: its
+   * visible stacks, and (#164) its hidden pool once per border and its stacks that left view, as
+   * {@link forceAt} counts them — a hidden stack is armies already there, not deploy to aim.
+   */
   const adjacentMovable = (t: number) => {
-    const byPlayer = new Map<number, number>();
-    for (const n of neighborsOf(g, t)) {
-      const st = state.get(n);
-      if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
-      byPlayer.set(st.owner.playerId, (byPlayer.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard) + unitsAt(n));
-    }
-    return Math.max(0, ...byPlayer.values());
+    const byPlayer = stacksAt(t, (n) => captured.has(n), false);
+    return Math.max(0, ...[...byPlayer.values()].map((p) => p.stacks.reduce((n, x) => n + x.movable, 0)));
   };
   /** The deploys `m` needs to beat the armies already next to it (never more than its hold cost). */
   const floorOf = (m: Threatened) => {
