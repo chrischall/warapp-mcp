@@ -176,6 +176,11 @@ export interface PlanState {
   coverKeep: Map<number, number>;
   /** #218 (comment): the leftover kept central with no front to go to (rule 5): rule 6 never moves it away. */
   centralKeep: Map<number, number>;
+  /**
+   * #226 review: borders rule 5's leftover deployed to for defence (a comfortable margin, a hold
+   * before the strike stack) or to save toward a step: the #226 margin takes nothing from them.
+   */
+  leftoverKept: Set<number>;
   /** #179: a buffer in an FFA left standing: no pass captures its territories this turn. */
   spared: Set<number>;
   /** #201: players left standing because absorbing them would not catch the leader. */
@@ -237,6 +242,7 @@ export function newPlanState(): PlanState {
     locked: new Set(),
     coverKeep: new Map(),
     centralKeep: new Map(),
+    leftoverKept: new Set(),
     spared: new Set(),
     unabsorbed: new Set(),
     absorbLines: new Map(),

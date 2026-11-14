@@ -500,7 +500,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     combined capture, not under No-Split) also takes the armies still idle on its source beyond
     what holds it — even if the attacks on players beside it fail (#128), the owner's other stacks
     beside each target having moved in first — as a margin over an
-    estimate that is only a floor; a "Margin on the attack on …" line says what deploy it covers.
+    estimate that is only a floor (never from a source rule 5's leftover went to for a comfortable
+    margin, a hold or saving toward a step: those armies are not idle); a "Margin on the attack on …" line says what deploy it covers.
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can
@@ -542,7 +543,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and
-    the opponent's estimate), and `warapp_plan_turn` feeds it to the outlook for the turn being played,
+    the opponent's estimate; both sides every turn's income, so a Reinforcement card played this
+    turn is left out of mine, as it is of theirs), and `warapp_plan_turn` feeds it to the outlook for the turn being played,
     so the two read the same; the plan's line says how the whole-income outcome differs from the
     income-less-the-share one, and the outlook's `basis` names the front and the incomes it assumed.
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into

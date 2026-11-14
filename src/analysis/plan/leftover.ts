@@ -412,6 +412,7 @@ export function leftoverDeploy(
           } (protects +${valueOf(b.id)}).`,
         );
         deploy(b.id, d);
+        ps.leftoverKept.add(b.id);
       }
     let where: number;
     let why: string;
@@ -420,12 +421,15 @@ export function leftoverDeploy(
     let concentrating = false;
     /** #218 (comment): the leftover stays central: rule 6 keeps it there, not the armies already there. */
     let central = false;
+    /** #226 review: the leftover defends `where` or saves there: the #226 margin leaves it. */
+    let defends = false;
     if (stack) {
       lock = true;
       concentrating = true;
       where = stack.id;
       why = `one strike stack on the border facing player ${stack.player}, the strongest opponent (~${stack.income} income, ${stack.source}), not spread`;
     } else if (short[0]) {
+      defends = true;
       // #218: the source of the step the leftover would save toward, when it is an open border:
       // once every short border has its comfortable margin, the rest goes there when it defends
       // as well as the border the rest would go to, and counts toward the step. A margin itself
@@ -451,6 +455,7 @@ export function leftoverDeploy(
           );
           deploy(b.id, d);
           locked.add(b.id);
+          ps.leftoverKept.add(b.id);
           spread = true;
         }
       lock = true;
@@ -472,6 +477,7 @@ export function leftoverDeploy(
     } else if (saving) {
       where = saving.from;
       why = `save toward ${label(saving.t)} (${saving.cost} to take), the next step of bonus ${bonusName(saving.bonusId)}, which this turn cannot afford`;
+      defends = true;
       lock = true;
       concentrating = true;
     } else if (expansion !== undefined && open(expansion)) {
@@ -530,6 +536,7 @@ export function leftoverDeploy(
         );
         deploy(second.id, half);
         locked.add(second.id);
+        if (defends) ps.leftoverKept.add(second.id);
         n = roomAt(where);
       }
     }
@@ -540,6 +547,7 @@ export function leftoverDeploy(
       // interior" armies. Only when it got deploys (under Local Deployment it may get none).
       if (lock) locked.add(where);
       if (central) ps.centralKeep.set(where, (ps.centralKeep.get(where) ?? 0) + n);
+      if (defends) ps.leftoverKept.add(where);
     }
     if (stack) strikeStack = { ...stack, deployed: Math.max(0, n) };
     // Local Deployment: what is left of each bonus pool stays inside its bonus, on its

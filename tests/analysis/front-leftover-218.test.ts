@@ -217,3 +217,26 @@ describe('#218 (2) the front line and the outlook are one computation', () => {
     );
   });
 });
+
+describe('#218 review: the front forecasts my board income, never a one-off card', () => {
+  // The same line as above. A Reinforcement card is played once (#164), as the opponent's side
+  // already assumes: the front's every-turn income leaves its armies out.
+  const sc: Scenario = {
+    edges: '1-2 2-3 3-4 4-5 5-6 6-7',
+    cells: { 1: 'M32', 2: 'F25', 3: 'n2', 4: 'M12', 5: 'E30', 6: 'n2', 7: 'F9' },
+    bonuses: [[100, 6, [3]]],
+    income: 10,
+    options: { enemyDeploy: 6 },
+  };
+
+  it('a 30-army card on a board income of 10 forecasts the front as income 10 does', () => {
+    const plain = planTurn(input(sc));
+    const withCard = planTurn({ ...input({ ...sc, income: 40 }), cardArmies: 30 });
+    expect(plain.front).toMatchObject({ myIncome: 10, outcome: 'ground-down' });
+    expect(withCard.front).toMatchObject({ myIncome: 10, theirIncome: plain.front!.theirIncome, outcome: plain.front!.outcome, turn: plain.front!.turn });
+    const line = withCard.rationale.find((r) => r.startsWith('Front outlook (#167)'));
+    expect(line).toBeDefined();
+    expect(line).not.toMatch(/\b40\b/);
+    expect(line).toMatch(/the 30 armies of this turn's card are played once/);
+  });
+});

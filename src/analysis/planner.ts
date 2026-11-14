@@ -109,7 +109,8 @@
 //          down). A rationale line gives the outcome, the turn and the income the border pins (or
 //          that not even the whole income keeps it). #218: the front is `mainFront` (exchange.ts),
 //          shared with the game outlook; the plan reports `front`, the same front forecast with my
-//          whole income, which warapp_plan_turn feeds back to the outlook, and when that outcome
+//          whole income, which warapp_plan_turn feeds back to the outlook (my income there, as the
+//          opponent's, is every turn's: a Reinforcement card played this turn is left out, #164), and when that outcome
 //          differs the line says what it is ("With my whole N a turn there (as the outlook's front
 //          forecast deploys it) …").
 //       3. Behind on income: pressure (rule 1e) is sized with no margin. Outside a 1v1 the goal
@@ -629,7 +630,8 @@
 //     #226, a margin: once the transfers (rule 6) have moved what they move, an attack on a
 //     player's territory whose owner may deploy there (not a combined capture; not under No-Split,
 //     which sends the whole stack already) takes the armies still on its source beyond what holds
-//     it (`spareBeyondHold`; and, as rule 6's #128 keep, what holds the source against the threat
+//     it (`spareBeyondHold`; never from a source rule 5's leftover went to for a comfortable margin,
+//     a hold before the strike stack or saving toward a step, `leftoverKept`; and, as rule 6's #128 keep, what holds the source against the threat
 //     beside it as if this turn's attacks on players there failed — each such target then also
 //     holding its owner's stacks beside it that are not beside the source, which may move in
 //     before my attack runs), the target with the most
@@ -1639,36 +1641,41 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         const settingsF = { offensiveKillRate: rates.offensiveKillRate, defensiveKillRate: rates.defensiveKillRate, oneArmyStandsGuard: guard === 1 };
         // Every turn's income, not this turn's deploy: a card is played once (#164).
         const theirIncome = incomeOfPlayer(front.player);
-        const f = forecastBorder({ mine: front.mine, theirs: front.theirs, myIncome: income, theirIncome, myDeploy: income - floor, settings: settingsF });
+        // #218 review: my side likewise — the board income, a Reinforcement card's armies out
+        // (`income` counts them this turn only), and the expansion share taken of that.
+        const every = nextIncomeWith(0);
+        const share = Math.min(floor, Math.ceil(MIN_EXPANSION_SHARE * every));
+        const cardNote = pc.cardArmies > 0 ? ` (my board income: the ${pc.cardArmies} armies of this turn's card are played once)` : '';
+        const f = forecastBorder({ mine: front.mine, theirs: front.theirs, myIncome: every, theirIncome, myDeploy: every - share, settings: settingsF });
         // #218: the same front with my whole income deployed there every turn — what the game
         // outlook's front forecast assumes — so the two can be read together.
-        const whole = forecastBorder({ mine: front.mine, theirs: front.theirs, myIncome: income, theirIncome, settings: settingsF, outcomeOnly: true });
-        ps.front = { ...front, myIncome: income, theirIncome, outcome: whole.outcome, turn: whole.turn };
+        const whole = forecastBorder({ mine: front.mine, theirs: front.theirs, myIncome: every, theirIncome, settings: settingsF, outcomeOnly: true });
+        ps.front = { ...front, myIncome: every, theirIncome, outcome: whole.outcome, turn: whole.turn };
         const wholeText =
           whole.outcome === f.outcome && whole.turn === f.turn
             ? ''
-            : ` With my whole ${income} a turn there (as the outlook's front forecast deploys it) ${
+            : ` With my whole ${every} a turn there (as the outlook's front forecast deploys it) ${
                 whole.outcome === 'ground-down'
                   ? `I am ground down on turn ${whole.turn}`
                   : whole.outcome === 'breaks'
                     ? `my stack breaks it on turn ${whole.turn}`
                     : 'it is a stand-off'
               }.`;
-        const pins = f.pinnedHolds ? `the border pins ${f.pinned} of my ${income} income` : `not even my whole ${income} income keeps the border`;
-        const pair = `my ${front.mine} on ${label(front.from)} against player ${front.player}'s ${front.theirs} on ${label(front.at)}, each deploying there every turn`;
+        const pins = f.pinnedHolds ? `the border pins ${f.pinned} of my ${every} income` : `not even my whole ${every} income keeps the border`;
+        const pair = `my ${front.mine} on ${label(front.from)} against player ${front.player}'s ${front.theirs} on ${label(front.at)}, each deploying there every turn${cardNote}`;
         // `breaks` means pressing captures before being pressed grinds me down; the plan commits to
         // pressing only when its orders already take that stack. Otherwise being pressed with the
         // income less the share decides: the border pins more than that, so the share goes.
-        const pressedGrinds = f.pinned > income - floor;
+        const pressedGrinds = f.pinned > every - share;
         const pressing = captured.has(front.at);
         if (f.outcome === 'ground-down') {
           rationale.push(
-            `Front outlook (#167): ${pair}, with ${income - floor} a turn (the income less the ${floor} expansion share) I am ground down on turn ${f.turn} — ${pins}. Holds come before the expansion share this turn.${wholeText}`,
+            `Front outlook (#167): ${pair}, with ${every - share} a turn (the income less the ${share} expansion share) I am ground down on turn ${f.turn} — ${pins}. Holds come before the expansion share this turn.${wholeText}`,
           );
           floor = 0;
         } else if (f.outcome === 'breaks' && pressedGrinds && !pressing) {
           rationale.push(
-            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn} only if the plan presses it, and it does not; pressed, with ${income - floor} a turn (the income less the ${floor} expansion share) I am ground down — ${pins}. Holds come before the expansion share this turn.${wholeText}`,
+            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn} only if the plan presses it, and it does not; pressed, with ${every - share} a turn (the income less the ${share} expansion share) I am ground down — ${pins}. Holds come before the expansion share this turn.${wholeText}`,
           );
           floor = 0;
         } else if (f.outcome === 'breaks' && pressedGrinds)
@@ -1677,7 +1684,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           );
         else
           rationale.push(
-            `Front outlook (#167): ${pair}, ${f.outcome === 'breaks' ? `my stack breaks it on turn ${f.turn}` : 'it is a stand-off'} even with ${floor} of income going to expansion (${f.pinnedHolds ? `the border pins ${f.pinned}` : `not even my whole ${income} keeps the border`}): the expansion share stands.${wholeText}`,
+            `Front outlook (#167): ${pair}, ${f.outcome === 'breaks' ? `my stack breaks it on turn ${f.turn}` : 'it is a stand-off'} even with ${share} of income going to expansion (${f.pinnedHolds ? `the border pins ${f.pinned}` : `not even my whole ${every} keeps the border`}): the expansion share stands.${wholeText}`,
           );
       }
     }
@@ -2281,13 +2288,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // An attack on a player's territory is sized to the kill count its defenders plus an ESTIMATED
   // deploy need (#120), and the estimate is a floor. Once the transfers have moved what they move,
   // the armies still on its source beyond what holds it (`spareBeyondHold`: none on a hold, a
-  // conceded border or the strike stack) would sit idle: they join the attack (the target with the
+  // conceded border or the strike stack; none either where rule 5's leftover went for a comfortable
+  // margin, a hold or saving toward a step) would sit idle: they join the attack (the target with the
   // most defenders first, then id; No-Split already sends the whole stack).
   if (!noSplit) {
     const onPlayers = moves
       .filter((m) => m.kind === 'attack' && !combined.has(m.to) && state.get(m.to)?.owner.kind === 'player' && reinforcementAt(m.to) > 0)
       .sort((a, b) => defenceAt(b.to) - defenceAt(a.to) || a.to - b.to);
     for (const m of onPlayers) {
+      // #226 review: rule 5 deployed the leftover there to defend it (a comfortable margin, a hold)
+      // or to save toward a step: those armies are not idle, and the margin leaves the source alone.
+      if (ps.leftoverKept.has(m.from)) continue;
       // #128, as the transfers keep it: a source beside an attack on a player that may fail keeps
       // what holds it against the threat there as if those attacks failed.
       const pending = neighborsOf(g, m.from).filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player');
