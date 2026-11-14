@@ -1060,7 +1060,11 @@
 //           deploys land one step behind, then a transfer of mine into it carries fewer (its own
 //           line retold), then the armies standing move back (toward a foe's territory no truce
 //           covers, else any open territory), said so when it already stood above the cap; what
-//           cannot go is a warning — naming this plan's own deploy when that is what exceeds it.
+//           cannot go is a warning — naming this plan's own deploy when that is what exceeds it
+//           (deploy less there, or give notice and ask the owner first: never a silent break), or
+//           Local Deployment's room on the step. A capped border that also faces another
+//           opponent is no "toward another front": when what the cap leaves no longer holds it
+//           against that opponent (and it held before), a warning names the opponent and the hold.
 //       T7. Never a surprise break: a notice binds until `endsTurn`, then the partner is an
 //           ordinary opponent; the plan's `advice` says `give-notice` when the trust turned `watch`
 //           for the endgame or for outgrowing (not when I already gave notice).
@@ -2337,7 +2341,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- 6. transfers, #125 staging (plan/transfers.ts) ----
   transfers(pc, ps, book, threats, hd, caps, staging);
   // ---- B2 (T5): a truce's border cap (plan/relations.ts) ----
-  applyBorderCaps(pc, ps, book, hd, ps.truce);
+  applyBorderCaps(pc, ps, book, hd, ps.truce, threats);
 
   // ---- #226: a margin on attacks on a player from armies that would sit idle ----
   // An attack on a player's territory is sized to the kill count its defenders plus an ESTIMATED

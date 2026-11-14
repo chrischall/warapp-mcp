@@ -475,7 +475,7 @@ describe('B2 T5: a hold deploy above the cap with no step behind is named in the
     const p = planTurn(alone(24));
     expect(deployedTo(p, 1)).toBe(5);
     expect(warned(p)).toMatch(
-      /Truce with player 20: my orders leave 4 above the agreed border cap of 25 on T1 \(#1\): this plan's own deploy of 5 there \(for its hold, or the leftover\) is what exceeds it, and no territory of mine one step behind can take it — deploy less there to keep the term, or keep the deploy and break it: that breaks a term of the truce\./,
+      /Truce with player 20: my orders leave 4 above the agreed border cap of 25 on T1 \(#1\): this plan's own deploy of 5 there \(for its hold, or the leftover\) is what exceeds it, and no territory of mine one step behind can take it, so these orders break a term of the truce — keep it by deploying less there, or give notice \(notice-by-me\) and ask the owner before exceeding the cap; never break it silently\./,
     );
   });
 
@@ -676,5 +676,82 @@ describe('B2: truces only in a free-for-all; none given changes nothing', () => 
     const p = planTurn(input([truce()], { game: teams }));
     expect(p.relations![0]!.state).toBe('ignored');
     expect(warned(p)).toMatch(/this is a team game/);
+  });
+});
+
+describe('B2 T5: a capped border that also faces another opponent (B2a review)', () => {
+  // My T1 (30) faces the partner's T2 (40) and player 30's T6 (20); T3 (2) sits behind T1, beside
+  // the neutral T4. Without the truce T1 holds against player 30; the cap of 10 moves its armies
+  // back and leaves T1 short against player 30's 19 movable plus ~5 deploy — the plan keeps the
+  // term but says T1 no longer holds, and against whom.
+  const g9 = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 6],
+      [
+        [1, 2],
+        [1, 6],
+        [1, 3],
+        [3, 4],
+      ],
+      [],
+    ),
+  );
+  const both = (relations?: PlanRelation[]): PlanInput => ({
+    graph: g9,
+    board: board([mine(1, 30), enemy(2, 40, PARTNER), mine(3, 2), neutral(4, 4), enemy(6, 20, OTHER)]),
+    me: ME,
+    income: 5,
+    settings: STD,
+    game: { players: FFA, turn: 8 },
+    options: { adapt: true, enemyDeploy: 5 },
+    ...(relations ? { relations } : {}),
+  });
+
+  it('without the truce T1 holds against player 30', () => {
+    const p = planTurn(both());
+    expect(warned(p)).not.toMatch(/T1 \(#1\).*does not hold/);
+  });
+
+  it('with the cap the plan keeps the term and warns that T1 no longer holds against player 30', () => {
+    const i = both([truce({ borderCap: 10 })]);
+    const p = planTurn(i);
+    expect(endsAt(p, i, 1)).toBe(10);
+    expect(why(p)).not.toMatch(/toward another front/);
+    expect(warned(p)).toMatch(
+      /Truce with player 20 \(border cap 10\): T1 \(#1\) also faces player 30, and the 10 the cap leaves there do not hold it — its hold needs \d+ against player 30's ~\d+\. Keep the term, or give notice \(notice-by-me\) and ask the owner before exceeding the cap; never break it silently\./,
+    );
+    expect(warned(p)).not.toMatch(/breaks a term/);
+  });
+});
+
+describe('B2 T5: Local Deployment leaves no room one step behind (B2a review)', () => {
+  // My T1 (24) is B901 (+5) on its own, facing the partner's T2 (40); T3 (2) sits behind it. The whole
+  // income is B901's pool, so the deploy cannot land on T3: the warning names the pool's room.
+  const g10 = buildGraph(
+    makeMap(
+      [1, 2, 3, 9],
+      [
+        [1, 2],
+        [1, 3],
+        [2, 9],
+      ],
+      [[901, 5, [1]]],
+    ),
+  );
+  it('says the pool had no room on the step', () => {
+    const p = planTurn({
+      graph: g10,
+      board: board([mine(1, 24), enemy(2, 40, PARTNER), mine(3, 2), enemy(9, 3, OTHER)]),
+      me: ME,
+      income: 5,
+      settings: { ...STD, localDeployments: true },
+      game: { players: FFA, turn: 8 },
+      options: { adapt: true, enemyDeploy: 5 },
+      relations: [truce({ borderCap: 0, trust: 'watch', watch: ['massing'] })],
+    });
+    expect(deployedTo(p, 3)).toBe(0);
+    expect(warned(p)).toMatch(
+      /my orders leave 1 above the agreed border cap of 0 on T1 \(#1\) \(Local Deployment: the pools had room for only 0 of the 5 deployed there on T3 \(#3\), and the armies there cannot move again this turn\)/,
+    );
   });
 });

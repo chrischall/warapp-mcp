@@ -405,6 +405,48 @@ describe('warapp_plan_turn — the truces in the ledger (B2)', () => {
     expect(p.rationale.join('\n')).not.toMatch(/Diplomacy card is in effect/);
   });
 
+  it('maps the give-notice advice, naming the partner as untrusted text, when Bob outgrows me (T7)', async () => {
+    h = await liveHarness({ feed: [game('2', { seats: 3 })], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    // Turn 3's board is cached by the plan; on turn 4 Bob's stack beside me has grown far past my income.
+    await planTurn();
+    const dir = h.dataDir;
+    await h.harness.close();
+    h = await liveHarness({ dataDir: dir, feed: [game('3', { seats: 3 })], warapp: live(boardAt({ bob158: 20 })) });
+    const p = await planTurn();
+    expect(p.relations).toEqual([expect.objectContaining({ agreement: 'a1', trust: 'watch', flags: expect.arrayContaining(['outgrowing']) })]);
+    expect(p.advice).toEqual([
+      { kind: 'give-notice', player: { id: Number(BOB.feed), name: '⟦Bob⟧' }, agreement: 'a1', why: expect.stringMatching(/^player \d+ is outgrowing me$/) },
+    ]);
+    expect(p.warnings.join('\n')).toMatch(/Truce with player \d+ \(agreement a1\): give notice \(T7\)/);
+  });
+
+  it("maps a border cap's moves back by name (T5)", async () => {
+    // Bob's 2 on 158 keep the cap of 2; my 3 on 161 stand above it.
+    h = await liveHarness({ feed: [game('2', { seats: 3 })], warapp: live(boardAt({ bob158: 2 })) });
+    payload(await record({ with: 'Bob', status: 'agreed', territories: [161, 158], border_cap: 2 }));
+    const p = await planTurn();
+    expect(p.relations).toEqual([
+      expect.objectContaining({ agreement: 'a1', capMoved: [{ from: expect.objectContaining({ id: 161 }), to: expect.objectContaining({ id: 159 }), armies: 1 }] }),
+    ]);
+  });
+
+  it('reports a quiet border with no agreement as tacit, never as a truce', async () => {
+    let dir: string | undefined;
+    // Four turns of the same board: Bob's border stays quiet three turns running.
+    for (const turn of ['2', '3', '4', '5']) {
+      await h?.harness.close();
+      h = await liveHarness({ ...(dir ? { dataDir: dir } : {}), feed: [game(turn, { seats: 3 })], warapp: live(boardAt()) });
+      dir = h.dataDir;
+      await planTurn();
+    }
+    const p = await planTurn();
+    expect(p).not.toHaveProperty('relations');
+    expect(p.tacit).toEqual([
+      { player: { id: Number(BOB.feed), name: '⟦Bob⟧' }, quietTurns: 3, border: [expect.objectContaining({ id: 159 }), expect.objectContaining({ id: 161 })] },
+    ]);
+  });
+
   it('a covered territory Bob took is a break: an ordinary opponent the same turn, with the evidence (T8)', async () => {
     h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
     payload(await record({ with: 'Bob', status: 'agreed' }));

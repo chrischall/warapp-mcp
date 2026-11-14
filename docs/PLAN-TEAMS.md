@@ -277,7 +277,10 @@ Only in a free-for-all; with teams or two players the input is ignored with a wa
   armies do not walk toward its border as "the enemy".
 - **T5. The cap.** With a border cap, my orders leave at most the cap on a covered border territory;
   the excess is staged one step behind, toward another front. If I already stand above it, the plan
-  moves the excess back and says so.
+  moves the excess back and says so. Where the plan's own hold deploy is what exceeds it, the warning
+  says to deploy less there, or to give notice and ask the owner first — never a silent break. Where
+  the border also faces another opponent and what the cap leaves no longer holds it, a warning names
+  that opponent and the hold: the term's cost, stated.
 - **T6. What a break would cost.** For each relation the plan reports `lossIfBroken`: the turn
   simulator's result when the partner lands its whole estimated deploy on its best covered border and
   attacks. `warapp_check_plan` keeps the partner among the opponents it tries, so `safe` still means

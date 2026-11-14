@@ -212,7 +212,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (T3); the partner is no front for rule 0p.2 or rule 6, and a territory beside a covered one keeps its
   hold (T4); a border cap (T5) is never overfilled by my own withdrawals, staging or rule 6 transfers
   (`capRoom` / `capStepRoom` at those call sites), and after rule 6 any excess is deployed one step back,
-  trimmed off a transfer in, or moved back — a warning names this plan's own deploy when that exceeds it; `enforced` (T9) makes the
+  trimmed off a transfer in, or moved back — a warning names this plan's own deploy when that exceeds it
+  (deploy less, or give notice and ask the owner: never a silent break), and one that the cap leaves
+  short of its hold against another opponent beside it; `enforced` (T9) makes the
   player no foe — `planRelationsFrom` never sets it (the ledger's field is ignored until a decoder-backed,
   turn-bounded source exists). `armiesFreed` counts a relaxed border only where the full hold would have
   been funded (not conceded, not refused by rule 1a or my income). **No

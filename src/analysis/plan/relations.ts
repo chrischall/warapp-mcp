@@ -255,11 +255,15 @@ export function capStepRoom(pc: PlanCtx, ps: PlanState, from: number, to: number
  * another front (a foe's territory no truce covers, else any territory not mine and not covered) —
  * then taken off a transfer of mine into it (the latest first; No-Split: a whole one only), then the
  * standing armies move one step behind, and the plan says so; one already above the cap at the
- * start is said to move back. What cannot go (No-Split, no step, armies that cannot move again) is a
- * warning that names it — this plan's own deploy for a hold, when that is what exceeds the cap.
+ * start is said to move back. What cannot go (No-Split, no step, Local Deployment's room, armies that
+ * cannot move again) is a warning that names it — this plan's own deploy for a hold, when that is
+ * what exceeds the cap; the plan never exceeds a term silently: it says to deploy less there, or to
+ * give notice and ask the owner first. A capped border that also faces another opponent is not
+ * "toward another front": when what the cap leaves there no longer holds it against that opponent
+ * (and it held before), a warning names the opponent and the hold — the cap's cost (section 4).
  */
-export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd: Holds, tp: TrucePass | undefined): void {
-  const { truce, g, mineSet, label, armiesOf, noSplit, territories: state } = pc;
+export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd: Holds, tp: TrucePass | undefined, threats: Threats): void {
+  const { truce, g, mineSet, label, armiesOf, noSplit, unitsAt, territories: state } = pc;
   if (!tp) return;
   const { deployed, avail, moves, warnings, rationale, incoming } = ps;
   const { capped, borderOf } = capsOf(pc);
@@ -277,8 +281,11 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
   truce.given.forEach((r, i) => {
     for (const t of borderOf.get(i) ?? []) {
       const cap = capped.get(t)!;
-      let excess = endsAt(pc, ps, t) - cap;
+      const before = endsAt(pc, ps, t);
+      let excess = before - cap;
       if (excess <= 0) continue;
+      // Another opponent beside it, with every truce partner's stacks left out.
+      const facesOther = foesNext(pc, t).some((p) => !truce.partners.has(p));
       const already = armiesOf(t) > cap;
       const dist = [...neighborsOf(g, t)].some((x) => distFoe.has(x)) ? distFoe : distAny;
       const step = neighborsOf(g, t)
@@ -287,6 +294,8 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
       const moved: { from: number; to: number; armies: number }[] = tp.capMoved.get(i) ?? [];
       const said: string[] = [];
       const trimmed: string[] = [];
+      /** Local Deployment: deploys the step's pool had no room for, put back on `t`. */
+      let noRoom: { shift: number; off: number } | undefined;
       if (step !== undefined) {
         // This turn's deploys there land one step behind instead.
         const off = Math.min(excess, deployed.get(t) ?? 0, avail.get(t)!);
@@ -296,6 +305,7 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
           const shift = Math.min(off, book.roomAt(step));
           if (shift > 0) book.deploy(step, shift);
           if (shift < off) book.deploy(t, off - shift);
+          if (shift < off) noRoom = { shift, off };
           if (shift > 0) said.push(`deploy ${shift} on ${label(step)} instead`);
           excess -= shift;
         }
@@ -342,19 +352,42 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
       if (moved.length) tp.capMoved.set(i, moved);
       if (said.length || trimmed.length)
         rationale.push(
-          `Truce with player ${r.player} (border cap ${cap}): ${already ? `${label(t)} already stands above the cap with ${armiesOf(t)}, so` : `my orders would leave more than ${cap} on ${label(t)}, so`} ${[...trimmed, ...said].join(' and ')}${said.length ? ', toward another front' : ''} (T5).`,
+          `Truce with player ${r.player} (border cap ${cap}): ${already ? `${label(t)} already stands above the cap with ${armiesOf(t)}, so` : `my orders would leave more than ${cap} on ${label(t)}, so`} ${[...trimmed, ...said].join(' and ')}${said.length && !facesOther ? ', toward another front' : ''} (T5).`,
         );
       if (excess > 0) {
         const dep = deployed.get(t) ?? 0;
         const why =
           step === undefined && dep > 0
-            ? `: this plan's own deploy of ${dep} there (for its hold, or the leftover)${armiesOf(t) > cap ? `, on top of the ${armiesOf(t)} already standing there,` : ''} is what exceeds it, and no territory of mine one step behind can take it — deploy less there to keep the term, or keep the deploy and break it`
+            ? `: this plan's own deploy of ${dep} there (for its hold, or the leftover)${armiesOf(t) > cap ? `, on top of the ${armiesOf(t)} already standing there,` : ''} is what exceeds it, and no territory of mine one step behind can take it, so these orders break a term of the truce — keep it by deploying less there, or give notice (notice-by-me) and ask the owner before exceeding the cap; never break it silently.`
             : step === undefined
             ? ' (no territory of mine one step behind to move them to)'
             : noSplit
             ? ' (No-Split: an order sends the whole stack)'
+            : noRoom
+            ? ` (Local Deployment: the pools had room for only ${noRoom.shift} of the ${noRoom.off} deployed there on ${label(step)}, and the armies there cannot move again this turn)`
             : ' (the armies there cannot move again this turn)';
-        warnings.push(`Truce with player ${r.player}: my orders leave ${excess} above the agreed border cap of ${cap} on ${label(t)}${why}: that breaks a term of the truce.`);
+        warnings.push(
+          why.endsWith('.')
+            ? `Truce with player ${r.player}: my orders leave ${excess} above the agreed border cap of ${cap} on ${label(t)}${why}`
+            : `Truce with player ${r.player}: my orders leave ${excess} above the agreed border cap of ${cap} on ${label(t)}${why}: that breaks a term of the truce.`,
+        );
+      }
+      if (facesOther) {
+        // The cap's cost: what it leaves no longer holds the border against another opponent.
+        const f = threats.forceAt(
+          t,
+          (n) => {
+            const st = state.get(n);
+            return st?.owner.kind === 'player' && truce.partners.has(st.owner.playerId);
+          },
+          { trend: true, allPlayers: true },
+        );
+        const need = f && !truce.partners.has(f.player) ? Math.max(0, threats.holdArmies(f.threat) - unitsAt(t)) : 0;
+        const left = endsAt(pc, ps, t);
+        if (f && need > 0 && left < need && before >= need)
+          warnings.push(
+            `Truce with player ${r.player} (border cap ${cap}): ${label(t)} also faces player ${f.player}, and the ${left} the cap leaves there do not hold it — its hold needs ${need} against player ${f.player}'s ~${f.threat}. Keep the term, or give notice (notice-by-me) and ask the owner before exceeding the cap; never break it silently.`,
+          );
       }
     }
   });
