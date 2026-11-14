@@ -171,3 +171,63 @@ export function capturePieceValue(settings: GameSettings | undefined, handArmies
     why: `a capturing turn brings ~${reinforcementPieces} Reinforcement pieces of the ${r.pieces} a card takes, at ${source}: ~${armies} armies (the other cards are not valued)`,
   };
 }
+
+/**
+ * #205: the most armies cards can add to one player, for the outlook's upper bound on a fogged
+ * opponent. Only a Reinforcement card adds armies to its holder; a Gift card lets another player
+ * hand it territories (and their armies), so with one in play — or a card this table does not
+ * know — there is no bound. The Reinforcement card must be fixed (`FixedArmies`; a `Mode` other
+ * than fixed is progressive, unverified) and every random piece is counted as its own, so the
+ * bound assumes a capture on every turn.
+ */
+export interface CardArmyCeiling {
+  /** Armies one Reinforcement card adds; 0 when none is in play. */
+  armiesPerCard: number;
+  pieces: number;
+  initialPieces: number;
+  /** The most Reinforcement pieces one capturing turn can bring. */
+  piecesPerTurn: number;
+}
+
+/** Cards that never add armies to their holder. */
+const NO_ARMY_CARDS = new Set([
+  'Spy',
+  'Emergency Blockade',
+  'Order Priority',
+  'Order Delay',
+  'Airlift',
+  'Diplomacy',
+  'Sanctions',
+  'Reconnaissance',
+  'Surveillance',
+  'Blockade',
+  'Bomb',
+]);
+
+const FIXED_MODES = new Set(['0', 'fixed']);
+
+/** {@link CardArmyCeiling} from the game's card settings; `undefined` when cards are not bounded (or none is in play). */
+export function cardArmyCeiling(settings: GameSettings | undefined): CardArmyCeiling | undefined {
+  const clock = cardClock(settings);
+  if (!clock) return undefined;
+  const r = clock.cards.find((c) => c.card === 'Reinforcement');
+  if (clock.cards.some((c) => c.card !== 'Reinforcement' && !NO_ARMY_CARDS.has(c.card))) return undefined;
+  if (!r) return { armiesPerCard: 0, pieces: 1, initialPieces: 0, piecesPerTurn: 0 };
+  const raw = settings!.raw.ReinforcementCard as Rec;
+  const fixed = asInt(raw.FixedArmies);
+  if (fixed === undefined || fixed <= 0) return undefined;
+  if (raw.Mode !== undefined && !FIXED_MODES.has(String(raw.Mode).toLowerCase())) return undefined;
+  return {
+    armiesPerCard: fixed,
+    pieces: r.pieces,
+    initialPieces: r.initialPieces,
+    piecesPerTurn: r.minimumPerTurn + (r.weight > 0 ? clock.randomPerTurn : 0),
+  };
+}
+
+/** The most armies cards can have added by `turn` (pieces arrive at the end of a turn, so turn `t` plays those of turns 1 to t − 1). */
+export function cardArmiesBy(c: CardArmyCeiling, turn: number): number {
+  if (c.armiesPerCard <= 0) return 0;
+  const pieces = c.initialPieces + c.piecesPerTurn * Math.max(0, turn - 1);
+  return Math.floor(pieces / c.pieces) * c.armiesPerCard;
+}

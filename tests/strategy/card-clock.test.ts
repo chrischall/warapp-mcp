@@ -2,7 +2,7 @@
 // (pieces per card, starting pieces, guaranteed pieces per turn, pieces handed out per turn).
 import { describe, expect, it } from 'vitest';
 import { normalizeSettings } from '../../src/normalize.js';
-import { capturePieceValue, cardClock } from '../../src/strategy/card-clock.js';
+import { capturePieceValue, cardArmiesBy, cardArmyCeiling, cardClock } from '../../src/strategy/card-clock.js';
 import { fixtureSettings } from '../analysis/helpers.js';
 
 const card = (o: Record<string, unknown>) => ({ NumPieces: 4, InitialPieces: 0, MinimumPiecesPerTurn: 0, Weight: 1, ...o });
@@ -158,5 +158,37 @@ describe('capturePieceValue (#127): what a turn with a capture is worth in card 
       }),
     );
     expect(v.armies).toBe(0);
+  });
+});
+
+describe('cardArmyCeiling (#205)', () => {
+  it('a fixed Reinforcement card: the most armies cards can have added by a turn, capturing every turn', () => {
+    const c = cardArmyCeiling(
+      settings({
+        NumberOfCardsToReceiveEachTurn: 2,
+        ReinforcementCard: card({ NumPieces: 4, InitialPieces: 1, MinimumPiecesPerTurn: 0, FixedArmies: 5 }),
+        SpyCard: card({ NumPieces: 3 }),
+      }),
+    )!;
+    // Every random piece can be a Reinforcement piece: 2 a turn on top of the 1 it starts with.
+    expect(c).toEqual({ armiesPerCard: 5, pieces: 4, initialPieces: 1, piecesPerTurn: 2 });
+    // Turn 1: 1 piece, no card. Turn 3: 1 + 2 × 2 = 5 pieces, one card. Turn 5: 9 pieces, two.
+    expect(cardArmiesBy(c, 1)).toBe(0);
+    expect(cardArmiesBy(c, 3)).toBe(5);
+    expect(cardArmiesBy(c, 5)).toBe(10);
+  });
+
+  it('cards that add no armies bound at nothing', () => {
+    const c = cardArmyCeiling(settings({ NumberOfCardsToReceiveEachTurn: 1, SpyCard: card({}), BombCard: card({}) }))!;
+    expect(cardArmiesBy(c, 20)).toBe(0);
+  });
+
+  it('no bound with a Gift card (another player can give it territories), a Reinforcement card of unknown armies, or a progressive one', () => {
+    expect(cardArmyCeiling(settings({ NumberOfCardsToReceiveEachTurn: 1, GiftCard: card({}) }))).toBeUndefined();
+    expect(cardArmyCeiling(settings({ NumberOfCardsToReceiveEachTurn: 1, ReinforcementCard: card({}) }))).toBeUndefined();
+    expect(
+      cardArmyCeiling(settings({ NumberOfCardsToReceiveEachTurn: 1, ReinforcementCard: card({ FixedArmies: 5, Mode: 'ProgressiveByNumberOfTurns' }) })),
+    ).toBeUndefined();
+    expect(cardArmyCeiling(settings({ ReinforcementCard: 'none' }))).toBeUndefined();
   });
 });

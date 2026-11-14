@@ -4,13 +4,19 @@
 // Strength is armies + STRENGTH_INCOME_TURNS × income (the #167 FFA ranking's measure): what a
 // player can field over the next few turns. Mine is exact. An opponent's is a range under fog:
 //   - low: its visible armies + k × the income it visibly earns (both lower bounds);
-//   - high: what it could have, at most — every army it can have received (its start plus, each
-//     turn paid, the most it could earn that turn: the could-earn cap of an observed turn, else
-//     the whole map's territory income plus every bonus, since a bonus held by someone else now
-//     may have paid it before; under BonusArmyPer an observed cap, which counts only territories
-//     in view, is raised by what the rest of the map could add) and k × its could-earn cap now.
-//     In a team game a teammate can transfer armies to it, so its high is not a ceiling there. Unbounded (`null`) when the start is unknown, cards can add armies, or it has
-//     nothing in view. With every territory in view, high = low.
+//   - high: what it could have, at most — every army it can have received and k × the most it
+//     could earn now. Received: its start (given, or #205 with the starts unknown under an even
+//     split, ⌈territories ÷ players⌉ × the armies each starting territory had) plus, each turn
+//     paid, the most it could earn that turn — on a turn I have a board of (#205), the territory
+//     income of every territory nobody else visibly holds plus every bonus none of whose
+//     territories someone else visibly holds; on any other turn the whole map's territory income
+//     plus every bonus, since a bonus held by someone else now may have paid it before — plus,
+//     with cards on (#205), the Reinforcement armies the card clock lets it have played by now and
+//     over the next k turns (`cardArmies`, capturing every turn).
+//     In a team game a teammate can transfer armies to it, so its high is not a ceiling there.
+//     Unbounded (`null`) when its start is unknown (a scenario's, or no armies per territory) or
+//     cards are on without that bound (a Gift card, a progressive or unknown Reinforcement card).
+//     With every territory in view, high = low.
 // The ratio is mine ÷ the strongest opponent's, as a range: `low` against the highest `high`,
 // `high` against the highest `low` (`null`: no upper limit). It is per player: in a team game my
 // strength alone against the single strongest opponent, teams are not summed.
@@ -33,8 +39,10 @@
 import type { BoardState } from '../board.js';
 import { carriesTeam } from '../teams.js';
 import { neighborsOf, type MapGraph } from './graph.js';
-import { trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
-import type { PlannerSettings } from './planner.js';
+import type { TrackGame, TurnBoard } from './opponents.js';
+import { ownerShown, type PlannerSettings } from './planner.js';
+import { bonusTerritories } from './bonuses.js';
+import { cardArmiesBy, type CardArmyCeiling } from '../strategy/card-clock.js';
 import { boardIncome, DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
 import { STRENGTH_INCOME_TURNS } from './profile.js';
 import { forecastBorder, type BorderOutcome } from './exchange.js';
@@ -86,8 +94,10 @@ export interface OutlookInput {
   settings?: PlannerSettings;
   /** The game's players and starts ({@link trackGame}). */
   game?: TrackGame;
-  /** Cards are in play: a Reinforcement card can add armies, so no opponent's strength is bounded above under fog. */
+  /** Cards are in play: a Reinforcement card can add armies, so no opponent's strength is bounded above under fog… */
   cards?: boolean;
+  /** …unless (#205) the card clock bounds what cards can add ({@link cardArmyCeiling}). */
+  cardArmies?: CardArmyCeiling;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -132,9 +142,39 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   // it is raised by what the rest of the map could add to the base, never past this ceiling.
   const mapTerritories = territoryIncome(g.territoryById.size, rules.base, rules.per);
   const ceiling = mapTerritories + allBonuses;
-  const turnCap = (observed: number | undefined) =>
-    observed === undefined ? ceiling : Math.min(ceiling, observed + mapTerritories - rules.base);
-  const start = input.game?.start ? input.game.start.territories * input.game.start.armiesPerTerritory : null;
+  // #205: on a turn I have a board of, a player earned at most the territory income of every
+  // territory nobody else visibly holds plus every bonus none of whose territories someone else
+  // (a player or neutral) visibly holds: income is paid from the board the turn starts on.
+  const boardCap = (b: BoardState, playerId: number): number => {
+    const other = new Set<number>();
+    for (const t of b.territories) {
+      if (!g.territoryById.has(t.territoryId)) continue;
+      const shown = ownerShown(t);
+      if (shown && !(shown.owner.kind === 'player' && shown.owner.playerId === playerId)) other.add(t.territoryId);
+    }
+    let bonuses = 0;
+    for (const bonus of g.bonusById.values()) {
+      if (bonus.value <= 0) continue;
+      const ts = bonusTerritories(g, bonus.id);
+      if (ts.length && !ts.some((t) => other.has(t))) bonuses += bonus.value;
+    }
+    return Math.min(ceiling, territoryIncome(g.territoryById.size - other.size, rules.base, rules.per) + bonuses);
+  };
+  const turnCap = (t: number, playerId: number) => {
+    const b = byTurn.get(t)?.board;
+    return b ? boardCap(b, playerId) : ceiling;
+  };
+  // Its starting armies: given, or (#205) at most an even share of the map at the armies each
+  // starting territory had.
+  const game = input.game;
+  const share = game && game.players.length > 0 ? Math.ceil(g.territoryById.size / game.players.length) : null;
+  const start = game?.start
+    ? game.start.territories * game.start.armiesPerTerritory
+    : game?.startArmiesPerTerritory !== undefined && share !== null
+      ? share * game.startArmiesPerTerritory
+      : null;
+  // Cards: unbounded unless the card clock bounds what they add.
+  const cardsBound = !input.cards ? null : (input.cardArmies ?? undefined);
 
   const turns: OutlookTurn[] = run.map((turn) => {
     const board = byTurn.get(turn)!.board;
@@ -149,8 +189,6 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     }
     const mine = (armies.get(me) ?? 0) + k * boardIncome(g, held.get(me) ?? new Set(), rules).total;
     const open = fullyVisible(g, board);
-    const tracks = open ? [] : trackOpponents(g, [...byTurn.values()].filter((b) => b.turn <= turn), me, settings, input.game);
-    const trackOf = new Map(tracks.map((t) => [t.playerId, t]));
     const ids = new Set<number>([...held.keys()].filter((p) => !ally(p)));
     for (const p of players) if (!ally(p.id) && stillPlaying(p.id)) ids.add(p.id);
     const rows = [...ids]
@@ -161,15 +199,15 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         const income = boardIncome(g, held.get(playerId) ?? new Set(), rules).total;
         const low = a + k * income;
         if (open) return { playerId, low, high: low as number | null };
-        if (!held.has(playerId) || start === null || input.cards) return { playerId, low, high: null };
-        // The could-earn cap per observed turn (paid at the start of `to`); any other turn is
-        // bounded by the ceiling ({@link turnCap}).
-        const observedCap = new Map<number, number>();
-        for (const x of trackOf.get(playerId)?.turns ?? []) observedCap.set(x.to, Math.max(observedCap.get(x.to) ?? 0, x.cap));
+        if (start === null || cardsBound === undefined) return { playerId, low, high: null };
+        // Each turn's could-earn cap: from that turn's board when I have it, else the ceiling.
         let received = start;
-        for (let t = 1; t <= turn; t++) received += turnCap(observedCap.get(t));
-        const cap = Math.max(income, turnCap(observedCap.get(turn)));
-        return { playerId, low, high: Math.max(a, received) + k * cap };
+        for (let t = 1; t <= turn; t++) received += turnCap(t, playerId);
+        const cap = Math.max(income, turnCap(turn, playerId));
+        // Cards: what the clock lets it have played by now, and over the next k turns.
+        const now = cardsBound ? cardArmiesBy(cardsBound, turn) : 0;
+        const ahead = cardsBound ? cardArmiesBy(cardsBound, turn + k) - now : 0;
+        return { playerId, low, high: Math.max(a, received + now) + k * cap + ahead };
       });
     const maxLow = rows.reduce((m, r) => Math.max(m, r.low), 0);
     const unbounded = rows.some((r) => r.high === null);

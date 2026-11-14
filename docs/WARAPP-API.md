@@ -298,6 +298,13 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
 - `DistributionMode` -1 is taken to be full distribution (every territory split among the
   players, `TerritoryLimit` ignored). Unverified. The bound leaves the starting armies out in
   that case, and for a map distribution whose type is not `normal`.
+- #205: the outlook's **upper** bound on a fogged opponent needs a start too. With the start
+  unknown under full distribution or without `TerritoryLimit`, it takes ⌈territories ÷ players⌉ ×
+  `InitialPlayerArmiesPerTerritory` (every player gets an even share; unverified that full
+  distribution places `InitialPlayerArmiesPerTerritory` on each). A scenario's starts stay unbounded.
+- #205: with cards on, the bound counts a fixed Reinforcement card (`FixedArmies`) by the card
+  clock. A `ReinforcementCard.Mode` other than `0`/`Fixed` is taken as progressive and leaves the
+  bound open — the field name and values are unverified; a Gift card always leaves it open.
 
 ## Combat (luck and rounding) — verified from the client bundle, not live
 
