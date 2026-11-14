@@ -383,6 +383,24 @@ Read-only tool `warapp_advise_diplomacy`:
 - `facts`: true statements the agent may cite, each with whether the recipient can see it under the
   game's fog (visible incomes, territory counts, a third player's stack beside them).
 
+*As built (B3, 2026-11-14):* `priceTruce`, `partnerReading`, `truceVerdict`, `offerChecks`, `sharedBorder`,
+`suggestedTerms` and `diplomacyFacts` in `src/analysis/relations.ts` (pure; `tests/analysis/truce-pricing.test.ts`);
+the tool in `src/tools/diplomacy.ts`. The plan is built by `livePlanSetup` (`src/tools/turn.ts`, extracted from
+`warapp_plan_turn` and shared by both tools), so a price is the difference between two plans
+`warapp_plan_turn` would make; the planner is unchanged and the golden corpus untouched. Departures and
+choices: the hypothetical truce replaces any recorded relation with the same player and is priced at trust
+`clear`, or `watch` in the endgame (where it frees nothing). The partner's D5 record enters as
+`reliability` (kept rate ≥ 0.75 `kept`, < 0.5 `broke`): `broke` blocks `propose`, and gives `no` when a break
+this turn would cost me. "Income gained this turn" is next turn's income with less without. Suggested terms:
+the border territories of both sides, one turn's notice, a cap at the largest stack standing on the border
+(so neither side moves back and a build-up shows as `cap-exceeded`), `until_turn` five turns on. A neighbour
+with an open agreement is priced on its recorded terms; an AI or otherwise ineligible neighbour is listed
+with `no` and the reason, unpriced. `facts` cover third players only (stack beside the recipient, territory
+count — "at least" unless the fog shows every owner — and bonuses held in full), each with `recipientSees`
+from the fog setting (the wiki's levels, unverified). The host's description is read loosely
+(`Game.description`; the GameFeed key is unverified). Not built: T7's `give-notice` when B3 prices a
+recorded truce below zero (that needs the planner to price, which B3 leaves unchanged).
+
 ### B4. A message promises only what the plan does
 
 `warapp_send_chat` gains an optional `commitments` list, which the skill requires whenever a message

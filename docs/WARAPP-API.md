@@ -535,6 +535,9 @@ public wiki page "Game ID feed API" (read 2026-11-12, not called live):
   (<https://war.app/wiki/Private_Messaging>, <https://war.app/wiki/Mod_API_Reference:GameSettings>).
   `warapp_send_chat` refuses a private message when it is `false` (the client names server error 202,
   `PrivateMessagingDisabled`).
+- **The host's description — UNVERIFIED.** No GameFeed reply seen so far carries a game description.
+  `normalizeGame` reads one loosely as `description` or `Description` on the game or in its settings
+  (`Game.description`), and `warapp_advise_diplomacy` shows it as untrusted text; absent means unknown.
 - **The Terms of Service** (<https://www.war.app/TermsOfService>), as the research for
   `docs/PLAN-TEAMS.md` reported them and **not re-read by anyone since**: section 6 (Prohibited
   Conduct) bans automated systems (bots, scrapers, scripts) except through "authorized APIs", which

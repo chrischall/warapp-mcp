@@ -65,7 +65,7 @@ export const LEDGER_NOTE =
 const playerRef = z.union([z.string(), z.number()]);
 
 /** The players as the ledger needs them. */
-const relationPlayers = (players: readonly Player[]) =>
+export const relationPlayers = (players: readonly Player[]) =>
   players.map((p) => ({
     id: p.id,
     isAI: p.isAI,
@@ -139,7 +139,7 @@ const formatOf = (game: Game): RecordEntry['format'] => {
 };
 
 /** A scope from the tool's arguments, by id. */
-function scopeFrom(map: GameMap, territories: readonly (string | number)[] | undefined, bonuses: readonly (string | number)[] | undefined): AgreementScope {
+export function scopeFrom(map: GameMap, territories: readonly (string | number)[] | undefined, bonuses: readonly (string | number)[] | undefined): AgreementScope {
   if (territories?.length && bonuses?.length) {
     throw new McpToolError('Give `territories` or `bonuses`, not both: nothing was recorded.', {
       hint: 'A truce covers all of your territories (omit both), some territories, or the territories of some bonuses.',
@@ -199,7 +199,7 @@ function agreementView(a: Agreement, game: Game, map: GameMap, turn: number, run
 const entryView = ({ key: _key, ...rest }: RecordEntry) => rest;
 
 /** The reliability facts on record for `partner` (and its entries), or why there are none. */
-async function recordFor(dir: string | undefined, partner: number, env: EnvSource | undefined) {
+export async function recordFor(dir: string | undefined, partner: number, env: EnvSource | undefined) {
   if (!playerRecordEnabled(env)) return { record: 'off' as const };
   if (!dir) return { record: null };
   const r = await readPlayerRecord(dir, partner, env);

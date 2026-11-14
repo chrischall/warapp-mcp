@@ -197,6 +197,10 @@
       "description": "Read the truces you recorded for a game: each one's state, board-derived watch flags and trust, quiet borders, and the partner's record"
     },
     {
+      "name": "warapp_advise_diplomacy",
+      "description": "Advise on truces in a free-for-all: each neighbour's shared border, a truce priced by planning with and without it, a verdict, an offer's three checks, and facts you may cite"
+    },
+    {
       "name": "warapp_record_agreement",
       "description": "Record a truce or a change to one in the server's agreement ledger and the partner's name-free cross-game record (nothing is sent to war.app)"
     },

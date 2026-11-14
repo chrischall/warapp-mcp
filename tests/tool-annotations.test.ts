@@ -45,6 +45,7 @@ afterAll(async () => {
 describe('tool annotations', () => {
   it('covers the full surface (guards against a registrar being dropped)', () => {
     expect(Object.keys(ann).sort()).toEqual([
+      'warapp_advise_diplomacy',
       'warapp_analyze_board',
       'warapp_begin_turn',
       'warapp_check_plan',

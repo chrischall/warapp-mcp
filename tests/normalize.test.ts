@@ -316,6 +316,17 @@ describe('normalizeGame (lobby fixture)', () => {
     expect(g.chat).toEqual([{ text: 'hi' }]);
   });
 
+  it("reads the host's description loosely when the feed carries one (B3, unverified key)", () => {
+    expect(normalizeGame(FIXTURE).description).toBeUndefined();
+    expect(normalizeGame({ ...FIXTURE, description: 'No alliances' }).description).toBe('No alliances');
+    expect(normalizeGame({ ...FIXTURE, Description: 'Teams of one' }).description).toBe('Teams of one');
+    const settings = (FIXTURE as { settings: Record<string, unknown> }).settings;
+    expect(normalizeGame({ ...FIXTURE, settings: { ...settings, Description: 'Be nice' } }).description).toBe('Be nice');
+    // Blank or not a string: none.
+    expect(normalizeGame({ ...FIXTURE, description: '  ' }).description).toBeUndefined();
+    expect(normalizeGame({ ...FIXTURE, description: 7 }).description).toBeUndefined();
+  });
+
   it('throws a format error when the body is not a game', () => {
     expect(() => normalizeGame({ termsOfUse: 'x' })).toThrow(/unexpected shape/);
   });
