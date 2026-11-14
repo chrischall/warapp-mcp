@@ -99,6 +99,8 @@ import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
+import { planRelationsFrom } from '../analysis/relations.js';
+import { readLedger, recordTruceUsage } from '../relations-store.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
@@ -1056,6 +1058,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board. ' +
+          'In a free-for-all, `relations` reports each truce recorded with warapp_record_agreement as the plan treated it ' +
+          '(no covered territory of the partner attacked while it is active or in notice; a covered border facing only ' +
+          'the partner held against its stacks with no deploy, except your commander\'s, a valuable border, or while trust ' +
+          'is watch; a border cap kept), `advice` says `give-notice` when the endgame or the partner outgrowing you made ' +
+          'the trust watch, a truce the board shows broken is planned as an ordinary opponent, and `tacit` lists quiet ' +
+          'borders with no agreement (a report, never a truce). ' +
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +
@@ -1224,12 +1232,45 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
         ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
       };
+      // B2: the truces in force, from the agreement ledger (warapp_record_agreement) and my board
+      // history, and the tacit truces (reported, never planned on).
+      const ledger = ctx.dataDir && turn !== null ? await readLedger(ctx.dataDir, game.id, me.id) : undefined;
+      const truces =
+        turn !== null
+          ? planRelationsFrom({
+              agreements: ledger?.agreements ?? [],
+              graph,
+              board: seen,
+              boards: [...history.boards, { turn, board: seen }],
+              me: me.id,
+              turn,
+              players: game.players.map((p) => ({
+                id: p.id,
+                ...(p.isAI ? { isAI: true } : {}),
+                ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
+                ...(p.state !== undefined ? { state: p.state } : {}),
+                ...(p.team !== undefined ? { team: p.team } : {}),
+              })),
+              incomes: {
+                mine: income - cards.extraArmies,
+                opponents: new Map(
+                  game.players
+                    .filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing')
+                    .map((p) => {
+                      const t = tracks?.find((x) => x.playerId === p.id);
+                      return [p.id, t && t.firstSeen !== null ? (t.income ?? t.visibleIncome) : null] as const;
+                    }),
+                ),
+              },
+            })
+          : undefined;
       const plan = planTurn({
         graph,
         board,
         me: me.id,
         income,
         cardArmies: cards.extraArmies,
+        ...(truces?.relations.length ? { relations: truces.relations } : {}),
         settings,
         ...(trend ? { previousBoard: trend.board } : {}),
         // #226: my orders on that turn, when this server sent them: a failed attack's kills count back.
@@ -1290,7 +1331,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
       if (ctx.dataDir && turn !== null) await writeGameRecord(ctx.dataDir, game);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
+      // B2: what each honoured truce freed this turn, for "has it been useful in play?" (not a what-if plan).
+      const used = (plan.relations ?? []).filter((r) => r.honoured && r.agreement !== undefined);
+      if (ctx.dataDir && turn !== null && !whatIf && used.length)
+        await recordTruceUsage(
+          ctx.dataDir,
+          game.id,
+          me.id,
+          turn,
+          used.map((r) => ({ agreementId: r.agreement!, armiesFreed: r.armiesFreed, lossIfBroken: null })),
+        );
       const name = namer(map);
+      /** Another player by id, its name delimited as untrusted text. */
+      const playerRef = (id: number) => {
+        const p = game.players.find((x) => x.id === id);
+        return { id, name: p ? untrustedText(p.name) : null };
+      };
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
       // and the cards in effect. Advice only: the orders below are the plan's.
       const advice = rules.inPlay.length
@@ -1472,6 +1528,23 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               }
             : {}),
         },
+        // B2: each truce as the plan treated it, the advice about them, and the tacit truces.
+        ...(plan.relations
+          ? {
+              relations: plan.relations.map((r) => ({
+                ...r,
+                player: playerRef(r.player),
+                relaxed: r.relaxed.map(name),
+                fullHold: r.fullHold.map((f) => ({ territory: name(f.territory), why: f.why })),
+                ...(r.capMoved ? { capMoved: r.capMoved.map((m) => ({ from: name(m.from), to: name(m.to), armies: m.armies })) } : {}),
+                ...(r.breach ? { breach: { ...r.breach, territories: r.breach.territories.map(name) } } : {}),
+              })),
+            }
+          : {}),
+        ...(plan.advice ? { advice: plan.advice.map((a) => ({ ...a, player: playerRef(a.player) })) } : {}),
+        ...(truces?.tacit.length
+          ? { tacit: truces.tacit.map((t) => ({ player: playerRef(t.player), quietTurns: t.quietTurns, border: t.border.map(name) })) }
+          : {}),
         warnings,
         rationale: plan.rationale,
         orders,

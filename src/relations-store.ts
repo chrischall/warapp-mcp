@@ -6,8 +6,8 @@
 // record (src/player-record-store.ts); nothing is sent to war.app. Reads are loose: an unusable
 // file or entry is dropped, never thrown on.
 //
-// `usage` is a stub for part B2: per planned turn, what each truce freed and what a break would
-// cost. Nothing fills it yet (`recordTruceUsage` is there for the planner work to call).
+// `usage` (part B2): per planned turn, what each honoured truce freed (warapp_plan_turn calls
+// `recordTruceUsage`); what a break would cost stays null until rule T6.
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -31,7 +31,7 @@ export const MAX_AGREEMENTS = 50;
 /** Planned turns of usage kept per game (the newest). */
 export const MAX_USAGE_TURNS = 200;
 
-/** Part B2's per-turn log for one truce: filled by the planner later; `null` until then. */
+/** Part B2's per-turn log for one truce; `lossIfBroken` is `null` until rule T6. */
 export interface TruceUsage {
   agreementId: string;
   /** Armies the truce freed from the covered border this turn. */
@@ -192,7 +192,7 @@ export function nextAgreementId(ledger: RelationsLedger): string {
 }
 
 /**
- * Part B2's stub: record what each truce freed and would cost on `turn`. Writes only when a ledger
+ * Part B2: record what each truce freed and would cost on `turn`. Writes only when a ledger
  * exists for the game. `true` when written; never throws.
  */
 export async function recordTruceUsage(dir: string, gameId: number, playerId: number, turn: number, usage: readonly TruceUsage[]): Promise<boolean> {

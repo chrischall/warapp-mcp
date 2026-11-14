@@ -349,3 +349,68 @@ describe('warapp_get_relations', () => {
     expect(p.notes.join(' ')).toMatch(/live board could not be read/);
   });
 });
+
+// B2: warapp_plan_turn resolves the ledger into the planner's relations (the rules themselves are
+// tested in tests/analysis/lessons-diplomacy.test.ts).
+interface PlanPayload {
+  relations?: Array<{
+    player: { id: number; name: string | null };
+    agreement?: string;
+    state: string;
+    honoured: boolean;
+    trust: string;
+    flags: string[];
+    breach?: { term: string; turn: number; territories: Array<{ id: number }> };
+  }>;
+  advice?: unknown[];
+  tacit?: unknown[];
+  warnings: string[];
+  rationale: string[];
+}
+const planTurn = async (view?: 'full') =>
+  payload<PlanPayload>(await h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', ...(view ? { view } : {}) }));
+
+describe('warapp_plan_turn — the truces in the ledger (B2)', () => {
+  it('without an agreement the plan carries no relations', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    const p = await planTurn();
+    expect(p).not.toHaveProperty('relations');
+    expect(p).not.toHaveProperty('advice');
+  });
+
+  it('honours an agreed truce, names the partner as untrusted text, and logs the armies it freed', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const p = await planTurn();
+    expect(p.relations).toEqual([
+      expect.objectContaining({ player: { id: Number(BOB.feed), name: '⟦Bob⟧' }, agreement: 'a1', state: 'active', honoured: true, trust: 'clear' }),
+    ]);
+    expect(p.rationale.join('\n')).toMatch(/Truce with player \d+ \(agreement a1\): none of its \d+ covered territor/);
+    const ledger = JSON.parse(readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')) as {
+      usage: Record<string, Array<{ agreementId: string; armiesFreed: number | null; lossIfBroken: number | null }>>;
+    };
+    expect(ledger.usage['3']).toEqual([{ agreementId: 'a1', armiesFreed: expect.any(Number), lossIfBroken: null }]);
+  });
+
+  it('a covered territory Bob took is a break: an ordinary opponent the same turn, with the evidence (T8)', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    // Turn 3's board is cached by the plan.
+    await planTurn();
+    const dir = h.dataDir;
+    await h.harness.close();
+    h = await liveHarness({ dataDir: dir, feed: [game('3')], warapp: live(boardAt({ bobTakes161: true })) });
+    const p = await planTurn();
+    expect(p.relations).toEqual([
+      expect.objectContaining({
+        agreement: 'a1',
+        state: 'broken',
+        honoured: false,
+        trust: 'watch',
+        flags: ['broken'],
+        breach: expect.objectContaining({ term: 'took or attacked a covered territory of mine', turn: 3, territories: [expect.objectContaining({ id: 161 })] }),
+      }),
+    ]);
+    expect(p.warnings.join('\n')).toMatch(/Truce with player \d+ \(agreement a1\) is broken by them: took or attacked a covered territory of mine on turn 3 .*\(T8\)/);
+  });
+});

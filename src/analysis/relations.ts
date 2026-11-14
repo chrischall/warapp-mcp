@@ -5,7 +5,7 @@
 // Principles (PLAN-TEAMS §4): an agreement exists only because the player recorded it with an
 // explicit tool call — chat is never parsed into one — and words change no estimate: only the
 // board raises a flag. Pure and deterministic like the planner (ties on ascending id, no I/O).
-// Nothing here is used by the planner yet (part B2).
+// `planRelationsFrom` resolves the ledger into the planner's `relations` (part B2).
 //
 // Board events read off two consecutive boards with the visibility rules of `observeDeploy`: a
 // territory counts only when both boards showed its owner and armies, so a fog reveal is never
@@ -16,7 +16,7 @@ import { carriesTeam } from '../teams.js';
 import { bonusTerritories } from './bonuses.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import type { MyOrders, TurnBoard } from './opponents.js';
-import { ownerShown, visibleState } from './plan/shared.js';
+import { ownerShown, visibleState, type PlanRelation, type TruceWatchReason } from './plan/shared.js';
 
 /** Every status an agreement can be recorded in. */
 export const AGREEMENT_STATUSES = [
@@ -620,4 +620,78 @@ export function trust(agreement: Agreement, flags: readonly WatchFlag[], context
   if (agreement.status === 'notice-by-them') reasons.push('they gave notice');
   if (context.endgame) reasons.push('endgame: no other opponent is still a match for either of us');
   return { level: reasons.length ? 'watch' : 'clear', reasons };
+}
+
+/** B2: what the plan resolves the ledger from. */
+export interface PlanRelationsInput {
+  agreements: readonly Agreement[];
+  graph: MapGraph;
+  /** My board this turn (the covered territories are read on it). */
+  board: BoardState;
+  /** My boards, oldest first, this turn's included, each with my orders when known. */
+  boards: readonly TurnBoard[];
+  me: number;
+  turn: number;
+  players: readonly RelationPlayer[];
+  /** My income and each opponent's estimate (`null`: unknown), for `outgrowing` and the endgame. */
+  incomes: { mine: number | null; opponents: ReadonlyMap<number, number | null> };
+}
+
+/** The flag kinds that make the trust `watch`, as the planner names them. */
+const WATCH_KINDS = ['broken', 'cap-exceeded', 'massing', 'outgrowing'] as const satisfies readonly WatchFlagKind[];
+
+/**
+ * B2: the agreements the planner reads this turn — every one agreed and `active` or in `notice`,
+ * with its covered territories on both sides (on `board`), its watch flags, the trust and why,
+ * and the border cap; one the partner broke (a `broken` flag, never ambiguous) as `broken` with
+ * the evidence (T8: an ordinary opponent at once). `enforced` comes from the agreement only (part
+ * D); an active Diplomacy card is not read in (its decoder is unverified, #163). Also the tacit
+ * truces with every neighbour no open agreement names: reported, never planned on.
+ */
+export function planRelationsFrom(input: PlanRelationsInput): { relations: PlanRelation[]; tacit: TacitTruce[] } {
+  const { graph, board, me, turn, players, incomes } = input;
+  const holding = (p: number) =>
+    new Set(board.territories.filter((t) => ownerShown(t) && ownerOn(t) === p).map((t) => t.territoryId));
+  const mine = holding(me);
+  const relations: PlanRelation[] = [];
+  for (const a of [...input.agreements].sort((x, y) => x.id.localeCompare(y.id))) {
+    const state = agreementState(a, turn, players);
+    if (state.phase !== 'active' && state.phase !== 'notice') continue;
+    const partnerIncome = incomes.opponents.get(a.with);
+    const flags = breachWatch({
+      agreement: a,
+      graph,
+      boards: input.boards,
+      me,
+      ...(incomes.mine !== null ? { incomes: { mine: incomes.mine, partner: partnerIncome ?? null } } : {}),
+    });
+    const others = [...incomes.opponents].filter(([id]) => id !== a.with);
+    const endgame =
+      incomes.mine !== null && partnerIncome !== null && partnerIncome !== undefined && others.every(([, v]) => v !== null)
+        ? truceEndgame({ mine: incomes.mine, partner: partnerIncome, others: others.map(([, v]) => v!) })
+        : false;
+    const verdict = trust(a, flags, { endgame });
+    const watch: TruceWatchReason[] = WATCH_KINDS.filter((k) => flags.some((f) => f.kind === k));
+    if (a.status === 'notice-by-them') watch.push('their-notice');
+    if (endgame) watch.push('endgame');
+    const broke = flags.find((f) => f.kind === 'broken' && !f.ambiguous);
+    relations.push({
+      player: a.with,
+      coveredMine: coveredTerritories(graph, a.terms.scope, mine),
+      coveredTheirs: coveredTerritories(graph, a.terms.scope, holding(a.with)),
+      state: broke ? 'broken' : state.phase,
+      ...(state.endsTurn !== undefined ? { endsTurn: state.endsTurn } : {}),
+      ...(a.terms.borderCap !== undefined ? { borderCap: a.terms.borderCap } : {}),
+      trust: verdict.level,
+      ...(watch.length ? { watch } : {}),
+      ...(a.enforced ? { enforced: true } : {}),
+      agreement: a.id,
+      ...(a.status === 'notice-by-me' ? { noticeBy: 'me' as const } : a.status === 'notice-by-them' ? { noticeBy: 'them' as const } : {}),
+      ...(broke
+        ? { breach: { term: 'took or attacked a covered territory of mine', turn: broke.turn, evidence: broke.evidence, territories: [...broke.territories] } }
+        : {}),
+    });
+  }
+  const open = new Set(input.agreements.filter((a) => !TERMINAL_STATUSES.has(a.status)).map((a) => a.with));
+  return { relations, tacit: tacitTruces({ graph, boards: input.boards, me, exclude: open }) };
 }
