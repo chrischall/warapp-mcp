@@ -2195,7 +2195,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     when: on({ format: ['ffa'] }),
     text:
       'A truce "until we two are the only ones left" was ended the turn the others surrendered, and the ' +
-      'posters held that its letter was kept: nobody had said when a player counts as gone. Tie the end to a ' +
+      'one poster held that its letter was kept: nobody had said when a player counts as gone. Tie the end to a ' +
       'turn or to notice, and read the game again before committing while players are leaving.',
     source: S.forumTruceTwoLeft,
     basis: 'source',
@@ -2249,9 +2249,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'diplomacy',
     when: on({ format: ['ffa'], phase: ['contact', 'late'] }),
     text:
-      'Calling the others to gang up on the leader, or posting its income, is resented: many forum posters ' +
-      'call it a popularity contest, and several block whoever sends it. Leave the board to make the case, and keep any ' +
-      'message to your own position and your own border.',
+      'Calling the others to gang up on the leader, or posting its income, is resented by some players: one ' +
+      'forum poster calls it a popularity contest and blocks whoever sends it. Leave the board to make the ' +
+      'case, and keep any message to your own position and your own border.',
     source: S.forumFfaChatEtiquette,
     basis: 'derived',
   },
@@ -2304,9 +2304,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'diplomacy',
     when: on({ format: ['ffa'], anyCards: true }),
     text:
-      'Card farming: friendly neighbours let one take a territory and the other retake it the same turn, so ' +
-      'both earn card pieces. The board shows the same owner each turn; the sign is two captures of it in ' +
-      'the events of every turn, a few armies lost each time. It can be mistaken for a real war: read it as a deal.',
+      'Card farming: one neighbour gives up a territory and the other takes it back the same turn, so both ' +
+      'earn card pieces for a few armies (4 with the guard on, 2 without). Players who do not know it can ' +
+      'take it for a war; between two neighbours it is a deal, not a fight.',
     source: S.diplomacyGames,
     basis: 'source',
   },

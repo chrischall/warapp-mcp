@@ -1062,8 +1062,8 @@ tool reads GameFeed alone and does not know the signed-in account's agreements
 - `diplomacy-truce-scope-end` — a truce limited to named territories leaves the rest open: cover the
   whole shared front or say what it excludes, give it an end; record it.
   **Advice only.** Derived. Source: <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced?Offset=20>
-- `diplomacy-truce-two-left` — a truce until "two are left" ended when others surrendered; tie the end
-  to a turn or notice. **Advice only.** Source: <https://war.app/Forum/4467-fair-blacklist-here>
+- `diplomacy-truce-two-left` — a truce until "two are left" ended when others surrendered (one poster
+  held its letter was kept); tie the end to a turn or notice. **Advice only.** Source: <https://war.app/Forum/4467-fair-blacklist-here>
 - `diplomacy-stack-behind` — whoever stacked most near the line wins the break: keep the hold or the
   cap plus a stack behind, and read a partner's stacks as a warning. **Advice only.** Derived. Source:
   <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced>
@@ -1074,7 +1074,7 @@ tool reads GameFeed alone and does not know the signed-in account's agreements
   **Advice only.** Source: <https://war.app/Forum/4401-everybodys-position-breaking-treaties-unannounced?Offset=20>
 - `diplomacy-restate-terms` — slow games forget; restate terms and say whether border stacking is a
   breach. **Advice only.** Source: <https://war.app/Forum/2981-psychology>
-- `diplomacy-no-gang-up-calls` — calls to gang up on the leader are resented by many; several block senders;
+- `diplomacy-no-gang-up-calls` — calls to gang up on the leader are resented by some players: one calls it a popularity contest and blocks senders;
   speak to your own position. **Advice only.** Derived. Source:
   <https://war.app/Forum/759391-ffa-private-chat-etiquette>
 - `diplomacy-unspoken-truce` — three or four turns of no deploys on a shared border read as an unspoken
@@ -1087,9 +1087,9 @@ tool reads GameFeed alone and does not know the signed-in account's agreements
   **Advice only.** Derived. Source: <https://war.app/Forum/4723-best-way-quality-ffa-games>
 - `diplomacy-fog-checkable-terms` — diplomacy games use no or light fog; under heavier fog (Foggy and
   above) agree only terms you can check from your own side. **Advice only.** Derived. Source: <https://war.app/wiki/PE>
-- `diplomacy-card-farming` — card farming (a territory taken and retaken in the same turn) keeps its
-  owner on the board; its sign is two captures of it in each turn's events with a few armies lost. It can
-  be mistaken for a real war; read it as a deal.
+- `diplomacy-card-farming` — card farming (a territory given up and retaken in the same turn) earns
+  both players card pieces for a few armies (4 with the guard on, 2 without). It can be mistaken for a
+  real war; read it as a deal.
   **Advice only.** Source: <https://war.app/wiki/PE>
 - `teams-team-chat` — each team has a chat only it reads: plan there (`channel: "team"`). **Advice
   only.** Source: <https://war.app/wiki/Team_Games>
