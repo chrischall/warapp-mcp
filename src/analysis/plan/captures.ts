@@ -219,7 +219,7 @@ export function captureHelper(
   const { coverOf, orderOf, warnSplit, deploy, spareAt, local } = book;
   const { borderAt, safeAtStart, holdArmies } = threats;
   const { conceded, heldBorders, keepFor, stayAt, twoStepBound, twoStepCite, twoStepHold, twoStepKeep } = hd;
-  const { targets, leadSteps, leadTry, leadNote, skipOffence, badTrades } = tgt;
+  const { targets, leadSteps, leadTry, leadNote, skipOffence, badTrades, repulsed } = tgt;
   const { defensible, mustHold, warnHold } = prev;
   // ---- capture helper ----
   /** How far a combined capture of a player's territory trades below even (see `ps.evenTradesOnly`). */
@@ -318,6 +318,17 @@ export function captureHelper(
   const finishedOff = new Set<number>();
   const defendersAt = (t: number) => worstCase.get(t) ?? defenceAt(t);
   /**
+   * #240 review: the defenders a capture's survivors and trade are judged against. A repulsed
+   * territory sized for its owner's deploy (its worst case, so no "assumes" warning) is judged against
+   * the defenders there now, as the plan without the evidence judges it — whose #120 sizing adds
+   * survivors over those same defenders — so the evidence changes what is sent, never how the
+   * capture ranks or whether R3 keeps it. Every other target: {@link defendersAt}.
+   */
+  const defendersSeen = (t: number) => {
+    const rep = leadSteps.has(t) ? undefined : repulsed.get(t);
+    return rep && worstCase.get(t) === rep.defenders + rep.extra ? defenceAt(t) : defendersAt(t);
+  };
+  /**
    * Capture `t` from its best source. A conceded border is never deployed to: it attacks
    * out only with the armies already on it (unless every territory I hold is conceded,
    * when there is nowhere better). `force` names the source (it may be locked) and the
@@ -337,21 +348,51 @@ export function captureHelper(
     // #203: a lead step lands even if its owner deploys there first (its survivors counted so) —
     // assumed while it is tried, kept only when it is taken.
     const lead = leadSteps.get(t);
-    const sure = lead !== undefined && !worstCase.has(t);
-    if (sure) worstCase.set(t, lead.defenders + lead.extra);
+    // #240: a territory my attacks failed on repeatedly, its owner reinforcing it, is sized the same way.
+    // #240 review: not while rule 4e's contact ranking tries it at its plain size (ps.plainRepulsed).
+    const rep = lead === undefined && !ps.plainRepulsed ? repulsed.get(t) : undefined;
+    const sized = lead ?? rep;
+    const sure = sized !== undefined && !worstCase.has(t);
+    if (sure) worstCase.set(t, sized.defenders + sized.extra);
     shortAt = undefined;
     belowEven = undefined;
     combinedR3 = false;
+    // #240 review: the target ranks on its plain cost; the capture sends at least the sure size
+    // (finish-off may size it larger itself), and is not made when that does not fit.
+    const ranked = targets.get(t)!;
+    if (rep && rep.cost > ranked.cost) targets.set(t, { ...ranked, cost: rep.cost });
     let ok = captureOnce(t, reason, force, fromConceded);
+    if (rep) targets.set(t, ranked);
     if (sure && !ok) worstCase.delete(t);
+    // #240 review: the sure size of a repulsed territory the turn cannot fund now may still be paid
+    // from the leftover, as the plan without the evidence pays its #120 sizing (after the holds and the
+    // reserve). When the source's armies and the whole budget could reach it, the capture is taken at
+    // its plain size, pending: planTurn drops it once the margin has run if it is still short of the
+    // sure size. A refusal (R3, a trade, a hold) stands, as for the sure try.
+    const shortNow = shortAt as Omit<Extract<LeadTry, { kind: 'short' }>, 'kind'> | undefined;
+    if (
+      rep &&
+      sure &&
+      !ok &&
+      shortNow?.from !== undefined &&
+      shortNow.spare + Math.max(0, ps.budget) >= rep.cost &&
+      ps.refusal === undefined &&
+      belowEven === undefined &&
+      !combinedR3
+    ) {
+      shortAt = undefined;
+      ok = captureOnce(t, reason, force, fromConceded);
+      if (ok) ps.repulsedPending.add(t);
+    }
     // #214: a step toward the closest bonus (or in a completion) the turn cannot fund at its sure
     // cost is retried at its bare cost — a sure capture of the defenders standing there now, the
     // basis rule 4f ranks the bonuses on. No worst case: #120's warning then says what it faces if
-    // the owner deploys there first. Only a funding shortfall retries (an R3 or trade refusal of the
+    // the owner deploys there first. Never a territory my attacks failed on repeatedly (#240 review:
+    // it is attacked only at the size that lands). Only a funding shortfall retries (an R3 or trade refusal of the
     // sure step stands), and the target keeps its sure cost for every later try.
     // #214 review: shortAt is set before tryCombined runs, so a combined capture refused for a
     // below-even trade (belowEven) or by R3 (combinedR3, which sets no refusal) is a refusal too.
-    if (bareOn && sure && bare && !ok && shortAt !== undefined && ps.refusal === undefined && belowEven === undefined && !combinedR3) {
+    if (bareOn && lead !== undefined && !repulsed.has(t) && sure && bare && !ok && shortAt !== undefined && ps.refusal === undefined && belowEven === undefined && !combinedR3) {
       const tg = targets.get(t)!;
       const cheap = costAt(t);
       const note = leadNote(t);
@@ -494,7 +535,7 @@ export function captureHelper(
     const sent = noSplit ? Math.max(tg.cost, avail.get(src)!) : tg.cost;
     avail.set(src, avail.get(src)! - sent);
     captured.add(t);
-    const survivors = sent - straightKills(defendersAt(t), rates.defensiveKillRate);
+    const survivors = sent - straightKills(defendersSeen(t), rates.defensiveKillRate);
     // A commander strike is never refused by R3: killing the commander eliminates a player.
     if (!strikes.has(t) && !defensible(t, survivors)) {
       // Undo: under a guarded goal a bonus that falls next turn is not completed.
@@ -692,7 +733,7 @@ export function captureHelper(
     );
     return true;
   };
-  return { belowEven, movableFor, keepOf, concededSource, siblings, fundedOnConceded, strikes, worstCase, finishedOff, defendersAt, tryCapture, shortAt, captureOnce, combinedPlan, tryCombined, bareOn, bareTaken };
+  return { belowEven, movableFor, keepOf, concededSource, siblings, fundedOnConceded, strikes, worstCase, finishedOff, defendersAt, defendersSeen, tryCapture, shortAt, captureOnce, combinedPlan, tryCombined, bareOn, bareTaken };
 }
 
 /** Pass 1 (complete a bonus, all or nothing) and pass 2 (advance one a capture at a time, rule 4c(c), 4d). */

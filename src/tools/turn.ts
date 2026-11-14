@@ -37,6 +37,7 @@ import {
   neighborsOf,
   planTurn,
   planEnemyEstimates,
+  repulsedAttacks,
   borderGuess,
   guessSeed,
   AHEAD_PRESSURE_FACTOR,
@@ -1174,6 +1175,9 @@ export async function livePlanSetup(
     turn !== null
       ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
       : undefined;
+  // #240: territories my cached orders show failed attacks on, their owner reinforcing them each
+  // time, on two or more of the last three turns: a further attack is sized for its owner's deploy.
+  const repulsed = turn !== null ? repulsedAttacks(graph, [...history.boards, { turn, board: seen }], me.id, settings) : [];
   // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
   // #201: the planner reads it too — a decided game shortens its payback horizon.
   const cardArmies = cardArmyCeiling(game.settings);
@@ -1231,6 +1235,7 @@ export async function livePlanSetup(
     ...(trend ? { previousBoard: trend.board } : {}),
     // #226: my orders on that turn, when this server sent them: a failed attack's kills count back.
     ...(trend && previousOrders ? { previousOrders } : {}),
+    ...(repulsed.length ? { repulsed } : {}),
     ...(turn !== null ? { turn } : {}),
     game: gameContext,
     ...(tracks ? { tracks } : {}),

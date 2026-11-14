@@ -66,7 +66,7 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
   const { guardAt, deploy, roomAt, valueOf, stakeAt } = book;
   const { ownedBy, ownerOf, fogAnywhere, deployReaching, holdArmies, bombSized, borderAt } = threats;
   const { stayAt } = hd;
-  const { targets, frontierDelta } = tgt;
+  const { targets, frontierDelta, repulsed } = tgt;
   const { notCompleted, worstCase, finishedOff, tryCapture } = cap;
   // ---- 1e. finish off an opponent (#45) ----
   // Before any border is conceded: for each visible opponent whose every territory is
@@ -274,6 +274,18 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
         }
       const reserved = checkpoint(ts);
       const fullReason = (t: number) => `takes player ${p}'s territory, sized for ${reachText(t)} landing there`;
+      /**
+       * #240 review: a territory my attacks failed on repeatedly, its owner reinforcing it, is
+       * attacked only at its sure size (its defenders plus `repulsed`'s deploy, when that is more
+       * than this pass's own reach), never pressed with a share of the deploy.
+       */
+      const sureShare = (t: number) => Math.max(reachOn.get(t)!, repulsed.get(t)?.extra ?? 0);
+      const reasonFor = (t: number, e: number) =>
+        e > reachOn.get(t)!
+          ? `takes player ${p}'s territory, sized for its ~${e} deploy there (my attacks on it failed before, its owner reinforcing it: #240)`
+          : e >= reachOn.get(t)!
+            ? fullReason(t)
+            : `presses player ${p}: sized for ${e} of its ~${reachOn.get(t)!} deploy landing there`;
       /** Size and plan the attacks for `sizes` (from `reserved`), and judge the result. */
       const attempt = (sizes: number[]): Attempt => {
         tried.forEach((t, i) => {
@@ -297,10 +309,7 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
         ps.assumeGone = (n) => sure.has(n);
         const attacked = order
           .filter(({ t, e }) =>
-            tryCapture(
-              t,
-              e >= reachOn.get(t)! ? fullReason(t) : `presses player ${p}: sized for ${e} of its ~${reachOn.get(t)!} deploy landing there`,
-            ),
+            tryCapture(t, reasonFor(t, e)),
           )
           .map((x) => x.t)
           .sort(byNum);
@@ -364,6 +373,8 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
         // B2 T1: a territory a truce covers is never attacked, so it is never sized either.
         if (pc.truce.noTarget(t)) return [SKIP];
         const r = reachOn.get(t)!;
+        // #240 review: a repulsed territory at its sure size, or (as any target may be) not attacked.
+        if (repulsed.has(t)) return levels >= 2 ? [sureShare(t), SKIP] : [sureShare(t)];
         const spaced = Array.from({ length: Math.max(1, levels - 1) }, (_, i) =>
           Math.round(r - (i * r) / Math.max(1, levels - 2)),
         );
@@ -864,7 +875,7 @@ export function guardOffBreaks(pc: PlanCtx, ps: PlanState, book: DeployBook, hd:
   const { rationale, avail, spared, captured, moves, survivorsAt, captureOrder, captureUndo } = ps;
   const { coverOf, gainWith, deploy, roomAt } = book;
   const { conceded, keepFor, twoStepKeep } = hd;
-  const { targets } = tgt;
+  const { targets, repulsed } = tgt;
   // ---- #165: guard off — an empty enemy territory that breaks a bonus ----
   // With One Army Must Stand Guard off, an enemy territory next to mine standing at 0 armies (no
   // special unit) falls to one army; when its owner holds a positive bonus it is in, that one army
@@ -880,6 +891,14 @@ export function guardOffBreaks(pc: PlanCtx, ps: PlanState, book: DeployBook, hd:
       if (captured.has(n) || spared.has(n) || uncounted(n) || unitsAt(n) > 0 || gainWith([n]) < 0) continue;
       // B2 (T1): never a truce's covered territory.
       if (pc.truce.noTarget(n)) continue;
+      // #240 review: one army is the attack a territory my attacks failed on, its owner reinforcing
+      // it, is never sent: it is a target only at its sure size (rule 2), or not attacked.
+      if (repulsed.has(n)) {
+        rationale.push(
+          `One Army Must Stand Guard is off and ${label(n)} stands at 0, but my attacks on it failed before, its owner reinforcing it: no one-army attack there (#240).`,
+        );
+        continue;
+      }
       const near = neighborsOf(g, n).filter((x) => mineSet.has(x));
       const spareOf = (x: number) =>
         Math.max(0, avail.get(x)! - Math.max(keepFor(x, (y) => y === n), twoStepKeep(x, (y) => y === n), coverOf(x)));
@@ -1100,7 +1119,10 @@ export function spendStrikeStack(
     );
     interface StrikeTarget {
       id: number;
+      /** Its plain capture cost, which ranks it (#240 review: evidence never demotes a target that fits). */
       cost: number;
+      /** What the strike sends: the cost, or a repulsed territory's sure size (#240). */
+      size: number;
       chance: number;
       breaks: Breakable[];
       retakes: number[];
@@ -1111,15 +1133,19 @@ export function spendStrikeStack(
       if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null || uncounted(n)) continue;
       // B2 (T1): never a truce's covered territory.
       if (pc.truce.noTarget(n)) continue;
+      // #240: a territory my attacks failed on repeatedly is sized for its owner's deploy (#240
+      // review: and ranked on its plain cost, like any other).
       const cost = costAt(n);
+      const size = tgt.costFor(n);
       // Never a capture that lowers income (rule 4c): it completes a negative bonus. Re-checked
       // below against the strike's own captures, which can complete one only together.
-      if (cost === null || gainWith([n]) < 0) continue;
+      if (cost === null || size === null || gainWith([n]) < 0) continue;
       const owner = st.owner.playerId;
       candidates.push({
         id: n,
         cost,
-        chance: chanceOf(cost, defenceAt(n)),
+        size,
+        chance: chanceOf(size, defenceAt(n)),
         breaks: breakable.filter((b) => b.player === owner && bonusTs.get(b.bonusId)!.includes(n)),
         retakes: [...lost].filter((id) => bonusTs.get(id)!.includes(n)).sort(byNum),
       });
@@ -1213,8 +1239,8 @@ export function spendStrikeStack(
             refused.set(c.id, `No-Split: the ${pinned} Local Deployment armies defending ${label(S)} would leave with the whole stack`);
             continue;
           }
-          if (c.cost > whole) {
-            refused.set(c.id, `it needs ${c.cost}, more than the ${Math.max(0, whole)} the stack can send`);
+          if (c.size > whole) {
+            refused.set(c.id, `it needs ${c.size}, more than the ${Math.max(0, whole)} the stack can send`);
             continue;
           }
           const h = mustHold(S, c.id, whole);
@@ -1242,9 +1268,9 @@ export function spendStrikeStack(
         const { threat, need } = holdAfter(gone);
         // #179: what covers a finished-off player's exit stays too.
         const movable = avail.get(S)! - Math.max(pinned, coverOf(S));
-        const stay = avail.get(S)! + guardAt(S) + (incoming.get(S) ?? 0) - c.cost;
-        if (c.cost > movable) {
-          refused.set(c.id, `it needs ${c.cost}, more than the ${Math.max(0, movable)} the stack can send`);
+        const stay = avail.get(S)! + guardAt(S) + (incoming.get(S) ?? 0) - c.size;
+        if (c.size > movable) {
+          refused.set(c.id, `it needs ${c.size}, more than the ${Math.max(0, movable)} the stack can send`);
           continue;
         }
         if (stay < need) {
@@ -1258,11 +1284,11 @@ export function spendStrikeStack(
         const value = strikeValue(c);
         plannedHere.add(c.id);
         refused.delete(c.id);
-        taken.push({ c, effect, value, armies: c.cost, chance: c.chance });
-        avail.set(S, avail.get(S)! - c.cost);
-        sent += c.cost;
+        taken.push({ c, effect, value, armies: c.size, chance: c.chance });
+        avail.set(S, avail.get(S)! - c.size);
+        sent += c.size;
         captured.add(c.id);
-        survivorsAt.set(c.id, c.cost - straightKills(defenceAt(c.id), rates.defensiveKillRate));
+        survivorsAt.set(c.id, c.size - straightKills(defenceAt(c.id), rates.defensiveKillRate));
         captureOrder.push(c.id);
         again = true;
         break;
@@ -1272,6 +1298,14 @@ export function spendStrikeStack(
     // first, in the order taken, while the stack still covers it and keeps its hold after every
     // attack. One the stack cannot cover keeps its size (its warning gives the reinforced odds).
     const reinforced = new Map<number, number>();
+    // #240 review: a repulsed territory was costed at that size when the stack took it (and No-Split
+    // sends at least as much): it is sized for its owner's deploy already, and says so.
+    for (const x of taken) {
+      const rep = tgt.repulsed.get(x.c.id);
+      if (!rep || x.armies < rep.cost) continue;
+      worstCase.set(x.c.id, rep.defenders + rep.extra);
+      reinforced.set(x.c.id, rep.extra);
+    }
     if (!noSplit) {
       const { need } = holdAfter(new Set());
       const room = () => Math.min(avail.get(S)! - Math.max(pinned, coverOf(S)), avail.get(S)! + guardAt(S) + (incoming.get(S) ?? 0) - need);
@@ -1323,7 +1357,7 @@ export function spendStrikeStack(
       const extra = reinforced.get(c.id);
       if (extra === undefined) warnings.push(`Attack on enemy ${label(c.id)} assumes its owner does not reinforce it first.`);
       const keeps = noSplit
-        ? `No-Split sends the whole stack (${c.cost} would take it), and ${label(S)} need not hold: ${
+        ? `No-Split sends the whole stack (${c.size} would take it), and ${label(S)} need not hold: ${
             valueOf(S) > 0 || myCommanders.has(S) ? 'no visible threat to it is left' : 'it protects nothing'
           }`
         : `the stack keeps ${stays}, enough to hold against the ~${finalThreat} threat after the attacks (needs ${finalNeed})`;
@@ -1351,7 +1385,7 @@ export function spendStrikeStack(
       offence.set(`strike:${c.id}`, {
         target: c.id,
         kind: 'strike-attack',
-        cost: c.cost,
+        cost: c.size,
         value: strikeValue(c),
         taken: false,
         why: `not made from the strike stack ${label(S)} — ${refused.get(c.id) ?? 'not worth it'}${effect ? `: ${effect}` : ''}`,

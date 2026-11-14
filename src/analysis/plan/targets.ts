@@ -207,11 +207,48 @@ export function captureTargets(
     g, foe, profile, auto, goal, balanced, territories: state, label, mineSet, unitsAt, uncounted, uncountedKind,
     defenceAt, bonusTs, costAt, noSplit, leadLever, leadText,
   } = pc;
-  const { warnings } = ps;
+  const { warnings, rationale } = ps;
   const { reinforcementAt, hiddenFoe, hiddenMovable, hiddenPool } = threats;
   const { breakMember, counterAt } = prev;
   // ---- 2. targets ----
   const targets = new Map<number, Target>();
+  /**
+   * #240: territories my attacks failed on repeatedly while their owner reinforced them
+   * (`input.repulsed`, {@link repulsedAttacks}): still that opponent's, armies in view, next to mine,
+   * its owner able to deploy there. Every capture of one is sized for its defenders plus that deploy
+   * (#120's sure sizing), and is not made when that size does not fit; a rationale line names the
+   * failed turns. #240 review: its target keeps its plain cost, so every ranking (the bonus passes,
+   * breaks and counter-attacks, rule 4e's fallback) treats it as the plan without the evidence does
+   * — the sure size only decides whether it fits and what is sent ({@link sizeOf}). Ranked on the sure
+   * size, a target that fitted dropped behind a worse one (under No-Split the whole stack went anyway).
+   */
+  const repulsed = new Map<number, { player: number; defenders: number; extra: number; cost: number }>();
+  for (const r of input.repulsed ?? []) {
+    const t = r.territoryId;
+    const st = state.get(t);
+    if (st?.owner.kind !== 'player' || st.owner.playerId !== r.playerId || !foe(r.playerId) || st.armies === null) continue;
+    if (uncounted(t) || !neighborsOf(g, t).some((n) => mineSet.has(n))) continue;
+    const defenders = defenceAt(t);
+    const extra = reinforcementAt(t);
+    const cost = costAt(t, defenders + extra);
+    if (extra <= 0 || cost === null) continue;
+    repulsed.set(t, { player: r.playerId, defenders, extra, cost });
+    const turns = r.attacks.map((a) => a.turn);
+    const listed = turns.length > 1 ? `${turns.slice(0, -1).join(', ')} and ${turns[turns.length - 1]}` : `${turns[0]}`;
+    rationale.push(
+      `My attacks on ${label(t)} failed on turns ${listed}, player ${r.playerId} reinforcing it each time (${r.attacks
+        .map((a) => `${a.armies} against ${a.before}, ${a.after} after`)
+        .join('; ')}): a further attack is sized for its owner's ~${extra} deploy there (${defenders} + ${extra} defenders, ${cost} armies), or not made (#240).`,
+    );
+  }
+  /** A capture's cost of `t` (its ordinary sizing), or #240's sure one for a repulsed territory. */
+  const costFor = (t: number): number | null => repulsed.get(t)?.cost ?? costAt(t);
+  /**
+   * #240 review: what a capture of target `t` must send — its cost, or a repulsed territory's sure
+   * size. Fit checks use it; rankings use the target's cost. `cost`: the target's cost when it may
+   * no longer be a target (rule 4e drops the enemy targets it added and did not take).
+   */
+  const sizeOf = (t: number, cost?: number): number => repulsed.get(t)?.cost ?? cost ?? targets.get(t)!.cost;
   /**
    * #203: adapting in a free-for-all on a big army lead (the lead strikes' conditions, #167), an
    * enemy member of a positive bonus next to mine (no special unit on it) is a step into that bonus
@@ -286,6 +323,7 @@ export function captureTargets(
       targets.set(t, { id: t, cost: sure, enemy, sources });
       continue;
     }
+    // #240 review: a repulsed territory too ranks on its plain cost (its sure size is sent: sizeOf).
     const cost = costAt(t);
     if (cost === null) continue;
     targets.set(t, { id: t, cost, enemy, sources });
@@ -294,7 +332,7 @@ export function captureTargets(
   // Bonus passes work toward my own bonuses; under `balanced` enemy targets are only break candidates.
   // #203: a lead step is a bonus target too.
   const bonusTarget = (t: number) => targets.has(t) && !(balanced && targets.get(t)!.enemy && !leadSteps.has(t));
-  return { targets, leadSteps, leadStepsOn, leadTry, leadNote, bonusTarget };
+  return { targets, leadSteps, leadStepsOn, leadTry, leadNote, bonusTarget, repulsed, costFor, sizeOf };
 }
 
 /** Rule 4d: what a capture adds to the frontier (#71), and the offence report (#72). */

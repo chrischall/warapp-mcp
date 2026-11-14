@@ -1245,3 +1245,86 @@ describe('#112: under luck the contact ranking prices no combined capture', () =
     expect(p.warnings.join('\n')).toMatch(/Standing still: no capture is planned, and the cheapest capture \(T22 \(#22\), 29 armies/);
   });
 });
+
+// #240: a 7-player FFA in contact. I held three of the four members of a +3 bonus; the fourth
+// (25 armies, its owner showing no attack on me) was "ranked after C: player P cannot attack me
+// now, so it is tried only after every other capture" — behind an advance into a bonus 110 armies
+// from done. Rule 0p.2's "no second front" orders a plain capture of a passive owner last; a
+// capture that completes a bonus this turn is not plain: it ranks first among the affordable
+// candidates, its owner's passivity aside.
+describe('#240: the contact fallback never demotes a capture that completes a bonus', () => {
+  const EIGHT: PlanGameContext = { players: [ME, P2, P3, 50, 60, 70, 80, 90].map((id) => ({ id })), turn: 3 };
+  //   My 15-stacks on 1 and 2, and 1-army 3 and 7. Delta (+3) is 1, 3 and 22: 22 (player 40, 4
+  //   armies; 26 behind it) completes it. Player 40 cannot attack me. 23 (player 30, empty) borders
+  //   2; player 30 can attack me (24, 6 armies, beside my 1-army 7). Fen (+2) is three 15-neutrals.
+  const map = makeMap(
+    [1, 2, 3, 4, 5, 6, 7, 22, 23, 24, 25, 26],
+    [[1, 2], [1, 3], [1, 22], [2, 4], [2, 23], [3, 4], [4, 5], [5, 6], [22, 26], [23, 25], [7, 24], [7, 2], [24, 25]],
+    [
+      [501, 'Delta', 3, [1, 3, 22]],
+      [502, 'Fen', 2, [4, 5, 6]],
+    ],
+  );
+  const mg = buildGraph(map);
+  const b = board([
+    mine(1, 15),
+    mine(2, 15),
+    mine(3, 1),
+    mine(7, 1),
+    neutral(4, 15),
+    neutral(5, 15),
+    neutral(6, 15),
+    player(22, 4, P3),
+    player(26, 3, P3),
+    player(23, 0, P2),
+    player(24, 6, P2),
+    player(25, 3, P2),
+  ]);
+  const run = (bd: BoardState) =>
+    planTurn({ graph: mg, board: bd, me: ME, income: 5, settings: STD, game: EIGHT, options: { adapt: false } });
+
+  it('takes the completion first, though its owner cannot attack me and the empty territory loses less', () => {
+    const p = run(b);
+    expect(p.profile.phase).toBe('contact');
+    const a = attacks(p);
+    expect(a[0]).toEqual(expect.objectContaining({ from: 1, to: 22, kind: 'attack' }));
+    expect(a[0]!.reason).toMatch(/^cheapest capture \(loses ~3 armies[^)]*\): completes bonus Delta \(#501\) \(\+3\) from player 40/);
+    expect(p.expected.captures).toContain(22);
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/Take T22 \(#22\) though no planned capture is economic/);
+    expect(r).toMatch(
+      /Player 40 cannot attack me now: taking T22 \(#22\) completes bonus Delta \(#501\) this turn, so the second front is taken for it\./,
+    );
+    expect(r).not.toMatch(/T22 \(#22\) is ranked after/);
+    // The empty 23 still costs nothing: it is taken too (#112).
+    expect(a.map((m) => [m.from, m.to])).toEqual([
+      [1, 22],
+      [2, 23],
+    ]);
+    expect(r).toMatch(/Also take T23 \(#23\): it costs nothing/);
+    expect(valid(p, b, 5, map)).toEqual([]);
+  });
+
+  it('a cheaper capture that costs something is dropped, and the rationale names the completion', () => {
+    // 23 holds 4 (loses ~3): no free capture. Before #240 it was taken and 22 ranked after it.
+    const bd = board([...b.territories.filter((t) => t.territoryId !== 23), player(23, 4, P2)]);
+    const p = run(bd);
+    expect(attacks(p).map((m) => [m.from, m.to])).toEqual([[1, 22]]);
+    const line = p.rationale.find((l) => l.startsWith('Other candidates not taken: '));
+    expect(line).toMatch(/T23 \(#23\) is ranked after T22 \(#22\): taking T22 \(#22\) completes bonus Delta \(#501\) this turn, which repays its cost of \d+ within 10 turns/);
+    expect(valid(p, bd, 5, map)).toEqual([]);
+  });
+
+  it('a plain capture is still ranked by what it loses: with 22 in no bonus, the empty 23 goes first', () => {
+    const plain = makeMap(
+      map.territories.map((t) => t.id),
+      [[1, 2], [1, 3], [1, 22], [2, 4], [2, 23], [3, 4], [4, 5], [5, 6], [22, 26], [23, 25], [7, 24], [7, 2], [24, 25]],
+      [[502, 'Fen', 2, [4, 5, 6]]],
+    );
+    const p = planTurn({ graph: buildGraph(plain), board: b, me: ME, income: 5, settings: STD, game: EIGHT, options: { adapt: false } });
+    expect(attacks(p)[0]).toEqual(expect.objectContaining({ from: 2, to: 23, kind: 'attack' }));
+    expect(p.rationale.join('\n')).toMatch(
+      /T22 \(#22\) is ranked after T23 \(#23\): player 40 cannot attack me now, so it is tried only after every other capture/,
+    );
+  });
+});

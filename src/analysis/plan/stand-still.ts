@@ -84,8 +84,8 @@ export function standStillKit(
   const { heldNow, orderOf, deploy, spareAt } = book;
   const { threatAt } = threats;
   const { conceded, stayAt } = hd;
-  const { targets, borderOf } = tgt;
-  const { notCompleted, movableFor, concededSource, defendersAt, tryCapture, combinedPlan, snapshot } = caps;
+  const { targets, borderOf, sizeOf } = tgt;
+  const { notCompleted, movableFor, concededSource, defendersSeen, tryCapture, combinedPlan, snapshot } = caps;
   const WITHDRAWS = 'withdraws from a conceded border';
   /** Armies rule 1b withdrew from conceded `x` this turn (they may attack out instead). */
   const withdrawnFrom = (x: number) =>
@@ -117,13 +117,14 @@ export function standStillKit(
       }
       const movable = Math.max(0, movableFor(x, t) + back);
       // Deploys reach a conceded source only through the attack-out path below.
-      const viaConceded = conceded.has(x) && !concededSource(x, t, tg.cost);
+      // #240 review: a repulsed territory's sure size (sizeOf) decides what fits; its cost ranks it.
+      const viaConceded = conceded.has(x) && !concededSource(x, t, sizeOf(t));
       const deploy = Math.max(0, spareAt(x));
       const reach = movable + deploy;
       // An unconceded source that can take it alone goes first: a conceded border attacks out
       // only when none can, so its armies are not thrown away for a step another source affords.
-      const fits = !conceded.has(x) && reach >= tg.cost;
-      const bestFits = best.from !== undefined && !conceded.has(best.from) && best.reach >= tg.cost;
+      const fits = !conceded.has(x) && reach >= sizeOf(t);
+      const bestFits = best.from !== undefined && !conceded.has(best.from) && best.reach >= sizeOf(t);
       if (
         best.from === undefined ||
         (fits && !bestFits) ||
@@ -170,7 +171,7 @@ export function standStillKit(
    * and straight rounding, where rule 3a makes one.
    */
   const lossOf = (st: Reach & { t: number; cost: number }): { lost: number; sent: number } => {
-    const single = { lost: Math.min(st.cost, straightKills(defendersAt(st.t), rates.defensiveKillRate)), sent: st.cost };
+    const single = { lost: Math.min(st.cost, straightKills(defendersSeen(st.t), rates.defensiveKillRate)), sent: st.cost };
     // Under luck or weighted rounding a combined capture is never made (rule 3a, `tryCombined`):
     // the single source's sizing is the one the plan would use.
     if (st.from === undefined || st.reach >= st.cost || luck > 0 || weightedRounding) return single;
@@ -234,7 +235,8 @@ export function standStillKit(
   /** The trade of the planned capture of `t`: defenders killed against attackers lost (every attack on it). */
   const tradeOf = (t: number): { lost: number; killed: number } => {
     const sent = moves.filter((m) => m.kind === 'attack' && m.to === t);
-    const killed = defendersAt(t);
+    // #240 review: a repulsed territory's trade as the plan without the evidence reads it.
+    const killed = defendersSeen(t);
     if (sent.length === 1) return { lost: straightKills(killed, rates.defensiveKillRate), killed };
     // A combined capture: every attack's losses — the softeners' (their survivors return home)
     // and the finisher's.
@@ -265,7 +267,7 @@ export function standStillKit(
     }
     const move = [...moves].reverse().find((m) => m.kind === 'attack' && m.to === st.t)!;
     if (out !== undefined && move.from === out) {
-      const need = Math.max(0, st.cost - before);
+      const need = Math.max(0, sizeOf(st.t, st.cost) - before);
       // Every movable army leaves with the attack: left behind on the conceded border they are
       // lost; at the target they survive.
       const extra = Math.max(0, movableFor(out, st.t));
@@ -333,7 +335,7 @@ export function standStillKit(
   const reachText = (st: Cand, held: number) =>
     st.from === undefined
       ? blockedText(st)
-      : `it needs ${st.cost}, and at most ${st.reach} can reach it this turn (${st.movable} movable on ${label(st.from)}${
+      : `it needs ${sizeOf(st.t, st.cost)}, and at most ${st.reach} can reach it this turn (${st.movable} movable on ${label(st.from)}${
           conceded.has(st.from) ? ', a conceded border,' : ''
         } + ${st.deploy} to deploy${held > 0 ? `; the holds took ${held}` : ''})`;
   /** "S would stay[, S+D with the D deploys left there,] against a threat of T". */
@@ -360,9 +362,10 @@ export function standStillKit(
     if (st.from === undefined) return `cannot be reached: ${blockedText(st)}`;
     // What the holds took before this rule ran (no capture spent anything yet).
     const held = income - ps.budget;
-    if (st.reach >= st.cost)
-      return `is not taken, though ${st.reach} could reach it (it needs ${st.cost}): no single source can deliver them this turn`;
-    if (held > 0 && st.reach + held >= st.cost) return `does not fit what the holds leave: ${reachText(st, held)}`;
+    const size = sizeOf(st.t, st.cost);
+    if (st.reach >= size)
+      return `is not taken, though ${st.reach} could reach it (it needs ${size}): no single source can deliver them this turn`;
+    if (held > 0 && st.reach + held >= size) return `does not fit what the holds leave: ${reachText(st, held)}`;
     return `does not fit this turn: ${reachText(st, 0)}`;
   };
   return { reachOf, lossOf, holdLeftShort, sizeOrHold, tradeOf, attempt, exposure, blockedText, holdText, failText };
@@ -389,13 +392,13 @@ export function neverStandStill(
 ): { saveStep: SaveStep | undefined; standStill: StandStillNote | undefined } {
   const {
     g, s, opts, income, foe, profile, auto, goal, deployOf, territories: state, label, bonusName, mine, mineSet,
-    armiesOf, unitsAt, uncounted, defenceAt, bonusTs, guard, costAt, toTake, leadLever, clearLeader,
+    armiesOf, unitsAt, uncounted, defenceAt, bonusTs, guard, toTake, leadLever, clearLeader,
   } = pc;
   const { warnings, rationale, spared, captured } = ps;
   const { gainWith } = book;
   const { growthOf, facing } = threats;
   const { conceded } = hd;
-  const { targets, bonusTarget, targetScoreCost, toFinish, plans, finishCost } = tgt;
+  const { targets, bonusTarget, targetScoreCost, toFinish, plans, finishCost, sizeOf } = tgt;
   const { stopped, outgrows } = caps;
   /**
    * #125: the step rule 4e ranked first and could not afford this turn (its size, nothing else):
@@ -444,7 +447,9 @@ export function neverStandStill(
           const sources = neighborsOf(g, t).filter((n) => mineSet.has(n));
           if (!sources.length || gainWith([t]) < 0) continue;
           if (!targets.has(t)) {
-            const cost = costAt(t);
+            // #240 review: ranked on its plain cost like any target; a territory my attacks failed on
+            // repeatedly is still sent its sure size (tryCapture), or not attacked.
+            const cost = pc.costAt(t);
             if (cost === null) continue;
             targets.set(t, { id: t, cost, enemy: true, sources });
             added.push(t);
@@ -534,6 +539,19 @@ export function neverStandStill(
         const adv = toward.find(([id]) => bonusTs.get(id)!.includes(t));
         return adv ? { id: adv[0], breaks: false } : undefined;
       };
+      /**
+       * #240: the bonus capturing `t` completes this turn — every other member already mine (the
+       * fallback runs only when nothing is captured) — the most valuable, then the lowest id.
+       */
+      const completesOf = (t: number): number | undefined =>
+        g.map.bonuses
+          .filter(
+            (b) =>
+              b.value > 0 &&
+              bonusTs.get(b.id)!.includes(t) &&
+              bonusTs.get(b.id)!.every((m) => m === t || mineSet.has(m)),
+          )
+          .sort((a, b) => b.value - a.value || a.id - b.id)[0]?.id;
       const enemySteps = enemyTs.map((t) => {
         const p = (state.get(t)!.owner as { playerId: number }).playerId;
         const from = attackableBy(p);
@@ -544,11 +562,15 @@ export function neverStandStill(
           bonus: enemyBonus(t, p),
           /** Its owner can attack me now: the territory of mine it could take. */
           front: from,
+          /** #240: the bonus this capture completes this turn, if any. */
+          completes: completesOf(t),
           secondFront: ffaFronts && from === undefined && p !== clearLeader,
           ...reachOf(t),
         };
       });
       const enemyReason = (e: (typeof enemySteps)[number]) => {
+        if (e.completes !== undefined)
+          return `cheapest capture: completes bonus ${bonusName(e.completes)} (+${g.bonusById.get(e.completes)!.value}) from player ${e.player}`;
         if (!e.bonus) return `cheapest capture: takes a territory of player ${e.player}`;
         const v = g.bonusById.get(e.bonus.id)!.value;
         if (e.bonus.breaks) return `cheapest capture: breaks bonus ${bonusName(e.bonus.id)} (+${v}) of player ${e.player}`;
@@ -560,13 +582,20 @@ export function neverStandStill(
        * above. In contact (#107, #112): the neutral steps and the enemy captures together —
        * affordable first, then the armies lost, then the armies sent, then one that breaks or
        * advances a bonus, then (neutral steps) rule 4e's order, then id; under rule 0p.2 a capture
-       * that opens a second front (its owner cannot attack me now) only after every other.
+       * that opens a second front (its owner cannot attack me now) only after every other. #240: a
+       * capture that completes a bonus this turn is never demoted for a second front, and one whose
+       * bonus repays its ranking cost within the payback horizon goes first among the affordable
+       * candidates (the others keep their order).
        */
       type Pick =
         | { kind: 'neutral'; st: (typeof steps)[number] }
         | { kind: 'enemy'; st: (typeof enemySteps)[number] };
-      const shortOf = (x: { cost: number; reach: number }) => Math.max(0, x.cost - x.reach);
+      // #240 review: what fits is judged on a repulsed territory's sure size.
+      const shortOf = (x: { t: number; cost: number; reach: number }) => Math.max(0, sizeOf(x.t, x.cost) - x.reach);
       const rank4e = new Map(steps.map((x, i) => [x.t, i]));
+      /** #240: the bonus a candidate completes this turn, if any. */
+      const completedBy = (p: Pick) => (p.kind === 'enemy' ? p.st.completes : completesOf(p.st.t));
+      const completing = (p: Pick) => completedBy(p) !== undefined;
       const picks: Pick[] = [
         ...steps.map((st): Pick => ({ kind: 'neutral', st })),
         ...enemySteps.map((st): Pick => ({ kind: 'enemy', st })),
@@ -596,10 +625,18 @@ export function neverStandStill(
       };
       // In contact (#112, #114): affordable first, then the cost (the armies the capture loses plus
       // its survivors at risk), then the armies it sends; breaking or advancing a bonus is only a
-      // tie-break. Under rule 0p.2 a capture that opens a second front still comes after every other.
+      // tie-break. Under rule 0p.2 a capture that opens a second front still comes after every other
+      // — unless it completes a bonus this turn (#240). A completion whose cost (the same ranking
+      // cost) the bonus repays within the payback horizon goes first among the affordable; one that
+      // does not is ranked like any other capture.
+      const repays = (p: Pick) => {
+        const id = completedBy(p);
+        return id !== undefined && costOfPick(p.st.t) <= pc.paybackTurns * g.bonusById.get(id)!.value;
+      };
       const keyOf = (p: Pick) => [
-        p.kind === 'enemy' && p.st.secondFront ? 1 : 0,
+        p.kind === 'enemy' && p.st.secondFront && !completing(p) ? 1 : 0,
         shortOf(p.st),
+        repays(p) ? 0 : 1,
         costOfPick(p.st.t),
         loss.get(p.st.t)!.sent,
         p.kind === 'enemy' && !p.st.bonus ? 1 : 0,
@@ -618,6 +655,8 @@ export function neverStandStill(
         // #114: rule 4d is a cost here, not a veto. Each candidate is tried (and undone) to see
         // what its capture leaves exposed; then they are ranked.
         ps.evenTradesOnly = true;
+        // #240 review: a repulsed territory ranks as the plan without the evidence ranks it.
+        ps.plainRepulsed = true;
         for (const pick of picks) {
           const undo = attempt(pick.st, '');
           if (!undo) continue;
@@ -625,6 +664,7 @@ export function neverStandStill(
           if (e) risk.set(pick.st.t, e);
           undo();
         }
+        ps.plainRepulsed = false;
         ps.evenTradesOnly = false;
         picks.sort((a, b) => {
           const x = keyOf(a);
@@ -764,7 +804,9 @@ export function neverStandStill(
             rationale.push(
               e.front !== undefined
                 ? `Player ${e.player} can already attack me (${label(e.front)}): taking ${label(t)} opens no new front.`
-                : `Player ${e.player} cannot attack me now: taking ${label(t)} opens a second front (no second front in an FFA), taken only because no neutral capture fits this turn.`,
+                : e.completes !== undefined && e.secondFront
+                  ? `Player ${e.player} cannot attack me now: taking ${label(t)} completes bonus ${bonusName(e.completes)} this turn, so the second front is taken for it.`
+                  : `Player ${e.player} cannot attack me now: taking ${label(t)} opens a second front (no second front in an FFA), taken only because no neutral capture fits this turn.`,
             );
         } else {
           // The bonus with the fewest armies to finish was passed over: say why.
@@ -804,7 +846,7 @@ export function neverStandStill(
         const head =
           top.kind === 'neutral'
             ? `Standing still: no capture is planned, and the cheapest expansion (${label(top.st.t)}, ${top.st.cost} armies, toward bonus ${bonusName(top.st.id)})`
-            : `Standing still: no capture is planned, and the cheapest capture (${label(top.st.t)}, ${top.st.cost} armies, a territory of player ${top.st.player})`;
+            : `Standing still: no capture is planned, and the cheapest capture (${label(top.st.t)}, ${sizeOf(top.st.t, top.st.cost)} armies, a territory of player ${top.st.player})`;
         const tail = `${failText(top.st, failed.get(top.st.t))}.`;
         const text = `${head} ${tail}`;
         warnings.push(text);
@@ -838,8 +880,18 @@ export function neverStandStill(
         if (!taken) return [`${label(t)} ${failText(p.st, undefined)}`];
         if (shortOf(p.st) > 0) return [`${label(t)} ${failText(p.st, undefined)}`];
         const after = `is ranked after ${label(taken.st.t)}`;
-        if (p.kind === 'enemy' && p.st.secondFront && !(taken.kind === 'enemy' && taken.st.secondFront))
+        if (
+          p.kind === 'enemy' &&
+          p.st.secondFront &&
+          !completing(p) &&
+          !(taken.kind === 'enemy' && taken.st.secondFront && !completing(taken))
+        )
           return [`${label(t)} ${after}: player ${p.st.player} cannot attack me now, so it is tried only after every other capture`];
+        // #240: a completion that repays its cost goes first among the affordable candidates.
+        if (repays(taken) && !repays(p))
+          return [
+            `${label(t)} ${after}: taking ${label(taken.st.t)} completes bonus ${bonusName(completedBy(taken)!)} this turn, which repays its cost of ${costOfPick(taken.st.t)} within ${pc.paybackTurns} turns`,
+          ];
         const c = costOfPick(t);
         const tc = costOfPick(taken.st.t);
         return [

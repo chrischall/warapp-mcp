@@ -345,6 +345,12 @@ export interface PlanInput {
    */
   previousOrders?: MyOrders;
   /**
+   * #240: territories my attacks failed on repeatedly while their owner reinforced them
+   * ({@link repulsedAttacks} over my board history and cached orders): a further attack on one is
+   * sized for its defenders plus its owner's deploy there, or not made. Absent: no change.
+   */
+  repulsed?: readonly RepulsedTarget[];
+  /**
    * The turn being planned, when known: `previousBoard` is then turn − 1's board, and the
    * observed-deploy rationale names the two turns.
    */
@@ -1089,19 +1095,125 @@ export function failedAttackKills(
   rates: KillRates = {},
 ): Map<number, number> {
   const offensive = rates.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const out = new Map<number, number>();
+  for (const m of failedAttackMoves(g, before, after, me, playerId, orders))
+    out.set(m.to, (out.get(m.to) ?? 0) + straightKills(Math.max(0, m.armies), offensive));
+  return out;
+}
+
+/**
+ * The moves {@link failedAttackKills} counts: each move of mine onto a territory `playerId` holds on
+ * both boards (shown with armies both times), from a source mine on both. #240 review: the armies
+ * {@link repulsedAttacks} reports are these moves' too, so they match the kills.
+ */
+function failedAttackMoves(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  me: number,
+  playerId: number,
+  orders: MyOrders,
+): MyOrders['moves'] {
   const was = new Map(before.territories.map((t) => [t.territoryId, t]));
   const now = new Map(after.territories.map((t) => [t.territoryId, t]));
   const owns = (t: TerritoryState | undefined, p: number) => {
     const v = visibleState(t);
     return v?.owner.kind === 'player' && v.owner.playerId === p;
   };
-  const out = new Map<number, number>();
-  for (const m of orders.moves) {
-    if (!g.territoryById.has(m.to) || !owns(was.get(m.from), me) || !owns(now.get(m.from), me)) continue;
-    if (!owns(was.get(m.to), playerId) || !owns(now.get(m.to), playerId)) continue;
-    out.set(m.to, (out.get(m.to) ?? 0) + straightKills(Math.max(0, m.armies), offensive));
+  return orders.moves.filter(
+    (m) =>
+      g.territoryById.has(m.to) &&
+      owns(was.get(m.from), me) &&
+      owns(now.get(m.from), me) &&
+      owns(was.get(m.to), playerId) &&
+      owns(now.get(m.to), playerId),
+  );
+}
+
+/** #240: the turns {@link repulsedAttacks} looks back over, ending on the board being planned. */
+export const REPULSE_WINDOW = 3;
+/** #240: failed, reinforced attacks on one territory within the window that make it repulsed. */
+export const REPULSE_MIN = 2;
+
+/** #240: one failed attack of mine on a territory whose owner reinforced it ({@link repulsedAttacks}). */
+export interface RepulsedAttack {
+  /** The turn I sent it on (the board it was planned on). */
+  turn: number;
+  /** The armies I sent: every move of mine onto it that turn whose kills count (a source mine on both boards). */
+  armies: number;
+  /** Its armies on that turn's board, and on the next. */
+  before: number;
+  after: number;
+  /** What my attackers killed there, straight-rounded at the offensive kill rate ({@link failedAttackKills}). */
+  kills: number;
+}
+
+/** #240: a territory my attacks failed on repeatedly while its owner reinforced it. */
+export interface RepulsedTarget {
+  territoryId: number;
+  /** Its owner, on every board read and on the newest. */
+  playerId: number;
+  /** The failed, reinforced attacks, oldest first ({@link REPULSE_MIN} or more). */
+  attacks: RepulsedAttack[];
+}
+
+/**
+ * #240: repeated failure is evidence. Over my board history (`boards`, the newest being the board
+ * being planned; consecutive turns only, each with my cached orders — `TurnBoard.orders`, what
+ * warapp_submit_turn sent), a failed attack of mine on a territory — its owner the same player on
+ * both boards, my source mine on both ({@link failedAttackKills}) — whose owner reinforced it: its
+ * armies after plus what my attack killed exceed its armies before (after = before + deploys and
+ * transfers in − kills). A territory with such an attack on {@link REPULSE_MIN} or more of the last
+ * {@link REPULSE_WINDOW} turns, still that player's on the newest board, is reported, by id. Kill
+ * counts are straight-rounded expectations: luck can move them. Pure; unknown orders give nothing.
+ */
+export function repulsedAttacks(
+  g: MapGraph,
+  boards: readonly { turn: number; board: BoardState; orders?: MyOrders | undefined }[],
+  me: number,
+  rates: KillRates = {},
+): RepulsedTarget[] {
+  const sorted = [...boards].sort((a, b) => a.turn - b.turn);
+  const newest = sorted[sorted.length - 1];
+  if (!newest) return [];
+  // #240 review: kept per territory and owner, so failed attacks on a territory under an earlier
+  // owner never hide those under its newest one (the filter below keeps the newest owner's only).
+  const found = new Map<string, RepulsedTarget>();
+  for (let i = 0; i + 1 < sorted.length; i++) {
+    const was = sorted[i]!;
+    const now = sorted[i + 1]!;
+    if (!was.orders || now.turn !== was.turn + 1 || was.turn < newest.turn - REPULSE_WINDOW) continue;
+    const orders = was.orders;
+    const before = new Map(was.board.territories.map((t) => [t.territoryId, t]));
+    const after = new Map(now.board.territories.map((t) => [t.territoryId, t]));
+    const owners = new Set<number>();
+    for (const m of orders.moves) {
+      const o = visibleState(before.get(m.to))?.owner;
+      if (o?.kind === 'player' && o.playerId !== me) owners.add(o.playerId);
+    }
+    for (const p of [...owners].sort(byNum)) {
+      for (const [t, kills] of [...failedAttackKills(g, was.board, now.board, me, p, orders, rates)].sort(([a], [b]) => a - b)) {
+        const b = visibleState(before.get(t))!.armies!;
+        const a = visibleState(after.get(t))!.armies!;
+        if (kills <= 0 || a + kills <= b) continue;
+        const armies = failedAttackMoves(g, was.board, now.board, me, p, orders)
+          .filter((m) => m.to === t)
+          .reduce((n, m) => n + Math.max(0, m.armies), 0);
+        const attack: RepulsedAttack = { turn: was.turn, armies, before: b, after: a, kills };
+        const key = `${t}:${p}`;
+        const entry = found.get(key);
+        if (!entry) found.set(key, { territoryId: t, playerId: p, attacks: [attack] });
+        else entry.attacks.push(attack);
+      }
+    }
   }
-  return out;
+  const latest = new Map(newest.board.territories.map((t) => [t.territoryId, t]));
+  return [...found.values()]
+    .filter((r) => {
+      const o = visibleState(latest.get(r.territoryId))?.owner;
+      return r.attacks.length >= REPULSE_MIN && o?.kind === 'player' && o.playerId === r.playerId;
+    })
+    .sort((a, b) => a.territoryId - b.territoryId);
 }
 
 /**

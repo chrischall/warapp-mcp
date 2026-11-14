@@ -670,6 +670,28 @@
 //     target is a player's or it is not certain, else an attack between breakpoints is named;
 //     and an attack on a player's still sized below that deploy keeps the warning, which then
 //     gives its win chance against the reinforced target and the size that would be sure.
+//     #240, repeated failure is evidence: a territory `input.repulsed` names (`repulsedAttacks`
+//     over my board history and cached orders: my attacks on it failed on REPULSE_MIN (2) or more
+//     of the last REPULSE_WINDOW (3) turns, its owner reinforcing it each time — its armies after
+//     plus my kills above its armies before), still that player's, next to mine and its owner able
+//     to deploy there, is attacked only at that sure size: its defenders plus the owner's deploy
+//     (a worst case, so no warning and no bare retry), or not at all; a rationale line names the
+//     failed turns. Every pass: rule 2's targets and the bonus, break and counter passes, rule 4e's
+//     fallback, the 1v1 strike stack, finishing off and fog pressure (rule 1e: its only sizing, or
+//     not attacked — never a share of the deploy) and the guard-off one-army break (#165: skipped,
+//     with a line saying why). It ranks on its PLAIN cost (#240 review: ranked on the sure size, a
+//     target that fitted dropped behind a worse one, most often under No-Split, where the whole stack
+//     goes anyway): the sure size only decides what fits (`sizeOf`) and what is sent, rule 4e's
+//     contact ranking tries it at its plain size (`ps.plainRepulsed`), and its survivors and trade are
+//     read against the defenders there now (`defendersSeen`), as without the evidence. One whose sure
+//     size the turn cannot fund when it is taken, but its source and the whole budget could reach,
+//     is taken at its plain size pending (`ps.repulsedPending`) — the plan without the evidence pays
+//     its sure size from the leftover (#120, #226) — and dropped once the margin has run if it is
+//     still short ("Drop the attack on …"). The evidence never shrinks the attack (#240 review):
+//     rule 5 judges its source's comfort, and whether to revive a conceded border, as the plan
+//     without it would (`repulsedSurplus`: the sure size's surplus over the plain one still on the
+//     source; one that would fall without it stays short), and the leftover put there is not kept
+//     from the #226 margin; the strike stack reports such an attack as sized for the deploy.
 //     #226, a margin: once the transfers (rule 6) have moved what they move, an attack on a
 //     player's territory whose owner may deploy there (not a combined capture; not under No-Split,
 //     which sends the whole stack already) takes the armies still on its source beyond what holds
@@ -838,7 +860,9 @@
 //     frontier stop is a cost, not a veto (#114): each candidate is tried (and undone) to find its
 //     armies at risk — the survivors its capture leaves on a border that cannot hold next turn at
 //     the expected enemy deploy (4d's and R3's arithmetic; 0 when it holds or faces no enemy).
-//     Order (#112, #114): affordable first, then its cost — the armies the capture is expected to
+//     Order (#112, #114): affordable first, then (#240) a capture that completes a bonus this turn
+//     (every other member already mine) whose bonus repays its cost below within the payback horizon
+//     (cost ≤ payback turns × value), then its cost — the armies the capture is expected to
 //     lose (the defenders' kills on its attackers at the game's rates; for a combined capture, the
 //     total over its attacks) plus its armies at risk — then the armies it sends, then one that
 //     breaks a bonus (its owner holds it in full) or advances one of mine (a tie-break only), then
@@ -853,14 +877,17 @@
 //     and, for one that opens a second front, "… taken only because it costs nothing"). Every
 //     candidate considered and not taken is named in one rationale line, "Other candidates not
 //     taken: …", with its reason (refused, does not fit, ranked after the capture taken and at
-//     what cost, or — rule 0p.2 — tried only after every other); an enemy capture refused as a
+//     what cost, or after a completion that repays its cost, or — rule 0p.2 — tried only after every
+//     other); an enemy capture refused as a
 //     trade or for a hold is left to its own warning, and when nothing is taken the top one is in
 //     the stand-still warning instead. In an FFA with two or more opponents (rule 0p.2's setting,
 //     applied here whether or not the plan adapts), a capture against a player that cannot
 //     currently attack me (it could take no territory of mine next turn) opens a second front and
-//     is tried only after every other; the rationale says which ("can already attack me …: opens
-//     no new front" / "cannot attack me now: … opens a second front (no second front in an FFA),
-//     taken only because no neutral capture fits"), and the trade ("kills K for L lost"). Outside
+//     is tried only after every other — unless it completes a bonus this turn (#240: never demoted;
+//     its reason says "completes bonus …"); the rationale says which ("can already attack me …:
+//     opens no new front" / "cannot attack me now: … opens a second front (no second front in an
+//     FFA), taken only because no neutral capture fits" / "cannot attack me now: … completes bonus
+//     … this turn, so the second front is taken for it"), and the trade ("kills K for L lost"). Outside
 //     the contact/late fallback (passes 1–3, the opening/expansion and army-cap fallback) rule 4d
 //     keeps its veto. An enemy capture carries the usual warning that it assumes the owner does
 //     not reinforce first, unless rule 3 sizes it for that deploy (#120).
@@ -1612,7 +1639,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const affordable = (t: number) => {
       const tg = targets.get(t)!;
       const free = tg.sources.filter((x) => !locked.has(x) && !orderOf(x)).reduce((n, x) => n + Math.max(0, avail.get(x)!), 0);
-      return free + Math.max(0, ps.budget - reserve) >= tg.cost;
+      // #240 review: a repulsed territory's sure size (it ranks on its plain cost).
+      return free + Math.max(0, ps.budget - reserve) >= tgt.sizeOf(t);
     };
     const broken = (b: Breakable) => bonusTerritories(g, b.bonusId).some((x) => captured.has(x));
     const breakReason = (b: Breakable) =>
@@ -2514,6 +2542,38 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         }.`,
       );
     }
+  }
+
+  // ---- #240 review: a repulsed territory taken pending its sure size ----
+  // Taken at its plain size because the sure size could not be funded when it was captured
+  // (`ps.repulsedPending`): #120, the No-Split leftover and the #226 margin have now added what they
+  // add. At its sure size it is sized for its owner's deploy (no "assumes" warning); still short, the
+  // attack is dropped — a territory my attacks failed on is attacked only at the size that lands —
+  // and its armies stay where they are.
+  for (const t of [...ps.repulsedPending].sort(byNum)) {
+    const rep = tgt.repulsed.get(t)!;
+    if (!captured.has(t) || combined.has(t)) continue;
+    const at = moves.filter((m) => m.kind === 'attack' && m.to === t);
+    const sent = at.reduce((n, m) => n + m.armies, 0);
+    if (sent >= rep.cost) {
+      worstCase.set(t, Math.max(worstCase.get(t) ?? 0, rep.defenders + rep.extra));
+      const w = warnings.indexOf(assumes(t));
+      if (w >= 0) warnings.splice(w, 1);
+      continue;
+    }
+    // Every army the attack carries goes home, those #120 or the margin added included.
+    for (const m of at) avail.set(m.from, avail.get(m.from)! + m.armies);
+    captured.delete(t);
+    survivorsAt.delete(t);
+    for (let i = moves.length - 1; i >= 0; i--) if (moves[i]!.kind === 'attack' && moves[i]!.to === t) moves.splice(i, 1);
+    const heads = [`Attack ${label(t)} `, `Size the attack on ${label(t)} `, `Top up the attack on ${label(t)} `, `Margin on the attack on ${label(t)} `];
+    for (let i = rationale.length - 1; i >= 0; i--) if (heads.some((h) => rationale[i]!.startsWith(h))) rationale.splice(i, 1);
+    for (let i = warnings.length - 1; i >= 0; i--)
+      if (warnings[i]!.startsWith(`Attack on enemy ${label(t)} `) || warnings[i]!.startsWith(`${label(t)} can be retaken `))
+        warnings.splice(i, 1);
+    rationale.push(
+      `Drop the attack on ${label(t)}: it could send only ${sent} by the end of the turn, short of the ${rep.cost} that take it even if player ${rep.player} deploys its ~${rep.extra} there first, and my attacks on it failed before, its owner reinforcing it (#240); its armies stay where they are.`,
+    );
   }
 
   // #120: an attack on a player's territory still sized below its owner's deploy says what it
