@@ -10,6 +10,7 @@ import type { BoardState, TerritoryState } from '../../board.js';
 import type { CombatSettings } from '../combat.js';
 import type { MapGraph } from '../graph.js';
 import type { Refusal } from './captures.js';
+import type { Truce, TrucePass } from './relations.js';
 import type { GameProfile } from '../profile.js';
 import type {
   CardAdvice,
@@ -38,6 +39,8 @@ export interface OpponentsCtx {
   allies: Set<number>;
   /** A player whose stacks threaten me and whose territories I may attack: not me, not a teammate. */
   foe: (p: number) => boolean;
+  /** B2: the truces in force (plan/relations.ts); with none, every check is false. */
+  truce: Truce;
   /** The turn being planned, when known (the opening board is the first turn's only, #128). */
   turnNow: number | null;
   incomePrior: EnemyIncomePrior | undefined;
@@ -227,6 +230,8 @@ export interface PlanState {
    * the report names the real reason.
    */
   firstOnlySkip: Map<number, 'budget' | 'room' | 'order' | 'closed'>;
+  /** B2 (T2, T3, T5): the truce holds of this pass; absent with no binding truce. */
+  truce?: TrucePass;
 }
 
 /** An empty plan state: nothing deployed, moved, captured or said yet. */

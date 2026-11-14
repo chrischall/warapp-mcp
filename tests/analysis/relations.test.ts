@@ -12,6 +12,7 @@ import {
   scopeRefusal,
   tacitTruces,
   transitionAgreement,
+  truceBreaksIn,
   trust,
   truceEndgame,
   type Agreement,
@@ -253,5 +254,36 @@ describe('endgame and trust', () => {
     const notice = (transitionAgreement(agreed(), 'notice-by-them', 5) as { agreement: Agreement }).agreement;
     expect(trust(notice, kept, {}).reasons).toEqual(['they gave notice']);
     expect(trust(agreed(), kept, { endgame: true }).level).toBe('watch');
+  });
+});
+
+// B2: warapp_submit_turn's check — an order of mine that attacks a covered territory of an active or
+// in-notice agreement.
+describe('truceBreaksIn', () => {
+  const b = at(4).board;
+  const check = (agreements: Agreement[], moves: { from: number; to: number; mode?: 'attack-only' | 'transfer-only' }[], turn = 4, ps = players()) =>
+    truceBreaksIn({ agreements, graph, board: b, me: ME, turn, players: ps, moves });
+
+  it('names the agreement and the order that attacks a territory it covers', () => {
+    expect(check([agreed()], [{ from: 4, to: 5 }, { from: 3, to: 2 }])).toEqual([
+      { agreement: 'a1', with: P, state: 'active', moves: [{ index: 0, from: 4, to: 5 }] },
+    ]);
+  });
+
+  it('in notice it still binds', () => {
+    const a = (transitionAgreement(agreed(), 'notice-by-me', 4) as { agreement: Agreement }).agreement;
+    expect(check([a], [{ from: 4, to: 5 }])).toEqual([expect.objectContaining({ agreement: 'a1', state: 'notice' })]);
+  });
+
+  it('a territory outside the scope, a transfer-only order, a proposal and an ended agreement are no break', () => {
+    expect(check([agreed({ scope: { territories: [6] } })], [{ from: 4, to: 5 }])).toEqual([]);
+    expect(check([agreed()], [{ from: 4, to: 5, mode: 'transfer-only' }])).toEqual([]);
+    expect(check([newAgreement('a1', P, 'proposed-by-me', 3, terms())], [{ from: 4, to: 5 }])).toEqual([]);
+    const ended = (transitionAgreement(agreed(), 'ended', 4) as { agreement: Agreement }).agreement;
+    expect(check([ended], [{ from: 4, to: 5 }])).toEqual([]);
+  });
+
+  it('nothing binds once only two players remain', () => {
+    expect(check([agreed()], [{ from: 4, to: 5 }], 4, players({ [OTHER]: { state: 'Eliminated' } }))).toEqual([]);
   });
 });

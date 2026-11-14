@@ -367,4 +367,78 @@ describe('order legality on seeded random boards (#133)', () => {
     expect(certain).toBeGreaterThan(CASES / 4);
     expect(problems.slice(0, 20)).toEqual([]);
   }, 240_000); // ~7 s alone, past 60 s beside the full suite on a CI runner (#221 timed out at 63.6 s)
+
+  // B2: the same boards with a truce with the first enemy (every territory on both sides covered, or
+  // every other one; trust, notice and a border cap varied): every order still legal, no covered
+  // territory attacked, and no armies moved both ways between two territories (B2a review: rule 6,
+  // staging or a withdrawal sending armies into a capped border that the cap then moved back).
+  it(`plans the boards with two or more enemies under a truce: every order legal, no covered territory attacked, no transfer undone`, () => {
+    const problems: string[] = [];
+    let truced = 0;
+    for (const c of cases) {
+      const owners = new Map<number, number>();
+      for (const t of c.board.territories) if (t.owner.kind === 'player') owners.set(t.territoryId, t.owner.playerId);
+      const enemies = [...new Set([...owners.values()].filter((p) => p !== ME))].sort((a, b) => a - b);
+      if (enemies.length < 2) continue;
+      truced++;
+      const partner = enemies[0]!;
+      const half = c.index % 2 === 1;
+      const theirs = [...owners].filter(([, p]) => p === partner).map(([t]) => t).filter((_, k) => !half || k % 2 === 0);
+      const mineIds = [...owners].filter(([, p]) => p === ME).map(([t]) => t).filter((_, k) => !half || k % 2 === 0);
+      const input: PlanInput = {
+        ...inputOf(c, c.map, c.board),
+        game: { fog: c.fog ? 'Foggy' : 'NoFog', commanders: c.commanders, turn: 5, players: [ME, ...enemies].map((id) => ({ id })) },
+        relations: [
+          {
+            player: partner,
+            coveredMine: mineIds,
+            coveredTheirs: theirs,
+            state: c.index % 5 === 0 ? 'notice' : 'active',
+            ...(c.index % 5 === 0 ? { endsTurn: 7 } : {}),
+            ...(c.index % 3 !== 1 ? { borderCap: c.index % 7 } : {}),
+            trust: c.index % 4 === 0 ? 'watch' : 'clear',
+          },
+        ],
+      };
+      const plan = planTurn(input);
+      const named = (id: number) => ({ id, name: `P${id}` });
+      for (const m of plan.moves) if (m.kind === 'attack' && theirs.includes(m.to)) problems.push(`${c.describe}: attacks covered T${m.to}`);
+      for (const m of plan.moves)
+        if (m.kind === 'transfer' && plan.moves.some((x) => x.kind === 'transfer' && x.from === m.to && x.to === m.from))
+          problems.push(`${c.describe}: transfers both ways between T${m.from} and T${m.to}`);
+      // T5: a capped border ends at most at the cap, or a warning names it.
+      const cap = input.relations![0]!.borderCap;
+      if (cap !== undefined)
+        for (const t of mineIds) {
+          if (!input.graph.territoryById.get(t)!.connectedTo.some((n) => theirs.includes(n))) continue;
+          const armies = c.board.territories.find((x) => x.territoryId === t)!.armies ?? 0;
+          const ends = plan.moves.reduce(
+            (n, m) => n - (m.from === t ? m.armies : 0) + (m.kind === 'transfer' && m.to === t ? m.armies : 0),
+            armies + (plan.deploys.find((d) => d.territoryId === t)?.armies ?? 0),
+          );
+          if (ends > cap && !plan.warnings.some((w) => w.includes(`border cap of ${cap} on P${t} (#${t})`)))
+            problems.push(`${c.describe}: T${t} ends at ${ends}, above the cap of ${cap}, unwarned`);
+        }
+      if (KNOWN[c.index]?.check === 'legal') continue;
+      try {
+        validateTurn({
+          map: c.map,
+          board: c.live,
+          myInGameId: ME,
+          income: c.income,
+          guard: c.settings.oneArmyStandsGuard !== false,
+          deploys: plan.deploys.map((d) => ({ territory: named(d.territoryId), armies: d.armies })),
+          moves: plan.moves.map((m) => ({ from: named(m.from), to: named(m.to), armies: m.armies })),
+          localDeployments: c.settings.localDeployments === true,
+          noSplit: c.settings.noSplit === true,
+          multiAttack: c.settings.multiAttack === true,
+        });
+      } catch (e) {
+        problems.push(`${c.describe}: validateTurn refused: ${(e as Error).message}`);
+      }
+      for (const b of ruleBreaks(c, input.graph, plan)) problems.push(`${c.describe}: ${b}`);
+    }
+    expect(truced).toBeGreaterThan(CASES / 4);
+    expect(problems.slice(0, 20)).toEqual([]);
+  }, 240_000);
 });

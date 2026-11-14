@@ -264,23 +264,30 @@ watch and the trust:
 
 The rule logic goes in a new `src/analysis/plan/relations.ts`; the phase modules call it. The planner
 is under active change (#214, #215, #218, #226), so keep the diffs in existing modules to call sites.
-Only in a free-for-all; with teams or two players the input is ignored with a warning.
+Only in a free-for-all; with teams or two players the input is ignored with a warning — except T1, which
+holds wherever the agreement binds (D3: the plan never orders a surprise break, and `warapp_submit_turn`
+refuses one in any format).
 
 - **T1. No target.** A covered territory of the partner is never a target, in any pass, while the
   relation is `active` or `notice`.
 - **T2. The truce hold.** A covered border of mine that faces only the partner is sized for the
   partner's visible adjacent stacks attacking with no deploy (the separate-attack rule of `forceAt`
-  still applies). That is the level at which a break needs a visible build-up first.
+  still applies). That is the level at which a break needs a visible build-up first. No report line calls
+  such a border sized for, or a gamble on, the partner's deploy (#69, #167's cover odds, #201).
 - **T3. What is never relaxed.** My commander's territory. A border whose protected value is above
   `TRUCE_RELAX_VALUE` (0.25) × my income. Any border when trust is `watch`. Those keep the full threat.
 - **T4. Not a front.** The partner does not count as a front for the no-second-front rule, and idle
   armies do not walk toward its border as "the enemy".
 - **T5. The cap.** With a border cap, my orders leave at most the cap on a covered border territory;
   the excess is staged one step behind, toward another front. If I already stand above it, the plan
-  moves the excess back and says so.
+  moves the excess back and says so. Where the plan's own hold deploy is what exceeds it, the warning
+  says to deploy less there, or to give notice and ask the owner first — never a silent break. Where
+  the border also faces another opponent and what the cap leaves no longer holds it, a warning names
+  that opponent and the hold: the term's cost, stated. So does one where my commander stands, when what
+  the cap leaves falls short of T3's full hold against the partner.
 - **T6. What a break would cost.** For each relation the plan reports `lossIfBroken`: the turn
-  simulator's result when the partner lands its whole estimated deploy on its best covered border and
-  attacks. `warapp_check_plan` keeps the partner among the opponents it tries, so `safe` still means
+  simulator's result when the partner lands its whole estimated deploy beside my costliest covered border and
+  attacks (from any territory of its there, covered or not). `warapp_check_plan` keeps the partner among the opponents it tries, so `safe` still means
   safe against a break; it adds `safeIfTruceHolds`.
 - **T7. Ending.** The plan never orders a surprise break. When I have given notice, the relation stays
   binding until `endsTurn`, then the partner is an ordinary opponent. The plan's `advice` says
@@ -302,8 +309,58 @@ The plan output gains `relations`: per agreement its state, trust, flags, armies
 **Tests** (`tests/analysis/lessons-diplomacy.test.ts`, each a miniature like the lessons files): a
 truce frees armies that complete a bonus elsewhere; the partner massing restores the full hold; the
 commander's border is never thinned; a valuable border is never thinned; the endgame restores full
-holds; no pass targets the partner; the cap moves excess back; notice binds until its turn; a break is
+holds; no pass targets the partner; the cap moves excess back, and no order of mine fills a capped
+border past it (an idle stack whose nearest front runs through it, a withdrawal); notice binds until its turn; a break is
 an opponent the same turn; the golden corpus is unchanged without relations.
+
+*As built (B2a, 2026-11-14):* rules T1–T5 and T7–T9 in `src/analysis/plan/relations.ts`, the phase
+modules calling it (`noTarget` at every attack source, the truce hold in `forceAt`, T5 after rule 6);
+`planRelationsFrom` in `src/analysis/relations.ts` resolves the ledger. Departures from the text above:
+`PlanRelation` also carries `watch` (why the trust is `watch`), `agreement`, `noticeBy`, and a third
+state `broken` with its `breach` (T8: the planner reports it and plans the partner as an ordinary
+opponent; the ledger is not written — its warning says to record `broken-by-them` with
+`warapp_record_agreement` before submitting, since `warapp_submit_turn` reads only the ledger). A territory beside a
+covered one keeps what holds it there (T4: once the partner is no front, rule 6 would otherwise walk the
+garrison off). T9's `enforced` is never set by `planRelationsFrom`: the ledger's field is ignored (no tool
+writes it, and a hand-edited file must not make a player no foe indefinitely), and the active-card
+decoder (#163) is unverified, so it is never "sure" and gives today's warning; part D supplies the
+decoder-backed, turn-bounded source. `armiesFreed` is per relaxed border the full hold's shortfall less
+the truce hold's, counted only where the plan without the truce would have funded the full hold — not on
+a border this plan concedes, nor one whose full hold rule 1a's economic test or my income refuses —
+capped at what the plan's orders really leave that border short of the full hold (armies that end there
+anyway, the leftover, a #172 two-step keep or a transfer in, are not freed), and at most my income. A plan holding no territory still reports each truce given. B2a review: no withdrawal, staging or
+rule 6 transfer of mine fills a capped border past its cap (`capRoom`; rule 6 and staging never move
+back along a transfer planned this turn), so the plan never moves armies both ways between two
+territories; any excess after rule 6 is deployed one step behind, then trimmed off a transfer in, then
+moved back; a warning that remains names this plan's own deploy when that is what exceeds the cap (so
+the agent can choose between the hold and the term). Rule 0p.2 subtracts only the partners still
+playing (`partnerFronts`). With no relations the golden corpus is byte-identical
+(`GOLDEN_FULL=1`), and the seeded legality property test also plans its boards under a truce.
+
+*As built (B2b, 2026-11-14):* T6 is `truceBreakLosses` in `src/analysis/plan/relations.ts`, called once
+the plan's orders are final: per binding, unenforced truce, each pair of a partner territory in view (covered
+or not, since T2 relaxes against every stack beside the border) and a covered territory of mine beside it is carried out on `turn-sim.ts` (my deploys and moves, the
+partner's whole deploy estimate there and an attack with everything, its commander too; both move orders
+unless the first mover is known and verified; no other player moves), and the costliest is `lossIfBroken`
+(my commander, then income lost, territories, armies): from, to, deploy, attackers, territories, armies,
+bonuses, income, `firstMover` when only one order costs it, `exact`. `null` when nothing binds, the truce is
+enforced, or no such pair exists. It changes no order. `warapp_plan_turn` logs it per turn beside
+`armiesFreed` (`lossIfBroken` = armies, plus `incomeLostIfBroken`). `warapp_check_plan` resolves the same
+truces (`truceRelations` in `src/tools/turn.ts`, shared with `warapp_plan_turn`), keeps every partner among
+the opponents, marks a reply that attacks a covered territory `breaksTruce` (any order, a chain's path, a
+joint strike's partner) and reports `safeIfTruceHolds` over the rest (`null` when none is left). Departure:
+an all-attack that mixes a break with attacks elsewhere is left out of `safeIfTruceHolds` whole, since its
+attacks elsewhere are each tried alone too. `warapp_submit_turn` refuses an order (not transfer-only) that
+attacks a territory the partner holds and an active or in-notice agreement covers (`truceBreaksIn`: the
+ledger's own states and the live board; the breach watch is not consulted, so a break by them is recorded
+`broken-by-them` first) unless `break_agreement: true`; with it the preview names the agreement, and once the
+outcome is `confirmed` the ledger records `broken-by-me` through warapp_record_agreement's path
+(`recordBrokenByMe`, `updateAgreementRecord` in `src/tools/relations.ts`: the transition under the ledger's
+lock, then the partner's player record with the break's flag and context); otherwise `agreementsBroken`
+says to record it by hand. `broken-by-me` is final: a later `warapp_uncommit_turn` does not undo it; the
+preview says so, and the withdrawal's result names the agreements still recorded broken that turn
+(`agreementsStillBroken`). Writing `broken-by-them` from the plan is still not done (the plan says to record
+it).
 
 ### B3. Pricing a deal
 

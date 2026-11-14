@@ -181,8 +181,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `twoStepReaches`, which asks what a stack could take and hold, not where armies stand), `tacitTruces` (3 quiet turns, reported only), the endgame
   (no other opponent ≥ 0.5 × the larger income) and `trust`. Refused: me, an AI, a player out, a
   teammate, a 1v1, two left, and no third player or team outside me, my team and the partner's; an
-  `until_turn` before this turn. Massing needs its growing pairs to end at the newest board. The ledger's `usage` (armies a truce freed, loss if broken, per planned turn)
-  is a stub that part B2 fills. Nothing in the planner reads the ledger yet. Its read-modify-write runs
+  `until_turn` before this turn. Massing needs its growing pairs to end at the newest board. The ledger's `usage`
+  logs per planned turn (not a what-if plan) the armies each honoured truce freed and what a break would cost (T6: `lossIfBroken` armies, `incomeLostIfBroken`). Its read-modify-write runs
   under an in-process per-path lock (`src/path-lock.ts`; another process sharing the data dir is not
   covered). **The cross-game player record** (owner decision D5 of 2026-11-14: on, local AND hosted —
   registered and enabled on a hosted child, in its per-user data dir) is `src/player-record-store.ts` at
@@ -197,9 +197,45 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   again) and tallies (`src/analysis/player-record.ts`: `recordDelta` moves each once, on the transition
   that earns it, so they never double-count and outlive entries dropped past the bound; 30 entries per
   player, 300 players). `warapp_record_agreement` updates it inside the ledger's lock (its own lock, a
-  different path), so entries land in the order the ledger changed. `WARAPP_PLAYER_RECORD=off` switches it off. The tools report `playerRecord`
+  different path), so entries land in the order the ledger changed; `warapp_submit_turn`'s `break_agreement`
+  goes through the same path (`recordBrokenByMe` / `updateAgreementRecord`, `src/tools/relations.ts`). `WARAPP_PLAYER_RECORD=off` switches it off. The tools report `playerRecord`
   (`warapp_record_agreement`: `updated` / `off` / `failed`; `warapp_get_relations`: `on` / `off` /
   `unreadable`).
+- **The planner honours a truce (B2, `src/analysis/plan/relations.ts`).** `warapp_plan_turn` resolves
+  the ledger with `planRelationsFrom` (`src/analysis/relations.ts`: covered territories on both sides
+  on this turn's board, `breachWatch` over my cached boards, `trust`; an unambiguous `broken` flag makes
+  it `broken`, T8) into `PlanInput.relations`; the plan reports `relations`, `advice` (`give-notice`) and
+  the tool `tacit`. Only in a free-for-all (teams or two players: ignored, a warning — but T1 still holds there), while `active` or
+  in `notice` before `endsTurn`: a covered partner territory is never a target (T1: `pc.truce.noTarget`,
+  checked at every attack source — targets, tryCapture, the strikes, lead strikes, guard-off breaks,
+  rule 4e); a covered border facing only the partner is sized for its stacks with no deploy (T2, in
+  `forceAt`) unless my commander stands there, it protects more than 0.25 × income, or trust is `watch`
+  (T3); the partner is no front for rule 0p.2 or rule 6, and a territory beside a covered one keeps its
+  hold (T4); a border cap (T5) is never overfilled by my own withdrawals, staging or rule 6 transfers
+  (`capRoom` / `capStepRoom` at those call sites), and after rule 6 any excess is deployed one step back,
+  trimmed off a transfer in, or moved back — a warning names this plan's own deploy when that exceeds it
+  (deploy less, or give notice and ask the owner: never a silent break), and one that the cap leaves
+  short of its hold against another opponent beside it, or of my commander's full hold; the report's #69
+  line, #167 cover odds and #201 gamble leave out a T2-relaxed border (`relaxedFor`); `enforced` (T9) makes the
+  player no foe — `planRelationsFrom` never sets it (the ledger's field is ignored until a decoder-backed,
+  turn-bounded source exists). `armiesFreed` counts a relaxed border only where the full hold would have
+  been funded (not conceded, not refused by rule 1a or my income), capped at what the plan's orders leave
+  that border short of the full hold. **No
+  relations, no change:** every hook is false or absent then, and the golden corpus must stay
+  byte-identical. **T6:** after the orders are final, `truceBreakLosses` carries out, per binding unenforced
+  truce, the partner's whole deploy estimate on any territory of its beside a covered one of mine (covered or
+  not: T2 relaxes against every stack there) and an attack with everything there, against the plan's orders on `turn-sim.ts` (both move orders unless the
+  first mover is known and verified; no other player moves), and reports the costliest as `lossIfBroken`
+  (my commander, then income, territories, armies); it changes no order. `warapp_check_plan` reads the same
+  truces (`truceRelations`, `src/tools/turn.ts`), keeps every partner among the opponents (`safe` is safe
+  against a break), marks a reply that attacks a covered territory `breaksTruce`, and adds `safeIfTruceHolds`
+  over the rest (`stressPlan`'s `truces`; a mixed all-attack is dropped whole). **`warapp_submit_turn` refuses
+  an order that attacks a territory an active or in-notice agreement covers** (`truceBreaksIn`, the ledger and
+  the live board only) unless `break_agreement: true`; then the preview names the agreement, and once the
+  outcome is `confirmed` the ledger records `broken-by-me` and the player record updates
+  (`agreementsBroken`; otherwise it says to record it by hand). That is final: `warapp_uncommit_turn`
+  does not undo it, and says so (`agreementsStillBroken`, the agreements broken-by-me on that turn). Not yet: writing `broken-by-them` to the
+  ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'

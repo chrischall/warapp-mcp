@@ -112,7 +112,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerSurrenderTool(server, live);
   registerBeginTurnTool(server, live);
   registerScoutTool(server, live);
-  registerTurnTools(server, live);
+  registerTurnTools(server, live, deps.env ? { env: deps.env } : {});
   registerCheckPlanTool(server, live);
   registerOpponentsTool(server, live);
   // Reads the map statistics cache only when they are on (WARAPP_STATS=1, never hosted).

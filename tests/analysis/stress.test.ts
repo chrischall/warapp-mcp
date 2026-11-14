@@ -337,3 +337,45 @@ describe('stressPlan', () => {
     expect(hit.assumptions.some((x) => /fewer/.test(x))).toBe(true);
   });
 });
+
+// B2 T6: a truce partner stays among the opponents tried (`safe` still means safe against a break);
+// `safeIfTruceHolds` leaves out every reply in which a partner attacks a territory the truce covers.
+describe('stressPlan with truces (B2 T6)', () => {
+  // My 1 on T2 beside the foe's 3 on T3: its 5 deploy and attack take T2 (and bonus 100).
+  const entries = [mine(1, 2), mine(2, 1), foe(3, 3), foe(4, 1)];
+
+  it('a break the truce rules out still makes the plan unsafe; it is safe if the truce holds', () => {
+    // Also the foe's 1 on T5 beside my 20 on T1: an attack there (no break) takes nothing.
+    const map = makeMap(5, [[1, 2], [2, 3], [3, 4], [1, 5]], [[100, 4, [1, 2]]]);
+    const r = stress(map, [mine(1, 20), mine(2, 1), foe(3, 3), foe(4, 1), foe(5, 1)], { truces: [{ player: FOE, covered: [2] }] });
+    expect(r.safe).toBe(false);
+    expect(r.safeIfTruceHolds).toBe(true);
+    expect(r.worst).toMatchObject({ opponent: FOE, to: 2, breaksTruce: true });
+    expect(r.replies.every((x) => x.breaksTruce === true)).toBe(true);
+  });
+
+  it('a reply on a territory the truce does not cover is no break', () => {
+    const r = stress(LINE4, entries, { truces: [{ player: FOE, covered: [1] }] });
+    expect(r.safe).toBe(false);
+    expect(r.safeIfTruceHolds).toBe(false);
+    expect(r.worst!.breaksTruce).toBeUndefined();
+  });
+
+  it('a truce with another player changes nothing for this one', () => {
+    const r = stress(LINE4, entries, { truces: [{ player: OTHER, covered: [1, 2] }] });
+    expect(r.safeIfTruceHolds).toBe(false);
+  });
+
+  it('without truces there is no safeIfTruceHolds and no reply is marked', () => {
+    const r = stress(LINE4, entries);
+    expect(r).not.toHaveProperty('safeIfTruceHolds');
+    expect(r.replies.some((x) => 'breaksTruce' in x)).toBe(false);
+  });
+
+  it('with only breaks to try, a held truce leaves nothing tried: null', () => {
+    // The foe's only reply is the attack on T2 (no move of mine to reinforce against).
+    const r = stress(makeMap(3, [[1, 2], [2, 3]]), [mine(1, 2), mine(2, 1), foe(3, 3)], { truces: [{ player: FOE, covered: [2] }] });
+    expect(r.safe).toBe(false);
+    expect(r.safeIfTruceHolds).toBeNull();
+  });
+});

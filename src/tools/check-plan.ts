@@ -23,6 +23,7 @@ import { resolveTerritory } from './resolve.js';
 import {
   boardHistory,
   currentTurn,
+  truceRelations,
   friendsOf,
   guardOffWarnings,
   modsWarning,
@@ -84,6 +85,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           "award of picks showed (as in warapp_plan_turn): the opponent's proven starts stand on the board the " +
           'orders are tried on even while fogged, and `award.firstMover` is who moves first this turn under a ' +
           '`Cycle` move order (not NoLuckCycle, where play speed sets it) — pass it as `first_mover` to judge by it; both orders are still tried by default. ' +
+          'In a free-for-all with a truce in force (the agreement ledger), its partner is still tried — `safe` is safe ' +
+          'against a break too — each reply that attacks a territory a truce covers is marked `breaksTruce`, and ' +
+          '`safeIfTruceHolds` is the verdict over the other replies (null when every reply is a break). ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on ` +
           'war.app; it never submits orders.',
       ),
@@ -252,6 +256,18 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const estimateOf = (id: number) => estimates.find((x) => x.playerId === id)?.estimate ?? base;
       const leader = teams.size === 0 && rivals.length >= 2 && rivals.every((o) => income > estimateOf(o.id));
 
+      // B2 T6: the truces in force (the ledger, as warapp_plan_turn reads it). Their partners stay among
+      // the opponents tried, so `safe` still means safe against a break; `safeIfTruceHolds` leaves the
+      // breaks out. Only in a free-for-all, as the planner honours them: a team game is left out here,
+      // and a game with two players still playing (a 1v1, or an FFA down to two) ends every agreement
+      // in the ledger (`agreementState`: two-left), so what binds is always one the planner's 'ffa' honours.
+      // `income` is the board's, card armies out — the same figure warapp_plan_turn passes.
+      const truces = (await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks }))?.relations ?? [];
+      const binding =
+        teams.size === 0
+          ? truces.filter((r) => (r.state === 'active' || r.state === 'notice') && (r.endsTurn === undefined || turn === null || turn < r.endsTurn) && !friend(r.player))
+          : [];
+
       const report = stressPlan({
         graph,
         board,
@@ -265,6 +281,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         orderPriority,
         ...(settings.localDeployments ? { localDeployments: true } : {}),
         leader,
+        ...(binding.length ? { truces: binding.map((r) => ({ player: r.player, covered: r.coveredMine })) } : {}),
       });
 
       const name = namer(map);
@@ -339,6 +356,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             }
           : {}),
         needsFirstMove: needs(r),
+        // B2 T6: the reply breaks a truce (a partner attacks a territory of yours it covers).
+        ...(r.breaksTruce ? { breaksTruce: true } : {}),
         lost: capped(r.lost),
         ...(r.lost.length > LIST_MAX ? { lostMore: r.lost.length - LIST_MAX } : {}),
         capturesFailed: capped(r.capturesFailed),
@@ -432,12 +451,21 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const dodged = escapingStacks
         ? ` ${escapingStacks} of the stacks you attack can move out first and get away (see dodges).`
         : '';
+      // B2 T6: what the verdict is if every truce holds.
+      const truceLine =
+        report.safeIfTruceHolds === undefined
+          ? ''
+          : report.safe === false && report.safeIfTruceHolds === true
+            ? ` Only a break of a truce costs you something: if every truce holds, nothing tried does (safeIfTruceHolds).`
+            : report.safe === false && report.safeIfTruceHolds === null
+              ? ' Every reply tried breaks a truce (safeIfTruceHolds is null).'
+              : '';
       const summary =
         report.safe === null
           ? `Nothing could be tested this turn: no opposing stack in view touches you.${blind}${ahead}`
           : report.safe
             ? `None of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried costs you a territory, a capture or a bonus.${blind}${inexact}${dodged}${ahead}`
-            : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${inexact}${dodged}${ahead}`;
+            : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${truceLine}${inexact}${dodged}${ahead}`;
       const deployed = deploys.reduce((n, d) => n + d.armies, 0);
       const warnings = [
         ...(award ? assumedWarning(award) : []),
@@ -472,6 +500,13 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         game: { id: game.id, name: game.name ?? null, turn },
         player: { id: me.id, name: me.name },
         safe: report.safe,
+        // B2 T6: with a truce in force, the verdict over the replies that break none (absent with no truce).
+        ...(report.safeIfTruceHolds !== undefined
+          ? {
+              safeIfTruceHolds: report.safeIfTruceHolds,
+              truces: binding.map((r) => ({ player: who(r.player), ...(r.agreement ? { agreement: r.agreement } : {}), state: r.state, covered: r.coveredMine.length })),
+            }
+          : {}),
         summary,
         exact: report.exact,
         firstMover: first_mover ?? 'unknown',

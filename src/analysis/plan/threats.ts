@@ -504,18 +504,24 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
   const forceAt = (
     t: number,
     gone: (n: number) => boolean,
-    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean },
+    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean },
   ): Force | null => {
     const byPlayer = stacksAt(t, gone, o.trend);
-    const chain = chainAt(t, gone);
+    // B2 (T2, plan/relations.ts): on a truce hold the partner attacks with its stacks alone — no
+    // deploy, no trend, its Multi-Attack chains from the armies standing; `full` asks for the hold
+    // the truce relaxed.
+    const truced = o.full ? undefined : ps.truce?.relaxed.get(t);
+    let chain = chainAt(t, gone);
+    if (chain && truced === chain.player) chain = chainAt(t, gone, true);
     if (!byPlayer.size) return chain ? chainForce(t, chain) : null;
     const each = [...byPlayer]
       .sort((a, b) => a[0] - b[0])
       .map(([player, p]) => {
-        const deploy = deployReaching(player, p.stacks.map((x) => x.id));
+        const deploy = truced === player ? 0 : deployReaching(player, p.stacks.map((x) => x.id));
+        const growth = truced === player ? 0 : p.growth;
         const movable = p.stacks.reduce((n, x) => n + x.movable, 0);
-        const add = Math.max(deploy, p.growth);
-        return { player, stacks: p.stacks, growth: p.growth, deploy, movable, add, single: movable + add };
+        const add = Math.max(deploy, growth);
+        return { player, stacks: p.stacks, growth, deploy, movable, add, single: movable + add };
       });
     const best = [...each].sort((a, b) => b.single - a.single || a.player - b.player)[0]!;
     // Separate attacks: try each stack as the last attack, its owner's deploy on it; every other

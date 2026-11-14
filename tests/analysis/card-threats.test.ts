@@ -36,6 +36,12 @@ describe('bombAdvice (#163)', () => {
     expect(a.why).toMatch(/^Bomb 5: /);
   });
 
+  it('never bombs a territory a truce covers: that would be a break without notice (D3)', () => {
+    const a = bombAdvice({ ...cb([neutral(3, 2), mine(4, 6), enemy(5, 10), neutral(6, 2)]), noBomb: new Set([5]) });
+    expect(a.target).toBeUndefined();
+    expect(a.why).toMatch(/^Hold the Bomb/);
+  });
+
   it('bombs the target of a planned attack that fails if the owner deploys there, and works halved', () => {
     const a = bombAdvice(
       cb([neutral(3, 2), mine(4, 20), enemy(5, 8), neutral(6, 2)], { moves: [{ from: 4, to: 5, armies: 19, kind: 'attack' }] }),

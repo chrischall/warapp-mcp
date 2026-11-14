@@ -19,6 +19,7 @@ import {
   type TwoStepPass,
 } from './shared.js';
 import type { DeployBook } from './orders.js';
+import { capRoom, relaxedFor } from './relations.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
@@ -874,9 +875,12 @@ export function floorTier(
         if (!short(m)) continue;
         const p = borders.get(m.id)?.player;
         if (p === undefined) continue;
+        const c = Math.max(0, breakCostWith(m, have.get(m) ?? m.have));
+        // B2 T2: a border relaxed for `p` faces its stacks with no deploy, so no share of the deploy
+        // it lands elsewhere breaks it here (plan/relations.ts, relaxedFor).
+        if (c > 0 && relaxedFor(ps, m.id, p)) continue;
         const e = players.get(p) ?? { deploy: 0, items: new Map<Unit, number>() };
         e.deploy = Math.max(e.deploy, deployShare(m));
-        const c = Math.max(0, breakCostWith(m, have.get(m) ?? m.have));
         e.items.set(u, Math.min(e.items.get(u) ?? Infinity, c));
         players.set(p, e);
       }
@@ -1297,8 +1301,9 @@ export function withdrawals(
           );
         }
       }
+      // B2 (T5): never onto a truce's capped border past its cap.
       const options = neighborsOf(g, t)
-        .filter(keep)
+        .filter((c) => keep(c) && capRoom(pc, ps, c, withdrawals) >= n)
         .map((c) => {
           const dist = bfsDistances(g, [c], { passable: keep });
           let best = Infinity;
@@ -1313,7 +1318,10 @@ export function withdrawals(
         .sort((a, b) => a.best - b.best || b.value - a.value || a.id - b.id);
       const to = options[0];
       if (!to) {
-        warnings.push(`${label(t)} is conceded and has nowhere to withdraw to: its ${n} movable armies stay.`);
+        const capped = neighborsOf(g, t).some((c) => keep(c) && capRoom(pc, ps, c, withdrawals) < n);
+        warnings.push(
+          `${label(t)} is conceded and has nowhere to withdraw to${capped ? ' (a truce caps the armies on the borders beside it)' : ''}: its ${n} movable armies stay.`,
+        );
         continue;
       }
       // #118: a border of a bonus I hold in full keeps its garrison — those armies kill attackers

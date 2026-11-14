@@ -267,8 +267,8 @@ export function captureTargets(
       continue;
     }
     if (st.owner.kind === 'available') continue;
-    // A teammate's territory is never a target (#128).
-    if (st.owner.kind === 'player' && !foe(st.owner.playerId)) continue;
+    // A teammate's territory is never a target (#128), nor a truce's covered territory (B2, T1).
+    if (st.owner.kind === 'player' && (!foe(st.owner.playerId) || pc.truce.noTarget(t))) continue;
     if (uncounted(t)) {
       warnings.push(
         `${label(t)} holds ${uncountedKind(t)}, whose strength the board does not carry: its defence is unknown, so no attack is planned on it.`,

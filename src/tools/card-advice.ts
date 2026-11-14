@@ -92,6 +92,8 @@ export interface CardAdviceInput {
   settings: CardBoard['settings'];
   /** A territory's label for the warnings. */
   label: (id: number) => string;
+  /** Territories of a truce partner the truce covers (active or in notice): never a Bomb target. */
+  truceCovered?: ReadonlySet<number>;
 }
 
 /**
@@ -110,6 +112,7 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
     board: input.board,
     me: me.id,
     friends,
+    ...(input.truceCovered?.size ? { noBomb: input.truceCovered } : {}),
     deploys: plan.deploys,
     moves: plan.moves,
     enemyDeploy: plan.enemyDeploy,

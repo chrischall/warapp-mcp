@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { parseGameId } from '../client.js';
 import type { Game, Player } from '../normalize.js';
 import { Method, writeUnCommitParams } from '../protocol/methods.js';
+import { readLedger } from '../relations-store.js';
 import { dropOrdersCache } from '../trend.js';
 import { gameIdArg, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { mintMeta } from './hints.js';
@@ -63,7 +64,8 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
         'turn resolves. Refuses outside a turn phase, for a game you are not playing, or when your orders are not ' +
         'committed. The game then waits on you again, so recommit before the boot timer runs out. Always as the ' +
         'signed-in war.app account; the outcome is read back from GameFeed (`uncommitted`, `unconfirmed`, or ' +
-        `\`unknown\` when war.app did not answer — never resend blindly). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
+        `\`unknown\` when war.app did not answer — never resend blindly). A truce recorded broken-by-me on that ` +
+        `turn stays recorded (\`agreementsStillBroken\`). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Withdraw committed war.app orders',
         readOnly: false,
@@ -147,6 +149,15 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
               // The orders cached when they were sent (#119) may never run now: a resend from the web
               // client would leave them standing in for that turn, so they are forgotten.
               if (ctx.dataDir && turn !== null) await dropOrdersCache(ctx.dataDir, gameId, me, turn);
+              // B2: warapp_submit_turn's break_agreement recorded a truce broken-by-me when these orders
+              // were committed. They never ran now, but broken-by-me is final: say so, never undo it.
+              const stillBroken =
+                ctx.dataDir && turn !== null
+                  ? ((await readLedger(ctx.dataDir, gameId, me))?.agreements ?? [])
+                      .filter((a) => a.status === 'broken-by-me' && a.endedTurn === turn)
+                      .map((a) => a.id)
+                      .sort()
+                  : [];
               return {
                 status: 'uncommitted' as const,
                 outcome: 'confirmed' as const,
@@ -154,6 +165,17 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
                 detail:
                   'Your orders are withdrawn and the game is waiting on you again: submit corrected orders with ' +
                   'warapp_submit_turn (e.g. from warapp_plan_turn) before the boot timer runs out.',
+                ...(stillBroken.length
+                  ? {
+                      agreementsStillBroken: stillBroken,
+                      warning:
+                        `${stillBroken.length === 1 ? 'Agreement' : 'Agreements'} ${stillBroken.join(', ')} ${stillBroken.length === 1 ? 'is' : 'are'} ` +
+                        `recorded broken-by-me on turn ${turn} (warapp_submit_turn's break_agreement, when these orders were committed). ` +
+                        'If the withdrawn orders were that break, they never ran, but broken-by-me is final: the ledger and the ' +
+                        "partner's player record keep it, and this withdrawal does not undo it. Tell the owner; record a new " +
+                        'agreement (warapp_record_agreement) if the truce is to go on.',
+                    }
+                  : {}),
               };
             }
             return unconfirmed(

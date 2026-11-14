@@ -1,7 +1,7 @@
 // Turn tools: plan a turn from the live board (read-only), and — gated on the
 // user's confirmation — submit one. The plan's `orders` array is the exact
 // input shape of warapp_submit_turn.
-import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations } from '@chrischall/mcp-utils';
+import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
@@ -49,6 +49,9 @@ import {
   type PlanGoal,
   type PlannerSettings,
   type PlanGameContext,
+  type MapGraph,
+  type OpponentTrack,
+  type PlanRelation,
 } from '../analysis/index.js';
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH } from '../analysis/combat.js';
@@ -99,6 +102,9 @@ import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
+import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
+import { recordBrokenByMe } from './relations.js';
+import { readLedger, recordTruceUsage } from '../relations-store.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
@@ -285,6 +291,8 @@ interface TurnState {
   incomeGiven?: boolean;
   /** How to read back an Order Delay placed among the moves (#186, unverified live), when one was. */
   orderDelayCheck?: string;
+  /** B2: the agreements these orders break (`break_agreement: true`), recorded broken-by-me once committed. */
+  breaks?: string[];
 }
 
 /**
@@ -1010,7 +1018,88 @@ function sinceLastView(
   };
 }
 
-export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
+/** The agreements `breaks` names and the orders that break each, in a sentence (ids only). */
+function breaksText(breaks: readonly TruceBreak[], moves: readonly { from: { id: number }; to: { id: number } }[]): string {
+  const one = (b: TruceBreak) =>
+    `agreement ${b.agreement} with player ${b.with} (${b.state === 'notice' ? 'in notice, still binding' : 'active'}): ` +
+    b.moves.map((m) => `move ${m.index + 1} (${moves[m.index]!.from.id} → ${m.to}) attacks a territory it covers`).join(', ');
+  return `These orders break ${breaks.length === 1 ? 'a truce' : `${breaks.length} truces`} — ${breaks.map(one).join('; ')}`;
+}
+
+/**
+ * B2: the truces in force in `game` for `me` this turn — the agreement ledger (warapp_record_agreement)
+ * resolved against my board history (`boards`, then `board` as this turn's) into the planner's relations,
+ * and the tacit truces (reported, never planned on). `undefined` with no turn. Shared by
+ * warapp_plan_turn and warapp_check_plan, so both read the same truces.
+ */
+export async function truceRelations(
+  ctx: LiveContext,
+  a: {
+    game: Game;
+    me: Player;
+    turn: number | null;
+    graph: MapGraph;
+    board: BoardState;
+    boards: readonly TurnBoard[];
+    /** My income this turn, card armies out. */
+    myIncome: number;
+    tracks: readonly OpponentTrack[] | undefined;
+  },
+): Promise<{ relations: PlanRelation[]; tacit: TacitTruce[] } | undefined> {
+  const { game, me, turn, graph, tracks } = a;
+  if (turn === null) return undefined;
+  const ledger = ctx.dataDir ? await readLedger(ctx.dataDir, game.id, me.id) : undefined;
+  return planRelationsFrom({
+    agreements: ledger?.agreements ?? [],
+    graph,
+    board: a.board,
+    boards: [...a.boards, { turn, board: a.board }],
+    me: me.id,
+    turn,
+    players: game.players.map((p) => ({
+      id: p.id,
+      ...(p.isAI ? { isAI: true } : {}),
+      ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
+      ...(p.state !== undefined ? { state: p.state } : {}),
+      ...(p.team !== undefined ? { team: p.team } : {}),
+    })),
+    incomes: {
+      mine: a.myIncome,
+      opponents: new Map(
+        game.players
+          .filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing')
+          .map((p) => {
+            const t = tracks?.find((x) => x.playerId === p.id);
+            return [p.id, t && t.firstSeen !== null ? (t.income ?? t.visibleIncome) : null] as const;
+          }),
+      ),
+    },
+  });
+}
+
+export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
+  /**
+   * B2: after `warapp_submit_turn` with `break_agreement`, mark the agreements its orders broke
+   * broken-by-me — only once the orders are confirmed committed (`committed`); otherwise say how to
+   * record it by hand. Never throws.
+   */
+  const recordBreaks = async (st: TurnState, committed: boolean) => {
+    const ids = st.breaks ?? [];
+    const notRecorded = (why: string) => ids.map((agreement) => ({ agreement, ledger: 'not-recorded' as const, why }));
+    if (!committed)
+      return notRecorded(
+        'the orders are not confirmed committed: once warapp_get_game shows them in, record it with warapp_record_agreement (status broken-by-me)',
+      );
+    if (!ctx.dataDir) return notRecorded('this server keeps no data directory');
+    try {
+      const game = await ctx.client.getGame(st.gameId, { settings: true });
+      const me = game.players.find((p) => p.id === st.feedPlayerId);
+      if (!me) return notRecorded('you are no longer listed in the game');
+      return await recordBrokenByMe({ dir: ctx.dataDir, env: opts.env, game, me, map: mapOf(game), agreements: ids, turn: st.turnNumber });
+    } catch (e) {
+      return notRecorded(`re-reading the game failed (${failureText(e)}): record it with warapp_record_agreement (status broken-by-me)`);
+    }
+  };
   server.registerTool(
     'warapp_plan_turn',
     {
@@ -1056,6 +1145,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board. ' +
+          'In a free-for-all, `relations` reports each truce recorded with warapp_record_agreement as the plan treated it ' +
+          '(no covered territory of the partner attacked while it is active or in notice; a covered border facing only ' +
+          'the partner held against its stacks with no deploy, except your commander\'s, a valuable border, or while trust ' +
+          'is watch; a border cap kept), `advice` says `give-notice` when the endgame or the partner outgrowing you made ' +
+          'the trust watch, a truce the board shows broken is planned as an ordinary opponent, and `tacit` lists quiet ' +
+          'borders with no agreement (a report, never a truce). ' +
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +
@@ -1174,7 +1269,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       const handUnknown = rules.inPlay.length > 0 && !handReadable(info, owners);
       const inGame = cardGame(game);
       const cards = chooseCardPlays(hand, rules, inGame);
-      const income = incomeFor(graph, board, me.id, game.settings) + cards.extraArmies;
+      // The board's income, card armies out: what the truces' trust reads (as warapp_check_plan passes it).
+      const boardIncome = incomeFor(graph, board, me.id, game.settings);
+      const income = boardIncome + cards.extraArmies;
       const trend = history.previous;
       const previousOrders = turn !== null ? history.boards.find((b) => b.turn === turn - 1)?.orders : undefined;
       // The opponents over my board history: one observed over 2+ turns gets its tracked income;
@@ -1224,12 +1321,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
         ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
       };
+      // B2: the truces in force, from the agreement ledger (warapp_record_agreement) and my board
+      // history, and the tacit truces (reported, never planned on).
+      const truces = await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: boardIncome, tracks });
       const plan = planTurn({
         graph,
         board,
         me: me.id,
         income,
         cardArmies: cards.extraArmies,
+        ...(truces?.relations.length ? { relations: truces.relations } : {}),
         settings,
         ...(trend ? { previousBoard: trend.board } : {}),
         // #226: my orders on that turn, when this server sent them: a failed attack's kills count back.
@@ -1290,11 +1391,32 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
       if (ctx.dataDir && turn !== null) await writeGameRecord(ctx.dataDir, game);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
+      // B2: what each honoured truce freed this turn and what a break would have cost (T6), for "has it
+      // been useful in play?" (not a what-if plan).
+      const used = (plan.relations ?? []).filter((r) => r.honoured && r.agreement !== undefined);
+      if (ctx.dataDir && turn !== null && !whatIf && used.length)
+        await recordTruceUsage(
+          ctx.dataDir,
+          game.id,
+          me.id,
+          turn,
+          used.map((r) => ({
+            agreementId: r.agreement!,
+            armiesFreed: r.armiesFreed,
+            lossIfBroken: r.lossIfBroken ? r.lossIfBroken.armies : null,
+            incomeLostIfBroken: r.lossIfBroken ? r.lossIfBroken.bonusValue : null,
+          })),
+        );
       const name = namer(map);
+      /** Another player by id, its name delimited as untrusted text. */
+      const playerRef = (id: number) => {
+        const p = game.players.find((x) => x.id === id);
+        return { id, name: p ? untrustedText(p.name) : null };
+      };
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
       // and the cards in effect. Advice only: the orders below are the plan's.
       const advice = rules.inPlay.length
-        ? adviseCards({ game, me, turn, info, hand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})` })
+        ? adviseCards({ game, me, turn, info, hand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})`, truceCovered: new Set((truces?.relations ?? []).filter((r) => r.state === 'active' || r.state === 'notice').flatMap((r) => r.coveredTheirs)) })
         : { view: {}, warnings: [] };
       const warnings = [
         ...(me.hasCommittedOrders
@@ -1472,6 +1594,32 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
               }
             : {}),
         },
+        // B2: each truce as the plan treated it, the advice about them, and the tacit truces.
+        ...(plan.relations
+          ? {
+              relations: plan.relations.map((r) => ({
+                ...r,
+                player: playerRef(r.player),
+                relaxed: r.relaxed.map(name),
+                fullHold: r.fullHold.map((f) => ({ territory: name(f.territory), why: f.why })),
+                ...(r.capMoved ? { capMoved: r.capMoved.map((m) => ({ from: name(m.from), to: name(m.to), armies: m.armies })) } : {}),
+                ...(r.breach ? { breach: { ...r.breach, territories: r.breach.territories.map(name) } } : {}),
+                lossIfBroken: r.lossIfBroken
+                  ? {
+                      ...r.lossIfBroken,
+                      from: name(r.lossIfBroken.from),
+                      to: name(r.lossIfBroken.to),
+                      territories: r.lossIfBroken.territories.map(name),
+                      bonuses: r.lossIfBroken.bonuses.map((b) => ({ id: b.id, name: map.bonuses.find((x) => x.id === b.id)?.name ?? String(b.id), value: b.value })),
+                    }
+                  : null,
+              })),
+            }
+          : {}),
+        ...(plan.advice ? { advice: plan.advice.map((a) => ({ ...a, player: playerRef(a.player) })) } : {}),
+        ...(truces?.tacit.length
+          ? { tacit: truces.tacit.map((t) => ({ player: playerRef(t.player), quietTurns: t.quietTurns, border: t.border.map(name) })) }
+          : {}),
         warnings,
         rationale: plan.rationale,
         orders,
@@ -1517,6 +1665,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         'armies of played Reinforcement cards. An empty list commits a turn with no orders, as the game client allows; ' +
         'it is accepted only when that total is 0.',
     ),
+    break_agreement: z
+      .boolean()
+      .optional()
+      .describe(
+        'Only when an order attacks a territory an active or in-notice truce covers (warapp_get_relations): true breaks ' +
+          'it on purpose — the preview names the agreement, and once the orders are committed the ledger records it ' +
+          'broken-by-me (the partner\'s player record too). Without it such orders are refused. Ask the owner first.',
+      ),
   });
 
   defineGatedWrite(
@@ -1549,7 +1705,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ. ' +
         'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
         'several attacks on one target together) ' +
-        'and warns about one that cannot capture. Always sent as ' +
+        'and warns about one that cannot capture. An order that attacks a territory an active or in-notice truce ' +
+        'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
+        'and, once the orders are committed, the ledger records it broken-by-me. Always sent as ' +
         'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
         `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
@@ -1560,7 +1718,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         openWorld: true,
       }),
       inputSchema: submitSchema,
-      async plan({ game_id, player, orders, income: givenIncome }) {
+      async plan({ game_id, player, orders, income: givenIncome, break_agreement }) {
         const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
         requireTurnPhase(game);
         // The bridge always acts as the signed-in account: an explicit `player` naming anyone
@@ -1677,6 +1835,33 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           givenIncome !== undefined && givenIncome !== modelled
             ? `income ${givenIncome} given (the game's armies per turn), modelled ${modelled}`
             : undefined;
+        // B2: an order that attacks a territory an active or in-notice truce covers is refused unless the
+        // caller breaks the agreement on purpose (the plan never orders a surprise break, T7).
+        const breaks = ctx.dataDir
+          ? truceBreaksIn({
+              agreements: (await readLedger(ctx.dataDir, game.id, me.id))?.agreements ?? [],
+              graph: graphOf(map),
+              board,
+              me: me.id,
+              turn: turnNumber,
+              players: game.players.map((p) => ({
+                id: p.id,
+                isAI: p.isAI,
+                humanTurnedIntoAI: p.humanTurnedIntoAI,
+                ...(p.state !== undefined ? { state: p.state } : {}),
+                ...(p.team !== undefined ? { team: p.team } : {}),
+              })),
+              moves: moves.map((m) => ({ from: m.from.id, to: m.to.id, ...(m.mode !== undefined ? { mode: m.mode } : {}) })),
+            })
+          : [];
+        if (breaks.length && break_agreement !== true) {
+          throw new McpToolError(`${breaksText(breaks, moves)}: nothing was sent.`, {
+            hint:
+              'Drop those orders, or give notice (warapp_record_agreement status notice-by-me) and wait until it runs. ' +
+              'If the partner broke it first, record broken-by-them with warapp_record_agreement. To break it on purpose ' +
+              '(ask the owner first), resend with break_agreement: true — the ledger then records it broken-by-me.',
+          });
+        }
         const { warnings } = validateTurn({
           map,
           board: territories,
@@ -1700,6 +1885,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ],
         });
         if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
+        if (breaks.length)
+          warnings.unshift(
+            `${breaksText(breaks, moves)}. break_agreement is true: once these orders are committed the ledger records ` +
+              `${breaks.length === 1 ? 'it' : 'them'} broken-by-me, and the partner's player record says so. That is final: ` +
+              'withdrawing the orders afterwards (warapp_uncommit_turn) does not undo it.',
+          );
         warnings.push(...options.warnings);
         warnings.push(
           ...modsWarning(game.settings),
@@ -1828,6 +2019,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             income,
             ...(givenIncome !== undefined ? { incomeGiven: true } : {}),
             ...(placedDelays.length ? { orderDelayCheck: orderDelayCheck(placedDelays.map((p) => placedAt(p)!)) } : {}),
+            ...(breaks.length ? { breaks: breaks.map((b) => b.agreement) } : {}),
           } satisfies TurnState,
         };
       },
@@ -1844,7 +2036,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'your `committed` true means the orders are in. Do not resend these orders blindly — a second commit for ' +
           'the same turn is not known to be safe, and once the turn has resolved they would commit to the next one.';
         const unconfirmed = (warning: string) => ({ status: 'unknown' as const, outcome: 'unconfirmed' as const, ...base, warning });
-        return sendAndVerify({
+        const result = await sendAndVerify({
           send: async () => {
             // The reply's bool is war.app's "vacation ended" flag — never a success signal.
             await ctx.rpc.call('SendOrders', Method.SendOrders, (w) =>
@@ -1887,6 +2079,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             return unconfirmed(`The orders were sent, but the game does not yet show them committed or the turn advanced. ${check}`);
           },
         });
+        if (!st.breaks?.length) return result;
+        return { ...result, agreementsBroken: await recordBreaks(st, result.outcome === 'confirmed') };
+
       },
     },
   );

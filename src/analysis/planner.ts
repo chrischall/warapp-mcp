@@ -17,6 +17,7 @@
 //   6. transfers, #125 staging ................................. plan/transfers.ts
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
 //   7r. reports, the offence report, 1i (#109), the final plan .. plan/report.ts
+//   T1–T9. truces (B2, `relations`): the rule logic .............. plan/relations.ts
 // Rule 1k's commander reserve is read by every phase that spends armies: captures, strike and
 // stand-still keep what holds my commander's territory. `byNum` and `pct` live in plan/util.ts.
 // plan/shared.ts is a leaf (it imports no phase and not planner.ts), and the phases import one
@@ -1035,6 +1036,66 @@
 //     borders next to it that its stacks plus the deploy that can reach them can take (named), and
 //     survive. Rule 1e's cover (#179) holds those borders when it can afford to, so the warning then
 //     names none; it names those left exposed when the cover was unaffordable.
+//  T. Truces (B2, docs/PLAN-TEAMS.md section 8; `relations`, resolved by warapp_plan_turn from the
+//     agreement ledger). Honoured only in a free-for-all (with teams or two players: ignored, with a
+//     warning — all but T1, which holds wherever the agreement binds: never a surprise break, and
+//     warapp_submit_turn refuses the order in any format), with a foe, while `active` or in `notice`
+//     before its `endsTurn`. Absent or empty,
+//     no rule here runs and the plan is byte-identical to one made without them.
+//       T1. A covered territory of the partner is never a target: not in the targets, tryCapture,
+//           the commander strikes, the strike stack, the lead strikes, the guard-off breaks or rule
+//           4e's enemy fallback; its "Not attacking" line says the truce covers it.
+//       T2. A covered border of mine facing only the partner is sized for the partner's stacks
+//           next to it attacking with no deploy and no trend (`forceAt`; separate attacks still
+//           count; its Multi-Attack chains from the armies standing).
+//       T3. Never relaxed: my commander's territory, a border protecting more than
+//           TRUCE_RELAX_VALUE (0.25) × my income, and every border while the trust is `watch`.
+//       T4. The partner is no front: rule 0p.2 counts the opponents less the partners still playing
+//           (`partnerFronts`: on the player list and `Playing`, else in sight), and rule 6's
+//           idle armies never head for a covered territory — while a territory beside one keeps what
+//           holds it there (T2's truce hold, or T3's full one).
+//       T5. A border cap: what my orders leave on a covered border territory is at most the cap.
+//           No fill move overfills it (`capRoom`): rule 1b withdraws only where the whole
+//           withdrawal fits (else to another neighbour, or a warning that a truce caps them), and
+//           #125's staging and rule 6 send at most the room left and never back along a transfer
+//           planned this turn (`capStepRoom`). After rule 6, any excess still there: this turn's
+//           deploys land one step behind, then a transfer of mine into it carries fewer (its own
+//           line retold), then the armies standing move back (toward a foe's territory no truce
+//           covers, else any open territory), said so when it already stood above the cap; what
+//           cannot go is a warning — naming this plan's own deploy when that is what exceeds it
+//           (deploy less there, or give notice and ask the owner first: never a silent break), or
+//           Local Deployment's room on the step. A capped border that also faces another
+//           opponent is no "toward another front": when what the cap leaves no longer holds it
+//           against that opponent (and it held before), a warning names the opponent and the hold;
+//           so does one where my commander stands, when the cap leaves it short of T3's full hold
+//           against the partner.
+//           The report never calls a T2-relaxed border sized for (or a gamble on) the partner's
+//           deploy: #69's line, #167's cover odds, #201's gamble and #118's best response leave it
+//           out (`relaxedFor`).
+//       T6. What a break would cost (`lossIfBroken`, after the orders are final; plan/relations.ts
+//           `truceBreakLosses`): per binding, unenforced truce, the partner's whole deploy estimate on
+//           any territory of its in view beside a covered territory of mine (covered or not: T2
+//           relaxes against every stack there) and an attack on it with everything there (its commander too), carried out against this plan's deploys and
+//           moves on the turn simulator (turn-sim.ts; both move orders unless the first mover is known
+//           and verified; no other player moves). The costliest pair is reported — my commander, then
+//           the income lost, the territories, the armies — with a rationale line; `null` when none
+//           exists. It changes no order: the plan is what it was, and only reports what it risks.
+//       T7. Never a surprise break: a notice binds until `endsTurn`, then the partner is an
+//           ordinary opponent; the plan's `advice` says `give-notice` when the trust turned `watch`
+//           for the endgame or for outgrowing (not when I already gave notice).
+//       T8. Broken by them (`state: 'broken'`): an ordinary opponent at once; a warning names the
+//           term, the turn and the evidence, and says to record `broken-by-them` with
+//           warapp_record_agreement before submitting (warapp_submit_turn reads only the ledger).
+//       T9. Enforced (a Diplomacy card the decoder is sure of): that player is no foe this turn
+//           (`foe`), so its threat is 0 and no attack on any of its territories is planned.
+//     The plan's `relations` reports each truce: its state, whether it binds, the trust and its
+//     flags, the borders relaxed and kept full (and why), the armies the relaxed holds free (per
+//     border, what its full hold needs beyond the armies there less what the truce hold needs —
+//     only where the full hold would have been funded: not on a border this plan concedes, nor one
+//     whose full hold rule 1a would refuse; capped at what the plan's orders really leave short of
+//     the full hold, so armies that end there anyway are not freed; at most my income), the armies
+//     the cap moved and what
+//     a break would cost (T6). A plan holding no territory still reports each truce given.
 // Local Deployment (`localDeployments`): a held bonus's value is a pool deployable
 // only on that bonus's territories (a superbonus's on all of its territories, beside
 // its member bonuses' pools); the rest of the income (base, per-territory, card
@@ -1138,9 +1199,11 @@ import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
 import { newPlanState } from './plan/state.js';
+import { applyBorderCaps, armiesFreed, partnerFronts, reportBreakLosses, reportTruce, trucePass } from './plan/relations.js';
 
 export * from './plan/shared.js';
 export { alliesOf, planEnemyEstimates } from './plan/estimates.js';
+export { TRUCE_RELAX_VALUE } from './plan/relations.js';
 
 /** Passes that refine the cut set (#172) before falling back to the plan that cuts nothing. */
 const TWO_STEP_PASSES = 3;
@@ -1255,13 +1318,24 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     staged, incoming,
   } = ps;
 
-  if (!mine.length) return emptyPlan(pc, ps);
+  if (!mine.length) {
+    const empty = emptyPlan(pc, ps);
+    // B2: each truce given is still reported, as the plan treated it (nothing to relax or cap).
+    const report = reportTruce(pc, ps, undefined, () => 0);
+    if (report) {
+      empty.relations = report.relations;
+      if (report.advice.length) empty.advice = report.advice;
+    }
+    return empty;
+  }
 
   // ---- the deploy book (plan/orders.ts): budget, guard, deploys, pools, protected value ----
   const book = deployBook(pc, ps);
   const {
     guardAt, coverOf, heldNow, gainWith, orderOf, deploy, pools, roomAt, spareAt,
   } = book;
+  // ---- B2 (T2, T3): the truce holds, once the book knows what each border protects (plan/relations.ts) ----
+  ps.truce = trucePass(pc, book.valueOf);
   // As the deploy book reads it, restated here so TypeScript narrows `pools` wherever it is tested.
   const local = pools !== null && pools.bonuses.length > 0;
 
@@ -1311,7 +1385,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // loses that income), and expansion that completes nothing ranks below holds and breaks.
     const oneVsOne = auto && profile.format === '1v1' && facing.size > 0;
     // Rule 0p.2: in an FFA with two or more opponents left, no second front.
-    const ffa = auto && profile.format === 'ffa' && profile.opponents >= 2;
+    // B2 (T4): a player a truce holds is no front.
+    const ffa = auto && profile.format === 'ffa' && profile.opponents - partnerFronts(pc) >= 2;
     if (oneVsOne)
       rationale.push(
         '1v1 in contact: breaking an enemy bonus counts like completing one of equal value (the opponent loses that income), and expansion that completes no bonus this turn ranks below holding, breaking and completing.',
@@ -2283,6 +2358,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   }
   // ---- 6. transfers, #125 staging (plan/transfers.ts) ----
   transfers(pc, ps, book, threats, hd, caps, staging);
+  // ---- B2 (T5): a truce's border cap (plan/relations.ts) ----
+  applyBorderCaps(pc, ps, book, hd, ps.truce, threats);
 
   // ---- #226: a margin on attacks on a player from armies that would sit idle ----
   // An attack on a player's territory is sized to the kill count its defenders plus an ESTIMATED
@@ -2396,10 +2473,18 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- 7. schedule the moves (#127), the exits (#179), Order Priority (plan/move-order.ts) ----
   const { slotOf, facesEnemy, exits } = scheduleOrders(pc, ps, threats, hd, caps, struck, strikeCard, strikeWho);
 
+  // ---- B2: what the truces did (plan/relations.ts) ----
+  const truceReport = reportTruce(pc, ps, ps.truce, (r) => armiesFreed(pc, ps, threats, r, { conceded, valueOf: book.valueOf }));
   // ---- the plan: offence list, #172's final check, #201 retaliation, #167 exchanges, #179 ETAs (plan/report.ts) ----
   const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
   // #218: the main front's forecast at my whole income, for the game outlook to share.
   if (ps.front) plan.front = ps.front;
+  if (truceReport) {
+    // T6: what a break would cost, against the plan's final orders (plan/relations.ts).
+    reportBreakLosses(pc, truceReport.relations, plan);
+    plan.relations = truceReport.relations;
+    if (truceReport.advice.length) plan.advice = truceReport.advice;
+  }
   // #214 review: what planTurn compares between the plans with and without bare steps. A border
   // ends holding when it is not conceded and what the final orders leave there (its armies, deploys
   // and transfers in, less every order out) beats the threat left once this plan's captures land.

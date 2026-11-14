@@ -361,6 +361,8 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
       while (levels > 1 && levels ** tried.length > LIMIT) levels--;
       /** Each target's sizings: its reachable deploy (#179) evenly spaced down to 0, or not attacked. */
       const sharesOf = tried.map((t) => {
+        // B2 T1: a territory a truce covers is never attacked, so it is never sized either.
+        if (pc.truce.noTarget(t)) return [SKIP];
         const r = reachOn.get(t)!;
         const spaced = Array.from({ length: Math.max(1, levels - 1) }, (_, i) =>
           Math.round(r - (i * r) / Math.max(1, levels - 2)),
@@ -573,6 +575,8 @@ export function commanderStrikes(pc: PlanCtx, ps: PlanState, book: DeployBook, t
   for (const t of [...state.keys()].sort(byNum)) {
     const st = state.get(t)!;
     if (mineSet.has(t) || captured.has(t) || st.armies === null || st.owner.kind !== 'player' || !foe(st.owner.playerId) || uncounted(t)) continue;
+    // B2 (T1): never a truce's covered territory.
+    if (pc.truce.noTarget(t)) continue;
     if (!(st.specialUnits ?? []).some((u) => u.kind === 'commander' && foe(u.playerId))) continue;
     const adjacent = neighborsOf(g, t).filter((n) => mineSet.has(n));
     if (!adjacent.length) continue;
@@ -874,6 +878,8 @@ export function guardOffBreaks(pc: PlanCtx, ps: PlanState, book: DeployBook, hd:
     for (const e of empties) {
       const n = e.territoryId;
       if (captured.has(n) || spared.has(n) || uncounted(n) || unitsAt(n) > 0 || gainWith([n]) < 0) continue;
+      // B2 (T1): never a truce's covered territory.
+      if (pc.truce.noTarget(n)) continue;
       const near = neighborsOf(g, n).filter((x) => mineSet.has(x));
       const spareOf = (x: number) =>
         Math.max(0, avail.get(x)! - Math.max(keepFor(x, (y) => y === n), twoStepKeep(x, (y) => y === n), coverOf(x)));
@@ -1103,6 +1109,8 @@ export function spendStrikeStack(
     for (const n of neighborsOf(g, S)) {
       const st = state.get(n);
       if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null || uncounted(n)) continue;
+      // B2 (T1): never a truce's covered territory.
+      if (pc.truce.noTarget(n)) continue;
       const cost = costAt(n);
       // Never a capture that lowers income (rule 4c): it completes a negative bonus. Re-checked
       // below against the strike's own captures, which can complete one only together.
@@ -1425,6 +1433,8 @@ export function leadStrikes(
             !spared.has(n) &&
             st?.owner.kind === 'player' &&
             foe(st.owner.playerId) &&
+            // B2 (T1): never a truce's covered territory.
+            !pc.truce.noTarget(n) &&
             st.armies !== null &&
             !uncounted(n) &&
             unitsAt(n) === 0

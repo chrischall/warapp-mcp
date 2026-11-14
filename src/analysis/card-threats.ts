@@ -23,6 +23,8 @@ export interface CardBoard {
   me: number;
   /** Players on my side (teammates): never a target, never a threat. */
   friends?: ReadonlySet<number>;
+  /** Territories a truce covers (active or in notice): bombing one breaks the truce, so never a Bomb target (D3). */
+  noBomb?: ReadonlySet<number>;
   deploys: readonly { territoryId: number; armies: number }[];
   moves: readonly { from: number; to: number; armies: number; kind: 'attack' | 'transfer' }[];
   /** The deploy assumed for each opponent (the plan's `enemyDeploy`). */
@@ -149,6 +151,7 @@ export function bombAdvice(cb: CardBoard): BombAdvice {
   for (const t of r.ids) {
     const p = r.ownerOf(t);
     if (!r.foe(p) || r.state.get(t)?.armies === null) continue;
+    if (cb.noBomb?.has(t)) continue;
     const borders = neighborsOf(cb.graph, t).filter(r.isMine);
     if (!borders.length) continue;
     const n = r.armiesOf(t) + cb.enemyDeploy;

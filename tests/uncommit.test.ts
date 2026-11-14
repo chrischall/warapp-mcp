@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
+import { writeLedger } from '../src/relations-store.js';
 import { readCachedOrders, writeOrdersCache } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 
@@ -120,6 +121,40 @@ describe('warapp_uncommit_turn', () => {
     h = await liveHarness({ pages: SIGNED_IN, feed: [COMMITTED, COMMITTED, UNCOMMITTED], warapp: s.warapp, dataDir: dir });
     expect((payload(await confirmed({ game_id: GAME_ID }))).status).toBe('uncommitted');
     expect([...(await readCachedOrders(dir, GAME_ID, mine)).keys()]).toEqual([5]);
+  });
+
+  it('says a truce recorded broken-by-me for this turn stays recorded once the orders are withdrawn (B2)', async () => {
+    const mine = Number(ME.feed);
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-uncommit-'));
+    const truce = (id: string, status: 'broken-by-me' | 'agreed', endedTurn?: number) => ({
+      id,
+      with: 1001,
+      kind: 'truce' as const,
+      status,
+      createdTurn: 2,
+      agreedTurn: 2,
+      ...(endedTurn !== undefined ? { endedTurn } : {}),
+      terms: { scope: 'all' as const, noticeTurns: 1 },
+      history: [{ turn: 2, status: 'agreed' as const }, ...(endedTurn !== undefined ? [{ turn: endedTurn, status }] : [])],
+    });
+    // a1 broken by this turn's orders, a2 by an earlier turn's, a3 still agreed.
+    await writeLedger(dir, { gameId: GAME_ID, playerId: mine, agreements: [truce('a1', 'broken-by-me', 6), truce('a2', 'broken-by-me', 4), truce('a3', 'agreed')], usage: {} });
+    const s = uncommitServer();
+    h = await liveHarness({ pages: SIGNED_IN, feed: [COMMITTED, COMMITTED, UNCOMMITTED], warapp: s.warapp, dataDir: dir });
+    const p = payload(await confirmed({ game_id: GAME_ID }));
+    expect(p.status).toBe('uncommitted');
+    expect(p.agreementsStillBroken).toEqual(['a1']);
+    expect(String(p.warning)).toMatch(
+      /Agreement a1 is recorded broken-by-me on turn 6.*withdrawn orders were that break, they never ran, but broken-by-me is final.*player record.*does not undo it/,
+    );
+  });
+
+  it('says nothing of agreements when none was broken this turn', async () => {
+    const s = uncommitServer();
+    h = await harness([COMMITTED, COMMITTED, UNCOMMITTED], s.warapp);
+    const p = payload(await confirmed({ game_id: GAME_ID }));
+    expect(p.agreementsStillBroken).toBeUndefined();
+    expect(p.warning).toBeUndefined();
   });
 
   it('reports unconfirmed when GameFeed still shows the orders committed', async () => {
