@@ -95,6 +95,17 @@ describe('the tools', () => {
 });
 
 describe('warapp_record_agreement', () => {
+  it('refuses to record over a ledger file it cannot read, and leaves the file as it is (#232)', async () => {
+    h = await liveHarness({ feed: [game('2')] });
+    mkdirSync(join(h.dataDir, 'relations'), { recursive: true });
+    const path = join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`);
+    writeFileSync(path, '{ not json');
+    expect(textOf(await record({ with: 'Bob', status: 'agreed' }))).toMatch(/exists but cannot be read: nothing was recorded/);
+    expect(readFileSync(path, 'utf8')).toBe('{ not json');
+    writeFileSync(path, JSON.stringify({ gameId: GAME, playerId: 1, agreements: [] }));
+    expect(textOf(await record({ with: 'Bob', status: 'agreed' }))).toMatch(/cannot be read/);
+  });
+
   it('records a truce and its changes in a name-free ledger, without a confirmation step', async () => {
     h = await liveHarness({ feed: [game('2')] });
     const made = payload<RecordPayload>(await record({ with: 'Bob', status: 'proposed-by-them', territories: [159], notice_turns: 2, border_cap: 8 }));

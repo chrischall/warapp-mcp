@@ -35,7 +35,7 @@ import type { BoardState } from '../board.js';
 import { boardStateFromLive } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
 import { entryKey, legacyEntryKey, playerRecordEnabled, playerRecordState, readPlayerRecord, updatePlayerRecord } from '../player-record-store.js';
-import { emptyLedger, nextAgreementId, readLedger, withLedgerLock, writeLedger, type RelationsLedger } from '../relations-store.js';
+import { emptyLedger, nextAgreementId, readLedger, readLedgerForWrite, withLedgerLock, writeLedger, type RelationsLedger } from '../relations-store.js';
 import { carriesTeam } from '../teams.js';
 import { readBoardHistory, readCachedOrders, writeBoardCache } from '../trend.js';
 import { currentTurn, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
@@ -513,7 +513,13 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
 
       // Read, change and write the ledger under its in-process lock: two calls never lose each other's change.
       const { agreement, created, recorded } = await withLedgerLock(dir, game.id, me.id, async () => {
-        const ledger: RelationsLedger = (await readLedger(dir, game.id, me.id)) ?? emptyLedger(game.id, me.id);
+        const read = await readLedgerForWrite(dir, game.id, me.id);
+        if (read === 'unreadable') {
+          throw new McpToolError(`The ledger for game ${game.id} exists but cannot be read: nothing was recorded, and the file was left as it is.`, {
+            hint: "Inspect or move aside the game's file under the server's data directory (relations/), then record again.",
+          });
+        }
+        const ledger: RelationsLedger = read ?? emptyLedger(game.id, me.id);
         const c = change(ledger);
         const rest = ledger.agreements.filter((a) => a.id !== c.agreement.id);
         if (!(await writeLedger(dir, { ...ledger, agreements: [...rest, c.agreement] }))) {

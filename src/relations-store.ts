@@ -127,6 +127,32 @@ export async function readLedger(dir: string, gameId: number, playerId: number):
 }
 
 /**
+ * The ledger for a write: `null` when there is no file yet, `'unreadable'` when a file exists but
+ * cannot be read as this game's and account's ledger (bad JSON, another shape, a read error), so a
+ * caller never replaces recorded agreements with an empty ledger.
+ */
+export async function readLedgerForWrite(
+  dir: string,
+  gameId: number,
+  playerId: number,
+): Promise<RelationsLedger | null | 'unreadable'> {
+  let text: string;
+  try {
+    text = await readFile(relationsPath(dir, gameId, playerId), 'utf8');
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unreadable';
+  }
+  try {
+    const c: unknown = JSON.parse(text);
+    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !Array.isArray(c.agreements)) return 'unreadable';
+    const agreements = c.agreements.map(agreementOf).filter((a): a is Agreement => a !== undefined);
+    return { gameId, playerId, agreements, usage: usageOf(c.usage) };
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/**
  * The ledger with its agreements in id order, at most {@link MAX_AGREEMENTS} of them (over ones
  * dropped oldest first), and at most {@link MAX_USAGE_TURNS} usage turns.
  */
