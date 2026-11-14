@@ -141,6 +141,10 @@ export function partyRefusal(players: readonly RelationPlayer[], me: number, par
   const mine = players.find((x) => x.id === me);
   if (mine && carriesTeam(mine.team) && p.team === mine.team) return `player ${partner} is your teammate`;
   if (players.filter(alive).length <= 2) return 'only two players remain: there is nothing a truce could leave aside';
+  // Someone must stand outside me, my team and the partner's team, or the truce leaves nothing aside.
+  const sameTeam = (x: RelationPlayer, y: RelationPlayer | undefined) => y !== undefined && carriesTeam(x.team) && x.team === y.team;
+  const third = players.some((x) => alive(x) && x.id !== me && x.id !== partner && !sameTeam(x, mine) && !sameTeam(x, p));
+  if (!third) return "no third player or team remains outside you, your team and the partner's team: there is nothing a truce could leave aside";
   return undefined;
 }
 
@@ -343,8 +347,9 @@ export interface BreachInput {
  * - `cap-exceeded` (newest board): a visible partner territory beside a covered one holds more
  *   than the cap;
  * - `massing`: the partner's visible armies within {@link TRUCE_MASSING_REACH} steps of the
- *   covered border grew for the last {@link TRUCE_MASSING_TURNS} turns (territories visible on
- *   both boards only: a fog reveal is no growth), or an event the fog leaves ambiguous;
+ *   covered border grew for the last {@link TRUCE_MASSING_TURNS} turns up to the newest board
+ *   (territories visible on both boards only: a fog reveal is no growth), or an event the fog
+ *   leaves ambiguous;
  * - `outgrowing`: its income passed {@link TRUCE_OUTGROW_RATIO} × mine;
  * - `kept`: the consecutive quiet turns up to the newest board (when nothing broke).
  * A proposal that was never agreed has no flags.
@@ -444,9 +449,11 @@ export function breachWatch(input: BreachInput): WatchFlag[] {
     growthByTurn.set(turn, growth);
   }
   // Massing: growth on each of the last TRUCE_MASSING_TURNS consecutive pairs.
+  // The pairs must run up to the newest board: growth followed by a gap is old news.
   const recent = pairs.slice(-TRUCE_MASSING_TURNS).map((p) => p.from.turn);
   if (
     recent.length === TRUCE_MASSING_TURNS &&
+    recent.at(-1)! + 1 === turns.at(-1) &&
     recent.every((t, i) => i === 0 || t === recent[i - 1]! + 1) &&
     recent.every((t) => (growthByTurn.get(t) ?? 0) > 0)
   ) {

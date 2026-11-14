@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { withPathLock } from './path-lock.js';
 import {
   AGREEMENT_STATUSES,
   MAX_NOTICE_TURNS,
@@ -169,7 +170,17 @@ export function nextAgreementId(ledger: RelationsLedger): string {
  * exists for the game. `true` when written; never throws.
  */
 export async function recordTruceUsage(dir: string, gameId: number, playerId: number, turn: number, usage: readonly TruceUsage[]): Promise<boolean> {
-  const ledger = await readLedger(dir, gameId, playerId);
-  if (!ledger) return false;
-  return writeLedger(dir, { ...ledger, usage: { ...ledger.usage, [String(turn)]: [...usage] } });
+  return withLedgerLock(dir, gameId, playerId, async () => {
+    const ledger = await readLedger(dir, gameId, playerId);
+    if (!ledger) return false;
+    return writeLedger(dir, { ...ledger, usage: { ...ledger.usage, [String(turn)]: [...usage] } });
+  });
 }
+
+/**
+ * Run a read-modify-write of one ledger under the in-process lock for its file (src/path-lock.ts),
+ * so two calls in this process never lose each other's change. Not re-entrant: never nest it on
+ * the same ledger.
+ */
+export const withLedgerLock = <T>(dir: string, gameId: number, playerId: number, fn: () => Promise<T>): Promise<T> =>
+  withPathLock(relationsPath(dir, gameId, playerId), fn);

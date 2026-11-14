@@ -1,17 +1,35 @@
-// The cross-game player record on disk (docs/PLAN-TEAMS.md A2, D5's default: on, local only — never
-// hosted — and counts only). At `<dataDir>/relations/players.json`: per player, the counts of
-// `src/analysis/player-record.ts` and when they last changed, nothing more. The player is keyed by an
-// HMAC of its GameFeed id under a local secret salt (`<dataDir>/relations/players.salt`, 0600, made
-// on first use): the file holds no player id, game id or name. Bounded (`MAX_RECORD_PLAYERS`).
-// Off on a hosted child (`isHosted`, src/hosted.ts) whatever the environment says, and switched off
-// locally by `WARAPP_PLAYER_RECORD=off` (or `0` / `false` / `no`): then nothing here reads or writes.
-// Best effort: never throws.
+// The cross-game player record on disk (docs/PLAN-TEAMS.md A2, owner decision D5 of 2026-11-14: ON,
+// local and hosted — a hosted child keeps it in its per-user data dir, `state.dataDir` in mint.yaml).
+// At `<dataDir>/relations/players.json` (version 3): per player, the name-free entries and the
+// tallies of `src/analysis/player-record.ts`, and when they last changed. The player is keyed by an
+// HMAC of its GameFeed id under a local secret salt (`<dataDir>/relations/players.salt`, 0600), and
+// each entry by an HMAC of the game and the agreement: the file holds no player id, game id or name,
+// and without the salt it cannot be joined to a game or a player.
+//
+// The salt is made only on the write path, never by a read; a salt file that exists but is
+// malformed is never replaced (that would orphan every key on record): reads say `unreadable` and
+// writes fail until the owner fixes or removes it.
+//
+// Bounded (`MAX_RECORD_ENTRIES` per player, `MAX_RECORD_PLAYERS` players). Isolated so it can be
+// switched off: `WARAPP_PLAYER_RECORD=off` (or `0` / `false` / `no`) and nothing here reads or
+// writes. Reads are loose (versions 1 and 2 are read too; an unusable player or entry is dropped);
+// every write is atomic and runs under the in-process path lock (src/path-lock.ts). Never throws.
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { link, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
-import { addCounts, COUNT_KEYS, isZero, MAX_RECORD_PLAYERS, ZERO_COUNTS, type RecordCounts } from './analysis/player-record.js';
-import { isHosted } from './hosted.js';
+import {
+  addCounts,
+  COUNT_KEYS,
+  MAX_RECORD_PLAYERS,
+  talliesOf,
+  upsertEntry,
+  ZERO_COUNTS,
+  type RecordCounts,
+  type RecordEntry,
+  type RecordOutcome,
+} from './analysis/player-record.js';
+import { withPathLock } from './path-lock.js';
 import { relationsDir } from './relations-store.js';
 
 type Rec = Record<string, unknown>;
@@ -19,74 +37,119 @@ const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !
 
 const SALT = /^[0-9a-f]{32}$/;
 const HASH = /^[0-9a-f]{32}$/;
+const OUTCOMES: ReadonlySet<RecordOutcome> = new Set(['open', 'not-agreed', 'kept', 'ended-with-notice', 'broken-by-them', 'broken-by-me']);
 
 export const playerRecordPath = (dir: string) => join(relationsDir(dir), 'players.json');
 export const playerRecordSaltPath = (dir: string) => join(relationsDir(dir), 'players.salt');
 
-/** Whether the cross-game record is on: never hosted; locally yes unless `WARAPP_PLAYER_RECORD` is `off`, `0`, `false` or `no`. */
+/** Whether the cross-game record is on: yes (local and hosted) unless `WARAPP_PLAYER_RECORD` is `off`, `0`, `false` or `no`. */
 export function playerRecordEnabled(env: EnvSource = process.env): boolean {
-  if (isHosted(env)) return false;
   const v = readEnvVar('WARAPP_PLAYER_RECORD', { env });
   return v === undefined || !/^(off|0|false|no)$/i.test(v.trim());
 }
 
-/** The salt for `dir`, made on first use; `undefined` when it can be neither read nor written. */
-export async function playerRecordSalt(dir: string): Promise<string | undefined> {
-  const path = playerRecordSaltPath(dir);
+type SaltRead = { salt: string } | 'missing' | 'malformed';
+
+async function readSalt(dir: string): Promise<SaltRead> {
+  let text: string;
   try {
-    const text = (await readFile(path, 'utf8')).trim();
-    if (SALT.test(text)) return text;
-  } catch {
-    // Not there yet.
+    text = await readFile(playerRecordSaltPath(dir), 'utf8');
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'malformed';
   }
-  try {
-    await mkdir(relationsDir(dir), { recursive: true, mode: 0o700 });
-    const salt = randomBytes(16).toString('hex');
-    const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(tmp, salt, { mode: 0o600 });
-    await rename(tmp, path);
-    return salt;
-  } catch {
-    return undefined;
-  }
+  const salt = text.trim();
+  return SALT.test(salt) ? { salt } : 'malformed';
 }
 
-/** A player's key in the record: never the id itself. */
-export const playerKey = (salt: string, playerId: number) => createHmac('sha256', salt).update(`player:${playerId}`).digest('hex').slice(0, 32);
+/** The salt on record for `dir`; `undefined` when there is none yet or it is malformed. Never makes one. */
+export async function playerRecordSalt(dir: string): Promise<string | undefined> {
+  const s = await readSalt(dir);
+  return typeof s === 'object' ? s.salt : undefined;
+}
 
-interface PlayerCounts {
-  counts: RecordCounts;
-  /** When the counts last changed (ms since the epoch): only to drop the stalest past the bound. */
+/** The salt for a write: the one on record, else a new one (never over an existing file); `undefined` when malformed or unwritable. */
+async function saltForWrite(dir: string): Promise<string | undefined> {
+  const s = await readSalt(dir);
+  if (typeof s === 'object') return s.salt;
+  if (s === 'malformed') return undefined;
+  const path = playerRecordSaltPath(dir);
+  await mkdir(relationsDir(dir), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(tmp, randomBytes(16).toString('hex'), { mode: 0o600 });
+  try {
+    // `link` fails when the file exists: another writer's salt is never replaced.
+    await link(tmp, path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+  } finally {
+    await unlink(tmp).catch(() => undefined);
+  }
+  const again = await readSalt(dir);
+  return typeof again === 'object' ? again.salt : undefined;
+}
+
+const hmac = (salt: string, text: string) => createHmac('sha256', salt).update(text).digest('hex').slice(0, 32);
+
+/** A player's key in the record: never the id itself. */
+export const playerKey = (salt: string, playerId: number) => hmac(salt, `player:${playerId}`);
+/** An agreement's key in the record: never the game id or agreement id themselves. */
+export const entryKey = (salt: string, gameId: number, agreementId: string) => hmac(salt, `agreement:${gameId}:${agreementId}`);
+
+/** One player's part of the record. */
+export interface PlayerRecordData {
+  tallies: RecordCounts;
+  entries: RecordEntry[];
+}
+interface StoredPlayer extends PlayerRecordData {
+  /** When it last changed (ms since the epoch): only to drop the stalest past the bound. */
   updated: number;
 }
 interface RecordFile {
-  version: 2;
-  players: Record<string, PlayerCounts>;
+  version: 3;
+  players: Record<string, StoredPlayer>;
 }
 
 const count = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+const intOrNull = (v: unknown) => v === null || (typeof v === 'number' && Number.isInteger(v));
 
-function countsOf(v: unknown): PlayerCounts | undefined {
-  if (!isRec(v) || !isRec(v.counts) || typeof v.updated !== 'number') return undefined;
-  const c = v.counts;
-  if (!COUNT_KEYS.every((k) => count(c[k]))) return undefined;
-  const counts: RecordCounts = { ...ZERO_COUNTS };
-  for (const k of COUNT_KEYS) counts[k] = c[k] as number;
-  return { counts, updated: v.updated };
+function talliesFrom(v: unknown): RecordCounts | undefined {
+  if (!isRec(v) || !COUNT_KEYS.every((k) => count(v[k]))) return undefined;
+  const out: RecordCounts = { ...ZERO_COUNTS };
+  for (const k of COUNT_KEYS) out[k] = v[k] as number;
+  return out;
+}
+
+function entryOf(v: unknown): RecordEntry | undefined {
+  // Entries are this module's own writes: checked for shape, not re-derived.
+  if (!isRec(v) || typeof v.key !== 'string' || !HASH.test(v.key) || !OUTCOMES.has(v.outcome as RecordOutcome) || typeof v.updated !== 'number')
+    return undefined;
+  if (!isRec(v.format) || !isRec(v.terms) || !intOrNull(v.agreedTurn) || !intOrNull(v.endedTurn)) return undefined;
+  return v as unknown as RecordEntry;
+}
+
+/** One player as stored, in any version this module wrote; `undefined` when unusable. */
+function playerOf(v: unknown): StoredPlayer | undefined {
+  if (!isRec(v)) return undefined;
+  const entries = Array.isArray(v.entries) ? v.entries.map(entryOf).filter((e): e is RecordEntry => e !== undefined) : [];
+  // Version 3 keeps `tallies`, version 2 kept `counts` only, version 1 entries only.
+  const tallies = talliesFrom(v.tallies) ?? talliesFrom(v.counts) ?? (entries.length ? talliesOf(entries) : undefined);
+  if (!tallies) return undefined;
+  const updated = typeof v.updated === 'number' ? v.updated : entries.reduce((m, e) => Math.max(m, e.updated), 0);
+  return { tallies, entries, updated };
 }
 
 async function readFileRecord(dir: string): Promise<RecordFile> {
   try {
     const c: unknown = JSON.parse(await readFile(playerRecordPath(dir), 'utf8'));
-    if (!isRec(c) || !isRec(c.players)) return { version: 2, players: {} };
+    if (!isRec(c) || !isRec(c.players)) return { version: 3, players: {} };
     const players: RecordFile['players'] = {};
     for (const [k, v] of Object.entries(c.players)) {
-      const p = HASH.test(k) ? countsOf(v) : undefined;
+      const p = HASH.test(k) ? playerOf(v) : undefined;
       if (p) players[k] = p;
     }
-    return { version: 2, players };
+    return { version: 3, players };
   } catch {
-    return { version: 2, players: {} };
+    return { version: 3, players: {} };
   }
 }
 
@@ -95,7 +158,7 @@ async function writeFileRecord(dir: string, file: RecordFile): Promise<void> {
     .sort((a, b) => file.players[b]!.updated - file.players[a]!.updated || (a < b ? -1 : 1))
     .slice(0, MAX_RECORD_PLAYERS)
     .sort();
-  const bounded: RecordFile = { version: 2, players: Object.fromEntries(keys.map((k) => [k, file.players[k]!])) };
+  const bounded: RecordFile = { version: 3, players: Object.fromEntries(keys.map((k) => [k, file.players[k]!])) };
   const path = playerRecordPath(dir);
   await mkdir(relationsDir(dir), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -103,34 +166,59 @@ async function writeFileRecord(dir: string, file: RecordFile): Promise<void> {
   await rename(tmp, path);
 }
 
-/** The counts on record for `playerId`; `undefined` when none, unusable or off. Never throws. */
-export async function readPlayerCounts(dir: string, playerId: number, env?: EnvSource): Promise<RecordCounts | undefined> {
-  if (!playerRecordEnabled(env)) return undefined;
+/**
+ * What is on record for `playerId`: its tallies and entries; `null` when nothing is (no salt yet
+ * included); `'unreadable'` when the salt file is malformed; `'off'` when the record is off. Never
+ * throws, never writes.
+ */
+export async function readPlayerRecord(dir: string, playerId: number, env?: EnvSource): Promise<PlayerRecordData | null | 'unreadable' | 'off'> {
+  if (!playerRecordEnabled(env)) return 'off';
   try {
-    const salt = await playerRecordSalt(dir);
-    if (!salt) return undefined;
-    return (await readFileRecord(dir)).players[playerKey(salt, playerId)]?.counts;
+    const s = await readSalt(dir);
+    if (s === 'malformed') return 'unreadable';
+    if (s === 'missing') return null;
+    const p = (await readFileRecord(dir)).players[playerKey(s.salt, playerId)];
+    return p ? { tallies: p.tallies, entries: p.entries } : null;
   } catch {
-    return undefined;
+    return null;
   }
 }
 
+/** The record's state for a tool result: `on`, `off`, or `unreadable` (a malformed salt file). */
+export async function playerRecordState(dir: string | undefined, env?: EnvSource): Promise<'on' | 'off' | 'unreadable'> {
+  if (!playerRecordEnabled(env)) return 'off';
+  return dir && (await readSalt(dir).catch(() => 'missing' as const)) === 'malformed' ? 'unreadable' : 'on';
+}
+
 /**
- * Add `delta` to `playerId`'s counts. `true` when written (or when there was nothing to add);
- * `false` when off or it failed. Never throws.
+ * Update `playerId`'s part of the record: `update` gets the salt (to key entries) and what is on
+ * record, and returns the tallies to add (`recordDelta`) and the entries to upsert. Read, change and
+ * write run under the in-process lock for the file. `updated` when written; `off` when the record is
+ * off; `failed` when it could not be (a malformed salt included). Never throws.
  */
-export async function addPlayerCounts(dir: string, playerId: number, delta: RecordCounts, env?: EnvSource, now = Date.now()): Promise<boolean> {
-  if (!playerRecordEnabled(env)) return false;
-  if (isZero(delta)) return true;
+export async function updatePlayerRecord(
+  dir: string,
+  playerId: number,
+  update: (salt: string, current: PlayerRecordData) => { delta: RecordCounts; entries: readonly RecordEntry[] },
+  env?: EnvSource,
+  now = Date.now(),
+): Promise<'updated' | 'off' | 'failed'> {
+  if (!playerRecordEnabled(env)) return 'off';
   try {
-    const salt = await playerRecordSalt(dir);
-    if (!salt) return false;
-    const file = await readFileRecord(dir);
-    const key = playerKey(salt, playerId);
-    file.players[key] = { counts: addCounts(file.players[key]?.counts ?? ZERO_COUNTS, delta), updated: now };
-    await writeFileRecord(dir, file);
-    return true;
+    return await withPathLock(playerRecordPath(dir), async () => {
+      const salt = await saltForWrite(dir);
+      if (!salt) return 'failed';
+      const file = await readFileRecord(dir);
+      const key = playerKey(salt, playerId);
+      const current = file.players[key] ?? { tallies: { ...ZERO_COUNTS }, entries: [], updated: 0 };
+      const { delta, entries } = update(salt, { tallies: current.tallies, entries: current.entries });
+      let next = current.entries;
+      for (const e of entries) next = upsertEntry(next, e);
+      file.players[key] = { tallies: addCounts(current.tallies, delta), entries: next, updated: now };
+      await writeFileRecord(dir, file);
+      return 'updated';
+    });
   } catch {
-    return false;
+    return 'failed';
   }
 }

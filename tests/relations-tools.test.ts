@@ -1,7 +1,7 @@
 // warapp_record_agreement and warapp_get_relations (docs/PLAN-TEAMS.md A2): recording a truce in the
 // local ledger (not confirm-gated: nothing leaves the machine), its refusals, the breach watch over
 // the cached boards, and the cross-game player record (salted, name-free, switchable).
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
@@ -62,7 +62,8 @@ interface RelationsPayload {
     state: string;
     trust?: { level: string; reasons: string[] };
     flags: Array<{ kind: string; turn: number; territories: Array<{ id: number }> }>;
-    record: null | 'off' | { brokenByThem: number; made: number };
+    record: null | 'off' | 'unreadable' | { brokenByThem: number; made: number };
+    recordEntries?: unknown[];
     history?: unknown[];
   }>;
   tacit: unknown[];
@@ -79,15 +80,14 @@ describe('the tools', () => {
     expect(tools.find((t) => t.name === 'warapp_record_agreement')!.description).toMatch(/Nothing is sent to war\.app/);
   });
 
-  it('is registered on a hosted child too (the ledger lives in its per-user data dir), but the player record is off there', async () => {
-    h = await liveHarness({ feed: [game('2')], env: { MCP_HOST_METER_FILE: '/tmp/meter', WARAPP_PLAYER_RECORD: 'on' } });
+  it('is registered on a hosted child too, with the player record on in its per-user data dir (owner decision D5)', async () => {
+    h = await liveHarness({ feed: [game('2')], env: { MCP_HOST_METER_FILE: '/tmp/meter' } });
     const names = (await h.harness.client.listTools()).tools.map((t) => t.name);
     expect(names).toEqual(expect.arrayContaining(['warapp_get_relations', 'warapp_record_agreement']));
-    expect(payload<RecordPayload>(await record({ with: 'Bob', status: 'agreed' })).playerRecord).toBe('off');
-    expect(existsSync(join(h.dataDir, 'relations', 'players.json'))).toBe(false);
-    expect(existsSync(join(h.dataDir, 'relations', 'players.salt'))).toBe(false);
+    expect(payload<RecordPayload>(await record({ with: 'Bob', status: 'agreed' })).playerRecord).toBe('updated');
+    expect(existsSync(join(h.dataDir, 'relations', 'players.json'))).toBe(true);
     const p = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
-    expect(p).toMatchObject({ playerRecord: 'off', agreements: [{ id: 'a1', record: 'off' }] });
+    expect(p).toMatchObject({ playerRecord: 'on', agreements: [{ id: 'a1', record: { made: 1 } }] });
   });
 });
 
@@ -98,8 +98,8 @@ describe('warapp_record_agreement', () => {
     expect(made).toMatchObject({
       recorded: 'created',
       agreement: { id: 'a1', with: { id: Number(BOB.feed) }, status: 'proposed-by-them', state: 'proposed' },
-      // A proposal counts nothing yet.
-      playerRecord: 'unchanged',
+      // A proposal is an entry, but counts nothing yet.
+      playerRecord: 'updated',
     });
     expect(made.agreement.with.name).toMatch(/^⟦Bob⟧$/);
     expect(made.agreement.terms).toMatchObject({ scope: { territories: [{ id: 159 }] }, noticeTurns: 2, borderCap: 8 });
@@ -109,11 +109,20 @@ describe('warapp_record_agreement', () => {
     const text = readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8');
     expect(text).not.toMatch(/Ann|Bob/);
     expect(JSON.parse(text)).toMatchObject({ gameId: GAME, playerId: Number(ANN.feed), agreements: [{ id: 'a1', with: Number(BOB.feed), status: 'agreed', agreedTurn: 3 }] });
-    // The cross-game record: counts only, no player id, game id or name.
+    // The cross-game record: an entry per agreement and the tallies, no player id, game id or name.
     const players = readFileSync(join(h.dataDir, 'relations', 'players.json'), 'utf8');
-    for (const s of [BOB.feed, String(GAME), 'Bob', 'Ann']) expect(players).not.toContain(s);
-    expect(Object.values((JSON.parse(players) as { players: Record<string, { counts: unknown }> }).players).map((x) => x.counts)).toEqual([
-      { made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 0, brokenByMe: 0 },
+    for (const s of [BOB.feed, ANN.feed, String(GAME), 'Bob', 'Ann']) expect(players).not.toContain(s);
+    const stored = Object.values((JSON.parse(players) as { players: Record<string, { tallies: unknown; entries: unknown[] }> }).players);
+    expect(stored.map((x) => x.tallies)).toEqual([{ made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 0, brokenByMe: 0 }]);
+    expect(stored[0]!.entries).toEqual([
+      expect.objectContaining({
+        format: { players: expect.any(Number), teams: false, ffaSize: expect.any(Number) },
+        proposedBy: 'them',
+        agreedTurn: 3,
+        endedTurn: null,
+        terms: { scope: 'territories', scopeSize: 1, noticeTurns: 2, cap: 8, endCondition: 'none', against: false },
+        outcome: 'open',
+      }),
     ]);
     // Nothing went to war.app.
     expect(h.exchanges).toEqual([]);
@@ -130,6 +139,17 @@ describe('warapp_record_agreement', () => {
     await h.harness.close();
     h = await liveHarness({ feed: [game('2', { seats: 2 })] });
     expect(textOf(await record({ with: 'Bob', status: 'agreed' }))).toMatch(/1v1/);
+    await h.harness.close();
+    // A 2v2-like seating: Bob's team holds everyone but me.
+    h = await liveHarness({ feed: [game('2', { seats: 3, patch: { Ann: { team: '1' }, Bob: { team: '2' }, Cat: { team: '2' } } })] });
+    expect(textOf(await record({ with: 'Bob', status: 'agreed' }))).toMatch(/no third player or team/);
+  });
+
+  it('refuses an until_turn already past, on create and on a terms change', async () => {
+    h = await liveHarness({ feed: [game('4')] });
+    expect(textOf(await record({ with: 'Bob', status: 'agreed', until_turn: 4 }))).toMatch(/until_turn 4 is before this turn \(5\): nothing was recorded/);
+    payload(await record({ with: 'Bob', status: 'proposed-by-me', until_turn: 5 }));
+    expect(textOf(await record({ agreement_id: 'a1', until_turn: 2 }))).toMatch(/until_turn 2 is before this turn/);
   });
 
   it('refuses a scope off the map, a second open agreement, a bad move, changed terms after agreeing, and a lobby', async () => {
@@ -186,11 +206,42 @@ describe('warapp_get_relations', () => {
     expect(a.history).toHaveLength(1);
     const broke = payload<RecordPayload>(await record({ agreement_id: 'a1', status: 'broken-by-them' }));
     expect(broke.agreement).toMatchObject({ status: 'broken-by-them', state: 'over' });
-    const after = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
-    expect(after.agreements[0]).toMatchObject({ state: 'over', record: { brokenByThem: 1, made: 1, keptRate: 0 } });
+    const after = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann', view: 'full' }));
+    expect(after.agreements[0]).toMatchObject({ state: 'over', record: { brokenByThem: 1, made: 1, keptRate: 0, turnsToBreak: [1], last: 'broken-by-them' } });
     expect(after.agreements[0]).not.toHaveProperty('trust');
-    const players = JSON.parse(readFileSync(join(dir, 'relations', 'players.json'), 'utf8')) as { players: Record<string, { counts: object }> };
-    expect(Object.values(players.players)[0]!.counts).toEqual({ made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 1, brokenByMe: 0 });
+    // The full view lists the partner's entries, without their keys.
+    expect(after.agreements[0]!.recordEntries).toEqual([expect.objectContaining({ outcome: 'broken-by-them', breachFlag: 'broken' })]);
+    expect(after.agreements[0]!.recordEntries![0]).not.toHaveProperty('key');
+    const players = JSON.parse(readFileSync(join(dir, 'relations', 'players.json'), 'utf8')) as {
+      players: Record<string, { tallies: object; entries: Array<Record<string, unknown>> }>;
+    };
+    const stored = Object.values(players.players)[0]!;
+    expect(stored.tallies).toEqual({ made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 1, brokenByMe: 0 });
+    // The break: its turn, the strongest flag the cached boards showed, and the context.
+    expect(stored.entries[0]).toMatchObject({
+      outcome: 'broken-by-them',
+      agreedTurn: 3,
+      endedTurn: 4,
+      breakTurn: 4,
+      breachFlag: 'broken',
+      // Cat is never seen on these boards, so the endgame and the leader are unknown, not guessed.
+      context: { endgame: null, leader: 'unknown', outgrowing: false },
+    });
+  });
+
+  it('marks an over agreement as proposed again when the partner proposes a new one', async () => {
+    h = await liveHarness({ feed: [game('2')] });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    payload(await record({ agreement_id: 'a1', status: 'ended' }));
+    payload(await record({ with: 'Bob', status: 'proposed-by-them' }));
+    const players = JSON.parse(readFileSync(join(h.dataDir, 'relations', 'players.json'), 'utf8')) as {
+      players: Record<string, { entries: Array<{ outcome: string; proposedAgain?: boolean }> }>;
+    };
+    const entries = Object.values(players.players)[0]!.entries;
+    expect(entries.map((e) => [e.outcome, e.proposedAgain ?? false]).sort()).toEqual([
+      ['kept', true],
+      ['open', false],
+    ]);
   });
 
   it('counts each agreement once across its updates, and an over one never again', async () => {
@@ -202,9 +253,19 @@ describe('warapp_get_relations', () => {
     payload(await record({ with: 'Bob', status: 'proposed-by-them' }));
     payload(await record({ agreement_id: 'a2', status: 'agreed' }));
     payload(await record({ agreement_id: 'a2', status: 'broken-by-me' }));
-    expect(payload<RecordPayload>(await record({ agreement_id: 'a2', retaliated: true })).playerRecord).toBe('unchanged');
+    expect(payload<RecordPayload>(await record({ agreement_id: 'a2', retaliated: true })).playerRecord).toBe('updated');
     const p = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
-    expect(p.agreements[1]!.record).toEqual({ made: 2, kept: 1, endedWithNotice: 0, brokenByThem: 0, brokenByMe: 1, keptRate: 1 });
+    expect(p.agreements[1]!.record).toMatchObject({ made: 2, kept: 1, endedWithNotice: 0, brokenByThem: 0, brokenByMe: 1, keptRate: 1, retaliated: 1, entries: 2 });
+  });
+
+  it('with a malformed salt file, records the ledger, reports the record failed, and never replaces the salt', async () => {
+    h = await liveHarness({ feed: [game('2')] });
+    mkdirSync(join(h.dataDir, 'relations'), { recursive: true });
+    writeFileSync(join(h.dataDir, 'relations', 'players.salt'), 'garbled');
+    expect(payload<RecordPayload>(await record({ with: 'Bob', status: 'agreed' }))).toMatchObject({ recorded: 'created', playerRecord: 'failed' });
+    expect(readFileSync(join(h.dataDir, 'relations', 'players.salt'), 'utf8')).toBe('garbled');
+    const p = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
+    expect(p).toMatchObject({ playerRecord: 'unreadable', agreements: [{ id: 'a1', record: 'unreadable' }] });
   });
 
   it('with the player record off, keeps the ledger and writes no record', async () => {

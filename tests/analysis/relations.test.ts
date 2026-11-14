@@ -121,6 +121,19 @@ describe('who can be a party', () => {
     expect(partyRefusal(players({ [OTHER]: { state: 'Eliminated' } }), ME, P)).toMatch(/two players remain/);
   });
 
+  it('refuses when no third player or team remains outside me, my team and the partner\'s team', () => {
+    const MATE = 40;
+    const four = (teams: Record<number, number>): RelationPlayer[] =>
+      [ME, MATE, P, OTHER].map((id) => ({ id, state: 'Playing', isAI: false, humanTurnedIntoAI: false, team: teams[id] }));
+    // 2v2: the only other player is the partner's teammate.
+    expect(partyRefusal(four({ [ME]: 1, [MATE]: 1, [P]: 2, [OTHER]: 2 }), ME, P)).toMatch(/no third player or team/);
+    // A third team outside both: allowed.
+    expect(partyRefusal(four({ [ME]: 1, [MATE]: 1, [P]: 2, [OTHER]: 3 }), ME, P)).toBeUndefined();
+    // Once that third team is out, refused.
+    const out = four({ [ME]: 1, [MATE]: 1, [P]: 2, [OTHER]: 3 }).map((x) => (x.id === OTHER ? { ...x, state: 'Eliminated' } : x));
+    expect(partyRefusal(out, ME, P)).toMatch(/no third player or team/);
+  });
+
   it('refuses a scope naming what is not on the map', () => {
     expect(scopeRefusal(graph, 'all')).toBeUndefined();
     expect(scopeRefusal(graph, { territories: [4, 99] })).toMatch(/99/);
@@ -182,6 +195,12 @@ describe('breachWatch', () => {
     // 6 fogged, then revealed with 30: not growth (5 holds steady).
     const reveal = [at(3, { t6: fogged(6) }), at(4, { t6: fogged(6) }), at(5, { p6: 30 })];
     expect(breachWatch({ agreement: agreed(), graph, me: ME, boards: reveal }).map((f) => f.kind)).toEqual(['kept']);
+  });
+
+  it('flags massing only when the growing pairs end at the newest board', () => {
+    // Growth over 3→4→5, then a gap and a board for turn 7: the growth is old news.
+    const stale = [at(3, { p5: 4 }), at(4, { p5: 7 }), at(5, { p5: 10 }), at(7, { p5: 10 })];
+    expect(breachWatch({ agreement: agreed(), graph, me: ME, boards: stale }).some((f) => f.kind === 'massing')).toBe(false);
   });
 
   it('flags a stack over the cap on the newest board', () => {

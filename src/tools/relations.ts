@@ -1,14 +1,15 @@
 // The agreement ledger's tools (docs/PLAN-TEAMS.md A2): `warapp_get_relations` (read-only on war.app;
 // it caches the board it read, like warapp_track_opponents) and `warapp_record_agreement`, which
-// writes only this machine's ledger (`<dataDir>/relations/<gameId>-<playerId>.json`) and the cross-game
-// player record (src/player-record-store.ts) — nothing is sent to war.app or to any player, so it
-// is not confirm-gated. An agreement exists only because the player recorded it here with
+// writes only the server's own ledger (`<dataDir>/relations/<gameId>-<playerId>.json`) and the
+// cross-game player record (src/player-record-store.ts; owner decision D5 of 2026-11-14: on, local
+// and hosted, name-free per-agreement entries and tallies) — nothing is sent to war.app or to any
+// player, so it is not confirm-gated. An agreement exists only because the player recorded it here with
 // structured terms: chat is never parsed into one, and words change no flag — only the board does.
 import { McpToolError, toolAnnotations, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { boardIncome, incomeRules, trackGame, trackOpponents, type MapGraph, type TurnBoard } from '../analysis/index.js';
-import { isZero, playerRecord, recordDelta } from '../analysis/player-record.js';
+import { playerRecord, recordDelta, recordEntryFor, type BreakContext, type RecordEntry, type RecordLeader } from '../analysis/player-record.js';
 import {
   AGREEMENT_STATUSES,
   agreementState,
@@ -28,13 +29,15 @@ import {
   type AgreementScope,
   type AgreementTerms,
   type WatchFlag,
+  type WatchFlagKind,
 } from '../analysis/relations.js';
 import type { BoardState } from '../board.js';
 import { boardStateFromLive } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
-import { addPlayerCounts, playerRecordEnabled, readPlayerCounts } from '../player-record-store.js';
-import { emptyLedger, nextAgreementId, readLedger, writeLedger, type RelationsLedger } from '../relations-store.js';
-import { writeBoardCache } from '../trend.js';
+import { entryKey, playerRecordEnabled, playerRecordState, readPlayerRecord, updatePlayerRecord } from '../player-record-store.js';
+import { emptyLedger, nextAgreementId, readLedger, withLedgerLock, writeLedger, type RelationsLedger } from '../relations-store.js';
+import { carriesTeam } from '../teams.js';
+import { readBoardHistory, readCachedOrders, writeBoardCache } from '../trend.js';
 import { currentTurn, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
@@ -101,6 +104,38 @@ function endgameOf(incomes: Incomes, partner: number): boolean | null {
   return truceEndgame({ mine: incomes.mine, partner: p, others: others.map(([, v]) => v!) });
 }
 
+/** Who leads by estimated income on the newest board: me, the partner or another; `unknown` when an income is. */
+function leaderOf(incomes: Incomes, partner: number): RecordLeader {
+  if (incomes.mine === null) return 'unknown';
+  let best: { who: RecordLeader; v: number } = { who: 'me', v: incomes.mine };
+  for (const [id, v] of [...incomes.opponents].sort(([a], [b]) => a - b)) {
+    if (v === null) return 'unknown';
+    if (v > best.v) best = { who: id === partner ? 'partner' : 'other', v };
+  }
+  return best.who;
+}
+
+/** The strongest flag a break showed: broken, then over the cap, massing, outgrowing. */
+function strongestFlag(flags: readonly WatchFlag[]): WatchFlagKind | null {
+  for (const kind of ['broken', 'cap-exceeded', 'massing', 'outgrowing'] as const) if (flags.some((f) => f.kind === kind)) return kind;
+  return null;
+}
+
+/** My cached boards of `game` (with my cached orders), oldest first: no request. */
+async function cachedBoards(dir: string, game: Game, me: Player): Promise<TurnBoard[]> {
+  const orders = await readCachedOrders(dir, game.id, me.id);
+  return (await readBoardHistory(dir, game.id, me.id)).map((b) => {
+    const o = orders.get(b.turn);
+    return { turn: b.turn, board: b.board, ...(o ? { orders: o } : {}) };
+  });
+}
+
+/** The game's format for a record entry: players seated, teams, and the free-for-all's size still playing. */
+const formatOf = (game: Game): RecordEntry['format'] => {
+  const teams = game.players.some((p) => carriesTeam(p.team));
+  return { players: game.players.length, teams, ffaSize: teams ? null : game.players.filter(alive).length };
+};
+
 /** A scope from the tool's arguments, by id. */
 function scopeFrom(map: GameMap, territories: readonly (string | number)[] | undefined, bonuses: readonly (string | number)[] | undefined): AgreementScope {
   if (territories?.length && bonuses?.length) {
@@ -158,12 +193,16 @@ function agreementView(a: Agreement, game: Game, map: GameMap, turn: number, run
   };
 }
 
-/** The reliability facts on record for `partner`, or why there are none. */
+/** An entry as a result shows it: everything but its key. */
+const entryView = ({ key: _key, ...rest }: RecordEntry) => rest;
+
+/** The reliability facts on record for `partner` (and its entries), or why there are none. */
 async function recordFor(dir: string | undefined, partner: number, env: EnvSource | undefined) {
   if (!playerRecordEnabled(env)) return { record: 'off' as const };
   if (!dir) return { record: null };
-  const counts = await readPlayerCounts(dir, partner, env);
-  return { record: counts ? playerRecord(counts) : null };
+  const r = await readPlayerRecord(dir, partner, env);
+  if (r === null || r === 'off' || r === 'unreadable') return { record: r };
+  return { record: playerRecord(r.tallies, r.entries), entries: r.entries };
 }
 
 export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
@@ -183,8 +222,10 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           `estimated income above ${TRUCE_OUTGROW_RATIO}× yours) and \`kept\` (quiet turns) — and \`trust\`: \`clear\`, or \`watch\` ` +
           'on any flag but kept, on their notice, and in the endgame (no other opponent still a match for either of you). ' +
           'Also `tacit`: neighbours with no agreement whose shared border stayed quiet three turns or more — reported, never ' +
-          "relied on. With the cross-game player record on, each partner's `record` gives the facts on how it kept earlier " +
-          'agreements (counts and a kept rate; keyed by a salted hash, never its id or name; local only, off when hosted). Words in chat never change a ' +
+          "relied on. The cross-game player record (on unless WARAPP_PLAYER_RECORD=off, local and hosted) gives each partner's " +
+          '`record`: how it kept earlier agreements — tallies, a kept rate, its notices honoured or broken, its breaks in ' +
+          'the endgame or while leading, retaliation, proposing again and turns to a break (`full` adds the entries) — keyed ' +
+          'by a salted hash, never its id or name. `playerRecord` says on, off or unreadable. Words in chat never change a ' +
           `flag or the trust: only the board does. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read.`,
       ),
       _meta: lookupMeta(['my truces', 'agreements', 'is my truce holding', 'diplomacy', 'who kept their word']),
@@ -192,7 +233,10 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
       inputSchema: z.object({
         game_id: gameIdArg,
         player: playerArg,
-        view: viewArg(VIEWS, 'compact (default) gives each agreement, its state, trust and flags; "full" adds each agreement\'s status history.'),
+        view: viewArg(
+          VIEWS,
+          'compact (default) gives each agreement, its state, trust, flags and the partner\'s record; "full" adds each agreement\'s status history and the partner\'s record entries.',
+        ),
       }),
     },
     async ({ game_id, player, view }) => {
@@ -225,7 +269,8 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         flags: WatchFlag[];
         trust?: ReturnType<typeof trust>;
         endgame?: boolean | null;
-        record: ReturnType<typeof playerRecord> | null | 'off';
+        record: ReturnType<typeof playerRecord> | null | 'off' | 'unreadable';
+        entries?: RecordEntry[];
       }[] = [];
       for (const a of ledger.agreements) {
         const state = agreementState(a, turn, relationPlayers(game.players));
@@ -250,6 +295,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
       }
       const open = new Set(ledger.agreements.filter((a) => !TERMINAL_STATUSES.has(a.status)).map((a) => a.with));
       const tacit = tacitTruces({ graph, boards, me: me.id, exclude: open });
+      const recordState = await playerRecordState(ctx.dataDir, env);
       const name = namer(map);
       const playerName = (id: number) => {
         const p = game.players.find((x) => x.id === id);
@@ -263,11 +309,12 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           ...(x.trust ? { trust: x.trust, endgame: x.endgame } : {}),
           flags: x.flags.map((f) => ({ ...f, territories: f.territories.map(name) })),
           record: x.record,
+          ...(rung === 'full' && x.entries ? { recordEntries: x.entries.map(entryView) } : {}),
         })),
         tacit: tacit.map((t) => ({ player: playerName(t.player), quietTurns: t.quietTurns, border: t.border.map(name) })),
         boards: { turns: boards.map((b) => b.turn).sort((a, b) => a - b), live },
         incomes: { mine: incomes.mine, opponents: Object.fromEntries(incomes.opponents) },
-        playerRecord: playerRecordEnabled(env) ? 'on' : 'off',
+        playerRecord: recordState,
         notes,
       }));
     },
@@ -289,8 +336,11 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           'while proposed; an ended or broken agreement takes nothing more but `retaliated` after broken-by-me). Refused ' +
           'for a partner who is you, an AI, out of the game or your teammate, in a 1v1 or once two players remain, and for ' +
           'a territory or bonus not on the map. An agreement exists only because you record it here: chat is never read ' +
-          'into one. With the cross-game player record on (local only, never hosted), the partner\'s counts — agreements ' +
-          'made, kept, ended with notice, broken — are kept under a salted hash (no id, no name, no game, no message).',
+          'into one. With the cross-game player record on (owner decision D5: on unless WARAPP_PLAYER_RECORD=off, local and ' +
+          'hosted), each agreement is also kept per partner under a salted hash, name-free (no id, no name, no game, no ' +
+          'message): the format, the turns agreed and ended, the shape of the terms, the outcome, a break\'s turn, flag and ' +
+          'context (endgame, who led, outgrowing), retaliation and proposing again, with tallies; `playerRecord` says ' +
+          'updated, off or failed.',
       ),
       annotations: toolAnnotations({ title: 'Record a war.app agreement', readOnly: false, destructive: false, idempotent: false, openWorld: true }),
       inputSchema: z.object({
@@ -303,7 +353,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         bonuses: z.array(playerRef).max(MAX_SCOPE_ITEMS).optional().describe("Only these bonuses' territories (names or ids) are covered."),
         notice_turns: z.coerce.number().int().min(0).max(MAX_NOTICE_TURNS).optional().describe('Turns of notice before it ends (default 1).'),
         border_cap: z.coerce.number().int().min(0).optional().describe('The most armies either side keeps on a territory of the covered border.'),
-        until_turn: z.coerce.number().int().min(1).optional().describe('The last turn it binds.'),
+        until_turn: z.coerce.number().int().min(1).optional().describe('The last turn it binds (this turn or later).'),
         until_player_out: playerRef.optional().describe('It ends when this player (name or id) is out of the game.'),
         against: playerRef.optional().describe('The player (name or id) it is aimed at, when it names one.'),
         retaliated: z.boolean().optional().describe('After broken-by-me: whether the partner retaliated.'),
@@ -327,7 +377,6 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
       const me = await resolveMe(ctx, game.players, args.player);
       const turn = Math.max(0, currentTurn(game) ?? 0);
       const players = relationPlayers(game.players);
-      const ledger: RelationsLedger = (await readLedger(dir, game.id, me.id)) ?? emptyLedger(game.id, me.id);
       const refuse = (why: string, hint: string): never => {
         throw new McpToolError(`${why}: nothing was recorded.`, { hint });
       };
@@ -352,6 +401,8 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         const t: AgreementTerms = { scope, noticeTurns: args.notice_turns ?? base?.noticeTurns ?? 1 };
         const cap = args.border_cap ?? base?.borderCap;
         if (cap !== undefined) t.borderCap = cap;
+        if (args.until_turn !== undefined && args.until_turn < turn)
+          refuse(`until_turn ${args.until_turn} is before this turn (${turn})`, 'Give this turn or a later one as the last turn it binds.');
         const until = args.until_turn ?? base?.untilTurn;
         if (until !== undefined) t.untilTurn = until;
         const out = args.until_player_out !== undefined ? otherPlayer(args.until_player_out, '`until_player_out`', partner) : base?.untilPlayerOut;
@@ -361,66 +412,109 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         return t;
       };
 
-      let agreement: Agreement;
-      let before: Agreement | undefined;
-      let created = false;
-      if (args.agreement_id === undefined) {
-        if (args.with === undefined || args.status === undefined)
-          refuse('A new agreement needs `with` (the partner) and `status`', 'Pass `agreement_id` to update one already recorded.');
-        if (!OPENING_STATUSES.includes(args.status!))
-          refuse(`A new agreement starts as ${OPENING_STATUSES.join(', ')}, not ${args.status}`, 'Record it as agreed first, then update it.');
-        const partner = resolvePlayer(game.players, args.with);
-        const why = partyRefusal(players, me.id, partner.id);
-        if (why) refuse(`No truce with player ${partner.id}: ${why}`, 'A truce is with another human player still in a free-for-all.');
-        const open = ledger.agreements.find((a) => a.with === partner.id && !TERMINAL_STATUSES.has(a.status));
-        if (open)
-          refuse(`Agreement ${open.id} with player ${partner.id} is still ${open.status}`, `Update it with agreement_id "${open.id}", or end it first.`);
-        if (args.retaliated !== undefined) refuse('`retaliated` applies only after broken-by-me', 'Record it on the broken agreement.');
-        agreement = newAgreement(nextAgreementId(ledger), partner.id, args.status!, turn, termsFrom(undefined, partner.id));
-        created = true;
-      } else {
-        const found = ledger.agreements.find((a) => a.id === args.agreement_id);
-        if (!found) refuse(`Game ${game.id} has no agreement ${JSON.stringify(args.agreement_id)}`, 'warapp_get_relations lists the agreements recorded.');
-        agreement = found!;
-        before = found;
-        if (args.with !== undefined && resolvePlayer(game.players, args.with).id !== agreement.with)
-          refuse(`Agreement ${agreement.id} is with player ${agreement.with}`, 'Omit `with` when updating, or record a new agreement.');
-        if (args.status === undefined && !termsGiven && args.retaliated === undefined)
-          refuse('Nothing to record: give a new `status`, terms, or `retaliated`', 'Pass the status the agreement moved to.');
-        if (termsGiven) {
-          if (agreement.status !== 'proposed-by-me' && agreement.status !== 'proposed-by-them')
-            refuse(`The terms of agreement ${agreement.id} (${agreement.status}) can no longer change`, 'End it and record a new agreement with the new terms.');
-          agreement = { ...agreement, terms: termsFrom(agreement.terms, agreement.with) };
-        }
-        if (args.status !== undefined && args.status !== agreement.status) {
-          const moved = transitionAgreement(agreement, args.status, turn);
-          if ('refused' in moved) refuse(moved.refused, 'warapp_get_relations shows its status.');
-          agreement = (moved as { agreement: Agreement }).agreement;
-          // A new commitment needs a party who can still keep it; ending or recording a break does not.
-          if (args.status === 'agreed' || args.status === 'proposed-by-me' || args.status === 'proposed-by-them') {
-            const why = partyRefusal(players, me.id, agreement.with);
-            if (why) refuse(`Agreement ${agreement.id} cannot become ${args.status}: ${why}`, 'Record it as ended instead.');
+      /** The change `args` make to `ledger`: the agreement after it, and as it stood. Refuses what cannot be recorded. */
+      const change = (ledger: RelationsLedger): { agreement: Agreement; before: Agreement | undefined; created: boolean } => {
+        let agreement: Agreement;
+        let before: Agreement | undefined;
+        let created = false;
+        if (args.agreement_id === undefined) {
+          if (args.with === undefined || args.status === undefined)
+            refuse('A new agreement needs `with` (the partner) and `status`', 'Pass `agreement_id` to update one already recorded.');
+          if (!OPENING_STATUSES.includes(args.status!))
+            refuse(`A new agreement starts as ${OPENING_STATUSES.join(', ')}, not ${args.status}`, 'Record it as agreed first, then update it.');
+          const partner = resolvePlayer(game.players, args.with);
+          const why = partyRefusal(players, me.id, partner.id);
+          if (why) refuse(`No truce with player ${partner.id}: ${why}`, 'A truce is with another human player still in a free-for-all.');
+          const open = ledger.agreements.find((a) => a.with === partner.id && !TERMINAL_STATUSES.has(a.status));
+          if (open)
+            refuse(`Agreement ${open.id} with player ${partner.id} is still ${open.status}`, `Update it with agreement_id "${open.id}", or end it first.`);
+          if (args.retaliated !== undefined) refuse('`retaliated` applies only after broken-by-me', 'Record it on the broken agreement.');
+          agreement = newAgreement(nextAgreementId(ledger), partner.id, args.status!, turn, termsFrom(undefined, partner.id));
+          created = true;
+        } else {
+          const found = ledger.agreements.find((a) => a.id === args.agreement_id);
+          if (!found) refuse(`Game ${game.id} has no agreement ${JSON.stringify(args.agreement_id)}`, 'warapp_get_relations lists the agreements recorded.');
+          agreement = found!;
+          before = found;
+          if (args.with !== undefined && resolvePlayer(game.players, args.with).id !== agreement.with)
+            refuse(`Agreement ${agreement.id} is with player ${agreement.with}`, 'Omit `with` when updating, or record a new agreement.');
+          if (args.status === undefined && !termsGiven && args.retaliated === undefined)
+            refuse('Nothing to record: give a new `status`, terms, or `retaliated`', 'Pass the status the agreement moved to.');
+          if (termsGiven) {
+            if (agreement.status !== 'proposed-by-me' && agreement.status !== 'proposed-by-them')
+              refuse(`The terms of agreement ${agreement.id} (${agreement.status}) can no longer change`, 'End it and record a new agreement with the new terms.');
+            agreement = { ...agreement, terms: termsFrom(agreement.terms, agreement.with) };
+          }
+          if (args.status !== undefined && args.status !== agreement.status) {
+            const moved = transitionAgreement(agreement, args.status, turn);
+            if ('refused' in moved) refuse(moved.refused, 'warapp_get_relations shows its status.');
+            agreement = (moved as { agreement: Agreement }).agreement;
+            // A new commitment needs a party who can still keep it; ending or recording a break does not.
+            if (args.status === 'agreed' || args.status === 'proposed-by-me' || args.status === 'proposed-by-them') {
+              const why = partyRefusal(players, me.id, agreement.with);
+              if (why) refuse(`Agreement ${agreement.id} cannot become ${args.status}: ${why}`, 'Record it as ended instead.');
+            }
+          }
+          if (args.retaliated !== undefined) {
+            if (agreement.status !== 'broken-by-me') refuse('`retaliated` applies only after broken-by-me', 'Record it on the agreement you broke.');
+            agreement = { ...agreement, retaliated: args.retaliated };
           }
         }
-        if (args.retaliated !== undefined) {
-          if (agreement.status !== 'broken-by-me') refuse('`retaliated` applies only after broken-by-me', 'Record it on the agreement you broke.');
-          agreement = { ...agreement, retaliated: args.retaliated };
+        return { agreement, before, created };
+      };
+
+      // Read, change and write the ledger under its in-process lock: two calls never lose each other's change.
+      const { agreement, before, created, others } = await withLedgerLock(dir, game.id, me.id, async () => {
+        const ledger: RelationsLedger = (await readLedger(dir, game.id, me.id)) ?? emptyLedger(game.id, me.id);
+        const c = change(ledger);
+        const rest = ledger.agreements.filter((a) => a.id !== c.agreement.id);
+        if (!(await writeLedger(dir, { ...ledger, agreements: [...rest, c.agreement] }))) {
+          throw new McpToolError(`The ledger for game ${game.id} could not be written: nothing was recorded.`, {
+            hint: "Check that the server's data directory is writable.",
+          });
         }
-      }
+        return { ...c, others: rest };
+      });
 
-      const others = ledger.agreements.filter((a) => a.id !== agreement.id);
-      const stored = await writeLedger(dir, { ...ledger, agreements: [...others, agreement] });
-      if (!stored) {
-        throw new McpToolError(`The ledger for game ${game.id} could not be written: nothing was recorded.`, {
-          hint: "Check that the server's data directory is writable.",
-        });
-      }
-
-      // The cross-game record: counts only, each moved once, by the transition that earns it.
-      let recorded: 'updated' | 'unchanged' | 'off' | 'failed' = 'off';
+      // The cross-game record (D5): the agreement's name-free entry, "proposed again" on this partner's
+      // earlier agreements in this game when it proposes anew, and the tallies its transition earns.
+      let recorded: 'updated' | 'off' | 'failed' = 'off';
       if (playerRecordEnabled(env)) {
-        const delta = recordDelta(created ? undefined : before, agreement);
-        recorded = isZero(delta) ? 'unchanged' : (await addPlayerCounts(dir, agreement.with, delta, env)) ? 'updated' : 'failed';
+        let breachFlag: WatchFlagKind | null | undefined;
+        let context: BreakContext | undefined;
+        if (agreement.status !== before?.status && (agreement.status === 'broken-by-them' || agreement.status === 'broken-by-me')) {
+          const boards = await cachedBoards(dir, game, me);
+          breachFlag = strongestFlag(breachWatch({ agreement, graph, boards, me: me.id }));
+          const incomes = incomesOf(graph, boards, game, me, map);
+          const partnerIncome = incomes.opponents.get(agreement.with) ?? null;
+          context = {
+            endgame: endgameOf(incomes, agreement.with),
+            leader: leaderOf(incomes, agreement.with),
+            outgrowing: incomes.mine !== null && incomes.mine > 0 && partnerIncome !== null ? partnerIncome > TRUCE_OUTGROW_RATIO * incomes.mine : null,
+          };
+        }
+        const earlier = created && agreement.status === 'proposed-by-them' ? others.filter((a) => a.with === agreement.with && TERMINAL_STATUSES.has(a.status)) : [];
+        const now = Date.now();
+        recorded = await updatePlayerRecord(
+          dir,
+          agreement.with,
+          (salt, current) => {
+            const key = entryKey(salt, game.id, agreement.id);
+            const previous = current.entries.find((e) => e.key === key);
+            const again = earlier
+              .map((a) => current.entries.find((e) => e.key === entryKey(salt, game.id, a.id)))
+              .filter((e): e is RecordEntry => e !== undefined && !e.proposedAgain)
+              .map((e) => ({ ...e, proposedAgain: true, updated: now }));
+            const entry = recordEntryFor(
+              agreement,
+              { key, format: formatOf(game), now, ...(breachFlag !== undefined ? { breachFlag } : {}), ...(context ? { context } : {}) },
+              previous,
+            );
+            return { delta: recordDelta(before, agreement), entries: [...again, entry] };
+          },
+          env,
+          now,
+        );
       }
       return respond(undefined, ['compact'], () => ({
         game: { id: game.id, turn },
