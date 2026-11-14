@@ -818,15 +818,16 @@
 // whole stack, only when it need not hold; its one order goes to the strike before a small
 // expansion (an attack on a neutral that completes no bonus this turn: taken back, its armies
 // rejoin the stack). Efficient sizes (S2) do not apply. Off (the default), plans are unchanged.
-// Bomb (#163; `opponentsMayHoldBomb`: the card clock lets an opponent hold one by now, its hand
-// hidden). A bomb halves one territory of mine next to the bomber after the deploys and before any
+// Bomb (#163; `opponentsMayHoldBomb`: the card clock's fastest turn lets an opponent hold one by
+// now; whether hands are hidden is not checked, since the plan never sees an opponent's hand). A bomb halves one territory of mine next to the bomber after the deploys and before any
 // move (my stack keeps the smaller half; a commander is unharmed), so every threat to my territory
 // (rule 1's `forceAt`) becomes the attack that twice the armies just hold against: every hold, near
 // miss, keep and comfort margin is sized as if halved first (one bomb, but it may land on any
 // border, so each is sized for it, as each is for the whole deploy). The threat warning names the
 // bombed take. And the leftover deploy (rule 5), when it goes to a border facing an enemy, gives
 // half to a second open border facing an enemy (the same opponent first, then the bigger stack,
-// then id): one bomb halves only one of two stacks. Off (the default), plans are unchanged.
+// then id): one bomb halves only one of two stacks. Not a strike, saving or expansion stack: each
+// concentrates for one attack, which a split would halve for certain. Off (the default), plans are unchanged.
 // Guard off (#165; `oneArmyStandsGuard: false`, not under No-Split): every army may move, but an
 // empty territory falls to any single army, so each territory of mine next to a visible enemy at the
 // start of the turn keeps one army all the same (never my commander's: it is not empty; a rationale
@@ -1062,10 +1063,11 @@ export interface PlanOptions {
    */
   opponentsMayHoldOrderPriority?: boolean;
   /**
-   * An opponent may hold a Bomb card this turn (#163): the card clock says one can exist by now and
-   * its hand is hidden. A bomb halves one territory of mine next to the bomber after the deploys and
+   * An opponent may hold a Bomb card this turn (#163): the card clock's fastest turn says one can
+   * exist by now (whether hands are hidden is not checked: the plan never sees an opponent's hand). A bomb halves one territory of mine next to the bomber after the deploys and
    * before any move, so every hold is sized as if its stack were halved first (the commander
-   * unharmed), and the leftover goes to two stacks rather than one. Default false.
+   * unharmed), and the leftover goes to two stacks rather than one (not a strike, saving or
+   * expansion stack, which concentrate for one attack). Default false.
    */
   opponentsMayHoldBomb?: boolean;
   /**
@@ -2607,7 +2609,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     );
   if (bombOn)
     rationale.push(
-      'An opponent may hold a Bomb (#163): it halves one territory of mine next to it after the deploys and before any move, so every hold here is sized as if its stack were halved first (my commander unharmed), and the leftover goes to two stacks, not one.',
+      'An opponent may hold a Bomb (#163): it halves one territory of mine next to it after the deploys and before any move, so every hold here is sized as if its stack were halved first (my commander unharmed), and the leftover goes to two stacks, not one, unless it concentrates for an attack.',
     );
   if (s.multiAttack)
     rationale.push('Multi-attack is on, but the plan does not chain attacks from captured territories.');
@@ -2776,7 +2778,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /** Armies a capture may still deploy on `id`: its room, less the reserve. */
   const spareAt = (id: number) => Math.min(budget - reserve, roomAt(id));
   // #165: a sentinel that starts the turn at 0 owes its army: paid from the income before any other
-  // deploy (the reserve holds back captures only). One the income (or its pool) cannot pay stays at
+  // deploy, holds included (the reserve holds back captures only). When income is scarce one army
+  // may go to a border later conceded ahead of a high-value hold: a cheap price, said in the rationale. One the income (or its pool) cannot pay stays at
   // 0, and the rationale does not claim it keeps one army.
   for (const id of [...sentinel].sort(byNum)) {
     const owed = -avail.get(id)!;
@@ -2786,7 +2789,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const paid = sentinelHeld.filter((id) => armiesOf(id) === 0);
   if (sentinelHeld.length)
     rationale.push(
-      `One Army Must Stand Guard is off: every army may move, but an empty territory falls to any single army, so ${sentinelHeld.map(label).join(', ')} ${sentinelHeld.length === 1 ? 'keeps' : 'each keep'} one army (next to an enemy)${paid.length ? `; ${paid.map(label).join(', ')} ${paid.length === 1 ? 'starts at 0, so its army is' : 'start at 0, so their armies are'} deployed first` : ''}.`,
+      `One Army Must Stand Guard is off: every army may move, but an empty territory falls to any single army, so ${sentinelHeld.map(label).join(', ')} ${sentinelHeld.length === 1 ? 'keeps' : 'each keep'} one army (next to an enemy)${paid.length ? `; ${paid.map(label).join(', ')} ${paid.length === 1 ? 'starts at 0, so its army is' : 'start at 0, so their armies are'} deployed first, before any hold (one army each, spent even where a border is later conceded)` : ''}.`,
     );
   if (local) {
     rationale.push(
@@ -8042,8 +8045,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     let where: number;
     let why: string;
     let lock = false;
+    /** #163: the leftover concentrates for one attack (strike, saving, expansion): no Bomb split. */
+    let concentrating = false;
     if (stack) {
       lock = true;
+      concentrating = true;
       where = stack.id;
       why = `one strike stack on the border facing player ${stack.player}, the strongest opponent (~${stack.income} income, ${stack.source}), not spread`;
     } else if (short[0]) {
@@ -8076,10 +8082,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       where = saving.from;
       why = `save toward ${label(saving.t)} (${saving.cost} to take), the next step of bonus ${bonusName(saving.bonusId)}, which this turn cannot afford`;
       lock = true;
+      concentrating = true;
     } else if (expansion !== undefined && open(expansion)) {
       where = expansion;
       why = 'the stack working on the top expansion';
       lock = true;
+      concentrating = true;
     } else if (fogged !== undefined) {
       where = fogged;
       why = 'the border with the most fogged neighbours';
@@ -8098,8 +8106,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (saving && where === saving.from) staging = saving;
     // #163: an opponent may hold a Bomb: a second stack on another open border facing an enemy takes
     // half the leftover, so one bomb halves only one of them (same opponent first, then the bigger
-    // stack, then id).
-    if (bombOn && n >= 2 && borders.has(where)) {
+    // stack, then id). Never a strike, saving or expansion stack: each concentrates for one attack
+    // (the strike this turn, #72), and a split would halve it for certain where a bomb only may.
+    if (bombOn && n >= 2 && borders.has(where) && !concentrating) {
       const facingP = borders.get(where)!.player;
       const second = [...borders.values()]
         .filter((b) => b.id !== where && open(b.id) && !orderOf(b.id) && notSoftening(b.id) && roomAt(b.id) >= 1)

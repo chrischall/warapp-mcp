@@ -83,6 +83,8 @@ describe('planTurn with the guard off (#165)', () => {
       expect(left(b, p, 3), goal).toBeGreaterThanOrEqual(1);
       expect(guardOffExposure({ graph: G, board: b, me: ME, deploys: p.deploys, moves: p.moves }).emptied, goal).toEqual([]);
       expect(p.rationale.join('\n'), goal).toMatch(/One Army Must Stand Guard is off: [^\n]*T3 \(#3\)/);
+      // The army is paid before any hold, and the rationale says so.
+      expect(p.rationale.join('\n'), goal).toMatch(/T3 \(#3\) starts at 0, so its army is deployed first, before any hold/);
     }
   });
 

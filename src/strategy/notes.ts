@@ -814,7 +814,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'first, or you play Order Priority.',
     source: S.bomb,
     basis: 'source',
-    encoded: 'once the card clock lets an opponent hold a Bomb, warapp_plan_turn sizes every hold as if a bomb halved the stack, splits the leftover over two stacks, and warns of borders that still hold only while unbombed',
+    encoded: 'once the card clock lets an opponent hold a Bomb, warapp_plan_turn sizes every hold as if a bomb halved the stack, splits the leftover over two stacks (not a stack concentrating for an attack), and warns of borders that still hold only while unbombed',
   },
   {
     id: 'cards-bomb-commander',

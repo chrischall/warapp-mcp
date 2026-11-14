@@ -1594,6 +1594,35 @@ describe('cards in the turn tools', () => {
     expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
   });
 
+  it('plan_turn values a capture by its card pieces (#127): with no other capture, it takes one worth them', async () => {
+    // Ann holds bonus 118 (159, 161, 157) against Bob's 158 (12); Bob's 134 keeps him from being
+    // finished. 135 is a 12-neutral in a bonus too costly to work on: under `defend` nothing is
+    // captured, unless a capture's card pieces are worth what it loses (8, to a fixed Reinforcement
+    // card of 20 armies, one piece a card).
+    const quiet: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 40 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 8 },
+      { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 8 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 12 },
+      { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 5 },
+      { id: 135, fogLevel: 1, owner: 0, armies: 12 },
+    ];
+    const withCards = (settings: Record<string, unknown>) =>
+      game('Playing', { settings: { ...modelledSettings(), ...settings } });
+    const call = async () =>
+      payload<CardsPayload>(await h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'defend' }));
+    h = await liveHarness({ feed: [withCards({})], warapp: routes({ [Method.GetLatestGameInfo]: board(quiet) }) });
+    const off = await call();
+    expect(off.orders.filter((o) => o.kind === 'move')).toEqual([]);
+    expect(off.rationale.join('\n')).not.toMatch(/card pieces/);
+    await h.harness.close();
+    const fixed = { ReinforcementCard: { NumPieces: 1, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1.0, FixedArmies: 20 } };
+    h = await liveHarness({ feed: [withCards(fixed)], warapp: routes({ [Method.GetLatestGameInfo]: board(quiet) }) });
+    const on = await call();
+    expect(on.orders).toContainEqual(expect.objectContaining({ kind: 'move', from: 159, to: 135 }));
+    expect(on.rationale.join('\n')).toMatch(/Attack Knife Hills \(#135\) from Hornwood \(#159\) with \d+: a capture earns this turn's card pieces, worth ~\d+ armies, and this one loses ~8 \(#127\)/);
+  });
+
   it('plan_turn over the hold limit (6/5) keeps Order Delay and Order Priority: the Spy goes (#163), never playing Blockade or Order Delay', async () => {
     h = await liveHarness({
       feed: [game('Playing')],

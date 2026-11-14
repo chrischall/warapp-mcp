@@ -225,6 +225,22 @@ describe('#125 the leftover saves toward the closest completion', () => {
     expect(deployedTo(p, 1)).toBeGreaterThan(0);
     expect(p.rationale.join('\n')).toMatch(/Deploy the leftover \d+ to T1 \(#1\): save toward T2 \(#2\) \(16 to take\), the next step of bonus B100 \(#100\)/);
   });
+
+  it('a saving stack facing an enemy is not split for a possible Bomb (#163): it saves for one attack', () => {
+    // T1 (saving toward T2, a 20-neutral) and T3 both face player 20 and hold comfortably even
+    // bombed, so a split would have a second open border to go to.
+    const sc: Scenario = {
+      ...B3,
+      edges: `${B3.edges} 1-10 3-11 11-12`,
+      cells: { ...B3.cells, 1: 'M14', 2: 'n20', 3: 'M20', 10: 'E1', 11: 'E3', 12: 'E9' },
+      income: 10,
+      options: { goal: 'defend', opponentsMayHoldBomb: true },
+    };
+    const p = plan(sc);
+    expect(p.rationale.join('\n')).toMatch(/Deploy the leftover 10 to T1 \(#1\): save toward T2 \(#2\)/);
+    expect(p.rationale.join('\n')).not.toMatch(/two stacks rather than one/);
+    expect(deployedTo(p, 3)).toBe(0);
+  });
 });
 
 describe('#125 staging: unthreatened stacks move toward a capture not yet affordable', () => {
