@@ -151,3 +151,23 @@ describe('the pickable territories kept beside the list', () => {
     expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, list: [11, 12] });
   });
 });
+
+describe('#201: the picking board\'s neutrals kept beside the pickables', () => {
+  it('are kept with the pickables (ids and armies only), and survive the list and its award', async () => {
+    const d = dir();
+    expect(await writePickable(d, GAME, ME, [11, 12], [[30, 10], [21, 2], [30, 10]])).toBe(true);
+    expect(await readPickRecord(d, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, pickable: [11, 12], neutrals: [[21, 2], [30, 10]] });
+    await writePickList(d, GAME, ME, [12, 11]);
+    await writeAward(d, GAME, ME, READING);
+    expect(await readPickRecord(d, GAME, ME)).toMatchObject({ list: [12, 11], pickable: [11, 12], neutrals: [[21, 2], [30, 10]], award: READING });
+    // The same pickables without neutrals keep the neutrals already kept.
+    await writePickable(d, GAME, ME, [11, 12]);
+    expect((await readPickRecord(d, GAME, ME))?.neutrals).toEqual([[21, 2], [30, 10]]);
+  });
+
+  it('drops malformed entries', async () => {
+    const d = dir();
+    await writePickable(d, GAME, ME, [11], [[21, -1], [0, 3], [22, 2.5], [23, 4]]);
+    expect((await readPickRecord(d, GAME, ME))?.neutrals).toEqual([[23, 4]]);
+  });
+});

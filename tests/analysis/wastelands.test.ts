@@ -47,3 +47,20 @@ describe('#167: wastelands price a fogged bonus member', () => {
     expect(why(plan({ ...STD, wastelands: { count: 0, size: 0 } }))).toEqual(why(plan(STD)));
   });
 });
+
+describe('#201: a fogged neutral the picking board showed keeps its size', () => {
+  const remembered = (sizes: [number, number][], settings: PlannerSettings = STD) =>
+    planTurn({ graph: g, board: b, me: ME, income: 5, settings, game: { turn: 4 }, options: { rememberedNeutrals: new Map(sizes) } });
+
+  it('a remembered 10 on T3 is costed as a 10, not as the costliest visible member or a wasteland guess', () => {
+    // T2 (2) needs 3; T3 remembered at 10 needs 16 (10 / 0.6 = 16.7 → 16 kills 10 at 60%: 9.6 → 10).
+    const p = remembered([[3, 10]], { ...STD, wastelands: { count: 4, size: 10 } });
+    expect(why(p)).toMatch(/B701 \(#701\): T3 \(#3\), fogged now, was a neutral of 10 on the picking board \(#201\): costed at that\./);
+    expect(why(p)).not.toMatch(/may be a wasteland/);
+    expect(why(p)).toMatch(/\+5, 1[89] armies to finish/);
+  });
+
+  it('a territory not remembered keeps the old costing', () => {
+    expect(why(remembered([[6, 4]]))).toMatch(/\+5, 6 armies to finish \(1 fogged member counted at 3 each\)/);
+  });
+});

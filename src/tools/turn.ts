@@ -92,6 +92,7 @@ import {
 import { gameOutlook } from '../analysis/outlook.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
+import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -1222,6 +1223,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         game: trackGame(game.players, game.settings, map),
         cards: rules.inPlay.length > 0,
       });
+      const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
       const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
       const gameContext: PlanGameContext = {
@@ -1261,6 +1263,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           // No goal: the game profile picks it and tunes the plan (an explicit goal overrides it).
           adapt: true,
           outlook: { state: outlook.state, turns: outlook.turns },
+          // #201: the picking board's neutrals, so a fogged one keeps its size (wastelands).
+          ...(picking?.neutrals ? { rememberedNeutrals: new Map(picking.neutrals) } : {}),
           ...(goal !== undefined ? { goal } : {}),
           focusBonusIds,
           ...(opponents > 0 ? { opponents } : {}),

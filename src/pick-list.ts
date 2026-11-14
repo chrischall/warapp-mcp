@@ -7,12 +7,15 @@
 // award read from it on the first board after distribution. The same file keeps the territories
 // the live board showed as pickable during distribution (written by warapp_plan_picks and by
 // warapp_submit_picks' preview): once the game starts nothing says where a player could have
-// started, and warapp_locate_opponents needs it. A record may hold either or both. Territory ids
+// started, and warapp_locate_opponents needs it. #201: beside them, the neutrals the picking board
+// showed and their armies, so a neutral the fog hides later (a wasteland) keeps a known size for the
+// turn planner. A record may hold any of these. Territory ids
 // only: no names, no other player's data. Best effort and never throws; a game's file not
 // written for 60 days is deleted on the first write of a process.
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AwardReading } from './analysis/award.js';
+import { OWNER_NEUTRAL, type LiveTerritory } from './live.js';
 
 export interface PickRecord {
   gameId: number;
@@ -22,6 +25,8 @@ export interface PickRecord {
   list?: number[];
   /** The territories the live board showed as pickable during distribution, ascending; absent when not kept. */
   pickable?: number[];
+  /** #201: the neutrals the picking board showed, `[territory, armies]` ascending by territory; absent when not kept. */
+  neutrals?: [number, number][];
   /**
    * The award read from the list on the first board after distribution: `null` when the list
    * could not explain that start; absent while it has not been read.
@@ -42,6 +47,14 @@ type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isId = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
 const isIds = (v: unknown): v is number[] => Array.isArray(v) && v.every(isId);
+const isArmies = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+/** `[territory, armies]` pairs, the malformed dropped, each territory once (the first), ascending. */
+function neutralsOf(v: unknown): [number, number][] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const seen = new Map<number, number>();
+  for (const e of v) if (Array.isArray(e) && e.length === 2 && isId(e[0]) && isArmies(e[1]) && !seen.has(e[0])) seen.set(e[0], e[1]);
+  return seen.size ? [...seen].sort((a, b) => a[0] - b[0]) : undefined;
+}
 
 /** A stored award, loosely: anything that does not look like one is dropped. */
 function awardOf(v: unknown): AwardReading | null | undefined {
@@ -71,9 +84,17 @@ export async function readPickRecord(dir: string, gameId: number, playerId: numb
     if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId) return undefined;
     const list = isIds(c.list) && c.list.length ? c.list : undefined;
     const pickable = isIds(c.pickable) && c.pickable.length ? c.pickable : undefined;
+    const neutrals = neutralsOf(c.neutrals);
     if (!list && !pickable) return undefined;
     const award = list ? awardOf(c.award) : undefined;
-    return { gameId, playerId, ...(list ? { list } : {}), ...(pickable ? { pickable } : {}), ...(award !== undefined ? { award } : {}) };
+    return {
+      gameId,
+      playerId,
+      ...(list ? { list } : {}),
+      ...(pickable ? { pickable } : {}),
+      ...(neutrals ? { neutrals } : {}),
+      ...(award !== undefined ? { award } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -125,31 +146,61 @@ export async function writePickList(dir: string, gameId: number, playerId: numbe
   if (!list.length || !isIds([...list])) return false;
   const kept = await readPickRecord(dir, gameId, playerId);
   if (sameIds(kept?.list, list)) return true;
-  return writeRecord(dir, { gameId, playerId, list: [...list], ...(kept?.pickable ? { pickable: kept.pickable } : {}) });
+  return writeRecord(dir, {
+    gameId,
+    playerId,
+    list: [...list],
+    ...(kept?.pickable ? { pickable: kept.pickable } : {}),
+    ...(kept?.neutrals ? { neutrals: kept.neutrals } : {}),
+  });
 }
 
 /** Keep the award read from the stored list (`null`: nothing could be read). False when no list is kept for this player. */
 export async function writeAward(dir: string, gameId: number, playerId: number, award: AwardReading | null): Promise<boolean> {
   const kept = await readPickRecord(dir, gameId, playerId);
   if (!kept?.list) return false;
-  return writeRecord(dir, { gameId, playerId, list: kept.list, ...(kept.pickable ? { pickable: kept.pickable } : {}), award });
+  return writeRecord(dir, {
+    gameId,
+    playerId,
+    list: kept.list,
+    ...(kept.pickable ? { pickable: kept.pickable } : {}),
+    ...(kept.neutrals ? { neutrals: kept.neutrals } : {}),
+    award,
+  });
 }
 
 /**
  * Keep the territories the live board showed as pickable for `gameId` (ascending, each once),
- * beside `playerId`'s list and its award when those are kept. The same set already kept stays as
- * it is. Never throws.
+ * beside `playerId`'s list and its award when those are kept, and (#201) the picking board's
+ * neutrals with their armies when given (else those already kept stay). The same sets already
+ * kept stay as they are. Never throws.
  */
-export async function writePickable(dir: string, gameId: number, playerId: number, pickable: readonly number[]): Promise<boolean> {
+export async function writePickable(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  pickable: readonly number[],
+  neutralArmies?: readonly (readonly [number, number])[],
+): Promise<boolean> {
   if (!pickable.length || !isIds([...pickable])) return false;
   const ids = [...new Set(pickable)].sort((a, b) => a - b);
   const kept = await readPickRecord(dir, gameId, playerId);
-  if (sameIds(kept?.pickable, ids)) return true;
+  const neutrals = neutralsOf(neutralArmies) ?? kept?.neutrals;
+  if (sameIds(kept?.pickable, ids) && JSON.stringify(kept?.neutrals) === JSON.stringify(neutrals)) return true;
   return writeRecord(dir, {
     gameId,
     playerId,
     ...(kept?.list ? { list: kept.list } : {}),
     pickable: ids,
+    ...(neutrals ? { neutrals } : {}),
     ...(kept?.list && kept.award !== undefined ? { award: kept.award } : {}),
   });
+}
+
+/** #201: the neutrals a live board shows with their armies (fogged ones left out), ascending by territory. */
+export function pickingNeutrals(board: readonly LiveTerritory[]): [number, number][] {
+  return board
+    .filter((t) => !t.fogged && t.owner === OWNER_NEUTRAL && t.armies !== null)
+    .map((t): [number, number] => [t.territoryId, t.armies!])
+    .sort((a, b) => a[0] - b[0]);
 }

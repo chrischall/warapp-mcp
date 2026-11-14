@@ -813,6 +813,11 @@
 //     Wastelands (#167, `settings.wastelands`): a fogged missing member of a bonus is costed at the
 //     costliest visible missing member plus the expected surcharge of being a wasteland
 //     (ceil(count ÷ the map's territories × (a wasteland's capture cost − that))), with a rationale line.
+//     #201: given `options.rememberedNeutrals` (the picking board's neutrals, which warapp_plan_picks
+//     and warapp_submit_picks' preview keep per game), a fogged missing member the picking board showed
+//     as a neutral (and whose owner the fog does not show as a player now) is costed at that size
+//     instead, never attacked, with a rationale line ("… fogged now, was a neutral of N on the picking
+//     board (#201)").
 //  7. Move order (#127; every goal, last). Orders zigzag — the first mover's 1st, the other's
 //     1st and 2nd, the first mover's 2nd and 3rd, … — so `moves` is scheduled
 //     (`scheduleMoves`, src/analysis/schedule.ts), earliest first: the one order Order Priority
@@ -1121,6 +1126,11 @@ export interface PlanOptions {
    * forecasts below read it; adapting only.
    */
   outlook?: Pick<GameOutlook, 'state' | 'turns'>;
+  /**
+   * #201: the neutrals the picking board showed, territory → armies (`warapp_plan_picks` keeps them).
+   * A missing bonus member the fog hides now is costed at its remembered size, never attacked.
+   */
+  rememberedNeutrals?: ReadonlyMap<number, number>;
   /** Bonuses to work on first, even when uneconomic. */
   focusBonusIds?: number[];
   /** Income held back from captures (still deployed, as leftover). */
@@ -5278,7 +5288,20 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     for (const t of remaining) {
       const st = state.get(t);
       if (!st || st.owner.kind === 'unknown' || st.armies === null) {
-        fogged++;
+        // #201: a neutral the picking board showed keeps its size (an owner the fog shows is not one).
+        const was = opts.rememberedNeutrals?.get(t);
+        if (was === undefined || (st && st.owner.kind === 'player')) {
+          fogged++;
+          continue;
+        }
+        const c = costAt(t, was) ?? Infinity;
+        cost += c;
+        worst = Math.max(worst, c);
+        const l = Math.min(c - 1, straightKills(was, rates.defensiveKillRate)) + 1;
+        loss += l;
+        worstLoss = Math.max(worstLoss, l);
+        if (remaining.some(bonusTarget))
+          rationale.push(`${b.name} (#${b.id}): ${label(t)}, fogged now, was a neutral of ${was} on the picking board (#201): costed at that.`);
         continue;
       }
       const c = costAt(t) ?? Infinity;
