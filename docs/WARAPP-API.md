@@ -351,8 +351,10 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   has none.
 - Bonus values can be 0 or negative (e.g. `The Sorrows` = -4).
 - Maps never change for a given map id, and the feed's terms of use ask callers to cache.
-  `MapCache` keeps maps per process. A game whose map is already cached is fetched with
-  `GetMap=false`. A new game is fetched once with its map, because its map id is unknown
+  `MapCache` keeps maps in memory and, with a data directory, on disk (`src/map-store.ts`:
+  `<dataDir>/maps/<mapId>.json`, base bonus values, LRU-bounded, plus `<dataDir>/maps/games.json`
+  naming each game's map), so the cache survives a restart. A game whose map is already cached is
+  fetched with `GetMap=false`. A new game is fetched once with its map, because its map id is unknown
   until the response arrives — except by a caller that never uses the map (#148): the turn wait,
   surrender, uncommit, chat, join-game, scout, begin-turn and submit-turn's read-back always ask
   `GetMap=false`. Map statistics ask `GetMap=false` with `GetSettings=true`, so a map cached under
@@ -430,7 +432,9 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   (or errors), the planner falls back to the board it planned on in the previous turn,
   cached at `<dataDir>/boards/<gameId>.json` (the player's own fogged view, the newest two
   planned turns kept so a turn planned twice still finds the one before it, used only when
-  cached on exactly the previous turn). When a live in-progress history is seen, record its
+  cached on exactly the previous turn). Beside it, `<dataDir>/games/<gameId>.json` keeps the
+  game's settings name-free, so `loadReplay` (`src/replay.ts`) can rebuild a plan's inputs offline
+  with the stored map. When a live in-progress history is seen, record its
   shape here and tighten the parser.
 - **My own past orders (#119).** The opponent tracker uses the player's own orders on a turn as
   measurements (`TurnBoard.orders`, `measureOrders` in `src/analysis/opponents.ts`: the defenders a

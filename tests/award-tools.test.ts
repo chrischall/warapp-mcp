@@ -15,6 +15,7 @@ import { Method } from '../src/protocol/methods.js';
 import { graphOf } from '../src/tools/common.js';
 import { mapOf } from '../src/tools/map.js';
 import { pickSettings } from '../src/tools/picks.js';
+import { readGameRecord } from '../src/replay.js';
 import { boardCachePath } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
@@ -128,6 +129,9 @@ describe('warapp_plan_turn — the award of picks', () => {
     expect((await readPickRecord(dir, GAME, ME))!.award).toMatchObject({ granted: [159, 161], opponentStarts: [158] });
     const cached = JSON.parse(readFileSync(boardCachePath(dir, GAME), 'utf8')) as { turns: Record<string, { territories: Array<{ territoryId: number; owner: { kind: string } }> }> };
     expect(cached.turns['1']!.territories.find((t) => t.territoryId === 158)!.owner.kind).toBe('unknown');
+    // Beside the boards, the game's settings for an offline replay (name-free).
+    expect((await readGameRecord(dir, GAME))?.id).toBe(GAME);
+    expect(readFileSync(join(dir, 'games', `${GAME}.json`), 'utf8')).not.toMatch(/Bob|Ann/);
   });
 
   it('tells who was awarded first and who moves first under a cyclic order, and when every start is known', async () => {

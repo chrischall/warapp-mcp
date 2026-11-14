@@ -360,7 +360,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   track (newest ten turns kept, so re-planning a turn keeps the trend and opponent tracking has a
   history) — and from GameFeed `GetHistory` (unverified in progress, parsed loosely in
   `src/trend.ts`) only for turns the cache lacks, not at all when the two previous turns are
-  cached; it reports `trendSource`. A board the decoder refuses is never written there.
+  cached; it reports `trendSource`. A board the decoder refuses is never written there. Each
+  write keeps the game's settings beside it (`<dataDir>/games/<gameId>.json`, see "Offline replay").
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
   turn, income = the most of the last three observed turns (or its stock and flow when more),
@@ -694,9 +695,23 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **All GameFeed traffic goes through `WarappClient` (`src/client.ts`)**, including the
   credential healthcheck probe; all `/Services` traffic goes through `WarappRpc`
   (`src/protocol/rpc.ts`), which echoes the reply extras into the next request. Maps are
-  cached per process (`MapCache`), and a known game is re-fetched with `GetMap=false`; a tool
+  cached in memory (`MapCache`) and on disk (`src/map-store.ts`, local and hosted: the per-user
+  `state.dataDir` persists): `<dataDir>/maps/<mapId>.json` holds the normalized map with its BASE
+  bonus values (overrides are per game, applied by `mapOf`), at most `MAX_STORED_MAPS`, the least
+  recently used evicted; `<dataDir>/maps/games.json` says which map a game is on (bounded), so a
+  known game is re-fetched with `GetMap=false` after a restart too. A bad file is ignored and
+  replaced; the disk never fails a call. A tool
   that never uses the map (the turn wait, surrender, uncommit, chat, join-game, scout, begin-turn,
   submit-turn's read-back) always asks `GetMap=false`, even for a game it has not seen.
+- **Offline replay (`src/replay.ts`).** Wherever the board cache is written (plan_turn,
+  track_opponents, locate_opponents, get_relations) the game's settings are kept at
+  `<dataDir>/games/<gameId>.json`: name-free (players by id, team, state and AI flags; raw settings
+  through `sanitizeSettings` — numbers, booleans, numeric strings and a few enum words, no free text,
+  no mod entries, nothing equal to a player's or the game's name; overrides re-written in their
+  verified shape), 0600, atomic, best effort, the newest `MAX_GAME_RECORDS` kept and a game not
+  written for 60 days deleted, like the boards. `loadReplay(dataDir, gameId)` rebuilds the planner's
+  inputs from the data directory alone: `{ game, settings, map, playerId, boards, orders }`
+  (`undefined` without a settings record; `map` absent when the store evicted it).
 
 ## Commands
 

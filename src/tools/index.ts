@@ -56,7 +56,9 @@ type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCa
 export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   // One client for the game tools, so they share the map cache. Config is
   // deferred: the client reads credentials per call, never at construction.
-  const client = new WarappClient(deps);
+  // The map cache is kept on disk too (`<dataDir>/maps/`, src/map-store.ts),
+  // local and hosted (a hosted child's per-user data dir persists).
+  const client = new WarappClient({ ...deps, dataDir: () => dataDir(deps.env) });
   const env = deps.env as NodeJS.ProcessEnv | undefined;
   // The process's browser bridge (fetchproxy), shared across connections.
   const fetchproxy = deps.bridge ?? createWarappBridge(env ? { env } : {});

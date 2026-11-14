@@ -15,7 +15,10 @@
 //
 // Maps are immutable per map id and large (761 territories on map 39905), and
 // the feed's terms ask callers to cache — so a map is kept per process and a
-// game whose map is cached is fetched with GetMap=false.
+// game whose map is cached is fetched with GetMap=false. With a data directory
+// (`dataDir`, wired by tools/index.ts) the cache is also kept on disk
+// (src/map-store.ts: `<dataDir>/maps/`, base values, LRU-bounded), so a known
+// map is not downloaded again after a restart.
 
 import {
   createApiClient,
@@ -27,6 +30,7 @@ import {
 } from '@chrischall/mcp-utils';
 import { readCredentials, TOKEN_URL, WarappConfigError, type WarappCredentials } from './config.js';
 import { feedErrorOf, normalizeGame, normalizeMap, type Game, type GameMap } from './normalize.js';
+import { readGameMapId, readStoredMap, rememberGameMap, writeStoredMap } from './map-store.js';
 import { scrubSecrets, type SecretValue } from './redact.js';
 import { asInt } from './scalars.js';
 
@@ -68,7 +72,11 @@ export function parseGameId(v: unknown): number {
   return n;
 }
 
-/** Per-process map cache: map id → map, plus game id → map id. */
+/**
+ * Map cache: map id → map, plus game id → map id, in memory per process. Given a data directory, a
+ * miss is read back from the persistent store (src/map-store.ts) and a new map or game is written
+ * there, best effort: the disk never makes a call fail.
+ */
 export class MapCache {
   readonly #maps = new Map<number, GameMap>();
   readonly #gameMaps = new Map<number, number>();
@@ -89,6 +97,39 @@ export class MapCache {
 
   rememberGame(gameId: number, mapId: number): void {
     this.#gameMaps.set(gameId, mapId);
+  }
+
+  /** {@link get}, else the map stored under `dir` (then kept in memory). */
+  async load(mapId: number, dir: string | undefined): Promise<GameMap | undefined> {
+    const hit = this.#maps.get(mapId);
+    if (hit || dir === undefined) return hit;
+    const stored = await readStoredMap(dir, mapId);
+    if (stored) this.set(stored);
+    return stored;
+  }
+
+  /** {@link forGame}, else the map the store under `dir` names for the game (then kept in memory). */
+  async loadForGame(gameId: number, dir: string | undefined): Promise<GameMap | undefined> {
+    const hit = this.forGame(gameId);
+    if (hit || dir === undefined) return hit;
+    const mapId = this.#gameMaps.get(gameId) ?? (await readGameMapId(dir, gameId));
+    const map = mapId === undefined ? undefined : await this.load(mapId, dir);
+    if (map) this.rememberGame(gameId, map.id);
+    return map;
+  }
+
+  /** Keep `map` in memory and, when it is new to this process, under `dir`. */
+  async store(map: GameMap, dir: string | undefined): Promise<void> {
+    const known = this.#maps.has(map.id);
+    this.set(map);
+    if (!known && dir !== undefined) await writeStoredMap(dir, map);
+  }
+
+  /** Remember the game's map in memory and, when that is new to this process, under `dir`. */
+  async storeGame(gameId: number, mapId: number, dir: string | undefined): Promise<void> {
+    const known = this.#gameMaps.get(gameId) === mapId;
+    this.rememberGame(gameId, mapId);
+    if (!known && dir !== undefined) await rememberGameMap(dir, gameId, mapId);
   }
 
   clear(): void {
@@ -120,6 +161,11 @@ export interface WarappClientOptions {
   /** Injectable retry sleep (tests). */
   sleep?: (ms: number) => Promise<void>;
   mapCache?: MapCache;
+  /**
+   * The data directory whose `maps/` keeps the map cache across restarts (src/map-store.ts);
+   * absent, or answering `undefined`, the cache is in memory only.
+   */
+  dataDir?: () => string | undefined;
   /** Per-attempt timeout, ms. Default 30 s. */
   timeoutMs?: number;
 }
@@ -127,12 +173,14 @@ export interface WarappClientOptions {
 export class WarappClient {
   readonly #env: EnvSource | undefined;
   readonly #cache: MapCache;
+  readonly #dataDir: (() => string | undefined) | undefined;
   readonly #api: ApiClient;
   #secrets: SecretValue[] = [];
 
   constructor(opts: WarappClientOptions = {}) {
     this.#env = opts.env;
     this.#cache = opts.mapCache ?? defaultMapCache;
+    this.#dataDir = opts.dataDir;
     this.#api = createApiClient({
       baseUrl: BASE_URL,
       serviceName: SERVICE,
@@ -207,13 +255,14 @@ export class WarappClient {
   }
 
   /**
-   * Load a game, normalized. The map comes from the per-process cache when
-   * this game's map is already known (fetched with GetMap=false), else from
-   * the feed (and is then cached).
+   * Load a game, normalized. The map comes from the cache (memory, else the data directory's
+   * store) when this game's map is already known (fetched with GetMap=false), else from the
+   * feed (and is then cached).
    */
   async getGame(id: unknown, opts: GetGameOptions = {}): Promise<Game> {
     const gameId = parseGameId(id);
-    const known = this.#cache.forGame(gameId);
+    const dir = this.#dir();
+    const known = await this.#cache.loadForGame(gameId, dir);
     const body = await this.#feed(gameId, { ...opts, noMap: known !== undefined || opts.map === false });
     const game = normalizeGame(body);
 
@@ -222,14 +271,23 @@ export class WarappClient {
     if (!map && rawMap && typeof rawMap === 'object' && Array.isArray((rawMap as { territories?: unknown }).territories)) {
       const fresh = normalizeMap(rawMap);
       map = this.#cache.get(fresh.id) ?? fresh;
-      this.#cache.set(map);
+      await this.#cache.store(map, dir);
     }
-    if (!map && game.settings?.mapId !== undefined) map = this.#cache.get(game.settings.mapId);
+    if (!map && game.settings?.mapId !== undefined) map = await this.#cache.load(game.settings.mapId, dir);
     if (map) {
-      this.#cache.rememberGame(gameId, map.id);
+      await this.#cache.storeGame(gameId, map.id, dir);
       game.map = map;
     }
     return game;
+  }
+
+  /** The data directory for the map store, or `undefined` (memory only); never throws. */
+  #dir(): string | undefined {
+    try {
+      return this.#dataDir?.();
+    } catch {
+      return undefined;
+    }
   }
 
   /**

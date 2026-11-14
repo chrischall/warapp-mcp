@@ -378,3 +378,16 @@ export async function writeBoardCache(
     return false;
   }
 }
+
+/**
+ * The player whose view is cached for `gameId` (the file keeps one account's boards), for offline
+ * replay (src/replay.ts); `undefined` when there is no usable cache. Never throws.
+ */
+export async function readCachedPlayer(dir: string, gameId: number): Promise<number | undefined> {
+  try {
+    const c: unknown = JSON.parse(await readFile(boardCachePath(dir, gameId), 'utf8'));
+    return isRec(c) && c.gameId === gameId && typeof c.playerId === 'number' ? c.playerId : undefined;
+  } catch {
+    return undefined;
+  }
+}

@@ -27,6 +27,7 @@ import type { Game, GameMap } from '../normalize.js';
 import { readPickRecord, writePickable } from '../pick-list.js';
 import { cachedRecords, STATS_ENV, statsGate } from '../stats.js';
 import { CACHED_TURNS, writeBoardCache } from '../trend.js';
+import { writeGameRecord } from '../replay.js';
 import { loadAward } from './award.js';
 import { gameIdArg, graphOf, namer, readAnnotations, respond, round2, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
@@ -197,7 +198,10 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
         proven,
         tracks,
       });
-      if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+      if (ctx.dataDir && turn !== null) {
+        await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+        await writeGameRecord(ctx.dataDir, game);
+      }
 
       const name = namer(map);
       const playerNames = new Map(game.players.map((p) => [p.id, p.name]));

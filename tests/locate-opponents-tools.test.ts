@@ -9,6 +9,7 @@ import { readPickRecord, writePickable, writePickList } from '../src/pick-list.j
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { recordPath } from '../src/stats.js';
+import { readGameRecord } from '../src/replay.js';
 import { boardCachePath } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
@@ -202,6 +203,8 @@ describe('warapp_locate_opponents', () => {
     expect(Object.keys(cached.turns)).toEqual(['1']);
     // 158 is the opponent's proven start, and still what war.app showed: fogged.
     expect(cached.turns['1']!.territories.find((t) => t.territoryId === 158)!.owner.kind).toBe('unknown');
+    // And the game's settings beside it, for an offline replay.
+    expect((await readGameRecord(dir, GAME))?.id).toBe(GAME);
   });
 
   it('reads my earlier boards: a territory last seen as its own keeps its presence', async () => {

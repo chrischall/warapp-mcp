@@ -2,6 +2,7 @@
 // local ledger (not confirm-gated: nothing leaves the machine), its refusals, the breach watch over
 // the cached boards, and the cross-game player record (salted, name-free, switchable).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readGameRecord } from '../src/replay.js';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
@@ -215,6 +216,7 @@ describe('warapp_get_relations', () => {
     expect(first.agreements[0]).toMatchObject({ id: 'a1', state: 'active', trust: { level: 'clear' }, flags: [], record: { made: 1, keptRate: null } });
     expect(first.boards).toEqual({ turns: [3], live: true });
     const dir = h.dataDir;
+    expect((await readGameRecord(dir, GAME))?.id).toBe(GAME);
     await h.harness.close();
     h = await liveHarness({ dataDir: dir, feed: [game('3')], warapp: live(boardAt({ bobTakes161: true })) });
     const p = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann', view: 'full' }));

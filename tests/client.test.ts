@@ -1,6 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { McpToolError } from '@chrischall/mcp-utils';
+import { readGameMapId, readStoredMap } from '../src/map-store.js';
 import { MapCache, parseGameId, PROBE_GAME_ID, WarappClient, WarappNotFoundError } from '../src/client.js';
 
 const FIXTURE_TEXT = readFileSync(new URL('./fixtures/gamefeed-lobby-map39905.json', import.meta.url), 'utf8');
@@ -25,8 +28,8 @@ function stubFetch(...replies: Reply[]) {
   return { calls, fetchImpl };
 }
 
-function client(fetchImpl: typeof fetch, mapCache = new MapCache(), env: Record<string, string> = CREDS) {
-  return new WarappClient({ env, fetchImpl, sleep: noSleep, mapCache });
+function client(fetchImpl: typeof fetch, mapCache = new MapCache(), env: Record<string, string> = CREDS, dataDir?: string) {
+  return new WarappClient({ env, fetchImpl, sleep: noSleep, mapCache, ...(dataDir ? { dataDir: () => dataDir } : {}) });
 }
 
 /** The fixture as war.app answers with GetMap=false: an empty map object. */
@@ -128,6 +131,66 @@ describe('WarappClient.getGame', () => {
     cache.clear();
     await c.getGame(12345678);
     expect(calls[1]!.url).not.toContain('GetMap');
+  });
+
+  describe('with a data directory (the persistent map store)', () => {
+    const tmp = () => mkdtempSync(join(tmpdir(), 'warapp-client-maps-'));
+
+    it('writes a map read with GetMap to <dir>/maps/<mapId>.json, base values, and the game to the index', async () => {
+      const dir = tmp();
+      const game = await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(await readStoredMap(dir, 39905)).toEqual(game.map);
+      expect(await readGameMapId(dir, 12345678)).toBe(39905);
+    });
+
+    it('after a restart (a fresh MapCache) asks a known game GetMap=false and attaches the stored map', async () => {
+      const dir = tmp();
+      const first = await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const { calls, fetchImpl } = stubFetch({ body: WITHOUT_MAP });
+      const cache = new MapCache();
+      const again = await client(fetchImpl, cache, CREDS, dir).getGame(12345678);
+      expect(calls[0]!.url).toBe('https://war.app/API/GameFeed?GameID=12345678&GetMap=false');
+      expect(again.map).toEqual(first.map);
+      expect(cache.get(39905)).toBe(again.map);
+    });
+
+    it('attaches the stored map to a new game whose settings name it, without a download', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const { calls, fetchImpl } = stubFetch({ body: { ...WITHOUT_MAP, id: '999' } });
+      const game = await client(fetchImpl, new MapCache(), CREDS, dir).getGame(999, { settings: true, map: false });
+      expect(calls[0]!.url).toContain('GetMap=false');
+      expect(game.map?.id).toBe(39905);
+      expect(await readGameMapId(dir, 999)).toBe(39905);
+    });
+
+    it('downloads the map again when the stored file is bad, and replaces it', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      writeFileSync(join(dir, 'maps', '39905.json'), 'garbage');
+      const { calls, fetchImpl } = stubFetch({ body: FIXTURE });
+      const game = await client(fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(calls[0]!.url).not.toContain('GetMap');
+      expect(await readStoredMap(dir, 39905)).toEqual(game.map);
+    });
+
+    it('still serves the game when the data directory cannot be written', async () => {
+      const dir = tmp();
+      writeFileSync(join(dir, 'maps'), 'a file, not a folder');
+      const game = await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(game.map?.id).toBe(39905);
+    });
+
+    it('does not rewrite the store for a map and game already known in this process', async () => {
+      const dir = tmp();
+      const cache = new MapCache();
+      const { fetchImpl } = stubFetch({ body: FIXTURE }, { body: WITHOUT_MAP });
+      const c = client(fetchImpl, cache, CREDS, dir);
+      await c.getGame(12345678);
+      writeFileSync(join(dir, 'maps', '39905.json'), 'garbage');
+      await c.getGame(12345678);
+      expect(await readStoredMap(dir, 39905)).toBeUndefined();
+    });
   });
 
   it('rejects an invalid game id before any request', async () => {
