@@ -406,7 +406,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   against a finished 1v1. A
   free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`, or a player
   out). A track never stands alone below the newest turn the planner reads against it (#123's bound
-  at the tracked income): the estimate is the larger, labelled "observed +N on the newest turn". Each border
+  at the tracked income — never the prior, which stays out of the bound whenever a track is usable, so a
+  one-off arrival from the fog is not read as income above the prior): the estimate is the larger,
+  labelled "observed +N on the newest turn". Each border
   is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to
   land), not a double count.
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
@@ -607,7 +609,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **One-off movements are not income (#123, `observeDeploy`).** Growth on its territory next
     to the fog and the surplus of a capture whose visible attacker shrank are ambiguous: both read
     as deploy up to one bound, `HIDDEN_INCOME_FACTOR` (2) × what it was expected to deploy
-    (visible income, the fog prior in the planner, or tracked/carried income — so a steady hidden
+    (visible income, plus the tracked/carried income, or the fog prior in the planner when no track is
+    usable — so a steady hidden
     bonus is still seen; a carry only bound-cut readings reached ends at a later turn read in full
     that observed less) and at most what it could earn; beyond it, a stack out of the fog. A capture from me is
     priced at the guard unless my cached orders say what stood there. Each observed turn has a low–high range for the ambiguity. The

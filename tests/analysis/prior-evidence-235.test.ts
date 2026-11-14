@@ -160,8 +160,27 @@ describe('(1) a tracked figure below the newest turn read with it does not stand
     expect(a).toMatchObject({ playerId: A, tracked: 20, observed: 40, estimate: 40, source: 'observed' });
     const p = planTurn(ffa({ board: now, previousBoard: before, tracks: [track(A, 20, 2)], game: { players, turn: 12, symmetricStart: false } }));
     expect(p.warnings.join('\n')).toMatch(
-      /Enemy deploy estimate for player 20: ~40 \(observed \+40 on the newest turn, read against its tracked income, above its tracked ~20 over 2 observed turns\)/,
+      /Enemy deploy estimate for player 20: ~40 \(observed \+40 on the newest turn, read against its tracked income, above its tracked ~20 over its last 2 observed turns\)/,
     );
+  });
+
+  it('with the fog prior on, the newest turn is read against the track, not the prior (#235 review)', () => {
+    // FFA prior 91 (my income), a six-turn track of 26. The growth 20 -> 120 beside the fog is
+    // ambiguous: read against the prior (bound 2 x 91) it made 100 of it income above the prior,
+    // a one-off arrival from the fog (#123). Read against the track the bound is 2 x 26 = 52, and
+    // the prior shrinks toward that: 52 + ceil(0.5 x 39) = 72.
+    const prior = { myIncome: 91, format: 'ffa' as const, opponents: 3 };
+    const a = enemyDeployEstimates(g, now, ME, STD, before, [track(A, 26, 6)], prior).find((e) => e.playerId === A)!;
+    expect(a).toMatchObject({ tracked: 26, observed: 52, prior: 91, source: 'prior', estimate: 72 });
+    expect(a.priorBlend).toMatchObject({ prior: 91, toward: 52, turns: 6 });
+    // Without the prior the same board reads the same 52.
+    const [bare] = enemyDeployEstimates(g, now, ME, STD, before, [track(A, 26, 6)]);
+    expect(bare).toMatchObject({ observed: 52, estimate: 52, source: 'observed' });
+  });
+
+  it('the observed-above-track line counts the turns the track used, as its last N turns', () => {
+    const p = planTurn(ffa({ board: now, previousBoard: before, tracks: [track(A, 20, 6)], game: { players, turn: 12, symmetricStart: false } }));
+    expect(p.warnings.join('\n')).toMatch(/above its tracked ~20 over its last 3 observed turns\)/);
   });
 
   it('a newest turn below the track leaves the track standing', () => {

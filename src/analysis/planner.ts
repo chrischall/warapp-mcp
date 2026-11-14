@@ -241,6 +241,8 @@
 //     single-turn observed figure, and a rationale line says so; fewer turns change nothing.
 //     #235: unless the newest turn, observed against the tracked income (#123's bound), reads more:
 //     a track never stands alone below it (source 'observed', "on the newest turn", both named).
+//     With a usable track the fog prior stays out of that bound (#235 review): read against twice
+//     the prior, a one-off arrival from the fog became income above the prior (#123, lesson 5).
 //     The fog prior (#119, `EnemyIncomePrior`): when `game.symmetricStart` says every player
 //     started even, with no teams and every seated player still playing — a 1v1, or (#226) a
 //     free-for-all, each opponent alike (a game with a player out is not: a survivor, or I, may

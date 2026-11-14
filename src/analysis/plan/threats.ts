@@ -840,7 +840,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
         if (e.source === 'observed' && e.tracked !== null) {
           // #235: the newest turn, read against the tracked income, above it: the track does not stand alone.
           warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${income} (observed +${e.observed} on the newest turn, read against its tracked income, above its tracked ~${e.tracked} over ${e.trackedTurns.length} observed turns)${withCard}; it holds income the fog hides, and could deploy more.`,
+            `Enemy deploy estimate for player ${p}: ~${income} (observed +${e.observed} on the newest turn, read against its tracked income, above its tracked ~${e.tracked} over its last ${e.trackedTurns.length} observed ${e.trackedTurns.length === 1 ? 'turn' : 'turns'})${withCard}; it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }

@@ -1482,14 +1482,17 @@ export function enemyDeployEstimates(
     const track = tracks?.find((t) => t.playerId === playerId);
     const usable = track && track.income !== null && track.turns.length >= TRACKED_MIN_TURNS ? track : undefined;
     const tracked = usable ? usable.income : null;
-    // #123: what it was expected to deploy before this observation (its visible income, the
-    // prior, or its tracked income): ambiguous armies beyond twice that are moves out of the fog
-    // ({@link ambiguousBound}); a capture from me is priced at the guard.
+    // #123: what it was expected to deploy before this observation (its visible income, and its
+    // tracked income when it has a usable track, else the prior): ambiguous armies beyond twice that
+    // are moves out of the fog ({@link ambiguousBound}); a capture from me is priced at the guard.
+    // #235 review: with a track the prior stays out of the bound. The newest turn is evidence the
+    // prior shrinks toward, so reading it against twice the prior would turn a one-off arrival from
+    // the fog into income above the prior (lesson 5).
     const observation = previous
       ? observeDeploy(g, board, previous, playerId, settings, {
           me,
           guard: (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
-          expected: Math.max(visible, priorFigure ?? 0, tracked ?? 0),
+          expected: Math.max(visible, tracked ?? priorFigure ?? 0),
           most: couldEarn,
           ...(when.previousOrders ? { myOrders: when.previousOrders } : {}),
         })
