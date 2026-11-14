@@ -999,7 +999,7 @@
 //     measured through, a conceded border
 //     (only when transfer-only orders are allowed). The front is the territories a visible
 //     enemy holds; only a stack no enemy can be reached from heads for the nearest territory
-//     not mine (neutral or fog) instead (#121: idle armies walked toward a worthless neutral
+//     not mine (neutral or fog; never a teammate's, PLAN-TEAMS C3) instead (#121: idle armies walked toward a worthless neutral
 //     while the enemy front was short, and a stack beside one never moved). This turn's
 //     captures count as mine only when they land for sure — a neutral, or an attack on a player
 //     sized for its owner's whole deploy (rule 1e, 1s, or rule 3's #120 sizing): an exact-sized attack on a player fails

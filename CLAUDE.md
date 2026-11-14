@@ -597,7 +597,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     what holds it, as my commander's territory does: a capture from it spends only the armies
     above that (plus deploys), so a capture never leaves a safe border takeable. Idle armies
     transfer toward the enemy front first (the nearest non-held territory only when no enemy is
-    reachable), a capture of a player's territory sized without a reserve does not make the
+    reachable, and never a teammate's: PLAN-TEAMS C3), a capture of a player's territory sized without a reserve does not make the
     garrison beside it idle, and my commander's stack beside a conceded border stays.
   - **Attacks on a player are sized for its owner's deploy (#120).** When the armies beyond what
     holds the source cover it, an attack on a player's territory (break, counter-attack, strike,

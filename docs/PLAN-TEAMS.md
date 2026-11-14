@@ -556,6 +556,13 @@ Smallest and safest first; each is its own PR.
 7. **Cards:** the card advice reads the teammate's entered card plays, so two teammates do not play
    the same card, and says who should play it.
 
+*As built (C3.1):* `teammateAt` (`src/analysis/plan/state.ts`) keeps a teammate's territory out of rule 6's
+"nearest territory not mine" front (`anyFront`, `plan/transfers.ts`), so a stack that faces only a teammate
+is interior and walks on toward a neutral or the fog. The truce cap's "another front" walk
+(`applyBorderCaps`) is unchanged: truces are ignored outside a free-for-all, so it never runs in a team game.
+The golden corpus's team boards change in their transfers only (deploys and attacks identical); no 1v1 or
+FFA plan changes.
+
 ### C4. The team brief and joining
 
 - Read-only `warapp_team_brief`: the content of a team-chat message as data, by stage. Before picks:
