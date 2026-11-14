@@ -64,9 +64,9 @@ export interface ReadyFetchBridge {
 }
 
 /** The byte cap on a direct reply (a board/standing reply is a few KB; pages tens of KB). */
-export const MAX_DIRECT_BODY_BYTES = 16 * 1024 * 1024;
+const MAX_DIRECT_BODY_BYTES = 16 * 1024 * 1024;
 /** The deadline over a direct request and its body read. */
-export const DIRECT_TIMEOUT_MS = 30_000;
+const DIRECT_TIMEOUT_MS = 30_000;
 
 /** The session-read surface the direct leg needs (M1's `readSession`, wrapped). */
 export interface SessionStore {
@@ -126,7 +126,7 @@ const isSafeToReplay = (method: string): boolean => /^(?:GET|HEAD)$/i.test(metho
 const SESSION_ORIGIN = `https://${SESSION_HOST}`;
 
 /** Redirects a direct GET may follow (all within war.app). */
-export const MAX_DIRECT_GET_REDIRECTS = 5;
+const MAX_DIRECT_GET_REDIRECTS = 5;
 
 /**
  * The status reported for a redirect a non-GET did not follow. netguard's
@@ -137,7 +137,7 @@ export const MAX_DIRECT_GET_REDIRECTS = 5;
 export const UNFOLLOWED_REDIRECT_STATUS = 302;
 
 /** The netguard options the direct leg chooses per request (pure; a test seam). */
-export interface DirectFetchOptions {
+interface DirectFetchOptions {
   requireHttps: true;
   /** Every hop's host, the first included: exactly war.app. */
   allowHosts: readonly string[];
@@ -404,7 +404,7 @@ export interface WarappDirectBridge {
 }
 
 /** Options for {@link createDirectFirstBridge}. */
-export interface CreateDirectFirstBridgeOptions {
+interface CreateDirectFirstBridgeOptions {
   /** The session store (M1's `readSession`, wrapped). */
   store: SessionStore;
   /** Build the existing fetchproxy bridge leg, lazily. */

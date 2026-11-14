@@ -86,7 +86,7 @@ export interface GameOutlook {
   basis: string;
 }
 
-export interface OutlookInput {
+interface OutlookInput {
   graph: MapGraph;
   me: number;
   /** My boards, any order (one per turn; the last given wins), the turn being played included. */

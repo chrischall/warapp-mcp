@@ -70,9 +70,9 @@ export function parseInviteToken(html: string): number | undefined {
   return t === undefined ? undefined : Number(t);
 }
 
-export const INVITE_TOKEN_URL = 'https://war.app/InviteToken';
+const INVITE_TOKEN_URL = 'https://war.app/InviteToken';
 
-export interface LiveContextOptions {
+interface LiveContextOptions {
   client: WarappClient;
   bridge: ReadyFetchBridge;
   env?: EnvSource;
@@ -98,7 +98,7 @@ export const IDENTITY_TTL_MS = 60_000;
 
 const onBridge = (url: URL) => BRIDGE_DOMAINS.some((d) => url.hostname === d || url.hostname.endsWith(`.${d}`));
 
-export interface BundleFetchLimits {
+interface BundleFetchLimits {
   /** Headers and body together (default {@link BUNDLE_FETCH_TIMEOUT_MS}). */
   timeoutMs?: number;
   /** Enforced while the body streams (default {@link BUNDLE_MAX_BYTES}). */
@@ -192,7 +192,7 @@ export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch 
 }
 
 /** What to do about a frozen tab, said on every bridged `/Services` timeout (#130). */
-export const FROZEN_TAB_HINT =
+const FROZEN_TAB_HINT =
   'Chrome freezes background tabs, and war.app calls are relayed through a page tab: a frozen tab stalls them ' +
   'while page reads still work. Reload or focus a war.app tab, then check the game before retrying.';
 
@@ -370,7 +370,7 @@ export const SPEED_FIRST_TURN_MOVE_ORDER = 'NoLuckCycle';
  * or GameFeed did not say, since the web client shows Begin whenever a playing
  * seat has no standing.
  */
-export function awaitsBegin(game: Game): boolean {
+function awaitsBegin(game: Game): boolean {
   if (game.state !== 'Playing' && game.state !== 'DistributingTerritories') return false;
   if ((game.numberOfTurns ?? 0) > 0) return false;
   const order = game.settings?.moveOrder;
@@ -378,7 +378,7 @@ export function awaitsBegin(game: Game): boolean {
 }
 
 /** What to say when the board is hidden until Begin. */
-export function beginFirstError(game: Game): McpToolError {
+function beginFirstError(game: Game): McpToolError {
   const picking = game.state === 'DistributingTerritories';
   return new McpToolError(
     `war.app has no board for game ${game.id} yet: this game's first turn starts when you press Begin — call ` +

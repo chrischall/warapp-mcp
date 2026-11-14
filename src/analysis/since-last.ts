@@ -11,7 +11,7 @@ import type { BoardState } from '../board.js';
 import { bonusTerritories } from './bonuses.js';
 import type { MapGraph } from './graph.js';
 
-export interface SinceLastInput {
+interface SinceLastInput {
   graph: MapGraph;
   /** The board of the previous turn as I saw it; absent when neither the cache nor history has it. */
   previous?: BoardState | undefined;

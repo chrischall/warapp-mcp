@@ -11,10 +11,10 @@
  */
 import type { McpServer } from '@modelcontextprotocol/server';
 
-export type MintIntent =
+type MintIntent =
   | 'whats-new' | 'whats-due' | 'whats-on' | 'lookup' | 'turn-on-off' | 'send' | 'change' | 'other';
 
-export interface MintHint {
+interface MintHint {
   domain: 'work';
   intent: MintIntent;
   /** The one tool that answers this intent for the group. */

@@ -41,14 +41,14 @@ export interface GameUpdate {
 }
 
 /** A connect, or a Subscribe that went through after one failed: pushes before it were lost. */
-export interface ConnectEvent {
+interface ConnectEvent {
   /** A connect after the first of this run. */
   reconnect: boolean;
   /** Not a connect: a Subscribe that had failed on this session went through on a retry. */
   resubscribed?: true;
 }
 
-export interface PushStatus {
+interface PushStatus {
   started: boolean;
   connected: boolean;
   /** Game ids subscribed (or to be subscribed on connect). */
@@ -62,7 +62,7 @@ export interface PushStatus {
   lastError?: string;
 }
 
-export interface PushListenerOptions {
+interface PushListenerOptions {
   transport: () => Promise<SocketTransport>;
   /** The direct WebSocket leg (src/push/websocket.ts `pushWebSocketLeg`); absent: xhr-polling only. */
   webSocket?: WebSocketLeg;
@@ -85,8 +85,8 @@ export interface PushListenerOptions {
   maxGames?: number;
 }
 
-export const DEFAULT_MAX_EVENTS = 100;
-export const DEFAULT_IDLE_MS = 10 * 60_000;
+const DEFAULT_MAX_EVENTS = 100;
+const DEFAULT_IDLE_MS = 10 * 60_000;
 /** Failed Subscribes in a row retried on the live session before leaving it to the next reconnect. */
 export const MAX_SUBSCRIBE_RETRIES = 5;
 /**

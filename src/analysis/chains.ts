@@ -47,7 +47,7 @@ export interface ChainAttack {
   survivors: number;
 }
 
-export interface ChainSearch extends KillRates {
+interface ChainSearch extends KillRates {
   graph: MapGraph;
   /** The board the chains run on. */
   territories: ReadonlyMap<number, SimTerritory>;

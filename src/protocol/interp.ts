@@ -87,7 +87,7 @@ import {
 } from 'acorn';
 import { PROTOCOL_VERSION, ProtocolError, Reader } from './codec.js';
 
-export type InterpErrorKind =
+type InterpErrorKind =
   | 'unsupported'
   | 'no-definition'
   | 'unknown-class'
@@ -115,7 +115,7 @@ export class InterpError extends Error {
   }
 }
 
-export interface ParsedBundle {
+interface ParsedBundle {
   src: string;
   /** Minified class var → registered type name. */
   typeNameOf: Map<string, string>;
@@ -135,7 +135,7 @@ export function parseBundle(src: string): ParsedBundle {
 }
 
 /** A decoded object: its fields plus the registered type name. */
-export interface DecodedObject {
+interface DecodedObject {
   $type: string;
   [field: string]: unknown;
 }
@@ -146,7 +146,7 @@ type Native = (...args: unknown[]) => unknown;
  * The minified names the readers call. These track the client release, so they are
  * data: a newer bundle that renames a primitive needs only a dialect override.
  */
-export interface Dialect {
+interface Dialect {
   /** Methods called directly on the reader (`a.Ua()`). */
   readerMethods: Record<string, (r: Reader, ...args: unknown[]) => unknown>;
   /** Native statics (`P.Ya(a)`), by class var then function name. Closures arrive as JS functions. */
@@ -186,7 +186,7 @@ function callback(f: unknown): Native {
 }
 
 /** The largest count `E.Range` will allocate, and the longest array a native takes (special-unit counts are a byte). */
-export const MAX_RANGE = 1_000_000;
+const MAX_RANGE = 1_000_000;
 
 function asArray(xs: unknown): unknown[] {
   if (!Array.isArray(xs)) throw new InterpError('bad-value', `expected an array, got ${describe(xs)}`);
@@ -455,7 +455,7 @@ export const MAX_NESTING = 32;
 export const MAX_THROW_MESSAGE = 200;
 
 /** Interpreted call depth per `readClass`; real readers nest a few dozen deep at most. */
-export const DEFAULT_MAX_DEPTH = 256;
+const DEFAULT_MAX_DEPTH = 256;
 
 /** Steps charged when a constructor's failure is kept on the object (`$ctorError`) rather than thrown. */
 const CTOR_FAILURE_STEPS = 20;
@@ -482,7 +482,7 @@ const STRING_COMPARE_OPS = new Set(['===', '!==', '<', '<=', '>', '>=']);
  * The longest string `+` may build. Real readers build only short strings (names, messages); without
  * a cap, repeated doubling reaches the host's string limit (a RangeError) or exhausts the heap.
  */
-export const MAX_STRING = 1_000_000;
+const MAX_STRING = 1_000_000;
 
 /**
  * A canonical array index (`"0"`, `"12"`, not `"01"` or `"1.0"`). No index has more than ten digits, so a

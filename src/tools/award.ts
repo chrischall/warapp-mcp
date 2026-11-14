@@ -10,7 +10,7 @@ import { readFirstMover, resolveFirstMover, writeFirstMover, type FirstMover, ty
 import { readPickRecord, writeAward } from '../pick-list.js';
 import { pickSettings } from './picks.js';
 
-export interface AwardContext {
+interface AwardContext {
   reading: AwardReading;
   /** Two players: the other one. */
   opponent?: Player;
@@ -206,7 +206,7 @@ export function awardView<T>(
 }
 
 /** Who moves first, as warapp_plan_turn reports it: `null` when unknown. */
-export interface FirstMoverView {
+interface FirstMoverView {
   who: 'you' | 'opponent';
   /** `explicit`: `first_mover` given; `award`: the award of picks; `remembered`: alternated from the turn in `from`. */
   source: FirstMoverSource | 'remembered';

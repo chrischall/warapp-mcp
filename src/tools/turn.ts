@@ -101,7 +101,7 @@ import type { BoardState } from '../board.js';
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
 /** The only GameFeed state in which turns are played. */
-export const TURN_PHASE_STATE = 'Playing';
+const TURN_PHASE_STATE = 'Playing';
 const MAX_ORDERS = 500;
 const MAX_FOCUS = 50;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -110,7 +110,7 @@ const territoryRef = z.union([z.string(), z.number()]);
 const armiesArg = z.coerce.number().int().min(1);
 
 /** One order of a turn: territories by id or name. */
-export const turnOrderArg = z.discriminatedUnion('kind', [
+const turnOrderArg = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('deploy'),
     territory: territoryRef.describe('Territory to deploy on: id or name.'),
@@ -180,7 +180,6 @@ export const turnOrderArg = z.discriminatedUnion('kind', [
 
 /** A whole turn's orders, as warapp_plan_turn returns them and warapp_submit_turn takes them. */
 export const turnOrdersArg = z.array(turnOrderArg).min(1).max(MAX_ORDERS);
-export type TurnOrderInput = z.infer<typeof turnOrderArg>;
 
 /** The planner's view of the game settings. */
 export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
@@ -622,7 +621,7 @@ export function validateTurn(args: {
 }
 
 /** One attack in the submit preview, sized against the defenders standing there now (#130). */
-export interface AttackSize {
+interface AttackSize {
   from: { id: number; name: string };
   to: { id: number; name: string };
   armies: number;
@@ -649,7 +648,7 @@ export interface AttackSize {
 }
 
 /** A move as {@link attackSizes} reads it, with its options (#165). */
-export interface SizedMove {
+interface SizedMove {
   from: { id: number; name: string };
   to: { id: number; name: string };
   armies: number;
@@ -731,7 +730,7 @@ const PLAYABLE: Readonly<Record<number, CardPlayKind>> = {
 };
 
 /** A card play resolved against the hand. */
-export interface ResolvedCardPlay {
+interface ResolvedCardPlay {
   card: Card;
   kind: CardPlayKind;
   target?: { id: number; name: string };
@@ -780,7 +779,7 @@ function findCard(hand: readonly Card[], ref: string, used: ReadonlySet<string>,
  * Resolve discards (by GUID or type name) against my hand, after the plays: any
  * card type may be discarded, but not one that is also played or discarded twice.
  */
-export function resolveDiscards(
+function resolveDiscards(
   hand: readonly Card[],
   plays: readonly ResolvedCardPlay[],
   inputs: ReadonlyArray<{ card: string }>,
@@ -800,7 +799,7 @@ export function resolveDiscards(
  * held, the same card twice, a card this server cannot play, a Blockade with no
  * target, a target on any other card, and a Reinforcement whose armies are unknown.
  */
-export function resolveCardPlays(
+function resolveCardPlays(
   map: GameMap,
   hand: readonly Card[],
   rules: CardRules,
@@ -899,7 +898,7 @@ export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
 const TREND_TURNS = 2;
 
 /** My earlier boards of a game and the previous turn's board, as {@link boardHistory} reads them. */
-export interface BoardHistory {
+interface BoardHistory {
   /** My views of turns before the one being played, oldest first (the cache, else GameFeed history). */
   boards: TurnBoard[];
   /** Turn − 1's board and where it came from, for the planner's threat trend. */

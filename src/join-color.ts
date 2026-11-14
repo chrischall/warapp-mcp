@@ -16,7 +16,7 @@ import { Reader } from './protocol/codec.js';
 import { fields, isObj, type DecodedRecord } from './protocol/decoded.js';
 import { GAME_COLOR_COUNT } from './protocol/methods.js';
 
-export const GAME_COLOR = 'warlight.shared.GameColor';
+const GAME_COLOR = 'warlight.shared.GameColor';
 const PLAYER = 'warlight.shared.Player';
 const INIT_PARAMETERS = 'warlight.shared.InitParameters';
 
@@ -71,7 +71,7 @@ export function encodeStartupBytes(bytes: Uint8Array): string {
 }
 
 /** The signed-in account's colours (GameColor indices); a colour not set is absent. */
-export interface AccountColors {
+interface AccountColors {
   preferred?: number;
   secondary?: number;
 }
@@ -131,7 +131,7 @@ export function readAccountColors(html: string, bundle: ClassReader): AccountCol
   return undefined;
 }
 
-export type ColorSource = 'requested' | 'preferred' | 'secondary' | 'free';
+type ColorSource = 'requested' | 'preferred' | 'secondary' | 'free';
 
 export interface JoinColor {
   color: number;

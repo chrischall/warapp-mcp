@@ -32,8 +32,7 @@ export const Method = {
   GameUpdated: 241,
 } as const;
 
-export type MethodName = keyof typeof Method;
-export type MethodId = (typeof Method)[MethodName];
+type MethodName = keyof typeof Method;
 
 const NAMES = new Map<number, MethodName>(
   (Object.entries(Method) as Array<[MethodName, number]>).map(([name, id]) => [id, name]),
@@ -55,14 +54,14 @@ export function writeGetTerritoryPicksParams(w: Writer, gameId: number, playerId
 }
 
 /** GetMyGames filters (`MyGamesFilters`); the server throws when they are absent. */
-export interface MyGamesFilters {
+interface MyGamesFilters {
   filterType: number;
   count: number;
   sort: number;
 }
 
 /** The web client's default filters, verified through the bridge. */
-export const DEFAULT_MY_GAMES_FILTERS: Readonly<MyGamesFilters> = { filterType: 4, count: 10, sort: 2 };
+const DEFAULT_MY_GAMES_FILTERS: Readonly<MyGamesFilters> = { filterType: 4, count: 10, sort: 2 };
 
 /**
  * GetMyGames(auth, …) — verified through the bridge: present + MyGamesFilters
@@ -77,7 +76,7 @@ export function writeGetMyGamesParams(w: Writer, filters: MyGamesFilters = DEFAU
 /** How many colours war.app's colour list has (`warlight.shared.GameColor` indices 0..435). */
 export const GAME_COLOR_COUNT = 436;
 
-export interface AcceptOpenSeatParams {
+interface AcceptOpenSeatParams {
   gameId: number;
   /** The team of the open seat being taken, as its record carries it (-1: a no-team seat). */
   team: number;
@@ -107,7 +106,7 @@ export function writeAcceptOpenSeatParams(w: Writer, p: AcceptOpenSeatParams): v
 }
 
 /** A `warlight.shared.AcceptOpenSeatReturn`. */
-export interface AcceptOpenSeatResult {
+interface AcceptOpenSeatResult {
   /** The join ended the account's vacation (the client says "Welcome back"). */
   vacationEnded: boolean;
   /**
@@ -127,7 +126,7 @@ export function readAcceptOpenSeatReturn(body: Reader): AcceptOpenSeatResult | u
   return body.bool() ? { vacationEnded, otherGameId: body.int32() } : { vacationEnded };
 }
 
-export interface SurrenderParams {
+interface SurrenderParams {
   gameId: number;
   /** true: surrender; false: take back a pending surrender. */
   surrender: boolean;
@@ -223,7 +222,7 @@ export function readSubscribeResult(body: Reader): Map<string, number> {
 /** SendChat channel for the whole game (any other value is a team channel). */
 export const CHAT_CHANNEL_PUBLIC = -1;
 
-export interface SendChatParams {
+interface SendChatParams {
   gameId: number;
   text: string;
   /** Team channel; default {@link CHAT_CHANNEL_PUBLIC}. */
@@ -269,7 +268,7 @@ function writeOrderBase(w: Writer, playerId: number): void {
   w.int32(playerId).bool(false).bool(false);
 }
 
-export interface DeployOrder {
+interface DeployOrder {
   playerId: number;
   territoryId: number;
   armies: number;
@@ -297,7 +296,7 @@ export interface OrderCommander {
 /** The special-unit tag of a Commander (`warlight.shared.Commander`, from the bundle; docs/WEB-PROTOCOL.md). */
 const SPECIAL_UNIT_COMMANDER = 1;
 
-export interface AttackTransferOrder {
+interface AttackTransferOrder {
   playerId: number;
   from: number;
   to: number;
@@ -337,10 +336,10 @@ export function writeAttackTransferOrder(w: Writer, o: AttackTransferOrder): voi
  * (docs/PLAN-CARDS-PUSH.md): Reinforcement (5) live, golden-pinned; the others
  * follow the same layout with the fields read from the client.
  */
-export const CardPlayTag = { Reinforcement: 5, OrderPriority: 10, OrderDelay: 11, Blockade: 18 } as const;
+const CardPlayTag = { Reinforcement: 5, OrderPriority: 10, OrderDelay: 11, Blockade: 18 } as const;
 export type CardPlayKind = keyof typeof CardPlayTag;
 
-export interface CardPlayOrder {
+interface CardPlayOrder {
   playerId: number;
   card: CardPlayKind;
   /** The card instance GUID (32 hex digits; dashes allowed). */
@@ -366,7 +365,7 @@ export function writeCardPlayOrder(w: Writer, o: CardPlayOrder): void {
 
 const ORDER_TAG_DISCARD = 9;
 
-export interface DiscardOrder {
+interface DiscardOrder {
   playerId: number;
   /** The card instance GUID (32 hex digits; dashes allowed). */
   cardId: string;
@@ -462,7 +461,7 @@ function compareTurnOrders(a: TurnOrder, b: TurnOrder): number {
  * place in the list is its position; UNVERIFIED live). Several placed above one move keep their
  * given order. Throws on a `beforeMove` on any other card, or one outside 0..moves.
  */
-export function sendOrderSequence(orders: readonly TurnOrder[]): TurnOrder[] {
+function sendOrderSequence(orders: readonly TurnOrder[]): TurnOrder[] {
   const moveCount = orders.filter((o) => o.kind === 'move').length;
   const placed = new Map<TurnOrder, number>();
   for (const o of orders) {

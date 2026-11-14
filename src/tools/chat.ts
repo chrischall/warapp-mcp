@@ -23,7 +23,7 @@ import { resolvePlayer } from './resolve.js';
 import { defineGatedWrite, requireMe, sendAndVerify } from './write-kit.js';
 
 const DEFAULT_LIMIT = 50;
-export const MAX_CHAT_LENGTH = 2000;
+const MAX_CHAT_LENGTH = 2000;
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -37,7 +37,7 @@ const TEXT_KEYS = ['message', 'text', 'chat', 'msg', 'body'] as const;
 const TIME_KEYS = ['time', 'date', 'dateTime', 'created', 'sent', 'when'] as const;
 const LIST_KEYS = ['chat', 'messages', 'Chat'] as const;
 
-export interface ChatMessage {
+interface ChatMessage {
   from: string | null;
   text: string;
   time?: string;
@@ -49,7 +49,7 @@ export interface ChatMessage {
  * `undefined` when nothing recognisable is there, so the caller can pass the
  * raw value through instead.
  */
-export function normalizeChat(raw: unknown, players: readonly Player[]): ChatMessage[] | undefined {
+function normalizeChat(raw: unknown, players: readonly Player[]): ChatMessage[] | undefined {
   let list: unknown = raw;
   if (isRec(list)) list = pick(list, LIST_KEYS);
   if (!Array.isArray(list)) return undefined;

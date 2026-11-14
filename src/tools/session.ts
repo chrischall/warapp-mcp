@@ -29,7 +29,7 @@ import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { defineGatedWrite } from './write-kit.js';
 
 /** Which leg serves calls now, and whether the linked token went stale this run. */
-export interface SessionTransportView {
+interface SessionTransportView {
   /** The leg the next call rides. */
   activeLeg(): 'direct' | 'fetchproxy';
   /** True while the linked token is known to be signed out (cleared by a direct success or a relink). */

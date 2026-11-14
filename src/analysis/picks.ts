@@ -157,7 +157,7 @@ import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 /** Turns the opening simulation runs (income by turn 3). */
 export const PICK_HORIZON = 3;
 /** Share of a still-incomplete bonus's value credited per share of it held at the horizon. */
-export const PROGRESS_WEIGHT = 0.5;
+const PROGRESS_WEIGHT = 0.5;
 /** Share of a completed bonus's credit lost when an opponent certainly starts where it can be reached in time (#166). */
 export const THREAT_LOSS = 0.5;
 /**
@@ -166,27 +166,27 @@ export const THREAT_LOSS = 0.5;
  */
 export const OPPONENT_WEIGHT = 0.5;
 /** Defensibility penalty per unit of exposure — an entry point, once per member it borders — scaled by attack hardness… */
-export const ENTRY_WEIGHT = 0.05;
+const ENTRY_WEIGHT = 0.05;
 /** …and in a 1v1 (twice ENTRY_WEIGHT: the one opponent finds every entry point, #73). */
-export const ENTRY_WEIGHT_1V1 = 0.1;
+const ENTRY_WEIGHT_1V1 = 0.1;
 /** Contest penalty per player beyond two… */
-export const CONTEST_PER_PLAYER = 0.06;
+const CONTEST_PER_PLAYER = 0.06;
 /** …capped here. */
-export const CONTEST_MAX = 0.5;
+const CONTEST_MAX = 0.5;
 /** A group pick lies within this many hops of another pick in its group… */
 export const COMPACT_DISTANCE = 2;
 /** With `spread: true` in a 1v1: or within this many when it anchors a bonus no other group pick anchors. */
 export const SPREAD_DISTANCE = 4;
 /** With `spread: true`: a 1v1 group spreads past SPREAD_DISTANCE only when that scores at least this many times as much. */
-export const SPREAD_RELAX_GAIN = 1.5;
+const SPREAD_RELAX_GAIN = 1.5;
 /** Defaults when the settings are missing (war.app's usual values). */
 export const DEFAULT_PICK_ARMIES = 5;
 export const DEFAULT_NEUTRALS_IN_DISTRIBUTION = 4;
 export const DEFAULT_NON_DISTRIBUTION_ARMIES = 2;
 /** Seeds (best score first) each group search grows from; every one when the pool is no larger (#129). */
-export const MAX_SEEDS = 12;
+const MAX_SEEDS = 12;
 /** The primary's order is searched for the best worst outcome only up to this size (#129). */
-export const MAX_REORDER = 5;
+const MAX_REORDER = 5;
 /** Neutral size used to compare attack hardness against the standard kill rates. */
 const HARDNESS_PROBE = 10;
 /** Territories a reason names before it says "and n more". */
@@ -231,9 +231,9 @@ export interface PlanPicksInput {
   spread?: boolean;
 }
 
-export type PickGroupName = 'primary' | 'fallback';
+type PickGroupName = 'primary' | 'fallback';
 
-export interface PickChoice {
+interface PickChoice {
   territoryId: number;
   group: PickGroupName;
   /**
@@ -245,7 +245,7 @@ export interface PickChoice {
   reasons: string[];
 }
 
-export interface GroupBonus {
+interface GroupBonus {
   bonusId: number;
   name: string;
   value: number;
@@ -259,7 +259,7 @@ export interface GroupBonus {
 }
 
 /** One order of the opening simulation: `armies` attacking out of `from`. */
-export interface PickOrder {
+interface PickOrder {
   from: number;
   armies: number;
 }
@@ -269,7 +269,7 @@ export interface PickOrder {
  * (#166): the first only wears it down, and its armies are spent for the turn; the second takes
  * it. Exact arithmetic, so only at 0% luck under straight rounding, and never with No-Split.
  */
-export interface TwoOrderCapture {
+interface TwoOrderCapture {
   /** Turn of the opening simulation. */
   turn: number;
   /** The neutral taken. */
@@ -294,7 +294,7 @@ export interface PickGroup {
   maxHops: number | null;
 }
 
-export interface AwardReport {
+interface AwardReport {
   /** Distinct sets of picks the award order can grant from this list (see {@link pickOutcomes}). */
   outcomes: number;
   /** The outcome scoring least in the opening simulation, with the other players' starts it implies. */
@@ -308,7 +308,7 @@ export interface AwardReport {
  * COMPACT_DISTANCE hops chosen as the primary's best pair would be, then the picks that most raise
  * coverage (ties: their own score, then id) — scored by the same opening simulation.
  */
-export interface AlternativePicks {
+interface AlternativePicks {
   group: PickGroup;
   coverage: CoverageReport;
   /** Its fallback, built for it by the rule the primary's fallback uses. */
@@ -748,7 +748,7 @@ function simulate(
 }
 
 /** What {@link openingIncome} simulates from. */
-export interface OpeningIncomeInput {
+interface OpeningIncomeInput {
   graph: MapGraph;
   /** The territories the player starts on (unknown ids are ignored). */
   starts: readonly number[];
@@ -1788,7 +1788,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   };
 }
 
-export interface PickLimits {
+interface PickLimits {
   /** Territories each player can be granted: the territory limit, or fewer when the pickables cannot give everyone that many. */
   perPlayer: number;
   /** The shortest list the game accepts (perPlayer, at most 10). */
@@ -1820,7 +1820,7 @@ export function clientPickLimits(input: { territoryLimit: number | undefined; pl
 }
 
 /** Most search states {@link pickOutcomes} explores before giving up (`null`). */
-export const MAX_AWARD_STATES = 50_000;
+const MAX_AWARD_STATES = 50_000;
 
 /**
  * Every set of list positions (0 = first pick) the award order can grant (#129). Picks are
@@ -1900,9 +1900,9 @@ function permutations<T>(xs: readonly T[]): T[][] {
 }
 
 /** Moves within which a pick covers a bonus: it can stand in or next to the bonus (#166). */
-export const COVERAGE_DISTANCE = 2;
+const COVERAGE_DISTANCE = 2;
 
-export interface CoverageInput {
+interface CoverageInput {
   graph: MapGraph;
   pickable: readonly number[];
   settings?: PickSettings;
@@ -1931,7 +1931,7 @@ export interface CoverageReport {
  * one next to it, lies within COVERAGE_DISTANCE hops of the pick, walking only through
  * territories that are not wastelands.
  */
-export function coverageModel(input: CoverageInput): (picks: readonly number[]) => CoverageReport {
+function coverageModel(input: CoverageInput): (picks: readonly number[]) => CoverageReport {
   const g = input.graph;
   const s = input.settings ?? {};
   const pickSet = new Set(input.pickable.filter((t) => g.territoryById.has(t)));

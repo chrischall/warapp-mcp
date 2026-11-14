@@ -31,7 +31,7 @@ import { carriesTeam } from './teams.js';
 
 export const OPEN_GAMES_URL = 'https://war.app/MultiPlayer/OpenGames';
 export { GAME_INFO };
-export const GAME_INFO_SETTINGS = 'warlight.shared.GameInfoSettings';
+const GAME_INFO_SETTINGS = 'warlight.shared.GameInfoSettings';
 
 /**
  * The most records an OpenGames payload may claim. The count is read from the payload, and each
@@ -143,7 +143,7 @@ export interface OpenLobby {
   colorsTaken: number[];
 }
 
-export interface OpenGamesPage {
+interface OpenGamesPage {
   games: OpenGame[];
   /** Per game id: its seated players and the colours taken. */
   lobbies: Map<number, OpenLobby>;
@@ -179,7 +179,7 @@ const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
 const isIntList = (v: unknown): v is number[] => Array.isArray(v) && v.every(isInt);
 
 /** A TimeSpan in ms as war.app shows it: `3d`, `1d12h`, `6h`, `2h30m`, `5m`, `45s`. */
-export function formatDuration(ms: number): string {
+function formatDuration(ms: number): string {
   const days = Math.floor(ms / 86_400_000);
   const hours = Math.floor(ms / 3_600_000) % 24;
   const mins = Math.floor(ms / 60_000) % 60;
@@ -462,7 +462,7 @@ export function parseOpenGamesPage(html: string, bundle: ClassReader): OpenGames
   return out;
 }
 
-export interface OpenGameFilters {
+interface OpenGameFilters {
   /** Default `multi-day`. */
   pace?: Pace | 'both';
   /** At most this many seats (players + open seats, or a mega game's cap). */
@@ -539,12 +539,12 @@ export function feedScreen(s: GameSettings): { screen?: JoinScreen; gaps: string
 }
 
 /** The owner's joining policy (#134): at most this many seats (1v1 preferred). */
-export const POLICY_MAX_SEATS = 4;
+const POLICY_MAX_SEATS = 4;
 /** …and a boot time of at least a day. */
-export const POLICY_MIN_BOOT_MINUTES = 24 * 60;
+const POLICY_MIN_BOOT_MINUTES = 24 * 60;
 
 /** Whether a lobby keeps the joining policy. Advisory: nothing is refused for it. */
-export interface JoinPolicy {
+interface JoinPolicy {
   /** true: keeps it; false: breaks it; null: nothing broke, but part of it could not be checked. */
   passes: boolean | null;
   /** Each rule the lobby breaks, in policy order. */

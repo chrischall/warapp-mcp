@@ -81,7 +81,7 @@ import { enemyDeployEstimates, observeSigned, ownerShown, visibleState, type Pla
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 
 /** #164: a stack is large when its armies are at least this many turns of its visible income. */
-export const LOST_STACK_INCOMES = 2;
+const LOST_STACK_INCOMES = 2;
 /** #164: lost stacks kept per opponent. */
 export const MAX_LOST_STACKS = 5;
 /**
@@ -91,7 +91,7 @@ export const MAX_LOST_STACKS = 5;
 export const LOST_STACK_TURNS = 6;
 
 /** #164: a large stack of an opponent last seen on `territoryId` on `turn`, hidden since. */
-export interface LostStack {
+interface LostStack {
   territoryId: number;
   turn: number;
   armies: number;
@@ -115,15 +115,15 @@ export interface MyOrders {
 }
 
 /** Observed turns (the latest) feeding the income estimate (#99: {@link trackedIncome}). */
-export const INCOME_TURNS = 3;
+const INCOME_TURNS = 3;
 /** Most bonuses in one inferred combination. */
-export const MAX_COMBINATION = 3;
+const MAX_COMBINATION = 3;
 /** Inferred combinations listed; when more fit, none is (#123: too many to name any). */
 export const MAX_LISTED_COMBINATIONS = 8;
 /** #123: an inferred bonus has a member within this many hops of a territory it visibly holds. */
 export const INFER_REACH = 4;
 /** #123: the least a territory it is not seen holding cost it to take (a 2-army neutral at 70%). */
-export const NEUTRAL_CAPTURE_LOSS = 1;
+const NEUTRAL_CAPTURE_LOSS = 1;
 
 /** What one turn (board `from` → board `to`) showed of one opponent. */
 export interface ObservedTurn {
@@ -199,14 +199,14 @@ export interface ObservedTurn {
 }
 
 /** One combination of bonuses that would explain an income gap. */
-export interface BonusCombination {
+interface BonusCombination {
   bonusIds: number[];
   total: number;
   /** Hops from a territory it visibly holds to the nearest member, summed over its bonuses (#123). */
   hops: number;
 }
 
-export interface InferredBonuses {
+interface InferredBonuses {
   /** income − visibleIncome. */
   gap: number;
   /** Some combination's values sum to exactly the gap. */
@@ -251,7 +251,7 @@ export interface TrackGame {
 }
 
 /** What an opponent with no territory in view must have received since the game started (#94). */
-export interface EarnedBound {
+interface EarnedBound {
   /** (start ?? 0) + baseIncome × turns: a lower bound on armies received, not on armies held. */
   total: number;
   /** Its starting armies; `null` when the settings do not give them (left out of `total`). */
@@ -380,7 +380,7 @@ export function trackGame(
 }
 
 /** GameFeed's DistributionMode for full distribution (unverified, docs/WARAPP-API.md). */
-export const FULL_DISTRIBUTION = -1;
+const FULL_DISTRIBUTION = -1;
 
 /**
  * Every player started with the same territories and armies (#119: the planner's fog prior
@@ -413,7 +413,7 @@ const byNum = (a: number, b: number) => a - b;
 export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried';
 
 /** A tracked income and how it was reached ({@link trackedIncome}). */
-export interface TrackedIncome {
+interface TrackedIncome {
   income: number;
   method: IncomeMethod;
   observedRange: { min: number; max: number };

@@ -38,7 +38,7 @@ export function subscribeFrameHex(topics: readonly string[], msgNum: number, ext
   );
 }
 
-export type PushMessage =
+type PushMessage =
   | { kind: 'game-updated'; gameId: number }
   | { kind: 'subscribe-reply'; msgNum: number; rejected: Map<string, number>; error?: number }
   | { kind: 'other'; method: number };
@@ -108,9 +108,9 @@ export interface SocketIoClientOptions {
 
 export const DEFAULT_INITIAL_BACKOFF_MS = 1_000;
 export const DEFAULT_MAX_BACKOFF_MS = 60_000;
-export const DEFAULT_STABLE_MS = 30_000;
-export const DEFAULT_MIN_POLL_MS = 1_000;
-export const DEFAULT_MAX_POLL_PACE_MS = 5_000;
+const DEFAULT_STABLE_MS = 30_000;
+const DEFAULT_MIN_POLL_MS = 1_000;
+const DEFAULT_MAX_POLL_PACE_MS = 5_000;
 
 const realSleep = (ms: number) =>
   new Promise<void>((resolve) => {

@@ -42,7 +42,7 @@ export interface AwardReading {
 }
 
 /** Search states {@link readAward} explores before it falls back to the rule that needs none. */
-export const MAX_AWARD_READ_STATES = 200_000;
+const MAX_AWARD_READ_STATES = 200_000;
 
 const byNum = (a: number, b: number) => a - b;
 

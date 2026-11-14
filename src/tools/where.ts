@@ -41,7 +41,7 @@ const LIST_MAX = 10;
 /** Approaches listed per opponent on the compact view (the full view lists the model's maximum). */
 const COMPACT_APPROACHES = 3;
 /** The least likelihood the full view lists under `presence`. */
-export const PRESENCE_LISTED = 0.15;
+const PRESENCE_LISTED = 0.15;
 
 /**
  * Keep the territories the live board shows as pickable, for the signed-in account when it is a

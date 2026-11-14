@@ -41,16 +41,13 @@ import { withToolConfig } from './hints.js';
 import { failureText, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
 
-/** What a write did, in the one vocabulary every write result carries as `outcome`. */
-export type WriteOutcome = 'confirmed' | 'accepted' | 'unconfirmed' | 'unknown' | 'not_applied';
-
 /** Refuse a write (or a read) before anything is sent. */
 export function refuse(message: string, hint: string): never {
   throw new McpToolError(message, { kind: 'unknown', hint });
 }
 
 /** The hint when the signed-in account cannot be told: linking a session is suggested only locally. */
-export function signedInHint(hosted: boolean | undefined): string {
+function signedInHint(hosted: boolean | undefined): string {
   return hosted
     ? 'Make sure a war.app tab signed in to your account is open and paired (reload or focus it if it is frozen), then retry.'
     : 'Make sure a war.app tab signed in to your account is open and paired (reload or focus it if it is frozen), or link ' +
@@ -96,7 +93,7 @@ export function requirePlaying(game: Game, seat: Player): void {
 }
 
 /** Refuse an explicit `player` that is not the signed-in account `token`. */
-export function requireNamedIsMe(game: Game, token: number, input: string | number | undefined): void {
+function requireNamedIsMe(game: Game, token: number, input: string | number | undefined): void {
   if (input === undefined || String(input).trim() === '') return;
   const named = resolvePlayer(game.players, input);
   if (named.id !== token) {

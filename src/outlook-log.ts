@@ -12,11 +12,11 @@ type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Turns kept per game (a long game is still a small file). */
-export const OUTLOOK_LOG_TURNS = 500;
+const OUTLOOK_LOG_TURNS = 500;
 
 export const outlookLogPath = (dir: string, gameId: number) => join(dir, 'outlook', `${gameId}.json`);
 
-export interface OutlookLogTurn {
+interface OutlookLogTurn {
   /** My strength. */
   mine: number;
   /** The strongest opponent's strength range (`high` `null`: unbounded). */
@@ -26,7 +26,7 @@ export interface OutlookLogTurn {
   state: OutlookState;
 }
 
-export interface OutlookLog {
+interface OutlookLog {
   gameId: number;
   playerId: number;
   turns: Record<string, OutlookLogTurn>;

@@ -253,7 +253,7 @@ export interface CardGame {
  * are worth nothing without fog; Gift and Diplomacy are worth little in a 1v1 (there is no third
  * player to buy off or to set against the opponent), below the information cards.
  */
-export function keepValue(c: Card, game: CardGame = {}): number {
+function keepValue(c: Card, game: CardGame = {}): number {
   if (game.fog === 'NoFog' && INFORMATION_CARDS.has(c.type)) return -2;
   if (game.players === 2 && !game.team && ONE_V_ONE_CHEAP.has(c.type)) return 0;
   return KEEP_VALUE[c.type] ?? 5;
@@ -370,7 +370,7 @@ export function advisedOrderPriority(hand: readonly Card[], choice: CardChoice):
 }
 
 /** Where to play an Order Delay this turn (#163). */
-export interface OrderDelayAdvice {
+interface OrderDelayAdvice {
   card: Card;
   /** The move (1-based, in the plan's order) the card goes above. */
   before: number;

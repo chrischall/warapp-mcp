@@ -43,7 +43,7 @@ import { captureCost, ownerShown, visibleState, type PlannerSettings } from './p
 import { DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
 
 /** Captures along one path that {@link reach} looks ahead, and turns {@link growth} is run for. */
-export const REACH_HORIZON = 12;
+const REACH_HORIZON = 12;
 /** Start sets enumerated before the candidates are weighed one by one. */
 export const MAX_START_SETS = 5000;
 /** How well a start explains a sighting it could only reach at the earliest (1: the growth model holds it; 0: not in time). */
@@ -61,24 +61,24 @@ export const GROWTH_WEIGHT = 0.6;
 /** Presence on the hidden members of a bonus that is in every combination explaining a tracked income. */
 export const INCOME_WEIGHT = 0.7;
 /** The least likelihood at which a bonus is listed as probably held, or a missing member of mine as contested. */
-export const LIKELY_BONUS = 0.3;
+const LIKELY_BONUS = 0.3;
 /** The least presence at which a hidden territory counts as a place it could attack from. */
-export const SOURCE_PRESENCE = 0.5;
+const SOURCE_PRESENCE = 0.5;
 /** Presence that could go either way: worth a look. */
-export const SCOUT_RANGE = { min: 0.25, max: 0.75 } as const;
+const SCOUT_RANGE = { min: 0.25, max: 0.75 } as const;
 /** How far ahead `prepare` looks: this turn and the next. */
 export const PREPARE_TURNS = 2;
 export const MAX_APPROACHES = 10;
 export const MAX_PREPARE = 10;
 /** Sentences one `doing` rule gives per opponent. */
-export const MAX_DOING_PER_RULE = 3;
+const MAX_DOING_PER_RULE = 3;
 /** Territories one `can-attack` sentence names before it gives the rest as a count. */
-export const MAX_TARGETS_NAMED = 5;
+const MAX_TARGETS_NAMED = 5;
 /**
  * A bonus I hold part of is `contested` only when finishing it (the capture cost of its missing
  * territories, as shown now) is at most this many turns of its value.
  */
-export const CONTEST_PAYBACK_TURNS = 10;
+const CONTEST_PAYBACK_TURNS = 10;
 
 /** The settings the model reads: the planner's, and how the game began. */
 export interface WhereSettings extends PlannerSettings {
@@ -93,7 +93,7 @@ export interface WhereSettings extends PlannerSettings {
 }
 
 /** Where the start candidates came from. */
-export type CandidateSource = 'pickable' | 'statistics';
+type CandidateSource = 'pickable' | 'statistics';
 
 /** The territories a player could start on. */
 export interface StartCandidates {
@@ -129,7 +129,7 @@ export interface WhereInput {
 }
 
 /** What a guess of presence rests on, in this order. */
-export type PresenceSource = 'last-seen' | 'start' | 'corridor' | 'growth' | 'income';
+type PresenceSource = 'last-seen' | 'start' | 'corridor' | 'growth' | 'income';
 const PRESENCE_ORDER: readonly PresenceSource[] = ['last-seen', 'start', 'corridor', 'growth', 'income'];
 /** Sources that all come from one start likelihood: never added up as if independent. */
 const FROM_STARTS: ReadonlySet<PresenceSource> = new Set(['start', 'corridor', 'growth']);
@@ -150,24 +150,24 @@ export function combinePresence(parts: ReadonlyMap<PresenceSource, number>): num
   return Math.min(PRESENCE_CAP, either(p, fromStarts));
 }
 
-export interface SeenTerritory {
+interface SeenTerritory {
   territoryId: number;
   /** Armies shown; `null` when only the owner is. */
   armies: number | null;
 }
 
-export interface LastSeen extends SeenTerritory {
+interface LastSeen extends SeenTerritory {
   /** The newest turn whose board showed it. */
   turn: number;
 }
 
-export interface StartGuess {
+interface StartGuess {
   territoryId: number;
   /** The model's estimate, 0–1; not a measured probability. */
   likelihood: number;
 }
 
-export interface StartsReading {
+interface StartsReading {
   /** Where the candidates came from; `none`: no candidates are known, so no start is guessed. */
   source: 'none' | CandidateSource;
   /** Starts known for certain: proven by the award of picks, or in view on the turn-1 board. */
@@ -185,14 +185,14 @@ export interface StartsReading {
   prior: { source: 'uniform' | 'statistics'; sample: number | null; weak: boolean };
 }
 
-export interface Presence {
+interface Presence {
   territoryId: number;
   likelihood: number;
   /** The sources that contributed. */
   basis: PresenceSource[];
 }
 
-export interface BonusGuess {
+interface BonusGuess {
   bonusId: number;
   /** The least presence among its members (one in view as its own counts 1). */
   likelihood: number;
@@ -221,9 +221,9 @@ export interface Approach {
   valued: boolean;
 }
 
-export type DoingRule = 'unseen' | 'out-of-sight' | 'can-attack' | 'stack-grew' | 'near-bonus' | 'hidden-armies';
+type DoingRule = 'unseen' | 'out-of-sight' | 'can-attack' | 'stack-grew' | 'near-bonus' | 'hidden-armies';
 
-export interface Doing {
+interface Doing {
   rule: DoingRule;
   /** One sentence, territories, bonuses and players by id. */
   text: string;
@@ -282,7 +282,7 @@ export interface Prepare {
   text: string;
 }
 
-export interface Whereabouts {
+interface Whereabouts {
   /** The turn of the newest board; `null` with no board. */
   turn: number | null;
   /** By player id. */
@@ -305,7 +305,7 @@ const either = (a: number, b: number) => (a <= 0 ? b : b <= 0 ? a : 1 - (1 - a) 
 // ---- reach ----
 
 /** The board as a mover crosses it. */
-export interface ReachField {
+interface ReachField {
   graph: MapGraph;
   /** Armies an attack needs to take a territory (0: the mover's own); `null`: it cannot be taken. */
   cost: (territoryId: number) => number | null;
@@ -313,14 +313,14 @@ export interface ReachField {
   targets?: ReadonlySet<number>;
 }
 
-export interface ReachBudget {
+interface ReachBudget {
   /** Armies at hand at the start. */
   armies: number;
   /** Armies added each turn, the first included. */
   income: number;
 }
 
-export interface Reached {
+interface Reached {
   /** The earliest number of turns after which it can hold the territory (0: a source). */
   turns: number;
   /** Captures on the way, the territory's own included. */
@@ -415,7 +415,7 @@ export function reach(field: ReachField, sources: Iterable<number>, budget: Reac
 
 // ---- growth ----
 
-export interface GrowthEconomy {
+interface GrowthEconomy {
   /** Armies on the start. */
   armies: number;
   baseIncome: number;
@@ -556,7 +556,7 @@ interface World {
 }
 
 /** The inputs a {@link ReachField} is built from. */
-export type FieldInput = Pick<WhereInput, 'graph' | 'boards' | 'me' | 'settings' | 'candidates'>;
+type FieldInput = Pick<WhereInput, 'graph' | 'boards' | 'me' | 'settings' | 'candidates'>;
 
 function worldOf(input: FieldInput): World {
   const g = input.graph;

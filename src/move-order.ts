@@ -22,14 +22,14 @@ export type FirstMover = 'me' | 'opponent';
 /** Where a known first mover came from: `first_mover` given for that turn, or the award of picks. */
 export type FirstMoverSource = 'explicit' | 'award';
 
-export interface FirstMoverSeen {
+interface FirstMoverSeen {
   /** The turn it is known for (the turn being played, as every tool reports `turn`). */
   turn: number;
   firstMover: FirstMover;
   source: FirstMoverSource;
 }
 
-export interface ResolvedFirstMover {
+interface ResolvedFirstMover {
   firstMover: FirstMover;
   /** `remembered`: alternated from the turn kept in `from`. */
   source: FirstMoverSource | 'remembered';

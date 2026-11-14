@@ -129,7 +129,7 @@ export interface GameProfile {
   notes: string[];
 }
 
-export interface FfaRanking {
+interface FfaRanking {
   leader: number;
   myRank: number;
   of: number;

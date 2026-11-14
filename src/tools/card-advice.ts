@@ -25,7 +25,7 @@ export function cardGame(game: Pick<Game, 'players' | 'settings'>): CardGame {
 }
 
 /** My teammates (never me), by GameFeed player. Empty outside a team game. */
-export const teammatesOf = (game: Pick<Game, 'players'>, me: Player): Player[] =>
+const teammatesOf = (game: Pick<Game, 'players'>, me: Player): Player[] =>
   carriesTeam(me.team) ? game.players.filter((p) => p.id !== me.id && p.team === me.team) : [];
 
 /**
@@ -68,7 +68,7 @@ export function opponentCanHold(settings: GameSettings | undefined, card: string
   return first !== null && (turn === null || turn >= first);
 }
 
-export interface CardAdviceView {
+interface CardAdviceView {
   /**
    * `before` is 1-based among the plan's moves (its `orders` moves, in order); `order` is the card
    * order to pass to warapp_submit_turn as is (#186: that placement is UNVERIFIED live).

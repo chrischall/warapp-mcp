@@ -99,7 +99,7 @@ export function readSessionSync(env: EnvSource = process.env): Session | null {
 }
 
 /** What {@link writeSession} does with the session file's directory. */
-export type SessionDirVerdict = 'ok' | 'tighten' | 'refuse';
+type SessionDirVerdict = 'ok' | 'tighten' | 'refuse';
 
 /**
  * Judge the session directory from its `stat` and this process's uid
@@ -253,7 +253,7 @@ function errorStrings(err: unknown, depth = 0): string[] {
  * Whether any of `tokens` (in any {@link scrubToken} form) appears anywhere in
  * `err` — its message, hint, stack, or a short `cause` chain.
  */
-export function errorCarriesToken(err: unknown, tokens: ReadonlyArray<string | null | undefined>): boolean {
+function errorCarriesToken(err: unknown, tokens: ReadonlyArray<string | null | undefined>): boolean {
   const strings = errorStrings(err);
   return tokens.some((t) => !!t && strings.some((s) => scrubToken(s, t) !== s));
 }

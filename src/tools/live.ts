@@ -99,7 +99,7 @@ export function maxPicks(game: Game, pickable?: number): number | null {
 }
 
 /** Which territories warapp_get_live_board lists, and which page of them (#130). */
-export interface BoardSelection {
+interface BoardSelection {
   /** Only these territory ids. */
   ids?: ReadonlySet<number>;
   /** Only territories with this owner (an in-game id, or OWNER_NEUTRAL / OWNER_PICKABLE). */

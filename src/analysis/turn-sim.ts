@@ -57,7 +57,7 @@ export interface SimSettings {
   multiAttack?: boolean;
 }
 
-export type SimOwner = number | 'neutral' | 'unknown';
+type SimOwner = number | 'neutral' | 'unknown';
 
 export interface SimTerritory {
   owner: SimOwner;
@@ -107,7 +107,7 @@ export interface SimInput {
   orderPriority?: readonly number[];
 }
 
-export type SimSkipReason = 'source-lost' | 'no-armies' | 'not-adjacent' | 'attack-only' | 'transfer-only';
+type SimSkipReason = 'source-lost' | 'no-armies' | 'not-adjacent' | 'attack-only' | 'transfer-only';
 
 export interface SimEvent {
   player: number;

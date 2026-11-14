@@ -37,7 +37,7 @@ export function territoryIncome(territories: number, base: number, per: number):
 }
 
 /** The income settings {@link boardIncome} needs: base (MinimumArmyBonus) and BonusArmyPer (0 = off). */
-export interface IncomeRules {
+interface IncomeRules {
   base: number;
   per: number;
 }
@@ -138,7 +138,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-export interface MissingTerritory {
+interface MissingTerritory {
   territoryId: number;
   name: string;
   owner: TerritoryOwner;
@@ -148,7 +148,7 @@ export interface MissingTerritory {
   armiesToTake: number | null;
 }
 
-export interface BonusProgress {
+interface BonusProgress {
   bonusId: number;
   name: string;
   value: number;
@@ -171,7 +171,7 @@ export interface Threat {
   adjacentTo: number[];
 }
 
-export interface PlayerAnalysis {
+interface PlayerAnalysis {
   playerId: number;
   boardVerified: boolean;
   territoryCount: number;
@@ -185,7 +185,7 @@ export interface PlayerAnalysis {
   assumptions: string[];
 }
 
-export interface PlayerAnalysisOptions {
+interface PlayerAnalysisOptions {
   /** Max bonuses in `closestBonuses` (default 10). */
   limit?: number;
 }

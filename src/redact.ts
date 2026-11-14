@@ -46,7 +46,7 @@ function charPattern(ch: string): string {
 }
 
 /** The pattern matching every spelling of `value` (see the file header). */
-export function secretPattern(value: string, anyCase = false): RegExp {
+function secretPattern(value: string, anyCase = false): RegExp {
   return new RegExp(Array.from(value, charPattern).join(''), anyCase ? 'gi' : 'g');
 }
 

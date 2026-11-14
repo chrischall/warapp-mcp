@@ -21,7 +21,7 @@ export function feedErrorOf(body: unknown): string | undefined {
 }
 
 /** A GameFeed body that does not have the shape a game or map must have. */
-export class WarappFormatError extends McpToolError {
+class WarappFormatError extends McpToolError {
   constructor(what: string, detail: string) {
     super(`war.app returned a ${what} in an unexpected shape (${detail}).`, { kind: 'unknown' });
     this.name = 'WarappFormatError';
@@ -450,7 +450,7 @@ export function normalizeGame(raw: unknown): Game {
  * when the feed does not send it. Key names are verified on a lobby (docs/WARAPP-API.md); what each
  * does is from the war.app wiki and the client, UNVERIFIED live.
  */
-export interface EndRules {
+interface EndRules {
   /**
    * `InstantSurrender`: a surrender takes effect at once, without the others accepting it. The feed
    * sent the string `Instant` on a lobby; the client reads the setting as a boolean. A string it
@@ -531,7 +531,7 @@ export function parseFeedTime(s: string | undefined): number | undefined {
 }
 
 /** One player who may be booted soon (#178). */
-export interface Leaver {
+interface Leaver {
   playerId: number;
   /** Minutes since the feed's `lastTurnTime` (read as the turn's start: UNVERIFIED). */
   waitingMinutes: number;
@@ -543,7 +543,7 @@ export interface Leaver {
   becomes: 'AI' | 'neutral';
 }
 
-export const LEAVERS_UNVERIFIED =
+const LEAVERS_UNVERIFIED =
   "Read from the game's lastTurnTime, taken as the moment this turn began (UNVERIFIED: it may mean something else), " +
   'against the AutoBoot and DirectBoot minutes. Banked boot time and vacations can delay a boot, and are not counted.';
 

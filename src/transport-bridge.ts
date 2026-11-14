@@ -23,7 +23,7 @@ export const DEFAULT_WS_PORT = 37149;
 /** The extension's trust boundary: requests may only target war.app. */
 export const BRIDGE_DOMAINS: readonly string[] = ['war.app'];
 
-export interface BridgeTransportOptions {
+interface BridgeTransportOptions {
   env?: NodeJS.ProcessEnv;
   /** Test seam: build the underlying FetchproxyServer (see createFetchproxyTransport). */
   createServer?: CreateFetchproxyTransportOptions['createServer'];

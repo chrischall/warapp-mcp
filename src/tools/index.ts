@@ -34,7 +34,7 @@ import { createDirectFirstBridge, type DirectFetch } from '../direct/transport.j
 import { isHosted } from '../hosted.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
 
-export type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCache'> & {
+type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCache'> & {
   /**
    * The process's browser bridge to war.app (the fetchproxy leg). index.ts
    * builds one and passes it to every connection; absent, a fresh one is built

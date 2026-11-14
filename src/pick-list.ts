@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import type { AwardReading } from './analysis/award.js';
 import { OWNER_NEUTRAL, type LiveTerritory } from './live.js';
 
-export interface PickRecord {
+interface PickRecord {
   gameId: number;
   /** The player whose list this is (GameFeed id). */
   playerId: number;

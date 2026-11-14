@@ -12,7 +12,7 @@ import { cardRules } from '../cards.js';
 import type { GameSettings } from '../normalize.js';
 
 export const NOTE_TOPICS = ['format', 'settings', 'cards', 'reading', 'opening', 'timing', 'fighting', 'map'] as const;
-export type NoteTopic = (typeof NOTE_TOPICS)[number];
+type NoteTopic = (typeof NOTE_TOPICS)[number];
 
 /** The pages the notes were researched from (read 2026-11; paraphrased, never copied): the war.app wiki and forum, and community guides they link to. */
 export const STRATEGY_SOURCES = {
@@ -2129,7 +2129,7 @@ export function notesFor(profile: GameProfile, topic?: NoteTopic, context: NoteC
   return generalNotes(topic).filter((n) => n.when(profile, context));
 }
 
-export interface FeedProfileInput {
+interface FeedProfileInput {
   graph: MapGraph;
   players: readonly ProfilePlayer[];
   settings?: ProfileSettings;

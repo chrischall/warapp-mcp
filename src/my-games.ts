@@ -19,7 +19,7 @@ export const GAME_INFO = 'warlight.shared.GameInfo';
 export const GAME_INFO_PLAYER = 'warlight.shared.GameInfoPlayer';
 
 /** GameState. */
-export const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
+const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
   2: 'WaitingForPlayers',
   3: 'Playing',
   4: 'Finished',
@@ -163,7 +163,7 @@ export function activeGameIds(games: readonly RawMyGame[], myInGameId: number): 
 }
 
 /** The longest line `view: 'brief'` answers (the context-groups contract). */
-export const BRIEF_MAX = 120;
+const BRIEF_MAX = 120;
 
 /**
  * One brief line, `name — <turn N | state> — waiting on you | waiting on others`,

@@ -19,14 +19,14 @@ import type { Reader } from './protocol/codec.js';
 import { fields, isObj, type DecodedRecord } from './protocol/decoded.js';
 import type { ReadBudget } from './protocol/interp.js';
 
-export const LATEST_GAME_INFO = 'warlight.shared.LatestGameInfo';
-export const GAME_STANDING = 'warlight.shared.GameStanding';
-export const TERRITORY_STANDING = 'warlight.shared.TerritoryStanding';
-export const ARMIES = 'warlight.shared.Armies';
-export const COMMANDER = 'warlight.shared.Commander';
+const LATEST_GAME_INFO = 'warlight.shared.LatestGameInfo';
+const GAME_STANDING = 'warlight.shared.GameStanding';
+const TERRITORY_STANDING = 'warlight.shared.TerritoryStanding';
+const ARMIES = 'warlight.shared.Armies';
+const COMMANDER = 'warlight.shared.Commander';
 
 /** What a special unit is: the registered unit classes, by kind. */
-export type SpecialUnitKind = BoardSpecialUnit['kind'];
+type SpecialUnitKind = BoardSpecialUnit['kind'];
 
 const UNIT_KINDS: Readonly<Record<string, SpecialUnitKind>> = {
   [COMMANDER]: 'commander',
@@ -38,7 +38,7 @@ const UNIT_KINDS: Readonly<Record<string, SpecialUnitKind>> = {
 };
 
 /** A special unit on a territory, as the standing has it. */
-export interface LiveSpecialUnit {
+interface LiveSpecialUnit {
   kind: SpecialUnitKind;
   /** The unit's GUID (32 hex digits). */
   id: string;
@@ -59,10 +59,10 @@ export const OWNER_PICKABLE = -2;
  * fog level 4, owner -1 and `Armies(0, fogged)`.
  */
 export const FOG_LEVEL_NAMES: Readonly<Record<number, string>> = { 1: 'You', 2: 'Visible', 3: 'OwnerOnly', 4: 'Fogged' };
-export const FOG_LEVEL_YOU = 1;
+const FOG_LEVEL_YOU = 1;
 export const FOG_LEVEL_VISIBLE = 2;
 export const FOG_LEVEL_OWNER_ONLY = 3;
-export const FOG_LEVEL_FOGGED = 4;
+const FOG_LEVEL_FOGGED = 4;
 const KNOWN_FOG_LEVELS: ReadonlySet<number> = new Set([FOG_LEVEL_YOU, FOG_LEVEL_VISIBLE, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_FOGGED]);
 
 /** One territory as the viewer's standing has it. */

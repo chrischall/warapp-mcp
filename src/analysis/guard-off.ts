@@ -8,7 +8,7 @@ import type { BoardState } from '../board.js';
 import type { MapGraph } from './graph.js';
 import { neighborsOf } from './graph.js';
 
-export interface GuardOffBreak {
+interface GuardOffBreak {
   /** The enemy territory standing at 0. */
   territoryId: number;
   /** My territory beside it (lowest id). */
@@ -19,7 +19,7 @@ export interface GuardOffBreak {
   value: number;
 }
 
-export interface GuardOffExposure {
+interface GuardOffExposure {
   /** My territories the orders leave at 0 armies beside an enemy or the fog, ascending. */
   emptied: number[];
   /** Enemy territories at 0 beside me whose capture breaks a bonus, that the orders do not attack. */

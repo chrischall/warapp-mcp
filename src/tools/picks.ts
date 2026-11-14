@@ -45,7 +45,7 @@ export function pickSettings(s: GameSettings | undefined): PickSettings {
 }
 
 /** Throw unless territories are being picked. */
-export function requirePickPhase(game: Game): void {
+function requirePickPhase(game: Game): void {
   if (game.state === PICK_PHASE_STATE) return;
   throw new McpToolError(`Game ${game.id} is not in the picking stage (game state: ${game.state}).`, {
     hint:

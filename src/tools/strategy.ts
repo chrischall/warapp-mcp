@@ -29,8 +29,8 @@ import { currentTurn } from './turn.js';
 
 const VIEWS = ['compact', 'full'] as const;
 
-export const STRATEGY_URI = 'warapp://strategy';
-export const STRATEGY_MAP_URI = 'warapp://strategy/map/{mapId}';
+const STRATEGY_URI = 'warapp://strategy';
+const STRATEGY_MAP_URI = 'warapp://strategy/map/{mapId}';
 
 const mapIdArg = z.coerce
   .number()

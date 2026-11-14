@@ -31,7 +31,7 @@ export interface CardBoard {
 }
 
 /** Where my Bomb changes the turn, or that it does not. */
-export interface BombAdvice {
+interface BombAdvice {
   /** The territory to bomb; absent: hold the card. */
   target?: number;
   /** What halving it changes. */
@@ -40,7 +40,7 @@ export interface BombAdvice {
 }
 
 /** A border of mine that holds only while it is not bombed. */
-export interface BombExposure {
+interface BombExposure {
   territory: number;
   /** My armies there after the plan, and what a bomb would leave (moves out cut first). */
   armies: number;
@@ -52,7 +52,7 @@ export interface BombExposure {
 }
 
 /** A planned attack that an Emergency Blockade on its target would stop. */
-export interface WallThreat {
+interface WallThreat {
   target: number;
   player: number;
   /** My armies sent at it. */
@@ -62,7 +62,7 @@ export interface WallThreat {
 }
 
 /** A conceded border where my Emergency Blockade kills more than it gives up. */
-export interface WallOffer {
+interface WallOffer {
   territory: number;
   /** My armies there (this turn's deploy included): what the card gives up. */
   givesUp: number;
@@ -211,7 +211,7 @@ export function bombExposure(cb: CardBoard): BombExposure[] {
 }
 
 /** The wall an Emergency Blockade makes of `armies` at `multiplier` (rounded: unverified). */
-export const wallOf = (armies: number, multiplier: number): number => Math.round(Math.max(0, armies) * multiplier);
+const wallOf = (armies: number, multiplier: number): number => Math.round(Math.max(0, armies) * multiplier);
 
 /**
  * The planned attacks on an opponent's territory that its Emergency Blockade would stop: the

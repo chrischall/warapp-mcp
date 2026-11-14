@@ -17,7 +17,7 @@ import { cardTypeByName, cardTypeName } from '../cards.js';
 import type { GameSettings } from '../normalize.js';
 import { asInt } from '../scalars.js';
 
-export interface CardClockEntry {
+interface CardClockEntry {
   card: string;
   /** Pieces that make one card, and how many every player starts with. */
   pieces: number;
@@ -38,7 +38,7 @@ export interface CardClockEntry {
   pieceValue?: number;
 }
 
-export interface CardClock {
+interface CardClock {
   /** Pieces a capturing player receives each turn (at least the sum of the minimums). */
   piecesPerTurn: number;
   /** Of those, the pieces drawn at random by weight. */
@@ -65,7 +65,7 @@ const perTurn = (need: number, rate: number): number | null => (need <= 0 ? 0 : 
 const firstThree = (pieces: number, initial: number, rate: number): number[] | null =>
   rate > 0 ? [1, 2, 3].map((k) => Math.max(0, Math.ceil((k * pieces - initial) / rate))) : null;
 
-export const CARD_CLOCK_PER_PLAYER =
+const CARD_CLOCK_PER_PLAYER =
   'Per player. A team shares one hand, and each teammate who captures is reported to add pieces (not on the wiki), so a team can hold a card sooner.';
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -124,7 +124,7 @@ export function cardClock(settings: GameSettings | undefined): CardClock | undef
 }
 
 /** What one turn with a capture earns in card pieces, in armies (#127). */
-export interface CapturePieceValue {
+interface CapturePieceValue {
   /** Armies a capturing turn's pieces are worth; `null` when the game does not say (see `why`). */
   armies: number | null;
   /** Reinforcement pieces expected from one capturing turn: its minimum plus its weighted share of the random ones. */

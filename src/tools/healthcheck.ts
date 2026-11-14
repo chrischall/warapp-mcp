@@ -37,7 +37,7 @@ const PROBE_PATH = `/API/GameFeed?GameID=${PROBE_GAME_ID}&GetMap=false`;
 /** The page the bridge arm round-trips through the user's war.app tab. */
 export const BRIDGE_PROBE_PATH = '/';
 
-export type HealthcheckDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep'> & {
+type HealthcheckDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep'> & {
   /** Clock for the linked session's age. Defaults to `Date.now`. */
   now?: () => number;
 };
