@@ -36,6 +36,9 @@ import {
   overrideUncertainties,
   neighborsOf,
   planTurn,
+  planEnemyEstimates,
+  borderGuess,
+  guessSeed,
   AHEAD_PRESSURE_FACTOR,
   PRESSURE_FACTOR,
   symmetricStart,
@@ -45,6 +48,7 @@ import {
   type TurnBoard,
   type PlanGoal,
   type PlannerSettings,
+  type PlanGameContext,
 } from '../analysis/index.js';
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH } from '../analysis/combat.js';
@@ -71,6 +75,7 @@ import {
 import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
 import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
+import { guessOrdersOf, guessView } from './guess-view.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 import {
@@ -1023,6 +1028,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +
+          'When one opponent touches two or more of your borders and no fixed split of the deploys there holds them all, ' +
+          '`guess` is a randomized split, weighted by what each border is worth, against an opponent who would read a fixed ' +
+          'one, and `guessOrders` the plan\'s `orders` with that split — optional (the user chooses; `orders` stay the ' +
+          "plan's), and a model: one opponent, one deploy, its visible stacks. " +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -1141,6 +1150,28 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           : undefined;
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
       const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
+      const gameContext: PlanGameContext = {
+        players: game.players.map((p) => ({
+          id: p.id,
+          ...(p.team !== undefined ? { team: p.team } : {}),
+          ...(p.state !== undefined ? { state: p.state } : {}),
+          ...(p.isAI ? { isAI: true } : {}),
+          ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
+        })),
+        ...(game.endRules?.aisSurrenderWhenOneHumanRemains !== undefined
+          ? { endRules: { aisSurrenderWhenOneHumanRemains: game.endRules.aisSurrenderWhenOneHumanRemains } }
+          : {}),
+        turn,
+        ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
+        ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
+        cards: rules.inPlay.length > 0,
+        // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
+        symmetricStart: symmetricStart(game.settings, map),
+        // #166: the opponent's opening simulated from the starts the award proved, as the prior.
+        ...(opening ? { opening } : {}),
+        // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
+        ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
+      };
       const plan = planTurn({
         graph,
         board,
@@ -1150,28 +1181,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         settings,
         ...(trend ? { previousBoard: trend.board } : {}),
         ...(turn !== null ? { turn } : {}),
-        game: {
-          players: game.players.map((p) => ({
-            id: p.id,
-            ...(p.team !== undefined ? { team: p.team } : {}),
-            ...(p.state !== undefined ? { state: p.state } : {}),
-            ...(p.isAI ? { isAI: true } : {}),
-            ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
-          })),
-          ...(game.endRules?.aisSurrenderWhenOneHumanRemains !== undefined
-            ? { endRules: { aisSurrenderWhenOneHumanRemains: game.endRules.aisSurrenderWhenOneHumanRemains } }
-            : {}),
-          turn,
-          ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
-          ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
-          cards: rules.inPlay.length > 0,
-          // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
-          symmetricStart: symmetricStart(game.settings, map),
-          // #166: the opponent's opening simulated from the starts the award proved, as the prior.
-          ...(opening ? { opening } : {}),
-          // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
-          ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
-        },
+        game: gameContext,
         ...(tracks ? { tracks } : {}),
         options: {
           // No goal: the game profile picks it and tunes the plan (an explicit goal overrides it).
@@ -1246,6 +1256,33 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ? [advice.view.orderDelay.order]
           : []),
       ];
+      // The border guess (docs/STRATEGY.md "Guessing at a border"): a randomized split of the deploys
+      // the plan spends on one opponent's borders, when no fixed split holds them all. Optional: the
+      // plan's own orders stay as they are; guessOrders carries the draw.
+      const { estimates } = planEnemyEstimates({
+        graph,
+        board,
+        me: me.id,
+        income: income - cards.extraArmies,
+        settings,
+        ...(trend ? { previousBoard: trend.board } : {}),
+        ...(tracks ? { tracks } : {}),
+        game: gameContext,
+        turn,
+      });
+      const guessed = borderGuess({
+        graph,
+        board,
+        me: me.id,
+        settings,
+        plan,
+        estimates,
+        ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
+        ...(gameContext.players ? { players: gameContext.players } : {}),
+        seed: guessSeed(game.id, turn),
+      });
+      const guess = guessed.kind === 'guess' ? guessed : undefined;
+      const guessOrders = guess ? guessOrdersOf(orders, guess) : undefined;
 
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, turn: currentTurn(game) },
@@ -1355,6 +1392,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         warnings,
         rationale: plan.rationale,
         orders,
+        // The border guess, only when there is one; why there is none, full view only.
+        ...(guess
+          ? {
+              guess: guessView(guess, rung, name, game.players.find((p) => p.id === guess.opponent)?.name ?? null),
+              guessOrders,
+            }
+          : rung === 'full' && guessed.kind === 'skipped'
+            ? { guessSkipped: { reason: guessed.reason, message: guessed.message } }
+            : {}),
         ...(rung === 'full'
           ? {
               settings: {

@@ -464,6 +464,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       stays is unverified). A territory that must hold issues no order; a strike stack's one order
       goes to the strike before a small expansion. `warapp_submit_turn` refuses a split and warns
       when an order sends less than the whole stack.
+- **The border guess (`src/analysis/guess.ts`, `warapp_plan_turn`'s `guess` / `guessOrders`)** is a
+  randomized deploy split against an opponent who would read a fixed one: pure and deterministic like
+  the planner (seeded by `guessSeed(game, turn)`, mulberry32), solved exactly as a small matrix game
+  (allocations at threshold levels × the border the deploy lands beside, a simplex). Only when exactly
+  one opponent has visible stacks next to 2–7 of my borders, combat is exact, Local Deployment is off,
+  no fixed split holds them all and the mix beats it by `MIN_GUESS_GAIN` of the worth at stake. It
+  redistributes only the plan's deploys on those borders and never changes the planner or the plan's
+  `orders`; with no guess both fields are absent, and the skip reason is `guessSkipped` in `full` only.
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it
