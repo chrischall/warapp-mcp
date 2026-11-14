@@ -114,6 +114,42 @@ describe('#201: behind, holds are sized for the expected attack', () => {
     expect(w).not.toMatch(/T1 \(#1\) [^\n]*it holds\)/);
   });
 
+  it('a border whose threatening player is eliminated this turn is no gamble: no stale "Behind" line', () => {
+    // Player 20's lone T2 grew 1 → 12 (+11 a turn, above its ~5 deploy), so T1 is sized for the
+    // expected attack. My 60 on T1 eliminate it (absorbing it catches leader player 30): with T2
+    // taken, T1 faces nobody, and the plan says nothing about gambling a border against player 20.
+    const g4 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 6],
+        [
+          [1, 2],
+          [1, 6],
+          [3, 4],
+          [4, 5],
+          [5, 6],
+        ],
+        [
+          [801, 1, [1]],
+          [803, 4, [3, 4, 5]],
+        ],
+      ),
+    );
+    const others = [enemy(3, 40, 30), enemy(4, 30, 30), enemy(5, 30, 30), neutral(6, 2)];
+    const p = planTurn({
+      graph: g4,
+      board: board([mine(1, 60), enemy(2, 12), ...others]),
+      previousBoard: board([mine(1, 60), enemy(2, 1), ...others]),
+      me: ME,
+      income: 5,
+      settings: { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true },
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: { adapt: true },
+    });
+    expect(p.profile.standing).toBe('behind');
+    expect(p.moves.some((m) => m.kind === 'attack' && m.to === 2)).toBe(true);
+    expect(p.warnings.join('\n')).not.toMatch(/Behind \(#201\)/);
+  });
+
   it('in an FFA the expected attack is the largest over every adjacent player, never below a stack next to it', () => {
     // T1 faces player 20's 3 on T2 (2 movable + its ~15 deploy) and player 30's 9 on T7 (8 movable
     // + ~5): the expected attack on T1 is the larger, ~17, and no border is gambled below 8.

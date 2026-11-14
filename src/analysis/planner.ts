@@ -317,7 +317,11 @@
 //     full on every border, so no border is short of one deploy landing there; separate attacks,
 //     chains, Bomb sizing, my commander's territory and an `enemyDeploy` override keep the worst case —
 //     and a warning names the gamble ("Behind (#201): …"), and a border's "could be taken" warning is
-//     restated against its worst case. Even keeps the rules above.
+//     restated against its worst case. Even keeps the rules above. The behind gamble is only the
+//     growth trend above the deploy: with no trend above it, behind sizes each border as `defend`
+//     does. A border sized below the whole deploy (the movable stacks alone) was tried and dropped:
+//     it broke #118, and one stack beside two such borders splits its deploy to take both.
+//     Expected-case holds below the whole deploy (cover odds k ≤ 1) remain open on #201.
 //     Scope of "protected value", deliberately narrow: only bonuses containing T
 //     count (not a bonus T merely borders; a negative bonus I hold in full that contains T
 //     counts against it, #128 — losing T lifts it — floored at 0), and an incomplete one counts in full
@@ -2792,7 +2796,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    * #201: fund holds by the standing (adapting). Ahead: every held bonus is held for the worst case
    * (each border against the whole deploy) before any capture, completions included. Behind: each
    * border is sized for the expected attack (#59: movable armies next to it plus the whole deploy
-   * estimate), not the worst case the growth trend projects, and the plan says what that gambles;
+   * estimate), not the worst case the growth trend projects, and the plan says what that gambles —
+   * only the trend above the deploy, never the deploy itself (sizing below it broke #118);
    * my commander's territory is never sized so (1k). Ahead, a held bonus never waits behind the
    * expansion share either.
    */
@@ -3651,11 +3656,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const gambled = new Map<number, { player: number; worst: number; expected: number; growth: number }>();
   const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
     const f = forceAt(t, gone, { trend: true, allPlayers: true });
-    if (!f) return null;
+    // No enemy next to it any more (a capture re-judged it): nothing gambled there either.
+    if (!f) {
+      gambled.delete(t);
+      return null;
+    }
     // #201, behind: sized for the expected attack (#59's {@link expectedAt}: every adjacent player's
     // movable armies next to it plus its whole deploy estimate, the largest of them), not the worst
     // case — the trend projection above the deploy. The deploy is counted in full on each border, so
-    // no border is left short of what one deploy landing there takes. Separate attacks, Multi-Attack
+    // no border is left short of what one deploy landing there takes: the gamble is only the growth
+    // trend above the deploy, and with none it is a no-op. (Sizing for the movable stacks alone broke
+    // #118, and one stack beside two such borders splits its deploy to take both.) Separate attacks, Multi-Attack
     // chains and Bomb sizing are no gamble here (they keep the worst case), nor my commander's
     // territory (rule 1k holds it against the whole deploy), nor an `enemyDeploy` override.
     if (holdPasses === 'expected' && !myCommanders.has(t) && !f.split && !f.chain && !bombOn && !custom) {
@@ -6896,6 +6907,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       }
       return waived;
     };
+    // #201: a smaller player holding a unit the board gives no strength for cannot be finished off
+    // (no finishing-off candidate), but absorbing it is judged the same way: its counted territories are
+    // spared when that would not catch the leader.
+    for (const p of [...ownedBy.keys()].sort(byNum))
+      if (inReach(p) && !struck.has(p) && ownedBy.get(p)!.some(uncounted)) absorbs(p);
     for (const p of candidates) {
       if (!absorbs(p)) continue;
       const edge = fogEdge(p);
@@ -9692,7 +9708,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // #201, behind: the borders sized for the expected attack, per player — what that gambles.
   {
     const byPlayer = new Map<number, number[]>();
-    for (const [id, x] of gambled) if (mineSet.has(id) && !conceded.has(id)) byPlayer.set(x.player, [...(byPlayer.get(x.player) ?? []), id]);
+    for (const [id, x] of gambled) if (mineSet.has(id) && borders.has(id) && !conceded.has(id)) byPlayer.set(x.player, [...(byPlayer.get(x.player) ?? []), id]);
     for (const [p, ids] of [...byPlayer].sort((a, b) => a[0] - b[0])) {
       // Gambled: holds against the expected attack as the plan leaves it, not against the worst case.
       // One short of even the expected attack is no gamble (its threat warning says so).

@@ -115,6 +115,38 @@ describe('#201: absorb a smaller neighbour only when it closes the gap to the le
     expect(p.rationale.join('\n')).toMatch(/Absorb player 20 \(#201\): its ~5 income brings mine from 5 to 10, matching leader player 30's ~9\./);
   });
 
+  it('a smaller player holding a unit the board gives no strength for is judged the same way', () => {
+    // Player 20 also holds T7 beside my T1, with a custom unit: it cannot be finished off this turn,
+    // but absorbing it still would not catch the leader, so its counted T2 is not attacked either.
+    const g7 = buildGraph({
+      ...g.map,
+      territories: [
+        ...g.map.territories.map((t) => (t.id === 1 ? { ...t, connectedTo: [...t.connectedTo, 7] } : t)),
+        { id: 7, name: 'T7', connectedTo: [1] },
+      ],
+      bonuses: [{ id: 803, name: 'B803', value: 10, territoryIds: [3, 4, 5], bonusIds: [] }],
+    });
+    const p = planTurn({
+      graph: g7,
+      board: board([
+        mine(1, 20),
+        enemy(2, 2, 20),
+        enemy(3, 40, 30),
+        enemy(4, 30, 30),
+        enemy(5, 30, 30),
+        neutral(6, 2),
+        { ...enemy(7, 2, 20), specialUnits: [{ kind: 'custom', id: 'c1', playerId: 20 }] },
+      ]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: { adapt: true },
+    });
+    expect(attacks(p).some((m) => m.to === 2)).toBe(false);
+    expect(p.rationale.join('\n')).toMatch(/Not finishing off player 20 \(#201\)/);
+  });
+
   it('an explicit goal keeps the old behaviour', () => {
     expect(attacks(run(10, false)).some((m) => m.to === 2)).toBe(true);
   });
