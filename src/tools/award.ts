@@ -64,7 +64,7 @@ export async function loadAward(
     reading = readAward({ list: record.list, mine, players: game.players.length });
     const state = new Map(board.territories.map((t) => [t.territoryId, t]));
     // A start the board shows as nobody's, mine or a neutral cannot be another player's: the list is not the one awarded from.
-    if (reading && reading.opponentStarts.some((t) => contradicts(state.get(t), me.id))) reading = null;
+    if (reading?.opponentStarts.some((t) => contradicts(state.get(t), me.id))) reading = null;
     await writeAward(dataDir, game.id, me.id, reading);
   }
   if (!reading) return undefined;

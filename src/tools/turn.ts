@@ -55,9 +55,9 @@ import { COMMANDER_STRENGTH } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
 import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
-import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
+import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
-import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
+import { SERVER_ERROR_MESSAGES, type WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
 import {
@@ -1630,7 +1630,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
             });
           }
           // A Blockade turns the territory neutral: my commander there would be lost with it (#163).
-          if (t && t.specialUnits?.some((u) => u.kind === 'commander' && u.owner === playerId)) {
+          if (t?.specialUnits?.some((u) => u.kind === 'commander' && u.owner === playerId)) {
             throw new McpToolError(`${label(p.target!)} holds your commander, so it cannot be blockaded.`, {
               hint: 'A Blockade makes the territory neutral and your commander on it would be lost (a commander must stay on your land). Move the commander out first, or blockade another territory.',
             });

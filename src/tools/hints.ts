@@ -47,7 +47,7 @@ export function lookupMeta(aliases?: string[]): { mint: MintHint } {
  */
 export function withToolConfig(server: McpServer, extra: Record<string, unknown>, register: () => void): void {
   const target = server as unknown as { registerTool: (...args: unknown[]) => unknown };
-  const hadOwn = Object.prototype.hasOwnProperty.call(target, 'registerTool');
+  const hadOwn = Object.hasOwn(target, 'registerTool');
   const original = target.registerTool;
   target.registerTool = (name: unknown, config: unknown, ...rest: unknown[]) =>
     original.call(server, name, { ...(config as Record<string, unknown>), ...extra }, ...rest);

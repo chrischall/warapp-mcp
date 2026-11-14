@@ -1630,6 +1630,7 @@ export class BundleInterpreter {
     // A string against a number or boolean is converted to a number: host work in its length.
     else if (typeof l === 'string' && (typeof r === 'number' || typeof r === 'boolean')) this.chargeConversion(l, where, n);
     else if (typeof r === 'string' && (typeof l === 'number' || typeof l === 'boolean')) this.chargeConversion(r, where, n);
+    // biome-ignore lint/suspicious/noDoubleEquals: this is the interpreted bundle's own `==`, coercion and all.
     return l == r;
   }
 

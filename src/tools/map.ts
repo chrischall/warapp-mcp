@@ -113,7 +113,7 @@ export function registerMapTool(server: McpServer, client: WarappClient): void {
       const order = SORTS[sort ?? 'easiest'];
       return respond(view, VIEWS, (rung) => {
         const all = analyzeBonuses(g);
-        if (bonus !== undefined && bonus.trim()) {
+        if (bonus?.trim()) {
           const q = bonus.trim().toLowerCase();
           const hits = all.filter((b) => b.name.toLowerCase().includes(q)).sort(order);
           if (!hits.length) {

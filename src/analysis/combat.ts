@@ -115,6 +115,7 @@ function killProbability(n: number, ratePct: number, luck: number, rounding: str
     if (weighted(rounding)) {
       const lo = Math.floor(x);
       const frac = x - lo;
+      // biome-ignore lint/complexity/useMathMinMax: a NaN fraction must give 0, which Math.max would not.
       const pUp = frac > 0 ? frac : 0;
       // kills = lo + 1 with pUp, else lo.
       const okLo = atLeast ? lo >= k : lo <= k;

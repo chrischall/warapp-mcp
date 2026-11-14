@@ -217,7 +217,7 @@ function readSettings(v: unknown): SettingsRead | undefined {
     gaps.push('Commanders');
   }
   const ss = typeof f[GS.settingsString] === 'string' ? settingsString(f[GS.settingsString] as string) : undefined;
-  if (ss && ss.cards.length) {
+  if (ss?.cards.length) {
     cards = ss.cards.map(cardTypeName);
     rules.push(`Cards: ${cards.join(', ')}`);
   }
