@@ -164,6 +164,25 @@ export function writeUnCommitParams(w: Writer, gameId: number): void {
   w.int32(gameId);
 }
 
+/**
+ * DeclineGame(auth, gameId, modHook) — the lobby's Decline button, which is also how a seated
+ * player leaves a game still `WaitingForPlayers` (#217). READ FROM THE CLIENT BUNDLE's writer,
+ * NOT VERIFIED LIVE: after the auth block the int32 game id, then one bool the client sets when
+ * one of the game's mods hooks the decline (sent false: mod games are refused).
+ */
+export function writeDeclineGameParams(w: Writer, gameId: number): void {
+  w.int32(gameId).bool(false);
+}
+
+/**
+ * A DeclineGame reply: one bool (no present flag), which the client reads as "the chat messages
+ * you sent to this game were removed". `undefined` when the reply carries nothing. Never a
+ * success signal: the leave is read back from game state.
+ */
+export function readDeclineGameReturn(body: Reader): boolean | undefined {
+  return body.remaining > 0 ? body.bool() : undefined;
+}
+
 /** GetLatestGameInfo(auth, gameId) — the parameters after the auth block. */
 export function writeGetLatestGameInfoParams(w: Writer, gameId: number): void {
   w.int32(gameId);

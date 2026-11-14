@@ -4,7 +4,17 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { filterOpenGames, joiningPolicy, markJoined, OPEN_GAMES_URL, parseOpenGamesPage } from '../open-games.js';
+import {
+  filterOpenGames,
+  joiningPolicy,
+  lotteryOf,
+  lotteryShape,
+  markJoined,
+  withLottery,
+  OPEN_GAMES_URL,
+  parseOpenGamesPage,
+  type OpenGame,
+} from '../open-games.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { noBrowserNote } from './session.js';
 import { lookupMeta } from './hints.js';
@@ -25,6 +35,37 @@ export async function openGamesPage(ctx: LiveContext): Promise<string> {
   }
 }
 
+/** At most this many lobbies' maps are fetched from GameFeed per call to tell a lottery (#217). */
+export const LOTTERY_LOOKUPS = 5;
+
+/** A lobby's map size: the cached map, else (when `fetch`) GameFeed's; undefined when unread. */
+async function territoryCount(ctx: LiveContext, game: OpenGame, fetch: boolean): Promise<number | undefined> {
+  const cached = ctx.client.cachedMap(game.mapId);
+  if (cached) return cached.territories.length;
+  if (!fetch) return undefined;
+  try {
+    return (await ctx.client.getGame(game.id))?.map?.territories.length;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `games` with `lottery` / `lotteryBasis` set where the data says so (#217, {@link lotteryOf}): a
+ * cached map is used for every game; GameFeed is asked (map included) only for lobbies whose
+ * settings fit the lottery shape, at most {@link LOTTERY_LOOKUPS} per call. Never throws.
+ */
+export async function markLotteries(ctx: LiveContext, games: readonly OpenGame[]): Promise<OpenGame[]> {
+  let lookups = 0;
+  const fetchFor = games.map((g) => lotteryShape(g) && !ctx.client.cachedMap(g.mapId) && lookups++ < LOTTERY_LOOKUPS);
+  return Promise.all(
+    games.map(async (g, i) => {
+      const verdict = lotteryOf(g, await territoryCount(ctx, g, fetchFor[i]!));
+      return verdict ? withLottery(g, verdict) : g;
+    }),
+  );
+}
+
 export function registerOpenGamesTool(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_list_open_games',
@@ -37,8 +78,11 @@ export function registerOpenGamesTool(server: McpServer, ctx: LiveContext): void
           'wording) and plannerGaps — rules the turn planner does not model yet. joined: true marks a game you ' +
           'already hold a seat in (when the signed-in account can be told). By default only free, multi-day, ' +
           'no-team games. policyBreaks lists the joining-policy rules a game breaks (Commerce, mods, custom ' +
-          'scenarios, more than four seats, a boot time under a day); the neutral cost is checked by ' +
-          'warapp_join_game\'s preview. hiddenByPrerequisites counts games war.app hides from this account.' +
+          'scenarios, more than four seats, a boot time under a day, a lottery); the neutral cost is checked by ' +
+          'warapp_join_game\'s preview. lottery: true marks a lottery from the data, never the name — a map of at ' +
+          'most four territories (its size read from GameFeed for lobbies with base income 0 and overridden ' +
+          'bonuses, or from a map already cached); lottery: null is that settings shape with the map size unread; ' +
+          'lotteryBasis says which. hiddenByPrerequisites counts games war.app hides from this account.' +
           `${noBrowserNote(ctx.hosted)} Read-only.`,
       ),
       _meta: lookupMeta(['open games', 'find a game', 'join a game', 'new warzone game', 'games to join']),
@@ -66,7 +110,7 @@ export function registerOpenGamesTool(server: McpServer, ctx: LiveContext): void
         limit: limit ?? 25,
       });
       // #134: advisory — the neutral-cost part needs each lobby's GameFeed settings, so only the join preview has it.
-      const games = filtered.map((g) => {
+      const games = (await markLotteries(ctx, filtered)).map((g) => {
         const { breaks } = joiningPolicy(g, null);
         return breaks.length ? { ...g, policyBreaks: breaks } : g;
       });

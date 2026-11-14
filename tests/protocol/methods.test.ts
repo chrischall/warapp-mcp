@@ -615,3 +615,33 @@ describe('BeginFirstTurn (method 78)', () => {
     expect(req.body.remaining).toBe(0);
   });
 });
+
+describe('DeclineGame (method 64): leaving a lobby (#217)', () => {
+  it('has the client method-table id and takes the auth block', async () => {
+    const { Method, methodName } = await import('../../src/protocol/methods.js');
+    const { methodTakesAuth } = await import('../../src/protocol/rpc.js');
+    expect(Method.DeclineGame).toBe(64);
+    expect(methodName(64)).toBe('DeclineGame');
+    expect(methodTakesAuth(Method.DeclineGame)).toBe(true);
+  });
+
+  // Read from the client's writer (not verified live): after the auth block the int32 LE game id,
+  // then one bool — whether a mod hooks the decline — sent false. 0x00BC614E = 4E 61 BC 00.
+  it('writes the game id, then the mod-hook flag false (golden, from the bundle)', async () => {
+    const { writeDeclineGameParams } = await import('../../src/protocol/methods.js');
+    expect(hex((w) => writeDeclineGameParams(w, 0x00bc614e))).toBe('4E61BC00' + '00');
+    expect(hex((w) => writeDeclineGameParams(w, 7))).toBe('07000000' + '00');
+  });
+
+  it('reads the reply: one bool, "your chat messages were removed"; an empty body is undefined', async () => {
+    const { readDeclineGameReturn } = await import('../../src/protocol/methods.js');
+    const read = (write: (w: Writer) => void) => {
+      const w = new Writer();
+      write(w);
+      return readDeclineGameReturn(new Reader(w.bytes()));
+    };
+    expect(read((w) => w.bool(true))).toBe(true);
+    expect(read((w) => w.bool(false))).toBe(false);
+    expect(read(() => {})).toBeUndefined();
+  });
+});

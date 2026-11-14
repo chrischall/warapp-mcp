@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Reader, Writer } from '../src/protocol/codec.js';
 import type { ReadBudget } from '../src/protocol/interp.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, markJoined, MAX_OPEN_GAMES, OPEN_GAMES_URL, OpenGamesFormatError, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
-import { liveHarness, payload, textOf, type Harness } from './helpers.js';
+import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, lotteryOf, LOTTERY_MAX_TERRITORIES, markJoined, MAX_OPEN_GAMES, OPEN_GAMES_URL, OpenGamesFormatError, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
+import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { MY_GAMES_BUNDLE, writeGameInfo, type SyntheticGame } from './protocol/my-games-bundle.js';
 
 const bundle = new WarappBundle(MY_GAMES_BUNDLE, 'test');
@@ -540,6 +540,76 @@ describe('warapp_list_open_games', () => {
     expect((await h.call('warapp_list_open_games', { limit: 0 })).isError).toBe(true);
   });
 
+  describe('marks a lottery from the data (#217)', () => {
+    const LOTTERY_SETTINGS = { minArmies: 0, overriddenBonuses: true };
+    /** A GameFeed lobby on a made-up map of `n` territories (a line), one +1 bonus over them all. */
+    const tinyMapFeed = (gameId: number, mapId: number, n: number) => {
+      const f = lobbyFixture();
+      const territories = Array.from({ length: n }, (_, i) => ({
+        id: String(i + 1),
+        name: `T${i + 1}`,
+        connectedTo: [i > 0 ? i : null, i < n - 1 ? i + 2 : null].filter((x): x is number => x !== null),
+      }));
+      return {
+        ...f,
+        id: String(gameId),
+        settings: { ...(f.settings as Record<string, unknown>), Map: String(mapId) },
+        map: {
+          id: String(mapId),
+          name: 'Tiny',
+          territories,
+          bonuses: [{ id: '1', name: 'All', value: '1', territoryIDs: territories.map((t) => Number(t.id)) }],
+          distributionModes: [],
+        },
+      };
+    };
+
+    it('reads the map size from GameFeed for a lobby with base income 0 and overridden bonuses, and breaks the policy', async () => {
+      const games: SyntheticGame[] = [
+        { ...GAMES[0]!, id: 2020, mapId: 777, settings: LOTTERY_SETTINGS },
+        { ...GAMES[0]!, id: 2021 },
+      ];
+      h = await liveHarness({ pages: { [OPEN_GAMES_URL]: page(payloadHex(games)) }, feed: [tinyMapFeed(2020, 777, 2)] });
+      const p = payload(await h.call('warapp_list_open_games'));
+      const listed = p.games as Array<OpenGame & { policyBreaks?: string[] }>;
+      expect(byId(listed, 2020)).toMatchObject({ lottery: true, lotteryBasis: '2-territory map, base income 0, overridden bonuses' });
+      expect(listed.find((g) => g.id === 2020)?.policyBreaks?.join(' ')).toMatch(/Lottery/);
+      expect(byId(listed, 2021).lottery).toBeUndefined();
+      // Only the lobby whose settings fit the shape was looked up.
+      expect(h.calls.map((c) => new URL(c.url).searchParams.get('GameID'))).toEqual(['2020']);
+    });
+
+    it('a large map with the same settings is not a lottery', async () => {
+      const games: SyntheticGame[] = [{ ...GAMES[0]!, id: 2020, mapId: 777, settings: LOTTERY_SETTINGS }];
+      h = await liveHarness({ pages: { [OPEN_GAMES_URL]: page(payloadHex(games)) }, feed: [tinyMapFeed(2020, 777, 30)] });
+      const listed = payload(await h.call('warapp_list_open_games')).games as OpenGame[];
+      expect(listed[0]!.lottery).toBeUndefined();
+    });
+
+    it('a map GameFeed cannot read leaves a likely lottery (null), not a break', async () => {
+      const games: SyntheticGame[] = [{ ...GAMES[0]!, id: 2020, mapId: 777, settings: LOTTERY_SETTINGS }];
+      h = await liveHarness({
+        pages: { [OPEN_GAMES_URL]: page(payloadHex(games)) },
+        feed: [{ termsOfUse: 'x', error: 'Something broke' }],
+      });
+      const listed = payload(await h.call('warapp_list_open_games')).games as Array<OpenGame & { policyBreaks?: string[] }>;
+      expect(listed[0]).toMatchObject({ lottery: null, lotteryBasis: 'base income 0, overridden bonuses; map size not read' });
+      expect(listed[0]!.policyBreaks).toBeUndefined();
+    });
+
+    it('looks up at most a few lobbies per call', async () => {
+      const games: SyntheticGame[] = Array.from({ length: 8 }, (_, i) => ({
+        ...GAMES[0]!,
+        id: 2030 + i,
+        mapId: 777,
+        settings: LOTTERY_SETTINGS,
+      }));
+      h = await liveHarness({ pages: { [OPEN_GAMES_URL]: page(payloadHex(games)) }, feed: [{ termsOfUse: 'x', error: 'Something broke' }] });
+      await h.call('warapp_list_open_games');
+      expect(h.calls.length).toBeLessThanOrEqual(5);
+    });
+  });
+
   it('says so when the page carries no list', async () => {
     h = await liveHarness({ pages: { [OPEN_GAMES_URL]: page(null) } });
     const p = payload(await h.call('warapp_list_open_games'));
@@ -641,5 +711,45 @@ describe('joiningPolicy: the owner\'s joining policy, advisory (#134)', () => {
   it('without a neutral screen it cannot pass, only fail: passes is null when nothing else breaks', () => {
     expect(joiningPolicy(plain())).toEqual({ passes: null, breaks: [], unchecked: ['the cheapest neutral\'s cost'] });
     expect(joiningPolicy(plain({ seats: 6 }), null).passes).toBe(false);
+  });
+
+  it('a lottery breaks it (#217); a likely one whose map size went unread is unchecked, not a break', () => {
+    const lottery = plain({ lottery: true, lotteryBasis: '2-territory map, base income 0, overridden bonuses' });
+    expect(joiningPolicy(lottery, cheap)).toEqual({
+      passes: false,
+      breaks: ['Lottery (2-territory map, base income 0, overridden bonuses) — pure luck; the policy joins no lotteries'],
+    });
+    const likely = plain({ lottery: null, lotteryBasis: 'base income 0, overridden bonuses; map size not read' });
+    expect(joiningPolicy(likely, cheap)).toEqual({
+      passes: null,
+      breaks: [],
+      unchecked: ['whether it is a lottery (base income 0, overridden bonuses; map size not read)'],
+    });
+  });
+});
+
+describe('lotteryOf: a lottery from the data, not the name (#217)', () => {
+  const game = (rules: string[] = []): OpenGame => ({
+    id: 1, name: 'Anything', url: 'u', pace: 'multi-day', players: 1, openSeats: 1, seats: 2, teamGame: false,
+    mapId: 1, entryFeeCoins: 0, prizeCoins: 0, rules, plannerGaps: [],
+  });
+  const SHAPE = ['Minimum armies per turn is 0', 'Overridden bonuses'];
+
+  it('a tiny map is a lottery, whatever the settings; the basis names what was read', () => {
+    expect(LOTTERY_MAX_TERRITORIES).toBe(4);
+    expect(lotteryOf(game(SHAPE), 2)).toEqual({ lottery: true, lotteryBasis: '2-territory map, base income 0, overridden bonuses' });
+    expect(lotteryOf(game(), 4)).toEqual({ lottery: true, lotteryBasis: '4-territory map' });
+  });
+
+  it('a map larger than that is not, even with base income 0 and overridden bonuses', () => {
+    expect(lotteryOf(game(SHAPE), 5)).toBeUndefined();
+    expect(lotteryOf(game(SHAPE), 120)).toBeUndefined();
+  });
+
+  it('base income 0 with overridden bonuses and no map size is a likely lottery (null); either alone is nothing', () => {
+    expect(lotteryOf(game(SHAPE))).toEqual({ lottery: null, lotteryBasis: 'base income 0, overridden bonuses; map size not read' });
+    expect(lotteryOf(game([SHAPE[0]!]))).toBeUndefined();
+    expect(lotteryOf(game([SHAPE[1]!]))).toBeUndefined();
+    expect(lotteryOf(game())).toBeUndefined();
   });
 });

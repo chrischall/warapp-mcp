@@ -81,7 +81,7 @@ function surrenderable(game: Game, me: number, undo: boolean): Player {
   if (game.state !== PLAYING && game.state !== DISTRIBUTING) {
     refuse(
       `Game ${game.id} has not started (game state: ${game.state}), so there is nothing to surrender.`,
-      'A lobby is left or declined in the game itself, not surrendered.',
+      'A lobby is left with warapp_leave_game, not surrendered.',
     );
   }
   const seat = mySeat(game, me);

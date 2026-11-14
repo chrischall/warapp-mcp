@@ -17,6 +17,7 @@
 // callers read them:
 //   warapp_begin_turn     begun → confirmed; not_begun → not_applied; unconfirmed; unknown
 //   warapp_join_game      joined → confirmed; unconfirmed; unknown
+//   warapp_leave_game     left → confirmed; unconfirmed; unknown
 //   warapp_surrender      surrendered → confirmed; pending, still_playing → accepted;
 //                         unchanged → unconfirmed; unknown
 //   warapp_uncommit_turn  uncommitted → confirmed; unconfirmed; unknown

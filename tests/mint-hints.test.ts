@@ -33,6 +33,7 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_submit_picks: 'change',
   warapp_submit_turn: 'change',
   warapp_join_game: 'change',
+  warapp_leave_game: 'change',
   warapp_surrender: 'change',
   warapp_begin_turn: 'change',
   warapp_uncommit_turn: 'change',
