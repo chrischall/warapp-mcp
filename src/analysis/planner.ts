@@ -74,7 +74,16 @@
 //          4d), sinking the deploy into a conceded border for half a bonus. When it cannot, the step
 //          is taken before or after the bonus's other steps, whichever plans more captures (a tie:
 //          whichever leaves more of the deploy; a tie again: after), so it never crowds out a
-//          sibling a held border funds for less. One those passes do not take is an ordinary enemy
+//          sibling a held border funds for less. #214: when the turn cannot fund a step toward the
+//          closest bonus (or in a completion) at that sure size, it is retried at its bare cost, a sure
+//          capture of the defenders standing there now — the cost rule 4f ranks the bonuses on — with
+//          no worst case: #120's warning says what it faces if the owner deploys there first, and the
+//          reason says what would be sure ("sized for the N defenders there now: S would be sure …,
+//          more than this turn can fund"). Only a funding shortfall retries (an R3 or trade refusal of
+//          the sure step stands), and only after every step had its sure try: pass 1 retries a
+//          completion with each step sure first and the ones that failed bare, pass 2 runs the closest
+//          bonus's leftover steps again bare once its sure round is done, so a bare step never takes
+//          the deploy a sibling's sure size would have had. One those passes do not take is an ordinary enemy
 //          territory again for every later rule
 //          (rule 4e's fallback, 4g's card pieces, the lead strikes): its plain size, no sure sizing;
 //          its "Not attacking" line still ends with why its bonus's step failed (the hold it had to
