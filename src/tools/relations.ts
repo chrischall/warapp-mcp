@@ -34,7 +34,7 @@ import {
 import type { BoardState } from '../board.js';
 import { boardStateFromLive } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
-import { entryKey, playerRecordEnabled, playerRecordState, readPlayerRecord, updatePlayerRecord } from '../player-record-store.js';
+import { entryKey, legacyEntryKey, playerRecordEnabled, playerRecordState, readPlayerRecord, updatePlayerRecord } from '../player-record-store.js';
 import { emptyLedger, nextAgreementId, readLedger, withLedgerLock, writeLedger, type RelationsLedger } from '../relations-store.js';
 import { carriesTeam } from '../teams.js';
 import { readBoardHistory, readCachedOrders, writeBoardCache } from '../trend.js';
@@ -56,9 +56,10 @@ export const RELATIONS_NOTE =
   'open is `massing`, never `broken`. Chat is never read into an agreement and never moves a flag. A truce ' +
   'that two players agree to but the game does not enforce (no Diplomacy card) is a promise, not a rule.';
 
-/** How the ledger's write is described: local only. */
+/** How the write is described: the server's data directory only (local or a hosted child's per-user dir), never war.app or a player. */
 export const LEDGER_NOTE =
-  "Written only to this machine's agreement ledger (the server's data directory); nothing was sent to war.app or to any player.";
+  "Written only to the server's data directory (the agreement ledger and the partner's name-free player record); " +
+  'nothing is sent to war.app or to any player.';
 
 const playerRef = z.union([z.string(), z.number()]);
 
@@ -463,23 +464,12 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         return { agreement, before, created };
       };
 
-      // Read, change and write the ledger under its in-process lock: two calls never lose each other's change.
-      const { agreement, before, created, others } = await withLedgerLock(dir, game.id, me.id, async () => {
-        const ledger: RelationsLedger = (await readLedger(dir, game.id, me.id)) ?? emptyLedger(game.id, me.id);
-        const c = change(ledger);
-        const rest = ledger.agreements.filter((a) => a.id !== c.agreement.id);
-        if (!(await writeLedger(dir, { ...ledger, agreements: [...rest, c.agreement] }))) {
-          throw new McpToolError(`The ledger for game ${game.id} could not be written: nothing was recorded.`, {
-            hint: "Check that the server's data directory is writable.",
-          });
-        }
-        return { ...c, others: rest };
-      });
-
       // The cross-game record (D5): the agreement's name-free entry, "proposed again" on this partner's
-      // earlier agreements in this game when it proposes anew, and the tallies its transition earns.
-      let recorded: 'updated' | 'off' | 'failed' = 'off';
-      if (playerRecordEnabled(env)) {
+      // earlier agreements in this game when it proposes anew, and the tallies its transition earns. It is
+      // written inside the ledger's lock (a different file and lock, never nested on itself), so two calls
+      // record their entries in the order they changed the ledger.
+      const updateRecord = async (agreement: Agreement, before: Agreement | undefined, created: boolean, others: readonly Agreement[]) => {
+        if (!playerRecordEnabled(env)) return 'off' as const;
         let breachFlag: WatchFlagKind | null | undefined;
         let context: BreakContext | undefined;
         if (agreement.status !== before?.status && (agreement.status === 'broken-by-them' || agreement.status === 'broken-by-me')) {
@@ -495,14 +485,18 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         }
         const earlier = created && agreement.status === 'proposed-by-them' ? others.filter((a) => a.with === agreement.with && TERMINAL_STATUSES.has(a.status)) : [];
         const now = Date.now();
-        recorded = await updatePlayerRecord(
+        return updatePlayerRecord(
           dir,
           agreement.with,
           (salt, current) => {
-            const key = entryKey(salt, game.id, agreement.id);
-            const previous = current.entries.find((e) => e.key === key);
+            // An entry written before my account was in the key is found under the older key and kept there.
+            const onRecord = (id: string) =>
+              current.entries.find((e) => e.key === entryKey(salt, me.id, game.id, id)) ??
+              current.entries.find((e) => e.key === legacyEntryKey(salt, game.id, id));
+            const previous = onRecord(agreement.id);
+            const key = previous?.key ?? entryKey(salt, me.id, game.id, agreement.id);
             const again = earlier
-              .map((a) => current.entries.find((e) => e.key === entryKey(salt, game.id, a.id)))
+              .map((a) => onRecord(a.id))
               .filter((e): e is RecordEntry => e !== undefined && !e.proposedAgain)
               .map((e) => ({ ...e, proposedAgain: true, updated: now }));
             const entry = recordEntryFor(
@@ -515,7 +509,20 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           env,
           now,
         );
-      }
+      };
+
+      // Read, change and write the ledger under its in-process lock: two calls never lose each other's change.
+      const { agreement, created, recorded } = await withLedgerLock(dir, game.id, me.id, async () => {
+        const ledger: RelationsLedger = (await readLedger(dir, game.id, me.id)) ?? emptyLedger(game.id, me.id);
+        const c = change(ledger);
+        const rest = ledger.agreements.filter((a) => a.id !== c.agreement.id);
+        if (!(await writeLedger(dir, { ...ledger, agreements: [...rest, c.agreement] }))) {
+          throw new McpToolError(`The ledger for game ${game.id} could not be written: nothing was recorded.`, {
+            hint: "Check that the server's data directory is writable.",
+          });
+        }
+        return { ...c, recorded: await updateRecord(c.agreement, c.before, c.created, rest) };
+      });
       return respond(undefined, ['compact'], () => ({
         game: { id: game.id, turn },
         recorded: created ? 'created' : 'updated',

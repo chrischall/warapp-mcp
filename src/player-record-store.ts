@@ -3,12 +3,17 @@
 // At `<dataDir>/relations/players.json` (version 3): per player, the name-free entries and the
 // tallies of `src/analysis/player-record.ts`, and when they last changed. The player is keyed by an
 // HMAC of its GameFeed id under a local secret salt (`<dataDir>/relations/players.salt`, 0600), and
-// each entry by an HMAC of the game and the agreement: the file holds no player id, game id or name,
-// and without the salt it cannot be joined to a game or a player.
+// each entry by an HMAC of my account, the game and the agreement (the ledger is per account, so two
+// accounts sharing a data dir never collide; entries written before the account was in the key are
+// read as they are, `legacyEntryKey`): the file holds no player id, game id or name, and without the
+// salt it cannot be joined to a game or a player.
 //
 // The salt is made only on the write path, never by a read; a salt file that exists but is
 // malformed is never replaced (that would orphan every key on record): reads say `unreadable` and
-// writes fail until the owner fixes or removes it.
+// writes fail until the owner fixes or removes it. A record file that exists but cannot be read or
+// parsed (bad JSON, not an object, no `players` object) is treated the same way — never moved aside,
+// never overwritten, since writing over it would drop every other player's data: reads say
+// `unreadable` and writes fail until the owner fixes or removes it. A missing file is empty.
 //
 // Bounded (`MAX_RECORD_ENTRIES` per player, `MAX_RECORD_PLAYERS` players). Isolated so it can be
 // switched off: `WARAPP_PLAYER_RECORD=off` (or `0` / `false` / `no`) and nothing here reads or
@@ -92,8 +97,11 @@ const hmac = (salt: string, text: string) => createHmac('sha256', salt).update(t
 
 /** A player's key in the record: never the id itself. */
 export const playerKey = (salt: string, playerId: number) => hmac(salt, `player:${playerId}`);
-/** An agreement's key in the record: never the game id or agreement id themselves. */
-export const entryKey = (salt: string, gameId: number, agreementId: string) => hmac(salt, `agreement:${gameId}:${agreementId}`);
+/** An agreement's key in the record: my account, the game and the agreement, never the ids themselves. */
+export const entryKey = (salt: string, myId: number, gameId: number, agreementId: string) =>
+  hmac(salt, `agreement:${myId}:${gameId}:${agreementId}`);
+/** The key entries were written under before my account was part of it: still read, and updated in place. */
+export const legacyEntryKey = (salt: string, gameId: number, agreementId: string) => hmac(salt, `agreement:${gameId}:${agreementId}`);
 
 /** One player's part of the record. */
 export interface PlayerRecordData {
@@ -138,19 +146,27 @@ function playerOf(v: unknown): StoredPlayer | undefined {
   return { tallies, entries, updated };
 }
 
-async function readFileRecord(dir: string): Promise<RecordFile> {
+/** The file on record: empty when there is none; `'unreadable'` when one exists but cannot be read or parsed. */
+async function readFileRecord(dir: string): Promise<RecordFile | 'unreadable'> {
+  let text: string;
   try {
-    const c: unknown = JSON.parse(await readFile(playerRecordPath(dir), 'utf8'));
-    if (!isRec(c) || !isRec(c.players)) return { version: 3, players: {} };
-    const players: RecordFile['players'] = {};
-    for (const [k, v] of Object.entries(c.players)) {
-      const p = HASH.test(k) ? playerOf(v) : undefined;
-      if (p) players[k] = p;
-    }
-    return { version: 3, players };
-  } catch {
-    return { version: 3, players: {} };
+    text = await readFile(playerRecordPath(dir), 'utf8');
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? { version: 3, players: {} } : 'unreadable';
   }
+  let c: unknown;
+  try {
+    c = JSON.parse(text);
+  } catch {
+    return 'unreadable';
+  }
+  if (!isRec(c) || !isRec(c.players)) return 'unreadable';
+  const players: RecordFile['players'] = {};
+  for (const [k, v] of Object.entries(c.players)) {
+    const p = HASH.test(k) ? playerOf(v) : undefined;
+    if (p) players[k] = p;
+  }
+  return { version: 3, players };
 }
 
 async function writeFileRecord(dir: string, file: RecordFile): Promise<void> {
@@ -168,8 +184,8 @@ async function writeFileRecord(dir: string, file: RecordFile): Promise<void> {
 
 /**
  * What is on record for `playerId`: its tallies and entries; `null` when nothing is (no salt yet
- * included); `'unreadable'` when the salt file is malformed; `'off'` when the record is off. Never
- * throws, never writes.
+ * included); `'unreadable'` when the salt file is malformed or the record file cannot be parsed;
+ * `'off'` when the record is off. Never throws, never writes.
  */
 export async function readPlayerRecord(dir: string, playerId: number, env?: EnvSource): Promise<PlayerRecordData | null | 'unreadable' | 'off'> {
   if (!playerRecordEnabled(env)) return 'off';
@@ -177,24 +193,29 @@ export async function readPlayerRecord(dir: string, playerId: number, env?: EnvS
     const s = await readSalt(dir);
     if (s === 'malformed') return 'unreadable';
     if (s === 'missing') return null;
-    const p = (await readFileRecord(dir)).players[playerKey(s.salt, playerId)];
+    const file = await readFileRecord(dir);
+    if (file === 'unreadable') return 'unreadable';
+    const p = file.players[playerKey(s.salt, playerId)];
     return p ? { tallies: p.tallies, entries: p.entries } : null;
   } catch {
     return null;
   }
 }
 
-/** The record's state for a tool result: `on`, `off`, or `unreadable` (a malformed salt file). */
+/** The record's state for a tool result: `on`, `off`, or `unreadable` (a malformed salt file or a record file that cannot be parsed). */
 export async function playerRecordState(dir: string | undefined, env?: EnvSource): Promise<'on' | 'off' | 'unreadable'> {
   if (!playerRecordEnabled(env)) return 'off';
-  return dir && (await readSalt(dir).catch(() => 'missing' as const)) === 'malformed' ? 'unreadable' : 'on';
+  if (!dir) return 'on';
+  if ((await readSalt(dir).catch(() => 'missing' as const)) === 'malformed') return 'unreadable';
+  return (await readFileRecord(dir).catch(() => 'unreadable' as const)) === 'unreadable' ? 'unreadable' : 'on';
 }
 
 /**
  * Update `playerId`'s part of the record: `update` gets the salt (to key entries) and what is on
  * record, and returns the tallies to add (`recordDelta`) and the entries to upsert. Read, change and
  * write run under the in-process lock for the file. `updated` when written; `off` when the record is
- * off; `failed` when it could not be (a malformed salt included). Never throws.
+ * off; `failed` when it could not be (a malformed salt or an unparseable record file included: neither
+ * is ever overwritten). Never throws.
  */
 export async function updatePlayerRecord(
   dir: string,
@@ -206,9 +227,10 @@ export async function updatePlayerRecord(
   if (!playerRecordEnabled(env)) return 'off';
   try {
     return await withPathLock(playerRecordPath(dir), async () => {
+      const file = await readFileRecord(dir);
+      if (file === 'unreadable') return 'failed';
       const salt = await saltForWrite(dir);
       if (!salt) return 'failed';
-      const file = await readFileRecord(dir);
       const key = playerKey(salt, playerId);
       const current = file.players[key] ?? { tallies: { ...ZERO_COUNTS }, entries: [], updated: 0 };
       const { delta, entries } = update(salt, { tallies: current.tallies, entries: current.entries });

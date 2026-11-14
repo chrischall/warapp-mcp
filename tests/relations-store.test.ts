@@ -19,11 +19,13 @@ import {
 import { newAgreement, transitionAgreement, type Agreement, type AgreementStatus } from '../src/analysis/relations.js';
 import {
   entryKey,
+  legacyEntryKey,
   playerKey,
   playerRecordEnabled,
   playerRecordPath,
   playerRecordSalt,
   playerRecordSaltPath,
+  playerRecordState,
   readPlayerRecord,
   updatePlayerRecord,
 } from '../src/player-record-store.js';
@@ -235,7 +237,7 @@ describe('the cross-game record on disk', () => {
       dir,
       P,
       (salt, current) => {
-        const key = entryKey(salt, GAME, after.id);
+        const key = entryKey(salt, ME, GAME, after.id);
         return { delta: recordDelta(before, after), entries: [recordEntryFor(after, { key, format, now }, current.entries.find((e) => e.key === key))] };
       },
       env,
@@ -256,14 +258,37 @@ describe('the cross-game record on disk', () => {
     expect(statSync(playerRecordPath(dir)).mode & 0o777).toBe(0o600);
     expect(statSync(playerRecordSaltPath(dir)).mode & 0o777).toBe(0o600);
     const back = await readPlayerRecord(dir, P, {});
-    expect(back).toMatchObject({ tallies: { ...ZERO_COUNTS, made: 1, kept: 1 }, entries: [{ key: entryKey(salt, GAME, 'a1'), outcome: 'kept', agreedTurn: 3, endedTurn: 4 }] });
+    expect(back).toMatchObject({ tallies: { ...ZERO_COUNTS, made: 1, kept: 1 }, entries: [{ key: entryKey(salt, ME, GAME, 'a1'), outcome: 'kept', agreedTurn: 3, endedTurn: 4 }] });
     expect(await readPlayerRecord(dir, 3333, {})).toBeNull();
   });
 
   it('a different salt keys the same player differently', () => {
     expect(playerKey('a'.repeat(32), P)).not.toBe(playerKey('b'.repeat(32), P));
     expect(playerKey('a'.repeat(32), P)).toMatch(/^[0-9a-f]{32}$/);
-    expect(entryKey('a'.repeat(32), GAME, 'a1')).not.toBe(entryKey('a'.repeat(32), GAME + 1, 'a1'));
+    expect(entryKey('a'.repeat(32), ME, GAME, 'a1')).not.toBe(entryKey('a'.repeat(32), ME, GAME + 1, 'a1'));
+  });
+
+  it('keys an entry by my account too: two local accounts in one game never collide', () => {
+    const salt = 'a'.repeat(32);
+    expect(entryKey(salt, ME, GAME, 'a1')).not.toBe(entryKey(salt, 9999, GAME, 'a1'));
+    expect(entryKey(salt, ME, GAME, 'a1')).toMatch(/^[0-9a-f]{32}$/);
+    // The key entries written before the account was part of it: read as they are.
+    expect(legacyEntryKey(salt, GAME, 'a1')).toMatch(/^[0-9a-f]{32}$/);
+    expect(legacyEntryKey(salt, GAME, 'a1')).not.toBe(entryKey(salt, ME, GAME, 'a1'));
+  });
+
+  it('never overwrites a record file it cannot parse: reads say unreadable, writes fail, the file stays as it was', async () => {
+    for (const bad of ['{not json', '[]', '"text"', JSON.stringify({ version: 3, players: [] })]) {
+      const dir = tmp();
+      expect(await write(dir, undefined, walk(['agreed']))).toBe('updated');
+      writeFileSync(playerRecordPath(dir), bad);
+      expect(await readPlayerRecord(dir, P, {})).toBe('unreadable');
+      expect(await playerRecordState(dir, {})).toBe('unreadable');
+      expect(await write(dir, undefined, { ...walk(['agreed']), id: 'a2' })).toBe('failed');
+      expect(readFileSync(playerRecordPath(dir), 'utf8')).toBe(bad);
+    }
+    // A missing file is simply empty.
+    expect(await playerRecordState(tmp(), {})).toBe('on');
   });
 
   it('makes the salt only when it writes, and never replaces a malformed one', async () => {
@@ -299,12 +324,10 @@ describe('the cross-game record on disk', () => {
     const counts = { made: 2, kept: 1, endedWithNotice: 0, brokenByThem: 1, brokenByMe: 0 };
     writeFileSync(playerRecordPath(dir), JSON.stringify({ version: 2, players: { [key]: { counts, updated: 1 } } }));
     expect(await readPlayerRecord(dir, P, {})).toEqual({ tallies: counts, entries: [] });
-    const e = recordEntryFor(walk(['agreed', 'broken-by-them']), { key: entryKey(salt, GAME, 'a1'), format, now: 1 });
+    const e = recordEntryFor(walk(['agreed', 'broken-by-them']), { key: legacyEntryKey(salt, GAME, 'a1'), format, now: 1 });
     writeFileSync(playerRecordPath(dir), JSON.stringify({ version: 1, players: { [key]: { entries: [e, { key: 'nope' }] } } }));
     expect(await readPlayerRecord(dir, P, {})).toEqual({ tallies: { ...ZERO_COUNTS, made: 1, brokenByThem: 1 }, entries: [e] });
     writeFileSync(playerRecordPath(dir), JSON.stringify({ version: 2, players: { [key]: { counts: { made: 'x' }, updated: 1 } } }));
-    expect(await readPlayerRecord(dir, P, {})).toBeNull();
-    writeFileSync(playerRecordPath(dir), '{not json');
     expect(await readPlayerRecord(dir, P, {})).toBeNull();
     // A write over an older file carries its tallies forward.
     writeFileSync(playerRecordPath(dir), JSON.stringify({ version: 2, players: { [key]: { counts, updated: 1 } } }));

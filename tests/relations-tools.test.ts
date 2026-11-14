@@ -3,8 +3,11 @@
 // the cached boards, and the cross-game player record (salted, name-free, switchable).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
+import { withPathLock } from '../src/path-lock.js';
+import { entryKey, legacyEntryKey, playerRecordPath } from '../src/player-record-store.js';
+import { withLedgerLock } from '../src/relations-store.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
@@ -103,7 +106,11 @@ describe('warapp_record_agreement', () => {
     });
     expect(made.agreement.with.name).toMatch(/^⟦Bob⟧$/);
     expect(made.agreement.terms).toMatchObject({ scope: { territories: [{ id: 159 }] }, noticeTurns: 2, borderCap: 8 });
-    expect(made.written).toMatch(/nothing was sent to war\.app/);
+    expect(made.written).toMatch(/nothing (?:is|was) sent to war\.app or to any player/);
+    // The note names what is written and where, never "this machine": a hosted child writes too.
+    expect(made.written).toMatch(/server's data directory/);
+    expect(made.written).toMatch(/player record/);
+    expect(made.written).not.toMatch(/this machine|local only/i);
     const agreed = payload<RecordPayload>(await record({ agreement_id: 'a1', status: 'agreed' }));
     expect(agreed).toMatchObject({ agreement: { status: 'agreed', state: 'active' }, playerRecord: 'updated' });
     const text = readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8');
@@ -242,6 +249,49 @@ describe('warapp_get_relations', () => {
       ['kept', true],
       ['open', false],
     ]);
+  });
+
+  it('updates the player record inside the ledger lock, so records land in the order the ledger changed', async () => {
+    h = await liveHarness({ feed: [game('2')] });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const dir = h.dataDir;
+    const ledgerPath = join(dir, 'relations', `${GAME}-${ANN.feed}.json`);
+    // Hold the record's lock: the call writes its ledger, then waits for the record.
+    let release!: () => void;
+    const blocker = withPathLock(playerRecordPath(dir), () => new Promise<void>((r) => (release = r)));
+    const call = record({ agreement_id: 'a1', status: 'ended' });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(ledgerPath, 'utf8')).agreements[0].status).toBe('ended'));
+    let probed = false;
+    const probe = withLedgerLock(dir, GAME, Number(ANN.feed), async () => {
+      probed = true;
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    // The ledger's lock is still held while the record waits: another ledger change cannot slip between them.
+    expect(probed).toBe(false);
+    release();
+    await blocker;
+    expect(payload<RecordPayload>(await call).playerRecord).toBe('updated');
+    await probe;
+    expect(probed).toBe(true);
+  });
+
+  it('updates an entry written under the older key (no account in it) in place, never beside it', async () => {
+    h = await liveHarness({ feed: [game('2')] });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const path = join(h.dataDir, 'relations', 'players.json');
+    const salt = readFileSync(join(h.dataDir, 'relations', 'players.salt'), 'utf8').trim();
+    const file = JSON.parse(readFileSync(path, 'utf8')) as { players: Record<string, { entries: Array<{ key: string; outcome: string }> }> };
+    const stored = Object.values(file.players)[0]!;
+    const old = legacyEntryKey(salt, GAME, 'a1');
+    stored.entries[0]!.key = old;
+    writeFileSync(path, JSON.stringify(file));
+    payload(await record({ agreement_id: 'a1', status: 'ended' }));
+    const after = Object.values((JSON.parse(readFileSync(path, 'utf8')) as typeof file).players)[0]!;
+    expect(after.entries.map((e) => [e.key, e.outcome])).toEqual([[old, 'kept']]);
+    // A new agreement is keyed with the account in it.
+    payload(await record({ with: 'Bob', status: 'proposed-by-them' }));
+    const keys = Object.values((JSON.parse(readFileSync(path, 'utf8')) as typeof file).players)[0]!.entries.map((e) => e.key);
+    expect(keys).toContain(entryKey(salt, Number(ANN.feed), GAME, 'a2'));
   });
 
   it('counts each agreement once across its updates, and an over one never again', async () => {
