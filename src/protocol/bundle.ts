@@ -36,17 +36,17 @@ import {
 } from './interp.js';
 
 /** A page that loads the game client (the homepage does not). */
-export const DEFAULT_PAGE_URL = 'https://war.app/MultiPlayer';
+const DEFAULT_PAGE_URL = 'https://war.app/MultiPlayer';
 /** The only host the bundle is downloaded from (exactly this host: no subdomain, no port). */
-export const BUNDLE_HOST = 'warappcdn.com';
+const BUNDLE_HOST = 'warappcdn.com';
 /** The only path the bundle is downloaded from; its `v` query parameter is the only variable. */
-export const BUNDLE_PATH = '/js/Release/ujs.js';
+const BUNDLE_PATH = '/js/Release/ujs.js';
 /** How long the bundle download may take, headers and body together. */
 export const BUNDLE_FETCH_TIMEOUT_MS = 120_000;
 /** The most bytes the bundle download may carry (the bundle is about 17 MB). */
 export const BUNDLE_MAX_BYTES = 64 * 1024 * 1024;
 
-export type BundleErrorKind = 'no-script' | 'bad-url' | 'bad-version' | 'bad-bundle' | 'dialect-mismatch' | 'dialect-unverified';
+type BundleErrorKind = 'no-script' | 'bad-url' | 'bad-version' | 'bad-bundle' | 'dialect-mismatch' | 'dialect-unverified';
 
 export class BundleError extends Error {
   constructor(
@@ -58,7 +58,7 @@ export class BundleError extends Error {
   }
 }
 
-export interface BundleSource {
+interface BundleSource {
   url: string;
   /** Cache key: the URL's `v` parameter. */
   version: string;
@@ -75,7 +75,7 @@ const SAFE_VERSION = /^[A-Za-z0-9._-]{1,64}$/;
 export function discoverBundleUrl(html: string, pageUrl: string): BundleSource {
   const m = SCRIPT_RE.exec(html);
   if (!m) throw new BundleError('no-script', `no ujs.js script tag on ${pageUrl}`);
-  const src = m[1].replace(/&amp;/g, '&');
+  const src = m[1]!.replace(/&amp;/g, '&');
   const url = new URL(src, pageUrl);
   if (url.protocol !== 'https:') throw new BundleError('bad-url', `bundle URL is not https: ${url.href}`);
   if (url.host !== BUNDLE_HOST || url.username || url.password) {
@@ -182,7 +182,7 @@ export class WarappBundle {
   }
 }
 
-export interface BundleLoaderOptions {
+interface BundleLoaderOptions {
   /** The server's data directory; the bundle is cached under `<dataDir>/bundle/`. */
   dataDir: string;
   /** GET a URL as text (through whatever transport the server uses). */
@@ -394,7 +394,7 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
  * How long a fallback bundle is used, or a refused (dialect-mismatch) bundle is remembered, before
  * the current version is looked up again.
  */
-export const FALLBACK_RETRY_MS = 5 * 60_000;
+const FALLBACK_RETRY_MS = 5 * 60_000;
 
 /**
  * Loads the bundle once per process; a failed load is retried on the next call, except a bundle

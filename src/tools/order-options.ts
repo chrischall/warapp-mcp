@@ -28,7 +28,7 @@ export interface OptionMove {
   attackTeammates?: boolean;
 }
 
-export interface MoveOptionsCheck {
+interface MoveOptionsCheck {
   warnings: string[];
   /** Move index → the commander it takes along (GUID and owner, from the live board). */
   commanders: Map<number, OrderCommander>;
@@ -37,7 +37,7 @@ export interface MoveOptionsCheck {
 }
 
 /** Options used, said once per preview: none of them has been sent in a live commit yet. */
-export const OPTIONS_UNVERIFIED =
+const OPTIONS_UNVERIFIED =
   'Order options (Transfer Only, Attack Only, percentage, the commander, attack teammates) follow the war.app ' +
   "client's own encoding but are not yet verified by a live commit: check the orders in the game after sending.";
 

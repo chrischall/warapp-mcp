@@ -10,6 +10,7 @@
 
 import { currentStanding } from './live.js';
 import type { GameSettings } from './normalize.js';
+import { fields, isObj, type DecodedRecord } from './protocol/decoded.js';
 import { asInt } from './scalars.js';
 
 /** Card type ids (the client's registry). */
@@ -63,15 +64,12 @@ export function normalizeGuid(v: unknown): string | undefined {
   return GUID_RE.test(hex) ? hex : undefined;
 }
 
-type Obj = Record<string, unknown> & { $type?: unknown };
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
+type Obj = DecodedRecord;
 const CARD_INSTANCE = /CardInstance$/;
 const MAX_DEPTH = 32;
 
 function cardOf(o: Obj, key: unknown): Card | undefined {
-  const values = Object.entries(o)
-    .filter(([k]) => k !== '$type')
-    .map(([, v]) => v);
+  const values = fields(o);
   const id = values.map(normalizeGuid).find((g) => g !== undefined) ?? normalizeGuid(key);
   const ints = values.filter((v): v is number => typeof v === 'number' && Number.isInteger(v));
   // The card-instance base reader sets `Gb` (the card type) last among the integer fields; a
@@ -255,7 +253,7 @@ export interface CardGame {
  * are worth nothing without fog; Gift and Diplomacy are worth little in a 1v1 (there is no third
  * player to buy off or to set against the opponent), below the information cards.
  */
-export function keepValue(c: Card, game: CardGame = {}): number {
+function keepValue(c: Card, game: CardGame = {}): number {
   if (game.fog === 'NoFog' && INFORMATION_CARDS.has(c.type)) return -2;
   if (game.players === 2 && !game.team && ONE_V_ONE_CHEAP.has(c.type)) return 0;
   return KEEP_VALUE[c.type] ?? 5;
@@ -372,7 +370,7 @@ export function advisedOrderPriority(hand: readonly Card[], choice: CardChoice):
 }
 
 /** Where to play an Order Delay this turn (#163). */
-export interface OrderDelayAdvice {
+interface OrderDelayAdvice {
   card: Card;
   /** The move (1-based, in the plan's order) the card goes above. */
   before: number;

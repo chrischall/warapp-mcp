@@ -40,7 +40,7 @@ export function neighborsOf(g: MapGraph, id: number): readonly number[] {
   return g.neighbors.get(id) ?? EMPTY;
 }
 
-export interface BfsOptions {
+interface BfsOptions {
   /** Territories the search may enter (sources are always included). */
   passable?: (id: number) => boolean;
 }

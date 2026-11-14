@@ -88,7 +88,7 @@ export function primaryBonusOf(g: MapGraph, territoryId: number): number | null 
   return index.get(territoryId) ?? null;
 }
 
-export type ChokepointReason = 'articulation' | 'bridge' | 'low-degree-connector';
+type ChokepointReason = 'articulation' | 'bridge' | 'low-degree-connector';
 
 export interface Chokepoint {
   territoryId: number;
@@ -102,7 +102,7 @@ export interface Chokepoint {
   connectsBonusIds: number[];
 }
 
-export interface ChokepointOptions {
+interface ChokepointOptions {
   /** Highest degree that still counts as a low-degree connector (default 2). */
   maxConnectorDegree?: number;
 }

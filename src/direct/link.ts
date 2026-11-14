@@ -23,10 +23,10 @@ import { VERSION } from '../version.js';
 import { scrubError, SESSION_HOST, writeSession, type Session } from './session.js';
 
 /** The cookie that carries the signed-in war.app session. */
-export const AUTH_COOKIE = 'AuthToken';
+const AUTH_COOKIE = 'AuthToken';
 
 /** The capture waits this long (ms) for the signed-in tab to make a request. */
-export const DEFAULT_CAPTURE_WINDOW_MS = 60_000;
+const DEFAULT_CAPTURE_WINDOW_MS = 60_000;
 
 /** No `AuthToken` cookie was present on the captured war.app request. */
 export class NoAuthTokenError extends McpToolError {

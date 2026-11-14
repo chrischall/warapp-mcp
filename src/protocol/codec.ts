@@ -28,18 +28,18 @@ export const DATE_EPOCH_MS = Date.UTC(2000, 0, 1);
 /** Written for "no date" (.NET DateTime.MinValue on the server). */
 export const NO_DATE_SENTINEL = -3.4028235e54;
 /** Written for the maximum date. */
-export const MAX_DATE_SENTINEL = 3.4028235e54;
+const MAX_DATE_SENTINEL = 3.4028235e54;
 /** Values at or beyond ± this many ms read as a sentinel. */
-export const DATE_SENTINEL_THRESHOLD = 2.524556148e14;
+const DATE_SENTINEL_THRESHOLD = 2.524556148e14;
 /** The decoded form of the max-date sentinel (the largest JS Date). */
 export const MAX_DATE = new Date(8.64e15);
 
 /** Envelope kind byte: a MessageExtrasDown block follows. */
-export const EXTRAS_PRESENT = 1;
+const EXTRAS_PRESENT = 1;
 /** Envelope kind byte: a server error follows instead of a result. */
-export const ERROR_KIND = 5;
+const ERROR_KIND = 5;
 
-export type ProtocolErrorKind =
+type ProtocolErrorKind =
   | 'truncated'
   | 'bad-bool'
   | 'bad-preamble'
@@ -211,7 +211,7 @@ export class Writer {
     const canonical = Array.from({ length: 16 }, (_, i) => parseInt(hex.slice(i * 2, i * 2 + 2), 16));
     const out = new Uint8Array(16);
     GUID_ORDER.forEach((src, i) => {
-      out[src] = canonical[i];
+      out[src] = canonical[i]!;
     });
     return this.raw(out);
   }
@@ -268,7 +268,7 @@ export class Reader {
 
   u8(): number {
     this.need(1);
-    return this.buf[this.pos++];
+    return this.buf[this.pos++]!;
   }
 
   /**
@@ -370,7 +370,7 @@ export class Reader {
   /** A GUID as 32 lowercase hex digits in canonical order. */
   guid(): string {
     const b = this.raw(16);
-    return GUID_ORDER.map((i) => b[i].toString(16).padStart(2, '0')).join('');
+    return GUID_ORDER.map((i) => b[i]!.toString(16).padStart(2, '0')).join('');
   }
 
   private count(): number | null {
@@ -425,7 +425,7 @@ export class Reader {
 // ---------------------------------------------------------------------------
 // Header and extras
 
-export interface FrameHeader {
+interface FrameHeader {
   version: number;
   reply: boolean;
   msgNum: number;
@@ -486,7 +486,7 @@ const readIntStringDict = (r: Reader): Map<number, string | null> | null =>
       )
     : null;
 
-export function writeExtrasUp(w: Writer, e: ExtrasUp): void {
+function writeExtrasUp(w: Writer, e: ExtrasUp): void {
   writeIntStringDict(w, e.dict);
   w.string(e.client)
     .int32(e.serverInfoVersionA)
@@ -510,7 +510,7 @@ export function readExtrasUp(r: Reader): ExtrasUp {
 }
 
 /** warlight.shared.Livestream. */
-export interface Livestream {
+interface Livestream {
   j7: string | null;
   jdb: number;
   lr: Date | null;
@@ -519,7 +519,7 @@ export interface Livestream {
 }
 
 /** warlight.shared.ServerInfoForClient. */
-export interface ServerInfo {
+interface ServerInfo {
   okb: string | null;
   /** Leaderboard flags, ';'-separated (minified `YR`). */
   lbFlags: string | null;
@@ -529,7 +529,7 @@ export interface ServerInfo {
 }
 
 /** warlight.shared.UnreadMailCheckResults. */
-export interface UnreadMail {
+interface UnreadMail {
   cYa: boolean;
   /** Becomes the next request's ExtrasUp.kFa (minified `I0a`). */
   kFa: Date | null;
@@ -559,7 +559,7 @@ function writeOptional<T>(w: Writer, value: T | null, write: (w: Writer, v: T) =
   write(w, value);
 }
 
-export function readExtrasDown(r: Reader): ExtrasDown {
+function readExtrasDown(r: Reader): ExtrasDown {
   return {
     cAa: readIntStringDict(r),
     wca: optional(r, (rr) => rr.int32()),
@@ -587,7 +587,7 @@ export function readExtrasDown(r: Reader): ExtrasDown {
   };
 }
 
-export function writeExtrasDown(w: Writer, e: ExtrasDown): void {
+function writeExtrasDown(w: Writer, e: ExtrasDown): void {
   writeOptional(w, e.cAa, (ww, d) =>
     ww.dict(
       d,
@@ -616,9 +616,9 @@ export function writeExtrasDown(w: Writer, e: ExtrasDown): void {
 // Requests
 
 /** The auth block's type tag, as the browser client writes it before the email. */
-export const AUTH_TAG = 4;
+const AUTH_TAG = 4;
 
-export interface RequestFrame {
+interface RequestFrame {
   method: number;
   msgNum: number;
   extras: ExtrasUp;

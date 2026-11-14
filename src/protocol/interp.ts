@@ -87,7 +87,7 @@ import {
 } from 'acorn';
 import { PROTOCOL_VERSION, ProtocolError, Reader } from './codec.js';
 
-export type InterpErrorKind =
+type InterpErrorKind =
   | 'unsupported'
   | 'no-definition'
   | 'unknown-class'
@@ -115,7 +115,7 @@ export class InterpError extends Error {
   }
 }
 
-export interface ParsedBundle {
+interface ParsedBundle {
   src: string;
   /** Minified class var → registered type name. */
   typeNameOf: Map<string, string>;
@@ -128,14 +128,14 @@ export function parseBundle(src: string): ParsedBundle {
   const typeNameOf = new Map<string, string>();
   const varOf = new Map<string, string>();
   for (const m of src.matchAll(/W\["([\w.$]+)"\]=([\w$]+);/g)) {
-    if (!typeNameOf.has(m[2])) typeNameOf.set(m[2], m[1]);
-    if (!varOf.has(m[1])) varOf.set(m[1], m[2]);
+    if (!typeNameOf.has(m[2]!)) typeNameOf.set(m[2]!, m[1]!);
+    if (!varOf.has(m[1]!)) varOf.set(m[1]!, m[2]!);
   }
   return { src, typeNameOf, varOf };
 }
 
 /** A decoded object: its fields plus the registered type name. */
-export interface DecodedObject {
+interface DecodedObject {
   $type: string;
   [field: string]: unknown;
 }
@@ -146,7 +146,7 @@ type Native = (...args: unknown[]) => unknown;
  * The minified names the readers call. These track the client release, so they are
  * data: a newer bundle that renames a primitive needs only a dialect override.
  */
-export interface Dialect {
+interface Dialect {
   /** Methods called directly on the reader (`a.Ua()`). */
   readerMethods: Record<string, (r: Reader, ...args: unknown[]) => unknown>;
   /** Native statics (`P.Ya(a)`), by class var then function name. Closures arrive as JS functions. */
@@ -186,7 +186,7 @@ function callback(f: unknown): Native {
 }
 
 /** The largest count `E.Range` will allocate, and the longest array a native takes (special-unit counts are a byte). */
-export const MAX_RANGE = 1_000_000;
+const MAX_RANGE = 1_000_000;
 
 function asArray(xs: unknown): unknown[] {
   if (!Array.isArray(xs)) throw new InterpError('bad-value', `expected an array, got ${describe(xs)}`);
@@ -455,7 +455,7 @@ export const MAX_NESTING = 32;
 export const MAX_THROW_MESSAGE = 200;
 
 /** Interpreted call depth per `readClass`; real readers nest a few dozen deep at most. */
-export const DEFAULT_MAX_DEPTH = 256;
+const DEFAULT_MAX_DEPTH = 256;
 
 /** Steps charged when a constructor's failure is kept on the object (`$ctorError`) rather than thrown. */
 const CTOR_FAILURE_STEPS = 20;
@@ -482,7 +482,7 @@ const STRING_COMPARE_OPS = new Set(['===', '!==', '<', '<=', '>', '>=']);
  * The longest string `+` may build. Real readers build only short strings (names, messages); without
  * a cap, repeated doubling reaches the host's string limit (a RangeError) or exhausts the heap.
  */
-export const MAX_STRING = 1_000_000;
+const MAX_STRING = 1_000_000;
 
 /**
  * A canonical array index (`"0"`, `"12"`, not `"01"` or `"1.0"`). No index has more than ten digits, so a
@@ -995,11 +995,11 @@ export class BundleInterpreter {
       else statics.set(key, [at]);
     }
     const ctors = new Map<string, number>();
-    for (const m of src.matchAll(/function ([\w$]+)\(/g)) if (!ctors.has(m[1])) ctors.set(m[1], m.index);
+    for (const m of src.matchAll(/function ([\w$]+)\(/g)) if (!ctors.has(m[1]!)) ctors.set(m[1]!, m.index);
     // Where each class's first registration (`W["<type name>"]=<var>;`) sits.
     const registrations = new Map<string, number>();
     for (const m of src.matchAll(/W\["([\w.$]+)"\]=([\w$]+);/g)) {
-      if (!registrations.has(m[2]) && typeNameOf.get(m[2]) === m[1]) registrations.set(m[2], m.index);
+      if (!registrations.has(m[2]!) && typeNameOf.get(m[2]!) === m[1]) registrations.set(m[2]!, m.index);
     }
     this.defs = { statics, ctors, registrations };
     return this.defs;
@@ -1034,9 +1034,9 @@ export class BundleInterpreter {
     const built: Array<[fn: string, cls: string, sup: string]> = [];
     const builders = new Map<string, number>();
     for (const m of src.matchAll(/(?<![\w$.])([\w$]+)\.prototype\s*=(?!=)\s*(?:([\w$]+)\(\s*([\w$]+)\.prototype\s*,)?/g)) {
-      protoOwners.add(m[1]);
+      protoOwners.add(m[1]!);
       if (m[2] && m[3]) {
-        built.push([m[2], m[1], m[3]]);
+        built.push([m[2], m[1]!, m[3]]);
         builders.set(m[2], (builders.get(m[2]) ?? 0) + 1);
       }
     }
@@ -1049,10 +1049,10 @@ export class BundleInterpreter {
     // the most classes (each class's prototype names itself under it).
     const linked = new Map<string, Set<string>>();
     for (const m of src.matchAll(/[{,]([\w$]+):([\w$]+)(?=\s*[,}])/g)) {
-      if (!protoOwners.has(m[2])) continue;
-      const set = linked.get(m[1]);
-      if (set) set.add(m[2]);
-      else linked.set(m[1], new Set([m[2]]));
+      if (!protoOwners.has(m[2]!)) continue;
+      const set = linked.get(m[1]!);
+      if (set) set.add(m[2]!);
+      else linked.set(m[1]!, new Set([m[2]!]));
     }
     const ranked = [...linked].sort((a, b) => b[1].size - a[1].size);
     const top = ranked[0];
@@ -1212,7 +1212,7 @@ export class BundleInterpreter {
       if (!sites) throw new InterpError('no-definition', `no definition for ${where}`);
       // Prefer the definition that follows the class's registration.
       const from = this.definitions().registrations.get(cls) ?? 0;
-      const at = sites.find((p) => p >= from) ?? sites[0];
+      const at = sites.find((p) => p >= from) ?? sites[0]!;
       const resolved = { node: this.parseFunctionAt(at, where), where };
       this.fnCache.set(where, resolved);
       return resolved;
@@ -1391,7 +1391,7 @@ export class BundleInterpreter {
         if (i < 0) i = st.cases.findIndex((c) => !c.test);
         if (i < 0) return undefined;
         for (; i < st.cases.length; i++) {
-          const c = this.execBlock(st.cases[i].consequent, scope, where);
+          const c = this.execBlock(st.cases[i]!.consequent, scope, where);
           if (c?.type === 'break') return undefined;
           if (c) return c;
         }
@@ -1630,6 +1630,7 @@ export class BundleInterpreter {
     // A string against a number or boolean is converted to a number: host work in its length.
     else if (typeof l === 'string' && (typeof r === 'number' || typeof r === 'boolean')) this.chargeConversion(l, where, n);
     else if (typeof r === 'string' && (typeof l === 'number' || typeof l === 'boolean')) this.chargeConversion(r, where, n);
+    // biome-ignore lint/suspicious/noDoubleEquals: this is the interpreted bundle's own `==`, coercion and all.
     return l == r;
   }
 
@@ -1731,8 +1732,8 @@ function walkAst(
   };
   push(root);
   while (stack.length) {
-    const top = stack[stack.length - 1];
-    if (top.i < top.c.length) push(top.c[top.i++]);
+    const top = stack[stack.length - 1]!;
+    if (top.i < top.c.length) push(top.c[top.i++]!);
     else {
       stack.pop();
       visit.leave?.(top.n);
@@ -1758,6 +1759,7 @@ function hoistedVars(fn: FunctionExpression, charge: Charge): string[] {
         const id = n.id as AstNode;
         if (id.type === 'Identifier') names.add(id.name as string);
       }
+      return true;
     },
   });
   out = [...names];
@@ -1845,6 +1847,7 @@ function ownStaticCalls(fn: FunctionExpression, cls: string, charge: Charge): st
           out.add(p.name as string);
         }
       }
+      return true;
     },
   });
   return [...out];
@@ -1944,7 +1947,7 @@ function stringLiterals(node: AcornNode, maxChars: number): { literals: string[]
       chars += v.value.length + 1;
     }
     const children = Object.entries(v).filter(([k]) => k !== 'type');
-    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i][1]);
+    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]![1]);
   }
   return { literals, nodes };
 }

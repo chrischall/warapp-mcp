@@ -12,18 +12,19 @@ import { currentTurn, gameIdArg, readAnnotations, respond, untrustedDescription 
 import { lookupMeta, mintMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
+import { requireMe } from './write-kit.js';
 
 /** Game states in which a player has something to submit (picks or orders). */
-export const ACTION_STATES: ReadonlySet<string> = new Set(['Playing', 'DistributingTerritories']);
+const ACTION_STATES: ReadonlySet<string> = new Set(['Playing', 'DistributingTerritories']);
 
 /** Game states that never change again: the push listener forgets such a game. */
-export const TERMINAL_STATES: ReadonlySet<string> = new Set(['Finished']);
+const TERMINAL_STATES: ReadonlySet<string> = new Set(['Finished']);
 
-export const MAX_WAIT_GAMES = 20;
-export const DEFAULT_TIMEOUT_SECONDS = 300;
-export const MAX_TIMEOUT_SECONDS = 1800;
+const MAX_WAIT_GAMES = 20;
+const DEFAULT_TIMEOUT_SECONDS = 300;
+const MAX_TIMEOUT_SECONDS = 1800;
 /** How often a waiting call reports progress, when the caller asked for it. */
-export const PROGRESS_EVERY_MS = 15_000;
+const PROGRESS_EVERY_MS = 15_000;
 const VIEWS = ['compact'] as const;
 
 /** Whether the game is waiting on this player: game in a turn/pick phase, my player Playing and not committed. */
@@ -45,7 +46,7 @@ export interface GameCheck {
 }
 
 /** Why no turn of mine can come in `game` any more, or undefined while one still can (#130). */
-export function endedReason(game: Game, playerId: number): string | undefined {
+function endedReason(game: Game, playerId: number): string | undefined {
   if (game.state === 'Finished') return 'The game is finished.';
   if (!ACTION_STATES.has(game.state)) return undefined;
   const me = game.players.find((p) => p.id === playerId);
@@ -65,7 +66,7 @@ export function checkOf(game: Game, playerId: number): GameCheck {
   };
 }
 
-export interface WaitOptions {
+interface WaitOptions {
   gameIds: readonly number[];
   timeoutMs: number;
   /**
@@ -88,7 +89,7 @@ export interface WaitOptions {
   now?: () => number;
 }
 
-export interface WaitOutcome {
+interface WaitOutcome {
   /** `game_over`: every watched game finished or has my seat out — no turn is coming (#130). */
   status: 'your_turn' | 'timed_out' | 'game_over';
   /** The latest view of every game, in the order asked. */
@@ -337,14 +338,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           });
         }
       }
-      const token = await ctx.myInviteToken();
-      if (token === undefined) {
-        throw new McpToolError('Could not tell which war.app account is signed in, so there is no turn to wait for.', {
-          hint:
-            'Turns are watched for the account signed in to your war.app tab. Make sure a signed-in war.app tab is ' +
-            'open and paired (ContextMint Bridge), focus or reload it, then retry.',
-        });
-      }
+      // Turns are watched for the account signed in to the war.app tab.
+      const token = await requireMe(ctx, { fresh: false, consequence: 'there is no turn to wait for' });
       const check = async (id: number) => {
         // A turn check reads only the game's state: no map (a cold map is ~190 KB per game, #131).
         const game = await readGame(id);

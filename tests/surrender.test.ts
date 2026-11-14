@@ -107,6 +107,7 @@ describe('warapp_surrender', () => {
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.sent).toEqual([{ gameId: GAME_ID, surrender: true, trailing: false, left: 0 }]);
     expect(p).toMatchObject({ status: 'surrendered', game: { id: GAME_ID, name: 'Synthetic Duel' } });
+    expect(p.outcome).toBe('confirmed');
   });
 
   it('reports a 3-player surrender as pending the others\' acceptance when the setting asks for it, not surrendered', async () => {
@@ -115,6 +116,7 @@ describe('warapp_surrender', () => {
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.sent).toHaveLength(1);
     expect(p.status).toBe('pending');
+    expect(p.outcome).toBe('accepted');
     expect(String(p.message)).toMatch(/accept/i);
   });
 
@@ -124,6 +126,7 @@ describe('warapp_surrender', () => {
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.sent).toHaveLength(1);
     expect(p.status).toBe('unchanged');
+    expect(p.outcome).toBe('unconfirmed');
     expect(String(p.warning)).toMatch(/warapp_get_game/);
   });
 
@@ -152,7 +155,7 @@ describe('warapp_surrender', () => {
     h = await harness([feedGame([opp(1), opp(2)])], s.warapp);
     const res = await h.call('warapp_surrender', { game_id: GAME_ID });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toMatch(/not playing in/i);
+    expect(textOf(res)).toMatch(/signed-in war\.app account is not a player in game/i);
     expect(s.sent).toEqual([]);
   });
 
@@ -180,6 +183,7 @@ describe('warapp_surrender', () => {
     h = await harness([feedGame(DUEL)], () => ({ msgNum: 999 }));
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(p.status).toBe('unknown');
+    expect(p.outcome).toBe('unknown');
     expect(String(p.warning)).toMatch(/warapp_get_game/);
     expect(String(p.warning)).not.toMatch(/try again|resend|retry/i);
   });
@@ -198,6 +202,7 @@ describe('warapp_surrender', () => {
       expect(s.sent).toEqual([{ gameId: GAME_ID, surrender: false, trailing: false, left: 0 }]);
       // #130: GameFeed shows no pending surrender, so "still playing" cannot prove one was taken back.
       expect(p.status).toBe('still_playing');
+      expect(p.outcome).toBe('accepted');
       expect(String(p.message)).toMatch(/no pending-surrender state/);
     });
 
@@ -208,6 +213,7 @@ describe('warapp_surrender', () => {
       h = await harness([three, three, after], s.warapp);
       const p = payload(await confirmed({ game_id: GAME_ID, undo: true }));
       expect(p.status).toBe('surrendered');
+      expect(p.outcome).toBe('confirmed');
     });
 
     it('refuses when GameFeed shows the surrender already accepted', async () => {
@@ -238,6 +244,7 @@ describe('warapp_surrender', () => {
       const p = payload(await h.call('warapp_surrender', { game_id: GAME_ID, confirmToken: preview.confirmToken }));
       // Still Playing after an instant surrender is not a pending one.
       expect(p.status).toBe('unchanged');
+      expect(p.outcome).toBe('unconfirmed');
     });
 
     it('refuses to take back an instant surrender in any game, which is never pending', async () => {
@@ -256,6 +263,7 @@ describe('warapp_surrender', () => {
       expect(String((v.acceptance as { note: string }).note)).toMatch(/UNVERIFIED/);
       const p = payload(await h.call('warapp_surrender', { game_id: GAME_ID, confirmToken: preview.confirmToken }));
       expect(p.status).toBe('pending');
+      expect(p.outcome).toBe('accepted');
       const undo = payload(await h.call('warapp_surrender', { game_id: GAME_ID, undo: true }));
       expect(undo.confirmToken).toEqual(expect.any(String));
     });

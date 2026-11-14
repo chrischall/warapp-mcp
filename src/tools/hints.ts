@@ -11,10 +11,10 @@
  */
 import type { McpServer } from '@modelcontextprotocol/server';
 
-export type MintIntent =
+type MintIntent =
   | 'whats-new' | 'whats-due' | 'whats-on' | 'lookup' | 'turn-on-off' | 'send' | 'change' | 'other';
 
-export interface MintHint {
+interface MintHint {
   domain: 'work';
   intent: MintIntent;
   /** The one tool that answers this intent for the group. */
@@ -47,7 +47,7 @@ export function lookupMeta(aliases?: string[]): { mint: MintHint } {
  */
 export function withToolConfig(server: McpServer, extra: Record<string, unknown>, register: () => void): void {
   const target = server as unknown as { registerTool: (...args: unknown[]) => unknown };
-  const hadOwn = Object.prototype.hasOwnProperty.call(target, 'registerTool');
+  const hadOwn = Object.hasOwn(target, 'registerTool');
   const original = target.registerTool;
   target.registerTool = (name: unknown, config: unknown, ...rest: unknown[]) =>
     original.call(server, name, { ...(config as Record<string, unknown>), ...extra }, ...rest);

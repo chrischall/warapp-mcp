@@ -16,16 +16,17 @@ import type { BoardSpecialUnit, BoardState, TerritoryOwner, TerritoryState } fro
 import type { Player } from './normalize.js';
 import type { DecoderReport } from './protocol/bundle.js';
 import type { Reader } from './protocol/codec.js';
+import { fields, isObj, type DecodedRecord } from './protocol/decoded.js';
 import type { ReadBudget } from './protocol/interp.js';
 
-export const LATEST_GAME_INFO = 'warlight.shared.LatestGameInfo';
-export const GAME_STANDING = 'warlight.shared.GameStanding';
-export const TERRITORY_STANDING = 'warlight.shared.TerritoryStanding';
-export const ARMIES = 'warlight.shared.Armies';
-export const COMMANDER = 'warlight.shared.Commander';
+const LATEST_GAME_INFO = 'warlight.shared.LatestGameInfo';
+const GAME_STANDING = 'warlight.shared.GameStanding';
+const TERRITORY_STANDING = 'warlight.shared.TerritoryStanding';
+const ARMIES = 'warlight.shared.Armies';
+const COMMANDER = 'warlight.shared.Commander';
 
 /** What a special unit is: the registered unit classes, by kind. */
-export type SpecialUnitKind = BoardSpecialUnit['kind'];
+type SpecialUnitKind = BoardSpecialUnit['kind'];
 
 const UNIT_KINDS: Readonly<Record<string, SpecialUnitKind>> = {
   [COMMANDER]: 'commander',
@@ -37,7 +38,7 @@ const UNIT_KINDS: Readonly<Record<string, SpecialUnitKind>> = {
 };
 
 /** A special unit on a territory, as the standing has it. */
-export interface LiveSpecialUnit {
+interface LiveSpecialUnit {
   kind: SpecialUnitKind;
   /** The unit's GUID (32 hex digits). */
   id: string;
@@ -58,10 +59,10 @@ export const OWNER_PICKABLE = -2;
  * fog level 4, owner -1 and `Armies(0, fogged)`.
  */
 export const FOG_LEVEL_NAMES: Readonly<Record<number, string>> = { 1: 'You', 2: 'Visible', 3: 'OwnerOnly', 4: 'Fogged' };
-export const FOG_LEVEL_YOU = 1;
+const FOG_LEVEL_YOU = 1;
 export const FOG_LEVEL_VISIBLE = 2;
 export const FOG_LEVEL_OWNER_ONLY = 3;
-export const FOG_LEVEL_FOGGED = 4;
+const FOG_LEVEL_FOGGED = 4;
 const KNOWN_FOG_LEVELS: ReadonlySet<number> = new Set([FOG_LEVEL_YOU, FOG_LEVEL_VISIBLE, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_FOGGED]);
 
 /** One territory as the viewer's standing has it. */
@@ -102,9 +103,7 @@ export class LiveBoardFormatError extends McpToolError {
   }
 }
 
-type Obj = Record<string, unknown> & { $type?: unknown };
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-const fields = (o: Obj): unknown[] => Object.entries(o).filter(([k]) => k !== '$type').map(([, v]) => v);
+type Obj = DecodedRecord;
 const isType = (v: unknown, type: string): v is Obj => isObj(v) && v.$type === type;
 
 /** `[key, value]` pairs of a decoded dict, or the items of a list. */
@@ -120,6 +119,10 @@ const GUID = /^[0-9a-f]{32}$/i;
 /** One decoded special unit: its class names the kind; GUID and owner are its last two fields. */
 function specialUnitOf(u: unknown): LiveSpecialUnit {
   if (!isObj(u) || typeof u.$type !== 'string') throw new LiveBoardFormatError('a special unit is not a unit');
+  // A constructor the interpreter could not run leaves a half-built record (#131, #133).
+  if (typeof u.$ctorError === 'string') {
+    throw new LiveBoardFormatError(`a special unit (${u.$type}): the client's constructor failed (${u.$ctorError})`);
+  }
   const values = fields(u);
   const [id, owner] = values.slice(-2);
   if (typeof id !== 'string' || !GUID.test(id) || typeof owner !== 'number') {

@@ -1,0 +1,53 @@
+{
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"files": {
+		"includes": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "*.ts"]
+	},
+	"formatter": { "enabled": false },
+	"assist": { "enabled": false },
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"style": {
+				"noNonNullAssertion": "off",
+				"useTemplate": "off"
+			},
+			"suspicious": {
+				"noAssignInExpressions": "off",
+				"noConfusingVoidType": "off",
+				"useIterableCallbackReturn": "off"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["tests/**"],
+			"linter": {
+				"rules": {
+					"complexity": { "noCommaOperator": "off" },
+					"suspicious": {
+						"noControlCharactersInRegex": "off",
+						"noDuplicateTestHooks": "off",
+						"noExplicitAny": "off",
+						"noNonNullAssertedOptionalChain": "off",
+						"noTemplateCurlyInString": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/analysis/planner.ts"],
+			"linter": {
+				"rules": {
+					"complexity": { "useOptionalChain": "off" },
+					"suspicious": {
+						"noControlCharactersInRegex": "off",
+						"noShadowRestrictedNames": "off"
+					}
+				}
+			}
+		}
+	]
+}

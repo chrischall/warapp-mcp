@@ -28,7 +28,7 @@ import { readPickRecord, writePickable } from '../pick-list.js';
 import { cachedRecords, STATS_ENV, statsGate } from '../stats.js';
 import { CACHED_TURNS, writeBoardCache } from '../trend.js';
 import { loadAward } from './award.js';
-import { gameIdArg, graphOf, readAnnotations, respond, round2, untrustedDescription, viewArg } from './common.js';
+import { gameIdArg, graphOf, namer, readAnnotations, respond, round2, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
@@ -41,12 +41,7 @@ const LIST_MAX = 10;
 /** Approaches listed per opponent on the compact view (the full view lists the model's maximum). */
 const COMPACT_APPROACHES = 3;
 /** The least likelihood the full view lists under `presence`. */
-export const PRESENCE_LISTED = 0.15;
-
-const namer = (map: GameMap) => {
-  const names = new Map(map.territories.map((t) => [t.id, t.name]));
-  return (id: number) => ({ id, name: names.get(id) ?? String(id) });
-};
+const PRESENCE_LISTED = 0.15;
 
 /**
  * Keep the territories the live board shows as pickable, for the signed-in account when it is a

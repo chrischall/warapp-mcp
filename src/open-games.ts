@@ -7,25 +7,31 @@
 // `warlight.shared.GameInfo` records (no present flags). Field names are
 // minified, so GameInfo and its GameInfoSettings are read by registered type
 // name and fields by read order (positions below, each checked for its type),
-// the same as `my-games.ts`. The reader stays loose: a record that does not
-// fit is skipped, a payload that stops decoding keeps what was read, and a
-// missing or malformed payload is an empty list with a note — never a throw.
+// the same as `my-games.ts`. Each record must have exactly the client's field
+// count: one with a field inserted or dropped would shift every position, so it
+// throws OpenGamesFormatError (#133). Otherwise the reader stays loose: a record
+// whose positions do not hold their types is skipped, a payload that stops
+// decoding keeps what was read, and a missing or malformed payload is an empty
+// list with a note.
 // Whatever the record does not carry reliably is omitted, never guessed.
 
+import { McpToolError } from '@chrischall/mcp-utils';
 import { armiesToTake } from './analysis/combat.js';
 import { DEFAULT_BASE_INCOME } from './analysis/player.js';
 import { cardTypeName } from './cards.js';
 import { colorIndexOf } from './join-color.js';
 import type { ClassReader } from './live.js';
 import type { GameSettings } from './normalize.js';
+import { GAME_INFO, GAME_INFO_FIELDS, GAME_INFO_PLAYER, GAME_INFO_PLAYER_FIELDS } from './my-games.js';
 import { Reader } from './protocol/codec.js';
+import { fields, isObj, type DecodedRecord } from './protocol/decoded.js';
 import type { ReadBudget } from './protocol/interp.js';
+import { holdsSeat, playerStateName } from './player-states.js';
 import { carriesTeam } from './teams.js';
 
 export const OPEN_GAMES_URL = 'https://war.app/MultiPlayer/OpenGames';
-export const GAME_INFO = 'warlight.shared.GameInfo';
-export const GAME_INFO_SETTINGS = 'warlight.shared.GameInfoSettings';
-const GAME_INFO_PLAYER = 'warlight.shared.GameInfoPlayer';
+export { GAME_INFO };
+const GAME_INFO_SETTINGS = 'warlight.shared.GameInfoSettings';
 
 /**
  * The most records an OpenGames payload may claim. The count is read from the payload, and each
@@ -49,12 +55,8 @@ const GI = {
   realTime: 19,
   settings: 21,
 } as const;
-const GI_MIN_FIELDS = 23;
 /** GameInfoPlayer: the colour (an optional GameColor), the in-game id, the state (GamePlayerState) and the team. */
 const GP = { color: 0, id: 6, state: 7, team: 8 } as const;
-const GP_MIN_FIELDS = 9;
-/** Player states not holding a seat: Declined, RemovedByHost. */
-const NOT_SEATED = new Set([5, 6]);
 
 /** GameInfoSettings field positions in read order. */
 const GS = {
@@ -83,7 +85,8 @@ const GS = {
   ranked: 22,
   roundingMode: 23,
 } as const;
-const GS_MIN_FIELDS = 24;
+/** GameInfoSettings' whole field count (as the client's reader has it, 2026-11-14). */
+const GAME_INFO_SETTINGS_FIELDS = 24;
 /** The distribution mode of a custom scenario. */
 const DIST_CUSTOM_SCENARIO = -3;
 const DEFAULT_MIN_ARMIES = 5;
@@ -107,10 +110,10 @@ export interface OpenGame {
   /** The boot time, e.g. `3d`, `1d12h`, `5m`; absent when it is "never". */
   bootTime?: string;
   bootTimeMinutes?: number;
-  /** Players holding a seat (declined and removed players excluded). */
+  /** Players holding a seat (invited, declined and removed players excluded: src/player-states.ts). */
   players: number;
   openSeats: number;
-  /** players + openSeats. */
+  /** players + the seats kept for invited players + openSeats. */
   seats: number;
   /** A mega game's player cap. */
   maxPlayers?: number;
@@ -140,7 +143,7 @@ export interface OpenLobby {
   colorsTaken: number[];
 }
 
-export interface OpenGamesPage {
+interface OpenGamesPage {
   games: OpenGame[];
   /** Per game id: its seated players and the colours taken. */
   lobbies: Map<number, OpenLobby>;
@@ -150,20 +153,33 @@ export interface OpenGamesPage {
   note?: string;
 }
 
-type Obj = Record<string, unknown> & { $type?: unknown };
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-const META_KEYS = new Set(['$type', '$ctorError']);
-const fields = (o: Obj): unknown[] =>
-  Object.entries(o)
-    .filter(([k]) => !META_KEYS.has(k))
-    .map(([, v]) => v);
+/**
+ * A GameInfo (or its player or settings record) without exactly the client's field count: the
+ * client added, dropped or moved a field, so every position read would be another field's (#133).
+ */
+export class OpenGamesFormatError extends McpToolError {
+  constructor(detail: string) {
+    super(`war.app's open-games list arrived in an unexpected shape (${detail}).`, {
+      kind: 'unknown',
+      hint: 'The war.app client may have changed. warapp_my_games and warapp_get_game still work.',
+    });
+    this.name = 'OpenGamesFormatError';
+  }
+}
+
+/** `o`'s fields, refused unless there are exactly `count` of them. */
+function fieldsOf(o: DecodedRecord, type: string, count: number): unknown[] {
+  const f = fields(o);
+  if (f.length !== count) throw new OpenGamesFormatError(`a ${type.replace('warlight.shared.', '')} has ${f.length} fields, not ${count}`);
+  return f;
+}
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
 const isIntList = (v: unknown): v is number[] => Array.isArray(v) && v.every(isInt);
 
 /** A TimeSpan in ms as war.app shows it: `3d`, `1d12h`, `6h`, `2h30m`, `5m`, `45s`. */
-export function formatDuration(ms: number): string {
+function formatDuration(ms: number): string {
   const days = Math.floor(ms / 86_400_000);
   const hours = Math.floor(ms / 3_600_000) % 24;
   const mins = Math.floor(ms / 60_000) % 60;
@@ -197,8 +213,7 @@ function settingsString(s: string): { cards: number[]; mods: boolean } | undefin
 /** The flags a GameInfoSettings record carries; `undefined` when it is not one. */
 function readSettings(v: unknown): SettingsRead | undefined {
   if (!isObj(v) || v.$type !== GAME_INFO_SETTINGS) return undefined;
-  const f = fields(v);
-  if (f.length < GS_MIN_FIELDS) return undefined;
+  const f = fieldsOf(v, GAME_INFO_SETTINGS, GAME_INFO_SETTINGS_FIELDS);
   const rules: string[] = [];
   const gaps: string[] = [];
   let cards: string[] | undefined;
@@ -217,7 +232,7 @@ function readSettings(v: unknown): SettingsRead | undefined {
     gaps.push('Commanders');
   }
   const ss = typeof f[GS.settingsString] === 'string' ? settingsString(f[GS.settingsString] as string) : undefined;
-  if (ss && ss.cards.length) {
+  if (ss?.cards.length) {
     cards = ss.cards.map(cardTypeName);
     rules.push(`Cards: ${cards.join(', ')}`);
   }
@@ -288,6 +303,8 @@ interface LobbyPlayer {
   id: number;
   team: number;
   seated: boolean;
+  /** An invitation not yet accepted: no seat yet, but one is kept for them. */
+  invited: boolean;
   /** The GameColor index, or null when the player has none. */
   color: number | null;
 }
@@ -295,24 +312,23 @@ interface LobbyPlayer {
 /** One GameInfoPlayer record, or `undefined` when it does not fit. */
 function lobbyPlayer(p: unknown): LobbyPlayer | undefined {
   if (!isObj(p) || p.$type !== GAME_INFO_PLAYER) return undefined;
-  const f = fields(p);
+  const f = fieldsOf(p, GAME_INFO_PLAYER, GAME_INFO_PLAYER_FIELDS);
   const id = f[GP.id];
   const state = f[GP.state];
   const team = f[GP.team];
   const color = colorIndexOf(f[GP.color]);
-  if (f.length < GP_MIN_FIELDS || !isInt(id) || !isInt(state) || !isInt(team)) return undefined;
-  return { id, team, seated: !NOT_SEATED.has(state), color: color ?? null };
+  if (!isInt(id) || !isInt(state) || !isInt(team)) return undefined;
+  const name = playerStateName(state);
+  return { id, team, seated: holdsSeat(name), invited: name === 'Invited', color: color ?? null };
 }
 
-/** One decoded GameInfo as an open game; `undefined` when the record does not fit. */
-export function openGameOf(record: unknown): OpenGame | undefined {
-  return readOpenGame(record)?.game;
-}
-
+/**
+ * One decoded GameInfo as an open game and its lobby; `undefined` when it is not a GameInfo or a
+ * position read does not hold its type. A record without the client's field count throws.
+ */
 function readOpenGame(record: unknown): { game: OpenGame; lobby: OpenLobby } | undefined {
   if (!isObj(record) || record.$type !== GAME_INFO) return undefined;
-  const f = fields(record);
-  if (f.length < GI_MIN_FIELDS) return undefined;
+  const f = fieldsOf(record, GAME_INFO, GAME_INFO_FIELDS);
   const id = f[GI.gameId];
   const name = f[GI.name];
   const mapId = f[GI.mapId];
@@ -325,6 +341,7 @@ function readOpenGame(record: unknown): { game: OpenGame; lobby: OpenLobby } | u
   const openSeatTeams = seats ?? [];
   const all = (players ?? []).map(lobbyPlayer).filter((p): p is LobbyPlayer => p !== undefined);
   const seated = all.filter((p) => p.seated);
+  const invited = all.filter((p) => p.invited).length;
   const randomTeamsOf = f[GI.randomTeamsOf];
   const random = isInt(randomTeamsOf) && randomTeamsOf > 0 ? randomTeamsOf : undefined;
   // The client's own test (its "Team Game" settings icon): random teams, or any player
@@ -341,7 +358,7 @@ function readOpenGame(record: unknown): { game: OpenGame; lobby: OpenLobby } | u
     pace: realTime ? 'real-time' : 'multi-day',
     players: seated.length,
     openSeats: openSeatTeams.length,
-    seats: seated.length + openSeatTeams.length,
+    seats: seated.length + invited + openSeatTeams.length,
     teamGame,
     mapId,
     entryFeeCoins: isInt(f[GI.entryFee]) ? (f[GI.entryFee] as number) : 0,
@@ -391,7 +408,10 @@ function hexBytes(hex: string): Uint8Array | undefined {
 
 const UNREADABLE = "war.app's open-games data could not be read (the client may have changed).";
 
-/** The open games a signed-in OpenGames page lists; never throws. */
+/**
+ * The open games a signed-in OpenGames page lists. A missing, malformed or truncated payload is a
+ * note; a record without the client's field count throws {@link OpenGamesFormatError}.
+ */
 export function parseOpenGamesPage(html: string, bundle: ClassReader): OpenGamesPage {
   const out: OpenGamesPage = { games: [], lobbies: new Map() };
   const hidden = HIDDEN_RE.exec(html);
@@ -434,13 +454,15 @@ export function parseOpenGamesPage(html: string, bundle: ClassReader): OpenGames
       }
     }
   } catch (e) {
+    // A shifted layout is the client changing, not a damaged payload: say so loudly.
+    if (e instanceof OpenGamesFormatError) throw e;
     // Records are back to back with no lengths: after a failed one the rest cannot be found.
     out.note = `${UNREADABLE} Read ${read} of ${count} games before: ${e instanceof Error ? e.message : String(e)}`;
   }
   return out;
 }
 
-export interface OpenGameFilters {
+interface OpenGameFilters {
   /** Default `multi-day`. */
   pace?: Pace | 'both';
   /** At most this many seats (players + open seats, or a mega game's cap). */
@@ -517,12 +539,12 @@ export function feedScreen(s: GameSettings): { screen?: JoinScreen; gaps: string
 }
 
 /** The owner's joining policy (#134): at most this many seats (1v1 preferred). */
-export const POLICY_MAX_SEATS = 4;
+const POLICY_MAX_SEATS = 4;
 /** …and a boot time of at least a day. */
-export const POLICY_MIN_BOOT_MINUTES = 24 * 60;
+const POLICY_MIN_BOOT_MINUTES = 24 * 60;
 
 /** Whether a lobby keeps the joining policy. Advisory: nothing is refused for it. */
-export interface JoinPolicy {
+interface JoinPolicy {
   /** true: keeps it; false: breaks it; null: nothing broke, but part of it could not be checked. */
   passes: boolean | null;
   /** Each rule the lobby breaks, in policy order. */

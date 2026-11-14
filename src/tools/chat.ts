@@ -1,20 +1,13 @@
 // Game chat: read through the official GameFeed (`GetChat=true`), send through
 // the web-client protocol (`SendChat`), gated on the user's confirmation — a
 // message reaches other players and cannot be unsent.
-import {
-  CONFIRM_INJECTION_RULE,
-  defineWrite,
-  McpToolError,
-  registerWrite,
-  toolAnnotations,
-} from '@chrischall/mcp-utils';
+import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
 import { inGameId, playersByInGameId } from '../live.js';
 import type { Player } from '../normalize.js';
 import { CHAT_CHANNEL_PUBLIC, Method, writeSendChatParams } from '../protocol/methods.js';
-import { WarappServerError } from '../protocol/rpc.js';
 import { asInt } from '../scalars.js';
 import {
   gameIdArg,
@@ -24,12 +17,13 @@ import {
   untrustedDescription,
   untrustedText,
 } from './common.js';
-import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
-import { failureText, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
+import { lookupMeta, mintMeta } from './hints.js';
+import { requireApprovedAccount, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
+import { defineGatedWrite, requireMe, sendAndVerify } from './write-kit.js';
 
 const DEFAULT_LIMIT = 50;
-export const MAX_CHAT_LENGTH = 2000;
+const MAX_CHAT_LENGTH = 2000;
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -43,7 +37,7 @@ const TEXT_KEYS = ['message', 'text', 'chat', 'msg', 'body'] as const;
 const TIME_KEYS = ['time', 'date', 'dateTime', 'created', 'sent', 'when'] as const;
 const LIST_KEYS = ['chat', 'messages', 'Chat'] as const;
 
-export interface ChatMessage {
+interface ChatMessage {
   from: string | null;
   text: string;
   time?: string;
@@ -55,7 +49,7 @@ export interface ChatMessage {
  * `undefined` when nothing recognisable is there, so the caller can pass the
  * raw value through instead.
  */
-export function normalizeChat(raw: unknown, players: readonly Player[]): ChatMessage[] | undefined {
+function normalizeChat(raw: unknown, players: readonly Player[]): ChatMessage[] | undefined {
   let list: unknown = raw;
   if (isRec(list)) list = pick(list, LIST_KEYS);
   if (!Array.isArray(list)) return undefined;
@@ -121,118 +115,118 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
     gameId: number;
     text: string;
     recipient?: { id: number; name: string };
-    /** The account the gate bound (its GameFeed id), when the plan could read it. */
-    account?: string;
+    /** The account the plan read and the gate bound (its GameFeed id). */
+    account: string;
   }
 
-  withToolConfig(
+  defineGatedWrite(
     server,
     {
       title: 'Send a chat message in a war.app game',
       _meta: mintMeta('send', ['send chat', 'message the game', 'tell my opponent']),
     },
-    () =>
-      registerWrite(
-        server,
-        defineWrite({
-          name: 'warapp_send_chat',
-          description:
-            'Post a chat message in a war.app (Warzone) game — to the whole game, or privately to one named player. ' +
-            'The message reaches other players and cannot be unsent. Sent through your signed-in war.app tab ' +
-            '(ContextMint Bridge); the game is read from GameFeed first, so the GameFeed credentials are needed too. ' +
-            `${CONFIRM_INJECTION_RULE}`,
-          annotations: toolAnnotations({
-            title: 'Send a war.app chat message',
-            readOnly: false,
-            destructive: true,
-            idempotent: false,
-            openWorld: true,
-          }),
-          inputSchema: z.object({
-            game_id: gameIdArg,
-            message: z.string().trim().min(1).max(MAX_CHAT_LENGTH).describe('The message text.'),
-            to: z
-              .union([z.string(), z.number()])
-              .optional()
-              .describe('A player (name or GameFeed id) to message privately. Omit to post to the whole game.'),
-          }),
-          async plan({ game_id, message, to }) {
-            const gameId = parseGameId(game_id);
-            // Read the game for every message (#130): one GameFeed does not know is refused here.
-            const game = await ctx.client.getGame(gameId, { map: false });
-            // The message goes out as whoever is signed in: bind that account, so an
-            // approval given while one account was signed in never posts as another.
-            const me = await ctx.myInviteToken({ fresh: true });
-            const account = writeAccount(me);
-            let recipient: ChatState['recipient'];
-            let shownRecipient: { id: number; name: string } | undefined;
-            if (to !== undefined && String(to).trim() !== '') {
-              const p = resolvePlayer(game.players, to);
-              if (p.id === me) {
-                throw new McpToolError(`${untrustedText(p.name)} (${p.id}) is you: a private message to yourself was not sent.`, {
-                  hint: 'Name another player in `to`, or omit it to post to the whole game.',
-                });
-              }
-              recipient = { id: inGameId(p), name: p.name };
-              // The recipient's name is their own words: by id in the sentence, delimited in a field.
-              shownRecipient = { id: p.id, name: untrustedText(p.name) };
-            }
-            return {
-              gate: {
-                action: 'warapp.send_chat',
-                summary: shownRecipient
-                  ? `Send a private chat message to player ${shownRecipient.id} in game ${gameId}`
-                  : `Post a chat message to everyone in game ${gameId}`,
-                account,
-                target: gameId,
-                payload: {
-                  method: 'SendChat',
-                  gameId,
-                  text: message,
-                  channel: CHAT_CHANNEL_PUBLIC,
-                  recipient: recipient?.id ?? null,
-                },
-                willSend: { game: gameId, to: shownRecipient?.name ?? 'everyone in the game', message },
-                preview: {
-                  account: account ?? 'the signed-in war.app account (could not be read)',
-                  note: 'Other players will see this message; it cannot be unsent.',
-                  game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state },
-                  ...(shownRecipient ? { recipient: shownRecipient } : {}),
-                  untrusted: UNTRUSTED_PREVIEW_NOTE,
-                },
-              },
-              state: {
-                gameId,
-                text: message,
-                ...(recipient ? { recipient } : {}),
-                ...(account === undefined ? {} : { account }),
-              } satisfies ChatState,
-            };
+    {
+      name: 'warapp_send_chat',
+      description:
+        'Post a chat message in a war.app (Warzone) game — to the whole game, or privately to one named player. ' +
+        'The message reaches other players and cannot be unsent. Sent through your signed-in war.app tab ' +
+        '(ContextMint Bridge); the game is read from GameFeed first, so the GameFeed credentials are needed too. ' +
+        `${CONFIRM_INJECTION_RULE}`,
+      annotations: toolAnnotations({
+        title: 'Send a war.app chat message',
+        readOnly: false,
+        destructive: true,
+        idempotent: false,
+        openWorld: true,
+      }),
+      inputSchema: z.object({
+        game_id: gameIdArg,
+        message: z.string().trim().min(1).max(MAX_CHAT_LENGTH).describe('The message text.'),
+        to: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe('A player (name or GameFeed id) to message privately. Omit to post to the whole game.'),
+      }),
+      async plan({ game_id, message, to }) {
+        const gameId = parseGameId(game_id);
+        // Read the game for every message (#130): one GameFeed does not know is refused here.
+        const game = await ctx.client.getGame(gameId, { map: false });
+        // The message goes out as whoever is signed in: bind that account, so an
+        // approval given while one account was signed in never posts as another (#133:
+        // refused when it cannot be read, as every write is).
+        const me = await requireMe(ctx);
+        const account = String(me);
+        let recipient: ChatState['recipient'];
+        let shownRecipient: { id: number; name: string } | undefined;
+        if (to !== undefined && String(to).trim() !== '') {
+          const p = resolvePlayer(game.players, to);
+          if (p.id === me) {
+            throw new McpToolError(`${untrustedText(p.name)} (${p.id}) is you: a private message to yourself was not sent.`, {
+              hint: 'Name another player in `to`, or omit it to post to the whole game.',
+            });
+          }
+          recipient = { id: inGameId(p), name: p.name };
+          // The recipient's name is their own words: by id in the sentence, delimited in a field.
+          shownRecipient = { id: p.id, name: untrustedText(p.name) };
+        }
+        return {
+          gate: {
+            action: 'warapp.send_chat',
+            summary: shownRecipient
+              ? `Send a private chat message to player ${shownRecipient.id} in game ${gameId}`
+              : `Post a chat message to everyone in game ${gameId}`,
+            account,
+            target: gameId,
+            payload: {
+              method: 'SendChat',
+              gameId,
+              text: message,
+              channel: CHAT_CHANNEL_PUBLIC,
+              recipient: recipient?.id ?? null,
+            },
+            willSend: { game: gameId, to: shownRecipient?.name ?? 'everyone in the game', message },
+            preview: {
+              account,
+              note: 'Other players will see this message; it cannot be unsent.',
+              game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state },
+              ...(shownRecipient ? { recipient: shownRecipient } : {}),
+              untrusted: UNTRUSTED_PREVIEW_NOTE,
+            },
           },
-          async execute({ gameId, text, recipient, account }: ChatState) {
-            await requireApprovedAccount(ctx, account);
-            const to = recipient?.name ?? 'everyone in the game';
-            try {
-              await ctx.rpc.call('SendChat', Method.SendChat, (w) =>
-                writeSendChatParams(w, { gameId, text, ...(recipient ? { recipient: recipient.id } : {}) }),
-              );
-            } catch (e) {
-              // war.app refused it: nothing was posted.
-              if (e instanceof WarappServerError) throw e;
-              return {
-                status: 'unknown' as const,
-                game: gameId,
-                to,
-                warning:
-                  `war.app did not confirm this message (${failureText(e)}), so it may ` +
-                  'already have been posted. Check warapp_get_chat before sending it again.',
-              };
-            }
-            return { status: 'sent' as const, game: gameId, to };
+          state: {
+            gameId,
+            text: message,
+            ...(recipient ? { recipient } : {}),
+            account,
+          } satisfies ChatState,
+        };
+      },
+      async execute({ gameId, text, recipient, account }: ChatState) {
+        await requireApprovedAccount(ctx, account);
+        const to = recipient?.name ?? 'everyone in the game';
+        const sent = () => ({ status: 'sent' as const, outcome: 'accepted' as const, game: gameId, to });
+        return sendAndVerify({
+          send: async () => {
+            await ctx.rpc.call('SendChat', Method.SendChat, (w) =>
+              writeSendChatParams(w, { gameId, text, ...(recipient ? { recipient: recipient.id } : {}) }),
+            );
           },
-          render: (r) => respond(undefined, ['compact'], () => r),
-          batchable: false,
-        }),
-      ),
+          // war.app refused it: nothing was posted (the refusal is rethrown).
+          unanswered: (failure) => ({
+            status: 'unknown' as const,
+            outcome: 'unknown' as const,
+            game: gameId,
+            to,
+            warning:
+              `war.app did not confirm this message (${failure}), so it may ` +
+              'already have been posted. Check warapp_get_chat before sending it again.',
+          }),
+          // A sent message has nothing to read back: war.app's acceptance is all there is.
+          readBack: async () => undefined,
+          unreadable: () => sent(),
+          classify: () => sent(),
+        });
+      },
+    },
   );
 }

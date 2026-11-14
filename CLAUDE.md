@@ -33,12 +33,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GameFeed answers as the player whose token is presented (fog of war included). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Seven tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
-  `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn` and `warapp_uncommit_turn`, registered with mcp-utils' `defineWrite` / `registerWrite`
+- **Eight tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
+  `warapp_send_chat`, `warapp_join_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn` and `warapp_link_session` (local only:
+  it stores a session cookie on this machine and is not registered hosted), registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
   preview names it, and `execute` refuses if it changed (`requireApprovedAccount`, `src/tools/live-context.ts`),
-  so an approval for one account never acts as another. `warapp_submit_picks` validates against the live board and reports
+  so an approval for one account never acts as another. The shared pieces are in `src/tools/write-kit.ts`:
+  `requireMe` / `requireMySeat` (every write refuses an unreadable signed-in account, one wording),
+  `sendAndVerify` (a refusal throws; no answer is `unknown` and is never read back or resent), and
+  `defineGatedWrite`. Every write result carries `outcome` (`confirmed`, `accepted`, `unconfirmed`,
+  `unknown`, `not_applied`; the per-tool mapping is in that file's header) beside its own `status`,
+  which callers still read. `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. Every other tool
   is read-only, `warapp_plan_turn` and `warapp_track_opponents` included. The two-step token
   confirmation verifies no person — on a client that cannot prompt it is advisory (the model itself
@@ -316,9 +322,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     is topped up rather than abandoned. Holds go in order of worth per army of hold cost. A
     border is **conceded** when holding costs more than `CONCEDE_FACTOR` (3) × its worth or than the income left
     (a warning either way; in the opening, never on worth when the hold costs no more than the
-    armies already there, #122): it is never deployed to (unless every territory I hold is
+    armies already there, #122): triage deploys nothing there (unless every territory I hold is
     conceded), it attacks out only with the armies already on it, and idle armies never move
-    into it.
+    into it. It can still get deploys as a finish-off source (rule 1e runs first) and, under Local
+    Deployment, from its held bonus's own pool (which lands only inside that bonus).
   - **Held bonuses first (#51)** (under `balanced`/`defend`): a bonus I hold in full is one
     unit — all its threatened borders are held or none (a border shared by two held bonuses is
     paid once). A unit whose summed hold cost ≤ `PAYBACK_TURNS` × its value (and, like any
@@ -588,5 +595,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 
 ## Commands
 
-`npm run build` (tsc --noEmit + esbuild bundle) · `npm test` (typecheck + vitest) ·
-`npm run test:coverage` · `npm run typecheck`.
+`npm run build` (tsc --noEmit + esbuild bundle) · `npm test` (typecheck + lint + vitest) ·
+`npm run test:coverage` (what CI runs: `npm test` plus the coverage thresholds in `vitest.config.ts`) · `npm run typecheck` ·
+`npm run lint` (Biome, lint only — no formatter; `biome.json` turns off the house-style rules such as
+`noNonNullAssertion`, which `noUncheckedIndexedAccess` makes the idiom). `exactOptionalPropertyTypes`
+is off until `src/analysis/planner.ts` is clean under it.

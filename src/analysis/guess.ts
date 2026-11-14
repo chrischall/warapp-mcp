@@ -28,9 +28,9 @@ import type { ProfilePlayer } from './profile.js';
 /** A guess is emitted only when the mix beats the best fixed split by this share of the worth at stake. */
 export const MIN_GUESS_GAIN = 0.05;
 /** A border with my commander on it is worth this much more (losing it can lose the game). */
-export const COMMANDER_WORTH = 100;
+const COMMANDER_WORTH = 100;
 /** At most this many borders (the allocations grow as 3^borders). */
-export const MAX_GUESS_BORDERS = 7;
+const MAX_GUESS_BORDERS = 7;
 
 /** What of the plan the guess reads: its deploys, its moves (out of a border) and its enemy deploy. */
 export interface GuessPlan {
@@ -56,7 +56,7 @@ export interface GuessInput {
   seed: number;
 }
 
-export interface GuessBorder {
+interface GuessBorder {
   id: number;
   /** 1 + the bonuses I hold in full containing it + {@link COMMANDER_WORTH} with my commander there. */
   worth: number;
@@ -104,7 +104,7 @@ export interface BorderGuess {
   deploys: PlannedDeploy[];
 }
 
-export type GuessSkipReason =
+type GuessSkipReason =
   | 'no-contact'
   | 'several-opponents'
   | 'luck'
@@ -115,13 +115,13 @@ export type GuessSkipReason =
   | 'fixed-split-holds'
   | 'small-gain';
 
-export interface GuessSkipped {
+interface GuessSkipped {
   kind: 'skipped';
   reason: GuessSkipReason;
   message: string;
 }
 
-export type GuessResult = BorderGuess | GuessSkipped;
+type GuessResult = BorderGuess | GuessSkipped;
 
 const byNum = (a: number, b: number) => a - b;
 const skip = (reason: GuessSkipReason, message: string): GuessSkipped => ({ kind: 'skipped', reason, message });

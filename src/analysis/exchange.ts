@@ -26,7 +26,7 @@ import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE,
 import { buildGraph, type MapGraph } from './graph.js';
 import { simulateTurn, type SimSettings, type SimTerritory } from './turn-sim.js';
 
-export type ExchangeLabel = 'certain first strike' | 'favourable exchange' | 'strike last' | 'stand';
+type ExchangeLabel = 'certain first strike' | 'favourable exchange' | 'strike last' | 'stand';
 
 export interface ExchangeCase {
   /** `now`: the defenders as they stand; `estimated`: plus the owner's estimated deploy; `whole`: plus its whole income. */
@@ -39,7 +39,7 @@ export interface ExchangeCase {
   captures: boolean;
 }
 
-export interface ExchangeInput {
+interface ExchangeInput {
   attackers: number;
   /** The defenders there now (special units included). */
   defenders: number;
@@ -87,7 +87,7 @@ export const FORECAST_TURNS = 10;
 
 export type BorderOutcome = 'breaks' | 'ground-down' | 'stand-off';
 
-export interface BorderForecastInput {
+interface BorderForecastInput {
   /** My stack on the border. */
   mine: number;
   /** The opponent's stack facing it. */
@@ -101,7 +101,7 @@ export interface BorderForecastInput {
   settings?: SimSettings;
 }
 
-export interface BorderForecast {
+interface BorderForecast {
   outcome: BorderOutcome;
   /** The turn (1-based) the border breaks either way; `null` for a stand-off. */
   turn: number | null;

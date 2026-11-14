@@ -6,9 +6,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { INFER_REACH, MAX_LISTED_COMBINATIONS, TRACKED_MIN_TURNS, trackGame, trackOpponents, type ObservedTurn } from '../analysis/index.js';
 import { boardStateFromLive } from '../live.js';
-import type { GameMap } from '../normalize.js';
 import { CACHED_TURNS, writeBoardCache } from '../trend.js';
-import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
+import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
@@ -16,11 +15,6 @@ import { mapOf } from './map.js';
 import { boardHistory, currentTurn, plannerSettings, requireTurnPhase } from './turn.js';
 
 const VIEWS = ['compact', 'full'] as const;
-
-const namer = (map: GameMap) => {
-  const names = new Map(map.territories.map((t) => [t.id, t.name]));
-  return (id: number) => ({ id, name: names.get(id) ?? String(id) });
-};
 
 export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void {
   server.registerTool(

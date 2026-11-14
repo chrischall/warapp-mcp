@@ -16,7 +16,7 @@
 //
 // SECURITY: the AuthToken is a full-account credential. Neither tool returns,
 // logs, or previews it; the status output carries only `capturedAt`/`host`/age.
-import { CONFIRM_INJECTION_RULE, defineWrite, registerWrite, toolAnnotations } from '@chrischall/mcp-utils';
+import { CONFIRM_INJECTION_RULE, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { linkSession, type LinkResult, type LinkSessionOptions } from '../direct/link.js';
@@ -24,11 +24,12 @@ import { readSession, SESSION_HOST, type Session } from '../direct/session.js';
 import { isHosted } from '../hosted.js';
 import type { DecoderReport } from '../protocol/bundle.js';
 import type { PushTransportName } from '../push/socketio.js';
-import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
+import { lookupMeta, mintMeta } from './hints.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
+import { defineGatedWrite } from './write-kit.js';
 
 /** Which leg serves calls now, and whether the linked token went stale this run. */
-export interface SessionTransportView {
+interface SessionTransportView {
   /** The leg the next call rides. */
   activeLeg(): 'direct' | 'fetchproxy';
   /** True while the linked token is known to be signed out (cleared by a direct success or a relink). */
@@ -75,13 +76,6 @@ const HINT_EXPIRED =
  */
 export function noBrowserNote(hosted: boolean | undefined): string {
   return hosted ? '' : ' Works without a browser once a session is linked (warapp_link_session).';
-}
-
-/** The hint when the signed-in account cannot be told: linking a session is suggested only locally. */
-export function signedInHint(hosted: boolean | undefined): string {
-  return hosted
-    ? 'Open a war.app tab signed in to your account, then retry.'
-    : 'Open a war.app tab signed in to your account (or link a session with warapp_link_session), then retry.';
 }
 
 export function registerSessionTools(server: McpServer, deps: SessionToolsDeps): void {
@@ -160,68 +154,63 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
   // Never on a hosted child: it would store a full-account token on the host.
   if (hosted) return;
 
-  withToolConfig(
+  defineGatedWrite(
     server,
     {
       title: 'Link a war.app session (direct transport)',
       _meta: mintMeta('change', ['link war.app', 'connect war.app session', 'relink war.app']),
     },
-    () =>
-      registerWrite(
-        server,
-        defineWrite({
-          name: 'warapp_link_session',
-          description:
-            'Link your signed-in war.app session for the direct (no-browser) transport: capture the session cookie ' +
-            'from your signed-in war.app tab once and store it on THIS machine, so later war.app calls go straight ' +
-            'to war.app without the browser bridge. The stored cookie is a full-account credential kept locally ' +
-            `(file mode 0600); it is never shown here or sent anywhere but war.app. ${CONFIRM_INJECTION_RULE}`,
-          annotations: toolAnnotations({
-            title: 'Link a war.app session',
-            readOnly: false,
-            destructive: false,
-            idempotent: false,
-            openWorld: true,
-          }),
-          inputSchema: z.object({}),
-          plan() {
-            return {
-              gate: {
-                action: 'warapp.link_session',
-                summary: 'Capture your signed-in war.app session and store it locally for the direct transport',
-                account: undefined,
-                payload: {
-                  action: 'link-session',
-                  host: SESSION_HOST,
-                  stores: 'the war.app session cookie, locally (file mode 0600), for the no-browser transport',
-                },
-                preview: {
-                  note:
-                    'Captures the session cookie from your signed-in war.app tab and stores it on this machine ' +
-                    'only (file mode 0600). It is a full-account credential — it is never shown here or sent ' +
-                    'anywhere but war.app.',
-                },
-              },
-              state: {} as Record<string, never>,
-            };
+    {
+      name: 'warapp_link_session',
+      description:
+        'Link your signed-in war.app session for the direct (no-browser) transport: capture the session cookie ' +
+        'from your signed-in war.app tab once and store it on THIS machine, so later war.app calls go straight ' +
+        'to war.app without the browser bridge. The stored cookie is a full-account credential kept locally ' +
+        `(file mode 0600); it is never shown here or sent anywhere but war.app. ${CONFIRM_INJECTION_RULE}`,
+      annotations: toolAnnotations({
+        title: 'Link a war.app session',
+        readOnly: false,
+        destructive: false,
+        idempotent: false,
+        openWorld: true,
+      }),
+      inputSchema: z.object({}),
+      plan() {
+        return {
+          gate: {
+            action: 'warapp.link_session',
+            summary: 'Capture your signed-in war.app session and store it locally for the direct transport',
+            account: undefined,
+            payload: {
+              action: 'link-session',
+              host: SESSION_HOST,
+              stores: 'the war.app session cookie, locally (file mode 0600), for the no-browser transport',
+            },
+            preview: {
+              note:
+                'Captures the session cookie from your signed-in war.app tab and stores it on this machine ' +
+                'only (file mode 0600). It is a full-account credential — it is never shown here or sent ' +
+                'anywhere but war.app.',
+            },
           },
-          async execute() {
-            const result = await link();
-            // The old token's stale flag and the router's fallback were about
-            // the OLD session: reset them so the direct leg is tried again.
-            deps.transport.sessionLinked();
-            // The new session may be another account: "me" must be read again.
-            deps.identityChanged?.();
-            return {
-              status: 'linked' as const,
-              host: result.host,
-              capturedAt: result.capturedAt,
-              transport: deps.transport.activeLeg(),
-            };
-          },
-          render: (r) => respond(undefined, ['compact'], () => r),
-          batchable: false,
-        }),
-      ),
+          state: {} as Record<string, never>,
+        };
+      },
+      async execute() {
+        const result = await link();
+        // The old token's stale flag and the router's fallback were about
+        // the OLD session: reset them so the direct leg is tried again.
+        deps.transport.sessionLinked();
+        // The new session may be another account: "me" must be read again.
+        deps.identityChanged?.();
+        return {
+          status: 'linked' as const,
+          outcome: 'confirmed' as const,
+          host: result.host,
+          capturedAt: result.capturedAt,
+          transport: deps.transport.activeLeg(),
+        };
+      },
+    },
   );
 }

@@ -17,7 +17,7 @@ import type { MapGraph } from './graph.js';
 import { neighborsOf } from './graph.js';
 import { simTerritories, simulateTurn, type SimDeploy, type SimOrder, type SimResult, type SimSettings } from './turn-sim.js';
 
-export interface TwoStepInput {
+interface TwoStepInput {
   graph: MapGraph;
   board: BoardState;
   me: number;

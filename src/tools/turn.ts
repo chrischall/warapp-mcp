@@ -1,7 +1,7 @@
 // Turn tools: plan a turn from the live board (read-only), and — gated on the
 // user's confirmation — submit one. The plan's `orders` array is the exact
 // input shape of warapp_submit_turn.
-import { CONFIRM_INJECTION_RULE, defineWrite, McpToolError, registerWrite, toolAnnotations } from '@chrischall/mcp-utils';
+import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
@@ -55,15 +55,16 @@ import { COMMANDER_STRENGTH } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
 import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
-import { type Game, type GameMap, type GameSettings, type Player } from '../normalize.js';
+import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
-import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
+import { SERVER_ERROR_MESSAGES, type WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
   gameIdArg,
   graphOf,
+  namer,
   readAnnotations,
   respond,
   shownAccount,
@@ -72,13 +73,14 @@ import {
   untrustedText,
   viewArg,
 } from './common.js';
-import { lookupMeta, mintMeta, withToolConfig } from './hints.js';
+import { lookupMeta, mintMeta } from './hints.js';
 import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { guessOrdersOf, guessView } from './guess-view.js';
 import { guessSalt } from '../guess-salt.js';
 import { mapOf } from './map.js';
-import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
+import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
+import { resolveBonus, resolveTerritory } from './resolve.js';
 import {
   boardFromHistory,
   CACHED_TURNS,
@@ -99,7 +101,7 @@ import type { BoardState } from '../board.js';
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
 /** The only GameFeed state in which turns are played. */
-export const TURN_PHASE_STATE = 'Playing';
+const TURN_PHASE_STATE = 'Playing';
 const MAX_ORDERS = 500;
 const MAX_FOCUS = 50;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -108,7 +110,7 @@ const territoryRef = z.union([z.string(), z.number()]);
 const armiesArg = z.coerce.number().int().min(1);
 
 /** One order of a turn: territories by id or name. */
-export const turnOrderArg = z.discriminatedUnion('kind', [
+const turnOrderArg = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('deploy'),
     territory: territoryRef.describe('Territory to deploy on: id or name.'),
@@ -178,7 +180,6 @@ export const turnOrderArg = z.discriminatedUnion('kind', [
 
 /** A whole turn's orders, as warapp_plan_turn returns them and warapp_submit_turn takes them. */
 export const turnOrdersArg = z.array(turnOrderArg).min(1).max(MAX_ORDERS);
-export type TurnOrderInput = z.infer<typeof turnOrderArg>;
 
 /** The planner's view of the game settings. */
 export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
@@ -233,47 +234,6 @@ export function requirePlayingSeat(game: Game, me: Player): void {
 const UNREADABLE_HAND =
   'Your hand could not be read from the live board (no player entry for you), so the cards shown as none may be ' +
   'wrong: check the hand in the game — war.app refuses a commit while you hold more cards than the limit (error 51).';
-
-const namer = (map: GameMap) => {
-  const names = new Map(map.territories.map((t) => [t.id, t.name]));
-  return (id: number) => ({ id, name: names.get(id) ?? String(id) });
-};
-
-/**
- * The signed-in account in this game. The bridge always acts as that account,
- * so an explicit `player` naming anyone else is refused, and so is a call when
- * the signed-in account cannot be determined (never trust `player` alone).
- */
-export async function requireSignedInMe(
-  ctx: LiveContext,
-  game: Game,
-  input: string | number | undefined,
-): Promise<Player> {
-  const token = await ctx.myInviteToken({ fresh: true });
-  if (token === undefined) {
-    throw new McpToolError('Could not tell which war.app account is signed in, so no orders were prepared.', {
-      hint:
-        'Orders are sent as the account signed in to your war.app tab. Make sure a signed-in war.app tab is open ' +
-        'and paired (ContextMint Bridge), focus or reload it, then retry.',
-    });
-  }
-  const me = game.players.find((p) => p.id === token);
-  if (!me) {
-    throw new McpToolError(`The signed-in war.app account is not a player in game ${game.id}.`, {
-      hint: 'Orders can only be submitted for the account signed in to your war.app tab.',
-    });
-  }
-  if (input !== undefined && String(input).trim() !== '') {
-    const named = resolvePlayer(game.players, input);
-    if (named.id !== me.id) {
-      throw new McpToolError(
-        `Orders are always sent as the signed-in account (${untrustedText(me.name)}), not ${untrustedText(named.name)}.`,
-        { hint: `Omit \`player\` (or name player ${me.id}); to play as player ${named.id}, sign in to war.app as them.` },
-      );
-    }
-  }
-  return me;
-}
 
 interface NamedOrder {
   kind: 'deploy' | 'move' | 'card' | 'discard';
@@ -661,7 +621,7 @@ export function validateTurn(args: {
 }
 
 /** One attack in the submit preview, sized against the defenders standing there now (#130). */
-export interface AttackSize {
+interface AttackSize {
   from: { id: number; name: string };
   to: { id: number; name: string };
   armies: number;
@@ -688,7 +648,7 @@ export interface AttackSize {
 }
 
 /** A move as {@link attackSizes} reads it, with its options (#165). */
-export interface SizedMove {
+interface SizedMove {
   from: { id: number; name: string };
   to: { id: number; name: string };
   armies: number;
@@ -770,7 +730,7 @@ const PLAYABLE: Readonly<Record<number, CardPlayKind>> = {
 };
 
 /** A card play resolved against the hand. */
-export interface ResolvedCardPlay {
+interface ResolvedCardPlay {
   card: Card;
   kind: CardPlayKind;
   target?: { id: number; name: string };
@@ -819,7 +779,7 @@ function findCard(hand: readonly Card[], ref: string, used: ReadonlySet<string>,
  * Resolve discards (by GUID or type name) against my hand, after the plays: any
  * card type may be discarded, but not one that is also played or discarded twice.
  */
-export function resolveDiscards(
+function resolveDiscards(
   hand: readonly Card[],
   plays: readonly ResolvedCardPlay[],
   inputs: ReadonlyArray<{ card: string }>,
@@ -839,7 +799,7 @@ export function resolveDiscards(
  * held, the same card twice, a card this server cannot play, a Blockade with no
  * target, a target on any other card, and a Reinforcement whose armies are unknown.
  */
-export function resolveCardPlays(
+function resolveCardPlays(
   map: GameMap,
   hand: readonly Card[],
   rules: CardRules,
@@ -938,7 +898,7 @@ export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
 const TREND_TURNS = 2;
 
 /** My earlier boards of a game and the previous turn's board, as {@link boardHistory} reads them. */
-export interface BoardHistory {
+interface BoardHistory {
   /** My views of turns before the one being played, oldest first (the cache, else GameFeed history). */
   boards: TurnBoard[];
   /** Turn − 1's board and where it came from, for the planner's threat trend. */
@@ -1535,376 +1495,375 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
     ),
   });
 
-  withToolConfig(
+  defineGatedWrite(
     server,
     {
       title: 'Submit my turn in a war.app game',
       _meta: mintMeta('change', ['submit my turn', 'commit orders', 'send my orders', 'end my turn']),
     },
-    () =>
-      registerWrite(
-        server,
-        defineWrite({
-          name: 'warapp_submit_turn',
-          description:
-            'Commit your orders for the current turn of a war.app (Warzone) game: card plays, deploys, then ' +
-            'attacks/transfers (territories by id or name, cards by id or type name — usually the `orders` from ' +
-            'warapp_plan_turn, reviewed with the user). Plays Reinforcement, Order Priority, Order Delay and Blockade ' +
-            '(with a `target` of yours; an Order Delay goes after every move unless it has `before`: a move number to ' +
-            'place it above, unverified live) from your hand, and discards any card (`{ kind: "discard", card }`); refuses ' +
-            'when your hand is over the hold limit and the orders do not play or discard enough cards. The ' +
-            'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
-            'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
-            'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
-            'Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
-            'income uncertain; after war.app\'s error 11, resend with the game\'s own number as `income`); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
-            'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
-            'stack, which war.app moves anyway); under Multi-Attack, a move (not a deploy) may go on from a ' +
-            'territory an earlier move in the list captures (warapp_plan_turn obeys these and the kill rates). ' +
-            'A move may carry options, each refused unless the game allows it: `mode` "transfer-only" (AllowTransferOnly) ' +
-            'or "attack-only" (AllowAttackOnly), `percent` (AllowPercentageAttacks: `armies` is a percentage of what can ' +
-            'move when it runs), `commander` (take your commander along; `armies` 0 sends it alone) and ' +
-            '`attack_teammates` (team games); these are encoded as the client does but not yet verified live. ' +
-            'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ. ' +
-            'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
-            'several attacks on one target together) ' +
-            'and warns about one that cannot capture. Always sent as ' +
-            'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
-            `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
-          annotations: toolAnnotations({
-            title: 'Submit a war.app turn',
-            readOnly: false,
-            destructive: true,
-            idempotent: false,
-            openWorld: true,
-          }),
-          inputSchema: submitSchema,
-          async plan({ game_id, player, orders, income: givenIncome }) {
-            const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
-            requireTurnPhase(game);
-            const me = await requireSignedInMe(ctx, game, player);
-            requirePlayingSeat(game, me);
-            if (me.hasCommittedOrders) {
-              throw new McpToolError(`You have already committed orders for this turn of game ${game.id}.`, {
-                hint:
-                  'To change them, withdraw them first with warapp_uncommit_turn (confirm-gated), then submit again — ' +
-                  'or use "Modify orders" in the game itself; this tool does not replace committed orders.',
-              });
-            }
-            const turnNumber = currentTurn(game);
-            if (turnNumber === null || game.numberOfTurns === undefined) {
-              throw new McpToolError(`GameFeed did not say how many turns game ${game.id} has had, so the turn number is unknown.`, {
-                hint: 'Retry in a moment; no orders were sent.',
-              });
-            }
-            const map = mapOf(game);
-            const deploys: Array<{ territory: { id: number; name: string }; armies: number }> = [];
-            const moves: Array<{
-              from: { id: number; name: string };
-              to: { id: number; name: string };
-              armies: number;
-              mode?: MoveMode;
-              percent?: boolean;
-              commander?: boolean;
-              attackTeammates?: boolean;
-            }> = [];
-            const cardInputs: Array<{ card: string; target?: string | number | undefined; before?: number | undefined }> = [];
-            const discardInputs: Array<{ card: string }> = [];
-            for (const o of orders) {
-              if (o.kind === 'card') {
-                cardInputs.push({ card: o.card, target: o.target, before: o.before });
-              } else if (o.kind === 'discard') {
-                discardInputs.push({ card: o.card });
-              } else if (o.kind === 'deploy') {
-                const t = resolveTerritory(map, o.territory);
-                deploys.push({ territory: { id: t.id, name: t.name }, armies: o.armies });
-              } else {
-                const f = resolveTerritory(map, o.from);
-                const t = resolveTerritory(map, o.to);
-                moves.push({
-                  from: { id: f.id, name: f.name },
-                  to: { id: t.id, name: t.name },
-                  armies: o.armies,
-                  ...(o.mode !== undefined && o.mode !== 'attack-transfer' ? { mode: o.mode } : {}),
-                  ...(o.percent ? { percent: true } : {}),
-                  ...(o.commander ? { commander: true } : {}),
-                  ...(o.attack_teammates ? { attackTeammates: true } : {}),
-                });
-              }
-            }
-            const { territories, info } = await loadLiveGame(ctx, game);
-            const board = boardStateFromLive(territories, me, game.players);
-            const playerId = inGameId(me);
-            const rules = cardRules(game.settings);
-            // A team shares one hand (#163): cards under my teammates may be played or discarded too. But how
-            // war.app keys a team's hand is unverified, so the hard refusal (error 51) counts only my own cards,
-            // as before, and the team's gathered count is a warning until a live team board verifies it.
-            const owners = handOwners(game, me);
-            const myHand = readHand(info, playerId);
-            const hand = owners.length > 1 ? readHand(info, owners) : myHand;
-            const handUnknown = rules.inPlay.length > 0 && !handReadable(info, playerId);
-            const plays = resolveCardPlays(map, hand, rules, cardInputs);
-            // #186: an Order Delay's `before` names a move of this list (1-based); one past the last is the default.
-            for (const p of plays) {
-              if (p.before !== undefined && p.before > moves.length + 1) {
-                throw new McpToolError(
-                  `Order Delay \`before\` ${p.before} is past this turn's ${moves.length} move${moves.length === 1 ? '' : 's'}.`,
-                  { hint: `Give a move number 1–${moves.length + 1} (${moves.length + 1}, or no \`before\`, writes it after every move).` },
-                );
-              }
-            }
-            /** The move (1-based) an Order Delay is placed above, when it is placed among the moves. */
-            const placedAt = (p: ResolvedCardPlay) => (p.before !== undefined && p.before <= moves.length ? p.before : undefined);
-            const discards = resolveDiscards(hand, plays, discardInputs);
-            // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
-            // than MaxCardsHold remain (verified, #20).
-            const used = plays.length + discards.length;
-            const shed = cardsToShed(myHand, rules);
-            if (used < shed) throw mustPlayCard(myHand, rules, shed, used);
-            const teamShed = owners.length > 1 ? cardsToShed(hand, rules) : 0;
-            for (const p of plays) {
-              const t = p.target && territories.find((x) => x.territoryId === p.target!.id);
-              if (p.target && (!t || t.fogged || t.owner !== playerId)) {
-                throw new McpToolError(`${label(p.target)} is not yours at the start of this turn, so it cannot be blockaded.`, {
-                  hint: 'A Blockade targets a territory you hold on the live board (warapp_get_live_board).',
-                });
-              }
-              // A Blockade turns the territory neutral: my commander there would be lost with it (#163).
-              if (t && t.specialUnits?.some((u) => u.kind === 'commander' && u.owner === playerId)) {
-                throw new McpToolError(`${label(p.target!)} holds your commander, so it cannot be blockaded.`, {
-                  hint: 'A Blockade makes the territory neutral and your commander on it would be lost (a commander must stay on your land). Move the commander out first, or blockade another territory.',
-                });
-              }
-            }
-            // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
-            const teammates = new Set(
-              me.team !== undefined && me.team >= 0
-                ? game.players.filter((p) => p !== me && p.team === me.team).map((p) => inGameId(p))
-                : [],
-            );
-            // #165: each move's options, refused unless the game allows them.
-            const deployedOn = new Map<number, number>();
-            for (const d of deploys) deployedOn.set(d.territory.id, (deployedOn.get(d.territory.id) ?? 0) + d.armies);
-            const options = checkMoveOptions({ moves, board: territories, myInGameId: playerId, settings: game.settings, teammates, deployedOn });
-            const modelled = incomeFor(graphOf(map), board, me.id, game.settings);
-            const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
-            // #130: war.app's own number, given after an error 11, replaces the model for the check.
-            const income = (givenIncome ?? modelled) + cardArmies;
-            const overridden =
-              givenIncome !== undefined && givenIncome !== modelled
-                ? `income ${givenIncome} given (the game's armies per turn), modelled ${modelled}`
-                : undefined;
-            const { warnings } = validateTurn({
-              map,
-              board: territories,
-              myInGameId: playerId,
-              income,
-              guard: game.settings?.oneArmyStandsGuard ?? true,
-              deploys,
-              moves,
-              localDeployments: game.settings?.localDeployments ?? false,
-              noSplit: game.settings?.noSplit ?? false,
-              multiAttack: game.settings?.multiAttack ?? false,
-              unplayedReinforcements: hand.flatMap((c) => {
-                if (c.type !== CARD_REINFORCEMENT || plays.some((p) => p.card.id === c.id)) return [];
-                const armies = reinforcementArmies(c, rules);
-                return armies === undefined ? [] : [{ id: c.id, armies }];
-              }),
-              incomeUncertain: givenIncome !== undefined ? [] : deployCheckUncertainties(game.settings),
-              poolsUncertain: [
-                ...overrideUncertainties(game.settings),
-                ...(overridden ? [`The ${overridden}, so the bonus pools may differ too.`] : []),
-              ],
+    {
+      name: 'warapp_submit_turn',
+      description:
+        'Commit your orders for the current turn of a war.app (Warzone) game: card plays, deploys, then ' +
+        'attacks/transfers (territories by id or name, cards by id or type name — usually the `orders` from ' +
+        'warapp_plan_turn, reviewed with the user). Plays Reinforcement, Order Priority, Order Delay and Blockade ' +
+        '(with a `target` of yours; an Order Delay goes after every move unless it has `before`: a move number to ' +
+        'place it above, unverified live) from your hand, and discards any card (`{ kind: "discard", card }`); refuses ' +
+        'when your hand is over the hold limit and the orders do not play or discard enough cards. The ' +
+        'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
+        'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
+        'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
+        'Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
+        'income uncertain; after war.app\'s error 11, resend with the game\'s own number as `income`); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
+        'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
+        'stack, which war.app moves anyway); under Multi-Attack, a move (not a deploy) may go on from a ' +
+        'territory an earlier move in the list captures (warapp_plan_turn obeys these and the kill rates). ' +
+        'A move may carry options, each refused unless the game allows it: `mode` "transfer-only" (AllowTransferOnly) ' +
+        'or "attack-only" (AllowAttackOnly), `percent` (AllowPercentageAttacks: `armies` is a percentage of what can ' +
+        'move when it runs), `commander` (take your commander along; `armies` 0 sends it alone) and ' +
+        '`attack_teammates` (team games); these are encoded as the client does but not yet verified live. ' +
+        'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ. ' +
+        'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
+        'several attacks on one target together) ' +
+        'and warns about one that cannot capture. Always sent as ' +
+        'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
+        `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
+      annotations: toolAnnotations({
+        title: 'Submit a war.app turn',
+        readOnly: false,
+        destructive: true,
+        idempotent: false,
+        openWorld: true,
+      }),
+      inputSchema: submitSchema,
+      async plan({ game_id, player, orders, income: givenIncome }) {
+        const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
+        requireTurnPhase(game);
+        // The bridge always acts as the signed-in account: an explicit `player` naming anyone
+        // else is refused, and so is a call when that account cannot be read (never trust `player` alone).
+        const me = await requireMySeat(ctx, game, { player, playing: false });
+        requirePlayingSeat(game, me);
+        if (me.hasCommittedOrders) {
+          throw new McpToolError(`You have already committed orders for this turn of game ${game.id}.`, {
+            hint:
+              'To change them, withdraw them first with warapp_uncommit_turn (confirm-gated), then submit again — ' +
+              'or use "Modify orders" in the game itself; this tool does not replace committed orders.',
+          });
+        }
+        const turnNumber = currentTurn(game);
+        if (turnNumber === null || game.numberOfTurns === undefined) {
+          throw new McpToolError(`GameFeed did not say how many turns game ${game.id} has had, so the turn number is unknown.`, {
+            hint: 'Retry in a moment; no orders were sent.',
+          });
+        }
+        const map = mapOf(game);
+        const deploys: Array<{ territory: { id: number; name: string }; armies: number }> = [];
+        const moves: Array<{
+          from: { id: number; name: string };
+          to: { id: number; name: string };
+          armies: number;
+          mode?: MoveMode;
+          percent?: boolean;
+          commander?: boolean;
+          attackTeammates?: boolean;
+        }> = [];
+        const cardInputs: Array<{ card: string; target?: string | number | undefined; before?: number | undefined }> = [];
+        const discardInputs: Array<{ card: string }> = [];
+        for (const o of orders) {
+          if (o.kind === 'card') {
+            cardInputs.push({ card: o.card, target: o.target, before: o.before });
+          } else if (o.kind === 'discard') {
+            discardInputs.push({ card: o.card });
+          } else if (o.kind === 'deploy') {
+            const t = resolveTerritory(map, o.territory);
+            deploys.push({ territory: { id: t.id, name: t.name }, armies: o.armies });
+          } else {
+            const f = resolveTerritory(map, o.from);
+            const t = resolveTerritory(map, o.to);
+            moves.push({
+              from: { id: f.id, name: f.name },
+              to: { id: t.id, name: t.name },
+              armies: o.armies,
+              ...(o.mode !== undefined && o.mode !== 'attack-transfer' ? { mode: o.mode } : {}),
+              ...(o.percent ? { percent: true } : {}),
+              ...(o.commander ? { commander: true } : {}),
+              ...(o.attack_teammates ? { attackTeammates: true } : {}),
             });
-            if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
-            warnings.push(...options.warnings);
-            warnings.push(
-              ...modsWarning(game.settings),
-              ...guardOffWarnings(
-                graphOf(map),
-                map,
-                board,
-                me.id,
-                friendsOf(game.players, me),
-                game.settings,
-                deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies })),
-                moves.map((m, i) => ({ from: m.from.id, to: m.to.id, armies: m.percent ? (options.estimates.get(i) ?? 0) : m.armies })),
-              ),
+          }
+        }
+        const { territories, info } = await loadLiveGame(ctx, game);
+        const board = boardStateFromLive(territories, me, game.players);
+        const playerId = inGameId(me);
+        const rules = cardRules(game.settings);
+        // A team shares one hand (#163): cards under my teammates may be played or discarded too. But how
+        // war.app keys a team's hand is unverified, so the hard refusal (error 51) counts only my own cards,
+        // as before, and the team's gathered count is a warning until a live team board verifies it.
+        const owners = handOwners(game, me);
+        const myHand = readHand(info, playerId);
+        const hand = owners.length > 1 ? readHand(info, owners) : myHand;
+        const handUnknown = rules.inPlay.length > 0 && !handReadable(info, playerId);
+        const plays = resolveCardPlays(map, hand, rules, cardInputs);
+        // #186: an Order Delay's `before` names a move of this list (1-based); one past the last is the default.
+        for (const p of plays) {
+          if (p.before !== undefined && p.before > moves.length + 1) {
+            throw new McpToolError(
+              `Order Delay \`before\` ${p.before} is past this turn's ${moves.length} move${moves.length === 1 ? '' : 's'}.`,
+              { hint: `Give a move number 1–${moves.length + 1} (${moves.length + 1}, or no \`before\`, writes it after every move).` },
             );
-            if (handUnknown) warnings.push(UNREADABLE_HAND);
-            if (used < teamShed) warnings.push(teamHandOver(hand.length, rules, teamShed, used));
-            const placedDelays = plays.filter((p) => placedAt(p) !== undefined);
-            for (const p of placedDelays) {
-              const m = moves[placedAt(p)! - 1]!;
-              warnings.push(
-                `Order Delay is written above move ${placedAt(p)} (${label(m.from)} → ${label(m.to)}), so that move and the ones ` +
-                  "after it wait until the opponents' attacks have run. UNVERIFIED live: no commit has yet placed the card among " +
-                  "the moves. war.app refusing it with error 10 (OrdersInIncorrectOrder) means it is not allowed there — resend " +
-                  'without `before`.',
-              );
-            }
-            if (plays.some((p) => p.kind === 'OrderDelay' && placedAt(p) === undefined)) {
-              // Phase 50, after every move, is the only live-verified position for the card.
-              warnings.push(
-                "Order Delay is written after every move (its only verified position), so it delays none of this turn's " +
-                  'orders: playing it only spends the card, as a discard would. Give it `before` (a move number) to place it ' +
-                  'among the moves (unverified live).',
-              );
-            }
-            const attacks = attackSizes(
-              territories,
-              playerId,
-              moves.map((m, i) => ({ ...m, ...(options.estimates.has(i) ? { estimate: options.estimates.get(i)! } : {}) })),
-              plannerSettings(game.settings),
-              teammates,
-            );
-            const hopeless = attacks.filter((a) => a.cannotCapture);
-            if (hopeless.length) {
-              warnings.push(
-                `${hopeless.map((a) => `${label(a.from)} → ${label(a.to)}`).join(', ')}: ${hopeless.length === 1 ? 'this attack' : 'these attacks'} ` +
-                  'cannot capture against the armies there now at this game\'s kill rates (see `attacks`).',
-              );
-            }
-            // Deploys first (as the client sends them), merged per territory.
-            const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
-            for (const d of deploys) {
-              const m = merged.get(d.territory.id);
-              if (m) m.armies += d.armies;
-              else merged.set(d.territory.id, { ...d });
-            }
-            const send: TurnOrder[] = [
-              ...discards.map((c) => ({ kind: 'discard' as const, cardId: c.id })),
-              ...plays.map((p) => ({
-                kind: 'card' as const,
-                card: p.kind,
-                cardId: p.card.id,
-                ...(p.target ? { target: p.target.id } : {}),
-                ...(placedAt(p) !== undefined ? { beforeMove: placedAt(p)! - 1 } : {}),
-              })),
-              ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territoryId: d.territory.id, armies: d.armies })),
-              ...moves.map((m, i) => {
-                const commander = options.commanders.get(i);
-                return {
-                  kind: 'move' as const,
-                  from: m.from.id,
-                  to: m.to.id,
-                  armies: m.armies,
-                  ...(m.mode === 'attack-only' ? { mode: AttackTransferMode.Attack } : m.mode === 'transfer-only' ? { mode: AttackTransferMode.Transfer } : {}),
-                  ...(m.percent ? { byPercent: true } : {}),
-                  ...(m.attackTeammates ? { attackTeammates: true } : {}),
-                  ...(commander ? { commander } : {}),
-                };
-              }),
-            ];
-            const named: NamedOrder[] = [
-              ...discards.map((c) => ({ kind: 'discard' as const, card: cardView(c) })),
-              ...plays.map((p) => ({
-                kind: 'card' as const,
-                card: cardView(p.card),
-                ...(p.target ? { target: p.target } : {}),
-                ...(placedAt(p) !== undefined ? { before: placedAt(p)! } : {}),
-              })),
-              ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territory: d.territory, armies: d.armies })),
-              ...moves.map((m) => ({
-                kind: 'move' as const,
-                from: m.from,
-                to: m.to,
-                armies: m.armies,
-                ...(m.mode === 'attack-only' || m.mode === 'transfer-only' ? { mode: m.mode } : {}),
-                ...(m.percent ? { percent: true as const } : {}),
-                ...(m.commander ? { commander: true as const } : {}),
-                ...(m.attackTeammates ? { attackTeammates: true as const } : {}),
-              })),
-            ];
+          }
+        }
+        /** The move (1-based) an Order Delay is placed above, when it is placed among the moves. */
+        const placedAt = (p: ResolvedCardPlay) => (p.before !== undefined && p.before <= moves.length ? p.before : undefined);
+        const discards = resolveDiscards(hand, plays, discardInputs);
+        // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
+        // than MaxCardsHold remain (verified, #20).
+        const used = plays.length + discards.length;
+        const shed = cardsToShed(myHand, rules);
+        if (used < shed) throw mustPlayCard(myHand, rules, shed, used);
+        const teamShed = owners.length > 1 ? cardsToShed(hand, rules) : 0;
+        for (const p of plays) {
+          const t = p.target && territories.find((x) => x.territoryId === p.target!.id);
+          if (p.target && (!t || t.fogged || t.owner !== playerId)) {
+            throw new McpToolError(`${label(p.target)} is not yours at the start of this turn, so it cannot be blockaded.`, {
+              hint: 'A Blockade targets a territory you hold on the live board (warapp_get_live_board).',
+            });
+          }
+          // A Blockade turns the territory neutral: my commander there would be lost with it (#163).
+          if (t?.specialUnits?.some((u) => u.kind === 'commander' && u.owner === playerId)) {
+            throw new McpToolError(`${label(p.target!)} holds your commander, so it cannot be blockaded.`, {
+              hint: 'A Blockade makes the territory neutral and your commander on it would be lost (a commander must stay on your land). Move the commander out first, or blockade another territory.',
+            });
+          }
+        }
+        // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
+        const teammates = new Set(
+          me.team !== undefined && me.team >= 0
+            ? game.players.filter((p) => p !== me && p.team === me.team).map((p) => inGameId(p))
+            : [],
+        );
+        // #165: each move's options, refused unless the game allows them.
+        const deployedOn = new Map<number, number>();
+        for (const d of deploys) deployedOn.set(d.territory.id, (deployedOn.get(d.territory.id) ?? 0) + d.armies);
+        const options = checkMoveOptions({ moves, board: territories, myInGameId: playerId, settings: game.settings, teammates, deployedOn });
+        const modelled = incomeFor(graphOf(map), board, me.id, game.settings);
+        const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
+        // #130: war.app's own number, given after an error 11, replaces the model for the check.
+        const income = (givenIncome ?? modelled) + cardArmies;
+        const overridden =
+          givenIncome !== undefined && givenIncome !== modelled
+            ? `income ${givenIncome} given (the game's armies per turn), modelled ${modelled}`
+            : undefined;
+        const { warnings } = validateTurn({
+          map,
+          board: territories,
+          myInGameId: playerId,
+          income,
+          guard: game.settings?.oneArmyStandsGuard ?? true,
+          deploys,
+          moves,
+          localDeployments: game.settings?.localDeployments ?? false,
+          noSplit: game.settings?.noSplit ?? false,
+          multiAttack: game.settings?.multiAttack ?? false,
+          unplayedReinforcements: hand.flatMap((c) => {
+            if (c.type !== CARD_REINFORCEMENT || plays.some((p) => p.card.id === c.id)) return [];
+            const armies = reinforcementArmies(c, rules);
+            return armies === undefined ? [] : [{ id: c.id, armies }];
+          }),
+          incomeUncertain: givenIncome !== undefined ? [] : deployCheckUncertainties(game.settings),
+          poolsUncertain: [
+            ...overrideUncertainties(game.settings),
+            ...(overridden ? [`The ${overridden}, so the bonus pools may differ too.`] : []),
+          ],
+        });
+        if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
+        warnings.push(...options.warnings);
+        warnings.push(
+          ...modsWarning(game.settings),
+          ...guardOffWarnings(
+            graphOf(map),
+            map,
+            board,
+            me.id,
+            friendsOf(game.players, me),
+            game.settings,
+            deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies })),
+            moves.map((m, i) => ({ from: m.from.id, to: m.to.id, armies: m.percent ? (options.estimates.get(i) ?? 0) : m.armies })),
+          ),
+        );
+        if (handUnknown) warnings.push(UNREADABLE_HAND);
+        if (used < teamShed) warnings.push(teamHandOver(hand.length, rules, teamShed, used));
+        const placedDelays = plays.filter((p) => placedAt(p) !== undefined);
+        for (const p of placedDelays) {
+          const m = moves[placedAt(p)! - 1]!;
+          warnings.push(
+            `Order Delay is written above move ${placedAt(p)} (${label(m.from)} → ${label(m.to)}), so that move and the ones ` +
+              "after it wait until the opponents' attacks have run. UNVERIFIED live: no commit has yet placed the card among " +
+              "the moves. war.app refusing it with error 10 (OrdersInIncorrectOrder) means it is not allowed there — resend " +
+              'without `before`.',
+          );
+        }
+        if (plays.some((p) => p.kind === 'OrderDelay' && placedAt(p) === undefined)) {
+          // Phase 50, after every move, is the only live-verified position for the card.
+          warnings.push(
+            "Order Delay is written after every move (its only verified position), so it delays none of this turn's " +
+              'orders: playing it only spends the card, as a discard would. Give it `before` (a move number) to place it ' +
+              'among the moves (unverified live).',
+          );
+        }
+        const attacks = attackSizes(
+          territories,
+          playerId,
+          moves.map((m, i) => ({ ...m, ...(options.estimates.has(i) ? { estimate: options.estimates.get(i)! } : {}) })),
+          plannerSettings(game.settings),
+          teammates,
+        );
+        const hopeless = attacks.filter((a) => a.cannotCapture);
+        if (hopeless.length) {
+          warnings.push(
+            `${hopeless.map((a) => `${label(a.from)} → ${label(a.to)}`).join(', ')}: ${hopeless.length === 1 ? 'this attack' : 'these attacks'} ` +
+              'cannot capture against the armies there now at this game\'s kill rates (see `attacks`).',
+          );
+        }
+        // Deploys first (as the client sends them), merged per territory.
+        const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
+        for (const d of deploys) {
+          const m = merged.get(d.territory.id);
+          if (m) m.armies += d.armies;
+          else merged.set(d.territory.id, { ...d });
+        }
+        const send: TurnOrder[] = [
+          ...discards.map((c) => ({ kind: 'discard' as const, cardId: c.id })),
+          ...plays.map((p) => ({
+            kind: 'card' as const,
+            card: p.kind,
+            cardId: p.card.id,
+            ...(p.target ? { target: p.target.id } : {}),
+            ...(placedAt(p) !== undefined ? { beforeMove: placedAt(p)! - 1 } : {}),
+          })),
+          ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territoryId: d.territory.id, armies: d.armies })),
+          ...moves.map((m, i) => {
+            const commander = options.commanders.get(i);
             return {
-              gate: {
-                action: 'warapp.submit_turn',
-                // By id only: player and territory names are other people's words and go,
-                // delimited, in the labelled fields of `willSend`.
-                summary: `Commit ${send.length} order${send.length === 1 ? '' : 's'} for player ${me.id} in game ${game.id}, turn ${turnNumber}`,
-                account: writeAccount(me.id),
-                target: game.id,
-                payload: { method: 'SendOrders', gameId: game.id, playerId, turnNumber, orders: send },
-                willSend: { game: game.id, player: untrustedText(me.name), turn: turnNumber, income, orders: named.map(shownOrder) },
-                preview: {
-                  account: shownAccount(me.name, me.id),
-                  note: 'These orders reach the game; once the turn resolves, other players see the results.',
-                  ...(attacks.length ? { attacks: attacks.map((a) => ({ ...a, from: shownPlace(a.from), to: shownPlace(a.to) })) } : {}),
-                  ...(warnings.length ? { warnings } : {}),
-                  untrusted: UNTRUSTED_PREVIEW_NOTE,
-                },
-              },
-              state: {
-                gameId: game.id,
-                playerId,
-                feedPlayerId: me.id,
-                turnsBefore: game.numberOfTurns,
-                turnNumber,
-                orders: send,
-                named,
-                income,
-                ...(givenIncome !== undefined ? { incomeGiven: true } : {}),
-                ...(placedDelays.length ? { orderDelayCheck: orderDelayCheck(placedDelays.map((p) => placedAt(p)!)) } : {}),
-              } satisfies TurnState,
+              kind: 'move' as const,
+              from: m.from.id,
+              to: m.to.id,
+              armies: m.armies,
+              ...(m.mode === 'attack-only' ? { mode: AttackTransferMode.Attack } : m.mode === 'transfer-only' ? { mode: AttackTransferMode.Transfer } : {}),
+              ...(m.percent ? { byPercent: true } : {}),
+              ...(m.attackTeammates ? { attackTeammates: true } : {}),
+              ...(commander ? { commander } : {}),
             };
+          }),
+        ];
+        const named: NamedOrder[] = [
+          ...discards.map((c) => ({ kind: 'discard' as const, card: cardView(c) })),
+          ...plays.map((p) => ({
+            kind: 'card' as const,
+            card: cardView(p.card),
+            ...(p.target ? { target: p.target } : {}),
+            ...(placedAt(p) !== undefined ? { before: placedAt(p)! } : {}),
+          })),
+          ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territory: d.territory, armies: d.armies })),
+          ...moves.map((m) => ({
+            kind: 'move' as const,
+            from: m.from,
+            to: m.to,
+            armies: m.armies,
+            ...(m.mode === 'attack-only' || m.mode === 'transfer-only' ? { mode: m.mode } : {}),
+            ...(m.percent ? { percent: true as const } : {}),
+            ...(m.commander ? { commander: true as const } : {}),
+            ...(m.attackTeammates ? { attackTeammates: true as const } : {}),
+          })),
+        ];
+        return {
+          gate: {
+            action: 'warapp.submit_turn',
+            // By id only: player and territory names are other people's words and go,
+            // delimited, in the labelled fields of `willSend`.
+            summary: `Commit ${send.length} order${send.length === 1 ? '' : 's'} for player ${me.id} in game ${game.id}, turn ${turnNumber}`,
+            account: writeAccount(me.id),
+            target: game.id,
+            payload: { method: 'SendOrders', gameId: game.id, playerId, turnNumber, orders: send },
+            willSend: { game: game.id, player: untrustedText(me.name), turn: turnNumber, income, orders: named.map(shownOrder) },
+            preview: {
+              account: shownAccount(me.name, me.id),
+              note: 'These orders reach the game; once the turn resolves, other players see the results.',
+              ...(attacks.length ? { attacks: attacks.map((a) => ({ ...a, from: shownPlace(a.from), to: shownPlace(a.to) })) } : {}),
+              ...(warnings.length ? { warnings } : {}),
+              untrusted: UNTRUSTED_PREVIEW_NOTE,
+            },
           },
-          async execute(st: TurnState) {
-            await requireApprovedAccount(ctx, writeAccount(st.feedPlayerId));
-            const base = {
-              game: st.gameId,
-              turn: st.turnNumber,
-              orders: st.named,
-              ...(st.orderDelayCheck ? { orderDelayCheck: st.orderDelayCheck } : {}),
-            };
-            const check =
-              `Check warapp_get_game: a \`turn\` above ${st.turnNumber} means this turn resolved; still ${st.turnNumber} with ` +
-              'your `committed` true means the orders are in. Do not resend these orders blindly — a second commit for ' +
-              'the same turn is not known to be safe, and once the turn has resolved they would commit to the next one.';
-            try {
-              // The reply's bool is war.app's "vacation ended" flag — never a success signal.
-              await ctx.rpc.call('SendOrders', Method.SendOrders, (w) =>
-                writeSendOrdersParams(w, st.gameId, st.playerId, st.orders, st.turnNumber),
-              );
-              // Sent: keep my deploys and moves for opponent tracking (#119). Best effort, never throws.
-              if (ctx.dataDir) await writeOrdersCache(ctx.dataDir, st.gameId, st.feedPlayerId, st.turnNumber, myOrdersOf(st.orders));
-            } catch (e) {
-              // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.
-              if (e instanceof WarappServerError && e.code === 11) throw incomeRefused(e, st.income, st.incomeGiven);
-              if (e instanceof WarappServerError && e.code === 10 && st.orderDelayCheck) throw orderDelayRefused(e);
-              if (e instanceof WarappServerError) throw e;
-              return {
-                status: 'unknown' as const,
-                ...base,
-                warning:
-                  `war.app did not confirm these orders (${failureText(e)}), so they may ` +
-                  `already have been committed. ${check}`,
-              };
-            }
-            let after: Game;
-            try {
-              after = await ctx.client.getGame(st.gameId, { map: false });
-            } catch (e) {
-              return {
-                status: 'unknown' as const,
-                ...base,
-                warning: `The orders were sent, but re-reading the game failed (${e instanceof Error ? e.message : String(e)}). ${check}`,
-              };
-            }
+          state: {
+            gameId: game.id,
+            playerId,
+            feedPlayerId: me.id,
+            turnsBefore: game.numberOfTurns,
+            turnNumber,
+            orders: send,
+            named,
+            income,
+            ...(givenIncome !== undefined ? { incomeGiven: true } : {}),
+            ...(placedDelays.length ? { orderDelayCheck: orderDelayCheck(placedDelays.map((p) => placedAt(p)!)) } : {}),
+          } satisfies TurnState,
+        };
+      },
+      async execute(st: TurnState) {
+        await requireApprovedAccount(ctx, writeAccount(st.feedPlayerId));
+        const base = {
+          game: st.gameId,
+          turn: st.turnNumber,
+          orders: st.named,
+          ...(st.orderDelayCheck ? { orderDelayCheck: st.orderDelayCheck } : {}),
+        };
+        const check =
+          `Check warapp_get_game: a \`turn\` above ${st.turnNumber} means this turn resolved; still ${st.turnNumber} with ` +
+          'your `committed` true means the orders are in. Do not resend these orders blindly — a second commit for ' +
+          'the same turn is not known to be safe, and once the turn has resolved they would commit to the next one.';
+        const unconfirmed = (warning: string) => ({ status: 'unknown' as const, outcome: 'unconfirmed' as const, ...base, warning });
+        return sendAndVerify({
+          send: async () => {
+            // The reply's bool is war.app's "vacation ended" flag — never a success signal.
+            await ctx.rpc.call('SendOrders', Method.SendOrders, (w) =>
+              writeSendOrdersParams(w, st.gameId, st.playerId, st.orders, st.turnNumber),
+            );
+            // Sent: keep my deploys and moves for opponent tracking (#119). Best effort, never throws.
+            if (ctx.dataDir) await writeOrdersCache(ctx.dataDir, st.gameId, st.feedPlayerId, st.turnNumber, myOrdersOf(st.orders));
+          },
+          // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.
+          refused: (e) => {
+            if (e.code === 11) return incomeRefused(e, st.income, st.incomeGiven);
+            if (e.code === 10 && st.orderDelayCheck) return orderDelayRefused(e);
+            return undefined;
+          },
+          unanswered: (failure) => ({
+            status: 'unknown' as const,
+            outcome: 'unknown' as const,
+            ...base,
+            warning: `war.app did not confirm these orders (${failure}), so they may already have been committed. ${check}`,
+          }),
+          readBack: () => ctx.client.getGame(st.gameId, { map: false }),
+          unreadable: (failure) => unconfirmed(`The orders were sent, but re-reading the game failed (${failure}). ${check}`),
+          classify: (after) => {
             if (after.numberOfTurns !== undefined && after.numberOfTurns > st.turnsBefore) {
-              return { status: 'resolved' as const, ...base, detail: `The turn resolved: the game is now on turn ${after.numberOfTurns + 1}.` };
+              return {
+                status: 'resolved' as const,
+                outcome: 'confirmed' as const,
+                ...base,
+                detail: `The turn resolved: the game is now on turn ${after.numberOfTurns + 1}.`,
+              };
             }
             if (after.players.find((p) => p.id === st.feedPlayerId)?.hasCommittedOrders) {
-              return { status: 'committed' as const, ...base, detail: 'Your orders are committed; the turn resolves when every player has committed.' };
+              return {
+                status: 'committed' as const,
+                outcome: 'confirmed' as const,
+                ...base,
+                detail: 'Your orders are committed; the turn resolves when every player has committed.',
+              };
             }
-            return {
-              status: 'unknown' as const,
-              ...base,
-              warning: `The orders were sent, but the game does not yet show them committed or the turn advanced. ${check}`,
-            };
+            return unconfirmed(`The orders were sent, but the game does not yet show them committed or the turn advanced. ${check}`);
           },
-          render: (r) => respond(undefined, ['compact'], () => r),
-          batchable: false,
-        }),
-      ),
+        });
+      },
+    },
   );
 }

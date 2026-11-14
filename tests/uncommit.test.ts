@@ -102,6 +102,7 @@ describe('warapp_uncommit_turn', () => {
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.sent).toEqual([{ gameId: GAME_ID, left: 0 }]);
     expect(p).toMatchObject({ status: 'uncommitted', game: { id: GAME_ID, name: 'Synthetic Skirmish' }, turn: 6 });
+    expect(p.outcome).toBe('confirmed');
     expect(String(p.detail)).toMatch(/warapp_submit_turn/);
   });
 
@@ -127,6 +128,7 @@ describe('warapp_uncommit_turn', () => {
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.sent).toHaveLength(1);
     expect(p.status).toBe('unconfirmed');
+    expect(p.outcome).toBe('unconfirmed');
     expect(String(p.warning)).toMatch(/still/i);
     expect(String(p.warning)).toMatch(/warapp_get_game/);
   });
@@ -137,6 +139,7 @@ describe('warapp_uncommit_turn', () => {
     h = await harness([COMMITTED, COMMITTED, advanced], s.warapp);
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(p.status).toBe('unconfirmed');
+    expect(p.outcome).toBe('unconfirmed');
     expect(String(p.warning)).toMatch(/resolved|advanced/i);
   });
 
@@ -147,6 +150,7 @@ describe('warapp_uncommit_turn', () => {
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(s.sent).toHaveLength(1);
     expect(p.status).toBe('unconfirmed');
+    expect(p.outcome).toBe('unconfirmed');
     expect(String(p.warning)).toMatch(/turn count/i);
   });
 
@@ -206,6 +210,7 @@ describe('warapp_uncommit_turn', () => {
     });
     const p = payload(await confirmed({ game_id: GAME_ID }));
     expect(p.status).toBe('unknown');
+    expect(p.outcome).toBe('unknown');
     expect(calls).toBe(1);
     expect(String(p.warning)).toMatch(/warapp_get_game/);
     expect(String(p.warning)).not.toMatch(/try again|resend|retry/i);

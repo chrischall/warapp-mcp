@@ -159,7 +159,7 @@ describe('armies arriving by an attack are a move, not income (#86)', () => {
     const now = board([mine(1, 5), mine(2, 5), enemy(3, 556), fogged(4), fogged(5), enemy(6, 5)]);
     const cost = straightKills(3, 70);
     expect(observeDeploy(g6, now, was, ENEMY, STD)).toMatchObject({ deploy: cost, counted: [3, 6], captured: [3], fromFog: [3], fogArmies: 556, reveals: [] });
-    const [e] = enemyDeployEstimates(g6, now, ME, STD, was);
+    const e = enemyDeployEstimates(g6, now, ME, STD, was)[0]!;
     expect(e.observedRaw).toBe(cost);
     expect(e.estimate).toBeLessThan(100);
   });

@@ -25,7 +25,7 @@
 
 import { McpToolError } from '@chrischall/mcp-utils';
 
-export interface FormatRecord {
+interface FormatRecord {
   format: string;
   wins: number;
   games: number;
@@ -46,7 +46,7 @@ export interface ProfileStats {
   formats: FormatRecord[];
 }
 
-export interface CommonGame {
+interface CommonGame {
   id: number;
   name: string;
   started: string;
@@ -55,7 +55,7 @@ export interface CommonGame {
   myState: string;
 }
 
-export interface HeadToHead {
+interface HeadToHead {
   count: number | null;
   /** My wins and losses in games without teams; a team game is in {@link teamGames} instead. */
   wins: number;

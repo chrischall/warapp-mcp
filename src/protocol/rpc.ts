@@ -31,8 +31,8 @@ export const PLATFORM_WEBSITE = 15;
 export const INITIAL_SERVER_INFO_A = 348;
 export const INITIAL_SERVER_INFO_B = 88732;
 
-export const SERVICES_URL = 'https://war.app/Services';
-export const CONTENT_TYPE = 'application/x-www-form-urlencoded; charset=UTF-8';
+const SERVICES_URL = 'https://war.app/Services';
+const CONTENT_TYPE = 'application/x-www-form-urlencoded; charset=UTF-8';
 
 /** Methods whose frame carries no auth block. */
 const NO_AUTH_METHODS: ReadonlySet<number> = new Set([Method.GetMapDetails]);
@@ -77,11 +77,11 @@ export class WarappServerError extends McpToolError {
 }
 
 /** The part of the bridge transport a call uses. */
-export interface RpcBridge {
+interface RpcBridge {
   fetch(init: FetchproxyFetchInit): Promise<FetchproxyFetchResult>;
 }
 
-export interface WarappRpcOptions {
+interface WarappRpcOptions {
   /** The started bridge (e.g. `() => bridge.ready()`). */
   bridge: () => Promise<RpcBridge>;
   /** The signed-in account's email. Defaults to `WARAPP_EMAIL` from `env`. */

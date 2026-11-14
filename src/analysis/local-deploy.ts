@@ -8,7 +8,7 @@ import { bonusTerritories } from './bonuses.js';
 import type { MapGraph } from './graph.js';
 
 /** One held bonus's armies, deployable only on its own territories. */
-export interface DeployPool {
+interface DeployPool {
   bonusId: number;
   name: string;
   /** Armies in the pool (the bonus's value; trimmed only when the income is smaller than every pool together). */
@@ -52,7 +52,7 @@ export function deployPools(g: MapGraph, held: ReadonlySet<number>, income: numb
   return { anywhere: Math.max(0, income - (total - trimmed)), bonuses, trimmed };
 }
 
-export interface PoolCharge {
+interface PoolCharge {
   /** Deployed armies no bonus pool could absorb: they draw on {@link DeployPools.anywhere}. */
   anywhereUsed: number;
   /** Armies each bonus pool absorbed, by bonus id. */

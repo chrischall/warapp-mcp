@@ -81,7 +81,7 @@ import {
   type SimTerritory,
 } from './turn-sim.js';
 
-export interface StressOpponent {
+interface StressOpponent {
   id: number;
   /** Armies it is expected to deploy this turn. */
   deploy: number;
@@ -113,11 +113,11 @@ export interface StressInput {
   leader?: boolean;
 }
 
-export const DEFAULT_MAX_REPLIES = 8;
+const DEFAULT_MAX_REPLIES = 8;
 /** The chain search's caps (#180), shared with the planner (chains.ts, #199). */
 export { CHAIN_MAX_NODES, CHAIN_MAX_STEPS } from './chains.js';
 
-export type StressReplyKind = 'attack' | 'reinforce' | 'all-attack' | 'dodge' | 'joint' | 'chain';
+type StressReplyKind = 'attack' | 'reinforce' | 'all-attack' | 'dodge' | 'joint' | 'chain';
 
 export interface StressReply {
   opponent: number;
@@ -215,7 +215,7 @@ export interface StressExposure {
   incomeLost: number;
 }
 
-export interface StressReport {
+interface StressReport {
   /** `false` under luck or weighted rounding: battles were resolved at their expectation. */
   exact: boolean;
   /** Unstated rules an outcome rested on (see turn-sim.ts). */

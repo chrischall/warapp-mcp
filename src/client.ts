@@ -290,7 +290,7 @@ export class WarappClient {
 }
 
 /** Game ids out of a GameIDFeed body, in any of the plausible layouts; distinct, descending. */
-export function gameIdsOf(body: unknown): number[] {
+function gameIdsOf(body: unknown): number[] {
   const rec = body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : undefined;
   const list = Array.isArray(body) ? body : (rec?.gameIDs ?? rec?.gameIds ?? rec?.GameIDs ?? rec?.games);
   if (!Array.isArray(list)) return [];

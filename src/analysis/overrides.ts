@@ -13,7 +13,7 @@ import type { GameMap, GameSettings } from '../normalize.js';
  * hard deploy-total and Local Deployment pre-checks. Overrides that did not read in full
  * keep both soft (warn, not refuse; war.app enforces both).
  */
-export const OVERRIDES_VERIFIED = true;
+const OVERRIDES_VERIFIED = true;
 
 /** The reason given when `OverriddenBonuses` was sent in a shape that could not be read. */
 export const OVERRIDES_UNPARSED =

@@ -1,7 +1,7 @@
 // warapp_my_games: the signed-in account's games through the web client's
 // GetMyGames, with which ones are waiting on me — the group's canonical
 // "what's new" tool, so it also answers `view: 'brief'`.
-import { McpToolError, untrustedEnvelope } from '@chrischall/mcp-utils';
+import { untrustedEnvelope } from '@chrischall/mcp-utils';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { briefGameLine, readMyGames, summarizeMyGames, type MyGame, type RawMyGame } from '../my-games.js';
@@ -10,6 +10,7 @@ import { readAnnotations, respond, untrustedDescription, WARAPP_UNTRUSTED_NOTE }
 import { canonicalMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
+import { accountUnknown } from './write-kit.js';
 
 const VIEWS = ['compact', 'brief'] as const;
 
@@ -22,9 +23,7 @@ function briefResult(games: readonly MyGame[]): CallToolResult {
 async function myInGameId(ctx: LiveContext): Promise<number> {
   const me = await ctx.myInGameId();
   if (me === undefined) {
-    throw new McpToolError('Could not tell which account is signed in to war.app, so its games cannot be listed.', {
-      hint: 'Make sure a signed-in war.app tab is open and paired, then retry.',
-    });
+    throw accountUnknown(ctx.hosted, 'its games cannot be listed');
   }
   return me;
 }

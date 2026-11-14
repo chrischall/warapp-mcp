@@ -19,11 +19,11 @@ import { DEFAULT_BASE_INCOME } from '../analysis/player.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from '../analysis/combat.js';
 
 /** Bonus rows by default. */
-export const MAP_NOTES_LIMIT = 10;
+const MAP_NOTES_LIMIT = 10;
 /** Chokepoint rows by default. */
-export const MAP_CHOKEPOINTS_LIMIT = 10;
+const MAP_CHOKEPOINTS_LIMIT = 10;
 
-export interface MapNotesInput {
+interface MapNotesInput {
   graph: MapGraph;
   settings?: PickSettings;
   /**
@@ -49,7 +49,7 @@ interface Named {
   name: string;
 }
 
-export interface BonusEfficiency {
+interface BonusEfficiency {
   bonusId: number;
   name: string;
   value: number;
@@ -64,7 +64,7 @@ export interface BonusEfficiency {
   doubleBorders: Array<Named & { touches: number }>;
 }
 
-export interface MapChokepoint {
+interface MapChokepoint {
   territoryId: number;
   name: string;
   reasons: string[];
@@ -72,7 +72,7 @@ export interface MapChokepoint {
   connects: string[];
 }
 
-export interface IncomeTarget {
+interface IncomeTarget {
   turn: number;
   /** Base income plus the bonuses held by the start of the turn. */
   income: number;

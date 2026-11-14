@@ -67,7 +67,7 @@ describe('static data reads', () => {
       ['return Math.PI', 'Math.PI'], // a host global's own member: not the bundle's to answer
       ['return Array.isArray', 'Array.isArray'],
     ]) {
-      const e = interpError(() => run(body));
+      const e = interpError(() => run(body!));
       expect(e.kind, body).toBe('unsupported');
       expect(e.message, body).toContain(`static read ${what}`);
     }

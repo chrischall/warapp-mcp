@@ -4,19 +4,22 @@
 // Field names in the bundle are minified and change between releases, so
 // nothing here keys on them. Classes are found by their stable registered type
 // name (`$type`) and fields by read order, as observed through the bridge
-// (docs/PLAN-SCOUT.md, GetMyGames). The positions used are checked for their
-// type, so a reordered layout is an error rather than a silently wrong list.
+// (docs/PLAN-SCOUT.md, GetMyGames). Each record must have exactly its known
+// field count and the positions used are checked for their type, so a field
+// inserted, dropped or reordered is an error rather than a silently wrong list.
 
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { ClassReader } from './live.js';
 import type { Reader } from './protocol/codec.js';
+import { playerStateName } from './player-states.js';
+import { fields, isObj } from './protocol/decoded.js';
 
 export const MY_GAMES_RETURN = 'warlight.shared.MyGamesReturn';
 export const GAME_INFO = 'warlight.shared.GameInfo';
 export const GAME_INFO_PLAYER = 'warlight.shared.GameInfoPlayer';
 
 /** GameState. */
-export const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
+const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
   2: 'WaitingForPlayers',
   3: 'Playing',
   4: 'Finished',
@@ -25,26 +28,14 @@ export const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
 const GAME_PLAYING = 3;
 const GAME_DISTRIBUTING = 5;
 
-/** GamePlayerState. */
-export const PLAYER_STATE_NAMES: Readonly<Record<number, string>> = {
-  1: 'Invited',
-  2: 'Playing',
-  3: 'Eliminated',
-  4: 'Won',
-  5: 'Declined',
-  6: 'RemovedByHost',
-  7: 'SurrenderAccepted',
-  8: 'Booted',
-  9: 'EndedByVote',
-};
 const PLAYER_PLAYING = 2;
 
-/** GameInfo field positions in read order. */
+/** GameInfo field positions in read order, and its whole field count (src/open-games.ts reads the same record). */
 const GI = { gameId: 7, name: 13, lastTurn: 14, players: 16, state: 22 } as const;
-const GI_MIN_FIELDS = 23;
-/** GameInfoPlayer field positions in read order. */
+export const GAME_INFO_FIELDS = 27;
+/** GameInfoPlayer field positions in read order, and its whole field count. */
 const GP = { committed: 2, name: 5, id: 6, state: 7 } as const;
-const GP_MIN_FIELDS = 8;
+export const GAME_INFO_PLAYER_FIELDS = 10;
 
 /** One game as GetMyGames has it (codes not yet named). */
 export interface RawMyGame {
@@ -78,27 +69,20 @@ export class MyGamesFormatError extends McpToolError {
   }
 }
 
-type Obj = Record<string, unknown> & { $type?: unknown };
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-// The interpreter adds `$type` (and `$ctorError` when a constructor threw); every other key is a
-// field in read order. Minified field names can start with `$` too (`$c`, `$a` live), so drop
-// only those two.
-const META_KEYS = new Set(['$type', '$ctorError']);
-const fields = (o: Obj): unknown[] =>
-  Object.entries(o)
-    .filter(([k]) => !META_KEYS.has(k))
-    .map(([, v]) => v);
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isStr = (v: unknown): v is string | null => v === null || typeof v === 'string';
 
 function playerOf(p: unknown): RawMyGame['players'][number] {
   if (!isObj(p) || p.$type !== GAME_INFO_PLAYER) throw new MyGamesFormatError('a player is not a GameInfoPlayer');
   const f = fields(p);
+  if (f.length !== GAME_INFO_PLAYER_FIELDS) {
+    throw new MyGamesFormatError(`a GameInfoPlayer has ${f.length} fields, not ${GAME_INFO_PLAYER_FIELDS}`);
+  }
   const committed = f[GP.committed];
   const name = f[GP.name];
   const id = f[GP.id];
   const state = f[GP.state];
-  if (f.length < GP_MIN_FIELDS || typeof committed !== 'boolean' || !isStr(name) || !isInt(id) || !isInt(state)) {
+  if (typeof committed !== 'boolean' || !isStr(name) || !isInt(id) || !isInt(state)) {
     throw new MyGamesFormatError('a GameInfoPlayer lacks its fields');
   }
   return { id, name: name ?? '', stateCode: state, committed };
@@ -107,13 +91,13 @@ function playerOf(p: unknown): RawMyGame['players'][number] {
 function gameOf(g: unknown): RawMyGame {
   if (!isObj(g) || g.$type !== GAME_INFO) throw new MyGamesFormatError('a game is not a GameInfo');
   const f = fields(g);
+  if (f.length !== GAME_INFO_FIELDS) throw new MyGamesFormatError(`a GameInfo has ${f.length} fields, not ${GAME_INFO_FIELDS}`);
   const id = f[GI.gameId];
   const name = f[GI.name];
   const lastTurn = f[GI.lastTurn];
   const players = f[GI.players];
   const state = f[GI.state];
   if (
-    f.length < GI_MIN_FIELDS ||
     !isInt(id) ||
     !isStr(name) ||
     !isInt(lastTurn) ||
@@ -159,7 +143,7 @@ export function summarizeMyGames(games: readonly RawMyGame[], myInGameId: number
       waitingOnYou: active && me !== undefined && me.stateCode === PLAYER_PLAYING && !me.committed,
       players: g.players.map((p) => ({
         name: p.name,
-        state: PLAYER_STATE_NAMES[p.stateCode] ?? String(p.stateCode),
+        state: playerStateName(p.stateCode),
         committed: p.committed,
       })),
     };
@@ -179,7 +163,7 @@ export function activeGameIds(games: readonly RawMyGame[], myInGameId: number): 
 }
 
 /** The longest line `view: 'brief'` answers (the context-groups contract). */
-export const BRIEF_MAX = 120;
+const BRIEF_MAX = 120;
 
 /**
  * One brief line, `name — <turn N | state> — waiting on you | waiting on others`,

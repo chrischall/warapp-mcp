@@ -106,7 +106,7 @@ export function analyzeBonuses(g: MapGraph): BonusAnalysis[] {
   return g.map.bonuses.map((b) => analyzeBonus(g, b.id)!);
 }
 
-export interface RankOptions {
+interface RankOptions {
   /** Drop bonuses worth less than this (default 1: only positive bonuses). */
   minValue?: number;
   limit?: number;

@@ -143,8 +143,9 @@ Builds on F1's fixed estimate. The planner sees one previous board; this keeps a
 
 - Per-game board history in the data dir (the existing board cache, one file per turn I planned
   or read; extend it if it keeps only one). Pure `trackOpponents(graph, boards[], me, settings)` →
-  per opponent: per-turn observed deploy (F1's rules), its income estimate (median of the last
-  three observed turns, floored by the visible-bonus estimate), **unexplained armies** (income
+  per opponent: per-turn observed deploy (F1's rules), its income estimate (the most of the last
+  three observed turns — this plan first said the median, which #100 replaced because every
+  observation under fog is a lower bound — floored by the visible-bonus estimate), **unexplained armies** (income
   earned since first seen minus visible army change, visible losses and likely combat deaths:
   armies in the fog, spent there, or a misread — `unexplainedArmies`, named `unaccountedArmies`
   before #123), and **inferred bonuses** — bonuses it could hold (no territory visibly held by another

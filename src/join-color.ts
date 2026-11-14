@@ -13,9 +13,10 @@
 
 import type { ClassReader } from './live.js';
 import { Reader } from './protocol/codec.js';
+import { fields, isObj, type DecodedRecord } from './protocol/decoded.js';
 import { GAME_COLOR_COUNT } from './protocol/methods.js';
 
-export const GAME_COLOR = 'warlight.shared.GameColor';
+const GAME_COLOR = 'warlight.shared.GameColor';
 const PLAYER = 'warlight.shared.Player';
 const INIT_PARAMETERS = 'warlight.shared.InitParameters';
 
@@ -70,18 +71,12 @@ export function encodeStartupBytes(bytes: Uint8Array): string {
 }
 
 /** The signed-in account's colours (GameColor indices); a colour not set is absent. */
-export interface AccountColors {
+interface AccountColors {
   preferred?: number;
   secondary?: number;
 }
 
-type Obj = Record<string, unknown> & { $type?: unknown };
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-const META_KEYS = new Set(['$type', '$ctorError']);
-const fields = (o: Obj): unknown[] =>
-  Object.entries(o)
-    .filter(([k]) => !META_KEYS.has(k))
-    .map(([, v]) => v);
+type Obj = DecodedRecord;
 
 /** A GameColor record's index; `null` for an absent colour; `undefined` when it is neither. */
 export function colorIndexOf(v: unknown): number | null | undefined {
@@ -136,7 +131,7 @@ export function readAccountColors(html: string, bundle: ClassReader): AccountCol
   return undefined;
 }
 
-export type ColorSource = 'requested' | 'preferred' | 'secondary' | 'free';
+type ColorSource = 'requested' | 'preferred' | 'secondary' | 'free';
 
 export interface JoinColor {
   color: number;

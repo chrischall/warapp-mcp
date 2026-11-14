@@ -26,7 +26,7 @@ export const MIN_SAMPLE = 5;
  */
 export const MIN_RATE_SAMPLE = 10;
 
-export interface PlayerRecord {
+interface PlayerRecord {
   /** GameFeed player id. */
   playerId: number;
   won: boolean;
@@ -102,7 +102,7 @@ export function recordFromGame(game: Game, map: GameMap): GameRecord {
   return { gameId: game.id, mapId: map.id, turnsSeen: boards.length, players };
 }
 
-export interface PickStat {
+interface PickStat {
   territoryId: number;
   /** Players who started on it, across the sample. */
   picks: number;
@@ -112,7 +112,7 @@ export interface PickStat {
   winnerPicks: number;
 }
 
-export interface BonusWinRate {
+interface BonusWinRate {
   bonusId: number;
   /** Players whose picks anchored this bonus. */
   players: number;
@@ -122,7 +122,7 @@ export interface BonusWinRate {
   lowSample: boolean;
 }
 
-export interface FirstBonusStat {
+interface FirstBonusStat {
   players: number;
   completed: number;
   neverCompleted: number;

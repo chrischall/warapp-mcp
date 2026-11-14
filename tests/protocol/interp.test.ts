@@ -333,11 +333,12 @@ describe('BundleInterpreter containment', () => {
       expect(e.kind, body).toBe('forbidden');
     }
     // Called directly with a host function, a native refuses it too.
-    const { P, E } = DEFAULT_DIALECT.statics;
+    const P = DEFAULT_DIALECT.statics.P!;
+    const E = DEFAULT_DIALECT.statics.E!;
     const host = () => 'host';
-    expect(() => P.Sd(new Reader(new Writer().int32(1).bytes()), host)).toThrow(InterpError);
-    expect(() => P.ef(new Reader(new Writer().int32(1).bytes()), host, host)).toThrow(InterpError);
-    expect(() => E.Za([1], host)).toThrow(InterpError);
+    expect(() => P.Sd!(new Reader(new Writer().int32(1).bytes()), host)).toThrow(InterpError);
+    expect(() => P.ef!(new Reader(new Writer().int32(1).bytes()), host, host)).toThrow(InterpError);
+    expect(() => E.Za!([1], host)).toThrow(InterpError);
   });
 
   it('never returns a host function into interpreted scope', () => {
@@ -411,9 +412,9 @@ describe('BundleInterpreter containment', () => {
     );
     expect(e.kind).toBe('bad-value');
     expect(Date.now() - t).toBeLessThan(SOON_MS);
-    const { E } = DEFAULT_DIALECT.statics;
-    for (const n of [-1, 1.5, Number.NaN, Infinity, 2 ** 31, '3']) expect(() => E.Range(0, n), String(n)).toThrow(InterpError);
-    expect(E.Range(2, 3)).toEqual([2, 3, 4]);
+    const E = DEFAULT_DIALECT.statics.E!;
+    for (const n of [-1, 1.5, Number.NaN, Infinity, 2 ** 31, '3']) expect(() => E.Range!(0, n), String(n)).toThrow(InterpError);
+    expect(E.Range!(2, 3)).toEqual([2, 3, 4]);
   });
 
   it('keeps arrays dense: no write to length, no index past the end', () => {
@@ -433,11 +434,11 @@ describe('BundleInterpreter containment', () => {
   });
 
   it('refuses an array longer than the cap to a native, as an InterpError (never a process abort)', () => {
-    const { E } = DEFAULT_DIALECT.statics;
+    const E = DEFAULT_DIALECT.statics.E!;
     const long: unknown[] = [];
     long.length = 2 ** 32 - 1;
-    expect(() => E.Sa(long)).toThrow(InterpError);
-    expect(() => E.Za(long, () => 1)).toThrow(InterpError);
+    expect(() => E.Sa!(long)).toThrow(InterpError);
+    expect(() => E.Za!(long, () => 1)).toThrow(InterpError);
     // Through the interpreter the long array cannot be made in the first place.
     expect(interpError(() => run('var x=[];x.length=4294967295;return E.Sa(x)')).kind).toBe('forbidden');
   });
@@ -697,7 +698,7 @@ describe('BundleInterpreter containment', () => {
       const e = interpError(() => run(body, new Writer().int32(1).bytes()));
       expect(e.kind, body).toBe('bad-value');
     }
-    expect(() => DEFAULT_DIALECT.statics.P.Ya({})).toThrow(InterpError);
+    expect(() => DEFAULT_DIALECT.statics.P!.Ya!({})).toThrow(InterpError);
   });
 
   it('never treats a key longer than ten characters as an array index', () => {

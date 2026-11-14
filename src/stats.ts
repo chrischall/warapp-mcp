@@ -55,7 +55,7 @@ export interface StatsClient {
   getGame(id: number, opts: GetGameOptions): Promise<Game>;
 }
 
-export interface CollectorOptions {
+interface CollectorOptions {
   client: StatsClient;
   /** The data directory; records go under `<dir>/stats/`. */
   dir: () => string;
