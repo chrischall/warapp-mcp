@@ -1598,9 +1598,10 @@ describe('cards in the turn tools', () => {
     // Ann holds bonus 118 (159, 161, 157) against Bob's 158 (12); Bob's 134 keeps him from being
     // finished. 135 is a 12-neutral in a bonus too costly to work on: under `defend` nothing is
     // captured, unless a capture's card pieces are worth what it loses (8, to a fixed Reinforcement
-    // card of 20 armies, one piece a card).
+    // card of 20 armies, one piece a card). #164: Bob may hold that card too, so 159 holds against
+    // his 11 + 5 + 20 and still has the armies to attack.
     const quiet: SyntheticTerritory[] = [
-      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 40 },
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 60 },
       { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 8 },
       { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 8 },
       { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 12 },
@@ -1621,6 +1622,9 @@ describe('cards in the turn tools', () => {
     const on = await call();
     expect(on.orders).toContainEqual(expect.objectContaining({ kind: 'move', from: 159, to: 135 }));
     expect(on.rationale.join('\n')).toMatch(/Attack Knife Hills \(#135\) from Hornwood \(#159\) with \d+: a capture earns this turn's card pieces, worth ~\d+ armies, and this one loses ~8 \(#127\)/);
+    // #164: the card clock reaches the threat model.
+    expect(on.warnings.join('\n')).toMatch(/may hold a Reinforcement card from turn \d+ \(the card clock\): \+20/);
+    expect(off.warnings.join('\n')).not.toMatch(/Reinforcement card from turn/);
   });
 
   it('plan_turn over the hold limit (6/5) keeps Order Delay and Order Priority: the Spy goes (#163), never playing Blockade or Order Delay', async () => {

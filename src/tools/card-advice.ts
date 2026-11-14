@@ -6,7 +6,7 @@
 
 import { adviseOrderDelay, CARD_REINFORCEMENT, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
-import type { TurnPlan } from '../analysis/planner.js';
+import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';
 import type { Game, GameSettings, Player } from '../normalize.js';
 import { capturePieceValue, cardClock } from '../strategy/card-clock.js';
@@ -240,4 +240,24 @@ export function cardPieceOption(settings: GameSettings | undefined, hand: readon
   const inHand = hand.find((c) => c.type === CARD_REINFORCEMENT && c.armies !== undefined && c.armies > 0)?.armies;
   const v = capturePieceValue(settings, inHand);
   return v.armies !== null && v.armies > 0 ? { cardPieceValue: v.armies } : {};
+}
+
+/**
+ * #164: an opponent's Reinforcement card for the threat model: the first turn one can be in a hand
+ * (the card clock's fastest), the armies it adds (a fixed card's `FixedArmies`, else the
+ * Reinforcement card in my hand as it is worth now) and the capturing turns each further card
+ * takes. `undefined` when no Reinforcement card is in play or what it adds is unknown.
+ */
+export function opponentReinforcement(settings: GameSettings | undefined, hand: readonly Card[]): ReinforcementClock | undefined {
+  const entry = cardClock(settings)?.cards.find((c) => c.card === 'Reinforcement');
+  const first = entry?.firstPlayableTurn.fastest;
+  if (!entry || first === null || first === undefined) return undefined;
+  const raw = settings!.raw.ReinforcementCard;
+  const fixed = typeof raw === 'object' && raw !== null ? Number((raw as Record<string, unknown>).FixedArmies) : NaN;
+  const inHand = hand.find((c) => c.type === CARD_REINFORCEMENT && c.armies !== undefined && c.armies > 0)?.armies;
+  const armies = Number.isFinite(fixed) && fixed > 0 ? Math.floor(fixed) : inHand;
+  if (armies === undefined || armies <= 0) return undefined;
+  const after = entry.cardsAfter.fastest;
+  const turnsPerCard = after && after.length >= 2 ? Math.max(1, after[1]! - after[0]!) : null;
+  return { firstTurn: first, armies, turnsPerCard };
 }

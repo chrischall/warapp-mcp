@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { incomeFor, planEnemyEstimates, symmetricStart, trackGame, trackOpponents } from '../analysis/index.js';
 import { stressPlan, type StressDodge, type StressExposure, type StressJoint, type StressReply } from '../analysis/stress.js';
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
-import { handOwners } from './card-advice.js';
+import { handOwners, opponentReinforcement } from './card-advice.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
 import { boardStateFromLive } from '../live.js';
 import type { GameMap } from '../normalize.js';
@@ -223,6 +223,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           symmetricStart: symmetricStart(game.settings, map),
           // #166: the opponent's opening simulated from the starts the award proved, as the prior.
           ...(opening ? { opening } : {}),
+          // #164: exact income where the fog shows every owner, and an opponent's Reinforcement card.
+          ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
+          ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
         },
         turn,
       });

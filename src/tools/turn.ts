@@ -55,7 +55,7 @@ import { type Game, type GameMap, type GameSettings, type Player } from '../norm
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
-import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, TEAM_HAND } from './card-advice.js';
+import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
   gameIdArg,
@@ -1004,6 +1004,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent: ' +
           'base income plus its visible bonuses, or its observed deploy when larger — its tracked income, carried across turns, once ' +
           'warapp_track_opponents has 2+ turns of it — and in an even-start 1v1 at least your income when it borders the fog; ' +
+          'exact where the fog shows every owner (No, Light, Dense fog); plus its Reinforcement card from the turn the card clock says it can hold one; ' +
+          'a neighbour whose armies the fog hides counts its unaccounted armies, and a large stack that left view counts where it can reach; ' +
           'growth beside the fog beyond twice what it was expected to deploy reads as a move out of the fog, not a deploy). Obeys the kill rates, luck, rounding, Local ' +
           'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement (in a team ' +
           "game only when cards must be shed: the hand is the team's), and Order Priority only when the plan advises it (a " +
@@ -1166,6 +1168,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           symmetricStart: symmetricStart(game.settings, map),
           // #166: the opponent's opening simulated from the starts the award proved, as the prior.
           ...(opening ? { opening } : {}),
+          // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
+          ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
         },
         ...(tracks ? { tracks } : {}),
         options: {

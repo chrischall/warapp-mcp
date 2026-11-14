@@ -3,7 +3,7 @@ import type { TerritoryState } from '../src/board.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import type { Card, CardChoice } from '../src/cards.js';
 import type { GameSettings, Player } from '../src/normalize.js';
-import { adviseCards, cardGame, cardPieceOption, handOwners, type CardAdviceInput } from '../src/tools/card-advice.js';
+import { adviseCards, cardGame, cardPieceOption, handOwners, opponentReinforcement, type CardAdviceInput } from '../src/tools/card-advice.js';
 import { normalizeSettings } from '../src/normalize.js';
 import { board, mine, neutral, tinyMap } from './analysis/helpers.js';
 
@@ -136,5 +136,27 @@ describe('cardPieceOption (#127): the planner option a capture\'s card pieces ar
     expect(cardPieceOption(progressive, [rein(12)])).toEqual({ cardPieceValue: 3 });
     expect(cardPieceOption(progressive, [])).toEqual({});
     expect(cardPieceOption(undefined, [])).toEqual({});
+  });
+});
+
+describe("opponentReinforcement (#164): an opponent's Reinforcement card on the card clock", () => {
+  const fixed = normalizeSettings({
+    NumberOfCardsToReceiveEachTurn: 1,
+    ReinforcementCard: { NumPieces: 4, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1, FixedArmies: 8 },
+  });
+  const progressive = normalizeSettings({
+    NumberOfCardsToReceiveEachTurn: 1,
+    ReinforcementCard: { NumPieces: 4, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1, Mode: 1, ProgressivePercentage: 0.1 },
+  });
+  const rein = (armies: number): Card => ({ id: 'b'.repeat(32), type: 1, name: 'Reinforcement', armies });
+
+  it('gives the first turn one can be in hand, its armies, and the capturing turns each further card takes', () => {
+    expect(opponentReinforcement(fixed, [])).toEqual({ firstTurn: 5, armies: 8, turnsPerCard: 4 });
+  });
+  it('a progressive card is valued at the one in my hand, else unknown', () => {
+    expect(opponentReinforcement(progressive, [rein(12)])).toEqual({ firstTurn: 5, armies: 12, turnsPerCard: 4 });
+    expect(opponentReinforcement(progressive, [])).toBeUndefined();
+    expect(opponentReinforcement(undefined, [])).toBeUndefined();
+    expect(opponentReinforcement(settings(), [])).toBeUndefined();
   });
 });

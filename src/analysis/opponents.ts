@@ -31,6 +31,11 @@
 //    seen to earn on the observed turns and the base income on the others), nearest first. They are candidates, never an assertion; when more than
 //    {@link MAX_LISTED_COMBINATIONS} fit, none is listed.
 //
+// Stacks that left view (#164): each territory's last sighting of a large stack of its (at least
+// {@link LOST_STACK_INCOMES} × its visible income that turn, beyond the guard) that no later board
+// showed again — fogged, or its armies hidden — is kept with its turn (`lostStacks`); the planner
+// counts it at every border of mine it can reach by now.
+//
 // One-off movements (#123): each observed turn carries a low and a high reading of its deploy
 // (`observeDeploy`): growth next to the fog and the surplus of a capture whose visible attacking
 // stack shrank are read as deploy up to twice what it was expected to deploy (its visible income,
@@ -62,6 +67,18 @@ import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills
 import { neighborsOf, type MapGraph } from './graph.js';
 import { enemyDeployEstimates, observeSigned, ownerShown, visibleState, type PlannerSettings } from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
+
+/** #164: a stack is large when its armies are at least this many turns of its visible income. */
+export const LOST_STACK_INCOMES = 2;
+/** #164: lost stacks kept per opponent. */
+export const MAX_LOST_STACKS = 5;
+
+/** #164: a large stack of an opponent last seen on `territoryId` on `turn`, hidden since. */
+export interface LostStack {
+  territoryId: number;
+  turn: number;
+  armies: number;
+}
 
 /** One of my boards and the turn it was seen on (the turn being played on it). */
 export interface TurnBoard {
@@ -280,6 +297,13 @@ export interface OpponentTrack {
   turnsUnseenAtLeast: boolean;
   /** With nothing in view: what it must have received since the game started; else `null`. */
   earnedAtLeast: EarnedBound | null;
+  /**
+   * #164: its large stacks that left view — each territory's last sighting of a stack of at least
+   * {@link LOST_STACK_INCOMES} × its visible income that turn, when no later board showed that
+   * territory again (largest first, then id; at most {@link MAX_LOST_STACKS}). Absent on a track
+   * built by hand.
+   */
+  lostStacks?: LostStack[];
   /** Unseen-banking warnings (also in `notes`), naming it. */
   warnings: string[];
   /** Confidence notes, plain sentences. */
@@ -854,6 +878,16 @@ export function trackOpponents(
     }
     return m;
   };
+  /** Each board's territories by id (#164: the lost-stack scan reads every territory on every board). */
+  const shownBy = new Map<number, Map<number, BoardState['territories'][number]>>();
+  const shownOn = (turn: number) => {
+    let m = shownBy.get(turn);
+    if (!m) {
+      m = new Map(byTurn.get(turn)!.territories.map((t) => [t.territoryId, t]));
+      shownBy.set(turn, m);
+    }
+    return m;
+  };
   const players = game?.players ?? [];
   const teams = players.some((p) => carriesTeam(p.team));
   const myTeam = players.find((p) => p.id === me)?.team;
@@ -1151,6 +1185,25 @@ export function trackOpponents(
           `${n} combination${n === 1 ? '' : 's'} fit${n === 1 ? 's' : ''} its income gap of ${gap}${inferred.exact ? '' : ' approximately'}, nearest first: candidates, not facts${left}.`,
         );
     }
+    // #164: stacks that left view. The last board showing each territory decides: a large stack of
+    // its there, and every later board hides it (fogged, or its armies hidden).
+    const lostStacks: LostStack[] = [];
+    for (const id of [...g.territoryById.keys()].sort(byNum)) {
+      let last: { turn: number; armies: number } | null = null;
+      let lastShown = -Infinity;
+      for (const turn of turns) {
+        const st = visibleState(shownOn(turn).get(id));
+        if (!st) continue;
+        lastShown = turn;
+        const income = visibleAt(turn).get(playerId);
+        const large = st.owner.kind === 'player' && st.owner.playerId === playerId && st.armies! - guard >= LOST_STACK_INCOMES * (income ? income.base + income.bonusIncome : baseIncome) && st.armies! - guard > 0;
+        last = large ? { turn, armies: st.armies! } : null;
+      }
+      if (last && last.turn === lastShown && last.turn < lastTurn) lostStacks.push({ territoryId: id, turn: last.turn, armies: last.armies });
+    }
+    lostStacks.sort((a, b) => b.armies - a.armies || a.territoryId - b.territoryId).splice(MAX_LOST_STACKS);
+    for (const l of lostStacks)
+      notes.push(`A stack of ${l.armies} was last seen on territory ${l.territoryId} on turn ${l.turn} and has been out of view since: the planner counts it at each border it can reach by now.`);
     notes.push(...warnings);
     return {
       playerId,
@@ -1171,6 +1224,7 @@ export function trackOpponents(
       turnsUnseen,
       turnsUnseenAtLeast,
       earnedAtLeast,
+      lostStacks,
       warnings,
       notes,
     };

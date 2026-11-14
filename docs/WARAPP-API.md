@@ -387,6 +387,15 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   - The observed-deploy cap counts a bonus out of reach when any of its territories shows
     another owner (a player or a neutral) under a fog level that shows owners — owner-only
     included, whatever its armies.
+  - **Which game fog settings show every owner (#164) — UNVERIFIED live.** From the wiki's Fog
+    page: `NoFog`, `LightFog` and `ModerateFog` (Dense fog) show every territory's owner, so an
+    opponent's income is exactly its base plus the bonuses it holds; `ModerateFog` hides every
+    stack, and `VeryFoggy` (Heavy fog) shows the owner of a territory next to mine but not its
+    armies. The engine lists Dense before Normal, so the planner matches the setting by name
+    (`OWNERS_SHOWN_FOG`) and also requires the board to show every territory's owner; it never
+    compares fog levels by position. An owner-only enemy territory next to mine is a threat of its
+    owner's unaccounted armies (the tracker's `unexplained`, else the guard alone) plus its deploy,
+    and never a target (its defenders are unknown).
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
   through raw. `GetChat` is passed through raw too, and it is third-party text.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a
