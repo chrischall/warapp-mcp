@@ -223,8 +223,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   that border short of the full hold. **No
   relations, no change:** every hook is false or absent then, and the golden corpus must stay
   byte-identical. **T6:** after the orders are final, `truceBreakLosses` carries out, per binding unenforced
-  truce, the partner's whole deploy estimate on a covered territory of its beside a covered one of mine and
-  an attack with everything there, against the plan's orders on `turn-sim.ts` (both move orders unless the
+  truce, the partner's whole deploy estimate on any territory of its beside a covered one of mine (covered or
+  not: T2 relaxes against every stack there) and an attack with everything there, against the plan's orders on `turn-sim.ts` (both move orders unless the
   first mover is known and verified; no other player moves), and reports the costliest as `lossIfBroken`
   (my commander, then income, territories, armies); it changes no order. `warapp_check_plan` reads the same
   truces (`truceRelations`, `src/tools/turn.ts`), keeps every partner among the opponents (`safe` is safe

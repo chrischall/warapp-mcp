@@ -1070,11 +1070,12 @@
 //           so does one where my commander stands, when the cap leaves it short of T3's full hold
 //           against the partner.
 //           The report never calls a T2-relaxed border sized for (or a gamble on) the partner's
-//           deploy: #69's line, #167's cover odds and #201's gamble leave it out (`relaxedFor`).
+//           deploy: #69's line, #167's cover odds, #201's gamble and #118's best response leave it
+//           out (`relaxedFor`).
 //       T6. What a break would cost (`lossIfBroken`, after the orders are final; plan/relations.ts
 //           `truceBreakLosses`): per binding, unenforced truce, the partner's whole deploy estimate on
-//           one of its covered territories in view beside a covered territory of mine and an attack on
-//           it with everything there (its commander too), carried out against this plan's deploys and
+//           any territory of its in view beside a covered territory of mine (covered or not: T2
+//           relaxes against every stack there) and an attack on it with everything there (its commander too), carried out against this plan's deploys and
 //           moves on the turn simulator (turn-sim.ts; both move orders unless the first mover is known
 //           and verified; no other player moves). The costliest pair is reported — my commander, then
 //           the income lost, the territories, the armies — with a rationale line; `null` when none

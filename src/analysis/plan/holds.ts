@@ -19,7 +19,7 @@ import {
   type TwoStepPass,
 } from './shared.js';
 import type { DeployBook } from './orders.js';
-import { capRoom } from './relations.js';
+import { capRoom, relaxedFor } from './relations.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
@@ -875,9 +875,12 @@ export function floorTier(
         if (!short(m)) continue;
         const p = borders.get(m.id)?.player;
         if (p === undefined) continue;
+        const c = Math.max(0, breakCostWith(m, have.get(m) ?? m.have));
+        // B2 T2: a border relaxed for `p` faces its stacks with no deploy, so no share of the deploy
+        // it lands elsewhere breaks it here (plan/relations.ts, relaxedFor).
+        if (c > 0 && relaxedFor(ps, m.id, p)) continue;
         const e = players.get(p) ?? { deploy: 0, items: new Map<Unit, number>() };
         e.deploy = Math.max(e.deploy, deployShare(m));
-        const c = Math.max(0, breakCostWith(m, have.get(m) ?? m.have));
         e.items.set(u, Math.min(e.items.get(u) ?? Infinity, c));
         players.set(p, e);
       }

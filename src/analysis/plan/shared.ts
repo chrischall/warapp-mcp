@@ -412,10 +412,10 @@ export interface PlanRelationView {
   capMoved?: { from: number; to: number; armies: number }[];
   breach?: PlanRelation['breach'];
   /**
-   * T6: what a break would cost this turn — the partner's whole estimated deploy on its costliest
-   * covered border and an attack on my covered territory beside it, against this plan's orders, on the
-   * turn simulator. `null` when the truce does not bind, is enforced, or no covered stack of the
-   * partner in view stands beside a covered territory of mine.
+   * T6: what a break would cost this turn — the partner's whole estimated deploy on any territory of
+   * its beside my costliest covered territory (covered by the truce or not) and an attack on mine from
+   * there, against this plan's orders, on the turn simulator. `null` when the truce does not bind, is
+   * enforced, or no stack of the partner in view stands beside a covered territory of mine.
    */
   lossIfBroken: TruceBreakLoss | null;
 }

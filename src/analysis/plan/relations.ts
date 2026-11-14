@@ -20,8 +20,9 @@
 //       another front, said so when I already stand above it; a warning when what the cap leaves
 //       falls short against another opponent there, or of T3's full hold under my commander;
 //   T6  what a break would cost (`truceBreakLosses`, after the plan is finished): for each binding
-//       truce, the partner's whole deploy estimate on one of its covered territories beside a covered
-//       territory of mine and an attack on it with everything there, carried out against this plan's
+//       truce, the partner's whole deploy estimate on any territory of its beside a covered territory
+//       of mine (covered or not: T2 relaxes against all of them) and an attack on it with everything
+//       there, carried out against this plan's
 //       own deploys and moves on the turn simulator (turn-sim.ts), both move orders unless the first
 //       mover is known; the costliest is reported (`lossIfBroken`);
 //   T7  never a surprise break: a notice binds until its `endsTurn`; the plan advises `give-notice`
@@ -616,8 +617,9 @@ export function reportTruce(
 
 /**
  * T6, once the plan's orders are final: for each binding truce that is not enforced, what a break
- * would cost this turn. The partner lands its whole deploy estimate (`deployOf`) on one of its covered
- * territories in view beside a covered territory of mine and attacks it with everything there (its
+ * would cost this turn. The partner lands its whole deploy estimate (`deployOf`) on any territory of
+ * its in view beside a covered territory of mine — covered by the truce or not, since T2 relaxes that
+ * border against every stack of the partner next to it — and attacks it with everything there (its
  * commander too), against this plan's deploys and moves; each such pair is carried out on the turn
  * simulator, with me moving first and with the partner first unless the first mover is known (and
  * verified), and the costliest is kept: my commander, then the income lost, the territories, the armies,
@@ -670,8 +672,12 @@ export function truceBreakLosses(pc: PlanCtx, plan: { deploys: readonly PlannedD
     a.armies - b.armies;
   return truce.given.map((r, i) => {
     if (!truce.binds[i] || truce.enforced.has(r.player)) return null;
-    const theirs = [...new Set(r.coveredTheirs)].filter((t) => start.get(t)?.owner === r.player).sort(byNum);
+    // A break is an attack on my covered territory wherever it comes from: T2 relaxes such a border
+    // against every stack of the partner next to it, so every one of them is tried, covered or not.
     const mineCovered = new Set(r.coveredMine.filter((t) => start.get(t)?.owner === me));
+    const theirs = [...new Set([...mineCovered].flatMap((t) => [...neighborsOf(g, t)]))]
+      .filter((t) => start.get(t)?.owner === r.player)
+      .sort(byNum);
     const deploy = Math.max(0, Math.floor(deployOf(r.player)));
     let best: TruceBreakLoss | null = null;
     for (const from of theirs) {

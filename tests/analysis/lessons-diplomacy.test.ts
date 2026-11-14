@@ -271,6 +271,13 @@ describe('B2 T1: no pass targets a covered territory', () => {
     expect(attacks(p).map((m) => m.to)).not.toContain(2);
   });
 
+  it('the finish-off search never sizes a covered territory, nor names it (whole-branch review)', () => {
+    const lone = board([mine(1, 20), enemy(2, 1, PARTNER), mine(3, 2), neutral(4, 2), enemy(6, 1, PARTNER), neutral(7, 2), enemy(9, 3, OTHER)]);
+    const p = planTurn(base([truce()], { adapt: true }, lone));
+    expect(attacks(p).map((m) => m.to)).not.toContain(2);
+    expect(why(p)).not.toMatch(/T2 \(#2\)[^\n]*(takes|presses) player 20/);
+  });
+
   it('notice binds until its turn, then the partner is an ordinary opponent', () => {
     const notice = truce({ state: 'notice', noticeBy: 'me', endsTurn: 9 });
     const before = planTurn(base([notice], { goal: 'balanced' }));
@@ -726,10 +733,36 @@ describe('B2 T6: what a break would cost', () => {
     expect(loss.bonusValue).toBeGreaterThanOrEqual(1);
   });
 
-  it('a relation that does not bind, or with no covered stack of the partner beside a covered territory of mine, costs nothing to report', () => {
+  it('a relation that does not bind, or with no stack of the partner beside a covered territory of mine, costs nothing to report', () => {
     expect(planTurn(input([truce({ state: 'broken' })])).relations![0]!.lossIfBroken).toBeNull();
-    expect(planTurn(input([truce({ coveredTheirs: [] })])).relations![0]!.lossIfBroken).toBeNull();
+    expect(planTurn(input([truce({ coveredMine: [] })])).relations![0]!.lossIfBroken).toBeNull();
     expect(planTurn(input([truce({ enforced: true })])).relations![0]!.lossIfBroken).toBeNull();
+  });
+
+  it('a break may come from a territory of the partner the scope does not cover (whole-branch review)', () => {
+    // A bonus-scoped truce: my T1 and the partner's T2 (2) are in it, the partner's T6 (20) beside
+    // T1 is not. T2 relaxes T1 against both stacks with no deploy, so T6 and the whole deploy are
+    // what a break would bring: the report must not stop at the covered T2.
+    const g7 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 6, 9],
+        [
+          [1, 2],
+          [1, 3],
+          [1, 6],
+          [3, 4],
+          [4, 5],
+          [5, 9],
+        ],
+        [[900, 3, [3, 4]]],
+      ),
+    );
+    const b = board([mine(1, 24), enemy(2, 2, PARTNER), mine(3, 2), neutral(4, 4), neutral(5, 2), enemy(6, 20, PARTNER), enemy(9, 3, OTHER)]);
+    const p = planTurn(input([truce({ coveredMine: [1], coveredTheirs: [2] })], { graph: g7, board: b }));
+    const view = p.relations![0]!;
+    expect(view.relaxed).toEqual([1]);
+    expect(view.lossIfBroken).toMatchObject({ from: 6, to: 1, deploy: 5 });
+    expect(view.lossIfBroken!.attackers).toBeGreaterThanOrEqual(24);
   });
 
   it('the plan with no relations is unchanged by it', () => {
@@ -926,5 +959,49 @@ describe('B2 T2: relaxed borders are not reported as sized for the full deploy (
     expect(p.relations![0]!.relaxed).toEqual([1, 3]);
     expect(why(p)).not.toMatch(/Cover odds against player 20/);
     expect(why(p)).not.toMatch(/held against player 20 .*is sized for its full/);
+  });
+});
+
+describe('B2 T2 in the #118 floor tier: the relaxed border is never charged to the partner\'s deploy (whole-branch review)', () => {
+  // Three held +4 bonuses facing the partner: A = {1, 2, 7} with T1 (covered, relaxed) facing 14 on
+  // T11 and T7 (not covered) facing 6 on T17; B and C one border each. Income 17 against a ~30 deploy:
+  // every unit is floored. T1 is sized for T11's stack alone, which its floor already beats, so the
+  // one deploy breaks A only through T7.
+  const gF = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5, 6, 7, 11, 13, 15, 17, 40, 41],
+      [
+        [1, 2], [2, 7], [3, 4], [5, 6], [2, 4], [4, 6],
+        [1, 11], [7, 17], [3, 13], [5, 15], [11, 13], [13, 15], [15, 40], [40, 41],
+      ],
+      [
+        [601, 4, [1, 2, 7]],
+        [602, 4, [3, 4]],
+        [603, 4, [5, 6]],
+      ],
+    ),
+  );
+  const bF = board([
+    mine(1, 2), mine(2, 1), mine(7, 2), mine(3, 2), mine(4, 1), mine(5, 2), mine(6, 1),
+    enemy(11, 14, PARTNER), enemy(17, 6, PARTNER), enemy(13, 6, PARTNER), enemy(15, 6, PARTNER), enemy(41, 3, OTHER),
+  ]);
+  const plan = (relations?: PlanRelation[]) =>
+    planTurn({
+      graph: gF,
+      board: bF,
+      me: ME,
+      income: 17,
+      settings: STD,
+      game: { players: FFA, turn: 8 },
+      options: { enemyDeploy: 30, adapt: true },
+      ...(relations ? { relations } : {}),
+    });
+  it('the floor warning names only the full-hold border of the unit, and the deploy still reaches it there', () => {
+    const p = plan([truce({ coveredMine: [1], coveredTheirs: [11] })]);
+    expect(p.relations![0]!.relaxed).toEqual([1]);
+    const a = p.warnings.find((w) => w.startsWith('Bonus B601'))!;
+    expect(a).toMatch(/falls only to armies deployed against it — T7 \(#7\)/);
+    expect(a).not.toMatch(/T1 \(#1\)/);
+    expect(warned(p)).toMatch(/Player 20's ~30 deploy can still break bonuses B601 \(#601\), B602 \(#602\) and B603 \(#603\) at once/);
   });
 });

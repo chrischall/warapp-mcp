@@ -361,6 +361,8 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
       while (levels > 1 && levels ** tried.length > LIMIT) levels--;
       /** Each target's sizings: its reachable deploy (#179) evenly spaced down to 0, or not attacked. */
       const sharesOf = tried.map((t) => {
+        // B2 T1: a territory a truce covers is never attacked, so it is never sized either.
+        if (pc.truce.noTarget(t)) return [SKIP];
         const r = reachOn.get(t)!;
         const spaced = Array.from({ length: Math.max(1, levels - 1) }, (_, i) =>
           Math.round(r - (i * r) / Math.max(1, levels - 2)),

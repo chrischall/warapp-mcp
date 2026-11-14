@@ -286,8 +286,8 @@ refuses one in any format).
   that opponent and the hold: the term's cost, stated. So does one where my commander stands, when what
   the cap leaves falls short of T3's full hold against the partner.
 - **T6. What a break would cost.** For each relation the plan reports `lossIfBroken`: the turn
-  simulator's result when the partner lands its whole estimated deploy on its best covered border and
-  attacks. `warapp_check_plan` keeps the partner among the opponents it tries, so `safe` still means
+  simulator's result when the partner lands its whole estimated deploy beside my costliest covered border and
+  attacks (from any territory of its there, covered or not). `warapp_check_plan` keeps the partner among the opponents it tries, so `safe` still means
   safe against a break; it adds `safeIfTruceHolds`.
 - **T7. Ending.** The plan never orders a surprise break. When I have given notice, the relation stays
   binding until `endsTurn`, then the partner is an ordinary opponent. The plan's `advice` says
@@ -338,8 +338,8 @@ playing (`partnerFronts`). With no relations the golden corpus is byte-identical
 (`GOLDEN_FULL=1`), and the seeded legality property test also plans its boards under a truce.
 
 *As built (B2b, 2026-11-14):* T6 is `truceBreakLosses` in `src/analysis/plan/relations.ts`, called once
-the plan's orders are final: per binding, unenforced truce, each pair of a covered partner territory in
-view and a covered territory of mine beside it is carried out on `turn-sim.ts` (my deploys and moves, the
+the plan's orders are final: per binding, unenforced truce, each pair of a partner territory in view (covered
+or not, since T2 relaxes against every stack beside the border) and a covered territory of mine beside it is carried out on `turn-sim.ts` (my deploys and moves, the
 partner's whole deploy estimate there and an attack with everything, its commander too; both move orders
 unless the first mover is known and verified; no other player moves), and the costliest is `lossIfBroken`
 (my commander, then income lost, territories, armies): from, to, deploy, attackers, territories, armies,

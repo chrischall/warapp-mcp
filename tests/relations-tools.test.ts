@@ -519,6 +519,18 @@ describe('warapp_check_plan — the truces in the ledger (B2 T6)', () => {
     expect(p.safe).toBe(false);
     expect(p.safeIfTruceHolds).toBe(false);
   });
+
+  it('an FFA down to two is a 1v1 to the planner: the truce is over (two left), so the stress test leaves it out too (whole-branch review)', async () => {
+    h = await liveHarness({ feed: [game('2', { seats: 3 })], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const { dataDir } = h;
+    await h.harness.close();
+    h = await liveHarness({ dataDir, feed: [game('3', { seats: 3, patch: { Cat: { state: 'SurrenderAccepted' } } })], warapp: live(boardAt()) });
+    const p = await checkPlan();
+    expect(p).not.toHaveProperty('safeIfTruceHolds');
+    expect(p).not.toHaveProperty('truces');
+    expect(p.worst).not.toHaveProperty('breaksTruce');
+  });
 });
 
 // B2: warapp_submit_turn refuses an order that attacks a covered territory of an active or in-notice
