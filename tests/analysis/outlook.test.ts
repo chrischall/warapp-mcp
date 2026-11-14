@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { gameOutlook, OUTLOOK_RATIO, OUTLOOK_TURNS } from '../../src/analysis/outlook.js';
+import { gameOutlook, OUTLOOK_RATIO, OUTLOOK_TURNS, peerPace } from '../../src/analysis/outlook.js';
 import type { TurnBoard } from '../../src/analysis/opponents.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
@@ -336,7 +336,8 @@ describe('gameOutlook (#178)', () => {
         // Said plainly: which opponent blocks an estimated win, and why.
         expect(o.basis).toMatch(/player 40 blocks a win on the estimate/i);
         expect(o.basis).toMatch(/no territory in view now/i);
-        expect(o.basis).toMatch(/at least an even share of the map.s income/i);
+        // #214: the even share is a ceiling now (it binds here: twice my income, 140, is more).
+        expect(o.basis).toMatch(/at most an even share of the map.s income \(55\)/i);
       });
 
       it('one seen on an earlier board but not now also rests on the prior', () => {
@@ -416,6 +417,93 @@ describe('gameOutlook (#178)', () => {
         expect(fogged.likely!.high).toBeLessThanOrEqual(fogged.strongest!.high!);
         expect(fogged.state).not.toBe('winning');
         expect(fogged.estimated).toBeUndefined();
+      });
+
+      describe('the prior is peer-paced: what I and the opponents I can measure earn, not the size of the map', () => {
+        // A 1,200-territory map in 300 four-territory bonuses worth 4 (base 6): an even share of its
+        // income is 6 + 1,200 ÷ 4 = 306 a turn, and an even share of its territories 300.
+        const huge = (n: number) =>
+          buildGraph({
+            ...line(n),
+            bonuses: Array.from({ length: n / 4 }, (_, i) => ({
+              id: 10000 + i,
+              name: `H${i}`,
+              value: 4,
+              territoryIds: [4 * i + 1, 4 * i + 2, 4 * i + 3, 4 * i + 4],
+              bonusIds: [],
+            })),
+          });
+        const settings = { baseIncome: 6 };
+        /** Me on 1–76 (19 bonuses: income 82; 3 armies each and 600 on 76), the foe and O2 in view, O3 never. */
+        const view = (n: number) =>
+          board([
+            ...Array.from({ length: 76 }, (_, i) => mine(i + 1, i === 75 ? 600 : 3)),
+            neutral(77, 2),
+            foe(78, 10),
+            neutral(79, 2),
+            foe(80, 10, O2),
+            ...Array.from({ length: n - 80 }, (_, i) => fogged(81 + i)),
+          ]);
+        // The starts unknown (no TerritoryLimit): the bound starts it on an even share, 300 × 5.
+        const full = { players: ffa4.players, startArmiesPerTerritory: 5 };
+
+        it('a 1,200-territory map where my income is 82: a labelled likely high paced at twice my income, not thousands from the map', () => {
+          const o = gameOutlook({ graph: huge(1200), me: ME, boards: turns(9, [view(1200), view(1200), view(1200)]), settings, game: full });
+          const last = o.turns.at(-1)!;
+          expect(last.turn).toBe(11);
+          expect(last.mine).toBe(825 + 3 * 82);
+          // The even share would have been 300 × 5 + 11 × 306 + 3 × 306 = 5,784. Peer-paced: each turn
+          // 2 × my income (164, under the even share's 306); the start as mine, 5 armies on each of the
+          // 76 territories of my first board: 380 + 11 × 164 + 3 × 164 = 2,676.
+          expect(last.likely).toEqual({ playerId: O3, high: 2676, ratio: 0.4, source: 'prior', why: 'unseen' });
+          expect(last.strongest!.high).toBeGreaterThan(5784);
+          // It still blocks a win, and the basis names it.
+          expect(last.state).not.toBe('winning');
+          expect(o.basis).toMatch(/player 40 blocks a win on the estimate/i);
+          expect(o.basis).toMatch(/twice the higher of my income/i);
+          expect(o.basis).toMatch(/even share of the map's income \(306\)/i);
+        });
+
+        it('does not grow with the map: the same boards on twice the map give the same prior', () => {
+          const a = gameOutlook({ graph: huge(1200), me: ME, boards: turns(9, [view(1200), view(1200), view(1200)]), settings, game: full });
+          const b = gameOutlook({ graph: huge(2400), me: ME, boards: turns(9, [view(2400), view(2400), view(2400)]), settings, game: full });
+          expect(b.turns.at(-1)!.likely).toEqual(a.turns.at(-1)!.likely);
+          expect(b.turns.at(-1)!.strongest!.high).toBeGreaterThan(a.turns.at(-1)!.strongest!.high!);
+        });
+
+        it('starts on my own opening board when I have one, never on the even share', () => {
+          const opening = board([
+            ...Array.from({ length: 4 }, (_, i) => mine(i + 1, 5)),
+            ...Array.from({ length: 1196 }, (_, i) => fogged(5 + i)),
+          ]);
+          const o = gameOutlook({ graph: huge(1200), me: ME, boards: turns(1, [opening, opening, opening]), settings, game: full });
+          // Turn 3: I started on 4 territories with 5 each (20) and earn 10 (base 6 + H0's 4), so the
+          // pace is 20: 20 + 3 × 20 + 3 × 20 = 140 (the even share would start it on 300 × 5 = 1,500).
+          expect(o.turns.at(-1)!.likely).toMatchObject({ playerId: FOE, high: 140, source: 'prior' });
+        });
+
+        it('paces at the most an opponent was tracked earning when that is more than mine', () => {
+          // The peer pace itself: twice the higher of mine and the peers', the base at least, under the
+          // ceiling, over the opponent's own evidence.
+          expect(peerPace({ base: 6, mine: 82, peers: 0, ceiling: 306 })).toBe(164);
+          expect(peerPace({ base: 6, mine: 82, peers: 100, ceiling: 306 })).toBe(200);
+          expect(peerPace({ base: 6, mine: 82, peers: 100, ceiling: 55 })).toBe(55);
+          expect(peerPace({ base: 6, mine: 82, peers: 100, ceiling: 55, floor: 90 })).toBe(90);
+          expect(peerPace({ base: 6, mine: 0, peers: 0, ceiling: 306 })).toBe(6);
+          // The foe's stack on 78 grows by 100 a turn: tracked at 100, it outranks the hidden one,
+          // which is paced at 200 from turn 9 (its first measured turn) — and both start as I did.
+          const grow = (i: number) => board(view(1200).territories.map((t) => (t.territoryId === 78 ? foe(78, 10 + 100 * i) : t)));
+          const o = gameOutlook({ graph: huge(1200), me: ME, boards: turns(8, [0, 1, 2, 3].map(grow)), settings, game: full });
+          const last = o.turns.at(-1)!;
+          // 380 + 11 × 200 + 3 × 200 = 3,180 (from an even-share start it would be 4,300).
+          expect(last.likely).toEqual({ playerId: FOE, high: 3180, ratio: 0.34, source: 'tracked' });
+          expect(last.state).not.toBe('winning');
+        });
+
+        it('a small map where the even share is below twice my income: the share binds, the prior unchanged (790)', () => {
+          const o = gameOutlook({ graph: big, me: ME, boards: turns(9, [issue(), issue(), issue()]), game: ffa4 });
+          expect(o.turns.at(-1)!.likely).toMatchObject({ playerId: O3, high: 790, source: 'prior', why: 'unseen' });
+        });
       });
 
       it('tracked opponents are labelled tracked', () => {

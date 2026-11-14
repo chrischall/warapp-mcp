@@ -649,6 +649,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback).
   `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json`
   (`warapp_get_game` adds the final result); the surrender preview reads the latest from there.
+  An opponent the outlook cannot measure (nothing in view now, or no observed income) gets a
+  peer-paced likely high (#214, `peerPace` in `src/analysis/outlook.ts`, pure and exported for the
+  planner): each turn 2 × the higher of my income and the most any opponent was tracked earning, the
+  map's even share only a ceiling, starting as I did — never sized by the map; it can still block `winning`.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared
