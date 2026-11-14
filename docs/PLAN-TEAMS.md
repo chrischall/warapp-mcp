@@ -115,7 +115,7 @@ path stays soft.
 | V1 | GameFeed player `team` in a real team game | Team detection (C1) |
 | V2 | Does GameFeed `GetChat=true` return team and private messages, and with which fields | Chat channels (A1) |
 | V3 | `SendChat`: public, private recipient, and the team channel value | Team-chat sending (A1) |
-| V4 | `GameRefresh` (39) reply `GameDetailsAndChat`: the chat message class and its fields | Chat channels (A1) |
+| V4 | `GameRefresh` (39) reply `GameDetailsAndChat`: the chat message class and its fields — **public messages verified live 2026-11-14** (count, time, turn, sender, channel matched GameFeed `GetChat=true` in two games; a game with no chat reads 0); team and private channels still open | Chat channels (A1) |
 | V5 | Teammate orders in `LatestGameInfo`: present before the teammate commits? | Team read (C1) |
 | V6 | `GetTerritoryPicks` with a teammate's player id | Team picks (C2) |
 | V7 | What a plain move onto a teammate's territory does; `attack_teammates` (#165) | Team planner (C3) |
@@ -221,8 +221,10 @@ Pure functions:
   partner no longer needs me.
 - The per-player record (owner decision D5, 2026-11-14): `<dataDir>/relations/players.json`, by player
   (an HMAC of its GameFeed id under a local salt, `players.salt`, made only on the first write and never
-  replaced: a malformed salt fails the write and reads `unreadable`). Per agreement, a name-free entry
-  (its own key a salted hash of game and agreement): the format, the turns agreed and ended, the terms'
+  replaced: a malformed salt fails the write and reads `unreadable`, and so does a record file that
+  exists but does not parse, which is never overwritten). Per agreement, a name-free entry (its own key
+  a salted hash of my account, the game and the agreement; older entries keyed without the account are
+  read as they are): the format, the turns agreed and ended, the terms'
   shape, the outcome (kept, ended with notice and whether honoured, broken by them or by me), the break
   turn and strongest flag, the context at the break (endgame, who led, outgrowing), retaliation and
   proposing again. Per player, tallies (made, kept, ended with notice, broken by them, broken by me),

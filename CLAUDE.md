@@ -147,7 +147,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn. Disagreement is a warning; `firstMover` reports `{ who, source, from? }`. The game history is not
   read for it (UNVERIFIED whether an in-progress `GetHistory` carries the orders in the order they ran).
   `warapp_check_plan` writes nothing and still tries both orders unless `first_mover` is given.
-- **Chat has channels (part A1 of `docs/PLAN-TEAMS.md`; UNVERIFIED live).** `warapp_get_chat` reads
+- **Chat has channels (part A1 of `docs/PLAN-TEAMS.md`).** The `GameRefresh` read of **public** messages is
+  VERIFIED LIVE 2026-11-14 (count, time, turn, sender and channel matched GameFeed `GetChat=true`); team and
+  private channels, `mark_seen` / the cursor, `warapp_plan_turn`'s `chat.unread`, `chatActivity` and sending
+  remain UNVERIFIED. `warapp_get_chat` reads
   `GameRefresh` (39, chat only) → `GameDetailsAndChat` → `GameMessage` by type name (`src/chat.ts`:
   fields by read order, a private counterpart first, then a game group (`unknown`), then the channel,
   -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
@@ -185,13 +188,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   registered and enabled on a hosted child, in its per-user data dir) is `src/player-record-store.ts` at
   `<dataDir>/relations/players.json` (version 3; versions 1 and 2 read loosely): per player, keyed by an
   HMAC of the GameFeed id under the salt `relations/players.salt` (made only on the write path; a salt
-  file that exists but is malformed is never regenerated — the write reports `failed`, reads
-  `unreadable`), name-free entries per agreement (its key an HMAC of game and agreement: format, turns
+  file that exists but is malformed is never regenerated, and a `players.json` that exists but does not
+  parse — bad JSON, not an object — is never overwritten or moved aside: the write reports `failed`, reads
+  `unreadable`), name-free entries per agreement (its key an HMAC of my account, game and agreement —
+  entries keyed by game and agreement alone before that are read as they are and updated in place: format, turns
   agreed and ended, terms shape, outcome with notice honoured or not, break turn and strongest flag, the
   context at the break from the cached boards — endgame, leader, outgrowing — retaliated, proposed
   again) and tallies (`src/analysis/player-record.ts`: `recordDelta` moves each once, on the transition
   that earns it, so they never double-count and outlive entries dropped past the bound; 30 entries per
-  player, 300 players). `WARAPP_PLAYER_RECORD=off` switches it off. The tools report `playerRecord`
+  player, 300 players). `warapp_record_agreement` updates it inside the ledger's lock (its own lock, a
+  different path), so entries land in the order the ledger changed. `WARAPP_PLAYER_RECORD=off` switches it off. The tools report `playerRecord`
   (`warapp_record_agreement`: `updated` / `off` / `failed`; `warapp_get_relations`: `on` / `off` /
   `unreadable`).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
