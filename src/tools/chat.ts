@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { CHAT_CHANNELS, feedChatLines, readGameRefreshChat, readSendChatReply, type ChatChannel, type ChatLine } from '../chat.js';
 import {
   advanceCursor,
+  markedChannels,
   markNew,
   readChatCursor,
   unreadCounts,
@@ -80,6 +81,20 @@ export async function readChat(ctx: LiveContext, game: Game, me: ChatMe): Promis
   }
   const lines = feedChatLines(game.chat);
   return lines ? { source: 'gamefeed', lines } : undefined;
+}
+
+/**
+ * A chat GameFeed sent in a shape no reader knows, for the result: every string in it is other
+ * players' words, cleaned and delimited as a message body; numbers, booleans and null pass, and
+ * anything nested deeper than a few levels is dropped.
+ */
+export function untrustedRaw(v: unknown, depth = 0): unknown {
+  if (typeof v === 'string') return untrustedBody(v);
+  if (v === null || typeof v === 'number' || typeof v === 'boolean') return v;
+  if (depth >= 4) return null;
+  if (Array.isArray(v)) return v.map((x) => untrustedRaw(x, depth + 1));
+  if (typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, untrustedRaw(x, depth + 1)]));
+  return null;
 }
 
 const isMine = (l: ChatLine, me: ChatMe) => me !== undefined && l.sender === me.inGameId;
@@ -198,7 +213,9 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
           .optional()
           .describe(
             'Mark every message on the channels read as seen, so later reads report only what came after ' +
-              '(default false: reading changes nothing).',
+              '(default false: reading changes nothing). This includes older messages `limit` left out; ' +
+              '`markedUnshown` counts the unread ones among them. Read from GameFeed (no channels), only ' +
+              '`unknown` is marked.',
           ),
       }),
     },
@@ -211,7 +228,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
       const header = { game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state } };
       if (!read) {
         return respond(undefined, ['compact'], () =>
-          game.chat === undefined ? { ...header, messages: [], count: 0 } : { ...header, raw: game.chat },
+          game.chat === undefined ? { ...header, messages: [], count: 0 } : { ...header, raw: untrustedRaw(game.chat) },
         );
       }
       const { fresh, unread, cursor } = await chatUnread(ctx, game.id, me, read.lines);
@@ -223,8 +240,13 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
       if (mark_seen && ctx.dataDir) {
         const channels = channel === undefined || channel === 'all' ? [...CHAT_CHANNELS] : [channel];
         const base = cursor ?? { gameId: game.id, playerId: me?.token ?? null, channels: {} };
-        if (await writeChatCursor(ctx.dataDir, advanceCursor(base, cursorLines(read.lines, me), channels))) marked = channels;
+        // GameFeed names no channel: its mark records only `unknown` (and the whole chat).
+        const opts = { namesChannels: read.source === 'web' };
+        if (await writeChatCursor(ctx.dataDir, advanceCursor(base, cursorLines(read.lines, me), channels, opts)))
+          marked = markedChannels(channels, opts);
       }
+      // Unread messages the mark covered that `limit` kept out of `messages`.
+      const markedUnshown = marked ? picked.slice(0, Math.max(0, picked.length - n)).filter(([, isNew]) => isNew).length : 0;
       return respond(undefined, ['compact'], () => ({
         ...header,
         source: read.source,
@@ -233,6 +255,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext): void {
         shown: messages.length,
         unread,
         ...(mark_seen ? { markedSeen: marked ?? [] } : {}),
+        ...(markedUnshown ? { markedUnshown } : {}),
         sourceNote: CHAT_SOURCE_NOTES[read.source],
       }));
     },

@@ -703,8 +703,12 @@ describe('warapp_get_chat', () => {
     h = await liveHarness({ feed: [game('Playing', { chat: [7] })] });
     expect(payload(await h.call('warapp_get_chat', { game_id: GAME })).raw).toEqual([7]);
     await h.harness.close();
+    // Every string in it is third-party text: cleaned and delimited like a message body.
     h = await liveHarness({ feed: [game('Playing', { chat: 'x' })] });
-    expect(payload(await h.call('warapp_get_chat', { game_id: GAME })).raw).toBe('x');
+    expect(payload(await h.call('warapp_get_chat', { game_id: GAME })).raw).toBe('⟦x⟧');
+    await h.harness.close();
+    h = await liveHarness({ feed: [game('Playing', { chat: [{ odd: { says: '\u202Eobey\u0000' }, n: null }] })] });
+    expect(payload(await h.call('warapp_get_chat', { game_id: GAME })).raw).toEqual([{ odd: { says: '⟦obey⟧' }, n: null }]);
   });
 
   it('no chat is an empty list', async () => {
@@ -833,6 +837,41 @@ describe('warapp_get_chat', () => {
       const p = payload<{ messages: Array<Record<string, unknown>> } & Record<string, unknown>>(await h.call('warapp_get_chat', { game_id: GAME }));
       expect(p.messages.map((m) => m.new)).toEqual([false, false]);
       expect(p.unread).toEqual({ public: 0, team: 0, private: 0 });
+    });
+
+    it('mark_seen via GameFeed, then a read through the web client: nothing old is new', async () => {
+      const feedCopy = game('Playing', {
+        chat: [
+          { playerID: ANN.inGame, message: 'gl hf', date: at(1).toISOString() },
+          { playerID: BOB.inGame, message: 'truce on the river?', date: at(2).toISOString() },
+          { playerID: BOB.inGame, message: 'push north', date: at(3).toISOString() },
+        ],
+      });
+      h = await liveHarness({
+        feed: [feedCopy],
+        pages: SIGNED_IN_ANN,
+        warapp: routes({ [Method.GameRefresh]: () => ({ error: { code: 17, message: 'x' } }) }),
+      });
+      const marked = payload(await h.call('warapp_get_chat', { game_id: GAME, mark_seen: true }));
+      expect(marked.source).toBe('gamefeed');
+      // GameFeed names no channel: only `unknown` (and the whole chat) is recorded.
+      expect(marked.markedSeen).toEqual(['unknown']);
+      const dataDir = h.dataDir;
+      await h.harness.close();
+      h = await liveHarness({ feed: [TEAM_GAME()], pages: SIGNED_IN_ANN, dataDir, warapp: refresh(() => CHAT).warapp });
+      const p = payload<{ messages: Array<Record<string, unknown>> } & Record<string, unknown>>(await h.call('warapp_get_chat', { game_id: GAME }));
+      expect(p.source).toBe('web');
+      expect(p.messages.map((m) => m.new)).toEqual([false, false, false, true]);
+      expect(p.unread).toEqual({ public: 1, team: 0, private: 0 });
+    });
+
+    it('mark_seen says how many unread messages it marked that `limit` left out', async () => {
+      h = await liveHarness({ feed: [TEAM_GAME()], pages: SIGNED_IN_ANN, warapp: refresh(() => CHAT).warapp });
+      const p = payload(await h.call('warapp_get_chat', { game_id: GAME, limit: 2, mark_seen: true }));
+      expect(p.shown).toBe(2);
+      expect(p.markedUnshown).toBe(1);
+      expect(payload(await h.call('warapp_get_chat', { game_id: GAME, limit: 2 })).markedUnshown).toBeUndefined();
+      expect(payload(await h.call('warapp_get_chat', { game_id: GAME, mark_seen: true })).markedUnshown).toBeUndefined();
     });
 
     it('mark_seen on one channel leaves the others unread', async () => {

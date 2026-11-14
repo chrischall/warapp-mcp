@@ -3,7 +3,7 @@
 // name-free: counts and times, never a message's text, sender or name (docs/PLAN-TEAMS.md, part A).
 // Keyed to the account (its GameFeed id) that marked it. Best effort: the store never throws.
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CHAT_CHANNELS, type ChatChannel } from './chat.js';
 
@@ -47,19 +47,21 @@ const byChannel = <T extends CursorLine>(lines: readonly T[], channel: ChatChann
  * is. With the times of every message on the channel and a time in the cursor: what came after the
  * newest message seen (one sharing its millisecond counts past the `atLast` seen there), so a list
  * that dropped its oldest messages still finds the new ones. Otherwise by count: the messages past
- * the number seen (a list that shrank then has nothing new). My own messages are never new. An `unknown`
- * message is judged against both the whole-chat mark (`all`) and the `unknown` channel's own: seen by
- * either, it is not new, so marking `unknown` after the whole chat still clears what came since.
+ * the number seen (a list that shrank then has nothing new). My own messages are never new. A message
+ * is judged against its channel's own mark and the whole-chat mark (`all`): seen by either, it is not
+ * new, so a whole-chat mark from one source clears what the other source shows. A public, team or
+ * private message is judged against `all` only by time (`all` with a time, and every message on the
+ * channel timed): a count taken over another source's list says nothing about one channel's.
  */
 export function markNew(lines: readonly CursorLine[], cursor: ChatCursor | undefined): boolean[] {
   const out = lines.map((l) => !l.mine);
   if (!cursor) return out;
   for (const channel of CHAT_CHANNELS) {
-    const marks = (channel === 'unknown' ? [cursor.all, cursor.channels.unknown] : [cursor.channels[channel]]).filter(
-      (c): c is ChannelCursor => c !== undefined,
-    );
-    if (!marks.length) continue;
     const mine = byChannel(lines, channel);
+    const timed = mine.every(([l]) => l.timeMs !== undefined);
+    const whole = channel === 'unknown' || (timed && cursor.all?.lastTimeMs !== undefined) ? cursor.all : undefined;
+    const marks = [whole, cursor.channels[channel]].filter((c): c is ChannelCursor => c !== undefined);
+    if (!marks.length) continue;
     const fresh = marks.map((c) => freshAgainst(mine.map(([l]) => l), c));
     mine.forEach(([l, i], k) => {
       out[i] = !l.mine && fresh.every((f) => f[k]);
@@ -80,13 +82,27 @@ function freshAgainst(on: readonly CursorLine[], c: ChannelCursor): boolean[] {
   });
 }
 
-/** The cursor with `channels` marked seen as `lines` stand (every message on them, mine included). */
-export function advanceCursor(cursor: ChatCursor, lines: readonly CursorLine[], channels: readonly ChatChannel[]): ChatCursor {
+/**
+ * The cursor with `channels` marked seen as `lines` stand (every message on them, mine included).
+ * `namesChannels: false` is a source that names no channel (GameFeed: every message `unknown`): it
+ * records only `unknown` and, when every channel is named, the whole chat, never a public, team or
+ * private mark (one of `{ seen: 0 }` would make that channel's whole history new on the next web read).
+ */
+export function advanceCursor(
+  cursor: ChatCursor,
+  lines: readonly CursorLine[],
+  channels: readonly ChatChannel[],
+  opts: { namesChannels?: boolean } = {},
+): ChatCursor {
   const next: ChatCursor = { ...cursor, channels: { ...cursor.channels } };
-  for (const channel of channels) next.channels[channel] = seenOf(byChannel(lines, channel).map(([l]) => l));
+  for (const channel of markedChannels(channels, opts)) next.channels[channel] = seenOf(byChannel(lines, channel).map(([l]) => l));
   if (CHAT_CHANNELS.every((c) => channels.includes(c))) next.all = seenOf(lines);
   return next;
 }
+
+/** The channels a mark of `channels` records: only `unknown` from a source that names none. */
+export const markedChannels = (channels: readonly ChatChannel[], opts: { namesChannels?: boolean } = {}): ChatChannel[] =>
+  opts.namesChannels === false ? channels.filter((c) => c === 'unknown') : [...channels];
 
 function seenOf(on: readonly CursorLine[]): ChannelCursor {
   const c: ChannelCursor = { seen: on.length };
@@ -144,8 +160,13 @@ export async function writeChatCursor(dir: string, cursor: ChatCursor): Promise<
     const path = chatCursorPath(dir, cursor.gameId);
     await mkdir(join(dir, 'chat'), { recursive: true, mode: 0o700 });
     const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(tmp, JSON.stringify(cursor), { mode: 0o600 });
-    await rename(tmp, path);
+    try {
+      await writeFile(tmp, JSON.stringify(cursor), { mode: 0o600 });
+      await rename(tmp, path);
+    } catch (e) {
+      await rm(tmp, { force: true }).catch(() => undefined);
+      throw e;
+    }
     return true;
   } catch {
     return false;

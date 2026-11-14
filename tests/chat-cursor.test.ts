@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -75,6 +75,29 @@ describe('a source with no channels (GameFeed) against a cursor marked from one 
     expect(markNew([line('unknown', 4), line('unknown', 7)], c2)).toEqual([false, true]);
   });
 
+  it('mark_seen via GameFeed, then read via web: nothing old is new', () => {
+    // GameFeed names no channel: marking "all" from it records only `unknown` and the whole chat.
+    const feed = [line('unknown', 1), line('unknown', 2), line('unknown', 3)];
+    const c = advanceCursor(empty(), feed, ['public', 'team', 'private', 'unknown'], { namesChannels: false });
+    expect(c.channels).toEqual({ unknown: { seen: 3, lastTimeMs: 3, atLast: 1 } });
+    expect(c.all).toEqual({ seen: 3, lastTimeMs: 3, atLast: 1 });
+    // The same chat through the web client, channels told apart, plus one message since.
+    const web = [line('public', 1), line('team', 2), line('private', 3), line('public', 4)];
+    expect(markNew(web, c)).toEqual([false, false, false, true]);
+  });
+
+  it('a whole-chat mark by time clears a known channel whose own mark is older', () => {
+    let c = advanceCursor(empty(), [line('public', 1)], ['public']);
+    c = advanceCursor(c, [line('unknown', 1), line('unknown', 5)], ['public', 'team', 'private', 'unknown'], { namesChannels: false });
+    expect(markNew([line('public', 1), line('public', 5), line('team', 5), line('public', 6)], c)).toEqual([false, false, false, true]);
+  });
+
+  it('a whole-chat mark without times never judges a known channel (counts across sources mean nothing)', () => {
+    const c = advanceCursor(empty(), [line('unknown'), line('unknown')], ['public', 'team', 'private', 'unknown'], { namesChannels: false });
+    expect(c.channels).toEqual({ unknown: { seen: 2 } });
+    expect(markNew([line('public', 1), line('team', 2)], c)).toEqual([true, true]);
+  });
+
   it('marking one channel does not mark the whole chat', () => {
     expect(advanceCursor(empty(), [line('public', 1)], ['public']).all).toBeUndefined();
   });
@@ -126,6 +149,14 @@ describe('the store', () => {
     expect(await readChatCursor(dir, 42, ME)).toBeUndefined();
     writeFileSync(chatCursorPath(dir, 42), JSON.stringify({ gameId: 42, playerId: ME, channels: { public: { seen: 'x' } } }));
     expect(await readChatCursor(dir, 42, ME)).toEqual({ gameId: 42, playerId: ME, channels: {} });
+  });
+
+  it('a rename that fails leaves no temp file behind', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-chat-'));
+    // A non-empty directory where the cursor file should be: the write lands, the rename cannot.
+    mkdirSync(join(chatCursorPath(dir, 1), 'x'), { recursive: true });
+    expect(await writeChatCursor(dir, { gameId: 1, playerId: ME, channels: {} })).toBe(false);
+    expect(readdirSync(join(dir, 'chat')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
   it('a write that cannot land is false, never a throw', async () => {

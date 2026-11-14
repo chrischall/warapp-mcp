@@ -148,8 +148,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   failure, GameFeed's `chat` (no channel: `unknown`). Bodies go out through `untrustedBody` (the
   `untrustedText` cleaning, capped at 2,000). "New" is a name-free cursor at `<dataDir>/chat/<gameId>.json`
   (`src/chat-cursor.ts`: per channel the count and newest time marked seen, plus the whole chat, against
-  which GameFeed's `unknown` messages are judged too: seen by either mark is not new); only `mark_seen: true`
-  writes it; mine are never new. `warapp_plan_turn` reports `chat.unread` from the GameFeed chat of its own
+  which every message is judged too — a named channel by time only: seen by either mark is not new); only
+  `mark_seen: true` writes it (from GameFeed only `unknown` and the whole chat, never a named channel, so a
+  later web read keeps what was seen; `markedUnshown` counts unread messages `limit` cut); mine are never
+  new. GameFeed chat in a shape no reader knows goes out as `raw` with every string through `untrustedBody`. `warapp_plan_turn` reports `chat.unread` from the GameFeed chat of its own
   game read (no extra request), so every count is under `unknown` (its `note` says so). Third-party names in
   results (sender, recipient, game) go through `untrustedText`.
   `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
