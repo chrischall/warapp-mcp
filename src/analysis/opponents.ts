@@ -314,7 +314,8 @@ export interface OpponentTrack {
    * #164: its large stacks that left view — each territory's last sighting of a stack of at least
    * {@link LOST_STACK_INCOMES} × its visible income that turn, when no later board showed that
    * territory again, less the stacks of its that came into view within its reach since (largest
-   * first, then id; at most {@link MAX_LOST_STACKS}). Absent on a track built by hand.
+   * first, then id; at most {@link MAX_LOST_STACKS}, counted among those last seen at most
+   * {@link LOST_STACK_TURNS} turns before the newest board). Absent on a track built by hand.
    */
   lostStacks?: LostStack[];
   /** Unseen-banking warnings (also in `notes`), naming it. */
@@ -1305,6 +1306,11 @@ export function trackOpponents(
       if (armies === l.armies) lostStacks.push(l);
       else if (largeAt(l.turn, armies)) lostStacks.push({ ...l, armies });
     }
+    // The planner drops a stack seen more than LOST_STACK_TURNS turns ago, so drop it here before the
+    // cut: a stale large stack must never push a fresh one out of the MAX_LOST_STACKS kept. (Aged
+    // against the newest board; the planner ages it against the turn being played, never earlier.)
+    const fresh = lostStacks.filter((l) => lastTurn - l.turn <= LOST_STACK_TURNS);
+    lostStacks.splice(0, lostStacks.length, ...fresh);
     lostStacks.sort((a, b) => b.armies - a.armies || a.territoryId - b.territoryId).splice(MAX_LOST_STACKS);
     for (const l of lostStacks)
       notes.push(`A stack of ${l.armies} was last seen on territory ${l.territoryId} on turn ${l.turn} and has been out of view since (stacks of it that came into view since, within its reach, are taken as it and offset it): the planner counts it at each border it can reach by now, for ${LOST_STACK_TURNS} turns after it was seen.`);

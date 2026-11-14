@@ -302,6 +302,24 @@ describe('stacks that leave view (#164)', () => {
     ], ME, STD, { players: [{ id: ME }, { id: FOE }] }).find((x) => x.playerId === FOE)!;
     expect(t.lostStacks!.map((l) => l.territoryId)).toEqual([8, 7, 6, 5, 4]);
   });
+  it(`stacks seen more than ${LOST_STACK_TURNS} turns ago are dropped before the ${MAX_LOST_STACKS}-stack cut, never pushing out a fresh one`, () => {
+    // A star: my 1 in the middle. Turn 1: big stacks on 2..6 (50+), hidden from turn 2 on. Turn 8:
+    // a smaller stack on 7 (30), hidden on turn 9. On turn 9 the old five are past LOST_STACK_TURNS.
+    const ids = [1, 2, 3, 4, 5, 6, 7];
+    const gs = buildGraph(makeMap(ids, ids.slice(1).map((id) => [1, id] as [number, number]), []));
+    const hidden = board([mine(1, 5), ...ids.slice(1).map((id) => fogged(id))]);
+    const old = board([mine(1, 5), ...[2, 3, 4, 5, 6].map((id) => foe(id, 50 + id)), fogged(7)]);
+    const fresh = board([mine(1, 5), ...[2, 3, 4, 5, 6].map((id) => fogged(id)), foe(7, 30)]);
+    const boards = [
+      { turn: 1, board: old },
+      ...[2, 3, 4, 5, 6, 7].map((turn) => ({ turn, board: hidden })),
+      { turn: 8, board: fresh },
+      { turn: 9, board: hidden },
+    ];
+    expect(9 - 1).toBeGreaterThan(LOST_STACK_TURNS);
+    const t = trackOpponents(gs, boards, ME, STD, { players: [{ id: ME }, { id: FOE }] }).find((x) => x.playerId === FOE)!;
+    expect(t.lostStacks).toEqual([{ territoryId: 7, turn: 8, armies: 30 }]);
+  });
   // Now 2 and 3 are fogged: the stack, last seen on 5 on turn 3, is 3 hops from 2 (next to my 1).
   const now = board([mine(1, 5), mine(7, 2), fogged(2), fogged(3), fogged(4), fogged(5), fogged(6)]);
   const lost = [track(FOE, { lostStacks: [{ territoryId: 5, turn: 3, armies: 30 }] })];
