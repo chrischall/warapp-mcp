@@ -185,6 +185,13 @@
 //     stands there unseen: where it can stand beside a border of mine by next turn, a warning says
 //     so a turn ahead (not counted in this turn's holds). Arrivals assume one move a turn; with
 //     Multi-attack on it can come sooner, and the lines say so.
+//     #199: under Multi-Attack an attack's survivors carry on, so a visible enemy stack's chain
+//     (chains.ts, shared with check_plan's stress test: its deploy that reaches it, less the
+//     guard, luck-free, at most CHAIN_MAX_STEPS attacks deep) that takes one territory or more not
+//     mine and then attacks a territory of mine is a threat there, the armies it lands; a border's
+//     threat is the larger of that and its stacks next to it, and a territory no stack touches can
+//     be a border by a chain alone. A chain through a territory the plan captures does not count.
+//     A warning names each chain that sets a border's threat ("Multi-Attack chain: …").
 //     `options.enemyDeploy` overrides all of them. Always a warning.
 //  1t. Trend. Given `previousBoard` (my view one turn earlier), each visible
 //     enemy territory next to me that was visible then (owner and armies, #69) under the same owner and
@@ -915,6 +922,8 @@ import {
   type KillRates,
 } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
+import { CHAIN_MAX_STEPS, searchChains } from './chains.js';
+import { simTerritories } from './turn-sim.js';
 import { guardOffExposure } from './guard-off.js';
 import { classifyExchange, forecastBorder, type Exchange, type ExchangeCase } from './exchange.js';
 import { twoStepReaches, type TwoStepReach } from './lookahead.js';
@@ -2757,7 +2766,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       'An opponent may hold a Bomb (#163): it halves one territory of mine next to it after the deploys and before any move, so every hold here is sized as if its stack were halved first (my commander unharmed), and the leftover goes to two stacks, not one, unless it concentrates for an attack.',
     );
   if (s.multiAttack)
-    rationale.push('Multi-attack is on, but the plan does not chain attacks from captured territories.');
+    rationale.push(
+      `Multi-attack is on: the plan does not chain its own attacks from captured territories, but an enemy stack's chain — a capture, then the survivors on from it, through territories not mine — counts as a threat to the territory of mine it reaches (luck-free, at most ${CHAIN_MAX_STEPS} attacks deep).`,
+    );
   const noSplit = s.noSplit === true;
   if (noSplit) {
     rationale.push(
@@ -3273,7 +3284,55 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     threat: number;
     /** When separate attacks beat one: what they are, for the rationale. */
     split?: { attacks: number[]; takes: number; players: number[] };
+    /** #199: when a Multi-Attack chain lands more than the stacks next to it: that chain. */
+    chain?: ChainThreat;
   }
+  /** #199: a Multi-Attack chain onto a territory of mine: its player, path (the stack first) and the armies it lands. */
+  interface ChainThreat {
+    player: number;
+    path: readonly number[];
+    armies: number;
+  }
+  /**
+   * #199: under Multi-Attack, every visible enemy stack's attack chains ({@link searchChains}: its
+   * deploy that reaches it, less the guard, its commander left behind; luck-free, capped) that take
+   * one territory or more not mine and then attack a territory of mine, by that territory, most
+   * armies first. Built on first use; empty without Multi-Attack.
+   */
+  let chainMemo: Map<number, ChainThreat[]> | undefined;
+  const chainsOnto = (t: number): readonly ChainThreat[] => {
+    if (!s.multiAttack) return [];
+    if (!chainMemo) {
+      const memo = new Map<number, ChainThreat[]>();
+      chainMemo = memo;
+      const sim = simTerritories(board);
+      for (const [n, st] of [...state].sort((a, b) => a[0] - b[0])) {
+        if (st.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null || hiddenFoe(n) !== undefined) continue;
+        const player = st.owner.playerId;
+        const team = teamOf.get(player);
+        searchChains({
+          graph: g,
+          territories: sim,
+          from: n,
+          sending: Math.max(0, st.armies - guard) + deployReaching(player, [n]),
+          guard,
+          ...rates,
+          hostile: (_id, x) => x.owner === 'neutral' || (typeof x.owner === 'number' && x.owner !== player && (team === undefined || teamOf.get(x.owner) !== team)),
+          goOn: (id) => !mineSet.has(id),
+          onAttack: (a) => {
+            const to = a.path[a.path.length - 1]!;
+            if (a.path.length < 3 || !mineSet.has(to)) return;
+            memo.set(to, [...(memo.get(to) ?? []), { player, path: a.path, armies: a.sending }]);
+          },
+        });
+      }
+      for (const list of memo.values()) list.sort((a, b) => b.armies - a.armies || a.player - b.player || a.path.join().localeCompare(b.path.join()));
+    }
+    return chainMemo.get(t) ?? [];
+  };
+  /** #199: the strongest chain onto my `t` that passes through no territory in `gone`. */
+  const chainAt = (t: number, gone: (n: number) => boolean): ChainThreat | undefined =>
+    chainsOnto(t).find((c) => !c.path.some((x) => x !== t && gone(x)));
   /**
    * The enemy force that can hit my `t` next turn (#128). Per opponent: each of its stacks next
    * to `t` (territories in `gone` excluded) is movable armies plus its units, and it may deploy
@@ -3347,7 +3406,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     o: { trend: boolean; allPlayers: boolean; pileOn?: boolean },
   ): Force | null => {
     const byPlayer = stacksAt(t, gone, o.trend);
-    if (!byPlayer.size) return null;
+    const chain = chainAt(t, gone);
+    if (!byPlayer.size) return chain ? { player: chain.player, movable: chain.armies, growth: 0, deploy: 0, threat: bombSized(t, chain.armies), chain } : null;
     const each = [...byPlayer]
       .sort((a, b) => a[0] - b[0])
       .map(([player, p]) => {
@@ -3394,9 +3454,20 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     let threat = best.single;
     if (split && split.takes > takesAlone(best.single)) threat = Math.max(threat, toTake(split.takes) ?? threat);
     else split = undefined;
+    // #199: a Multi-Attack chain that lands more than the stacks next to it.
+    const chained = chain && chain.armies > threat ? chain : undefined;
+    if (chained) threat = chained.armies;
     // #163: sized as if a Bomb halved my stack first ({@link bombSized}).
     threat = bombSized(t, threat);
-    return { player: best.player, movable: best.movable, growth: best.growth, deploy: best.deploy, threat, ...(split ? { split } : {}) };
+    return {
+      player: best.player,
+      movable: best.movable,
+      growth: best.growth,
+      deploy: best.deploy,
+      threat,
+      ...(split ? { split } : {}),
+      ...(chained ? { chain: chained } : {}),
+    };
   };
   /**
    * The strongest visible enemy force that could hit `t` next turn ({@link forceAt}, every
@@ -3457,6 +3528,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     for (const l of lostAt.get(t) ?? []) if (estimates.has(l.player)) facing.add(l.player);
     const b = borderAt(t, () => false);
     if (b) borders.set(t, b);
+  }
+  // #199: say where a Multi-Attack chain sets a border's threat.
+  for (const b of [...borders.values()].filter((x) => x.chain).sort((x, y) => y.chain!.armies - x.chain!.armies || x.id - y.id).slice(0, MAX_NAMED_REVEALS)) {
+    const c = b.chain!;
+    const via = c.path.slice(1, -1).map(label).join(' then ');
+    warnings.push(
+      `Multi-Attack chain: player ${c.player}'s stack on ${label(c.path[0]!)} can take ${via} and attack ${label(b.id)} with ~${c.armies} armies (its deploy included, luck-free): that is the threat counted there.`,
+    );
   }
   // #128: an enemy unit the board gives no strength for is in no threat: say so.
   for (const e of [...state.keys()].sort(byNum)) {

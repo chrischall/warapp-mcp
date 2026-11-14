@@ -457,7 +457,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   card still pays; spend rather than bank. **Advice only** (the income model does not compute the
   cap; `warapp_submit_turn` only warns), derived. Source: Army cap.
 - `settings-multi-attack` — armies chain captures, so a threat is any stack that can reach, not
-  only an adjacent one. **Advice only** (the planner's threats are adjacent stacks), derived.
+  only an adjacent one. **Encoded** in part: the planner counts each visible stack's chain through
+  territories not mine onto a territory of mine (#199, `chains.ts`); its own attacks never chain.
+  Derived.
   Source: Multi-Attack.
 - `settings-no-luck-exact` — with no luck and straight rounding, results are exact. **Encoded:** `armiesToTake`. Source: Luck modifier.
 - `settings-luck-guaranteed` — with luck, count only the kills the roll cannot remove and add a
