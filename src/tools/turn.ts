@@ -1416,7 +1416,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
       // and the cards in effect. Advice only: the orders below are the plan's.
       const advice = rules.inPlay.length
-        ? adviseCards({ game, me, turn, info, hand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})` })
+        ? adviseCards({ game, me, turn, info, hand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})`, truceCovered: new Set((truces?.relations ?? []).filter((r) => r.state === 'active' || r.state === 'notice').flatMap((r) => r.coveredTheirs)) })
         : { view: {}, warnings: [] };
       const warnings = [
         ...(me.hasCommittedOrders
