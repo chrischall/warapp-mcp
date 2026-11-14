@@ -980,9 +980,9 @@ import {
 } from './combat.js';
 import { neighborsOf, type MapGraph } from './graph.js';
 import type { GameOutlook } from './outlook.js';
-import { classifyExchange, forecastBorder, type Exchange, type ExchangeCase } from './exchange.js';
+import { forecastBorder, type Exchange } from './exchange.js';
 import type { TwoStepReach } from './lookahead.js';
-import { indexAfterAll, MoveSlot, opponentOrdersBefore, scheduleMoves, type MoverPosition } from './schedule.js';
+import type { MoveSlot } from './schedule.js';
 import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from './player.js';
 import type { GameProfile, ProfilePlayer } from './profile.js';
 import { emptyPlan, noteEstimates, planContext } from './plan/estimates.js';
@@ -995,6 +995,8 @@ import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from '
 import { leftoverDeploy } from './plan/leftover.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { transfers } from './plan/transfers.js';
+import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
+import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
 import { newPlanState } from './plan/state.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
@@ -1466,7 +1468,7 @@ export interface ExchangeView extends Exchange {
 
 /** The names of {@link MoveSlot}, earliest first. */
 export type MoveSlotName = 'protected' | 'early' | 'sure' | 'filler' | 'last';
-const SLOT_NAMES: readonly MoveSlotName[] = ['protected', 'early', 'sure', 'filler', 'last'];
+export const SLOT_NAMES: readonly MoveSlotName[] = ['protected', 'early', 'sure', 'filler', 'last'];
 
 export interface OffenceEntry {
   target: number;
@@ -1558,7 +1560,7 @@ export const HOLD_FALL_CHANCE = 0.05;
 export const CITE_OPEN = '\u0001';
 export const CITE_SEP = '\u0002';
 export const CITE_CLOSE = '\u0003';
-const CITE_RE = /\u0001(\d+)\u0002([^\u0002\u0003]*)\u0002([^\u0003]*)\u0003/g;
+export const CITE_RE = /\u0001(\d+)\u0002([^\u0002\u0003]*)\u0002([^\u0003]*)\u0003/g;
 export function defaultMinWinChance(settings: PlannerSettings = {}): number {
   return luckFraction(settings.luckModifier) > 0 ? LUCK_WIN_CHANCE : 1;
 }
@@ -2453,16 +2455,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     reserve, enemyDeploy, deployOf, incomeOfPlayer, paybackTurns,
   } = pc;
   const {
-    territories: state, label, bonusName, mine, mineSet, incomeGain, nextIncomeWith, incomeAfter, armiesOf, unitsAt,
-    uncounted, uncountedKind, defenceAt, bonusTs, completedBy, territoryShare, plainWorth, inFocus,
+    territories: state, label, bonusName, mine, mineSet, incomeGain, nextIncomeWith, armiesOf, unitsAt, defenceAt,
+    bonusTs, completedBy, territoryShare, plainWorth, inFocus,
   } = pc;
   const {
     guard, rates, chanceOf, chanceAt, costAt, toTake, luck, noSplit,
   } = pc;
   const { armyLead, leadLever, clearLeader, ffaLeader, holdPasses, leadText, myCommanders } = pc;
   const {
-    warnings, rationale, deployed, avail, locked, spared, unabsorbed, absorbLines, captured, combined, moves,
-    survivorsAt, captureOrder, captureUndo, staged, incoming,
+    warnings, rationale, avail, locked, spared, captured, combined, moves, survivorsAt, captureOrder, captureUndo,
+    staged, incoming,
   } = ps;
 
   if (!mine.length) return emptyPlan(pc, ps);
@@ -2477,37 +2479,26 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- 0. threat trend, 1. defence (plan/threats.ts) ----
   const threats = threatsPhase(pc, ps, input);
-  const {
-    growthOf, deployReaching, reinforcementAt, forceAt,
-    borders, facing, borderAt, ownedBy, ownerOf, fogEdge,
-  } = threats;
+  const { growthOf, reinforcementAt, borders, facing, borderAt } = threats;
 
   // ---- 1. holds, #172, 1h, 1b, 1c, #122 garrisons (plan/holds.ts) ----
   const hd = holdsPhase(pc, ps, book, threats, pass);
   const {
-    acting, conceded, concedeUnaffordable, floorOrConcede, fundNearMiss, fundUnit,
-    garrisonCompleted, heldAgainst, heldBorders, heldStack, hold, holds, keepFor, kept,
-    keptIncome, keptShort, leftFor, mayHold, noteRecent, reconsider, settleContested, stayAt,
-    threatWarnings, twoStepBound, twoStepCited, twoStepHold, twoStepKeep, twoStepNote, uneconomic,
-    units, withdraw,
+    acting, conceded, concedeUnaffordable, floorOrConcede, fundNearMiss, fundUnit, garrisonCompleted, heldBorders,
+    heldStack, hold, holds, keepFor, kept, keptShort, leftFor, mayHold, noteRecent, reconsider, settleContested,
+    twoStepBound, twoStepKeep, uneconomic, units, withdraw,
   } = hd;
 
   // ---- 2. targets, 4d. frontier cost, bonus scoring, #101 (plan/targets.ts) ----
   const tgt = targetsPhase(pc, ps, input, book, threats, hd);
   const {
-    breakable, counterAt, targets, leadSteps, leadTry,
-    targetScoreCost, landScoreCost, offence, offenceSkip, skipOffence, badTrades, frontierOf, startHold,
-    plans, economicMember, uneconomicMember, negativeMember, ratio, committing, byCloseness, retakeChecks,
-    retakeWarning,
+    breakable, counterAt, targets, leadSteps, targetScoreCost, landScoreCost, offence, skipOffence, plans,
+    economicMember, uneconomicMember, negativeMember, ratio, committing, byCloseness, retakeChecks, retakeWarning,
   } = tgt;
 
   // ---- R3, No-Split, capture helper, 3a. combined, passes 1 and 2 (plan/captures.ts) ----
   const caps = capturesPhase(pc, ps, pass, book, threats, hd, tgt);
-  const {
-    notCompleted, strikes, worstCase, finishedOff, defendersAt,
-    tryCapture, snapshot, complete, stopped, stoppedLine, tryExpand,
-    advance,
-  } = caps;
+  const { strikes, worstCase, defendersAt, tryCapture, snapshot, complete, tryExpand, advance } = caps;
 
   // ---- 1e. finish off an opponent, 1s. strike an enemy commander, #165 guard-off breaks (plan/strike.ts) ----
   const { struck } = strikesPhase(pc, ps, book, threats, hd, tgt, caps);
@@ -3453,771 +3444,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- 6. transfers, #125 staging (plan/transfers.ts) ----
   transfers(pc, ps, book, threats, hd, caps, staging);
 
-  // ---- Order Priority for a strike (rule 1s) ----
-  // war.app interleaves both players' attacks, so a struck player's stacks next to my commander
-  // may attack before the strike lands. Judged on what stays on my commander's territory once
-  // every planned deploy and move is in (a strike from it thins it), against the STRUCK players'
-  // visible stacks only: moving first kills their commander before they attack, but does nothing
-  // against a third player, so a threat from someone else is no reason to spend the card.
-  const commanderThreatened = [...myCommanders].some((c) => {
-    const b = borderAt(c, (n) => {
-      const st = state.get(n);
-      return !(st?.owner.kind === 'player' && struck.has(st.owner.playerId));
-    });
-    return b !== null && (toTake(stayAt(c) + unitsAt(c)) ?? Infinity) <= b.threat;
-  });
-  /** The threat to my commander, not a withdrawal, advised Order Priority for the strike (rule 1s). */
-  let strikeCard = false;
-  const strikeWho = [...struck].sort(byNum).map((p) => `player ${p}`).join(' and ');
-  if (struck.size && commanderThreatened) {
-    const where = [...myCommanders].map(label).join(', ');
-    const who = strikeWho;
-    if (opts.holdsOrderPriority) {
-      strikeCard = true;
-      rationale.push(
-        `Play Order Priority: my commander's territory ${where} is threatened this turn by what is left on it after this turn's orders, and with the card my attacks resolve first, so the strike on ${who}'s commander lands before its attacks.`,
-      );
-    } else
-      warnings.push(
-        `My attacks and ${who}'s interleave this turn, so its stacks may attack my commander's territory ${where} before the strike lands, and what is left on it after this turn's orders would fall; I hold no Order Priority card to make my attacks resolve first.`,
-      );
-  }
+  // ---- Order Priority for a strike (rule 1s) (plan/move-order.ts) ----
+  const { strikeCard, strikeWho } = strikeOrderPriority(pc, ps, threats, hd, struck);
 
-  // ---- expected ----
-  const after = heldNow();
-  const completed = completedBy(after);
-  // #126: a completion lands only if every capture it needs does — its chance is their product.
-  for (const id of completed) {
-    const taken = bonusTerritories(g, id).filter((x) => captured.has(x));
-    // Each member's capture is its last attack (a combined capture's softeners fail by design).
-    const chances = taken.map((x) => moves.filter((m) => m.kind === 'attack' && m.to === x).at(-1)?.winChance ?? 1);
-    const joint = chances.reduce((a, b) => a * b, 1);
-    if (joint < 1)
-      rationale.push(
-        `Bonus ${bonusName(id)} (+${g.bonusById.get(id)!.value}) completes with a ${pct(joint)} chance: the product of its ${taken.length} capture${taken.length === 1 ? "'s" : "s'"} win chances this turn.`,
-      );
-  }
-  // A bonus refused in one pass but completed by a later one is not reported as refused.
-  for (const id of [...notCompleted.keys()].sort(byNum)) {
-    if (completed.includes(id)) continue;
-    warnings.push(notCompleted.get(id)!.warning);
-    rationale.push(notCompleted.get(id)!.why);
-  }
+  // ---- expected, frontier, two-step holds, gambled and shared borders (plan/report.ts) ----
+  const expected = reportExpected(pc, ps, book, threats, hd, tgt, caps);
+  // ---- offence report (#72), the warnings after the deploys, "Not attacking" (#167) (plan/report.ts) ----
+  const { sentAt } = reportOffence(pc, ps, book, threats, hd, tgt, holdLocked, leadSpareFor);
+  // ---- 7. schedule the moves (#127), the exits (#179), Order Priority (plan/move-order.ts) ----
+  const { slotOf, facesEnemy, exits } = scheduleOrders(pc, ps, threats, hd, caps, struck, strikeCard, strikeWho);
 
-  // Issue #109: the income the plan's concessions put at risk. `nextIncome` counts every
-  // territory the plan keeps (conceded borders included); a second figure drops the conceded
-  // borders, by the same income rule, and names the bonuses they break.
-  const nextIncome = incomeAfter(after);
-  const atRisk = bonusesAtRisk(g, after, conceded);
-  const ifFall = incomeAfter(new Set([...after].filter((t) => !conceded.has(t))));
-  const reportRisk = atRisk.length > 0 || ifFall !== nextIncome;
-  if (ifFall < nextIncome) {
-    const what = atRisk.length
-      ? `bonus ${atRisk.map((b) => `${bonusName(b.bonusId)} (+${b.value})`).join(', ')}`
-      : [...conceded].sort(byNum).map(label).join(', ');
-    warnings.push(
-      `This plan concedes ${what}: next income ${nextIncome} if they hold, ${ifFall} if the conceded borders fall.`,
-    );
-  }
-  const nextIncomeText = ifFall < nextIncome ? `${nextIncome}, ${ifFall} if the conceded borders fall` : `${nextIncome}`;
-
-  // Rule 4d's frontier budget (#71): the frontier this plan leaves against the next income.
-  const frontier: FrontierBudget = {
-    ...frontierOf(after, (x) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0))),
-    income: keptIncome(after),
-  };
-  const startCost = startHold();
-  const outgrown = frontier.holdCost > frontier.income && frontier.holdCost > startCost;
-  // A capture stopped by one pass but taken by a later one (the next income grew in between) is
-  // in the orders: nothing may still say it was not taken.
-  const notTaken = stopped.filter((x) => !captured.has(x.t));
-  const takenAfterAll = stopped.filter((x) => captured.has(x.t)).map((x) => stoppedLine(x.t));
-  if (takenAfterAll.length) {
-    const kept = rationale.filter((r) => !takenAfterAll.some((line) => r.startsWith(line)));
-    rationale.splice(0, rationale.length, ...kept);
-  }
-  if (outgrown || notTaken.length) {
-    const stop = notTaken.length
-      ? ` Expansion that adds enemy borders without completing a bonus is stopped: ${notTaken.map((x) => `${label(x.t)} (the frontier would need ${x.holdCost}, next income ${x.income})`).join(', ')} not taken.`
-      : '';
-    warnings.push(
-      outgrown
-        ? `Frontier grows faster than income: holding its ${frontier.enemyBorders} enemy-facing borders next turn needs ${frontier.holdCost} at the expected deploy, more than ${
-            frontier.income < nextIncome
-              ? `the ${frontier.income} of next income the plan counts on (${nextIncome} if every border holds: the bonuses it concedes or still contests are left out)`
-              : `the next income of ${frontier.income}`
-          } (${startCost} at the start of the turn).${stop}`
-        : `Frontier grows faster than income.${stop}`,
-    );
-  }
-  // #172: each two-step hold an order cited, or that shrank or ruled out an order (a pressure
-  // attack's size, a softener, a finisher, a top-up), is stated once, with the stay the plan ends
-  // on (an order's own note would read the stay mid-plan) — if it still applies at the end. One
-  // that no longer does (a later capture took the territory in between, or the stay fell so far
-  // that holding is hopeless) is not stated, and the orders' citations of it are dropped.
-  const stillHeld = new Set<number>();
-  for (const t of [...new Set([...twoStepBound, ...twoStepCited.keys()])].sort(byNum)) {
-    // The stay the plan ends on, rule 6's arrivals included, decides whether the hold still applies.
-    const h = twoStepHold(t, undefined, true);
-    if (!h) continue;
-    stillHeld.add(t);
-    rationale.push(`Hold ${label(t)} against a stack two steps away (${twoStepNote(t, h)}).`);
-  }
-  for (let i = rationale.length - 1; i >= 0; i--) {
-    const line = rationale[i]!;
-    if (!line.includes(CITE_OPEN)) continue;
-    const text = line.replace(CITE_RE, (_m, t: string, clause: string, fallback: string) =>
-      stillHeld.has(Number(t)) ? clause : fallback,
-    );
-    if (text.trim()) rationale[i] = text;
-    else rationale.splice(i, 1);
-  }
-  // #201: an absorption is claimed only where an attack on that player is made.
-  for (const [p, line] of absorbLines) {
-    const owned = (t: number) => {
-      const o = state.get(t)?.owner;
-      return o?.kind === 'player' && o.playerId === p;
-    };
-    if (moves.some((m) => m.kind === 'attack' && owned(m.to))) continue;
-    const i = rationale.indexOf(line);
-    if (i >= 0) rationale.splice(i, 1);
-  }
-  if (frontier.enemyBorders)
-    rationale.push(
-      `Frontier after this plan: ${frontier.borders} borders, ${frontier.enemyBorders} facing an enemy, needing ${frontier.holdCost} next turn to hold at the expected deploy (next income ${nextIncomeText}); every capture's score paid for the borders it adds.`,
-    );
-
-  // #201, behind: the borders sized for the expected attack, per player — what that gambles.
-  {
-    // Read from `borders`, the sizing the plan used (re-judged after captures), never from a
-    // hypothetical re-judge: the expected attack is the border's `threat`, the worst case its `worst`.
-    const gambled = new Map<number, { player: number; worst: number; expected: number; growth: number }>();
-    for (const b of borders.values())
-      if (b.worst !== undefined) gambled.set(b.id, { player: b.player, worst: b.worst, expected: b.threat, growth: b.growth });
-    const byPlayer = new Map<number, number[]>();
-    for (const [id, x] of gambled) if (mineSet.has(id) && !conceded.has(id)) byPlayer.set(x.player, [...(byPlayer.get(x.player) ?? []), id]);
-    for (const [p, ids] of [...byPlayer].sort((a, b) => a[0] - b[0])) {
-      // Gambled: holds against the expected attack as the plan leaves it, not against the worst case.
-      // One short of even the expected attack is no gamble (its threat warning says so).
-      const takeAt = (id: number) => toTake(stayAt(id) + unitsAt(id)) ?? Infinity;
-      const gamble = ids.sort(byNum).filter((id) => takeAt(id) > gambled.get(id)!.expected && takeAt(id) <= gambled.get(id)!.worst);
-      const allHold = ids.every((id) => takeAt(id) > gambled.get(id)!.worst);
-      if (!gamble.length && !allHold) continue;
-      warnings.push(
-        `Behind (#201): the borders facing player ${p} are sized for its expected attack (its movable armies next to each plus its whole ~${deployOf(p)} deploy, #59), not the worst case its growth per turn projects, and the armies saved go to the captures. ${
-          gamble.length
-            ? `Gambled: ${gamble
-                .map((id) => {
-                  const x = gambled.get(id)!;
-                  return `${label(id)} (it holds against the expected ~${x.expected}, not the worst-case ~${x.worst} at its growth of ~${x.growth} a turn)`;
-                })
-                .join(', ')} — each falls if player ${p} keeps growing at that rate and attacks it.`
-            : 'Each still holds against the worst case as the plan leaves it.'
-        }`,
-      );
-    }
-  }
-  // Issue #69, second point: several borders facing one opponent are each sized for its whole
-  // deploy. That is each border's worst case — the opponent picks where to land after I
-  // commit — so a sure hold of all of them needs every one sized for it; no army is counted
-  // twice on one border (movable + max(deploy, growth)).
-  for (const [p, ids] of [...heldAgainst].sort((a, b) => a[0] - b[0])) {
-    const held = [...ids].filter((id) => !conceded.has(id)).sort(byNum);
-    if (held.length < 2) continue;
-    rationale.push(
-      `Each of the ${held.length} borders held against player ${p} (${held.map(label).join(', ')}) is sized for its full ~${deployOf(p)} deploy: it chooses where to land after seeing my orders, so any one of them can face all of it, and a share each would leave whichever it picks short. Each border's threat counts its stacks next to that border once plus one deploy, never the deploy twice.`,
-    );
-  }
-
-  // #167: cover odds. One deploy lands on one territory: against a player that faces two or more of
-  // my kept borders, those that hold against its stacks alone but not with its whole deploy on them
-  // are a gamble on where it lands — say which, and the chance each survives if it picks at random.
-  // A split deploy takes every border whose shortfall it funds alongside another's: those get 0%.
-  {
-    const facingBy = new Map<number, { x: number; movable: number }[]>();
-    for (const x of mine) {
-      if (conceded.has(x)) continue;
-      const by = new Map<number, number>();
-      for (const n of neighborsOf(g, x)) {
-        const st = state.get(n);
-        if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
-        by.set(st.owner.playerId, (by.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard) + unitsAt(n));
-      }
-      for (const [q, movable] of by) facingBy.set(q, [...(facingBy.get(q) ?? []), { x, movable }]);
-    }
-    for (const [q, list] of [...facingBy].sort((a, b) => a[0] - b[0])) {
-      if (list.length < 2) continue;
-      const d = deployOf(q);
-      const short = list.flatMap(({ x, movable }) => {
-        const take = toTake(stayAt(x) + unitsAt(x));
-        return take !== null && take > movable && take <= movable + d ? [{ x, gap: take - movable }] : [];
-      });
-      if (!short.length) continue;
-      const n = list.length;
-      // A deploy can be split: a border whose shortfall the deploy funds together with another
-      // border's is no coin flip — the split takes both. How many it takes at once: the smallest
-      // shortfalls first, while the deploy covers them.
-      const splits = short.filter(({ x, gap }) => short.some((o) => o.x !== x && gap + o.gap <= d));
-      const gaps = short.map(({ gap }) => gap).sort((a, b) => a - b);
-      let k = 0;
-      for (let left = d; k < gaps.length && gaps[k]! <= left; k++) left -= gaps[k]!;
-      const flips = short.filter((s) => !splits.includes(s));
-      const parts: string[] = [];
-      // #201: the split takes k at once. Each of those holds with chance 0% only when there are
-      // k of them or fewer; with more, it picks k of them and each holds with (m − k) ÷ m.
-      if (splits.length) {
-        const m = splits.length;
-        const named = `(${splits.map(({ x, gap }) => `${label(x)} short ${gap}`).join(', ')})`;
-        parts.push(
-          m <= k
-            ? `its ~${d} deploy, split, can take ${k} of the ${n} borders facing it at once ${named}: each of those holds with chance 0%.`
-            : `its ~${d} deploy, split, can take ${k} of the ${n} borders facing it at once ${named}: if it picks ${k} of those ${m} at random, each holds with chance ${Math.round(((m - k) / m) * 100)}%, and all of them with 0%.`,
-        );
-      }
-      if (flips.length)
-        parts.push(
-          `${splits.length ? 'Besides, its' : 'its'} one ~${d} deploy can land on one of the ${n} borders facing it; ${flips.length} hold${flips.length === 1 ? 's' : ''} against its stacks alone but not with that deploy on ${flips.length === 1 ? 'it' : 'them'} (${flips.map(({ x }) => label(x)).join(', ')}) — a gamble on where it lands: if it picks among the ${n} at random, ${
-            flips.length === 1
-              ? `it holds with chance ${Math.round(((n - 1) / n) * 100)}%`
-              : `each holds with chance ${Math.round(((n - 1) / n) * 100)}%${splits.length ? '' : `, and all of them with ${Math.round(((n - flips.length) / n) * 100)}%`}`
-          }.`,
-        );
-      rationale.push(`Cover odds against player ${q} (#167): ${parts.join(' ')}`);
-    }
-  }
-
-  if (noSplit && moves.length && guard)
-    warnings.push(
-      'No-Split is on: each order sends its territory\'s whole stack less the one army that stands guard; whether war.app leaves that army behind under No-Split is unverified (a live turn with the guard off left every source at 0).',
-    );
-
-  // ---- offence report (#72) ----
-  for (const [t, { lost, killed }] of [...badTrades].sort((a, b) => a[0] - b[0]))
-    if (!captured.has(t))
-      rationale.push(
-        `Not attacking ${label(t)}: the combined capture loses ${lost} armies for the ${killed} it kills, a trade below even while behind on armies.`,
-      );
-  /** What the final orders send at `t` (a top-up of idle armies can raise a capture's size). */
-  const sentAt = (t: number) => moves.reduce((n, m) => (m.kind === 'attack' && m.to === t ? n + m.armies : n), 0);
-  // A border warned about before the deploys may have been deployed to since: say what the
-  // plan leaves there, so the warning does not contradict the hold, floor or spread lines.
-  for (let i = 0; i < warnings.length; i++) {
-    const hit = [...threatWarnings].find(([, w]) => w.text === warnings[i]);
-    if (!hit) continue;
-    const [id, { threat }] = hit;
-    const n = deployed.get(id) ?? 0;
-    if (n <= 0) continue;
-    const have = stayAt(id);
-    const take = toTake(have + unitsAt(id));
-    warnings[i] += ` Before this turn's deploys: the plan deploys ${n} there, leaving ${have} armies (${take ?? 'none can'} to take${take !== null && take > threat ? `, more than the ${threat} that can reach it: it holds` : `; the ${threat} that can reach it still could`}).`;
-  }
-  // #201: the FFA leader's borders held against two or more opponents attacking together.
-  if (ffaLeader)
-    for (const id of [...borders.keys()].sort(byNum)) {
-      if (conceded.has(id) || !mineSet.has(id)) continue;
-      const f = forceAt(id, (n) => captured.has(n), { trend: true, allPlayers: true });
-      if (!f?.split || f.split.players.length < 2) continue;
-      rationale.push(
-        `I lead this free-for-all (#201): ${label(id)} is held against players ${f.split.players.join(' and ')} attacking together (${f.split.attacks.join(' then ')}, up to ${f.split.takes} armies), not each alone: the others may combine against the leader.`,
-      );
-    }
-  // #128: a border that holds against each opponent alone but not against two of them attacking
-  // it in the same turn (FFA players do not coordinate, so this is a warning, not a hold).
-  for (const id of [...borders.keys()].sort(byNum)) {
-    if (conceded.has(id) || !mineSet.has(id)) continue;
-    const alone = borderAt(id, (n) => captured.has(n));
-    const pile = forceAt(id, (n) => captured.has(n), { trend: true, allPlayers: true, pileOn: true });
-    if (!alone || !pile?.split || pile.split.players.length < 2) continue;
-    const have = stayAt(id) + unitsAt(id);
-    const take = toTake(have);
-    if (take === null || take <= alone.threat || have > pile.split.takes) continue;
-    warnings.push(
-      `${label(id)} holds against each opponent alone, but players ${pile.split.players.join(' and ')} attacking it in the same turn (${pile.split.attacks.join(' then ')}) could take up to ${pile.split.takes} armies, and ${have} stay there.`,
-    );
-  }
-  // ---- #167: every enemy territory next to mine left alone names why ----
-  // One rationale line lists each visible enemy territory next to a territory I held at the start
-  // that no order attacks, with the first reason that applies: a special unit there, a reason the
-  // offence report already gave (rule 0p.2's second front among them), a capture that lowers income,
-  // its size against the most any neighbour of mine can spare once it holds its border, or that it is
-  // no target of the plan's (rule 2: a player's territory is attacked to break a bonus, counter-attack,
-  // finish a player off, strike, or as rule 4e's fallback; adapting in an FFA, the lead strikes).
-  {
-    const spareNow = (x: number, n: number) => {
-      if (!mineSet.has(x) || holdLocked.has(x) || conceded.has(x) || myCommanders.has(x) || orderOf(x)) return 0;
-      const gone = (m: number) => m === n;
-      return Math.max(0, avail.get(x)! - Math.max(keepFor(x, gone), twoStepKeep(x, gone)));
-    };
-    const attacked = new Set(moves.filter((m) => m.kind === 'attack').map((m) => m.to));
-    const left = [...new Set(mine.flatMap((x) => neighborsOf(g, x)))].sort(byNum).filter((n) => {
-      const st = state.get(n);
-      return !mineSet.has(n) && !attacked.has(n) && st?.owner.kind === 'player' && foe(st.owner.playerId) && st.armies !== null;
-    });
-    const reasonFor = (n: number): string => {
-      const st = state.get(n)!;
-      const p = (st.owner as { playerId: number }).playerId;
-      if (uncounted(n)) return `it holds ${uncountedKind(n)}, whose strength the board does not carry`;
-      if (unitsAt(n) > 0) return `an enemy commander stands there: only a commander strike (rule 1s) attacks it, sized for its owner's whole deploy`;
-      if (spared.has(n) && unabsorbed.has(p))
-        return `absorbing player ${p} would not bring my income to the FFA leader's: the armies are better spent against the leader (#201)`;
-      if (spared.has(n)) return `player ${p} is a buffer in this FFA: finishing it off costs more frontier than it pays (#179)`;
-      const skip = offenceSkip.get(n);
-      if (skip) return skip;
-      if (gainWith([n]) < 0) return 'taking it would lower my income (it completes a negative bonus)';
-      const need = costAt(n);
-      const extra = reinforcementAt(n);
-      const sure = extra > 0 ? costAt(n, defenceAt(n) + extra) : need;
-      const best = neighborsOf(g, n)
-        .filter((x) => mineSet.has(x))
-        .map((x) => ({ x, spare: spareNow(x, n) }))
-        .sort((a, b) => b.spare - a.spare || a.x - b.x)[0]!;
-      if (need === null) return 'no attack can take it at these kill rates';
-      if (best.spare < need)
-        return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}`;
-      if (goal !== 'balanced') {
-        // Rule 4e's fallback (and a lead) can still take a player's territory under another goal.
-        const others = [...attacked].filter((t) => t !== n && state.get(t)?.owner.kind === 'player').sort(byNum);
-        return others.length
-          ? `under goal ${goal} the plan attacks a player's territory only where a rule calls for it (here ${others.map(label).join(', ')}), and none calls for this one`
-          : `goal ${goal} attacks no player's territory${goal === 'complete-bonus' ? ' outside the bonus it completes' : ''}`;
-      }
-      const ffaLead = auto && profile.format === 'ffa' && profile.opponents >= 2;
-      if (ffaLead && leadLever && !noSplit && sure !== null && sure > need) {
-        // The lead strikes ran: this one was not sized for sure (defenders plus its owner's deploy).
-        const lead = neighborsOf(g, n)
-          .filter((x) => mineSet.has(x))
-          .map((x) => ({ x, spare: leadSpareFor(x, n) }))
-          .sort((a, b) => b.spare - a.spare || a.x - b.x)[0]!;
-        // #203: why its bonus's step failed, as measured when that pass tried it (later deploys,
-        // counted in the spare above, could not fund it then).
-        const tried = leadTry.get(n);
-        const deployText =
-          tried === undefined
-            ? ''
-            : tried.kind === 'r3'
-              ? `; its bonus's step was refused: what survives the attack would not hold it next turn (R3)`
-              : tried.kind === 'trade'
-                ? `; its bonus's step was refused: a trade below even (~${tried.lost} lost for ${tried.killed} killed)`
-                : tried.kind === 'frontier'
-                  ? `; its bonus's step was stopped by rule 4d's frontier budget: it adds a border facing an enemy`
-                  : tried.from === undefined
-                    ? `; when its bonus's step was tried, no neighbour of mine was free to attack it`
-                    : `; when its bonus's step was tried, ${label(tried.from)} could spare ${tried.spare} for it and ${
-                        tried.reach === 0
-                          ? 'none of this turn\'s deploy could still reach it'
-                          : `this turn's deploy could add at most ${tried.reach} there${local ? ' (Local Deployment)' : ''}: ${tried.spare + tried.reach} in all`
-                      }`;
-        if (lead.spare < sure)
-          return `a lead strike (my army lead is ${leadText()}, over ${SECOND_FRONT_LEAD}×) needs ${sure} — sized for its ${defenceAt(n)} defenders plus player ${p}'s ~${extra} deploy — and the most a neighbour of mine can spare for it is ${lead.spare}${lead.spare > 0 ? ` (${label(lead.x)})` : ''}${deployText}`;
-      }
-      return `${label(best.x)} could spare ${best.spare} for it, but it breaks no bonus and is no counter-attack, finishing blow or strike — the only reasons the plan attacks a player's territory (rule 2), besides rule 4e's fallback when nothing else is captured${
-        !ffaLead
-          ? ''
-          : !leadLever
-            ? ` (a lead strike takes one only with an army lead over ${SECOND_FRONT_LEAD}×; mine is ${leadText()})`
-            : noSplit
-              ? ` (no lead strike under No-Split: an order carries the whole stack)`
-              : ''
-      }`;
-    };
-    // Capped (#130 trimmed the response before): the first NOT_ATTACKING_REASONS by id with their
-    // reasons, the rest named.
-    const told = left.slice(0, NOT_ATTACKING_REASONS);
-    const rest = left.slice(NOT_ATTACKING_REASONS);
-    if (left.length)
-      rationale.push(
-        `Not attacking ${left.length === 1 ? 'the enemy territory' : `${left.length} enemy territories`} next to mine: ${told
-          .map((n) => `${label(n)} (player ${(state.get(n)!.owner as { playerId: number }).playerId}, ${state.get(n)!.armies} armies): ${reasonFor(n)}`)
-          .join('; ')}${rest.length ? `; and ${rest.length} more: ${rest.map(label).join(', ')}` : ''}.`,
-      );
-  }
-  // ---- 7. schedule the moves (#127) ----
-  // Orders zigzag (the first mover's 1st, the other's 1st and 2nd, …), so the place of a move in
-  // the list decides what it meets. One order is protected when Order Priority is advised.
-  const CONCEDED_ORDER = /; play Order Priority so it goes first\.$/;
-  /** The strike Order Priority protects (rule 1s), when the threat to my commander advised the card. */
-  const strikeOrder = strikeCard ? moves.find((m) => m.kind === 'attack' && strikes.has(m.to)) : undefined;
-  /**
-   * #179: the strike that eliminates a player finished off (rule 1e) — the attack on its largest
-   * stack (most armies plus special units, then lowest id): the one that can flee or strike first.
-   * Else a commander strike (rule 1s) the threat to my commander did not already protect
-   * (`commander`): it ends a player too, and the commander can walk away before it lands.
-   * A combined capture there (rule 3a) has no such strike: its first attack only wears the stack
-   * down, and Order Priority moves only my first order ahead, so the card cannot secure it.
-   */
-  const kill = (() => {
-    for (const p of [...finishedOff].sort(byNum)) {
-      const target = [...(ownedBy.get(p) ?? [])]
-        .filter((t) => moves.some((m) => m.kind === 'attack' && m.to === t))
-        .sort((a, b) => armiesOf(b) + unitsAt(b) - (armiesOf(a) + unitsAt(a)) || a - b)[0];
-      const order = target === undefined ? undefined : moves.find((m) => m.kind === 'attack' && m.to === target);
-      if (order) return { p, order, attacks: moves.filter((m) => m.kind === 'attack' && m.to === target).length, commander: false };
-    }
-    // Else a strike on a commander (rule 1s) that no threat to mine advised the card for: it too
-    // ends a player, and the commander can walk away before it lands.
-    if (strikeOrder) return undefined;
-    for (const t of [...strikes].sort(byNum)) {
-      const st = state.get(t);
-      if (st?.owner.kind !== 'player' || !struck.has(st.owner.playerId)) continue;
-      const order = moves.find((m) => m.kind === 'attack' && m.to === t);
-      if (order) return { p: st.owner.playerId, order, attacks: moves.filter((m) => m.kind === 'attack' && m.to === t).length, commander: true };
-    }
-    return undefined;
-  })();
-  if (!strikeOrder && kill && combined.has(kill.order.to))
-    warnings.push(
-      `The strike that eliminates player ${kill.p} is a combined capture of ${label(kill.order.to)} (${kill.attacks} attacks that must run in order): Order Priority moves only my first order ahead, so it cannot secure the kill; its stack can still flee or strike before the capture lands.`,
-    );
-  const killOrder = strikeOrder || (kill && combined.has(kill.order.to)) ? undefined : kill?.order;
-  const outOfConceded = moves.filter((m) => conceded.has(m.from) && m !== strikeOrder && m !== killOrder);
-  /** My first order: the one Order Priority would protect. Checked against the schedule below. */
-  let firstOrder: PlannedMove | undefined =
-    strikeOrder ?? killOrder ?? [...outOfConceded].sort((a, b) => b.armies - a.armies || a.from - b.from || a.to - b.to)[0];
-  /** The visible stacks of one player next to `t` plus its deploy: what can reach `t` this turn. */
-  const reachOf = (t: number) => {
-    const byPlayer = new Map<number, number>();
-    for (const n of neighborsOf(g, t)) {
-      const st = state.get(n);
-      if (st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
-      const p = st.owner.playerId;
-      byPlayer.set(p, (byPlayer.get(p) ?? deployOf(p)) + Math.max(0, st.armies - guard) + unitsAt(n));
-    }
-    return byPlayer.size ? Math.max(...byPlayer.values()) : null;
-  };
-  const facesEnemy = (t: number) =>
-    neighborsOf(g, t).some((n) => {
-      const st = state.get(n);
-      return st?.owner.kind === 'player' && foe(st.owner.playerId);
-    });
-  const lastWhy = new Map<PlannedMove, string>();
-  const slotOf = (m: PlannedMove): MoveSlot => {
-    if (m === firstOrder) return MoveSlot.Protected;
-    if (m.kind === 'transfer') return conceded.has(m.from) || facesEnemy(m.to) ? MoveSlot.Early : MoveSlot.Filler;
-    if (conceded.has(m.from)) return MoveSlot.Early;
-    const st = state.get(m.to);
-    if (st?.owner.kind === 'player') {
-      if (worstCase.has(m.to) || strikes.has(m.to)) return MoveSlot.Sure;
-      lastWhy.set(m, `${label(m.to)} (player ${st.owner.playerId}'s stack can attack first; attacking second fights its survivors)`);
-      return MoveSlot.Last;
-    }
-    // A neutral another player can reach: early only when my survivors hold against its capture
-    // of that neutral (sized as mine are), at most what its stacks next to it plus its deploy send.
-    const near = reachOf(m.to);
-    if (near === null) return MoveSlot.Filler;
-    const reach = Math.min(near, captureCost(defenceAt(m.to), s) ?? near);
-    const survivors = m.armies - Math.min(m.armies, straightKills(defenceAt(m.to), rates.defensiveKillRate));
-    if ((toTake(survivors) ?? Infinity) > reach) return MoveSlot.Sure;
-    lastWhy.set(m, `${label(m.to)} (another player can send ~${reach} at it, which would take my ${survivors} survivors: taken last, mine is the capture that stands)`);
-    return MoveSlot.Last;
-  };
-  // "Eliminated even if it reinforces" holds only if my attacks land before its own orders: moving
-  // first, it can move between its territories or take a thin border of mine, and survive.
-  for (const p of opts.movesFirst ? [] : [...finishedOff].sort(byNum)) {
-    const theirs = ownedBy.get(p) ?? [];
-    /** Its stacks next to my `b` plus the deploy that can reach them (as the cover sizes it, #179). */
-    const reach = (b: number) => {
-      const adj = neighborsOf(g, b).filter((n) => theirs.includes(n));
-      return deployReaching(p, adj) + adj.reduce((a, n) => a + Math.max(0, armiesOf(n) - guard) + unitsAt(n), 0);
-    };
-    const exposed = mine.filter(
-      (b) => neighborsOf(g, b).some((n) => theirs.includes(n)) && (toTake(stayAt(b) + unitsAt(b)) ?? Infinity) <= reach(b),
-    );
-    const most = Math.max(0, ...exposed.map(reach));
-    warnings.push(
-      `Eliminating player ${p} assumes my attacks land before its own orders: they interleave, so if it moves first it can move between its territories${exposed.length ? `, or take ${exposed.map(label).join(' or ')} (what this plan leaves there falls to its ~${most})` : ''}, and survive.`,
-    );
-  }
-  // ---- #179: the exits of an opponent down to a few territories ----
-  // Each of its stacks can move to its own neighbours, take a neutral its movable armies plus the
-  // deploy that can reach it take, or take a territory of mine that falls to that (what this plan
-  // leaves there).
-  const exits: OpponentExits[] = [];
-  for (const [p, theirs] of [...ownedBy].sort((a, b) => a[0] - b[0])) {
-    // Its land bordering the fog, it may hold more there: not known to be down to a few.
-    if (theirs.length > FEW_TERRITORIES || (fogEdge(p).length && !finishedOff.has(p))) continue;
-    const stacks = theirs.map((t) => {
-      const movable = Math.max(0, armiesOf(t) - guard) + unitsAt(t);
-      const reach = movable + deployReaching(p, [t]);
-      const next = [...neighborsOf(g, t)].sort(byNum);
-      return {
-        territory: t,
-        movable,
-        own: next.filter((n) => theirs.includes(n)),
-        neutrals: next.filter((n) => {
-          const st = state.get(n);
-          return st?.owner.kind === 'neutral' && st.armies !== null && !captured.has(n) && (captureCost(defenceAt(n), s) ?? Infinity) <= reach;
-        }),
-        mine: next.filter((n) => mineSet.has(n) && (toTake(stayAt(n) + unitsAt(n)) ?? Infinity) <= reach),
-      };
-    });
-    exits.push({ player: p, stacks });
-    if (!finishedOff.has(p) || opts.movesFirst) continue;
-    for (const x of stacks)
-      for (const n of x.neutrals) {
-        const by = neighborsOf(g, n).filter((y) => mineSet.has(y) || captured.has(y)).sort(byNum);
-        warnings.push(
-          `player ${p}'s stack on ${label(x.territory)} can flee onto ${label(n)} before my attack lands and survive there; ${by.length ? `${by.map(label).join(' or ')} borders it: retake it next turn` : 'nothing of mine borders it'}.`,
-        );
-      }
-  }
-  const decided = [...moves];
-  /** Within a slot, a larger early move first: one grouped early transfer beats several small ones. */
-  const rankOf = (m: PlannedMove) => (slotOf(m) === MoveSlot.Early ? m.armies : 0);
-  let scheduled = scheduleMoves(decided, slotOf, rankOf);
-  if (firstOrder && scheduled[0] !== firstOrder) {
-    // A move it depends on (one into its source, say) must run before it, so it is not my first
-    // order, and the card protects only that one: my first order is whatever the schedule puts first.
-    const head = scheduled[0]!;
-    if (firstOrder === killOrder)
-      warnings.push(
-        `The strike that eliminates player ${kill!.p} cannot be my first order: ${label(head.from)} → ${label(head.to)} must run before it.`,
-      );
-    if (firstOrder === strikeOrder) {
-      const r = rationale.findIndex((l) => l.startsWith("Play Order Priority: my commander's territory"));
-      if (r >= 0) rationale.splice(r, 1);
-      warnings.push(
-        `The strike on ${strikeWho}'s commander cannot be my first order: ${label(head.from)} → ${label(head.to)} must run before it, so Order Priority would not make it land before ${strikeWho}'s attacks on my commander's territory.`,
-      );
-    }
-    firstOrder = outOfConceded.includes(head) ? head : undefined;
-    lastWhy.clear();
-    scheduled = scheduleMoves(decided, slotOf, rankOf);
-  }
-  moves.splice(0, moves.length, ...scheduled);
-  // Order Priority moves only my first order ahead of the opponent's first: spend the card only
-  // for that order — the strike rule 1s advised it for, else a move out of a conceded border that
-  // saves enough — when I hold one, and when I do not move first anyway.
-  /** Why Order Priority is not advised for the protected first order, if not. */
-  let why: string | undefined;
-  if (!firstOrder) ps.cardAdvice = null;
-  else {
-    const n = firstOrder.armies;
-    /** #179: a strike that ends a player is protected even moving first when the opponent may hold the card too. */
-    const decisive = firstOrder === strikeOrder || firstOrder === killOrder;
-    const contested = decisive && opts.movesFirst === true && opts.opponentsMayHoldOrderPriority === true;
-    why = opts.movesFirst && !contested
-      ? "I move first this turn, so my first order already runs before any of the opponent's"
-      : firstOrder === strikeOrder
-        ? undefined
-        : !opts.holdsOrderPriority
-          ? 'I hold no Order Priority card to play'
-          : n < ORDER_PRIORITY_MIN_ARMIES && !opts.orderPriorityForced && firstOrder !== killOrder
-            ? `it saves only ${n} ${n === 1 ? 'army' : 'armies'}, under the ${ORDER_PRIORITY_MIN_ARMIES} a card is worth`
-            : undefined;
-    ps.cardAdvice = why === undefined ? 'order-priority' : null;
-    const mayHold = (who: string) =>
-      `I move first this turn, but ${who} may hold an Order Priority card: two cancel, so mine keeps this order first`;
-    if (firstOrder === killOrder && ps.cardAdvice) {
-      const units = unitsAt(firstOrder.to);
-      const stack = `${armiesOf(firstOrder.to)}${units ? ` armies and special units worth ${units}` : ''}`;
-      const what = kill!.commander
-        ? `the strike on player ${kill!.p}'s commander, which eliminates it (${stack} there), before the commander can move away`
-        : `the strike that eliminates player ${kill!.p}, on its largest stack (${stack}), the one that could flee or strike first`;
-      rationale.push(
-        `Play Order Priority: ${label(firstOrder.from)} → ${label(firstOrder.to)} is ${what}; ${contested ? mayHold(`player ${kill!.p}`) : `with the card it is my first order and runs before player ${kill!.p}'s first`}.`,
-      );
-    }
-    if (firstOrder === strikeOrder && contested) {
-      const r = rationale.findIndex((l) => l.startsWith("Play Order Priority: my commander's territory"));
-      if (r >= 0) rationale[r] = `${rationale[r]} ${mayHold(strikeWho)}.`;
-    } else if (firstOrder === strikeOrder && opts.movesFirst) {
-      // Rule 1s advised the card before it knew I move first: take that line back.
-      const r = rationale.findIndex((l) => l.startsWith("Play Order Priority: my commander's territory"));
-      if (r >= 0) rationale.splice(r, 1);
-      rationale.push("Order Priority is not needed for the strike: I move first this turn, so my first order already runs before any of the opponent's.");
-    }
-  }
-  // Each move out of a conceded border says where it stands: the protected first order, or early
-  // but possibly too late (the card protects one order only).
-  const top = firstOrder && conceded.has(firstOrder.from) ? label(firstOrder.from) : undefined;
-  for (let i = 0; i < warnings.length; i++) {
-    if (!CONCEDED_ORDER.test(warnings[i]!)) continue;
-    const head = warnings[i]!.replace(CONCEDED_ORDER, '');
-    const isTop = top !== undefined && (head.startsWith(`The withdrawal from ${top} only`) || head.startsWith(`The attack out of ${top} only`));
-    warnings[i] = !isTop
-      ? `${head}; it is listed early, but only my first order can run before the opponent's first, so it may come too late.`
-      : why === undefined
-        ? `${head}; play Order Priority: it is my first order, and the card runs it before the opponent's first.`
-        : `${head}; it is my first order (Order Priority not advised: ${why}).`;
-  }
-  const lasts = scheduled.filter((m) => lastWhy.has(m)).map((m) => lastWhy.get(m)!);
-  if (lasts.length || scheduled.some((m, i) => m !== decided[i])) {
-    rationale.push(
-      `Move order (#127): ${firstOrder ? `${label(firstOrder.from)} → ${label(firstOrder.to)} first; ` : ''}withdrawals and transfers into borders the enemy can break early, attacks that land even if the owner deploys there first next, uncontested captures and interior transfers as filler${lasts.length ? `, and last ${lasts.join('; ')}` : ''}.`,
-    );
-  }
-
-  // Where each move put last lands among the opponent's orders (two players only: with more,
-  // the interleave runs through every player). An Order Priority played (and not matched) makes me
-  // the first mover for the turn, whichever I was.
-  const foes = [
-    ...new Set([...state.values()].flatMap((st) => (st.owner.kind === 'player' && foe(st.owner.playerId) ? [st.owner.playerId] : []))),
-  ];
-  const lastMoves = scheduled.filter((m) => lastWhy.has(m));
-  if (foes.length === 1 && lastMoves.length) {
-    const p = foes[0]!;
-    const mover: MoverPosition =
-      opts.movesFirst === true || ps.cardAdvice === 'order-priority'
-        ? 'first'
-        : opts.movesFirst === false
-          ? 'second'
-          : 'unknown';
-    const orders = (ownedBy.get(p) ?? []).filter((t) => Math.max(0, armiesOf(t) - guard) + unitsAt(t) > 0).length;
-    const need = indexAfterAll(orders, mover);
-    const items = lastMoves.map((m) => {
-      const k = scheduled.indexOf(m) + 1;
-      const before =
-        mover === 'unknown'
-          ? `after ${opponentOrdersBefore(k, 'first')} of player ${p}'s orders if I move first, ${opponentOrdersBefore(k, 'second')} if it does`
-          : `after ${opponentOrdersBefore(k, mover)} of player ${p}'s orders (${mover === 'first' ? 'I move' : 'it moves'} first)`;
-      const short = need - k;
-      return `${label(m.to)} is my order ${k}: ${before}; player ${p} has ${orders} ${orders === 1 ? 'territory' : 'territories'} in view with armies to move, so it runs after them all${short > 0 ? ` from order ${need} (${short} more ${short === 1 ? 'order' : 'orders'} above it)` : ''}.`;
-    });
-    rationale.push(`Move position (#127): ${items.join(' ')}`);
-  }
-
-  const offenceList = [...offence.values()].map(({ bonusId, ...o }): OffenceEntry => {
-    // A strike attack's cost is what the final orders send (a top-up can raise it).
-    // The strike stack's own entry is final as built.
-    if (o.kind === 'strike') return o;
-    if (o.kind === 'strike-attack') return o.taken && captured.has(o.target) ? { ...o, cost: sentAt(o.target) || o.cost } : o;
-    // A bonus broken this turn is a break made, whichever member fell and whatever path took it.
-    const via = captured.has(o.target)
-      ? o.target
-      : bonusId !== undefined
-        ? bonusTerritories(g, bonusId).filter((x) => captured.has(x)).sort(byNum)[0]
-        : undefined;
-    if (via !== undefined)
-      return {
-        ...o,
-        target: via,
-        cost: sentAt(via) || o.cost,
-        taken: true,
-        why: via === o.target ? o.why : `already broken by the capture of ${label(via)}: ${o.why}`,
-      };
-    return {
-      ...o,
-      taken: false,
-      why: `not made — ${offenceSkip.get(o.target) ?? 'other uses of the income scored higher per army, or it could not be afforded'}: ${o.why}`,
-    };
-  });
-
-  // #172: how each territory in between that a two-step hold judged ends — kept (not conceded)
-  // and holding its own border with what the final orders leave there (its armies, deploys and
-  // every transfer in, less every order out) — for settledPass to check the pass against.
-  for (const v of pass.viaSeen.keys()) {
-    const b = borders.get(v);
-    const ends = moves.reduce((n, m) => n - (m.from === v ? m.armies : 0) + (m.kind === 'transfer' && m.to === v ? m.armies : 0), armiesOf(v) + (deployed.get(v) ?? 0));
-    pass.viaFinal.set(v, !conceded.has(v) && b !== undefined && (toTake(ends + unitsAt(v)) ?? Infinity) > b.threat);
-  }
-
-  // ---- #201: a break without an elimination invites retaliation (FFA) ----
-  // In an FFA a player whose bonus I break and leave standing aims what it has left at me; in a
-  // 1v1 it does anyway, so no warning there.
-  if (profile.format === 'ffa' && profile.opponents >= 2) {
-    for (const [p, ts] of [...ownedBy].sort((a, b) => a[0] - b[0])) {
-      if (!foe(p)) continue;
-      const broken = g.map.bonuses
-        .filter((b) => b.value > 0)
-        .filter((b) => {
-          const members = bonusTerritories(g, b.id);
-          return members.length > 0 && members.every((t) => ownerOf(t) === p) && members.some((t) => captured.has(t));
-        })
-        .sort((a, b) => a.id - b.id);
-      if (!broken.length) continue;
-      const left = ts.filter((t) => !captured.has(t));
-      if (!left.length && !fogEdge(p).length) continue;
-      const armies = left.reduce((n, t) => n + armiesOf(t), 0);
-      const value = broken.reduce((n, b) => n + b.value, 0);
-      warnings.push(
-        `Breaking player ${p}'s bonus${broken.length === 1 ? '' : 'es'} ${broken.map((b) => `${b.name} (+${b.value})`).join(', ')} without eliminating it invites retaliation (#201): it keeps ${left.length} territor${left.length === 1 ? 'y' : 'ies'} in view (${armies} armies)${fogEdge(p).length ? ' and more in the fog' : ''} and a ~${deployOf(p)} deploy, and loses +${value} a turn to me — in a free-for-all what it has left is likeliest aimed at whoever broke it.`,
-      );
-    }
-  }
-
-  // ---- #167: the exchange of each attack on a player ----
-  const exchanges: ExchangeView[] = moves.flatMap((m): ExchangeView[] => {
-    const st = state.get(m.to);
-    if (m.kind !== 'attack' || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) return [];
-    const p = st.owner.playerId;
-    const deploy = reinforcementAt(m.to);
-    // Its stack can hit my source: what stays there against its movable armies plus its deploy.
-    const take = toTake(stayAt(m.from) + unitsAt(m.from));
-    const threatensSource = take !== null && take <= Math.max(0, st.armies - guard) + unitsAt(m.to) + deployOf(p);
-    const x = classifyExchange({
-      attackers: m.armies,
-      defenders: defenceAt(m.to),
-      deploy,
-      income: Math.max(deploy, deployOf(p)),
-      threatensSource,
-      rates,
-    });
-    return [{ from: m.from, to: m.to, armies: m.armies, player: p, ...x }];
-  });
-  if (exchanges.length)
-    rationale.push(
-      `Exchange of attacks on players (#167): ${exchanges
-        .map((e) => {
-          const [now, est, whole] = e.cases as [ExchangeCase, ExchangeCase, ExchangeCase];
-          const at = (c: ExchangeCase) => `${c.captures ? 'takes' : `${c.net >= 0 ? '+' : ''}${c.net}`} against ${c.defenders}`;
-          return `${label(e.to)} from ${label(e.from)} with ${e.armies}: ${e.label} (${at(now)}, ${at(est)} after the estimated deploy, ${at(whole)} after the whole income)`;
-        })
-        .join('; ')}.`,
-    );
-
-  // ---- #179: turns to eliminate each visible opponent ----
-  const eliminateEta: Record<number, EliminateEta> = {};
-  {
-    const dist = new Map<number, number>(mine.map((t) => [t, 0] as const));
-    const queue = [...mine];
-    for (let i = 0; i < queue.length; i++) {
-      const x = queue[i]!;
-      for (const n of neighborsOf(g, x))
-        if (!dist.has(n)) {
-          dist.set(n, dist.get(x)! + 1);
-          queue.push(n);
-        }
-    }
-    const movable = mine.reduce((n, x) => n + Math.max(0, armiesOf(x) - guard), 0);
-    for (const [p, ts] of [...ownedBy].sort((a, b) => a[0] - b[0])) {
-      const distance = Math.max(...ts.map((t) => dist.get(t) ?? Infinity));
-      const base = ts.reduce((n, t) => n + (captureCost(defenceAt(t), s) ?? Infinity), 0);
-      if (!Number.isFinite(distance) || !Number.isFinite(base)) continue;
-      const need = (k: number) => base + (k * deployOf(p) > 0 ? (captureCost(k * deployOf(p), s) ?? Infinity) : 0);
-      let turns: number | null = null;
-      for (let k = Math.max(1, distance); k <= ETA_HORIZON && turns === null; k++) if (need(k) <= movable + income * k) turns = k;
-      const armies = need(turns ?? Math.max(1, distance));
-      eliminateEta[p] = { turns, atLeast: fogEdge(p).length > 0, distance, armies: Number.isFinite(armies) ? armies : null };
-    }
-  }
-
-  return {
-    goal,
-    profile,
-    // Deploys interleave like moves, and the order they land in shows the opponent my income and
-    // the move order: next to a visible enemy first, in the back after (ascending id within each).
-    deploys: [...deployed]
-      .filter(([, n]) => n > 0)
-      .sort((a, b) => Number(facesEnemy(b[0])) - Number(facesEnemy(a[0])) || a[0] - b[0])
-      .map(([territoryId, armies]) => ({ territoryId, armies })),
-    moves,
-    expected: {
-      captures: [...captured].sort(byNum),
-      bonusesCompleted: completed,
-      nextIncome,
-      ...(reportRisk ? { nextIncomeIfConcededFall: ifFall, bonusesAtRisk: atRisk } : {}),
-    },
-    warnings,
-    rationale,
-    enemyDeploy,
-    conceded: [...conceded].sort(byNum),
-    cardAdvice: ps.cardAdvice,
-    multiSourceCaptures: [...combined].sort(byNum),
-    frontier,
-    offence: offenceList,
-    moveSlots: moves.map((m) => SLOT_NAMES[slotOf(m)]!),
-    ...(exchanges.length ? { exchanges } : {}),
-    ...(Object.keys(eliminateEta).length ? { eta: { eliminate: eliminateEta } } : {}),
-    ...(exits.length ? { exits } : {}),
-  };
+  // ---- the plan: offence list, #172's final check, #201 retaliation, #167 exchanges, #179 ETAs (plan/report.ts) ----
+  return finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
 }
