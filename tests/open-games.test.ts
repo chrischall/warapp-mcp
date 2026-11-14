@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type Reader, Writer } from '../src/protocol/codec.js';
 import type { ReadBudget } from '../src/protocol/interp.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, MAX_OPEN_GAMES, OPEN_GAMES_URL, openGameOf, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
+import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, markJoined, MAX_OPEN_GAMES, OPEN_GAMES_URL, openGameOf, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
 import { liveHarness, payload, textOf, type Harness } from './helpers.js';
 import { MY_GAMES_BUNDLE, writeGameInfo, type SyntheticGame } from './protocol/my-games-bundle.js';
 
@@ -11,6 +11,7 @@ const bundle = new WarappBundle(MY_GAMES_BUNDLE, 'test');
 const WAITING = 2;
 const P_PLAYING = 2;
 const P_DECLINED = 5;
+const P_INVITED = 1;
 const DAY_MS = 86_400_000;
 
 /** Synthetic open games: made-up ids, names and players. */
@@ -181,6 +182,29 @@ describe('parseOpenGamesPage', () => {
     );
     expect(out.lobbies.get(2001)).toEqual({ seatedPlayerIds: [111111, 333333], colorsTaken: [4, 9] });
     expect(JSON.stringify(out.games)).not.toContain('colorsTaken');
+  });
+
+  it('an invited player holds no seat yet, but the seat kept for them counts in the size (#133)', () => {
+    const out = parseOpenGamesPage(
+      page(
+        payloadHex([
+          {
+            ...GAMES[0]!,
+            players: [
+              { id: 111111, name: 'Ann', state: P_PLAYING, committed: false },
+              { id: 222222, name: 'Gone', state: P_DECLINED, committed: false },
+              { id: 333333, name: 'Asked', state: P_INVITED, committed: false, color: 7 },
+            ],
+            openSeats: [-1, -1],
+          },
+        ]),
+      ),
+      bundle,
+    );
+    expect(out.lobbies.get(2001)).toEqual({ seatedPlayerIds: [111111], colorsTaken: [7] });
+    expect(out.games[0]).toMatchObject({ players: 1, openSeats: 2, seats: 4 });
+    expect(markJoined(out.games, out.lobbies, 333333)[0]).not.toHaveProperty('joined');
+    expect(markJoined(out.games, out.lobbies, 111111)[0]).toMatchObject({ joined: true });
   });
 
   it('names the settings flags it reads and the ones the planner does not model', () => {

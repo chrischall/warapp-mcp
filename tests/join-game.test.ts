@@ -6,7 +6,7 @@ import { OPEN_GAMES_URL } from '../src/open-games.js';
 import { UNTRUSTED_PREVIEW_NOTE } from '../src/tools/common.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { encodeStartupBytes } from '../src/join-color.js';
-import { writeGameInfo, writeInitParameters, type SyntheticAccount, type SyntheticGame } from './protocol/my-games-bundle.js';
+import { writeGameInfo, writeInitParameters, writeMyGamesReturn, type SyntheticAccount, type SyntheticGame } from './protocol/my-games-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -217,6 +217,28 @@ describe('warapp_join_game', () => {
     expect(p.status).toBe('unconfirmed');
     expect(p.outcome).toBe('unconfirmed');
     expect(String(p.warning)).toMatch(/could not confirm/i);
+  });
+
+  it('an invitation is not a seat: GameFeed listing the account as Invited does not confirm the join (#133)', async () => {
+    const s = joinServer(undefined, { [Method.GetMyGames]: () => ({ body: (w) => w.bool(false) }) });
+    const invited = feedGame(3001, true);
+    const players = invited.players as Array<Record<string, string>>;
+    players[1] = { ...players[1]!, state: 'Invited' };
+    h = await harness({ warapp: s.warapp, feed: [invited] });
+    const p = payload(await confirmed('warapp_join_game', { game_id: 3001 }));
+    expect(p.status).toBe('unconfirmed');
+  });
+
+  it('my games listing the account as Declined or Invited does not confirm the join; Playing does (#133)', async () => {
+    for (const [state, status] of [[5, 'unconfirmed'], [1, 'unconfirmed'], [2, 'joined']] as const) {
+      const lobby = { ...OPEN.plain!, players: [HOST, { id: ME.inGame, name: 'Me', state, committed: false }] };
+      const s = joinServer(undefined, { [Method.GetMyGames]: () => ({ body: (w) => writeMyGamesReturn(w, [lobby]) }) });
+      h = await harness({ warapp: s.warapp, feed: [feedGame(3001, false)] });
+      const p = payload(await confirmed('warapp_join_game', { game_id: 3001 }));
+      expect(p.status, `state ${state}`).toBe(status);
+      await h.harness.close();
+      h = undefined;
+    }
   });
 
   it('reports a vacation the join ended', async () => {

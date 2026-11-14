@@ -7,6 +7,7 @@
 // the game ends with when the AIs surrender to the last human (`endsWith`).
 
 import type { BoardState } from '../board.js';
+import { holdsSeat } from '../player-states.js';
 import { carriesTeam } from '../teams.js';
 import { armiesToTake } from './combat.js';
 import { neighborsOf, type MapGraph } from './graph.js';
@@ -136,8 +137,6 @@ export interface FfaRanking {
   players: { playerId: number; armies: number; income: number; strength: number }[];
 }
 
-/** Player states that never held a seat: they did not start the game. */
-const NEVER_SEATED = new Set(['Invited', 'Declined', 'RemovedByHost']);
 const playing = (p: ProfilePlayer) => (p.state ?? 'Playing') === 'Playing';
 
 function luckPercent(v: number | undefined): number {
@@ -166,7 +165,7 @@ export function gameProfile(input: ProfileInput): GameProfile {
   const ally = (id: number) =>
     id === me || (teams && carriesTeam(myTeam) && players.find((p) => p.id === id)?.team === myTeam);
   const opponents = players.filter((p) => !ally(p.id) && playing(p)).length;
-  const started = players.filter((p) => !NEVER_SEATED.has(p.state ?? 'Playing')).length;
+  const started = players.filter((p) => holdsSeat(p.state)).length;
   const format: GameFormat = teams ? 'teams' : opponents <= 1 ? '1v1' : 'ffa';
   // #178: who is human, and who the game ends with when the AIs surrender to the last human.
   const machine = (p: ProfilePlayer) => p.isAI === true || p.humanTurnedIntoAI === true;

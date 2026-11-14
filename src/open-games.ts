@@ -21,6 +21,7 @@ import type { GameSettings } from './normalize.js';
 import { Reader } from './protocol/codec.js';
 import { fields, isObj } from './protocol/decoded.js';
 import type { ReadBudget } from './protocol/interp.js';
+import { holdsSeat, playerStateName } from './player-states.js';
 import { carriesTeam } from './teams.js';
 
 export const OPEN_GAMES_URL = 'https://war.app/MultiPlayer/OpenGames';
@@ -54,8 +55,6 @@ const GI_MIN_FIELDS = 23;
 /** GameInfoPlayer: the colour (an optional GameColor), the in-game id, the state (GamePlayerState) and the team. */
 const GP = { color: 0, id: 6, state: 7, team: 8 } as const;
 const GP_MIN_FIELDS = 9;
-/** Player states not holding a seat: Declined, RemovedByHost. */
-const NOT_SEATED = new Set([5, 6]);
 
 /** GameInfoSettings field positions in read order. */
 const GS = {
@@ -108,10 +107,10 @@ export interface OpenGame {
   /** The boot time, e.g. `3d`, `1d12h`, `5m`; absent when it is "never". */
   bootTime?: string;
   bootTimeMinutes?: number;
-  /** Players holding a seat (declined and removed players excluded). */
+  /** Players holding a seat (invited, declined and removed players excluded: src/player-states.ts). */
   players: number;
   openSeats: number;
-  /** players + openSeats. */
+  /** players + the seats kept for invited players + openSeats. */
   seats: number;
   /** A mega game's player cap. */
   maxPlayers?: number;
@@ -282,6 +281,8 @@ interface LobbyPlayer {
   id: number;
   team: number;
   seated: boolean;
+  /** An invitation not yet accepted: no seat yet, but one is kept for them. */
+  invited: boolean;
   /** The GameColor index, or null when the player has none. */
   color: number | null;
 }
@@ -295,7 +296,8 @@ function lobbyPlayer(p: unknown): LobbyPlayer | undefined {
   const team = f[GP.team];
   const color = colorIndexOf(f[GP.color]);
   if (f.length < GP_MIN_FIELDS || !isInt(id) || !isInt(state) || !isInt(team)) return undefined;
-  return { id, team, seated: !NOT_SEATED.has(state), color: color ?? null };
+  const name = playerStateName(state);
+  return { id, team, seated: holdsSeat(name), invited: name === 'Invited', color: color ?? null };
 }
 
 /** One decoded GameInfo as an open game; `undefined` when the record does not fit. */
@@ -319,6 +321,7 @@ function readOpenGame(record: unknown): { game: OpenGame; lobby: OpenLobby } | u
   const openSeatTeams = seats ?? [];
   const all = (players ?? []).map(lobbyPlayer).filter((p): p is LobbyPlayer => p !== undefined);
   const seated = all.filter((p) => p.seated);
+  const invited = all.filter((p) => p.invited).length;
   const randomTeamsOf = f[GI.randomTeamsOf];
   const random = isInt(randomTeamsOf) && randomTeamsOf > 0 ? randomTeamsOf : undefined;
   // The client's own test (its "Team Game" settings icon): random teams, or any player
@@ -335,7 +338,7 @@ function readOpenGame(record: unknown): { game: OpenGame; lobby: OpenLobby } | u
     pace: realTime ? 'real-time' : 'multi-day',
     players: seated.length,
     openSeats: openSeatTeams.length,
-    seats: seated.length + openSeatTeams.length,
+    seats: seated.length + invited + openSeatTeams.length,
     teamGame,
     mapId,
     entryFeeCoins: isInt(f[GI.entryFee]) ? (f[GI.entryFee] as number) : 0,

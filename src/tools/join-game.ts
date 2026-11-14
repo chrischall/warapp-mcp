@@ -24,11 +24,10 @@ import { mintMeta } from './hints.js';
 import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
 import { openGamesPage } from './open-games.js';
+import { holdsSeat, playerStateName } from '../player-states.js';
 import { NO_TEAM } from '../teams.js';
 import { accountUnknown, defineGatedWrite, refuse, sendAndVerify } from './write-kit.js';
 
-/** GameFeed player states that do not hold a seat. */
-const NOT_SEATED = new Set(['Declined', 'RemovedByHost']);
 /** war.app's "already in the game" code: the client treats it as a successful join. */
 const ALREADY_JOINED = 121;
 /** war.app's generic assertion failure; with "color is null" it is a join sent without a colour. */
@@ -173,14 +172,14 @@ async function confirmSeated(ctx: LiveContext, gameId: number): Promise<boolean>
   if (token !== undefined) {
     try {
       const game = await ctx.client.getGame(gameId, { map: false });
-      if (game.players.some((p) => p.id === token && !NOT_SEATED.has(p.state ?? ''))) return true;
+      if (game.players.some((p) => p.id === token && holdsSeat(p.state))) return true;
     } catch {
       // No GameFeed credentials or a failed read: try the web client's list.
     }
   }
   try {
     const { me, games } = await fetchMyGames(ctx);
-    return games.some((g) => g.id === gameId && g.players.some((p) => p.id === me));
+    return games.some((g) => g.id === gameId && g.players.some((p) => p.id === me && holdsSeat(playerStateName(p.stateCode))));
   } catch {
     return false;
   }

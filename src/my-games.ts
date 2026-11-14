@@ -10,6 +10,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { ClassReader } from './live.js';
 import type { Reader } from './protocol/codec.js';
+import { playerStateName } from './player-states.js';
 import { fields, isObj } from './protocol/decoded.js';
 
 export const MY_GAMES_RETURN = 'warlight.shared.MyGamesReturn';
@@ -26,18 +27,6 @@ export const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
 const GAME_PLAYING = 3;
 const GAME_DISTRIBUTING = 5;
 
-/** GamePlayerState. */
-export const PLAYER_STATE_NAMES: Readonly<Record<number, string>> = {
-  1: 'Invited',
-  2: 'Playing',
-  3: 'Eliminated',
-  4: 'Won',
-  5: 'Declined',
-  6: 'RemovedByHost',
-  7: 'SurrenderAccepted',
-  8: 'Booted',
-  9: 'EndedByVote',
-};
 const PLAYER_PLAYING = 2;
 
 /** GameInfo field positions in read order. */
@@ -150,7 +139,7 @@ export function summarizeMyGames(games: readonly RawMyGame[], myInGameId: number
       waitingOnYou: active && me !== undefined && me.stateCode === PLAYER_PLAYING && !me.committed,
       players: g.players.map((p) => ({
         name: p.name,
-        state: PLAYER_STATE_NAMES[p.stateCode] ?? String(p.stateCode),
+        state: playerStateName(p.stateCode),
         committed: p.committed,
       })),
     };

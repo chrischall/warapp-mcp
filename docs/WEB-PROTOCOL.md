@@ -451,8 +451,10 @@ applies the same test (it used to skip declined players' teams).
 
 **Already joined.** `warapp_list_open_games` marks `joined: true` on a lobby where the signed-in
 account (its invite token, minus the check digits — as every live tool finds "me") holds a seat
-(a player record with its in-game id, not declined or removed); `warapp_join_game` refuses such a
-lobby up front.
+(a player record with its in-game id that is not invited, declined or removed — the one test in
+`src/player-states.ts`, shared with the join read-back and the game profile); `warapp_join_game`
+refuses such a lobby up front. A seat kept for an invited player is no player yet but counts in the
+lobby's `seats`.
 
 The page hides games the account fails the prerequisites for and says so in its text
 ("N games are being hidden due to prerequisites"); that count is reported when present.
