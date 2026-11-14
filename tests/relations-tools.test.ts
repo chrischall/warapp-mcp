@@ -573,6 +573,7 @@ describe('warapp_submit_turn — breaking a truce (B2)', () => {
     payload(await record({ with: 'Bob', status: 'agreed' }));
     const preview = payload<{ confirmToken: string; preview: { warnings: string[] } }>(await submit({ break_agreement: true }));
     expect(preview.preview.warnings.join('\n')).toMatch(/agreement a1 with player \d+ \(active\).*break_agreement is true: once these orders are committed the ledger records it broken-by-me/);
+    expect(preview.preview.warnings.join('\n')).toMatch(/That is final: withdrawing the orders afterwards \(warapp_uncommit_turn\) does not undo it\./);
     expect(sent).toEqual([]);
     const done = payload<{ status: string; outcome: string; agreementsBroken: Array<{ agreement: string; ledger: string; playerRecord?: string }> }>(
       await submit({ break_agreement: true, confirmToken: preview.confirmToken }),

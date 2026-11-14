@@ -1886,7 +1886,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         if (breaks.length)
           warnings.unshift(
             `${breaksText(breaks, moves)}. break_agreement is true: once these orders are committed the ledger records ` +
-              `${breaks.length === 1 ? 'it' : 'them'} broken-by-me, and the partner's player record says so.`,
+              `${breaks.length === 1 ? 'it' : 'them'} broken-by-me, and the partner's player record says so. That is final: ` +
+              'withdrawing the orders afterwards (warapp_uncommit_turn) does not undo it.',
           );
         warnings.push(...options.warnings);
         warnings.push(
