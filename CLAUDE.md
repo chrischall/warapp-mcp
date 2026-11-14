@@ -157,11 +157,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Leaving a lobby is `DeclineGame` (64) via `warapp_leave_game`, confirm-gated** (#217): the lobby's
   Decline button, also how a seated player leaves a game still `WaitingForPlayers`. Its parameters
   (the int32 game id, then a "mod hooks the decline" bool sent false) are read from the bundle's writer
-  and golden-pinned, NOT yet verified live. It refuses a started game (surrender instead), a seat the
+  and golden-pinned; **verified live 2026-11-14** for a seat taken through an open seat (an invited
+  seat and a hosted bridge run are not yet checked). It refuses a started game (surrender instead), a seat the
   account does not hold, and mod games; reports `left` only once GameFeed (else a `GetMyGames` entry)
   shows the seat given up — never from the reply, whose bool means "your chat was removed"; a transport
-  failure is `unknown`, never retried. 17 and 7 are read back (the client swallows them); 191 (your own
-  open game), 88 and 4 are refusals.
+  failure is `unknown`, never retried. 17, 4 and 7 are read back from game state (the client swallows
+  them); 191 (your own open game) and 88 are refusals. After a leave GameFeed refuses the game ("This API
+  can only be used for games you are in…"), which confirms it.
 - **A lottery is read from the data, never the name** (#217, `lotteryOf` in `src/open-games.ts`): a
   map of at most `LOTTERY_MAX_TERRITORIES` (4) territories is one; base income 0 with overridden
   bonuses and the map size unread is a likely one (`lottery: null`, unchecked in the policy, not a

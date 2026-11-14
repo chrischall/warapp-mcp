@@ -96,7 +96,7 @@ string email                  the signed-in account's email
 | 61 | **AcceptOpenSeat** | take an open seat — see [Open games](#open-games) |
 | 62 | AcceptOpenAutoGame | not used |
 | 63 | GetOpenAutoGame | not used |
-| 64 | **DeclineGame** | params: int32 gameId, bool modHook — read from the bundle, not verified live; see [DeclineGame](#declinegame-leaving-a-lobby) |
+| 64 | **DeclineGame** | params: int32 gameId, bool modHook — read from the bundle, **verified live 2026-11-14** (open-seat lobby); see [DeclineGame](#declinegame-leaving-a-lobby) |
 | 67 | **Surrender** | params: int32 gameId, bool surrender, bool false — see [Surrender](#surrender) |
 | 68 | AcceptSurrender | accept another player's pending surrender (not used) |
 | 73 | GetMapDetails | no auth; params: int32 mapId |
@@ -581,7 +581,7 @@ encoder is pinned by a golden test built from synthetic ids.
 
 ## DeclineGame (leaving a lobby)
 
-**UNVERIFIED live: read from the client bundle's writer.** The lobby's Decline button (`LobbyVM`)
+**Verified live 2026-11-14** (read from the client bundle's writer): `warapp_leave_game` left a 36-seat lobby joined through an open seat — `{status: left, outcome: confirmed}`, and GameFeed then answered that game id with "This API can only be used for games you are in…" (which the tool takes as confirmation). Not yet checked: a seat taken by invitation, and a hosted (bridge) run. The lobby's Decline button (`LobbyVM`)
 sends `DeclineGame` (64), `POST /Services?m=DeclineGame&js=1` through `WarappRpc`. It is enabled for
 a seat that is `Invited` or `Playing` in a game still `WaitingForPlayers` (not for ladder or
 tournament games), so it is both "decline an invitation" and "leave a game I joined". After the
@@ -602,9 +602,8 @@ game with the account's seat given up (a game missing from that paged list prove
 client first warns that declining leaves the teammates a player short; the preview says so.
 Error codes, with the client's handling: **191** `CannotDeclineYourOwnOpenGame` (delete it
 instead); **88** the game was deleted; **17** `NotInGame`, **4** and **7** `InvalidPlayerState` are
-swallowed by the client. The tool reads back after 17 and 7 (the seat may already be gone) and words
-4 as "the game has already begun". The encoder is pinned by a golden test built from synthetic ids;
-the owner verifies it live.
+swallowed by the client. The tool reads back after 17, 4 and 7 (the seat may already be gone) rather than guessing a
+wording for them. The encoder is pinned by a golden test built from synthetic ids.
 
 ## Push channel (socket.io)
 

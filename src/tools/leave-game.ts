@@ -1,7 +1,7 @@
 // warapp_leave_game: give up the signed-in account's seat in a game that has not started
 // (`WaitingForPlayers`) with the web client's DeclineGame (method 64) — the lobby's Decline
 // button, gated on the user's confirmation (#217). The encoding is read from the client bundle's
-// writer, NOT verified live (docs/WEB-PROTOCOL.md "DeclineGame"). The game is read from GameFeed
+// writer, verified live 2026-11-14 for an open-seat lobby (docs/WEB-PROTOCOL.md "DeclineGame"). The game is read from GameFeed
 // first (refused once started, for a seat the account does not hold, and for mod games), and the
 // leave is reported only once GameFeed (else GetMyGames) shows the account no longer seated —
 // never from the reply, whose one bool says whether war.app removed the account's chat.
@@ -34,7 +34,7 @@ const LEAVE_ERRORS: Readonly<Record<number, string>> = {
 };
 /**
  * NotInGame and the codes the client swallows (4, 7): the seat may already be gone, so game
- * state decides rather than a guessed wording (the encoding is unverified live).
+ * state decides rather than a guessed wording.
  */
 const READ_BACK_ERRORS = new Set([17, 4, 7]);
 
@@ -113,8 +113,8 @@ export function registerLeaveGameTool(server: McpServer, ctx: LiveContext): void
       name: 'warapp_leave_game',
       description:
         'Leave a war.app (Warzone) game that has not started — a lobby still WaitingForPlayers — giving up your ' +
-        "seat (war.app's DeclineGame, the lobby's Decline button; the encoding is read from the war.app client, " +
-        'not yet verified live). Refuses a game that has started (surrender it with warapp_surrender), a lobby you ' +
+        "seat (war.app's DeclineGame, the lobby's Decline button; verified live for a lobby joined through an open " +
+        'seat). Refuses a game that has started (surrender it with warapp_surrender), a lobby you ' +
         'hold no seat in, and mod games. Always as the signed-in war.app account; reported `left` only once ' +
         'GameFeed (or your games list) no longer shows you seated — `unconfirmed` otherwise, or `unknown` when ' +
         `war.app did not answer (never resend blindly). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,

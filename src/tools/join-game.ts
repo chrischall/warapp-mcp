@@ -202,7 +202,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
         'pass); the preview shows which, plus a screen from the lobby\'s GameFeed settings (does the cheapest ' +
         'neutral cost at most one turn of base income; Light Fog) and `policy`: whether the lobby keeps the ' +
         'joining policy (no Commerce, mods or custom scenarios; that cheap neutral; at most four seats; a boot time ' +
-        'of at least a day; no lottery — `lottery`, read from the data as warapp_list_open_games does) — advisory, the join is not refused for it. You become a player and are expected ' +
+        'of at least 12 hours; no lottery — `lottery`, read from the data as warapp_list_open_games does) — advisory, the join is not refused for it. You become a player and are expected ' +
         'to take turns — leaving later means declining or being booted.' +
         `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
