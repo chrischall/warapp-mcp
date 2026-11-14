@@ -630,7 +630,9 @@ export function stressPlan(input: StressInput): StressReport {
         deploy: c.deploy,
         sent: out?.sent ?? 0,
         took,
-        escaped: took ? end!.armies : 0,
+        // What got away: a capture's survivors are all arrivals; a transfer into its own territory
+        // joins armies already there, so only what it sent counts (at most what stands there now).
+        escaped: !took ? 0 : out!.result === 'transferred' ? Math.min(out!.sent, end!.armies) : end!.armies,
         commander: took && end!.commander === c.player,
         strikes: r.log.filter((e) => e.player === me && e.to === stack).map((e) => ({ from: e.from, result: e.result, sent: e.sent })),
         harmful: theyFirst.harmful,

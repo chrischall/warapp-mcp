@@ -107,10 +107,11 @@ describe('stressPlan: dodge (#180)', () => {
   });
 
   it('lists a dodge into its own territory as an escape that costs me nothing', () => {
-    // Its own 4 behind it: the stack steps back, my strike takes 3 from the guard.
+    // Its own 4 behind it: the stack steps back, my strike takes 3 from the guard. Its 5 + 5 deployed
+    // send 9 (the guard stays); the 1 already on 4 did not get away, so 9 escaped, not the 10 there.
     const r = stress(LINE, [mine(1, 2), mine(2, 20), foe(3, 5), foe(4, 1)], { moves: strike });
     const own = r.dodges.find((x) => x.exit === 4)!;
-    expect(own).toMatchObject({ exitOwner: 'own', took: true, escaped: 10, harmful: false, strikes: [{ from: 2, result: 'captured', sent: 19 }] });
+    expect(own).toMatchObject({ exitOwner: 'own', took: true, sent: 9, escaped: 9, harmful: false, strikes: [{ from: 2, result: 'captured', sent: 19 }] });
   });
 
   it('says when its commander gets away with it', () => {
