@@ -150,6 +150,67 @@ describe('#201: behind, holds are sized for the expected attack', () => {
     expect(p.warnings.join('\n')).not.toMatch(/Behind \(#201\)/);
   });
 
+  it('names a gambled border even after a what-if re-judge of it (the line reads how the border is sized)', () => {
+    // A four-player FFA, found by a randomized sweep: player 20's T2 grew 1 → 16 (+15 a turn, above
+    // its ~5 deploy), so my T1 is sized for the expected ~29 (24 movable + 5), not the worst-case
+    // ~39. The plan leaves it holding the first, not the second: a gamble, and the plan names it,
+    // though later hypothetical re-judges of T1 (what holds once a capture lands) ran in between.
+    const g5 = buildGraph(
+      makeMap(
+        Array.from({ length: 16 }, (_, k) => k + 1),
+        [
+          [1, 2],
+          [1, 7],
+          [2, 3],
+          [2, 4],
+          [2, 5],
+          [2, 14],
+          [3, 9],
+          [3, 11],
+          [4, 6],
+          [4, 8],
+          [4, 16],
+          [6, 9],
+          [6, 10],
+          [6, 11],
+          [6, 12],
+          [7, 15],
+          [9, 13],
+        ],
+        [
+          [1000, 5, [3, 4, 5]],
+          [1001, 6, [10, 11]],
+          [1002, 4, [6, 7, 8]],
+          [1003, 5, [15, 16, 1, 2]],
+        ],
+      ),
+    );
+    const rows = (a: [number, number | 'neutral' | 'unknown', number | null][]): TerritoryState[] =>
+      a.map(([id, o, armies]) =>
+        o === 'neutral'
+          ? neutral(id, armies!)
+          : o === 'unknown'
+            ? { territoryId: id, owner: { kind: 'unknown' }, armies: null }
+            : { ...enemy(id, armies!, o), ...(id === 3 ? { fogLevel: 'OwnerOnly' as const } : {}) },
+      );
+    const p = planTurn({
+      graph: g5,
+      board: board(rows([[1, 10, 18], [2, 20, 16], [3, 30, 2], [4, 40, 5], [5, 30, 70], [6, 40, 4], [7, 20, 8], [8, 40, 23], [9, 10, 17], [10, 40, 8], [11, 10, 7], [12, 'neutral', 3], [13, 'unknown', null], [14, 'neutral', 0], [15, 30, 7], [16, 30, 78]])),
+      previousBoard: board(rows([[1, 10, 18], [2, 20, 1], [3, 30, 1], [4, 40, 1], [5, 30, 70], [6, 40, 1], [7, 20, 1], [8, 40, 21], [9, 10, 17], [10, 40, 1], [11, 10, 7], [12, 'neutral', 3], [13, 'unknown', null], [14, 'neutral', 0], [15, 30, 1], [16, 30, 75]])),
+      me: ME,
+      income: 6,
+      settings: { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: false, luckModifier: 0.16 },
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }, { id: 40 }], turn: 21, cards: true, fog: 'LightFog', reinforcement: { firstTurn: 6, armies: 8, turnsPerCard: null } },
+      options: { adapt: true, rememberedNeutrals: new Map([[13, 3], [14, 0]]), cardPieceValue: 5.74 },
+    });
+    expect(p.profile.standing).toBe('behind');
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/T1 \(#1\) \(18 armies\) could be taken next turn: player 20 has 24 movable armies next to it plus ~15/);
+    expect(w).toMatch(
+      /Behind \(#201\): the borders facing player 20 [^\n]*Gambled: T1 \(#1\) \(it holds against the expected ~29, not the worst-case ~39 at its growth of ~15 a turn\)/,
+    );
+  });
+
   it('in an FFA the expected attack is the largest over every adjacent player, never below a stack next to it', () => {
     // T1 faces player 20's 3 on T2 (2 movable + its ~15 deploy) and player 30's 9 on T7 (8 movable
     // + ~5): the expected attack on T1 is the larger, ~17, and no border is gambled below 8.

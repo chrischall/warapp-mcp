@@ -115,6 +115,22 @@ describe('#201: absorb a smaller neighbour only when it closes the gap to the le
     expect(p.rationale.join('\n')).toMatch(/Absorb player 20 \(#201\): its ~5 income brings mine from 5 to 10, matching leader player 30's ~9\./);
   });
 
+  it('claims an absorption only when an attack on that player is made', () => {
+    // The same income test passes, but player 20's 30 on T2 are more than my 40 on T1 can take:
+    // no attack on it, so no "Absorb" line either.
+    const p = planTurn({
+      graph: buildGraph({ ...g.map, bonuses: [{ id: 803, name: 'B803', value: 4, territoryIds: [3, 4, 5], bonusIds: [] }] }),
+      board: board([mine(1, 40), enemy(2, 30, 20), enemy(3, 40, 30), enemy(4, 30, 30), enemy(5, 30, 30), neutral(6, 2)]),
+      me: ME,
+      income: 5,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
+      options: { adapt: true },
+    });
+    expect(attacks(p).some((m) => m.to === 2)).toBe(false);
+    expect(p.rationale.join('\n')).not.toMatch(/Absorb player 20/);
+  });
+
   it('a smaller player holding a unit the board gives no strength for is judged the same way', () => {
     // Player 20 also holds T7 beside my T1, with a custom unit: it cannot be finished off this turn,
     // but absorbing it still would not catch the leader, so its counted T2 is not attacked either.

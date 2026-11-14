@@ -2944,6 +2944,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const spared = new Set<number>();
   /** #201: players left standing because absorbing them would not catch the leader. */
   const unabsorbed = new Set<number>();
+  /** #201: the "Absorb player …" line per player, dropped when no attack on that player is made. */
+  const absorbLines = new Map<number, string>();
   const captured = new Set<number>();
   /** Targets taken by a combined (multi-source) capture. */
   const combined = new Set<number>();
@@ -3648,19 +3650,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const borders = new Map<number, Border>();
   /** Every visible enemy player with a stack next to one of my territories. */
   const facing = new Set<number>();
-  /** The strongest visible enemy threat to my `t` (territories in `gone` excluded), or `null` with none next to it. */
   /**
-   * #201: borders sized for the expected attack (behind): the worst case each is not sized for, and
-   * the growth per turn behind it.
+   * The strongest visible enemy threat to my `t` (territories in `gone` excluded), or `null` with none
+   * next to it. Pure: callers judge hypothetical boards with it, so what a border is actually sized
+   * for (its `worst` included, #201) is read from `borders`, never from a side table.
    */
-  const gambled = new Map<number, { player: number; worst: number; expected: number; growth: number }>();
   const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
     const f = forceAt(t, gone, { trend: true, allPlayers: true });
-    // No enemy next to it any more (a capture re-judged it): nothing gambled there either.
-    if (!f) {
-      gambled.delete(t);
-      return null;
-    }
+    if (!f) return null;
     // #201, behind: sized for the expected attack (#59's {@link expectedAt}: every adjacent player's
     // movable armies next to it plus its whole deploy estimate, the largest of them), not the worst
     // case — the trend projection above the deploy. The deploy is counted in full on each border, so
@@ -3671,12 +3668,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // territory (rule 1k holds it against the whole deploy), nor an `enemyDeploy` override.
     if (holdPasses === 'expected' && !myCommanders.has(t) && !f.split && !f.chain && !bombOn && !custom) {
       const e = forceAt(t, gone, { trend: false, allPlayers: true });
-      if (e && !e.split && !e.chain && e.threat < f.threat) {
-        gambled.set(t, { player: f.player, worst: f.threat, expected: e.threat, growth: f.growth });
-        return { id: t, ...f, threat: e.threat, worst: f.threat };
-      }
+      if (e && !e.split && !e.chain && e.threat < f.threat) return { id: t, ...f, threat: e.threat, worst: f.threat };
     }
-    gambled.delete(t);
     return { id: t, ...f };
   };
   for (const t of mine) {
@@ -6871,9 +6864,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (!mineRow || !theirs || !lead || theirs.strength >= mineRow.strength) return true;
       const with_ = income + theirs.income;
       if (with_ >= lead.income) {
-        rationale.push(
-          `Absorb player ${p} (#201): its ~${theirs.income} income brings mine from ${income} to ${with_}, matching leader player ${lead.playerId}'s ~${lead.income}.`,
-        );
+        // Said once, and kept only when an attack on player `p` is made (checked once the orders are final).
+        if (!absorbLines.has(p)) {
+          const line = `Absorb player ${p} (#201): its ~${theirs.income} income brings mine from ${income} to ${with_}, matching leader player ${lead.playerId}'s ~${lead.income}.`;
+          absorbLines.set(p, line);
+          rationale.push(line);
+        }
         return true;
       }
       unabsorbed.add(p);
@@ -9700,6 +9696,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (text.trim()) rationale[i] = text;
     else rationale.splice(i, 1);
   }
+  // #201: an absorption is claimed only where an attack on that player is made.
+  for (const [p, line] of absorbLines) {
+    const owned = (t: number) => {
+      const o = state.get(t)?.owner;
+      return o?.kind === 'player' && o.playerId === p;
+    };
+    if (moves.some((m) => m.kind === 'attack' && owned(m.to))) continue;
+    const i = rationale.indexOf(line);
+    if (i >= 0) rationale.splice(i, 1);
+  }
   if (frontier.enemyBorders)
     rationale.push(
       `Frontier after this plan: ${frontier.borders} borders, ${frontier.enemyBorders} facing an enemy, needing ${frontier.holdCost} next turn to hold at the expected deploy (next income ${nextIncomeText}); every capture's score paid for the borders it adds.`,
@@ -9707,8 +9713,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // #201, behind: the borders sized for the expected attack, per player — what that gambles.
   {
+    // Read from `borders`, the sizing the plan used (re-judged after captures), never from a
+    // hypothetical re-judge: the expected attack is the border's `threat`, the worst case its `worst`.
+    const gambled = new Map<number, { player: number; worst: number; expected: number; growth: number }>();
+    for (const b of borders.values())
+      if (b.worst !== undefined) gambled.set(b.id, { player: b.player, worst: b.worst, expected: b.threat, growth: b.growth });
     const byPlayer = new Map<number, number[]>();
-    for (const [id, x] of gambled) if (mineSet.has(id) && borders.has(id) && !conceded.has(id)) byPlayer.set(x.player, [...(byPlayer.get(x.player) ?? []), id]);
+    for (const [id, x] of gambled) if (mineSet.has(id) && !conceded.has(id)) byPlayer.set(x.player, [...(byPlayer.get(x.player) ?? []), id]);
     for (const [p, ids] of [...byPlayer].sort((a, b) => a[0] - b[0])) {
       // Gambled: holds against the expected attack as the plan leaves it, not against the worst case.
       // One short of even the expected attack is no gamble (its threat warning says so).
