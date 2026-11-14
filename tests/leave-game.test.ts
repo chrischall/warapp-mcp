@@ -238,6 +238,15 @@ describe('warapp_leave_game (#217)', () => {
     expect(s.sent).toEqual([]);
   });
 
+  it('confirms left when GameFeed then refuses the game as one I am not in (seen live, #217)', async () => {
+    const s = leaveServer();
+    const refused = { error: 'This API can only be used for games you are in, tournament games, or open games' };
+    h = await harness([SEATED, SEATED, refused as unknown as Record<string, unknown>], s.warapp);
+    const p = payload(await confirmed({ game_id: GAME_ID }));
+    expect(p.status).toBe('left');
+    expect(p.outcome).toBe('confirmed');
+  });
+
   it('a transport failure is unknown and never resent', async () => {
     let calls = 0;
     h = await harness([SEATED], () => {

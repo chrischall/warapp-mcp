@@ -74,6 +74,9 @@ function leavable(game: Game, token: number): Player {
   return seat;
 }
 
+/** GameFeed's answer for a game the account is no longer in (seen live after a leave, #217). */
+const NOT_IN_GAME = /can only be used for games you are in/i;
+
 /**
  * Whether game state shows account `me` (its GameFeed id) out of the game: GameFeed listing it
  * with no seat (declined) or not at all, else GetMyGames listing the game with its seat given up.
@@ -84,8 +87,11 @@ async function confirmLeft(ctx: LiveContext, gameId: number, me: number): Promis
     const game = await ctx.client.getGame(gameId, { map: false });
     const seat = game.players.find((p) => p.id === me);
     return !seat || !holdsSeat(seat.state);
-  } catch {
-    // No GameFeed credentials or a failed read: try the web client's list.
+  } catch (e) {
+    // Seen live (#217): once the seat is given up, GameFeed refuses the game outright ("This API
+    // can only be used for games you are in, tournament games…") instead of listing me as gone.
+    if (e instanceof Error && NOT_IN_GAME.test(e.message)) return true;
+    // No GameFeed credentials or another failed read: try the web client's list.
   }
   try {
     const { me: inGame, games } = await fetchMyGames(ctx);
