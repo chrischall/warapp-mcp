@@ -366,5 +366,5 @@ describe('order legality on seeded random boards (#133)', () => {
     expect(attacks).toBeGreaterThan(CASES);
     expect(certain).toBeGreaterThan(CASES / 4);
     expect(problems.slice(0, 20)).toEqual([]);
-  }, 60_000);
+  }, 240_000); // ~7 s alone, past 60 s beside the full suite on a CI runner (#221 timed out at 63.6 s)
 });
