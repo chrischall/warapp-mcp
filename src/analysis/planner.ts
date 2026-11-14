@@ -808,7 +808,10 @@
 //     goes to a conceded border. #215: armies withdrawn into a border (rule 1b) land by my own
 //     order, after the opponent's first attack when it moves first, so unless `movesFirst` the
 //     leftover makes each open border that falls without them hold on its own ("so it holds
-//     whoever moves first", most protected value first, only when it can afford the whole hold;
+//     whoever moves first", most protected value first, only when it can afford the whole hold —
+//     #215 review: then its own orders have not run either, so the armies it sends out still
+//     stand and only the withdrawal less those is left out (`lateNet`), and it never spends what
+//     another open border needs to hold the opponent's first order;
 //     after #121's hold after all below, when that runs: a conceded border falls whoever moves
 //     first, this one only if the opponent does),
 //     and a border's keep (`keepFor`: what a capture, a top-up or rule 4e's fallback may not spend)

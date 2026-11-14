@@ -31,7 +31,7 @@ import {
 } from './shared.js';
 import type { MoveSlot } from '../schedule.js';
 import type { Captures } from './captures.js';
-import { knownFirst, lateArrivals, withdrawnInto, type Holds } from './holds.js';
+import { knownFirst, lateArrivals, lateNet, withdrawnInto, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { LeadBlock, Targets } from './targets.js';
@@ -350,13 +350,15 @@ export function reportOffence(
     const after = borderAt(id, (x) => captured.has(x));
     if (late + idle <= 0 || !after) return null;
     const threat = Math.min(atStart, after.worst ?? after.threat);
-    const own = stayAt(id) - late + unitsAt(id);
+    const base = stayAt(id) - late + unitsAt(id);
+    // #215 review: when the opponent moves first, its own orders have not run either (lateNet).
+    const own = stayAt(id) - lateNet(pc, ps, id) + unitsAt(id);
     // #215 review: moving first, only my first order runs before the opponent's first (the zigzag),
     // so with idle transfers in, only one move into it can land in time: the largest. (Withdrawals
     // alone keep #127's reading — the withdrawal is scheduled as my first order.)
     const first = idle > 0 ? [...into].sort((a, b) => b.armies - a.armies || a.from - b.from)[0]! : null;
     const inTime = first ? first.armies : late;
-    if ((toTake(own + inTime) ?? Infinity) <= threat || (toTake(own) ?? Infinity) > threat) return null;
+    if ((toTake(base + inTime) ?? Infinity) <= threat || (toTake(own) ?? Infinity) > threat) return null;
     let d = 0;
     while ((toTake(own + d) ?? Infinity) <= threat) d++;
     // Known to move first, the one transfer that can land in time is named even when it is alone.
@@ -412,7 +414,9 @@ export function reportOffence(
     const skip = f.idle > 0 ? undefined : ps.firstOnlySkip.get(id);
     const fix =
       skip === 'order'
-        ? 'No-Split sends every army of its own with its order, deploys included, so no deploy there holds it whoever moves first'
+        ? // #215 review: its own count includes the stack its order sends, which still stands when
+          // the opponent moves first; deploys there would stand too, then leave with that order.
+          `${f.d} more deployed there would hold it whoever moves first (until its order runs: No-Split sends every army there with it, deploys included); the plan sizes no deploy for that on a territory that issues an order`
         : `${f.d} more deployed there would hold it whoever moves first${
             skip === 'budget'
               ? ', more than the plan had left to deploy there'

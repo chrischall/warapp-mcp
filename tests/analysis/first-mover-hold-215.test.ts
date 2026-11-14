@@ -64,10 +64,10 @@ const map = makeMap(
   ],
 );
 const g = buildGraph(map);
-const field = (o: { y?: number; e?: number; w?: number; t9?: number } = {}): BoardState =>
+const field = (o: { y?: number; e?: number; w?: number; t9?: number; t2?: number } = {}): BoardState =>
   boardOf([
     at(1, o.w ?? 27, ME),
-    at(2, 60, FOE),
+    at(2, o.t2 ?? 60, FOE),
     at(3, o.y ?? 10, ME),
     at(4, 1, 'neutral'),
     at(5, 6, ME),
@@ -78,7 +78,7 @@ const field = (o: { y?: number; e?: number; w?: number; t9?: number } = {}): Boa
     at(10, 2, FOE),
     at(11, 2, FOE),
   ]);
-type Shape = { income?: number; movesFirst?: boolean; unverified?: boolean; opOrderPriority?: boolean; y?: number; e?: number; w?: number; t9?: number; dep?: number };
+type Shape = { t2?: number; income?: number; movesFirst?: boolean; unverified?: boolean; opOrderPriority?: boolean; y?: number; e?: number; w?: number; t9?: number; dep?: number };
 const input = (o: Shape = {}): PlanInput => ({
   graph: g,
   board: field(o),
@@ -114,13 +114,15 @@ describe('#215: a hold is sized for the worse move order when the first mover is
     const p = planTurn(input());
     // T1 withdraws 26 to T3, which attacks T4 with 2: 8 of its own stay, plus the 26 arriving.
     expect(withdrawal(p)?.armies).toBe(26);
-    // Without the withdrawal T3 needs 13 more to hold the ~33 (21 need 35 to take).
-    expect(deployedOn(p, 3)).toBe(13);
+    // #215 review: when player 20 moves first, its attack runs before ALL of my orders: the 26 have
+    // not arrived and the 2 attacking T4 have not left. Its own 10 need 11 more to hold the ~33
+    // (21 need 35 to take).
+    expect(deployedOn(p, 3)).toBe(11);
     expect(p.rationale.join('\n')).toMatch(
-      /Deploy 13 to T3 \(#3\) so it holds whoever moves first \(protects \+1\): the 26 withdrawn into it land after player 20's attack if it moves first, and without them its 21 need 35 to take, above the ~33 threat\./,
+      /Deploy 11 to T3 \(#3\) so it holds whoever moves first \(protects \+1\): the 26 withdrawn into it land after player 20's attack if it moves first, and without them its 21 \(the 2 its own orders send out not yet gone\) need 35 to take, above the ~33 threat\./,
     );
     // The rest of the leftover still goes to the expansion stack.
-    expect(deployedOn(p, 7)).toBe(17);
+    expect(deployedOn(p, 7)).toBe(19);
     expect(p.warnings.join('\n')).not.toMatch(/holds only if I move first/);
   });
 
@@ -130,7 +132,7 @@ describe('#215: a hold is sized for the worse move order when the first mover is
 
   it('sizes it the same when player 20 is known to move first', () => {
     const p = planTurn(input({ movesFirst: false }));
-    expect(deployedOn(p, 3)).toBe(13);
+    expect(deployedOn(p, 3)).toBe(11);
     expect(p.rationale.join('\n')).toMatch(/so it holds whoever moves first/);
   });
 
@@ -145,7 +147,7 @@ describe('#215: a hold is sized for the worse move order when the first mover is
 
   it('treats a first move only the award of picks says (unverified) as unknown for the hold (#215 review)', () => {
     const p = planTurn(input({ movesFirst: true, unverified: true }));
-    expect(deployedOn(p, 3)).toBe(13);
+    expect(deployedOn(p, 3)).toBe(11);
     expect(p.rationale.join('\n')).toMatch(/so it holds whoever moves first/);
     expect(lostIfOpponentFirst(p)).not.toContain(3);
   });
@@ -153,48 +155,60 @@ describe('#215: a hold is sized for the worse move order when the first mover is
   it('sizes the hold for the worse order when an opponent may hold Order Priority, even moving first (#215 review)', () => {
     // Its Order Priority puts its first order (the all-in on T3) ahead of my first.
     const p = planTurn(input({ movesFirst: true, opOrderPriority: true }));
-    expect(deployedOn(p, 3)).toBe(13);
+    expect(deployedOn(p, 3)).toBe(11);
     expect(p.rationale.join('\n')).toMatch(/so it holds whoever moves first/);
     expect(lostIfOpponentFirst(p)).not.toContain(3);
   });
 
   it("says so when the hold depends on a first move an opponent's Order Priority may take away", () => {
-    const p = planTurn(input({ income: 12, movesFirst: true, opOrderPriority: true }));
+    const p = planTurn(input({ income: 10, movesFirst: true, opOrderPriority: true }));
     expect(p.warnings.join('\n')).toMatch(
       /T3 \(#3\) holds only if I move first: 26 of its armies are withdrawn into it this turn, and if player 20 moves first its attack \(~33\) lands before them \(I move first, but an opponent may hold an Order Priority card, which puts its first order before mine\)\./,
     );
   });
 
   it('says so when the hold depends on a first move the award says I have, unverified', () => {
-    const p = planTurn(input({ income: 12, movesFirst: true, unverified: true }));
+    const p = planTurn(input({ income: 10, movesFirst: true, unverified: true }));
     expect(p.warnings.join('\n')).toMatch(
       /T3 \(#3\) holds only if I move first: 26 of its armies are withdrawn into it this turn, and if player 20 moves first its attack \(~33\) lands before them \(the award of picks says I move first: the wiki's rule, not verified live\)\./,
     );
   });
 
   it('says plainly that the hold depends on moving first when the leftover cannot afford it', () => {
-    // 12 income: the hold of T7's attack and the capture leave too little for the 13.
-    const p = planTurn(input({ income: 12 }));
+    // 10 income: the hold of T7's attack and the capture leave too little for the 11.
+    const p = planTurn(input({ income: 10 }));
     expect(deployedOn(p, 3)).toBe(0);
     expect(p.warnings).toContain(
-      "T3 (#3) holds only if I move first: 26 of its armies are withdrawn into it this turn, and if player 20 moves first its attack (~33) lands before them. Its own 8 need 13 to take; 13 more deployed there would hold it whoever moves first, more than the plan had left to deploy there.",
+      "T3 (#3) holds only if I move first: 26 of its armies are withdrawn into it this turn, and if player 20 moves first its attack (~33) lands before them. Its own 10 need 16 to take; 11 more deployed there would hold it whoever moves first, more than the plan had left to deploy there.",
     );
   });
 
   it('names the known order in that warning when player 20 moves first', () => {
-    const p = planTurn(input({ income: 12, movesFirst: false }));
+    const p = planTurn(input({ income: 10, movesFirst: false }));
     expect(p.warnings.join('\n')).toMatch(/T3 \(#3\) holds only if I move first: 26 of its armies are withdrawn into it this turn, and player 20 moves first, so its attack \(~33\) lands before them\./);
   });
 
   it('says why no deploy was made when No-Split sends the border\'s stack with its order (#215 review)', () => {
-    // Under No-Split T3's attack on T4 carries its whole stack, deploys included: a deploy there
-    // holds nothing, so "more than the plan had left to deploy there" would misstate why.
-    const i = input();
+    // Income 8: under No-Split T3's attack on T4 carries its whole stack, deploys included (the
+    // leftover 8 among them). When player 20 moves first that stack still stands (18, ~30 to take
+    // against ~33); the plan sizes no deploy on a territory that issues an order, and says so.
+    const i = input({ income: 8 });
     i.settings = { ...RATES, noSplit: true };
     const p = planTurn(i);
     const w = p.warnings.find((l) => l.startsWith('T3 (#3) holds only if I move first')) ?? '';
-    expect(w).toMatch(/No-Split sends every army of its own with its order, deploys included, so no deploy there holds it whoever moves first\.$/);
+    expect(w).toMatch(
+      /Its own 18 need 30 to take; 3 more deployed there would hold it whoever moves first \(until its order runs: No-Split sends every army there with it, deploys included\); the plan sizes no deploy for that on a territory that issues an order\.$/,
+    );
     expect(w).not.toMatch(/more than the plan had left/);
+  });
+
+  it('counts a No-Split stack that attacks out as standing when player 20 moves first (#215 review)', () => {
+    // Income 30: the leftover 30 joins T3's attack, so T3 has 40 if player 20's attack comes
+    // before my orders and the 27 withdrawn into it after them: it holds either way, no warning.
+    const i = input();
+    i.settings = { ...RATES, noSplit: true };
+    const p = planTurn(i);
+    expect(p.warnings.join('\n')).not.toMatch(/T3 \(#3\) holds only if I move first/);
   });
 
   it('leaves a border alone that holds on its own whoever moves first', () => {
@@ -237,7 +251,8 @@ describe('#215 review: a conceded border held after all comes before a hold only
   // T1 8 (hopeless against the 60, withdraws 7 into T3), T3 10 facing player 20's 28-stack (~31
   // with its deploy of 3), T9 3 (conceded at triage, withdraws 2 into T7). T9 falls whoever moves
   // first unless the leftover holds it after all (#121); T3 falls only if player 20 moves first,
-  // before the 7 withdrawn into it land. The worse-order step took 12 for T3 first, leaving the
+  // before the 7 withdrawn into it land. The worse-order step took 12 (10 since the #215 review
+  // counts T3's own attackers as still standing then) for T3 first, leaving the
   // revival short of T9's 17, and the plan lost T9 under both orders where it used to lose neither.
   const big: Shape = { income: 30, w: 8, y: 10, e: 28, t9: 3, dep: 3 };
   const small: Shape = { income: 14, w: 8, y: 4, e: 12, t9: 3, dep: 3 };
@@ -246,10 +261,11 @@ describe('#215 review: a conceded border held after all comes before a hold only
     const p = planTurn(input(big));
     expect(p.rationale.join('\n')).toMatch(/Hold T9 \(#9\) after all \(not conceded\): deploy 17 there, and keep the 2 that would have withdrawn/);
     expect(deployedOn(p, 9)).toBe(17);
-    expect(p.rationale.join('\n')).toMatch(/Deploy 12 to T3 \(#3\) so it holds whoever moves first/);
-    expect(deployedOn(p, 3)).toBe(12);
-    // T3 has its comfortable margin with the 7 withdrawn into it: the last army goes to the expansion stack.
-    expect(deployedOn(p, 7)).toBe(1);
+    // #215 review: its own 10 (the 2 attacking T4 not yet gone when player 20 moves first) need 10.
+    expect(p.rationale.join('\n')).toMatch(/Deploy 10 to T3 \(#3\) so it holds whoever moves first/);
+    expect(deployedOn(p, 3)).toBe(10);
+    // T3 has its comfortable margin with the 7 withdrawn into it: the last 3 go to the expansion stack.
+    expect(deployedOn(p, 7)).toBe(3);
     expect(p.moves.some((m) => m.from === 9)).toBe(false);
   });
 
@@ -344,5 +360,23 @@ describe('#215: what a border spares beyond its hold leaves the armies withdrawn
     const first = planTurn(smallInput(true));
     expect(line(first)).toMatch(/15 movable on T1 \(#1\)/);
     expect(first.moves.some((m) => m.kind === 'attack' && m.from === 1 && m.to === 3 && m.armies === 16)).toBe(true);
+  });
+});
+
+describe('#215 review: the worse-order step never loses a border main held under both orders', () => {
+  // T2 is 20, not 60: T1 (4) is still conceded and withdraws 3 into T3; T7 (10) attacks T10 with 3
+  // and receives 7 withdrawn from conceded T9 (8). Player 20 deploys ~12. When player 20 moves
+  // first its first order runs before ALL of mine: T7's 3 attackers are still standing, so T7 has
+  // 10 against its ~14 threat and holds, and needs no worse-order deploy. The worse-order step read
+  // it as 7 and put 2 there, which left T3 short of what holds it, and T3 fell under both orders.
+  const shape: Shape = { t2: 20, income: 16, w: 4, y: 10, e: 28, t9: 8, dep: 12 };
+  it('puts no worse-order deploy on T7, whose attackers still stand when player 20 moves first', () => {
+    const p = planTurn(input(shape));
+    expect(p.rationale.join('\n')).not.toMatch(/Deploy \d+ to T7 \(#7\) so it holds whoever moves first/);
+  });
+
+  it('loses T3 under neither order, as the plan without the worse-order step did', () => {
+    const p = planTurn(input(shape));
+    for (const who of ['opponent', 'me'] as const) expect(lostIfOpponentFirst(p, shape, who)).not.toContain(3);
   });
 });

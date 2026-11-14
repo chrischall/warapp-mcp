@@ -428,7 +428,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can
-    afford the whole hold) — after #121 has held a conceded border after all when the leftover would
+    afford the whole hold; the armies the border's own orders send out still stand then, since the
+    opponent's first order precedes all of mine, so it leaves out only the withdrawal less those,
+    `lateNet`; never from what another open border needs to hold that first order) — after #121 has held a conceded border after all when the leftover would
     buy comfort margins (a conceded border falls whoever moves first; that one falls only if the
     opponent does), and #121 may then take back a withdrawal the border it went to needs, paying the
     deploy that holds that border without it (spent either way) — what a border keeps from captures and

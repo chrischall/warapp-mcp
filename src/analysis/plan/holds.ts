@@ -1174,9 +1174,34 @@ export function lateArrivals(pc: PlanCtx, ps: PlanState, id: number): number {
   return knownFirst(pc) ? 0 : withdrawnInto(ps, id);
 }
 
-/** #215: the armies withdrawn into my `id` this turn (rule 1b), whatever the move order. */
+/**
+ * #215 review: the armies a worse-order hold on my `id` leaves out. When the opponent moves first,
+ * its first order runs before ALL of mine: the armies withdrawn into `id` are not there yet, and
+ * the armies `id` sends out by its own orders are still there. After my orders have run, the
+ * withdrawal is in and those armies are gone (the hold #127 sized). A move out of a territory is
+ * scheduled after the moves into it (schedule.ts), so the worse of the two is the withdrawal less
+ * what leaves: `max(0, late − sent out)`. 0 when I am known to move first.
+ */
+export function lateNet(pc: PlanCtx, ps: PlanState, id: number): number {
+  const late = lateArrivals(pc, ps, id);
+  return late <= 0 ? 0 : Math.max(0, late - sentOut(ps, id));
+}
+
+/** #215 review: the armies my `id` sends out by its own orders this turn (attacks and transfers). */
+export function sentOut(ps: PlanState, id: number): number {
+  return ps.moves.reduce((n, m) => (m.from === id ? n + m.armies : n), 0);
+}
+
+/**
+ * #215: the armies withdrawn into my `id` this turn (rule 1b), whatever the move order. Only
+ * withdrawal transfers count (#215 review): `incoming` also carries a softener's survivors that come
+ * home and No-Split extras, which beside an idle transfer in (rule 6) would read as withdrawn.
+ */
 export function withdrawnInto(ps: PlanState, id: number): number {
-  const sent = ps.moves.reduce((n, m) => (m.kind === 'transfer' && m.to === id ? n + m.armies : n), 0);
+  const sent = ps.moves.reduce(
+    (n, m) => (m.kind === 'transfer' && m.to === id && m.reason === 'withdraws from a conceded border' ? n + m.armies : n),
+    0,
+  );
   return Math.max(0, Math.min(ps.incoming.get(id) ?? 0, sent));
 }
 
