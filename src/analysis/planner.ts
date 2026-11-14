@@ -811,7 +811,10 @@
 //     whoever moves first", most protected value first, only when it can afford the whole hold —
 //     #215 review: then its own orders have not run either, so the armies it sends out still
 //     stand and only the withdrawal less those is left out (`lateNet`), and it never spends what
-//     another open border needs to hold the opponent's first order;
+//     another open border needs to hold whoever moves first: moving first, only my first order
+//     lands before the opponent's first, so a border another withdrawal goes into needs its
+//     worse-order hold either way, kept back from the one my first order goes into (two such
+//     borders go most at stake first, neither reserving for the other);
 //     after #121's hold after all below, when that runs: a conceded border falls whoever moves
 //     first, this one only if the opponent does),
 //     and a border's keep (`keepFor`: what a capture, a top-up or rule 4e's fallback may not spend)

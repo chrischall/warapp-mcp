@@ -11,7 +11,7 @@
 import { neighborsOf } from '../graph.js';
 import { chargeDeploys } from '../local-deploy.js';
 import { COMFORT_MARGIN, type PlannedMove } from './shared.js';
-import { knownFirst, lateArrivals, lateNet, sentOut, type Holds } from './holds.js';
+import { knownFirst, lateArrivals, lateNet, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { SaveStep } from './stand-still.js';
 import type { PlanCtx, PlanState } from './state.js';
@@ -100,13 +100,14 @@ export function leftoverDeploy(
    */
   const worseOrderHolds = () => {
     /**
-     * #215 review: what my open `x` (no order of its own under No-Split) needs to hold when the
-     * opponent's first order comes before all of mine — its own orders not yet run, nothing
-     * withdrawn into it arrived (with two withdrawals, moving first lands only one in time) — or
-     * `undefined` when the leftover could not make it hold anyway.
+     * #215 review: what my open `x` (no order of its own under No-Split) needs to hold, or
+     * `undefined` when the leftover could not make it hold anyway. `worse`: in the order that is
+     * worse for it, the hold this step sizes (`stays − lateNet`: its own orders not yet run,
+     * nothing withdrawn into it arrived); otherwise after all my orders (`stays`), the hold the
+     * later steps size.
      */
-    const fallNeed = (x: Border): number | undefined => {
-      const first = stays(x.id) + sentOut(ps, x.id) - lateArrivals(pc, ps, x.id) + unitsAt(x.id);
+    const fallNeed = (x: Border, worse: boolean): number | undefined => {
+      const first = stays(x.id) - (worse ? lateNet(pc, ps, x.id) : 0) + unitsAt(x.id);
       let d = 0;
       while ((toTake(first + d) ?? Infinity) <= x.threat) {
         d++;
@@ -114,7 +115,21 @@ export function leftoverDeploy(
       }
       return d;
     };
-    for (const b of [...borders.values()].sort((x, y) => valueOf(y.id) - valueOf(x.id) || x.id - y.id)) {
+    /**
+     * #215 review: the border my first order withdraws into, unless the opponent is known to move
+     * first. Moving first, only that withdrawal lands before the opponent's first order (the
+     * zigzag gives it two orders before my second), so a border any other withdrawal goes into
+     * falls whoever moves first without its worse-order hold. The schedule puts the largest early
+     * move first (ties in decision order, schedule.ts); the withdrawals are the early moves known here.
+     */
+    const firstInto =
+      pc.opts.movesFirst === false
+        ? undefined
+        : moves
+            .filter((m) => m.kind === 'transfer' && m.reason === 'withdraws from a conceded border' && lateArrivals(pc, ps, m.to) > 0)
+            .reduce<PlannedMove | undefined>((a, m) => (!a || m.armies > a.armies ? m : a), undefined)?.to;
+    const order = [...borders.values()].sort((x, y) => valueOf(y.id) - valueOf(x.id) || x.id - y.id);
+    for (const [i, b] of order.entries()) {
       const late = lateArrivals(pc, ps, b.id);
       // No-Split (#124): a deploy on a territory that issues an order leaves with it, holding nothing.
       if (late <= 0) continue;
@@ -128,12 +143,21 @@ export function leftoverDeploy(
       if ((toTake(own) ?? Infinity) > b.threat) continue;
       let d = 0;
       while ((toTake(own + d) ?? Infinity) <= b.threat) d++;
-      // #215 review: never from what another open border needs to hold that first order — the
-      // leftover may be what holds it in both orders, and a border that holds whoever moves first
-      // is not bought with one that then falls whoever does.
+      // #215 review: never from what another open border needs to hold whoever moves first — the
+      // leftover may be what holds it in both orders, and a border that holds only if I move
+      // first is not bought with one that then falls whoever does. For a border with nothing
+      // withdrawn into it, or the one my first order goes into, that is what the later steps give
+      // it (after all my orders). A border another withdrawal goes into falls whoever moves first
+      // without its worse-order hold, which it gets here or not at all: it is kept back only from
+      // the border my first order goes into, and only while still to come. Two such borders take
+      // their turns most at stake first (keeping each one's hold back from the other, neither
+      // was held), and one this step has passed had its turn.
       let reserve = 0;
-      for (const x of borders.values())
-        if (x.id !== b.id && !conceded.has(x.id) && open(x.id) && !orderOf(x.id)) reserve += fallNeed(x) ?? 0;
+      for (const [j, x] of order.entries()) {
+        if (j === i || conceded.has(x.id) || !open(x.id) || orderOf(x.id)) continue;
+        if (x.id === firstInto || lateArrivals(pc, ps, x.id) <= 0) reserve += fallNeed(x, false) ?? 0;
+        else if (b.id === firstInto && j > i) reserve += fallNeed(x, true) ?? 0;
+      }
       if (d > ps.budget - reserve || d > roomAt(b.id)) {
         ps.firstOnlySkip.set(b.id, d > ps.budget - reserve ? 'budget' : 'room');
         continue;
