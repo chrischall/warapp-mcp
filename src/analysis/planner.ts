@@ -1065,6 +1065,14 @@
 //           Local Deployment's room on the step. A capped border that also faces another
 //           opponent is no "toward another front": when what the cap leaves no longer holds it
 //           against that opponent (and it held before), a warning names the opponent and the hold.
+//       T6. What a break would cost (`lossIfBroken`, after the orders are final; plan/relations.ts
+//           `truceBreakLosses`): per binding, unenforced truce, the partner's whole deploy estimate on
+//           one of its covered territories in view beside a covered territory of mine and an attack on
+//           it with everything there (its commander too), carried out against this plan's deploys and
+//           moves on the turn simulator (turn-sim.ts; both move orders unless the first mover is known
+//           and verified; no other player moves). The costliest pair is reported — my commander, then
+//           the income lost, the territories, the armies — with a rationale line; `null` when none
+//           exists. It changes no order: the plan is what it was, and only reports what it risks.
 //       T7. Never a surprise break: a notice binds until `endsTurn`, then the partner is an
 //           ordinary opponent; the plan's `advice` says `give-notice` when the trust turned `watch`
 //           for the endgame or for outgrowing (not when I already gave notice).
@@ -1076,8 +1084,8 @@
 //     flags, the borders relaxed and kept full (and why), the armies the relaxed holds free (per
 //     border, what its full hold needs beyond the armies there less what the truce hold needs —
 //     only where the full hold would have been funded: not on a border this plan concedes, nor one
-//     whose full hold rule 1a would refuse; at most my income) and the armies the cap moved. A plan
-//     holding no territory still reports each truce given.
+//     whose full hold rule 1a would refuse; at most my income), the armies the cap moved and what
+//     a break would cost (T6). A plan holding no territory still reports each truce given.
 // Local Deployment (`localDeployments`): a held bonus's value is a pool deployable
 // only on that bonus's territories (a superbonus's on all of its territories, beside
 // its member bonuses' pools); the rest of the income (base, per-territory, card
@@ -1181,7 +1189,7 @@ import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
 import { newPlanState } from './plan/state.js';
-import { applyBorderCaps, armiesFreed, partnerFronts, reportTruce, trucePass } from './plan/relations.js';
+import { applyBorderCaps, armiesFreed, partnerFronts, reportBreakLosses, reportTruce, trucePass } from './plan/relations.js';
 
 export * from './plan/shared.js';
 export { alliesOf, planEnemyEstimates } from './plan/estimates.js';
@@ -2462,6 +2470,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // #218: the main front's forecast at my whole income, for the game outlook to share.
   if (ps.front) plan.front = ps.front;
   if (truceReport) {
+    // T6: what a break would cost, against the plan's final orders (plan/relations.ts).
+    reportBreakLosses(pc, truceReport.relations, plan);
     plan.relations = truceReport.relations;
     if (truceReport.advice.length) plan.advice = truceReport.advice;
   }

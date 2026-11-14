@@ -115,6 +115,7 @@ describe('B2 T2: a truce hold frees armies', () => {
         relaxed: [1],
         fullHold: [],
         armiesFreed: 3,
+        lossIfBroken: expect.objectContaining({ from: 2, to: 1 }),
       },
     ]);
     expect(why(p)).toMatch(/T1 \(#1\) faces only player 20, so it is held against its visible stacks there attacking with no deploy \(T2\).*3 armies freed/);
@@ -644,6 +645,68 @@ describe('B2 T4: idle armies do not walk toward a covered territory (rule 6)', (
   });
 });
 
+// T6: the partner lands its whole estimated deploy on its covered border and attacks, against this
+// plan's own orders, on the turn simulator (turn-sim.ts).
+describe('B2 T6: what a break would cost', () => {
+  it("the partner's 40 and its 5 deploy take T1, whose 24 the truce hold left alone", () => {
+    const p = planTurn(input([truce({ agreement: 'a1' })]));
+    expect(p.relations![0]!.lossIfBroken).toEqual({
+      from: 2,
+      to: 1,
+      deploy: 5,
+      attackers: 44,
+      territories: [1],
+      armies: 24,
+      bonuses: [],
+      bonusValue: 0,
+      commanderLost: false,
+      exact: true,
+    });
+    expect(why(p)).toMatch(
+      /Truce with player 20 \(agreement a1\): if it broke this turn — its ~5 deploy on T2 \(#2\) and an attack on T1 \(#1\) with 44 — I would lose T1 \(#1\), 24 armies and \+0 income \(T6\)\./,
+    );
+  });
+
+  it('a break that takes a held bonus counts its income, and the costliest covered border is the one reported', () => {
+    // T3 (2) alone is B903 (+1) and also faces the partner's 30 on T6, both covered: T3 cannot be
+    // held, and losing it costs income where losing T1 costs only armies.
+    const g6 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 6, 9],
+        [
+          [1, 2],
+          [1, 3],
+          [3, 4],
+          [3, 6],
+          [4, 5],
+          [5, 9],
+        ],
+        [
+          [900, 3, [3, 4]],
+          [903, 1, [3]],
+        ],
+      ),
+    );
+    const b = board([mine(1, 24), enemy(2, 40, PARTNER), mine(3, 2), neutral(4, 4), neutral(5, 2), enemy(6, 30, PARTNER), enemy(9, 3, OTHER)]);
+    const p = planTurn(input([truce({ coveredMine: [1, 3], coveredTheirs: [2, 6] })], { graph: g6, board: b }));
+    const loss = p.relations![0]!.lossIfBroken!;
+    expect(loss).toMatchObject({ from: 6, to: 3, deploy: 5 });
+    expect(loss.territories).toContain(3);
+    expect(loss.bonuses.map((x) => x.id)).toContain(903);
+    expect(loss.bonusValue).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a relation that does not bind, or with no covered stack of the partner beside a covered territory of mine, costs nothing to report', () => {
+    expect(planTurn(input([truce({ state: 'broken' })])).relations![0]!.lossIfBroken).toBeNull();
+    expect(planTurn(input([truce({ coveredTheirs: [] })])).relations![0]!.lossIfBroken).toBeNull();
+    expect(planTurn(input([truce({ enforced: true })])).relations![0]!.lossIfBroken).toBeNull();
+  });
+
+  it('the plan with no relations is unchanged by it', () => {
+    expect(planTurn(input()).relations).toBeUndefined();
+  });
+});
+
 describe('B2: truces only in a free-for-all; none given changes nothing', () => {
   it('an empty list plans exactly what no list does', () => {
     expect(planTurn(input([]))).toEqual(planTurn(input()));
@@ -655,7 +718,7 @@ describe('B2: truces only in a free-for-all; none given changes nothing', () => 
     expect(p.deploys).toEqual([]);
     expect(p.moves).toEqual([]);
     expect(p.relations).toEqual([
-      { player: PARTNER, state: 'active', honoured: true, enforced: false, trust: 'clear', flags: [], relaxed: [], fullHold: [], armiesFreed: 0 },
+      { player: PARTNER, state: 'active', honoured: true, enforced: false, trust: 'clear', flags: [], relaxed: [], fullHold: [], armiesFreed: 0, lossIfBroken: null },
     ]);
     expect(planTurn(input(undefined, { board: none })).relations).toBeUndefined();
   });

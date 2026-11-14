@@ -207,6 +207,130 @@ async function recordFor(dir: string | undefined, partner: number, env: EnvSourc
   return { record: playerRecord(r.tallies, r.entries), entries: r.entries };
 }
 
+/**
+ * The cross-game record (D5) for one change to an agreement: its name-free entry, "proposed again" on
+ * this partner's earlier agreements in this game when it proposes anew, and the tallies its transition
+ * earns; a break also records its strongest flag and its context from my cached boards. Call it inside
+ * the ledger's lock (a different file and lock, never nested on itself), so entries land in the order the
+ * ledger changed. Shared by warapp_record_agreement and warapp_submit_turn's `break_agreement`.
+ */
+export async function updateAgreementRecord(o: {
+  dir: string;
+  env: EnvSource | undefined;
+  game: Game;
+  me: Player;
+  map: GameMap;
+  graph: MapGraph;
+  agreement: Agreement;
+  before: Agreement | undefined;
+  created: boolean;
+  others: readonly Agreement[];
+}): Promise<'updated' | 'off' | 'failed'> {
+  const { dir, env, game, me, map, graph, agreement, before, created, others } = o;
+  if (!playerRecordEnabled(env)) return 'off';
+  let breachFlag: WatchFlagKind | null | undefined;
+  let context: BreakContext | undefined;
+  if (agreement.status !== before?.status && (agreement.status === 'broken-by-them' || agreement.status === 'broken-by-me')) {
+    const boards = await cachedBoards(dir, game, me);
+    breachFlag = strongestFlag(breachWatch({ agreement, graph, boards, me: me.id }));
+    const incomes = incomesOf(graph, boards, game, me, map);
+    const partnerIncome = incomes.opponents.get(agreement.with) ?? null;
+    context = {
+      endgame: endgameOf(incomes, agreement.with),
+      leader: leaderOf(incomes, agreement.with),
+      outgrowing: incomes.mine !== null && incomes.mine > 0 && partnerIncome !== null ? partnerIncome > TRUCE_OUTGROW_RATIO * incomes.mine : null,
+    };
+  }
+  const earlier = created && agreement.status === 'proposed-by-them' ? others.filter((a) => a.with === agreement.with && TERMINAL_STATUSES.has(a.status)) : [];
+  const now = Date.now();
+  return updatePlayerRecord(
+    dir,
+    agreement.with,
+    (salt, current) => {
+      // An entry written before my account was in the key is found under the older key and kept there.
+      const onRecord = (id: string) =>
+        current.entries.find((e) => e.key === entryKey(salt, me.id, game.id, id)) ??
+        current.entries.find((e) => e.key === legacyEntryKey(salt, game.id, id));
+      const previous = onRecord(agreement.id);
+      const key = previous?.key ?? entryKey(salt, me.id, game.id, agreement.id);
+      const again = earlier
+        .map((a) => onRecord(a.id))
+        .filter((e): e is RecordEntry => e !== undefined && !e.proposedAgain)
+        .map((e) => ({ ...e, proposedAgain: true, updated: now }));
+      const entry = recordEntryFor(
+        agreement,
+        { key, format: formatOf(game), now, ...(breachFlag !== undefined ? { breachFlag } : {}), ...(context ? { context } : {}) },
+        previous,
+      );
+      return { delta: recordDelta(before, agreement), entries: [...again, entry] };
+    },
+    env,
+    now,
+  );
+}
+
+/** One agreement `recordBrokenByMe` was asked to mark, and what became of it. */
+export interface BrokenByMe {
+  agreement: string;
+  /** `recorded`: now broken-by-me; `refused`: the ledger could not take it (`why`). */
+  ledger: 'recorded' | 'refused';
+  why?: string;
+  playerRecord?: 'updated' | 'off' | 'failed';
+}
+
+/**
+ * B2 (`warapp_submit_turn`'s `break_agreement`): mark each agreement broken by me on `turn`, through the
+ * same path as warapp_record_agreement — the ledger's transition under its lock, then the partner's
+ * player record (D5). Never throws: what could not be recorded says why.
+ */
+export async function recordBrokenByMe(o: {
+  dir: string;
+  env: EnvSource | undefined;
+  game: Game;
+  me: Player;
+  map: GameMap;
+  agreements: readonly string[];
+  turn: number;
+}): Promise<BrokenByMe[]> {
+  const { dir, env, game, me, map, turn } = o;
+  const graph = graphOf(map);
+  try {
+    return await withLedgerLock(dir, game.id, me.id, async () => {
+      const read = await readLedgerForWrite(dir, game.id, me.id);
+      if (read === null || read === 'unreadable') {
+        const why = read === null ? 'no ledger for this game' : 'the ledger exists but cannot be read';
+        return o.agreements.map((agreement) => ({ agreement, ledger: 'refused' as const, why }));
+      }
+      let ledger = read;
+      const out: BrokenByMe[] = [];
+      for (const id of o.agreements) {
+        const found = ledger.agreements.find((a) => a.id === id);
+        if (!found) {
+          out.push({ agreement: id, ledger: 'refused', why: 'not in the ledger' });
+          continue;
+        }
+        const moved = transitionAgreement(found, 'broken-by-me', turn);
+        if ('refused' in moved) {
+          out.push({ agreement: id, ledger: 'refused', why: moved.refused });
+          continue;
+        }
+        const rest = ledger.agreements.filter((a) => a.id !== id);
+        const next = { ...ledger, agreements: [...rest, moved.agreement] };
+        if (!(await writeLedger(dir, next))) {
+          out.push({ agreement: id, ledger: 'refused', why: 'the ledger could not be written' });
+          continue;
+        }
+        ledger = next;
+        const playerRecord = await updateAgreementRecord({ dir, env, game, me, map, graph, agreement: moved.agreement, before: found, created: false, others: rest });
+        out.push({ agreement: id, ledger: 'recorded', playerRecord });
+      }
+      return out;
+    });
+  } catch (e) {
+    return o.agreements.map((agreement) => ({ agreement, ledger: 'refused' as const, why: (e as Error).message }));
+  }
+}
+
 export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
   const env = opts.env;
 
@@ -468,52 +592,8 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         return { agreement, before, created };
       };
 
-      // The cross-game record (D5): the agreement's name-free entry, "proposed again" on this partner's
-      // earlier agreements in this game when it proposes anew, and the tallies its transition earns. It is
-      // written inside the ledger's lock (a different file and lock, never nested on itself), so two calls
-      // record their entries in the order they changed the ledger.
-      const updateRecord = async (agreement: Agreement, before: Agreement | undefined, created: boolean, others: readonly Agreement[]) => {
-        if (!playerRecordEnabled(env)) return 'off' as const;
-        let breachFlag: WatchFlagKind | null | undefined;
-        let context: BreakContext | undefined;
-        if (agreement.status !== before?.status && (agreement.status === 'broken-by-them' || agreement.status === 'broken-by-me')) {
-          const boards = await cachedBoards(dir, game, me);
-          breachFlag = strongestFlag(breachWatch({ agreement, graph, boards, me: me.id }));
-          const incomes = incomesOf(graph, boards, game, me, map);
-          const partnerIncome = incomes.opponents.get(agreement.with) ?? null;
-          context = {
-            endgame: endgameOf(incomes, agreement.with),
-            leader: leaderOf(incomes, agreement.with),
-            outgrowing: incomes.mine !== null && incomes.mine > 0 && partnerIncome !== null ? partnerIncome > TRUCE_OUTGROW_RATIO * incomes.mine : null,
-          };
-        }
-        const earlier = created && agreement.status === 'proposed-by-them' ? others.filter((a) => a.with === agreement.with && TERMINAL_STATUSES.has(a.status)) : [];
-        const now = Date.now();
-        return updatePlayerRecord(
-          dir,
-          agreement.with,
-          (salt, current) => {
-            // An entry written before my account was in the key is found under the older key and kept there.
-            const onRecord = (id: string) =>
-              current.entries.find((e) => e.key === entryKey(salt, me.id, game.id, id)) ??
-              current.entries.find((e) => e.key === legacyEntryKey(salt, game.id, id));
-            const previous = onRecord(agreement.id);
-            const key = previous?.key ?? entryKey(salt, me.id, game.id, agreement.id);
-            const again = earlier
-              .map((a) => onRecord(a.id))
-              .filter((e): e is RecordEntry => e !== undefined && !e.proposedAgain)
-              .map((e) => ({ ...e, proposedAgain: true, updated: now }));
-            const entry = recordEntryFor(
-              agreement,
-              { key, format: formatOf(game), now, ...(breachFlag !== undefined ? { breachFlag } : {}), ...(context ? { context } : {}) },
-              previous,
-            );
-            return { delta: recordDelta(before, agreement), entries: [...again, entry] };
-          },
-          env,
-          now,
-        );
-      };
+      const updateRecord = (agreement: Agreement, before: Agreement | undefined, created: boolean, others: readonly Agreement[]) =>
+        updateAgreementRecord({ dir, env, game, me, map, graph, agreement, before, created, others });
 
       // Read, change and write the ledger under its in-process lock: two calls never lose each other's change.
       const { agreement, created, recorded } = await withLedgerLock(dir, game.id, me.id, async () => {

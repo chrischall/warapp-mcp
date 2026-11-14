@@ -116,6 +116,13 @@ describe('the per-game ledger', () => {
     expect(await recordTruceUsage(dir, GAME, ME, 7, [{ agreementId: 'a1', armiesFreed: 4, lossIfBroken: 9 }])).toBe(true);
     expect((await readLedger(dir, GAME, ME))!.usage).toEqual({ '7': [{ agreementId: 'a1', armiesFreed: 4, lossIfBroken: 9 }] });
   });
+
+  it("keeps a turn's income lost to a break (T6) beside its armies, and reads older entries without it", async () => {
+    const dir = tmp();
+    await writeLedger(dir, emptyLedger(GAME, ME));
+    expect(await recordTruceUsage(dir, GAME, ME, 8, [{ agreementId: 'a1', armiesFreed: 3, lossIfBroken: 24, incomeLostIfBroken: 5 }])).toBe(true);
+    expect((await readLedger(dir, GAME, ME))!.usage['8']).toEqual([{ agreementId: 'a1', armiesFreed: 3, lossIfBroken: 24, incomeLostIfBroken: 5 }]);
+  });
 });
 
 describe('the record entry', () => {

@@ -649,6 +649,43 @@ const WATCH_KINDS = ['broken', 'cap-exceeded', 'massing', 'outgrowing'] as const
  * card is not read in (its decoder is unverified, #163). Also the tacit
  * truces with every neighbour no open agreement names: reported, never planned on.
  */
+/** One agreement an order list would break (`truceBreaksIn`). */
+export interface TruceBreak {
+  agreement: string;
+  with: number;
+  state: 'active' | 'notice';
+  /** The orders (index in the list given) that attack a territory of the partner the agreement covers. */
+  moves: { index: number; from: number; to: number }[];
+}
+
+/**
+ * B2 (warapp_submit_turn): the active or in-notice agreements that `moves` would break — an order that
+ * attacks a territory the partner holds on `board` and the terms cover (a transfer-only order attacks
+ * nothing). By agreement id; empty when nothing binds. Pure; reads only the ledger's own agreements and
+ * the board (the breach watch is not consulted: a break by them is recorded as broken-by-them first).
+ */
+export function truceBreaksIn(input: {
+  agreements: readonly Agreement[];
+  graph: MapGraph;
+  board: BoardState;
+  me: number;
+  turn: number;
+  players: readonly RelationPlayer[];
+  moves: readonly { from: number; to: number; mode?: string }[];
+}): TruceBreak[] {
+  const out: TruceBreak[] = [];
+  for (const a of [...input.agreements].sort((x, y) => x.id.localeCompare(y.id))) {
+    if (a.with === input.me) continue;
+    const state = agreementState(a, input.turn, input.players);
+    if (state.phase !== 'active' && state.phase !== 'notice') continue;
+    const held = new Set(input.board.territories.filter((t) => ownerShown(t) && ownerOn(t) === a.with).map((t) => t.territoryId));
+    const covered = new Set(coveredTerritories(input.graph, a.terms.scope, held));
+    const moves = input.moves.flatMap((m, index) => (m.mode !== 'transfer-only' && covered.has(m.to) ? [{ index, from: m.from, to: m.to }] : []));
+    if (moves.length) out.push({ agreement: a.id, with: a.with, state: state.phase, moves });
+  }
+  return out;
+}
+
 export function planRelationsFrom(input: PlanRelationsInput): { relations: PlanRelation[]; tacit: TacitTruce[] } {
   const { graph, board, me, turn, players, incomes } = input;
   const holding = (p: number) =>

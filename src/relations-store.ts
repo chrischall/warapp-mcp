@@ -6,8 +6,8 @@
 // record (src/player-record-store.ts); nothing is sent to war.app. Reads are loose: an unusable
 // file or entry is dropped, never thrown on.
 //
-// `usage` (part B2): per planned turn, what each honoured truce freed (warapp_plan_turn calls
-// `recordTruceUsage`); what a break would cost stays null until rule T6.
+// `usage` (part B2): per planned turn, what each honoured truce freed and what a break would have
+// cost (rule T6: the armies and the income); warapp_plan_turn calls `recordTruceUsage`.
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -31,13 +31,15 @@ export const MAX_AGREEMENTS = 50;
 /** Planned turns of usage kept per game (the newest). */
 export const MAX_USAGE_TURNS = 200;
 
-/** Part B2's per-turn log for one truce; `lossIfBroken` is `null` until rule T6. */
+/** Part B2's per-turn log for one truce. */
 export interface TruceUsage {
   agreementId: string;
   /** Armies the truce freed from the covered border this turn. */
   armiesFreed: number | null;
-  /** What the plan would lose if the partner broke the truce this turn. */
+  /** Rule T6: the armies the plan would lose if the partner broke the truce this turn (`null`: no break to try). */
   lossIfBroken: number | null;
+  /** Rule T6: the income (bonus values) that break would take; absent in entries written before it. */
+  incomeLostIfBroken?: number | null;
 }
 
 export interface RelationsLedger {
@@ -103,7 +105,12 @@ function usageOf(v: unknown): Record<string, TruceUsage[]> {
     const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
     out[k] = list
       .filter((u): u is Rec => isRec(u) && typeof u.agreementId === 'string')
-      .map((u) => ({ agreementId: u.agreementId as string, armiesFreed: num(u.armiesFreed), lossIfBroken: num(u.lossIfBroken) }));
+      .map((u) => ({
+        agreementId: u.agreementId as string,
+        armiesFreed: num(u.armiesFreed),
+        lossIfBroken: num(u.lossIfBroken),
+        ...('incomeLostIfBroken' in u ? { incomeLostIfBroken: num(u.incomeLostIfBroken) } : {}),
+      }));
   }
   return out;
 }

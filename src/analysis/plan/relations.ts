@@ -16,6 +16,11 @@
 //       withdrawal of mine fills it past the cap (`capRoom`), and the excess is deployed one step
 //       behind, an incoming transfer trimmed, or the standing armies moved one step behind toward
 //       another front, said so when I already stand above it;
+//   T6  what a break would cost (`truceBreakLosses`, after the plan is finished): for each binding
+//       truce, the partner's whole deploy estimate on one of its covered territories beside a covered
+//       territory of mine and an attack on it with everything there, carried out against this plan's
+//       own deploys and moves on the turn simulator (turn-sim.ts), both move orders unless the first
+//       mover is known; the costliest is reported (`lossIfBroken`);
 //   T7  never a surprise break: a notice binds until its `endsTurn`; the plan advises `give-notice`
 //       when the trust turned `watch` for the endgame or for outgrowing;
 //   T8  broken by them (`state: 'broken'`): an ordinary opponent at once, the plan naming the term,
@@ -24,11 +29,23 @@
 //       threat is 0 and no attack on it is planned.
 // With no relations every function here is a no-op, so every plan is byte-identical to one made
 // without them. Pure and deterministic (ties on ascending id).
+import { bonusTerritories } from '../bonuses.js';
 import { bfsDistances, neighborsOf } from '../graph.js';
+import { simTerritories, simulateTurn, type SimResult } from '../turn-sim.js';
 import type { GameFormat } from '../profile.js';
 import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
-import { CONCEDE_FACTOR, type PlanAdvice, type PlanInput, type PlannedMove, type PlanRelation, type PlanRelationView, type TruceWatchReason } from './shared.js';
+import {
+  CONCEDE_FACTOR,
+  type PlanAdvice,
+  type PlanInput,
+  type PlannedDeploy,
+  type PlannedMove,
+  type PlanRelation,
+  type PlanRelationView,
+  type TruceBreakLoss,
+  type TruceWatchReason,
+} from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
@@ -526,7 +543,130 @@ export function reportTruce(
       armiesFreed: freed,
       ...(tp?.capMoved.get(i)?.length ? { capMoved: tp.capMoved.get(i)! } : {}),
       ...(r.breach ? { breach: r.breach } : {}),
+      // T6: filled in once the plan's orders are final (truceBreakLosses).
+      lossIfBroken: null,
     };
   });
   return { relations, advice };
+}
+
+/**
+ * T6, once the plan's orders are final: for each binding truce that is not enforced, what a break
+ * would cost this turn. The partner lands its whole deploy estimate (`deployOf`) on one of its covered
+ * territories in view beside a covered territory of mine and attacks it with everything there (its
+ * commander too), against this plan's deploys and moves; each such pair is carried out on the turn
+ * simulator, with me moving first and with the partner first unless the first mover is known (and
+ * verified), and the costliest is kept: my commander, then the income lost, the territories, the armies,
+ * then ascending ids. Per relation index (parallel to `truce.given`): `null` where nothing binds or no
+ * such pair exists. Only the partner moves besides me: every other player is left out of the break.
+ */
+export function truceBreakLosses(pc: PlanCtx, plan: { deploys: readonly PlannedDeploy[]; moves: readonly PlannedMove[] }): (TruceBreakLoss | null)[] {
+  const { truce, g, board, me, s, opts, deployOf } = pc;
+  if (!truce.given.length) return [];
+  const start = simTerritories(board);
+  const settings = {
+    ...(s.offensiveKillRate !== undefined ? { offensiveKillRate: s.offensiveKillRate } : {}),
+    ...(s.defensiveKillRate !== undefined ? { defensiveKillRate: s.defensiveKillRate } : {}),
+    ...(s.luckModifier !== undefined ? { luckModifier: s.luckModifier } : {}),
+    ...(s.roundingMode !== undefined ? { roundingMode: s.roundingMode } : {}),
+    ...(s.oneArmyStandsGuard !== undefined ? { oneArmyStandsGuard: s.oneArmyStandsGuard } : {}),
+    ...(s.multiAttack !== undefined ? { multiAttack: s.multiAttack } : {}),
+  };
+  const myDeploys = plan.deploys.filter((d) => d.armies > 0).map((d) => ({ player: me, territoryId: d.territoryId, armies: d.armies }));
+  const myOrders = plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies }));
+  const run = (partner: number, from: number, to: number, deploy: number, order: number[]): SimResult =>
+    simulateTurn({
+      graph: g,
+      board,
+      deploys: [...myDeploys, ...(deploy > 0 ? [{ player: partner, territoryId: from, armies: deploy }] : [])],
+      orders: [
+        { player: me, orders: myOrders },
+        { player: partner, orders: [{ from, to, armies: (start.get(from)?.armies ?? 0) + deploy, withCommander: true }] },
+      ],
+      moveOrder: order,
+      settings,
+    });
+  const baseline = simulateTurn({ graph: g, board, deploys: myDeploys, orders: [{ player: me, orders: myOrders }], moveOrder: [me], settings });
+  const mineAfter = (r: SimResult) => new Set([...r.territories].filter(([, t]) => t.owner === me).map(([id]) => id));
+  const armiesAfter = (r: SimResult) => [...r.territories.values()].reduce((n, t) => n + (t.owner === me ? t.armies : 0), 0);
+  const bonusIds = [...g.bonusById.keys()].sort(byNum);
+  const heldBonuses = (held: ReadonlySet<number>) =>
+    bonusIds.filter((id) => {
+      const ts = bonusTerritories(g, id);
+      return ts.length > 0 && ts.every((t) => held.has(t));
+    });
+  const baseMine = mineAfter(baseline);
+  const baseBonuses = heldBonuses(baseMine);
+  const baseArmies = armiesAfter(baseline);
+  const known = opts.movesFirst !== undefined && !opts.movesFirstUnverified;
+  const worse = (a: TruceBreakLoss, b: TruceBreakLoss) =>
+    Number(a.commanderLost) - Number(b.commanderLost) ||
+    Math.max(0, a.bonusValue) - Math.max(0, b.bonusValue) ||
+    a.territories.length - b.territories.length ||
+    a.armies - b.armies;
+  return truce.given.map((r, i) => {
+    if (!truce.binds[i] || truce.enforced.has(r.player)) return null;
+    const theirs = [...new Set(r.coveredTheirs)].filter((t) => start.get(t)?.owner === r.player).sort(byNum);
+    const mineCovered = new Set(r.coveredMine.filter((t) => start.get(t)?.owner === me));
+    const deploy = Math.max(0, Math.floor(deployOf(r.player)));
+    let best: TruceBreakLoss | null = null;
+    for (const from of theirs) {
+      for (const to of [...neighborsOf(g, from)].filter((n) => mineCovered.has(n)).sort(byNum)) {
+        const orders: { who: 'me' | 'partner'; order: number[] }[] = known
+          ? [{ who: opts.movesFirst ? 'me' : 'partner', order: opts.movesFirst ? [me, r.player] : [r.player, me] }]
+          : [
+              { who: 'me', order: [me, r.player] },
+              { who: 'partner', order: [r.player, me] },
+            ];
+        const outcomes = orders.map(({ who, order }) => {
+          const res = run(r.player, from, to, deploy, order);
+          const after = mineAfter(res);
+          const held = new Set(heldBonuses(after));
+          const bonuses = baseBonuses.filter((b) => !held.has(b)).map((id) => ({ id, value: g.bonusById.get(id)?.value ?? 0 }));
+          const loss: TruceBreakLoss = {
+            from,
+            to,
+            deploy,
+            attackers: res.log.find((e) => e.player === r.player && e.index === 0)?.sent ?? 0,
+            territories: [...baseMine].filter((t) => !after.has(t)).sort(byNum),
+            armies: Math.max(0, baseArmies - armiesAfter(res)),
+            bonuses,
+            bonusValue: bonuses.reduce((n, b) => n + b.value, 0),
+            commanderLost: res.eliminated.includes(me),
+            exact: res.exact,
+          };
+          return { who, loss };
+        });
+        const top = outcomes.reduce((a, b) => (worse(b.loss, a.loss) > 0 ? b : a));
+        const same = outcomes.every((o) => JSON.stringify(o.loss) === JSON.stringify(top.loss));
+        const loss: TruceBreakLoss = !known && !same ? { ...top.loss, firstMover: top.who } : top.loss;
+        if (!best || worse(loss, best) > 0) best = loss;
+      }
+    }
+    return best;
+  });
+}
+
+/**
+ * T6's report: each binding truce's {@link truceBreakLosses} on its view, and a rationale line that
+ * says what a break would take. Nothing with no relations.
+ */
+export function reportBreakLosses(pc: PlanCtx, views: PlanRelationView[], plan: { deploys: readonly PlannedDeploy[]; moves: readonly PlannedMove[]; rationale: string[] }): void {
+  const losses = truceBreakLosses(pc, plan);
+  const { label } = pc;
+  views.forEach((v, i) => {
+    const loss = losses[i] ?? null;
+    v.lossIfBroken = loss;
+    if (!loss) return;
+    const name = `Truce with player ${v.player}${v.agreement ? ` (agreement ${v.agreement})` : ''}`;
+    const lost = loss.commanderLost
+      ? 'my commander, and with it everything'
+      : loss.territories.length
+        ? `${loss.territories.map(label).join(', ')}, ${loss.armies} ${loss.armies === 1 ? 'army' : 'armies'} and +${loss.bonusValue} income`
+        : `no territory (${loss.armies} ${loss.armies === 1 ? 'army' : 'armies'})`;
+    const when = loss.firstMover ? ` (if ${loss.firstMover === 'me' ? 'I move' : 'it moves'} first)` : '';
+    plan.rationale.push(
+      `${name}: if it broke this turn — its ~${loss.deploy} deploy on ${label(loss.from)} and an attack on ${label(loss.to)} with ${loss.attackers} — I would lose ${lost}${when} (T6).`,
+    );
+  });
 }

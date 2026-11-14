@@ -361,6 +361,7 @@ interface PlanPayload {
     trust: string;
     flags: string[];
     breach?: { term: string; turn: number; territories: Array<{ id: number }> };
+    lossIfBroken?: { from: { id: number }; to: { id: number }; deploy: number; armies: number; bonusValue: number; territories: Array<{ id: number }> } | null;
   }>;
   advice?: unknown[];
   tacit?: unknown[];
@@ -378,7 +379,7 @@ describe('warapp_plan_turn — the truces in the ledger (B2)', () => {
     expect(p).not.toHaveProperty('advice');
   });
 
-  it('honours an agreed truce, names the partner as untrusted text, and logs the armies it freed', async () => {
+  it('honours an agreed truce, names the partner as untrusted text, and logs the armies it freed and what a break would cost (T6)', async () => {
     h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
     payload(await record({ with: 'Bob', status: 'agreed' }));
     const p = await planTurn();
@@ -387,9 +388,16 @@ describe('warapp_plan_turn — the truces in the ledger (B2)', () => {
     ]);
     expect(p.rationale.join('\n')).toMatch(/Truce with player \d+ \(agreement a1\): none of its \d+ covered territor/);
     const ledger = JSON.parse(readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')) as {
-      usage: Record<string, Array<{ agreementId: string; armiesFreed: number | null; lossIfBroken: number | null }>>;
+      usage: Record<string, Array<{ agreementId: string; armiesFreed: number | null; lossIfBroken: number | null; incomeLostIfBroken?: number | null }>>;
     };
-    expect(ledger.usage['3']).toEqual([{ agreementId: 'a1', armiesFreed: expect.any(Number), lossIfBroken: null }]);
+    // Bob's 7 on 158 and its deploy break in: the plan reports it by name, and the ledger logs the armies and income.
+    const loss = p.relations![0]!.lossIfBroken!;
+    expect(loss).toMatchObject({ from: expect.objectContaining({ id: 158 }), deploy: expect.any(Number) });
+    expect([159, 161]).toContain(loss.to.id);
+    expect(ledger.usage['3']).toEqual([
+      { agreementId: 'a1', armiesFreed: expect.any(Number), lossIfBroken: loss.armies, incomeLostIfBroken: loss.bonusValue },
+    ]);
+    expect(loss.armies).toBeGreaterThan(0);
   });
 
   it('never honours an `enforced` flag written into the ledger: no decoder vouches for it (T9)', async () => {
@@ -467,5 +475,126 @@ describe('warapp_plan_turn — the truces in the ledger (B2)', () => {
       }),
     ]);
     expect(p.warnings.join('\n')).toMatch(/Truce with player \d+ \(agreement a1\) is broken by them: took or attacked a covered territory of mine on turn 3 .*\(T8\)/);
+  });
+});
+
+// B2 T6: warapp_check_plan keeps a truce partner among the opponents it tries (`safe` is still safe
+// against a break) and adds the verdict if every truce holds.
+interface CheckPayload {
+  safe: boolean | null;
+  safeIfTruceHolds?: boolean | null;
+  truces?: Array<{ player: { id: number }; agreement?: string; state: string; covered: number }>;
+  worst: { opponent: { id: number }; breaksTruce?: boolean } | null;
+  summary: string;
+}
+const checkPlan = async () =>
+  payload<CheckPayload>(
+    await h!.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [{ kind: 'deploy', territory: 159, armies: 5 }] }),
+  );
+
+describe('warapp_check_plan — the truces in the ledger (B2 T6)', () => {
+  it('without an agreement there is no safeIfTruceHolds', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    const p = await checkPlan();
+    expect(p.safe).toBe(false);
+    expect(p).not.toHaveProperty('safeIfTruceHolds');
+    expect(p).not.toHaveProperty('truces');
+  });
+
+  it("still tries Bob's break of a truce covering both my territories, and says nothing else is tried", async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const p = await checkPlan();
+    expect(p.safe).toBe(false);
+    expect(p.worst).toMatchObject({ opponent: { id: Number(BOB.feed) }, breaksTruce: true });
+    expect(p.safeIfTruceHolds).toBeNull();
+    expect(p.truces).toEqual([{ player: expect.objectContaining({ id: Number(BOB.feed) }), agreement: 'a1', state: 'active', covered: 2 }]);
+    expect(p.summary).toMatch(/Every reply tried breaks a truce/);
+  });
+
+  it('a truce covering only 159 leaves the attack on 161 counted: not safe if the truce holds either', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed', territories: [159, 158] }));
+    const p = await checkPlan();
+    expect(p.safe).toBe(false);
+    expect(p.safeIfTruceHolds).toBe(false);
+  });
+});
+
+// B2: warapp_submit_turn refuses an order that attacks a covered territory of an active or in-notice
+// truce unless break_agreement is true; with it, the preview names the agreement and the ledger (and the
+// partner's player record) records broken-by-me once the orders are committed.
+describe('warapp_submit_turn — breaking a truce (B2)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  // Deploy 5 on 159 and attack Bob's 158 from 161: a break of a truce covering everything.
+  const ATTACK = [
+    { kind: 'deploy', territory: 159, armies: 5 },
+    { kind: 'move', from: 161, to: 158, armies: 2 },
+  ];
+  const withOrders = (sent: unknown[]) => (req: DecodedRequest): Partial<ReplyFrame> => {
+    if (req.method === Method.SendOrders) {
+      sent.push(req);
+      return { body: (w) => w.bool(false) };
+    }
+    return live(boardAt())(req);
+  };
+  const submit = (args: Record<string, unknown>) => h!.call('warapp_submit_turn', { game_id: GAME, orders: ATTACK, ...args });
+  const ledgerFile = () => JSON.parse(readFileSync(join(h!.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')) as {
+    agreements: Array<{ id: string; status: string; endedTurn?: number }>;
+  };
+
+  it('refuses the attack without break_agreement, naming the agreement, and sends nothing', async () => {
+    const sent: unknown[] = [];
+    h = await liveHarness({ feed: [game('2')], pages: ME_PAGE, warapp: withOrders(sent) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const r = await submit({});
+    expect(textOf(r)).toMatch(/These orders break a truce — agreement a1 with player \d+ \(active\): move 1 \(161 → 158\) attacks a territory it covers: nothing was sent/);
+    expect(textOf(r)).toMatch(/break_agreement: true/);
+    expect(JSON.stringify(r)).not.toMatch(/confirmToken/);
+    expect(sent).toEqual([]);
+    expect(ledgerFile().agreements[0]!.status).toBe('agreed');
+  });
+
+  it('a truce in notice still binds; one not covering 158 does not', async () => {
+    h = await liveHarness({ feed: [game('2')], pages: ME_PAGE, warapp: withOrders([]) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    payload(await record({ agreement_id: 'a1', status: 'notice-by-me' }));
+    expect(textOf(await submit({}))).toMatch(/agreement a1 with player \d+ \(in notice, still binding\)/);
+    payload(await record({ agreement_id: 'a1', status: 'ended' }));
+    payload(await record({ with: 'Bob', status: 'agreed', territories: [159, 161] }));
+    // 158 is not covered: no break, the preview goes ahead.
+    expect(payload<{ confirmToken?: string }>(await submit({})).confirmToken).toEqual(expect.any(String));
+  });
+
+  it('with break_agreement: true, warns in the preview, sends, and records broken-by-me in the ledger and the player record', async () => {
+    const sent: unknown[] = [];
+    // record, preview, confirm, read back (the turn resolved), then the re-read for the record.
+    h = await liveHarness({ feed: [game('2'), game('2'), game('2'), game('3')], pages: ME_PAGE, warapp: withOrders(sent) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const preview = payload<{ confirmToken: string; preview: { warnings: string[] } }>(await submit({ break_agreement: true }));
+    expect(preview.preview.warnings.join('\n')).toMatch(/agreement a1 with player \d+ \(active\).*break_agreement is true: once these orders are committed the ledger records it broken-by-me/);
+    expect(sent).toEqual([]);
+    const done = payload<{ status: string; outcome: string; agreementsBroken: Array<{ agreement: string; ledger: string; playerRecord?: string }> }>(
+      await submit({ break_agreement: true, confirmToken: preview.confirmToken }),
+    );
+    expect(sent).toHaveLength(1);
+    expect(done).toMatchObject({ status: 'resolved', outcome: 'confirmed' });
+    expect(done.agreementsBroken).toEqual([{ agreement: 'a1', ledger: 'recorded', playerRecord: 'updated' }]);
+    expect(ledgerFile().agreements[0]).toMatchObject({ id: 'a1', status: 'broken-by-me', endedTurn: 3 });
+    const rel = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
+    expect(rel.agreements[0]!.record).toMatchObject({ made: 1 });
+    expect(JSON.stringify(rel.agreements[0]!.record)).toMatch(/"brokenByMe":1/);
+  });
+
+  it('with break_agreement but the orders not confirmed, the ledger is left for the player to record', async () => {
+    h = await liveHarness({ feed: [game('2')], pages: ME_PAGE, warapp: withOrders([]) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const preview = payload<{ confirmToken: string }>(await submit({ break_agreement: true }));
+    const done = payload<{ outcome: string; agreementsBroken: Array<{ agreement: string; ledger: string; why: string }> }>(
+      await submit({ break_agreement: true, confirmToken: preview.confirmToken }),
+    );
+    expect(done.outcome).toBe('unconfirmed');
+    expect(done.agreementsBroken).toEqual([{ agreement: 'a1', ledger: 'not-recorded', why: expect.stringMatching(/broken-by-me/) }]);
+    expect(ledgerFile().agreements[0]!.status).toBe('agreed');
   });
 });

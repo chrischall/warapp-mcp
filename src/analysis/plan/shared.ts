@@ -411,6 +411,38 @@ export interface PlanRelationView {
   /** T5: the armies moved back from a covered border to keep at most the cap there. */
   capMoved?: { from: number; to: number; armies: number }[];
   breach?: PlanRelation['breach'];
+  /**
+   * T6: what a break would cost this turn — the partner's whole estimated deploy on its costliest
+   * covered border and an attack on my covered territory beside it, against this plan's orders, on the
+   * turn simulator. `null` when the truce does not bind, is enforced, or no covered stack of the
+   * partner in view stands beside a covered territory of mine.
+   */
+  lossIfBroken: TruceBreakLoss | null;
+}
+
+/** T6: one break, carried out (see {@link PlanRelationView.lossIfBroken}). */
+export interface TruceBreakLoss {
+  /** The partner's covered territory it deploys on and attacks from. */
+  from: number;
+  /** My covered territory it attacks. */
+  to: number;
+  /** Its whole deploy estimate (the planner's, as every hold is sized for). */
+  deploy: number;
+  /** The armies that attack (its stack and the deploy, less the guard). */
+  attackers: number;
+  /** Territories I would hold after this plan that the break leaves me without, ascending. */
+  territories: number[];
+  /** My armies lost against this plan going unanswered. */
+  armies: number;
+  /** Bonuses I would hold after this plan and no longer hold, ascending by id. */
+  bonuses: { id: number; value: number }[];
+  /** Their values summed: the income lost. */
+  bonusValue: number;
+  commanderLost: boolean;
+  /** When the first mover is unknown and only one move order costs this: who has to move first. */
+  firstMover?: 'me' | 'partner';
+  /** `false` under luck or weighted rounding: the battle was resolved at its expectation. */
+  exact: boolean;
 }
 
 /** B2 (T7): advice the plan gives about an agreement; the planner itself sends nothing. */

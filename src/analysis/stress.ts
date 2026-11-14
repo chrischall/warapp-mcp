@@ -54,6 +54,13 @@
 // deploy. A territory that falls is listed with the armies it would need to hold. I am taken to
 // add nothing next turn: it shows what the orders leave exposed, not what will happen.
 //
+// Truces (B2 T6, `truces`): a partner stays among the opponents, so `safe` still means safe against a
+// break. A reply in which a partner attacks a territory of mine its truce covers (any order of its, a
+// chain's path or a dodge into it included) is marked `breaksTruce`, and `safeIfTruceHolds` is the
+// verdict over the other replies alone (`null` when none is left to try). A reply that mixes a break
+// with attacks elsewhere (every stack at once) is left out whole: its attacks elsewhere are each tried
+// alone too.
+//
 // What this does NOT cover, so "safe" is only ever "safe against these": stacks hidden by fog,
 // armies included (`blindBorders` lists my territories next to them), a deploy split over
 // several stacks, two opponents together other than on one territory of mine (and two
@@ -111,6 +118,11 @@ export interface StressInput {
   localDeployments?: boolean;
   /** I lead a free-for-all: any two opponents may strike one territory of mine together (#180). */
   leader?: boolean;
+  /**
+   * B2 T6: the truces in force — each partner and the territories of mine its truce covers. A partner
+   * is still tried; replies that break a truce are marked, and `safeIfTruceHolds` leaves them out.
+   */
+  truces?: readonly { player: number; covered: readonly number[] }[];
 }
 
 const DEFAULT_MAX_REPLIES = 8;
@@ -159,6 +171,8 @@ export interface StressReply {
   /** Armies each side ends with, against the plan going unanswered (negative: fewer). */
   myArmies: number;
   theirArmies: number;
+  /** B2 T6: a truce partner attacks a territory of mine its truce covers (only with `truces`). */
+  breaksTruce?: true;
 }
 
 /** A stack my orders attack, moving out first (#180): see the header. */
@@ -258,6 +272,11 @@ interface StressReport {
    * does. `null`: no reply could be tried, so nothing is known.
    */
   safe: boolean | null;
+  /**
+   * B2 T6, only with `truces`: `safe` over the replies that break no truce — `null` when every reply
+   * tried is a break (or none could be tried).
+   */
+  safeIfTruceHolds?: boolean | null;
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -499,6 +518,15 @@ export function stressPlan(input: StressInput): StressReport {
     }
   }
 
+  // ---- B2 T6: which replies break a truce ----
+  const covers = new Map<number, Set<number>>();
+  for (const t of input.truces ?? []) covers.set(t.player, new Set([...(covers.get(t.player) ?? []), ...t.covered]));
+  const sideBreaks = (x: Side, path?: readonly number[]): boolean => {
+    const c = covers.get(x.player);
+    return c !== undefined && (x.orders.some((o) => c.has(o.to)) || (path ?? []).some((t) => c.has(t)));
+  };
+  const breaksTruce = (c: Candidate): boolean => sideBreaks(c, c.path) || (c.partner !== undefined && sideBreaks(c.partner));
+
   // ---- run them ----
   const assumptions = new Set(baseline.assumptions);
   const baseCaptured = new Set(baseline.log.filter((e) => e.player === me && e.result === 'captured').map((e) => e.to));
@@ -513,6 +541,9 @@ export function stressPlan(input: StressInput): StressReport {
     .sort(byNum);
   let runs = 0;
   let harmfulCandidates = 0;
+  /** B2 T6: replies that break no truce, and those of them that cost something. */
+  let keptCandidates = 0;
+  let harmfulKept = 0;
   const harmful: StressReply[] = [];
   const dodges: StressDodge[] = [];
   const joints = new Map<number, StressJoint>();
@@ -557,6 +588,7 @@ export function stressPlan(input: StressInput): StressReport {
       myArmies: armiesOf(r, (o) => o === me) - baseMyArmies,
       // Against what they would have with their deploys and nothing else happening.
       theirArmies: armiesOf(r, theirs) - (armiesOf(baseline, theirs) + sides.reduce((n, x) => n + x.deploy, 0)),
+      ...(breaksTruce(c) ? { breaksTruce: true as const } : {}),
     };
   };
   /** Two outcomes are the same when they cost me the same things. */
@@ -587,6 +619,10 @@ export function stressPlan(input: StressInput): StressReport {
       if (c.kind === 'joint' && r.territories.get(c.orders[0]!.to)?.owner !== me) falls = true;
     }
     if (found.length) harmfulCandidates++;
+    if (!breaksTruce(c)) {
+      keptCandidates++;
+      if (found.length) harmfulKept++;
+    }
     // Outcomes that are the same are reported once: with no first mover named when every run
     // ends that way, and with no first opponent when both of theirs do under one first mover.
     const groups = new Map<string, StressReply[]>();
@@ -738,5 +774,6 @@ export function stressPlan(input: StressInput): StressReport {
     blindBorders,
     exposedNextTurn,
     safe: candidates.length === 0 ? null : harmful.length === 0,
+    ...(input.truces?.length ? { safeIfTruceHolds: keptCandidates === 0 ? null : harmfulKept === 0 } : {}),
   };
 }
