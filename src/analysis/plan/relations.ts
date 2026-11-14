@@ -7,7 +7,7 @@
 //       tryCapture, the strikes, the lead strikes, the guard-off breaks and rule 4e's enemy fallback);
 //   T2  a covered border of mine that faces only the partner is sized for the partner's visible
 //       stacks next to it attacking with no deploy and no trend (`forceAt`; its separate-attack
-//       rule still applies);
+//       rule still applies), and the report never says it is sized for that deploy (`relaxedFor`);
 //   T3  never relaxed: my commander's territory, a border protecting more than
 //       TRUCE_RELAX_VALUE × my income, any border while the trust is `watch`;
 //   T4  the partner is no front: not for the no-second-front rule (rule 0p.2, a partner still
@@ -15,7 +15,8 @@
 //   T5  a border cap: my orders leave at most the cap on a covered border territory — no transfer or
 //       withdrawal of mine fills it past the cap (`capRoom`), and the excess is deployed one step
 //       behind, an incoming transfer trimmed, or the standing armies moved one step behind toward
-//       another front, said so when I already stand above it;
+//       another front, said so when I already stand above it; a warning when what the cap leaves
+//       falls short against another opponent there, or of T3's full hold under my commander;
 //   T6  what a break would cost (`truceBreakLosses`, after the plan is finished): for each binding
 //       truce, the partner's whole deploy estimate on one of its covered territories beside a covered
 //       territory of mine and an attack on it with everything there, carried out against this plan's
@@ -188,6 +189,15 @@ export function trucePass(pc: PlanCtx, valueOf: (t: number) => number): TrucePas
 }
 
 /**
+ * T2 in the report: my `t` is relaxed for player `p` this pass — sized for its visible stacks there
+ * with no deploy, so no line may call it sized for (or a gamble on) that player's deploy. Always
+ * false with no binding truce.
+ */
+export function relaxedFor(ps: PlanState, t: number, p: number): boolean {
+  return ps.truce?.relaxed.get(t) === p;
+}
+
+/**
  * T4's other half: a territory of mine next to a truce's covered territory is no interior, though
  * the partner is no front — it keeps what holds it against the threat there (T2's truce hold, or
  * T3's full one), so rule 6 never walks its garrison away. 0 beside no covered territory.
@@ -277,7 +287,9 @@ export function capStepRoom(pc: PlanCtx, ps: PlanState, from: number, to: number
  * what exceeds the cap; the plan never exceeds a term silently: it says to deploy less there, or to
  * give notice and ask the owner first. A capped border that also faces another opponent is not
  * "toward another front": when what the cap leaves there no longer holds it against that opponent
- * (and it held before), a warning names the opponent and the hold — the cap's cost (section 4).
+ * (and it held before), a warning names the opponent and the hold — the cap's cost (section 4). So
+ * does one where my commander stands, when what the cap leaves no longer meets T3's full hold against
+ * the partner itself.
  */
 export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd: Holds, tp: TrucePass | undefined, threats: Threats): void {
   const { truce, g, mineSet, label, armiesOf, noSplit, unitsAt, territories: state } = pc;
@@ -404,6 +416,23 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
         if (f && need > 0 && left < need && before >= need)
           warnings.push(
             `Truce with player ${r.player} (border cap ${cap}): ${label(t)} also faces player ${f.player}, and the ${left} the cap leaves there do not hold it — its hold needs ${need} against player ${f.player}'s ~${f.threat}. Keep the term, or give notice (notice-by-me) and ask the owner before exceeding the cap; never break it silently.`,
+          );
+      }
+      if (pc.myCommanders.has(t)) {
+        // T3 keeps my commander's full hold against the partner; the cap may still thin it below that.
+        const f = threats.forceAt(
+          t,
+          (n) => {
+            const st = state.get(n);
+            return !(st?.owner.kind === 'player' && st.owner.playerId === r.player);
+          },
+          { trend: true, allPlayers: true, full: true },
+        );
+        const need = f ? Math.max(0, threats.holdArmies(f.threat) - unitsAt(t)) : 0;
+        const left = endsAt(pc, ps, t);
+        if (f && need > 0 && left < need && before >= need)
+          warnings.push(
+            `Truce with player ${r.player} (border cap ${cap}): my commander stands on ${label(t)}, and the ${left} the cap leaves there do not hold it against player ${r.player}'s full attack — its hold needs ${need} against ~${f.threat}. Keep the term, or give notice (notice-by-me) and ask the owner before exceeding the cap; never break it silently.`,
           );
       }
     }

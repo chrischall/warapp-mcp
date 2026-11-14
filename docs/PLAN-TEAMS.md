@@ -270,7 +270,8 @@ Only in a free-for-all; with teams or two players the input is ignored with a wa
   relation is `active` or `notice`.
 - **T2. The truce hold.** A covered border of mine that faces only the partner is sized for the
   partner's visible adjacent stacks attacking with no deploy (the separate-attack rule of `forceAt`
-  still applies). That is the level at which a break needs a visible build-up first.
+  still applies). That is the level at which a break needs a visible build-up first. No report line calls
+  such a border sized for, or a gamble on, the partner's deploy (#69, #167's cover odds, #201).
 - **T3. What is never relaxed.** My commander's territory. A border whose protected value is above
   `TRUCE_RELAX_VALUE` (0.25) × my income. Any border when trust is `watch`. Those keep the full threat.
 - **T4. Not a front.** The partner does not count as a front for the no-second-front rule, and idle
@@ -280,7 +281,8 @@ Only in a free-for-all; with teams or two players the input is ignored with a wa
   moves the excess back and says so. Where the plan's own hold deploy is what exceeds it, the warning
   says to deploy less there, or to give notice and ask the owner first — never a silent break. Where
   the border also faces another opponent and what the cap leaves no longer holds it, a warning names
-  that opponent and the hold: the term's cost, stated.
+  that opponent and the hold: the term's cost, stated. So does one where my commander stands, when what
+  the cap leaves falls short of T3's full hold against the partner.
 - **T6. What a break would cost.** For each relation the plan reports `lossIfBroken`: the turn
   simulator's result when the partner lands its whole estimated deploy on its best covered border and
   attacks. `warapp_check_plan` keeps the partner among the opponents it tries, so `safe` still means
@@ -351,7 +353,9 @@ ledger's own states and the live board; the breach watch is not consulted, so a 
 outcome is `confirmed` the ledger records `broken-by-me` through warapp_record_agreement's path
 (`recordBrokenByMe`, `updateAgreementRecord` in `src/tools/relations.ts`: the transition under the ledger's
 lock, then the partner's player record with the break's flag and context); otherwise `agreementsBroken`
-says to record it by hand. Writing `broken-by-them` from the plan is still not done (the plan says to record
+says to record it by hand. `broken-by-me` is final: a later `warapp_uncommit_turn` does not undo it; the
+preview says so, and the withdrawal's result names the agreements still recorded broken that turn
+(`agreementsStillBroken`). Writing `broken-by-them` from the plan is still not done (the plan says to record
 it).
 
 ### B3. Pricing a deal

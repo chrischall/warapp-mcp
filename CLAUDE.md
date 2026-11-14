@@ -215,7 +215,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`capRoom` / `capStepRoom` at those call sites), and after rule 6 any excess is deployed one step back,
   trimmed off a transfer in, or moved back — a warning names this plan's own deploy when that exceeds it
   (deploy less, or give notice and ask the owner: never a silent break), and one that the cap leaves
-  short of its hold against another opponent beside it; `enforced` (T9) makes the
+  short of its hold against another opponent beside it, or of my commander's full hold; the report's #69
+  line, #167 cover odds and #201 gamble leave out a T2-relaxed border (`relaxedFor`); `enforced` (T9) makes the
   player no foe — `planRelationsFrom` never sets it (the ledger's field is ignored until a decoder-backed,
   turn-bounded source exists). `armiesFreed` counts a relaxed border only where the full hold would have
   been funded (not conceded, not refused by rule 1a or my income). **No
@@ -231,7 +232,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   an order that attacks a territory an active or in-notice agreement covers** (`truceBreaksIn`, the ledger and
   the live board only) unless `break_agreement: true`; then the preview names the agreement, and once the
   outcome is `confirmed` the ledger records `broken-by-me` and the player record updates
-  (`agreementsBroken`; otherwise it says to record it by hand). Not yet: writing `broken-by-them` to the
+  (`agreementsBroken`; otherwise it says to record it by hand). That is final: `warapp_uncommit_turn`
+  does not undo it, and says so (`agreementsStillBroken`, the agreements broken-by-me on that turn). Not yet: writing `broken-by-them` to the
   ledger (the plan says to record it).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the

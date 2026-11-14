@@ -33,6 +33,7 @@ import type { MoveSlot } from '../schedule.js';
 import type { Captures } from './captures.js';
 import { knownFirst, lateArrivals, lateNet, withdrawnInto, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
+import { relaxedFor } from './relations.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { LeadBlock, Targets } from './targets.js';
 import type { Threats } from './threats.js';
@@ -188,7 +189,7 @@ export function reportExpected(
     for (const b of borders.values())
       if (b.worst !== undefined) gambled.set(b.id, { player: b.player, worst: b.worst, expected: b.threat, growth: b.growth });
     const byPlayer = new Map<number, number[]>();
-    for (const [id, x] of gambled) if (mineSet.has(id) && !conceded.has(id)) byPlayer.set(x.player, [...(byPlayer.get(x.player) ?? []), id]);
+    for (const [id, x] of gambled) if (mineSet.has(id) && !conceded.has(id) && !relaxedFor(ps, id, x.player)) byPlayer.set(x.player, [...(byPlayer.get(x.player) ?? []), id]);
     for (const [p, ids] of [...byPlayer].sort((a, b) => a[0] - b[0])) {
       // Gambled: holds against the expected attack as the plan leaves it, not against the worst case.
       // One short of even the expected attack is no gamble (its threat warning says so).
@@ -215,7 +216,8 @@ export function reportExpected(
   // commit — so a sure hold of all of them needs every one sized for it; no army is counted
   // twice on one border (movable + max(deploy, growth)).
   for (const [p, ids] of [...heldAgainst].sort((a, b) => a[0] - b[0])) {
-    const held = [...ids].filter((id) => !conceded.has(id)).sort(byNum);
+    // B2 (T2): a border relaxed for that player is sized for no deploy of its: not this line's.
+    const held = [...ids].filter((id) => !conceded.has(id) && !relaxedFor(ps, id, p)).sort(byNum);
     if (held.length < 2) continue;
     rationale.push(
       `Each of the ${held.length} borders held against player ${p} (${held.map(label).join(', ')}) is sized for its full ~${deployOf(p)} deploy: it chooses where to land after seeing my orders, so any one of them can face all of it, and a share each would leave whichever it picks short. Each border's threat counts its stacks next to that border once plus one deploy, never the deploy twice.`,
@@ -236,7 +238,8 @@ export function reportExpected(
         if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
         by.set(st.owner.playerId, (by.get(st.owner.playerId) ?? 0) + Math.max(0, st.armies - guard) + unitsAt(n));
       }
-      for (const [q, movable] of by) facingBy.set(q, [...(facingBy.get(q) ?? []), { x, movable }]);
+      // B2 (T2): a border relaxed for q is sized for no deploy of its, so it is no gamble on where that lands.
+      for (const [q, movable] of by) if (!relaxedFor(ps, x, q)) facingBy.set(q, [...(facingBy.get(q) ?? []), { x, movable }]);
     }
     for (const [q, list] of [...facingBy].sort((a, b) => a[0] - b[0])) {
       if (list.length < 2) continue;

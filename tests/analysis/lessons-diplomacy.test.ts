@@ -328,6 +328,24 @@ describe('B2 T5: the border cap', () => {
     expect(endsAt(p, i, 1)).toBe(25);
     expect(why(p)).toMatch(/my orders would leave more than 25 on T1 \(#1\), so deploy \d+ on T3 \(#3\) instead/);
   });
+
+  it("a cap that leaves my commander's territory short of its full hold says so (whole-branch review)", () => {
+    // My commander on T1 (24) keeps its full hold against the partner's 39 movable and ~5 deploy
+    // (T3); a cap of 10 moves the rest back, and the 10 and my commander no longer hold it.
+    const b = at(withCommander(mine(1, 24), ME));
+    const i = input([truce({ borderCap: 10 })], { board: b });
+    const p = planTurn(i);
+    expect(endsAt(p, i, 1)).toBe(10);
+    expect(warned(p)).toMatch(
+      /Truce with player 20 \(border cap 10\): my commander stands on T1 \(#1\), and the 10 the cap leaves there do not hold it against player 20's full attack — its hold needs \d+ against ~\d+\. Keep the term, or give notice \(notice-by-me\) and ask the owner before exceeding the cap; never break it silently\./,
+    );
+  });
+
+  it('a cap that still leaves my commander its full hold says nothing more', () => {
+    const b = at(withCommander(mine(1, 24), ME));
+    const p = planTurn(input([truce({ borderCap: 60 })], { board: b }));
+    expect(warned(p)).not.toMatch(/my commander stands on/);
+  });
 });
 
 describe('B2 T5: no order of mine fills a capped border past its cap (B2a review)', () => {
@@ -816,5 +834,64 @@ describe('B2 T5: Local Deployment leaves no room one step behind (B2a review)', 
     expect(warned(p)).toMatch(
       /my orders leave 1 above the agreed border cap of 0 on T1 \(#1\) \(Local Deployment: the pools had room for only 0 of the 5 deployed there on T3 \(#3\), and the armies there cannot move again this turn\)/,
     );
+  });
+});
+
+describe('B2 T2: relaxed borders are not reported as sized for the full deploy (whole-branch review)', () => {
+  // My T1 (5) and T3 (5) are B900 (+5) and both face the partner's T2 (20); player 30 sits far off
+  // on T9. Income 30: B900 is worth less than TRUCE_RELAX_VALUE × 30, so both borders are relaxed —
+  // the #69 line and #167's cover odds must not say they are sized for (or gamble on) its deploy.
+  const g11 = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 9],
+      [
+        [1, 2],
+        [3, 2],
+        [1, 3],
+        [3, 4],
+        [4, 9],
+      ],
+      [[900, 5, [1, 3]]],
+    ),
+  );
+  const two = (relations?: PlanRelation[], income = 30, graph = g11): PlanInput => ({
+    graph,
+    board: board([mine(1, 5), enemy(2, 20, PARTNER), mine(3, 5), neutral(4, 2), enemy(9, 3, OTHER)]),
+    me: ME,
+    income,
+    settings: STD,
+    game: { players: FFA, turn: 8 },
+    options: { adapt: true, enemyDeploy: 5 },
+    ...(relations ? { relations } : {}),
+  });
+
+  it('without the truce both borders are sized for its full deploy', () => {
+    const p = planTurn(two());
+    expect(why(p)).toMatch(/Each of the 2 borders held against player 20 \(T1 \(#1\), T3 \(#3\)\) is sized for its full ~5 deploy/);
+  });
+
+  it('with the truce the line is left out and the cover odds say nothing of its deploy', () => {
+    const p = planTurn(two([truce({ coveredMine: [1, 3] })]));
+    expect(p.relations![0]!.relaxed).toEqual([1, 3]);
+    expect(why(p)).toMatch(/T1 \(#1\), T3 \(#3\) face only player 20, so they are held against its visible stacks there attacking with no deploy \(T2\)/);
+    expect(why(p)).not.toMatch(/held against player 20 .*is sized for its full/);
+    expect(why(p)).not.toMatch(/Cover odds against player 20/);
+  });
+
+  // At income 14 (B900 worth 3, still below TRUCE_RELAX_VALUE × 14) each hold leaves 12 there, which
+  // the partner's 19 movable alone do not take but with its ~5 deploy do: without the truce that is
+  // #167's gamble on where it lands; with it, the borders are sized for no deploy.
+  const g12 = buildGraph({ ...makeMap([1, 2, 3, 4, 9], [[1, 2], [3, 2], [1, 3], [3, 4], [4, 9]], [[900, 3, [1, 3]]]) });
+
+  it('without the truce the cover odds name the gamble on where its deploy lands', () => {
+    const p = planTurn(two(undefined, 14, g12));
+    expect(why(p)).toMatch(/Cover odds against player 20 \(#167\)/);
+  });
+
+  it('with the truce the relaxed borders are no gamble on its deploy', () => {
+    const p = planTurn(two([truce({ coveredMine: [1, 3] })], 14, g12));
+    expect(p.relations![0]!.relaxed).toEqual([1, 3]);
+    expect(why(p)).not.toMatch(/Cover odds against player 20/);
+    expect(why(p)).not.toMatch(/held against player 20 .*is sized for its full/);
   });
 });

@@ -1064,7 +1064,11 @@
 //           (deploy less there, or give notice and ask the owner first: never a silent break), or
 //           Local Deployment's room on the step. A capped border that also faces another
 //           opponent is no "toward another front": when what the cap leaves no longer holds it
-//           against that opponent (and it held before), a warning names the opponent and the hold.
+//           against that opponent (and it held before), a warning names the opponent and the hold;
+//           so does one where my commander stands, when the cap leaves it short of T3's full hold
+//           against the partner.
+//           The report never calls a T2-relaxed border sized for (or a gamble on) the partner's
+//           deploy: #69's line, #167's cover odds and #201's gamble leave it out (`relaxedFor`).
 //       T6. What a break would cost (`lossIfBroken`, after the orders are final; plan/relations.ts
 //           `truceBreakLosses`): per binding, unenforced truce, the partner's whole deploy estimate on
 //           one of its covered territories in view beside a covered territory of mine and an attack on
