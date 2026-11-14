@@ -20,7 +20,7 @@ import {
 } from '../combat.js';
 import { neighborsOf, type MapGraph } from '../graph.js';
 import type { GameOutlook } from '../outlook.js';
-import type { Exchange } from '../exchange.js';
+import type { BorderOutcome, Exchange } from '../exchange.js';
 import type { TwoStepReach } from '../lookahead.js';
 import type { MoveSlot } from '../schedule.js';
 import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from '../player.js';
@@ -464,6 +464,26 @@ export interface TurnPlan {
    * whose land borders the fog (it may hold more there) unless it is being finished off.
    */
   exits?: OpponentExits[];
+  /**
+   * #218: the main front (rule 2f: the biggest enemy stack next to me against my biggest stack
+   * beside it, `mainFront`) forecast with my whole income and the opponent's estimated income
+   * deployed there every turn — the same computation as the game outlook's front, which
+   * warapp_plan_turn feeds it for the turn being played. Present only when the front outlook ran.
+   */
+  front?: FrontView;
+}
+
+/** #218: a front forecast: the pair, the incomes deployed there every turn, and the outcome. */
+export interface FrontView {
+  from: number;
+  at: number;
+  mine: number;
+  theirs: number;
+  player: number;
+  myIncome: number;
+  theirIncome: number;
+  outcome: BorderOutcome;
+  turn: number | null;
 }
 
 /**

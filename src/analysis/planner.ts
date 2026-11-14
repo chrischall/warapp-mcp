@@ -106,7 +106,12 @@
 //          down so, the share is 0 this turn and holds come first. A front my stack breaks only if
 //          pressed counts as one only when the orders already take that stack; otherwise the share
 //          also goes when the border pins more than the income less the share (pressed, I am ground
-//          down). A rationale line gives the outcome, the turn and the income the border pins.
+//          down). A rationale line gives the outcome, the turn and the income the border pins (or
+//          that not even the whole income keeps it). #218: the front is `mainFront` (exchange.ts),
+//          shared with the game outlook; the plan reports `front`, the same front forecast with my
+//          whole income, which warapp_plan_turn feeds back to the outlook, and when that outcome
+//          differs the line says what it is ("With my whole N a turn there (as the outlook's front
+//          forecast deploys it) …").
 //       3. Behind on income: pressure (rule 1e) is sized with no margin. Outside a 1v1 the goal
 //          is `defend`; in a 1v1 (#72) it stays `balanced` — strike: rule 1's ordering puts
 //          breaks before expansion that completes nothing, and held-bonus units that pay for
@@ -878,14 +883,24 @@
 //     that territory without it, which the worse-order step would spend anyway; never one that
 //     attacks out or whose garrison already stays); with two or more such borders, each is first brought to that
 //     margin in the same order (#121: two symmetric borders at an exact hold ended as 16 and 7),
-//     the rest to the first — else (#125) it saves toward a capture this turn cannot afford:
+//     the rest to the first — #218: unless the step it would save toward (below) has its source on
+//     an open border of equal defensive value (the same player's threat, the same size, from the
+//     same enemy territories, protecting as much, in the same bonuses): then every short border
+//     first gets its margin (a lone one too), and the rest goes to that source, saving toward the
+//     step; a margin itself stays on its border — else (#125) it saves toward a capture this turn cannot afford:
 //     rule 4e's top-ranked step when it stood still for want of armies, else (rule 4f committing)
 //     the closest bonus's cheapest missing member in reach when this turn made no capture into
 //     that bonus, and only when its armies free plus what may still be deployed there fall short
 //     of it (a step refused for another reason — R3, rule 4c or 4d — is no reason to save); it
 //     goes to my territory beside that member with the most armies free (open, not a softener, no
 //     order under No-Split; "save toward …, the next step of bonus …") — else the
-//     source of the top expansion (a capture's finisher; it then makes no transfer), else the
+//     source of the top expansion (a capture's finisher; it then makes no transfer) — #218: but
+//     with no enemy territory in view (no front to go to), when that source's attacks land for
+//     sure and it lies more than CENTRE_SLACK hops farther from my farthest border than the
+//     territory central to what I hold (open, issuing no order; my largest connected holding,
+//     then the fewest hops through my land to its farthest border, then the least sum, then id),
+//     the leftover stays on that centre ("no front to go to: it stays central …"; rule 6 moves
+//     the armies already there, never the leftover) — else the
 //     border with the most fogged neighbours, else my biggest stack.
 //  6. Idle armies on interior territories transfer one step toward the front,
 //     only into territories held at the start of the turn and never into, or
@@ -1094,7 +1109,7 @@ import {
   straightKills,
 } from './combat.js';
 import { neighborsOf } from './graph.js';
-import { forecastBorder } from './exchange.js';
+import { forecastBorder, mainFront, type FrontStack } from './exchange.js';
 import { byNum, pct } from './plan/util.js';
 import {
   BREAK_WEIGHT,
@@ -1614,26 +1629,32 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // against that stack on the opponent's whole deploy (`forecastBorder`). Ground down so, the share
     // is dropped this turn and holds come first.
     if (floor > 0 && auto && (profile.phase === 'contact' || profile.phase === 'late')) {
-      let front: { theirs: number; at: number; player: number; mine: number; from: number } | undefined;
-      for (const [id, st] of [...state].sort((a, b) => a[0] - b[0])) {
-        if (st.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
-        const mineNext = neighborsOf(g, id).filter((n) => mineSet.has(n));
-        if (!mineNext.length) continue;
-        const from = [...mineNext].sort((x, y) => armiesOf(y) - armiesOf(x) || x - y)[0]!;
-        const theirs = st.armies + unitsAt(id);
-        if (!front || theirs > front.theirs)
-          front = { theirs, at: id, player: st.owner.playerId, mine: armiesOf(from) + unitsAt(from), from };
-      }
+      // #218: one definition of the main front, shared with the game outlook (`mainFront`).
+      const enemies: FrontStack[] = [];
+      for (const [id, st] of state)
+        if (st.owner.kind === 'player' && foe(st.owner.playerId) && st.armies !== null)
+          enemies.push({ id, armies: st.armies + unitsAt(id), player: st.owner.playerId });
+      const front = mainFront(g, (x) => mineSet.has(x), enemies, (x) => armiesOf(x) + unitsAt(x));
       if (front) {
-        const f = forecastBorder({
-          mine: front.mine,
-          theirs: front.theirs,
-          myIncome: income,
-          // Every turn's income, not this turn's deploy: a card is played once (#164).
-          theirIncome: incomeOfPlayer(front.player),
-          myDeploy: income - floor,
-          settings: { offensiveKillRate: rates.offensiveKillRate, defensiveKillRate: rates.defensiveKillRate, oneArmyStandsGuard: guard === 1 },
-        });
+        const settingsF = { offensiveKillRate: rates.offensiveKillRate, defensiveKillRate: rates.defensiveKillRate, oneArmyStandsGuard: guard === 1 };
+        // Every turn's income, not this turn's deploy: a card is played once (#164).
+        const theirIncome = incomeOfPlayer(front.player);
+        const f = forecastBorder({ mine: front.mine, theirs: front.theirs, myIncome: income, theirIncome, myDeploy: income - floor, settings: settingsF });
+        // #218: the same front with my whole income deployed there every turn — what the game
+        // outlook's front forecast assumes — so the two can be read together.
+        const whole = forecastBorder({ mine: front.mine, theirs: front.theirs, myIncome: income, theirIncome, settings: settingsF, outcomeOnly: true });
+        ps.front = { ...front, myIncome: income, theirIncome, outcome: whole.outcome, turn: whole.turn };
+        const wholeText =
+          whole.outcome === f.outcome && whole.turn === f.turn
+            ? ''
+            : ` With my whole ${income} a turn there (as the outlook's front forecast deploys it) ${
+                whole.outcome === 'ground-down'
+                  ? `I am ground down on turn ${whole.turn}`
+                  : whole.outcome === 'breaks'
+                    ? `my stack breaks it on turn ${whole.turn}`
+                    : 'it is a stand-off'
+              }.`;
+        const pins = f.pinnedHolds ? `the border pins ${f.pinned} of my ${income} income` : `not even my whole ${income} income keeps the border`;
         const pair = `my ${front.mine} on ${label(front.from)} against player ${front.player}'s ${front.theirs} on ${label(front.at)}, each deploying there every turn`;
         // `breaks` means pressing captures before being pressed grinds me down; the plan commits to
         // pressing only when its orders already take that stack. Otherwise being pressed with the
@@ -1642,21 +1663,21 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         const pressing = captured.has(front.at);
         if (f.outcome === 'ground-down') {
           rationale.push(
-            `Front outlook (#167): ${pair}, with ${income - floor} a turn (the income less the ${floor} expansion share) I am ground down on turn ${f.turn} — the border pins ${f.pinned} of my ${income} income. Holds come before the expansion share this turn.`,
+            `Front outlook (#167): ${pair}, with ${income - floor} a turn (the income less the ${floor} expansion share) I am ground down on turn ${f.turn} — ${pins}. Holds come before the expansion share this turn.${wholeText}`,
           );
           floor = 0;
         } else if (f.outcome === 'breaks' && pressedGrinds && !pressing) {
           rationale.push(
-            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn} only if the plan presses it, and it does not; pressed, with ${income - floor} a turn (the income less the ${floor} expansion share) I am ground down — the border pins ${f.pinned} of my ${income} income. Holds come before the expansion share this turn.`,
+            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn} only if the plan presses it, and it does not; pressed, with ${income - floor} a turn (the income less the ${floor} expansion share) I am ground down — ${pins}. Holds come before the expansion share this turn.${wholeText}`,
           );
           floor = 0;
         } else if (f.outcome === 'breaks' && pressedGrinds)
           rationale.push(
-            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn}, and the plan presses it this turn (pressed instead, the border pins ${f.pinned} of my ${income} income): the expansion share stands.`,
+            `Front outlook (#167): ${pair}, my stack breaks it on turn ${f.turn}, and the plan presses it this turn (pressed instead, ${pins}): the expansion share stands.${wholeText}`,
           );
         else
           rationale.push(
-            `Front outlook (#167): ${pair}, ${f.outcome === 'breaks' ? `my stack breaks it on turn ${f.turn}` : 'it is a stand-off'} even with ${floor} of income going to expansion (the border pins ${f.pinned}): the expansion share stands.`,
+            `Front outlook (#167): ${pair}, ${f.outcome === 'breaks' ? `my stack breaks it on turn ${f.turn}` : 'it is a stand-off'} even with ${floor} of income going to expansion (${f.pinnedHolds ? `the border pins ${f.pinned}` : `not even my whole ${income} keeps the border`}): the expansion share stands.${wholeText}`,
           );
       }
     }
@@ -2366,6 +2387,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- the plan: offence list, #172's final check, #201 retaliation, #167 exchanges, #179 ETAs (plan/report.ts) ----
   const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
+  // #218: the main front's forecast at my whole income, for the game outlook to share.
+  if (ps.front) plan.front = ps.front;
   // #214 review: what planTurn compares between the plans with and without bare steps. A border
   // ends holding when it is not conceded and what the final orders leave there (its armies, deploys
   // and transfers in, less every order out) beats the threat left once this plan's captures land.

@@ -533,7 +533,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin (with several, each is brought to its margin first, and a conceded border the leftover
     can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies
-    next to it" rule picked the hopeless border).
+    next to it" rule picked the hopeless border). #218: once every short border has its margin, the
+    rest goes to the source of the step the leftover would save toward (#125) when that source is a
+    border of equal defensive value (same player, threat, enemy territories, protected value and
+    bonuses), and counts toward the step; with no enemy territory in view the leftover stays on the
+    territory central to what I hold (fewest hops through my land to my farthest border) rather than
+    ride an expansion stack more than `CENTRE_SLACK` hops farther out whose attacks land without it.
+  - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
+    forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
+    against my biggest beside it). The plan reports `front` (that forecast with my whole income and
+    the opponent's estimate), and `warapp_plan_turn` feeds it to the outlook for the turn being played,
+    so the two read the same; the plan's line says how the whole-income outcome differs from the
+    income-less-the-share one, and the outlook's `basis` names the front and the incomes it assumed.
   - **Trend:** with `previousBoard`, growth of a visible adjacent enemy stack projects into
     the threat (see the threat model above), and warns "is building" — less what a visible
     neighbour of the same owner sent (unless it shrank beside another player's shrinking stack:

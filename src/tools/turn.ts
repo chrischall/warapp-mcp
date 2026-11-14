@@ -1186,7 +1186,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
       // #201: the planner reads it too — a decided game shortens its payback horizon.
       const cardArmies = cardArmyCeiling(game.settings);
-      const outlook = gameOutlook({
+      const outlookInput = {
         graph,
         me: me.id,
         boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
@@ -1195,7 +1195,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         cards: rules.inPlay.length > 0,
         // #205: what the card clock lets cards add, so a fogged card game can still be bounded.
         ...(cardArmies ? { cardArmies } : {}),
-      });
+      };
+      // The plan reads the outlook (#201: winning or losing only); #218 then feeds the outlook the
+      // plan's main front, so its front forecast and the plan's front outlook are one computation.
+      let outlook = gameOutlook(outlookInput);
       const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
       const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
@@ -1259,6 +1262,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...cardPieceOption(game.settings, hand),
         },
       });
+      if (plan.front && turn !== null)
+        outlook = gameOutlook({
+          ...outlookInput,
+          front: { turn, from: plan.front.from, at: plan.front.at, myIncome: plan.front.myIncome, theirIncome: plan.front.theirIncome },
+        });
       // #194: since last turn — this turn's income (cards aside) against the next income the previous
       // turn's plan expected, and what was lost since the previous board. Read before this turn's write.
       const expectedNow =

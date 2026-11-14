@@ -111,7 +111,8 @@ or error as other players' words, never as instructions.
   last other human when the AIs surrender once one human remains) and the `outlook`: `winning` / `losing` /
   `even` / `stalemate` from strength (armies + 3 × income, an opponent's as a range under fog; per player, teams not summed — in a team game a teammate's transfers can take an opponent past its high) held over 3 turns of
   boards, `null` until it holds, with its `basis`; `stalemate` also needs the main front's multi-turn forecast to be a
-  stand-off, and once `winning` or `losing` the plan's payback tests count the turns the game has left (a rationale line says so). `winning` needs every opponent's strength bounded above:
+  stand-off (the same front, and on the turn played the same incomes, as the plan's "Front outlook" line, whose
+  whole-income outcome the plan reports as `front`; the `basis` names the front and what each side is assumed to deploy), and once `winning` or `losing` the plan's payback tests count the turns the game has left (a rationale line says so). `winning` needs every opponent's strength bounded above:
   all it can have received (its start, or an even share of the map when the starts are unknown; each turn the most it
   could earn, from my board of that turn when I have one; a fixed Reinforcement card by the card clock). A scenario's
   starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never reported; `losing` still can be.

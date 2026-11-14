@@ -23,7 +23,7 @@
 // even that is not enough).
 
 import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills, type KillRates } from './combat.js';
-import { buildGraph, type MapGraph } from './graph.js';
+import { buildGraph, neighborsOf, type MapGraph } from './graph.js';
 import { simulateTurn, type SimSettings, type SimTerritory } from './turn-sim.js';
 
 type ExchangeLabel = 'certain first strike' | 'favourable exchange' | 'strike last' | 'stand';
@@ -99,6 +99,8 @@ interface BorderForecastInput {
   /** Default {@link FORECAST_TURNS}. */
   turns?: number;
   settings?: SimSettings;
+  /** #218: skip the `pinned` search (it is the same for any `myDeploy`): `pinned` reads the whole income. */
+  outcomeOnly?: boolean;
 }
 
 interface BorderForecast {
@@ -109,6 +111,8 @@ interface BorderForecast {
   turns: number;
   /** The least deploy a turn on my stack that keeps it from being ground down within the horizon. */
   pinned: number;
+  /** #218: `false` when not even my whole income keeps it (`pinned` is then that whole income). */
+  pinnedHolds: boolean;
 }
 
 const ME = 1;
@@ -184,10 +188,54 @@ export function forecastBorder(input: BorderForecastInput): BorderForecast {
     turn = null;
   }
   let pinned = myIncome;
-  for (let d = 0; d <= myIncome; d++)
-    if (grind(THEM, input.mine, input.theirs, d, theirIncome, turns, settings) === null) {
-      pinned = d;
-      break;
-    }
-  return { outcome, turn, turns, pinned };
+  let pinnedHolds = false;
+  if (!input.outcomeOnly)
+    for (let d = 0; d <= myIncome; d++)
+      if (grind(THEM, input.mine, input.theirs, d, theirIncome, turns, settings) === null) {
+        pinned = d;
+        pinnedHolds = true;
+        break;
+      }
+  return { outcome, turn, turns, pinned, pinnedHolds };
+}
+
+/** #218: one side of a front: a territory, its armies (special units included) and its owner. */
+export interface FrontStack {
+  id: number;
+  armies: number;
+  player: number;
+}
+
+/** #218: the main front — the biggest enemy stack next to me, against my biggest stack beside it. */
+export interface MainFront {
+  /** My territory. */
+  from: number;
+  /** The enemy's. */
+  at: number;
+  mine: number;
+  theirs: number;
+  player: number;
+}
+
+/**
+ * #218: the main front, one definition for the planner's front outlook (#167) and the game
+ * outlook's front forecast (#201): the biggest enemy stack next to a territory of mine (ties to
+ * the lower id), against my biggest stack beside it (ties to the lower id). `enemies` are the
+ * visible stacks of every opponent (teammates left out by the caller); `myArmies` gives my stack
+ * on a territory of mine (special units included).
+ */
+export function mainFront(
+  g: MapGraph,
+  isMine: (id: number) => boolean,
+  enemies: readonly FrontStack[],
+  myArmies: (id: number) => number,
+): MainFront | undefined {
+  let front: MainFront | undefined;
+  for (const e of [...enemies].sort((a, b) => a.id - b.id)) {
+    const next = neighborsOf(g, e.id).filter(isMine);
+    if (!next.length) continue;
+    const from = [...next].sort((x, y) => myArmies(y) - myArmies(x) || x - y)[0]!;
+    if (!front || e.armies > front.theirs) front = { from, at: e.id, mine: myArmies(from), theirs: e.armies, player: e.player };
+  }
+  return front;
 }

@@ -56,10 +56,13 @@
 // at least OUTLOOK_RATIO × the highest likely high), `losing`
 // when even the high ratio is at most 1 / OUTLOOK_RATIO, `stalemate` when neither and no territory
 // in view on both boards changed owner since the turn before while I face an enemy and (#201) the
-// main front's multi-turn forecast is a stand-off, else `even`. The main front is my biggest stack
-// next to an enemy against the biggest enemy stack beside it, both owners deploying their visible
-// income there every turn (`forecastBorder`, exchange.ts): a front that breaks or grinds me down
-// within the horizon is not stuck, however quiet the last turns were.
+// main front's multi-turn forecast is a stand-off, else `even`. The main front (#218: `mainFront`,
+// exchange.ts, the planner's definition) is the biggest enemy stack next to me against my biggest
+// stack beside it, both owners deploying their whole income there every turn (`forecastBorder`):
+// mine off my board, theirs the tracked income (its visible income at least) — and on the turn
+// being played, when the plan's `front` is that pair (`front` input), the plan's incomes, so the
+// plan's front outlook and this forecast agree. A front that breaks or grinds me down within the
+// horizon is not stuck, however quiet the last turns were; the basis says what the front assumed.
 // The outlook reports a state only once it has held for OUTLOOK_TURNS consecutive turns; until
 // then `state` is null and the basis says what each turn read.
 //
@@ -77,7 +80,8 @@ import { bonusTerritories } from './bonuses.js';
 import { cardArmiesBy, type CardArmyCeiling } from '../strategy/card-clock.js';
 import { boardIncome, DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
 import { STRENGTH_INCOME_TURNS } from './profile.js';
-import { forecastBorder, type BorderOutcome } from './exchange.js';
+import { FORECAST_TURNS, forecastBorder, mainFront, type BorderOutcome, type FrontStack } from './exchange.js';
+import { specialUnitStrength } from './combat.js';
 
 /** Turns a state must hold before it is reported. */
 export const OUTLOOK_TURNS = 3;
@@ -132,7 +136,20 @@ export interface OutlookTurn {
    * #201: the main front's forecast — my biggest stack next to an enemy against the biggest enemy
    * stack beside it, both deploying their visible income every turn. Absent with no front.
    */
-  front?: { mine: number; theirs: number; player: number; outcome: BorderOutcome; turn: number | null };
+  front?: {
+    mine: number;
+    theirs: number;
+    player: number;
+    /** #218: my territory and the enemy's. */
+    from: number;
+    at: number;
+    /** #218: the incomes deployed there every turn, and where theirs came from. */
+    myIncome: number;
+    theirIncome: number;
+    incomeSource: 'plan' | 'tracked' | 'visible';
+    outcome: BorderOutcome;
+    turn: number | null;
+  };
   state: OutlookState;
 }
 
@@ -162,9 +179,17 @@ interface OutlookInput {
   cards?: boolean;
   /** …unless (#205) the card clock bounds what cards can add ({@link cardArmyCeiling}). */
   cardArmies?: CardArmyCeiling;
+  /**
+   * #218: the plan's main front for the turn being played (its `front`): when the latest turn's
+   * main front is that pair, its forecast uses the plan's incomes, so the two agree.
+   */
+  front?: { turn: number; from: number; at: number; myIncome: number; theirIncome: number };
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** The armies the special units on a territory fight as (commanders), as the planner counts them. */
+const unitsOn = (b: BoardState, id: number) => specialUnitStrength(b.territories.find((t) => t.territoryId === id)?.specialUnits);
 
 const fullyVisible = (g: MapGraph, b: BoardState) => {
   const seen = new Set<number>();
@@ -441,32 +466,53 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         return o?.kind === 'player' && !ally(o.playerId);
       }),
     );
-    // #201: the main front, forecast forward.
-    let main: { mine: number; theirs: number; player: number } | undefined;
-    for (const x of [...(held.get(me) ?? [])].sort((a, b) => a - b)) {
-      const ours = board.territories.find((t) => t.territoryId === x)?.armies ?? 0;
-      for (const n of neighborsOf(g, x)) {
-        const o = ownerById.get(n);
-        const st = board.territories.find((t) => t.territoryId === n);
-        if (o?.kind !== 'player' || ally(o.playerId) || st?.armies == null) continue;
-        if (!main || ours > main.mine || (ours === main.mine && st.armies > main.theirs))
-          main = { mine: ours, theirs: st.armies, player: o.playerId };
-      }
+    // #201: the main front, forecast forward. #218: the planner's definition (`mainFront`), and on
+    // the turn being played the planner's incomes (`input.front`, the plan's `front`), so the plan's
+    // front outlook and this forecast are one computation.
+    const enemies: FrontStack[] = [];
+    for (const t of board.territories) {
+      if (!g.territoryById.has(t.territoryId) || t.armies == null || ownerById.get(t.territoryId) !== t.owner) continue;
+      if (t.owner.kind !== 'player' || ally(t.owner.playerId)) continue;
+      enemies.push({ id: t.territoryId, armies: t.armies + unitsOn(board, t.territoryId), player: t.owner.playerId });
     }
+    const armiesById = new Map<number, number>();
+    for (const t of board.territories) if (!armiesById.has(t.territoryId)) armiesById.set(t.territoryId, t.armies ?? 0);
+    const mineNow = held.get(me) ?? new Set<number>();
+    const main = mainFront(g, (x) => mineNow.has(x), enemies, (x) => (armiesById.get(x) ?? 0) + unitsOn(board, x));
     let forecast: OutlookTurn['front'];
     if (main) {
+      const given =
+        input.front && input.front.turn === turn && input.front.from === main.from && input.front.at === main.at ? input.front : undefined;
+      // Their income: the plan's estimate on the turn being played; else what the tracker reads
+      // off my boards (its tracked income, its visible income at least).
+      const tr = given ? undefined : trackedAll().get(main.player);
+      const myIncome = given?.myIncome ?? boardIncome(g, mineNow, rules).total;
+      const theirIncome =
+        given?.theirIncome ?? Math.max(boardIncome(g, held.get(main.player) ?? new Set(), rules).total, tr?.income ?? 0);
       const f = forecastBorder({
         mine: main.mine,
         theirs: main.theirs,
-        myIncome: boardIncome(g, held.get(me) ?? new Set(), rules).total,
-        theirIncome: boardIncome(g, held.get(main.player) ?? new Set(), rules).total,
+        myIncome,
+        theirIncome,
+        outcomeOnly: true,
         settings: {
           ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
           ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
           ...(settings.oneArmyStandsGuard !== undefined ? { oneArmyStandsGuard: settings.oneArmyStandsGuard } : {}),
         },
       });
-      forecast = { ...main, outcome: f.outcome, turn: f.turn };
+      forecast = {
+        mine: main.mine,
+        theirs: main.theirs,
+        player: main.player,
+        from: main.from,
+        at: main.at,
+        myIncome,
+        theirIncome,
+        incomeSource: given ? 'plan' : tr?.income != null && tr.income > boardIncome(g, held.get(main.player) ?? new Set(), rules).total ? 'tracked' : 'visible',
+        outcome: f.outcome,
+        turn: f.turn,
+      };
     }
     const bound = dominated || (rows.length > 0 && ratio.low >= OUTLOOK_RATIO);
     const estimated = !bound && likely !== undefined && likely.high > 0 && likely.ratio >= OUTLOOK_RATIO;
@@ -522,6 +568,23 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
           ? `${state[0]!.toUpperCase()}${state.slice(1)} for ${OUTLOOK_TURNS} turns running; ${figures}.`
           : `${last.state[0]!.toUpperCase()}${last.state.slice(1)} for ${heldTurns} of the ${OUTLOOK_TURNS} turns (${turns.map((t) => t.state).join(', ')}), so no state yet; ${figures}.`;
     reading += est;
+    // #218: the main front, said with what it assumes, so it reads with the plan's front outlook.
+    const fr = last.front;
+    if (fr) {
+      const theirs =
+        fr.incomeSource === 'plan'
+          ? "the plan's estimate"
+          : fr.incomeSource === 'tracked'
+            ? 'tracked off my boards'
+            : 'its visible income, a lower bound under fog';
+      const outcome =
+        fr.outcome === 'ground-down'
+          ? `I am ground down on turn ${fr.turn}`
+          : fr.outcome === 'breaks'
+            ? `my stack breaks it on turn ${fr.turn}`
+            : `a stand-off over ${FORECAST_TURNS} turns`;
+      reading += ` The main front (the biggest enemy stack next to me against my biggest beside it), each side deploying its whole income there every turn (mine ${fr.myIncome}, player ${fr.player}'s ${fr.theirIncome}: ${theirs}): my ${fr.mine} on #${fr.from} against its ${fr.theirs} on #${fr.at}, ${outcome}.`;
+    }
   }
   return { state, heldTurns, turns, k, threshold: OUTLOOK_RATIO, basis: `${reading} ${measure} ${thresholds}` };
 }

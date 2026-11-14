@@ -14,6 +14,7 @@ import type { GameProfile } from '../profile.js';
 import type {
   CardAdvice,
   EnemyDeployEstimate,
+  FrontView,
   EnemyIncomePrior,
   PlanGameContext,
   PlanGoal,
@@ -173,6 +174,8 @@ export interface PlanState {
   locked: Set<number>;
   /** #179: what a territory covering a finished-off player's exit keeps, in `avail` terms. */
   coverKeep: Map<number, number>;
+  /** #218 (comment): the leftover kept central with no front to go to (rule 5): rule 6 never moves it away. */
+  centralKeep: Map<number, number>;
   /** #179: a buffer in an FFA left standing: no pass captures its territories this turn. */
   spared: Set<number>;
   /** #201: players left standing because absorbing them would not catch the leader. */
@@ -195,6 +198,8 @@ export interface PlanState {
   staged: Map<number, number>;
   /** The expansion stack: the source of the first bonus pass's finishing attack (the leftover deploy's home). */
   anchor: number | undefined;
+  /** #218: the main front's forecast at my whole income (rule 2f), when the front outlook ran. */
+  front?: FrontView;
   /** Territories a pass assumes fall this turn (finishing a player off): they threaten nothing. */
   assumeGone: (n: number) => boolean;
   /** Why the last tryCapture refused (R3, No-Split on a source that could take it); else size. */
@@ -231,6 +236,7 @@ export function newPlanState(): PlanState {
     avail: new Map(),
     locked: new Set(),
     coverKeep: new Map(),
+    centralKeep: new Map(),
     spared: new Set(),
     unabsorbed: new Set(),
     absorbLines: new Map(),
