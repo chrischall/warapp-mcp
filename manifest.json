@@ -186,6 +186,14 @@
       "description": "Post a game chat message, public or private (confirm-gated)"
     },
     {
+      "name": "warapp_get_relations",
+      "description": "Read the truces you recorded for a game: each one's state, board-derived watch flags and trust, quiet borders, and the partner's record"
+    },
+    {
+      "name": "warapp_record_agreement",
+      "description": "Record a truce or a change to one in this machine's agreement ledger (nothing is sent to war.app)"
+    },
+    {
       "name": "warapp_wait_for_turn",
       "description": "Wait until one of your games is waiting on you, woken by war.app's push notifications"
     },

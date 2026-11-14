@@ -6,8 +6,9 @@ import { harnessFor, type Harness } from './helpers.js';
  * war.app except the confirm-gated writes that reach other people
  * (submitting territory picks, submitting a turn's orders, sending chat,
  * joining a game, surrendering one, withdrawing committed orders) and
- * one confirm-gated LOCAL write that reaches no one but this machine — linking
- * the direct-transport session (it only stores a cookie locally).
+ * two LOCAL writes that reach no one but this machine — linking the
+ * direct-transport session (confirm-gated: it stores a cookie locally) and
+ * recording an agreement in the local ledger (not confirm-gated).
  */
 const WRITES = [
   'warapp_begin_turn',
@@ -19,7 +20,7 @@ const WRITES = [
   'warapp_surrender',
   'warapp_uncommit_turn',
 ];
-const LOCAL_WRITES = ['warapp_link_session'];
+const LOCAL_WRITES = ['warapp_link_session', 'warapp_record_agreement'];
 
 interface Ann {
   readOnlyHint?: unknown;
@@ -52,6 +53,7 @@ describe('tool annotations', () => {
       'warapp_get_live_board',
       'warapp_get_map',
       'warapp_get_my_picks',
+      'warapp_get_relations',
       'warapp_healthcheck',
       'warapp_join_game',
       'warapp_leave_game',
@@ -64,6 +66,7 @@ describe('tool annotations', () => {
       'warapp_plan_route',
       'warapp_plan_turn',
       'warapp_recent_events',
+      'warapp_record_agreement',
       'warapp_scout_player',
       'warapp_send_chat',
       'warapp_session_status',
@@ -99,6 +102,10 @@ describe('tool annotations', () => {
 
   it('marks linking the session a write, but a local one that reaches no other people', () => {
     expect(ann.warapp_link_session).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+  });
+
+  it('marks recording an agreement a write to the local ledger only', () => {
+    expect(ann.warapp_record_agreement).toMatchObject({ readOnlyHint: false, destructiveHint: false });
   });
 
   it('marks every game tool open-world (all reach war.app)', () => {
