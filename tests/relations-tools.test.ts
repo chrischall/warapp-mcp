@@ -62,7 +62,7 @@ interface RelationsPayload {
     state: string;
     trust?: { level: string; reasons: string[] };
     flags: Array<{ kind: string; turn: number; territories: Array<{ id: number }> }>;
-    record: null | 'off' | { brokenByThem: number; agreed: number };
+    record: null | 'off' | { brokenByThem: number; made: number };
     history?: unknown[];
   }>;
   tacit: unknown[];
@@ -79,10 +79,15 @@ describe('the tools', () => {
     expect(tools.find((t) => t.name === 'warapp_record_agreement')!.description).toMatch(/Nothing is sent to war\.app/);
   });
 
-  it('is registered on a hosted child too (the ledger lives in its per-user data dir)', async () => {
-    h = await liveHarness({ env: { MCP_HOST_METER_FILE: '/tmp/meter' } });
+  it('is registered on a hosted child too (the ledger lives in its per-user data dir), but the player record is off there', async () => {
+    h = await liveHarness({ feed: [game('2')], env: { MCP_HOST_METER_FILE: '/tmp/meter', WARAPP_PLAYER_RECORD: 'on' } });
     const names = (await h.harness.client.listTools()).tools.map((t) => t.name);
     expect(names).toEqual(expect.arrayContaining(['warapp_get_relations', 'warapp_record_agreement']));
+    expect(payload<RecordPayload>(await record({ with: 'Bob', status: 'agreed' })).playerRecord).toBe('off');
+    expect(existsSync(join(h.dataDir, 'relations', 'players.json'))).toBe(false);
+    expect(existsSync(join(h.dataDir, 'relations', 'players.salt'))).toBe(false);
+    const p = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
+    expect(p).toMatchObject({ playerRecord: 'off', agreements: [{ id: 'a1', record: 'off' }] });
   });
 });
 
@@ -93,19 +98,23 @@ describe('warapp_record_agreement', () => {
     expect(made).toMatchObject({
       recorded: 'created',
       agreement: { id: 'a1', with: { id: Number(BOB.feed) }, status: 'proposed-by-them', state: 'proposed' },
-      playerRecord: 'updated',
+      // A proposal counts nothing yet.
+      playerRecord: 'unchanged',
     });
     expect(made.agreement.with.name).toMatch(/^⟦Bob⟧$/);
     expect(made.agreement.terms).toMatchObject({ scope: { territories: [{ id: 159 }] }, noticeTurns: 2, borderCap: 8 });
     expect(made.written).toMatch(/nothing was sent to war\.app/);
     const agreed = payload<RecordPayload>(await record({ agreement_id: 'a1', status: 'agreed' }));
-    expect(agreed.agreement).toMatchObject({ status: 'agreed', state: 'active' });
-    const text = readFileSync(join(h.dataDir, 'relations', `${GAME}.json`), 'utf8');
+    expect(agreed).toMatchObject({ agreement: { status: 'agreed', state: 'active' }, playerRecord: 'updated' });
+    const text = readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8');
     expect(text).not.toMatch(/Ann|Bob/);
     expect(JSON.parse(text)).toMatchObject({ gameId: GAME, playerId: Number(ANN.feed), agreements: [{ id: 'a1', with: Number(BOB.feed), status: 'agreed', agreedTurn: 3 }] });
-    // The cross-game record: no player id, game id or name.
+    // The cross-game record: counts only, no player id, game id or name.
     const players = readFileSync(join(h.dataDir, 'relations', 'players.json'), 'utf8');
     for (const s of [BOB.feed, String(GAME), 'Bob', 'Ann']) expect(players).not.toContain(s);
+    expect(Object.values((JSON.parse(players) as { players: Record<string, { counts: unknown }> }).players).map((x) => x.counts)).toEqual([
+      { made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 0, brokenByMe: 0 },
+    ]);
     // Nothing went to war.app.
     expect(h.exchanges).toEqual([]);
   });
@@ -165,7 +174,7 @@ describe('warapp_get_relations', () => {
     h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
     payload(await record({ with: 'Bob', status: 'agreed' }));
     const first = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
-    expect(first.agreements[0]).toMatchObject({ id: 'a1', state: 'active', trust: { level: 'clear' }, flags: [], record: { agreed: 1 } });
+    expect(first.agreements[0]).toMatchObject({ id: 'a1', state: 'active', trust: { level: 'clear' }, flags: [], record: { made: 1, keptRate: null } });
     expect(first.boards).toEqual({ turns: [3], live: true });
     const dir = h.dataDir;
     await h.harness.close();
@@ -178,27 +187,24 @@ describe('warapp_get_relations', () => {
     const broke = payload<RecordPayload>(await record({ agreement_id: 'a1', status: 'broken-by-them' }));
     expect(broke.agreement).toMatchObject({ status: 'broken-by-them', state: 'over' });
     const after = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
-    expect(after.agreements[0]).toMatchObject({ state: 'over', record: { brokenByThem: 1, agreed: 1 } });
+    expect(after.agreements[0]).toMatchObject({ state: 'over', record: { brokenByThem: 1, made: 1, keptRate: 0 } });
     expect(after.agreements[0]).not.toHaveProperty('trust');
-    const players = JSON.parse(readFileSync(join(dir, 'relations', 'players.json'), 'utf8')) as {
-      players: Record<string, { entries: Array<{ outcome: string; breachFlag: string; breakTurn: number; context: unknown }> }>;
-    };
-    expect(Object.values(players.players)[0]!.entries[0]).toMatchObject({ outcome: 'broken-by-them', breachFlag: 'broken', breakTurn: 4 });
+    const players = JSON.parse(readFileSync(join(dir, 'relations', 'players.json'), 'utf8')) as { players: Record<string, { counts: object }> };
+    expect(Object.values(players.players)[0]!.counts).toEqual({ made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 1, brokenByMe: 0 });
   });
 
-  it('marks a new proposal from a partner after an over agreement as proposed again', async () => {
+  it('counts each agreement once across its updates, and an over one never again', async () => {
     h = await liveHarness({ feed: [game('2')] });
     payload(await record({ with: 'Bob', status: 'agreed' }));
+    payload(await record({ agreement_id: 'a1', status: 'notice-by-me' }));
+    payload(await record({ agreement_id: 'a1', status: 'agreed' }));
     payload(await record({ agreement_id: 'a1', status: 'ended' }));
     payload(await record({ with: 'Bob', status: 'proposed-by-them' }));
-    const players = JSON.parse(readFileSync(join(h.dataDir, 'relations', 'players.json'), 'utf8')) as {
-      players: Record<string, { entries: Array<{ outcome: string; proposedAgain?: boolean }> }>;
-    };
-    const entries = Object.values(players.players)[0]!.entries;
-    expect(entries.map((e) => [e.outcome, e.proposedAgain ?? false]).sort()).toEqual([
-      ['kept', true],
-      ['open', false],
-    ]);
+    payload(await record({ agreement_id: 'a2', status: 'agreed' }));
+    payload(await record({ agreement_id: 'a2', status: 'broken-by-me' }));
+    expect(payload<RecordPayload>(await record({ agreement_id: 'a2', retaliated: true })).playerRecord).toBe('unchanged');
+    const p = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
+    expect(p.agreements[1]!.record).toEqual({ made: 2, kept: 1, endedWithNotice: 0, brokenByThem: 0, brokenByMe: 1, keptRate: 1 });
   });
 
   it('with the player record off, keeps the ledger and writes no record', async () => {

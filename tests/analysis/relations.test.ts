@@ -152,6 +152,23 @@ describe('breachWatch', () => {
     expect(breachWatch({ agreement: agreed(), graph, me: ME, boards: [at(3), at(4, { m4: 2 })] }).map((f) => f.kind)).toEqual(['kept']);
   });
 
+  it('a shortfall my transfer in would explain, when its source was taken or hit, is ambiguous, not broken', () => {
+    // My move 3 -> 4 of 2 never arrived in full: 3 was taken by another player first.
+    const fed: MyOrders = { deploys: [], moves: [{ from: 3, to: 4, armies: 2 }] };
+    const turn4 = (t3: TerritoryState): TurnBoard => ({
+      turn: 4,
+      board: board([mine(1, 3), mine(2, 3), t3, mine(4, 5), theirs(5, 4), theirs(6, 2), neutral(7, 2)]),
+    });
+    const lost = breachWatch({ agreement: agreed(), graph, me: ME, boards: [at(3, { orders: fed }), turn4(mine(3, 2, OTHER))] });
+    expect(lost).toEqual([expect.objectContaining({ kind: 'massing', ambiguous: true, territories: [4] })]);
+    // Its source hit (fewer armies than my orders leave there): ambiguous too.
+    const hit = breachWatch({ agreement: agreed(), graph, me: ME, boards: [at(3, { orders: fed }), turn4(mine(3, 0))] });
+    expect(hit).toEqual([expect.objectContaining({ kind: 'massing', ambiguous: true, territories: [4] })]);
+    // Its source intact: the transfer arrived, so the shortfall is the partner's.
+    const intact = breachWatch({ agreement: agreed(), graph, me: ME, boards: [at(3, { orders: fed }), turn4(mine(3, 1))] });
+    expect(intact).toEqual([expect.objectContaining({ kind: 'broken', territories: [4] })]);
+  });
+
   it('under fog, a covered territory lost to an unseen owner is massing, not broken', () => {
     const flags = breachWatch({ agreement: agreed(), graph, me: ME, boards: [at(3), at(4, { t4: fogged(4) })] });
     expect(flags).toEqual([expect.objectContaining({ kind: 'massing', ambiguous: true, territories: [4] })]);

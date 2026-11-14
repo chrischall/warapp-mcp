@@ -175,7 +175,7 @@ unread counts survive a restart, and a team-channel send is refused outside a te
 ### A2. The agreement ledger
 
 **Pure model:** `src/analysis/relations.ts`. **Store:** `src/relations-store.ts`, at
-`<dataDir>/relations/<gameId>.json`, name-free. **Tools:** `warapp_get_relations` (read-only) and
+`<dataDir>/relations/<gameId>-<playerId>.json` (one file per account), name-free. **Tools:** `warapp_get_relations` (read-only) and
 `warapp_record_agreement` (writes only that local file; not confirm-gated, since nothing leaves the
 machine; say so in CLAUDE.md's paragraph on writes).
 
@@ -205,7 +205,9 @@ Pure functions:
   - `broken`: the partner took, or attacked, a covered territory of mine.
   - `cap-exceeded`: a visible partner territory on the covered border holds more than the cap.
   - `massing`: the partner's visible armies within two steps of the covered border grew over
-    `TRUCE_MASSING_TURNS` turns (use `twoStepReaches`).
+    `TRUCE_MASSING_TURNS` turns. Built with plain graph distance 2 (`bfsDistances`), not `twoStepReaches`:
+    that asks what a stack could take and hold through the territory between, while massing asks only
+    where the partner's armies stand, so neutrals and my own territories between still count.
   - `outgrowing`: the partner's tracked income passed `TRUCE_OUTGROW_RATIO` × mine.
   - `kept`: consecutive quiet turns.
   Under fog one ambiguous event is `massing`, not `broken`.
@@ -215,8 +217,9 @@ Pure functions:
   their notice, and in the endgame: when no other opponent's estimated income reaches
   `TRUCE_ENDGAME_RATIO` (0.5) × the larger of mine and the partner's. That is the point where the
   partner no longer needs me.
-- The per-player record (D5): `<dataDir>/relations/players.json`, by player id, counts of agreements
-  made, kept to their end, ended with notice, and broken. Local only.
+- The per-player record (D5): `<dataDir>/relations/players.json`, by player (a salted hash of its id),
+  counts of agreements made, kept to their end, ended with notice, and broken (by them, by me). Local
+  only: off on a hosted child.
 
 The store also logs per planned turn the armies a truce freed and the loss if it were broken, so "has
 it been useful in play?" has an answer later.

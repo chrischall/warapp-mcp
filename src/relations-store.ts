@@ -1,4 +1,5 @@
-// The agreement ledger on disk (docs/PLAN-TEAMS.md A2): per game, at `<dataDir>/relations/<gameId>.json`,
+// The agreement ledger on disk (docs/PLAN-TEAMS.md A2): per game and account, at
+// `<dataDir>/relations/<gameId>-<playerId>.json` (a second account in the same game has its own file),
 // the agreements the player recorded with `warapp_record_agreement` — name-free (player, territory
 // and bonus ids, turns, statuses; never a name or a message), 0600 in a 0700 directory, written
 // atomically. It is the only file `warapp_record_agreement` writes besides the cross-game player
@@ -48,7 +49,11 @@ export interface RelationsLedger {
 }
 
 export const relationsDir = (dir: string) => join(dir, 'relations');
-export const relationsPath = (dir: string, gameId: number) => join(relationsDir(dir), `${gameId}.json`);
+export const relationsPath = (dir: string, gameId: number, playerId: number) => join(relationsDir(dir), `${gameId}-${playerId}.json`);
+
+const AGREEMENT_ID = /^a(\d{1,9})$/;
+/** An agreement id's number (`a7` is 7); ids are made by {@link nextAgreementId}. */
+const idNumber = (id: string) => Number(AGREEMENT_ID.exec(id)?.[1] ?? 0);
 
 function scopeOf(v: unknown): AgreementScope | undefined {
   if (v === 'all') return 'all';
@@ -75,7 +80,7 @@ function termsOf(v: unknown): AgreementTerms | undefined {
 
 /** An agreement read back, or `undefined` when it is unusable. */
 export function agreementOf(v: unknown): Agreement | undefined {
-  if (!isRec(v) || typeof v.id !== 'string' || !isInt(v.with) || v.kind !== 'truce' || !isStatus(v.status) || !isInt(v.createdTurn))
+  if (!isRec(v) || typeof v.id !== 'string' || !AGREEMENT_ID.test(v.id) || !isInt(v.with) || v.kind !== 'truce' || !isStatus(v.status) || !isInt(v.createdTurn))
     return undefined;
   const terms = termsOf(v.terms);
   if (!terms || !Array.isArray(v.history)) return undefined;
@@ -111,7 +116,7 @@ export const emptyLedger = (gameId: number, playerId: number): RelationsLedger =
  */
 export async function readLedger(dir: string, gameId: number, playerId: number): Promise<RelationsLedger | undefined> {
   try {
-    const c: unknown = JSON.parse(await readFile(relationsPath(dir, gameId), 'utf8'));
+    const c: unknown = JSON.parse(await readFile(relationsPath(dir, gameId, playerId), 'utf8'));
     if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !Array.isArray(c.agreements)) return undefined;
     const agreements = c.agreements.map(agreementOf).filter((a): a is Agreement => a !== undefined);
     return { gameId, playerId, agreements, usage: usageOf(c.usage) };
@@ -120,9 +125,12 @@ export async function readLedger(dir: string, gameId: number, playerId: number):
   }
 }
 
-/** The ledger with at most {@link MAX_AGREEMENTS} agreements (over ones dropped oldest first) and usage turns. */
+/**
+ * The ledger with its agreements in id order, at most {@link MAX_AGREEMENTS} of them (over ones
+ * dropped oldest first), and at most {@link MAX_USAGE_TURNS} usage turns.
+ */
 export function boundLedger(ledger: RelationsLedger): RelationsLedger {
-  let agreements = ledger.agreements;
+  let agreements = [...ledger.agreements].sort((a, b) => idNumber(a.id) - idNumber(b.id) || (a.id < b.id ? -1 : 1));
   if (agreements.length > MAX_AGREEMENTS) {
     const over = agreements.filter((a) => a.endedTurn !== undefined).sort((a, b) => a.endedTurn! - b.endedTurn! || (a.id < b.id ? -1 : 1));
     const drop = new Set(over.slice(0, agreements.length - MAX_AGREEMENTS).map((a) => a.id));
@@ -139,7 +147,7 @@ export function boundLedger(ledger: RelationsLedger): RelationsLedger {
 /** Write the ledger (bounded), atomically, 0600. `true` when written; never throws. */
 export async function writeLedger(dir: string, ledger: RelationsLedger): Promise<boolean> {
   try {
-    const path = relationsPath(dir, ledger.gameId);
+    const path = relationsPath(dir, ledger.gameId, ledger.playerId);
     await mkdir(relationsDir(dir), { recursive: true, mode: 0o700 });
     const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(tmp, JSON.stringify(boundLedger(ledger)), { mode: 0o600 });
@@ -152,7 +160,7 @@ export async function writeLedger(dir: string, ledger: RelationsLedger): Promise
 
 /** The next agreement id in `ledger`: `a1`, `a2`, … */
 export function nextAgreementId(ledger: RelationsLedger): string {
-  const n = ledger.agreements.reduce((m, a) => Math.max(m, /^a(\d+)$/.exec(a.id) ? Number(a.id.slice(1)) : 0), 0);
+  const n = ledger.agreements.reduce((m, a) => Math.max(m, idNumber(a.id)), 0);
   return `a${n + 1}`;
 }
 

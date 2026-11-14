@@ -1,6 +1,6 @@
 // The agreement ledger's tools (docs/PLAN-TEAMS.md A2): `warapp_get_relations` (read-only on war.app;
 // it caches the board it read, like warapp_track_opponents) and `warapp_record_agreement`, which
-// writes only this machine's ledger (`<dataDir>/relations/<gameId>.json`) and the cross-game
+// writes only this machine's ledger (`<dataDir>/relations/<gameId>-<playerId>.json`) and the cross-game
 // player record (src/player-record-store.ts) — nothing is sent to war.app or to any player, so it
 // is not confirm-gated. An agreement exists only because the player recorded it here with
 // structured terms: chat is never parsed into one, and words change no flag — only the board does.
@@ -8,7 +8,7 @@ import { McpToolError, toolAnnotations, type EnvSource } from '@chrischall/mcp-u
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { boardIncome, incomeRules, trackGame, trackOpponents, type MapGraph, type TurnBoard } from '../analysis/index.js';
-import { playerRecord, recordEntryFor, type BreakContext, type RecordEntry, type RecordLeader } from '../analysis/player-record.js';
+import { isZero, playerRecord, recordDelta } from '../analysis/player-record.js';
 import {
   AGREEMENT_STATUSES,
   agreementState,
@@ -28,15 +28,13 @@ import {
   type AgreementScope,
   type AgreementTerms,
   type WatchFlag,
-  type WatchFlagKind,
 } from '../analysis/relations.js';
 import type { BoardState } from '../board.js';
 import { boardStateFromLive } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
-import { entryKey, playerRecordEnabled, readPlayerEntries, updatePlayerEntries } from '../player-record-store.js';
+import { addPlayerCounts, playerRecordEnabled, readPlayerCounts } from '../player-record-store.js';
 import { emptyLedger, nextAgreementId, readLedger, writeLedger, type RelationsLedger } from '../relations-store.js';
-import { carriesTeam } from '../teams.js';
-import { readBoardHistory, readCachedOrders, writeBoardCache } from '../trend.js';
+import { writeBoardCache } from '../trend.js';
 import { currentTurn, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
@@ -103,31 +101,6 @@ function endgameOf(incomes: Incomes, partner: number): boolean | null {
   return truceEndgame({ mine: incomes.mine, partner: p, others: others.map(([, v]) => v!) });
 }
 
-function leaderOf(incomes: Incomes, partner: number): RecordLeader {
-  if (incomes.mine === null) return 'unknown';
-  let best: { who: RecordLeader; v: number } = { who: 'me', v: incomes.mine };
-  for (const [id, v] of [...incomes.opponents].sort(([a], [b]) => a - b)) {
-    if (v === null) return 'unknown';
-    if (v > best.v) best = { who: id === partner ? 'partner' : 'other', v };
-  }
-  return best.who;
-}
-
-/** The strongest flag a break showed: broken, then over the cap, massing, outgrowing. */
-function strongestFlag(flags: readonly WatchFlag[]): WatchFlagKind | null {
-  for (const kind of ['broken', 'cap-exceeded', 'massing', 'outgrowing'] as const) if (flags.some((f) => f.kind === kind)) return kind;
-  return null;
-}
-
-/** My cached boards of `game` (with my cached orders), oldest first: no request. */
-async function cachedBoards(dir: string, game: Game, me: Player): Promise<TurnBoard[]> {
-  const orders = await readCachedOrders(dir, game.id, me.id);
-  return (await readBoardHistory(dir, game.id, me.id)).map((b) => {
-    const o = orders.get(b.turn);
-    return { turn: b.turn, board: b.board, ...(o ? { orders: o } : {}) };
-  });
-}
-
 /** A scope from the tool's arguments, by id. */
 function scopeFrom(map: GameMap, territories: readonly (string | number)[] | undefined, bonuses: readonly (string | number)[] | undefined): AgreementScope {
   if (territories?.length && bonuses?.length) {
@@ -185,17 +158,12 @@ function agreementView(a: Agreement, game: Game, map: GameMap, turn: number, run
   };
 }
 
-const formatOf = (game: Game): RecordEntry['format'] => {
-  const teams = game.players.some((p) => carriesTeam(p.team));
-  return { players: game.players.length, teams, ffaSize: teams ? null : game.players.filter(alive).length };
-};
-
 /** The reliability facts on record for `partner`, or why there are none. */
 async function recordFor(dir: string | undefined, partner: number, env: EnvSource | undefined) {
   if (!playerRecordEnabled(env)) return { record: 'off' as const };
   if (!dir) return { record: null };
-  const entries = await readPlayerEntries(dir, partner, env);
-  return { record: entries.length ? playerRecord(entries) : null };
+  const counts = await readPlayerCounts(dir, partner, env);
+  return { record: counts ? playerRecord(counts) : null };
 }
 
 export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
@@ -216,7 +184,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           'on any flag but kept, on their notice, and in the endgame (no other opponent still a match for either of you). ' +
           'Also `tacit`: neighbours with no agreement whose shared border stayed quiet three turns or more — reported, never ' +
           "relied on. With the cross-game player record on, each partner's `record` gives the facts on how it kept earlier " +
-          'agreements (counts and a kept rate; keyed by a salted hash, never its id or name). Words in chat never change a ' +
+          'agreements (counts and a kept rate; keyed by a salted hash, never its id or name; local only, off when hosted). Words in chat never change a ' +
           `flag or the trust: only the board does. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read.`,
       ),
       _meta: lookupMeta(['my truces', 'agreements', 'is my truce holding', 'diplomacy', 'who kept their word']),
@@ -321,8 +289,8 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           'while proposed; an ended or broken agreement takes nothing more but `retaliated` after broken-by-me). Refused ' +
           'for a partner who is you, an AI, out of the game or your teammate, in a 1v1 or once two players remain, and for ' +
           'a territory or bonus not on the map. An agreement exists only because you record it here: chat is never read ' +
-          'into one. With the cross-game player record on, the outcome is also kept per partner under a salted hash ' +
-          '(no id, no name, no message), for later decisions about that player.',
+          'into one. With the cross-game player record on (local only, never hosted), the partner\'s counts — agreements ' +
+          'made, kept, ended with notice, broken — are kept under a salted hash (no id, no name, no game, no message).',
       ),
       annotations: toolAnnotations({ title: 'Record a war.app agreement', readOnly: false, destructive: false, idempotent: false, openWorld: true }),
       inputSchema: z.object({
@@ -394,6 +362,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
       };
 
       let agreement: Agreement;
+      let before: Agreement | undefined;
       let created = false;
       if (args.agreement_id === undefined) {
         if (args.with === undefined || args.status === undefined)
@@ -413,6 +382,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         const found = ledger.agreements.find((a) => a.id === args.agreement_id);
         if (!found) refuse(`Game ${game.id} has no agreement ${JSON.stringify(args.agreement_id)}`, 'warapp_get_relations lists the agreements recorded.');
         agreement = found!;
+        before = found;
         if (args.with !== undefined && resolvePlayer(game.players, args.with).id !== agreement.with)
           refuse(`Agreement ${agreement.id} is with player ${agreement.with}`, 'Omit `with` when updating, or record a new agreement.');
         if (args.status === undefined && !termsGiven && args.retaliated === undefined)
@@ -439,51 +409,18 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
       }
 
       const others = ledger.agreements.filter((a) => a.id !== agreement.id);
-      const stored = await writeLedger(dir, { ...ledger, agreements: [...others, agreement].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1))) });
+      const stored = await writeLedger(dir, { ...ledger, agreements: [...others, agreement] });
       if (!stored) {
         throw new McpToolError(`The ledger for game ${game.id} could not be written: nothing was recorded.`, {
           hint: "Check that the server's data directory is writable.",
         });
       }
 
-      // The cross-game record: the agreement's entry, and "proposed again" on earlier ones in this game.
-      let recorded: 'updated' | 'off' | 'failed' = 'off';
+      // The cross-game record: counts only, each moved once, by the transition that earns it.
+      let recorded: 'updated' | 'unchanged' | 'off' | 'failed' = 'off';
       if (playerRecordEnabled(env)) {
-        let breachFlag: WatchFlagKind | null | undefined;
-        let context: BreakContext | undefined;
-        if (agreement.status === 'broken-by-them' || agreement.status === 'broken-by-me') {
-          const boards = await cachedBoards(dir, game, me);
-          breachFlag = strongestFlag(breachWatch({ agreement, graph, boards, me: me.id }));
-          const incomes = incomesOf(graph, boards, game, me, map);
-          const partnerIncome = incomes.opponents.get(agreement.with) ?? null;
-          context = {
-            endgame: endgameOf(incomes, agreement.with),
-            leader: leaderOf(incomes, agreement.with),
-            outgrowing: incomes.mine !== null && incomes.mine > 0 && partnerIncome !== null ? partnerIncome > TRUCE_OUTGROW_RATIO * incomes.mine : null,
-          };
-        }
-        const earlier = created && agreement.status === 'proposed-by-them' ? others.filter((a) => a.with === agreement.with && TERMINAL_STATUSES.has(a.status)) : [];
-        const now = Date.now();
-        const ok = await updatePlayerEntries(
-          dir,
-          agreement.with,
-          (salt, entries) => {
-            const key = entryKey(salt, game.id, agreement.id);
-            const previous = entries.find((e) => e.key === key);
-            const again = earlier
-              .map((a) => entries.find((e) => e.key === entryKey(salt, game.id, a.id)))
-              .filter((e): e is RecordEntry => e !== undefined && !e.proposedAgain)
-              .map((e) => ({ ...e, proposedAgain: true, updated: now }));
-            const entry = recordEntryFor(
-              agreement,
-              { key, format: formatOf(game), now, ...(breachFlag !== undefined ? { breachFlag } : {}), ...(context ? { context } : {}) },
-              previous,
-            );
-            return [...again, entry];
-          },
-          env,
-        );
-        recorded = ok ? 'updated' : 'failed';
+        const delta = recordDelta(created ? undefined : before, agreement);
+        recorded = isZero(delta) ? 'unchanged' : (await addPlayerCounts(dir, agreement.with, delta, env)) ? 'updated' : 'failed';
       }
       return respond(undefined, ['compact'], () => ({
         game: { id: game.id, turn },

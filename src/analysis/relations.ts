@@ -276,6 +276,30 @@ function expectedArmies(t: number, before: number, orders: MyOrders, mine: Reado
   return n;
 }
 
+/**
+ * Whether a transfer of mine into `t` may not have arrived in full: its source is no longer shown
+ * as mine, or holds fewer armies than my orders leave there (it was hit, so the move may never have
+ * run). A shortfall on `t` is then not evidence against anyone.
+ */
+function fedByHitSource(
+  t: number,
+  orders: MyOrders,
+  mine: ReadonlySet<number>,
+  was: ReadonlyMap<number, TerritoryState>,
+  now: ReadonlyMap<number, TerritoryState>,
+  me: number,
+): boolean {
+  return orders.moves.some((m) => {
+    if (m.to !== t || !mine.has(m.from)) return false;
+    const after = ownerShown(now.get(m.from));
+    if (!after || ownerOn(after) !== me) return true;
+    const before = visibleState(was.get(m.from))?.armies;
+    const nowArmies = visibleState(after)?.armies;
+    if (before == null || nowArmies == null) return true;
+    return nowArmies < expectedArmies(m.from, before, orders, mine);
+  });
+}
+
 export type WatchFlagKind = 'broken' | 'cap-exceeded' | 'massing' | 'outgrowing' | 'kept';
 
 export interface WatchFlag {
@@ -314,7 +338,8 @@ export interface BreachInput {
  * What my boards say about the partner keeping `agreement`, over the consecutive turns from the
  * one it was agreed (and before it ended), as flags with their turn and evidence:
  * - `broken`: the partner took a covered territory of mine, or attacked one (my orders known,
- *   armies lost there, and only the partner — visibly — borders it);
+ *   armies lost there, only the partner — visibly — borders it, and no transfer of mine in came
+ *   from a source taken or hit, which may never have arrived);
  * - `cap-exceeded` (newest board): a visible partner territory beside a covered one holds more
  *   than the cap;
  * - `massing`: the partner's visible armies within {@link TRUCE_MASSING_REACH} steps of the
@@ -369,6 +394,11 @@ export function breachWatch(input: BreachInput): WatchFlag[] {
       // Armies lost on a territory still mine: who could have hit it? Mine and visible neutrals
       // cannot; a fogged neighbour or another player could.
       if (!partnerNext) continue;
+      // A transfer of mine in whose source was taken or hit may never have arrived: open, not a break.
+      if (fedByHitSource(c, from.orders, mine, was, now, me)) {
+        ambiguous.push(c);
+        continue;
+      }
       const onlyPartner = neighbours.every((n) => {
         const t = ownerShown(was.get(n));
         if (t === undefined) return false;

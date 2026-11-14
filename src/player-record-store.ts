@@ -1,17 +1,17 @@
-// The cross-game player record on disk (docs/PLAN-TEAMS.md A2, owner decision D5 of 2026-11-14: ON,
-// local and hosted — a hosted child keeps it in its per-user data dir). At
-// `<dataDir>/relations/players.json`: per player, the entries of `src/analysis/player-record.ts`.
-// The player is keyed by an HMAC of its GameFeed id under a local secret salt
-// (`<dataDir>/relations/players.salt`, 0600, made on first use), and each entry by an HMAC of the
-// game and the agreement: the file holds no player id, game id or name, and without the salt it
-// cannot be joined to a game or a player. Bounded (`MAX_RECORD_ENTRIES` per player,
-// `MAX_RECORD_PLAYERS` players). Isolated so it can be switched off: `WARAPP_PLAYER_RECORD=off`
-// (or `0` / `false`) and nothing here reads or writes. Best effort: never throws.
+// The cross-game player record on disk (docs/PLAN-TEAMS.md A2, D5's default: on, local only — never
+// hosted — and counts only). At `<dataDir>/relations/players.json`: per player, the counts of
+// `src/analysis/player-record.ts` and when they last changed, nothing more. The player is keyed by an
+// HMAC of its GameFeed id under a local secret salt (`<dataDir>/relations/players.salt`, 0600, made
+// on first use): the file holds no player id, game id or name. Bounded (`MAX_RECORD_PLAYERS`).
+// Off on a hosted child (`isHosted`, src/hosted.ts) whatever the environment says, and switched off
+// locally by `WARAPP_PLAYER_RECORD=off` (or `0` / `false` / `no`): then nothing here reads or writes.
+// Best effort: never throws.
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
-import { MAX_RECORD_PLAYERS, upsertEntry, type RecordEntry } from './analysis/player-record.js';
+import { addCounts, COUNT_KEYS, isZero, MAX_RECORD_PLAYERS, ZERO_COUNTS, type RecordCounts } from './analysis/player-record.js';
+import { isHosted } from './hosted.js';
 import { relationsDir } from './relations-store.js';
 
 type Rec = Record<string, unknown>;
@@ -23,8 +23,9 @@ const HASH = /^[0-9a-f]{32}$/;
 export const playerRecordPath = (dir: string) => join(relationsDir(dir), 'players.json');
 export const playerRecordSaltPath = (dir: string) => join(relationsDir(dir), 'players.salt');
 
-/** Whether the cross-game record is on: yes unless `WARAPP_PLAYER_RECORD` is `off`, `0` or `false`. */
+/** Whether the cross-game record is on: never hosted; locally yes unless `WARAPP_PLAYER_RECORD` is `off`, `0`, `false` or `no`. */
 export function playerRecordEnabled(env: EnvSource = process.env): boolean {
+  if (isHosted(env)) return false;
   const v = readEnvVar('WARAPP_PLAYER_RECORD', { env });
   return v === undefined || !/^(off|0|false|no)$/i.test(v.trim());
 }
@@ -50,49 +51,51 @@ export async function playerRecordSalt(dir: string): Promise<string | undefined>
   }
 }
 
-const hmac = (salt: string, text: string) => createHmac('sha256', salt).update(text).digest('hex').slice(0, 32);
-
 /** A player's key in the record: never the id itself. */
-export const playerKey = (salt: string, playerId: number) => hmac(salt, `player:${playerId}`);
-/** An agreement's key in the record: never the game id or agreement id themselves. */
-export const entryKey = (salt: string, gameId: number, agreementId: string) => hmac(salt, `agreement:${gameId}:${agreementId}`);
+export const playerKey = (salt: string, playerId: number) => createHmac('sha256', salt).update(`player:${playerId}`).digest('hex').slice(0, 32);
 
+interface PlayerCounts {
+  counts: RecordCounts;
+  /** When the counts last changed (ms since the epoch): only to drop the stalest past the bound. */
+  updated: number;
+}
 interface RecordFile {
-  version: 1;
-  players: Record<string, { entries: RecordEntry[] }>;
+  version: 2;
+  players: Record<string, PlayerCounts>;
 }
 
-function entryOf(v: unknown): RecordEntry | undefined {
-  // Entries are this module's own writes: checked for shape, not re-derived.
-  if (!isRec(v) || typeof v.key !== 'string' || !HASH.test(v.key) || typeof v.outcome !== 'string' || typeof v.updated !== 'number') return undefined;
-  if (!isRec(v.format) || !isRec(v.terms)) return undefined;
-  return v as unknown as RecordEntry;
+const count = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+function countsOf(v: unknown): PlayerCounts | undefined {
+  if (!isRec(v) || !isRec(v.counts) || typeof v.updated !== 'number') return undefined;
+  const c = v.counts;
+  if (!COUNT_KEYS.every((k) => count(c[k]))) return undefined;
+  const counts: RecordCounts = { ...ZERO_COUNTS };
+  for (const k of COUNT_KEYS) counts[k] = c[k] as number;
+  return { counts, updated: v.updated };
 }
 
 async function readFileRecord(dir: string): Promise<RecordFile> {
   try {
     const c: unknown = JSON.parse(await readFile(playerRecordPath(dir), 'utf8'));
-    if (!isRec(c) || !isRec(c.players)) return { version: 1, players: {} };
+    if (!isRec(c) || !isRec(c.players)) return { version: 2, players: {} };
     const players: RecordFile['players'] = {};
     for (const [k, v] of Object.entries(c.players)) {
-      if (!HASH.test(k) || !isRec(v) || !Array.isArray(v.entries)) continue;
-      const entries = v.entries.map(entryOf).filter((e): e is RecordEntry => e !== undefined);
-      if (entries.length) players[k] = { entries };
+      const p = HASH.test(k) ? countsOf(v) : undefined;
+      if (p) players[k] = p;
     }
-    return { version: 1, players };
+    return { version: 2, players };
   } catch {
-    return { version: 1, players: {} };
+    return { version: 2, players: {} };
   }
 }
 
-const latest = (p: { entries: RecordEntry[] }) => p.entries.reduce((m, e) => Math.max(m, e.updated), 0);
-
 async function writeFileRecord(dir: string, file: RecordFile): Promise<void> {
   const keys = Object.keys(file.players)
-    .sort((a, b) => latest(file.players[b]!) - latest(file.players[a]!) || (a < b ? -1 : 1))
+    .sort((a, b) => file.players[b]!.updated - file.players[a]!.updated || (a < b ? -1 : 1))
     .slice(0, MAX_RECORD_PLAYERS)
     .sort();
-  const bounded: RecordFile = { version: 1, players: Object.fromEntries(keys.map((k) => [k, file.players[k]!])) };
+  const bounded: RecordFile = { version: 2, players: Object.fromEntries(keys.map((k) => [k, file.players[k]!])) };
   const path = playerRecordPath(dir);
   await mkdir(relationsDir(dir), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -100,37 +103,31 @@ async function writeFileRecord(dir: string, file: RecordFile): Promise<void> {
   await rename(tmp, path);
 }
 
-/** The entries on record for `playerId`; `[]` when none or off. Never throws. */
-export async function readPlayerEntries(dir: string, playerId: number, env?: EnvSource): Promise<RecordEntry[]> {
-  if (!playerRecordEnabled(env)) return [];
+/** The counts on record for `playerId`; `undefined` when none, unusable or off. Never throws. */
+export async function readPlayerCounts(dir: string, playerId: number, env?: EnvSource): Promise<RecordCounts | undefined> {
+  if (!playerRecordEnabled(env)) return undefined;
   try {
     const salt = await playerRecordSalt(dir);
-    if (!salt) return [];
-    return (await readFileRecord(dir)).players[playerKey(salt, playerId)]?.entries ?? [];
+    if (!salt) return undefined;
+    return (await readFileRecord(dir)).players[playerKey(salt, playerId)]?.counts;
   } catch {
-    return [];
+    return undefined;
   }
 }
 
 /**
- * Update `playerId`'s entries: `update` gets the salt (to key entries) and the current entries and
- * returns the entries to upsert. `true` when written; `false` when off or it failed. Never throws.
+ * Add `delta` to `playerId`'s counts. `true` when written (or when there was nothing to add);
+ * `false` when off or it failed. Never throws.
  */
-export async function updatePlayerEntries(
-  dir: string,
-  playerId: number,
-  update: (salt: string, entries: readonly RecordEntry[]) => readonly RecordEntry[],
-  env?: EnvSource,
-): Promise<boolean> {
+export async function addPlayerCounts(dir: string, playerId: number, delta: RecordCounts, env?: EnvSource, now = Date.now()): Promise<boolean> {
   if (!playerRecordEnabled(env)) return false;
+  if (isZero(delta)) return true;
   try {
     const salt = await playerRecordSalt(dir);
     if (!salt) return false;
     const file = await readFileRecord(dir);
     const key = playerKey(salt, playerId);
-    let entries = file.players[key]?.entries ?? [];
-    for (const e of update(salt, entries)) entries = upsertEntry(entries, e);
-    file.players[key] = { entries };
+    file.players[key] = { counts: addCounts(file.players[key]?.counts ?? ZERO_COUNTS, delta), updated: now };
     await writeFileRecord(dir, file);
     return true;
   } catch {
