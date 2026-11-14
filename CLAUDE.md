@@ -364,7 +364,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   The threat at a border (#128, `forceAt`) is the larger of one attack of a player's stacks plus
   its deploy and the single attack equal to its stacks attacking separately (each rounds on its
   own); opponents on one team combine, FFA players do not (a warning when two together could take
-  a border); teammates are never a threat or a target; under Local Deployment an opponent's
+  a border; when I lead an FFA (#201) every adjacent opponent combines, but only while that hold pays —
+  a border whose joint hold fails rule 1a's tests while its hold against the strongest single opponent
+  passes is sized for that opponent, never conceded on the two together, #235); teammates are never a threat or a target; under Local Deployment an opponent's
   visible bonus pools reach only their own territories (its free base income still lands anywhere,
   even when its estimate leaves the pools out). A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also
@@ -459,9 +461,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Triage by protected value.** A threatened border's protected value is my complete
     bonuses containing it, plus bonuses I'd lose all access to, plus its share (value × members
     held ÷ size) of a bonus I am building — every missing member a visible neutral, finishing it
-    economic (#122) — plus per-territory income; its
-    **worth** adds the armies a hold saves as income (armies / `PAYBACK_TURNS`), so a big stack
-    is topped up rather than abandoned. Holds go in order of worth per army of hold cost. A
+    economic (#122) — plus per-territory income, plus (#235) the income of what its loss cuts off
+    from the rest of my holdings (every part but the largest when it is a cut vertex); its
+    **worth** adds the armies a hold saves as income (armies / `PAYBACK_TURNS`), those cut off
+    included, so a big stack is topped up rather than abandoned. Holds go in order of worth per army of hold cost. A
     border is **conceded** when holding costs more than `CONCEDE_FACTOR` (3) × its worth or than the income left
     (a warning either way; in the opening, never on worth when the hold costs no more than the
     armies already there, #122): triage deploys nothing there (unless every territory I hold is

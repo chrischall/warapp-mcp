@@ -69,6 +69,11 @@ export interface Border extends Force {
   id: number;
   /** #201, behind: the worst-case threat when `threat` is the expected attack it is sized for. */
   worst?: number;
+  /**
+   * #235: I lead the FFA (#201) and `threat` is every adjacent opponent together: the strongest
+   * single opponent's threat, lower, which the holds fall back to when the joint hold does not pay.
+   */
+  alone?: number;
 }
 
 /** The threats phase's helpers, for the phases after it. */
@@ -504,7 +509,7 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
   const forceAt = (
     t: number,
     gone: (n: number) => boolean,
-    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean },
+    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean; solo?: boolean },
   ): Force | null => {
     const byPlayer = stacksAt(t, gone, o.trend);
     // B2 (T2, plan/relations.ts): on a truce hold the partner attacks with its stacks alone — no
@@ -537,8 +542,9 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
       if (mates) mates.push(e);
       else groups.push([e]);
     }
-    // #201: the FFA leader holds against every adjacent opponent together.
-    if (o.pileOn || (o.allPlayers && ffaLeader)) groups.splice(0, groups.length, each);
+    // #201: the FFA leader holds against every adjacent opponent together — unless `solo` (#235:
+    // a border whose joint hold does not pay is sized for each opponent alone, as in any FFA).
+    if (o.pileOn || (o.allPlayers && ffaLeader && !o.solo)) groups.splice(0, groups.length, each);
     for (const group of groups) {
       const count = group.reduce((n, e) => n + e.stacks.length, 0);
       if (count < 2) continue;
@@ -580,7 +586,8 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
    * opponent next to it, trend included). `null` with no enemy next to it.
    */
   const threatAt = (t: number, gone: (n: number) => boolean): { player: number; threat: number } | null => {
-    const f = forceAt(t, gone, { trend: true, allPlayers: true });
+    // #235: a leader's border whose joint hold does not pay is judged against each opponent alone.
+    const f = forceAt(t, gone, { trend: true, allPlayers: true, solo: ps.soloHeld.has(t) });
     return f ? { player: f.player, threat: f.threat } : null;
   };
   /**
@@ -637,8 +644,16 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
    * for (its `worst` included, #201) is read from `borders`, never from a side table.
    */
   const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
-    const f = forceAt(t, gone, { trend: true, allPlayers: true });
+    // #235: a leader's border whose joint hold does not pay is sized for each opponent alone.
+    const solo = ps.soloHeld.has(t);
+    const f = forceAt(t, gone, { trend: true, allPlayers: true, solo });
     if (!f) return null;
+    // #235: the leader's joint threat, with the strongest single opponent's beside it.
+    const alone = (): number | undefined => {
+      if (solo || !pc.ffaLeader || !f.split || f.split.players.length < 2) return undefined;
+      const a = forceAt(t, gone, { trend: true, allPlayers: true, solo: true });
+      return a && a.threat < f.threat ? a.threat : undefined;
+    };
     // #201, behind: sized for the expected attack (#59's {@link expectedAt}: every adjacent player's
     // movable armies next to it plus its whole deploy estimate, the largest of them), not the worst
     // case — the trend projection above the deploy. The deploy is counted in full on each border, so
@@ -648,10 +663,11 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     // chains and Bomb sizing are no gamble here (they keep the worst case), nor my commander's
     // territory (rule 1k holds it against the whole deploy), nor an `enemyDeploy` override.
     if (holdPasses === 'expected' && !myCommanders.has(t) && !f.split && !f.chain && !bombOn && !custom) {
-      const e = forceAt(t, gone, { trend: false, allPlayers: true });
+      const e = forceAt(t, gone, { trend: false, allPlayers: true, solo });
       if (e && !e.split && !e.chain && e.threat < f.threat) return { id: t, ...f, threat: e.threat, worst: f.threat };
     }
-    return { id: t, ...f };
+    const a = alone();
+    return { id: t, ...f, ...(a !== undefined ? { alone: a } : {}) };
   };
   for (const t of mine) {
     for (const n of neighborsOf(g, t)) {

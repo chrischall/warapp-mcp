@@ -25,6 +25,9 @@ import type { Threats } from './threats.js';
 import { byNum } from './util.js';
 
 
+/** #235: the most territories a cut-off line names. */
+const MAX_CUT_NAMED = 4;
+
 /** A territory of mine with a threat next to it (rule 1): what it has, what it faces, what holding it costs. */
 export interface Threatened {
   id: number;
@@ -119,6 +122,7 @@ export function holdsPhase(pc: PlanCtx, ps: PlanState, book: DeployBook, threats
     pendingLocks: new Set(), completable: new Map(),
   };
   const h0 = holdBasics(pc, ps, book, threats);
+  soloLeaderHolds(pc, ps, book, threats, h0);
   const h1 = { ...h0, ...twoStepHolds(pc, ps, book, threats, hb, pass, h0) };
   const h2 = { ...h1, ...holdOrConcede(pc, ps, book, threats, hb, h1) };
   const h3 = { ...h2, ...heldBonusUnits(pc, ps, book, threats, hb, h2) };
@@ -168,6 +172,62 @@ export function holdBasics(pc: PlanCtx, ps: PlanState, book: DeployBook, threats
     return Math.max(covering, a - Math.max(0, Math.min(a, -short)));
   };
   return { uneconomic, stayAt, keepFor };
+}
+
+/**
+ * #235: I lead the FFA (#201), so a border is held against every adjacent opponent together — but
+ * only while that pays. A border whose joint hold costs more than CONCEDE_FACTOR × its worth (rule
+ * 1a's test) or more than the whole income, while its hold against the strongest single opponent
+ * passes both, is sized for that opponent instead (`ps.soloHeld`, read by `borderAt`), as in any FFA: two players landing
+ * on it in one turn is #128's warning, never the cost that concedes it (live: a 23-stack that held
+ * against each neighbour alone was conceded on the two together and withdrawn as the first order).
+ * Never my commander's territory (rule 1k holds it against everything), nor a member of a bonus I
+ * hold in full: rule 1h's units judge those whole, and may hold them when they do not pay (#118).
+ */
+export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, threats: Threats, prev: HoldsUpTo0) {
+  const { g, ffaLeader, paybackTurns, label, unitsAt, toTake, myCommanders } = pc;
+  const { valueOf, stakeAt } = book;
+  const { borders, borderAt, safeAtStart } = threats;
+  const { uneconomic, stayAt } = prev;
+  if (!ffaLeader) return;
+  /** A member of a positive bonus I hold in full: rule 1h's units decide it (#51, #118). */
+  const inHeldBonus = (t: number) =>
+    g.map.bonuses.some((b) => {
+      if (b.value <= 0) return false;
+      const ts = bonusTerritories(g, b.id);
+      return ts.includes(t) && ts.every((x) => ps.holdings.has(x));
+    });
+  const costFor = (have: number, threat: number) => {
+    let d = 0;
+    while ((toTake(have + d) ?? Infinity) <= threat) d++;
+    return d;
+  };
+  for (const b of [...borders.values()].sort((x, y) => x.id - y.id)) {
+    if (b.alone === undefined || !b.split || myCommanders.has(b.id) || inHeldBonus(b.id)) continue;
+    const have = stayAt(b.id);
+    const units = unitsAt(b.id);
+    const joint = costFor(have + units, b.threat);
+    const single = costFor(have + units, b.alone);
+    if (single >= joint) continue;
+    const value = valueOf(b.id);
+    const worth = value + (have + stakeAt(b.id)) / paybackTurns;
+    const recent = threats.recentlyTakenFrom(b.id);
+    const judged = (threat: number, holdCost: number): Threatened => ({
+      id: b.id, have, threat, holdCost, value, worth, units, ...(recent !== undefined && recent === b.player ? { recentFrom: recent } : {}),
+    });
+    const dear = uneconomic(judged(b.threat, joint));
+    if (!dear && joint <= ps.budget) continue;
+    // Only a border the single opponent's hold keeps: one conceded either way keeps #201's sizing.
+    if (uneconomic(judged(b.alone, single)) || single > ps.budget) continue;
+    const line =
+      `I lead this free-for-all (#201), but holding ${label(b.id)} against players ${b.split.players.join(' and ')} attacking together needs ${joint} (protects +${value}, worth ~${Math.round(worth * 10) / 10}): ${
+        dear ? 'more than CONCEDE_FACTOR × its worth' : `more than the ${ps.budget} I can deploy`
+      }, so it is sized for the strongest single opponent (~${b.alone}), as FFA players attack alone (#235)${single ? `: it needs ${single}` : ': it holds on what it has'}.`;
+    ps.soloHeld.set(b.id, line);
+    const solo = borderAt(b.id, () => false);
+    if (solo) borders.set(b.id, solo);
+    if ((toTake(have + units) ?? Infinity) > (solo?.threat ?? 0)) safeAtStart.add(b.id);
+  }
 }
 
 /** #172: the holds a stack two steps away asks of a territory worth guarding, and how an order cites them. */
@@ -380,7 +440,7 @@ export function holdOrConcede(
 ) {
   const { goal, paybackTurns, label, unitsAt, bombOn, toTake, myCommanders } = pc;
   const { warnings, rationale, locked } = ps;
-  const { deploy, valueOf } = book;
+  const { deploy, valueOf, stakeAt, cutOff } = book;
   const { borders, recentlyTakenFrom } = threats;
   const { threatened, conceded } = hb;
   const { stayAt } = prev;
@@ -388,6 +448,8 @@ export function holdOrConcede(
    * Fill `threatened` from `borders`, judging each by the armies that stay on it (its
    * armies at the start of the turn unless a finishing-off attack already left).
    */
+  /** #235: the borders whose cut is already named. */
+  const cutNoted = new Set<number>();
   /** Rule 1a's pre-deploy threat warning per border, restated once the deploys are known. */
   const threatWarnings = new Map<number, { text: string; threat: number }>();
   const assessThreats = () => {
@@ -405,6 +467,18 @@ export function holdOrConcede(
       let d = 1;
       while ((toTake(have + units + d) ?? Infinity) <= b.threat) d++;
       const value = valueOf(b.id);
+      // #235: a border whose loss cuts my holdings in two protects what it cuts off.
+      const cut = cutOff(b.id);
+      if (cut && (cut.armies > 0 || cut.income > 0) && !cutNoted.has(b.id)) {
+        cutNoted.add(b.id);
+        const named = cut.ids.slice(0, MAX_CUT_NAMED).map(label).join(', ');
+        const more = cut.ids.length > MAX_CUT_NAMED ? ` and ${cut.ids.length - MAX_CUT_NAMED} more` : '';
+        rationale.push(
+          `${label(b.id)} links my holdings: losing it cuts off ${named}${more} (${cut.armies} armies${cut.income > 0 ? `, +${cut.income} income` : ''}) from the rest, so ${
+            cut.income > 0 ? `it protects +${cut.income} more and ` : ''
+          }its worth counts those ${cut.armies} armies (/ ${paybackTurns} turns) (#235).`,
+        );
+      }
       const from = recentlyTakenFrom(b.id);
       threatened.push({
         id: b.id,
@@ -412,7 +486,7 @@ export function holdOrConcede(
         threat: b.threat,
         holdCost: d,
         value,
-        worth: value + have / paybackTurns,
+        worth: value + (have + stakeAt(b.id)) / paybackTurns,
         ...(from !== undefined && from === b.player ? { recentFrom: from } : {}),
         units,
         ...(myCommanders.has(b.id) ? { critical: true as const } : {}),
@@ -470,7 +544,7 @@ export function heldBonusUnits(
 ) {
   const { g, paybackTurns, label, bonusName, incomeAfter, toTake } = pc;
   const { warnings, rationale, locked } = ps;
-  const { deploy, undeploy, pools, roomAt } = book;
+  const { deploy, undeploy, pools, roomAt, stakeAt } = book;
   const local = pools !== null && pools.bonuses.length > 0;
   const { expectedAt } = threats;
   const { threatened, conceded, units } = hb;
@@ -508,7 +582,7 @@ export function heldBonusUnits(
       // the unit's cost and its payback test. A hold rule 1k could not fully fund still counts.
       const paying = members.filter((m) => !commanderHeld.has(m.id));
       const cost = paying.reduce((n, m) => n + m.holdCost, 0);
-      const worth = b.value + paying.reduce((n, m) => n + m.have / paybackTurns, 0);
+      const worth = b.value + paying.reduce((n, m) => n + (m.have + stakeAt(m.id)) / paybackTurns, 0);
       // It pays back within PAYBACK_TURNS, and (as rule 1a asks of every border) costs at
       // most CONCEDE_FACTOR × its worth, unless a member was just taken from a weak opponent.
       const recent = members.some((m) => m.recentFrom !== undefined);
@@ -537,7 +611,7 @@ export function heldBonusUnits(
   const residual = (t: Threatened): Threatened => {
     const lost = units.filter((u) => u.conceded && u.members.some((m) => m.id === t.id)).reduce((n, u) => n + u.value, 0);
     const value = Math.max(0, t.value - lost);
-    return { ...t, value, worth: value + t.have / paybackTurns };
+    return { ...t, value, worth: value + (t.have + stakeAt(t.id)) / paybackTurns };
   };
   const unitBorders = (u: Unit) =>
     `${u.members.length} threatened border${u.members.length === 1 ? '' : 's'}`;
@@ -1378,7 +1452,7 @@ export function reconsiderAndGarrison(
 ) {
   const { g, guarded, reserve, paybackTurns, label, bonusName, mine, mineSet, unitsAt, toTake, myCommanders } = pc;
   const { warnings, rationale, deployed, locked, captured, moves } = ps;
-  const { orderOf, deploy, pools, valueCache, valueOf } = book;
+  const { orderOf, deploy, pools, valueCache, cutCache, valueOf } = book;
   const local = pools !== null && pools.bonuses.length > 0;
   const { borders } = threats;
   const { conceded, kept, garrisoned } = hb;
@@ -1392,6 +1466,7 @@ export function reconsiderAndGarrison(
     if (!captured.size) return;
     ps.holdings = new Set([...mine, ...captured]);
     valueCache.clear();
+    cutCache.clear();
     if (!conceded.size) return;
     for (const t of [...conceded].sort(byNum)) {
       // Already withdrawn from (rule 1b ran first): its armies are gone, and it stays conceded.

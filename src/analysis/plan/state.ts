@@ -234,6 +234,12 @@ export interface PlanState {
   firstOnlySkip: Map<number, 'budget' | 'room' | 'order' | 'closed'>;
   /** B2 (T2, T3, T5): the truce holds of this pass; absent with no binding truce. */
   truce?: TrucePass;
+  /**
+   * #235: the FFA leader's borders (#201) whose hold against every adjacent opponent together does
+   * not pay: `borderAt` sizes them for the strongest single opponent instead, as in any FFA. The
+   * value is the rationale line, stated by the report only for a border the plan does not concede.
+   */
+  soloHeld: Map<number, string>;
 }
 
 /** An empty plan state: nothing deployed, moved, captured or said yet. */
@@ -267,5 +273,6 @@ export function newPlanState(): PlanState {
     evenTradesOnly: false,
     spendKeeps: false,
     firstOnlySkip: new Map(),
+    soloHeld: new Map(),
   };
 }

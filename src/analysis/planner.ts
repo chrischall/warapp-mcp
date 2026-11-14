@@ -189,7 +189,14 @@
 //     one turn gets a warning — except (#201) when I lead an FFA on strength (adapting, two or more
 //     opponents left): the others may combine against the leader, so every adjacent opponent's
 //     stacks and deploys count together, like a team's, and a rationale line names each border held
-//     so ("I lead this free-for-all …"). Teammates (the game's team list) are never a threat, an
+//     so ("I lead this free-for-all …") — #235: but only while that pays. A leader's border whose
+//     joint hold costs more than CONCEDE_FACTOR × its worth (rule 1a) or the whole income, while
+//     its hold against the strongest single opponent passes both, is sized for that opponent
+//     (`soloHeld`, read by `borderAt` and `threatAt`), as in any FFA, with #128's pile-on warning;
+//     never my commander's territory, nor a member of a bonus I hold in full (rule 1h's units
+//     judge those). A rationale line says so ("… as FFA players attack alone (#235)") when the plan
+//     keeps it (live: a 23-stack that held against each neighbour alone, even at a 40 deploy, was
+//     conceded on the two together and withdrawn as the first order). Teammates (the game's team list) are never a threat, an
 //     estimate or a target. Under Local Deployment an opponent's visibly held bonus pays
 //     only into its own territories: what reaches T is its estimate less its visible pools
 //     plus the pools that contain one of its stacks next to T. An enemy commander counts in
@@ -401,7 +408,12 @@
 //     income it carries (each bonus counted once). Its worth adds the armies a
 //     hold saves, in income terms (armies / PAYBACK_TURNS): a top-up that keeps a
 //     big stack is worth paying even for a small bonus (live, a 60-army border
-//     protecting +4 needed 20 and held against 105). Its hold cost is the fewest
+//     protecting +4 needed 20 and held against 105). #235: a border whose loss cuts my
+//     holdings in two (its neighbours of mine fall into two or more parts without it) also
+//     protects what it cuts off — every part but the largest (most territories, then armies, then
+//     id): their income (positive bonuses held in full inside them, plus their per-territory
+//     income) in its protected value, their armies in its worth (/ PAYBACK_TURNS) — and a
+//     rationale line names the cut ("… links my holdings: losing it cuts off …"). Its hold cost is the fewest
 //     deploys making `armiesToTake(armies + d) > threat`. Every border facing one
 //     opponent is sized for that opponent's whole deploy (#69): it picks where to land
 //     after I commit, so that is each border's worst case, and a sure hold of several
