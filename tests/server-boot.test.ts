@@ -9,7 +9,7 @@
 // read. The fetchproxy identity the bridge loads at boot goes in the temp dir.
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, copyFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,10 +22,11 @@ function rpc(id: number, method: string, params: unknown): string {
 }
 
 describe('server boot (bundled artifact, no node_modules)', () => {
+  // Always bundle the current source first (#133): a dist/bundle.js left from an
+  // older checkout would otherwise fail, or pass, for the wrong reason. Only the
+  // esbuild step runs here (well under a second); `npm test` typechecks first.
   beforeAll(() => {
-    if (!existsSync(BUNDLE)) {
-      execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'ignore' });
-    }
+    execFileSync(process.execPath, [join(ROOT, 'scripts', 'bundle.mjs')], { cwd: ROOT, stdio: 'ignore' });
   });
 
   it('answers initialize + tools/list without credentials, keeping stdout pure JSON-RPC', async () => {
