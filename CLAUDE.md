@@ -400,7 +400,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   a lower bound under fog, and without it a finished game's true deploys read 2–3× low. #235: the
   prior shrinks with evidence: with a usable track it keeps `PRIOR_EVIDENCE_TURNS` (4) / (4 + its
   consecutive observed turns × the visible share of its edge) of its lead over the larger of the
-  tracked figure and the newest observed turn (`priorBlend`; the warning names both figures). A
+  tracked figure and the newest observed turn (`priorBlend`; the warning names both figures). This applies in a 1v1 too,
+  pulling #119's prior back toward the tracked figures #119 found 2–3× low (8 turns with the whole
+  edge in view keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
+  against a finished 1v1. A
   free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`, or a player
   out). A track never stands alone below the newest turn the planner reads against it (#123's bound
   at the tracked income): the estimate is the larger, labelled "observed +N on the newest turn". Each border
@@ -428,7 +431,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   best fit the income gap, within reach and affordable, none listed when too many fit — see the
   #123 rules below; candidates, never asserted). With 2+ observed turns the planner uses
   the tracked income in place of the single-turn observed figure (`PlanInput.tracks`) and says so
-  in its rationale; fewer, and the plan is exactly what it was without tracking.
+  in its rationale, unless the newest observed turn reads more (#235: then that figure, source
+  `observed`, "on the newest turn"; see the fog prior above); fewer, and the plan is exactly what it
+  was without tracking.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in

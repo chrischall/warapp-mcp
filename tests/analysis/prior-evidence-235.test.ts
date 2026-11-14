@@ -254,4 +254,31 @@ describe('(3) the Standing-still warning names the source the plan stages on', (
       /Standing still: no capture is planned, and the cheapest expansion \(T3 \(#3\), 58 armies, toward bonus B100 \(#100\)\) is not taken this turn: the plan stages on T2 \(#2\) toward it \(the leftover saves there\); taking it now would leave T1 \(#1\) unable to hold its border \(3 would stay, 4 with the 1 deploys left there, against a threat of 52\)\./,
     );
   });
+  it('a conceded border the leftover holds after all, in the same plan, does not shift the restatement onto another warning', () => {
+    // T9 (1 army) faces player 20's 8 on T10: conceded in triage (its warning pushed before 4e),
+    // then held after all by the leftover, which splices that warning out before the restatement.
+    const map2 = makeMap(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      [[1, 2], [1, 3], [2, 3], [1, 4], [2, 4], [2, 5], [3, 5], [3, 6], [4, 7], [4, 8], [9, 6], [9, 10]],
+      [[100, 3, [1, 2, 3, 5]]],
+    );
+    const b2 = board([mine(1, 13), mine(2, 32), neutral(3, 12), enemy(4, 22), mine(5, 0), mine(6, 0), enemy(7, 5, B), enemy(8, 3), mine(9, 1), enemy(10, 8)], true);
+    const p = planTurn({
+      graph: buildGraph(map2),
+      board: b2,
+      me: ME,
+      income: 18,
+      settings: LOW,
+      turn: 13,
+      game: { players: [{ id: ME }, { id: A }, { id: B }], turn: 13, fog: 'Foggy' },
+      options: { adapt: true, enemyDeploy: 30 },
+    });
+    expect(p.rationale.join('\n')).toMatch(/Hold T9 \(#9\) after all \(not conceded\)/);
+    const still = p.warnings.filter((w) => w.startsWith('Standing still:'));
+    expect(still).toHaveLength(1);
+    expect(still[0]).toMatch(/the plan stages on T2 \(#2\) toward it/);
+    // Every other warning survives: the restatement replaced only its own.
+    expect(p.warnings.some((w) => w.startsWith('T9 (#9) (1 armies) could be taken next turn'))).toBe(true);
+    expect(p.warnings.some((w) => w.startsWith('Enemy deploy estimate'))).toBe(true);
+  });
 });

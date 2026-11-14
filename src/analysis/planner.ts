@@ -259,6 +259,8 @@
 //     prior shrinks with evidence: with a usable track it keeps PRIOR_EVIDENCE_TURNS / (PRIOR_EVIDENCE_TURNS
 //     + its consecutive observed turns × the share of its edge in view) of its lead over the larger of
 //     its tracked income and the newest observed turn (`priorBlend`), and the warning names both.
+//     In a 1v1 too, so it trades #119's prior back toward tracked figures #119 found 2-3x low:
+//     PRIOR_EVIDENCE_TURNS (4) is unmeasured against a finished 1v1.
 //     #164, exact income: under a fog setting that shows every owner (`OWNERS_SHOWN_FOG`: No, Light
 //     and Dense fog, matched by name, never by the engine's order) on a board that shows every
 //     territory's owner, an opponent's estimate is its base plus the bonuses it holds, exactly
@@ -2197,8 +2199,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   let { strikeStack } = leftover;
   const { poolDeployed, staging } = leftover;
   // #235: the Standing-still warning names the source the leftover actually stages on.
-  if (staging && standStill && staging.t === standStill.t && staging.from !== standStill.named)
-    ps.warnings[standStill.index] = standStill.restate(staging.from);
+  // Found by its text: earlier warnings may have been spliced out since (a revival, a dropped capture).
+  if (staging && standStill && staging.t === standStill.t && staging.from !== standStill.named) {
+    const at = ps.warnings.indexOf(standStill.text);
+    if (at >= 0) ps.warnings[at] = standStill.restate(staging.from);
+  }
 
   // The stack exists whether or not a leftover reached it (#102): holds and captures may take the
   // whole income, and an 80-stack must not stand idle for want of one spare army.
