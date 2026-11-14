@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { McpToolError } from '@chrischall/mcp-utils';
-import { readGameMapId, readStoredMap } from '../src/map-store.js';
+import { MAX_MAP_AGE_MS, readGameMapId, readStoredMap } from '../src/map-store.js';
 import { MapCache, parseGameId, PROBE_GAME_ID, WarappClient, WarappNotFoundError } from '../src/client.js';
 
 const FIXTURE_TEXT = readFileSync(new URL('./fixtures/gamefeed-lobby-map39905.json', import.meta.url), 'utf8');
@@ -161,7 +161,29 @@ describe('WarappClient.getGame', () => {
       const game = await client(fetchImpl, new MapCache(), CREDS, dir).getGame(999, { settings: true, map: false });
       expect(calls[0]!.url).toContain('GetMap=false');
       expect(game.map?.id).toBe(39905);
-      expect(await readGameMapId(dir, 999)).toBe(39905);
+      // A caller that never uses the map always asks GetMap=false: no index entry is spent on it.
+      expect(await readGameMapId(dir, 999)).toBeUndefined();
+    });
+
+    it('downloads the map again (GetMap) for a known game once the stored copy is older than the maximum age', async () => {
+      const dir = tmp();
+      await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      const path = join(dir, 'maps', '39905.json');
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as { storedAt: number };
+      raw.storedAt -= MAX_MAP_AGE_MS + 1;
+      writeFileSync(path, JSON.stringify(raw));
+      const { calls, fetchImpl } = stubFetch({ body: FIXTURE });
+      await client(fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(calls[0]!.url).not.toContain('GetMap');
+      const fresh = JSON.parse(readFileSync(path, 'utf8')) as { storedAt: number };
+      expect(Date.now() - fresh.storedAt).toBeLessThan(60_000);
+    });
+
+    it('spends no index entry on a finished game (map statistics read many)', async () => {
+      const dir = tmp();
+      const game = await client(stubFetch({ body: { ...FIXTURE, state: 'Finished' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+      expect(game.map?.id).toBe(39905);
+      expect(await readGameMapId(dir, 12345678)).toBeUndefined();
     });
 
     it('downloads the map again when the stored file is bad, and replaces it', async () => {

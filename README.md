@@ -46,7 +46,7 @@ game chat.
 | `WARAPP_SESSION_FILE` | no | Where the linked direct-transport session is stored (default `<data dir>/session.json`). Local-only; a full-account credential, kept at file mode `0600`. Its directory is made `0700`, so name a file in a directory of its own. |
 | `WARAPP_STATS` | no | `1` turns on `warapp_map_stats` on a **local** install (off by default; always off when hosted). It then fetches finished ladder games — at most `max_new_games` a call, one request a second — and caches them under `<data dir>/stats/`. |
 | `WARAPP_DEBUG` | no | Truthy logs the bridge's role and lifecycle to stderr. |
-| `MCP_DATA_DIR` | no | Where the downloaded war.app client bundle is cached (default `~/.config/warapp-mcp`). A host with persistent state sets it. |
+| `MCP_DATA_DIR` | no | Where this server keeps its local state (default `~/.config/warapp-mcp`): the downloaded war.app client bundle (`bundle/`), GameFeed maps (`maps/`), each planned game's name-free settings (`games/`), the board history (`boards/`) and the rest of its per-game records. A host with persistent state sets it. |
 | `MCP_CONFIRM_MODE` | no | What a write does on a client that cannot show a confirmation prompt: `ask-user` (default), `auto` or `refuse`. See [Confirming writes](#confirming-writes). |
 
 The server starts without credentials and reports what is missing on the first call

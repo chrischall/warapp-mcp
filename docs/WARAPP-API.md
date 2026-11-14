@@ -350,16 +350,20 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   and failing both it goes into `unknownIds`. *Superbonus encoding is unverified:* this map
   has none.
 - Bonus values can be 0 or negative (e.g. `The Sorrows` = -4).
-- Maps never change for a given map id, and the feed's terms of use ask callers to cache.
-  `MapCache` keeps maps in memory and, with a data directory, on disk (`src/map-store.ts`:
-  `<dataDir>/maps/<mapId>.json`, base bonus values, LRU-bounded, plus `<dataDir>/maps/games.json`
-  naming each game's map), so the cache survives a restart. A game whose map is already cached is
+- The feed's terms of use ask callers to cache maps. A map id does not pin a map's content,
+  though: a map maker can publish an edit under the same id, and GameFeed sends no map version
+  (UNVERIFIED how often edits reach live games). `MapCache` keeps maps in memory and, with a data
+  directory, on disk (`src/map-store.ts`: `<dataDir>/maps/<mapId>.json`, base bonus values,
+  LRU-bounded, plus `<dataDir>/maps/games.json` naming each game's map), so the cache survives a
+  restart. A stored map carries `storedAt` and is trusted for `MAX_MAP_AGE_MS` (30 days): after
+  that the game is fetched with its map again and the fresh copy replaces the stored one. A game whose map is already cached is
   fetched with `GetMap=false`. A new game is fetched once with its map, because its map id is unknown
   until the response arrives — except by a caller that never uses the map (#148): the turn wait,
   surrender, uncommit, chat, join-game, scout, begin-turn and submit-turn's read-back always ask
   `GetMap=false`. Map statistics ask `GetMap=false` with `GetSettings=true`, so a map cached under
   the settings' map id is attached without a download; only a finished game on a map not cached
-  yet costs a second request, for the map.
+  yet costs a second request, for the map. The game → map index is written only for a caller that
+  wants the map, on a game not finished.
 
 ## Board state — UNVERIFIED
 

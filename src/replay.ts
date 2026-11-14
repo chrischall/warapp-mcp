@@ -209,7 +209,7 @@ export async function loadReplay(dataDir: string, gameId: number): Promise<Repla
   const game = await readGameRecord(dataDir, gameId);
   if (!game) return undefined;
   const settings = game.settings!;
-  const map = settings.mapId !== undefined ? await readStoredMap(dataDir, settings.mapId) : undefined;
+  const map = settings.mapId !== undefined ? await readStoredMap(dataDir, settings.mapId, { maxAgeMs: Number.POSITIVE_INFINITY }) : undefined;
   if (map) game.map = map;
   const playerId = await readCachedPlayer(dataDir, gameId);
   const boards = playerId !== undefined ? await readBoardHistory(dataDir, gameId, playerId) : [];

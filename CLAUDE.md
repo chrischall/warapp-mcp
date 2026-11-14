@@ -699,7 +699,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `state.dataDir` persists): `<dataDir>/maps/<mapId>.json` holds the normalized map with its BASE
   bonus values (overrides are per game, applied by `mapOf`), at most `MAX_STORED_MAPS`, the least
   recently used evicted; `<dataDir>/maps/games.json` says which map a game is on (bounded), so a
-  known game is re-fetched with `GetMap=false` after a restart too. A bad file is ignored and
+  known game is re-fetched with `GetMap=false` after a restart too. That index is written only for
+  a caller that wants the map, on a game not finished (map statistics and `GetMap=false` callers
+  spend no entry). **A map is not immutable:** its maker can publish an edit under the same id and
+  GameFeed sends no map version, so a stored map carries `storedAt` and is trusted for
+  `MAX_MAP_AGE_MS` (30 days); older, or with no `storedAt`, it reads as absent and the game is
+  fetched with its map again (the fresh copy replaces it). Offline replay reads a stored map
+  whatever its age. A bad file is ignored and
   replaced; the disk never fails a call. A tool
   that never uses the map (the turn wait, surrender, uncommit, chat, join-game, scout, begin-turn,
   submit-turn's read-back) always asks `GetMap=false`, even for a game it has not seen.

@@ -1,10 +1,14 @@
 // The persistent map store: GameFeed maps by map id, so a known map is not downloaded again after a
 // restart and the cached boards (`<dataDir>/boards/`) can be replayed offline (src/replay.ts).
 //
-// - `<dataDir>/maps/<mapId>.json`: `{ version: 1, map }`, the map exactly as `MapCache` holds it
-//   (normalized: territories with adjacency, bonuses with their BASE values — overrides are per game
+// - `<dataDir>/maps/<mapId>.json`: `{ version: 1, storedAt, map }`, the map exactly as `MapCache` holds
+//   it (normalized: territories with adjacency, bonuses with their BASE values — overrides are per game
 //   and applied by `mapOf`). Maps are public data. At most MAX_STORED_MAPS files; the least recently
 //   used (file mtime, touched on every read) is evicted on a write.
+//   A map maker can publish an edit under the same map id and GameFeed sends no map version, so a
+//   stored map is trusted for MAX_MAP_AGE_MS after `storedAt` (the download time, epoch ms) and then
+//   reads as absent: the game is fetched with its map again and the fresh copy replaces it. A file with
+//   no readable `storedAt` is stale. Offline replay (src/replay.ts) reads a map whatever its age.
 // - `<dataDir>/maps/games.json`: `{ version: 1, games: [[gameId, mapId], …] }`, newest last, at most
 //   MAX_GAME_INDEX entries — which map a game is on, so a game seen before a restart is still asked
 //   `GetMap=false`.
@@ -21,6 +25,8 @@ import { withPathLock } from './path-lock.js';
 
 /** Maps kept on disk; the least recently used goes first. */
 export const MAX_STORED_MAPS = 40;
+/** How long a stored map is trusted before it is downloaded again (30 days). */
+export const MAX_MAP_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /** Game → map entries kept in the index; the oldest goes first. */
 export const MAX_GAME_INDEX = 500;
 
@@ -83,9 +89,20 @@ function all<T>(xs: unknown, f: (x: unknown) => T | undefined): T[] | undefined 
   return out;
 }
 
-/** A stored map, read strictly enough that the planner can trust it; `undefined` when anything is off. */
-function storedMapOf(raw: unknown, mapId: number): GameMap | undefined {
+export interface ReadStoredMapOptions {
+  /** The clock, epoch ms (tests). Default `Date.now()`. */
+  now?: number;
+  /** The oldest copy accepted, ms since `storedAt`. Default {@link MAX_MAP_AGE_MS}; `Infinity` takes any age. */
+  maxAgeMs?: number;
+}
+
+/** A stored map, read strictly enough that the planner can trust it; `undefined` when anything is off or it is too old. */
+function storedMapOf(raw: unknown, mapId: number, now: number, maxAgeMs: number): GameMap | undefined {
   if (!isRec(raw) || raw.version !== VERSION || !isRec(raw.map)) return undefined;
+  if (maxAgeMs !== Number.POSITIVE_INFINITY) {
+    const at = raw.storedAt;
+    if (typeof at !== 'number' || !Number.isFinite(at) || now - at > maxAgeMs) return undefined;
+  }
   const m = raw.map;
   if (m.id !== mapId || typeof m.name !== 'string') return undefined;
   const territories = all(m.territories, territoryOf);
@@ -95,11 +112,14 @@ function storedMapOf(raw: unknown, mapId: number): GameMap | undefined {
   return { id: mapId, name: m.name, territories, bonuses, distributionModes };
 }
 
-/** The map stored for `mapId`, marking it recently used; `undefined` when absent or unusable. Never throws. */
-export async function readStoredMap(dir: string, mapId: number): Promise<GameMap | undefined> {
+/**
+ * The map stored for `mapId`, marking it recently used; `undefined` when absent, unusable or older
+ * than `maxAgeMs` ({@link MAX_MAP_AGE_MS} by default). Never throws.
+ */
+export async function readStoredMap(dir: string, mapId: number, opts: ReadStoredMapOptions = {}): Promise<GameMap | undefined> {
   const path = mapStorePath(dir, mapId);
   try {
-    const map = storedMapOf(JSON.parse(await readFile(path, 'utf8')), mapId);
+    const map = storedMapOf(JSON.parse(await readFile(path, 'utf8')), mapId, opts.now ?? Date.now(), opts.maxAgeMs ?? MAX_MAP_AGE_MS);
     if (map) {
       const now = new Date();
       await utimes(path, now, now).catch(() => {});
@@ -128,10 +148,10 @@ async function evictMaps(dir: string, keep: number): Promise<void> {
   for (const f of victims.slice(0, excess)) await unlink(join(folder, f.name)).catch(() => {});
 }
 
-/** Store `map` (its base values), then evict beyond the cap. `true` when written; never throws. */
-export async function writeStoredMap(dir: string, map: GameMap): Promise<boolean> {
+/** Store `map` (its base values) stamped `storedAt`, then evict beyond the cap. `true` when written; never throws. */
+export async function writeStoredMap(dir: string, map: GameMap, storedAt: number = Date.now()): Promise<boolean> {
   try {
-    await writeJsonAtomic(mapStorePath(dir, map.id), mapsDir(dir), { version: VERSION, map });
+    await writeJsonAtomic(mapStorePath(dir, map.id), mapsDir(dir), { version: VERSION, storedAt, map });
     await evictMaps(dir, map.id).catch(() => {});
     return true;
   } catch {

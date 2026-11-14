@@ -13,12 +13,15 @@
 // string this module surfaces — raw, JSON-escaped, percent- and form-encoded,
 // the email in any letter case (src/redact.ts).
 //
-// Maps are immutable per map id and large (761 territories on map 39905), and
-// the feed's terms ask callers to cache — so a map is kept per process and a
-// game whose map is cached is fetched with GetMap=false. With a data directory
-// (`dataDir`, wired by tools/index.ts) the cache is also kept on disk
-// (src/map-store.ts: `<dataDir>/maps/`, base values, LRU-bounded), so a known
-// map is not downloaded again after a restart.
+// Maps are large (761 territories on map 39905) and the feed's terms ask callers
+// to cache — so a map is kept per process and a game whose map is cached is
+// fetched with GetMap=false. With a data directory (`dataDir`, wired by
+// tools/index.ts) the cache is also kept on disk (src/map-store.ts:
+// `<dataDir>/maps/`, base values, LRU-bounded), so a known map is not
+// downloaded again after a restart — for at most MAX_MAP_AGE_MS (30 days), since
+// a map maker can edit a map under the same id and GameFeed sends no version.
+// The game → map index is written only for a caller that wants the map, on a
+// game not finished.
 
 import {
   createApiClient,
@@ -275,7 +278,11 @@ export class WarappClient {
     }
     if (!map && game.settings?.mapId !== undefined) map = await this.#cache.load(game.settings.mapId, dir);
     if (map) {
-      await this.#cache.storeGame(gameId, map.id, dir);
+      // The index only saves a map download for a caller that wants the map, on a game still played:
+      // a `map: false` caller always asks GetMap=false, and a finished game (map statistics read many)
+      // would only push live games out of the bounded index.
+      const index = opts.map !== false && game.state !== 'Finished';
+      await this.#cache.storeGame(gameId, map.id, index ? dir : undefined);
       game.map = map;
     }
     return game;

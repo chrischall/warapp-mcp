@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MAX_GAME_INDEX,
+  MAX_MAP_AGE_MS,
   MAX_STORED_MAPS,
   mapStorePath,
   readGameMapId,
@@ -46,13 +47,13 @@ describe('the persistent map store', () => {
     mkdirSync(join(dir, 'maps'), { recursive: true });
     writeFileSync(mapStorePath(dir, 7), '{not json');
     expect(await readStoredMap(dir, 7)).toBeUndefined();
-    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 1, map: mapOf(8) }));
+    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 1, storedAt: Date.now(), map: mapOf(8) }));
     expect(await readStoredMap(dir, 7)).toBeUndefined();
-    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 1, map: { ...mapOf(7), territories: [{ id: 'x' }] } }));
+    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 1, storedAt: Date.now(), map: { ...mapOf(7), territories: [{ id: 'x' }] } }));
     expect(await readStoredMap(dir, 7)).toBeUndefined();
-    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 1, map: { ...mapOf(7), bonuses: [{ id: 1 }] } }));
+    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 1, storedAt: Date.now(), map: { ...mapOf(7), bonuses: [{ id: 1 }] } }));
     expect(await readStoredMap(dir, 7)).toBeUndefined();
-    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 2, map: mapOf(7) }));
+    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 2, storedAt: Date.now(), map: mapOf(7) }));
     expect(await readStoredMap(dir, 7)).toBeUndefined();
     // A bad file is replaced by the next write.
     await writeStoredMap(dir, mapOf(7));
@@ -115,5 +116,30 @@ describe('the persistent map store', () => {
     await rememberGameMap(dir, 7, 3);
     expect(await readGameMapId(dir, 6)).toBe(2);
     expect(await readGameMapId(dir, 7)).toBe(3);
+  });
+
+  it(`stamps a stored map with storedAt and treats one older than ${MAX_MAP_AGE_MS / 86_400_000} days as absent`, async () => {
+    const dir = tmp();
+    const t0 = Date.UTC(2026, 0, 1);
+    await writeStoredMap(dir, mapOf(7), t0);
+    const raw = JSON.parse(readFileSync(mapStorePath(dir, 7), 'utf8')) as { storedAt: unknown };
+    expect(raw.storedAt).toBe(t0);
+    expect(await readStoredMap(dir, 7, { now: t0 + MAX_MAP_AGE_MS })).toEqual(mapOf(7));
+    expect(await readStoredMap(dir, 7, { now: t0 + MAX_MAP_AGE_MS + 1 })).toBeUndefined();
+    // Offline replay takes the stored map whatever its age.
+    expect(await readStoredMap(dir, 7, { now: t0 + 10 * MAX_MAP_AGE_MS, maxAgeMs: Number.POSITIVE_INFINITY })).toEqual(mapOf(7));
+    // A newer copy replaces it and is fresh again.
+    await writeStoredMap(dir, mapOf(7), t0 + MAX_MAP_AGE_MS + 1);
+    expect(await readStoredMap(dir, 7, { now: t0 + MAX_MAP_AGE_MS + 2 })).toEqual(mapOf(7));
+  });
+
+  it('treats a stored map with no readable storedAt as stale (fetched again), though replay may still read it', async () => {
+    const dir = tmp();
+    mkdirSync(join(dir, 'maps'), { recursive: true });
+    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 1, map: mapOf(7) }));
+    expect(await readStoredMap(dir, 7)).toBeUndefined();
+    expect(await readStoredMap(dir, 7, { maxAgeMs: Number.POSITIVE_INFINITY })).toEqual(mapOf(7));
+    writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 1, storedAt: 'yesterday', map: mapOf(7) }));
+    expect(await readStoredMap(dir, 7)).toBeUndefined();
   });
 });
