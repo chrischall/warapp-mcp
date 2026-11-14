@@ -919,7 +919,7 @@ import { guardOffExposure } from './guard-off.js';
 import { classifyExchange, forecastBorder, type Exchange, type ExchangeCase } from './exchange.js';
 import { twoStepReaches, type TwoStepReach } from './lookahead.js';
 import { indexAfterAll, MoveSlot, opponentOrdersBefore, scheduleMoves, type MoverPosition } from './schedule.js';
-import { chargeDeploys, deployPools } from './local-deploy.js';
+import { chargeDeploys, deployPools, enemyDeployReaching, heldBonusPools } from './local-deploy.js';
 import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from './player.js';
 import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type GameProfile, type ProfilePlayer } from './profile.js';
 
@@ -3077,27 +3077,22 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (growth > 0) growthOf.set(id, { from: was.armies, to: st.armies, growth });
     }
   }
+  /** Each opponent's team, in a team game (#128): opponents on one team attack together. */
+  const teamOf = new Map<number, number>();
+  for (const p of ctx.players ?? []) if (carriesTeam(p.team) && foe(p.id)) teamOf.set(p.id, p.team);
   /**
    * Local Deployment (#128): each opponent's bonuses it visibly holds in full, as deploy pools that
    * land only on their own territories. Empty without Local Deployment or under the override.
    */
-  /** Each opponent's team, in a team game (#128): opponents on one team attack together. */
-  const teamOf = new Map<number, number>();
-  for (const p of ctx.players ?? []) if (carriesTeam(p.team) && foe(p.id)) teamOf.set(p.id, p.team);
   const enemyPools = new Map<number, { value: number; members: ReadonlySet<number> }[]>();
-  if (s.localDeployments && !custom) {
-    const ownerAt = (t: number) => {
+  // #199: the one Local Deployment bound (local-deploy.ts), shared with check_plan's stress test.
+  // A what-if `enemyDeploy` is taken as it stands: no pool bounds it.
+  if (s.localDeployments && !custom)
+    for (const [p, pools] of heldBonusPools(g, (t) => {
       const o = ownerShown(state.get(t))?.owner;
       return o?.kind === 'player' ? o.playerId : undefined;
-    };
-    for (const b of g.map.bonuses) {
-      if (b.value <= 0) continue;
-      const ts = bonusTerritories(g, b.id);
-      const p = ts.length ? ownerAt(ts[0]!) : undefined;
-      if (p === undefined || !foe(p) || !ts.every((t) => ownerAt(t) === p)) continue;
-      enemyPools.set(p, [...(enemyPools.get(p) ?? []), { value: b.value, members: new Set(ts) }]);
-    }
-  }
+    }))
+      if (foe(p)) enemyPools.set(p, pools);
   /**
    * What `player` may deploy on any of `on` (#128): its whole estimate, except under Local
    * Deployment, where a bonus it visibly holds pays only into that bonus's territories — the
@@ -3107,15 +3102,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    * it holds above its free floor — max({@link MIN_ENEMY_DEPLOY}, base income) — is taken as
    * pooled: the free base always lands anywhere.
    */
-  const deployReaching = (player: number, on: readonly number[]): number => {
-    const all = deployOf(player);
-    const pools = enemyPools.get(player);
-    if (!pools?.length) return all;
-    const pooled = pools.reduce((n, q) => n + q.value, 0);
-    const here = pools.reduce((n, q) => n + (on.some((t) => q.members.has(t)) ? q.value : 0), 0);
-    const free = Math.min(all, Math.max(MIN_ENEMY_DEPLOY, estimates.get(player)?.base ?? 0));
-    return Math.min(all, Math.max(free, all - pooled) + here);
-  };
+  const deployReaching = (player: number, on: readonly number[]): number =>
+    enemyDeployReaching(deployOf(player), estimates.get(player)?.base ?? 0, MIN_ENEMY_DEPLOY, enemyPools.get(player) ?? [], on);
   /**
    * #120: what the owner of enemy territory `t` may add there before my attack lands — its deploy
    * estimate (under Local Deployment, what reaches `t`), or its growth there per turn when larger
