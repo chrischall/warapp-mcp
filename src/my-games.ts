@@ -4,8 +4,9 @@
 // Field names in the bundle are minified and change between releases, so
 // nothing here keys on them. Classes are found by their stable registered type
 // name (`$type`) and fields by read order, as observed through the bridge
-// (docs/PLAN-SCOUT.md, GetMyGames). The positions used are checked for their
-// type, so a reordered layout is an error rather than a silently wrong list.
+// (docs/PLAN-SCOUT.md, GetMyGames). Each record must have exactly its known
+// field count and the positions used are checked for their type, so a field
+// inserted, dropped or reordered is an error rather than a silently wrong list.
 
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { ClassReader } from './live.js';
@@ -29,12 +30,12 @@ const GAME_DISTRIBUTING = 5;
 
 const PLAYER_PLAYING = 2;
 
-/** GameInfo field positions in read order. */
+/** GameInfo field positions in read order, and its whole field count (src/open-games.ts reads the same record). */
 const GI = { gameId: 7, name: 13, lastTurn: 14, players: 16, state: 22 } as const;
-const GI_MIN_FIELDS = 23;
-/** GameInfoPlayer field positions in read order. */
+export const GAME_INFO_FIELDS = 27;
+/** GameInfoPlayer field positions in read order, and its whole field count. */
 const GP = { committed: 2, name: 5, id: 6, state: 7 } as const;
-const GP_MIN_FIELDS = 8;
+export const GAME_INFO_PLAYER_FIELDS = 10;
 
 /** One game as GetMyGames has it (codes not yet named). */
 export interface RawMyGame {
@@ -74,11 +75,14 @@ const isStr = (v: unknown): v is string | null => v === null || typeof v === 'st
 function playerOf(p: unknown): RawMyGame['players'][number] {
   if (!isObj(p) || p.$type !== GAME_INFO_PLAYER) throw new MyGamesFormatError('a player is not a GameInfoPlayer');
   const f = fields(p);
+  if (f.length !== GAME_INFO_PLAYER_FIELDS) {
+    throw new MyGamesFormatError(`a GameInfoPlayer has ${f.length} fields, not ${GAME_INFO_PLAYER_FIELDS}`);
+  }
   const committed = f[GP.committed];
   const name = f[GP.name];
   const id = f[GP.id];
   const state = f[GP.state];
-  if (f.length < GP_MIN_FIELDS || typeof committed !== 'boolean' || !isStr(name) || !isInt(id) || !isInt(state)) {
+  if (typeof committed !== 'boolean' || !isStr(name) || !isInt(id) || !isInt(state)) {
     throw new MyGamesFormatError('a GameInfoPlayer lacks its fields');
   }
   return { id, name: name ?? '', stateCode: state, committed };
@@ -87,13 +91,13 @@ function playerOf(p: unknown): RawMyGame['players'][number] {
 function gameOf(g: unknown): RawMyGame {
   if (!isObj(g) || g.$type !== GAME_INFO) throw new MyGamesFormatError('a game is not a GameInfo');
   const f = fields(g);
+  if (f.length !== GAME_INFO_FIELDS) throw new MyGamesFormatError(`a GameInfo has ${f.length} fields, not ${GAME_INFO_FIELDS}`);
   const id = f[GI.gameId];
   const name = f[GI.name];
   const lastTurn = f[GI.lastTurn];
   const players = f[GI.players];
   const state = f[GI.state];
   if (
-    f.length < GI_MIN_FIELDS ||
     !isInt(id) ||
     !isStr(name) ||
     !isInt(lastTurn) ||

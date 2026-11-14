@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { type Reader, Writer } from '../src/protocol/codec.js';
+import { Reader, Writer } from '../src/protocol/codec.js';
 import type { ReadBudget } from '../src/protocol/interp.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, markJoined, MAX_OPEN_GAMES, OPEN_GAMES_URL, openGameOf, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
+import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, markJoined, MAX_OPEN_GAMES, OPEN_GAMES_URL, OpenGamesFormatError, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
 import { liveHarness, payload, textOf, type Harness } from './helpers.js';
 import { MY_GAMES_BUNDLE, writeGameInfo, type SyntheticGame } from './protocol/my-games-bundle.js';
 
@@ -301,14 +301,78 @@ describe('parseOpenGamesPage', () => {
     expect(out.note).toMatch(/4 of 5/);
   });
 
-  it('skips a record that is not a GameInfo shape instead of throwing', () => {
-    expect(openGameOf({ $type: 'warlight.shared.Other', a: 1 })).toBeUndefined();
-    expect(openGameOf({ $type: 'warlight.shared.GameInfo', a: 1, b: 'x' })).toBeUndefined();
-    expect(openGameOf(null)).toBeUndefined();
+  /** A reader that takes one byte per record and answers `records` in turn (hand-built decodes). */
+  const answering = (...records: unknown[]) => {
+    let i = 0;
+    return {
+      hex: hexOf(new Writer().int32(records.length).bytes()) + '00'.repeat(records.length),
+      reader: { readClass: (_t: string, r: Reader) => (r.u8(), records[i++]) },
+    };
+  };
+
+  it('skips a record that is not a GameInfo instead of throwing', () => {
+    const a = answering({ $type: 'warlight.shared.Other', a: 1 }, null);
+    const out = parseOpenGamesPage(page(a.hex), a.reader);
+    expect(out.games).toEqual([]);
+    expect(out.note).toBeUndefined();
     const good = { ...GAMES[0]! };
     const w = new Writer().int32(1);
     writeGameInfo(w, good);
     expect(parseOpenGamesPage(page(hexOf(w.bytes())), bundle).games).toHaveLength(1);
+  });
+
+  describe('a shifted record is a typed error, not a silently wrong game (#133)', () => {
+    type Obj = Record<string, unknown>;
+    /** `o` with `value` inserted as its field at `at`, as a client that added a field would decode it. */
+    const inserted = (o: Obj, at: number, value: unknown): Obj => {
+      const { $type, ...rest } = o;
+      const entries = Object.entries(rest);
+      entries.splice(at, 0, ['zz', value]);
+      return { $type, ...Object.fromEntries(entries) };
+    };
+    /** The synthetic bundle's reader, with `edit` applied to each decoded GameInfo. */
+    const editing = (edit: (gi: Obj) => Obj) => ({
+      readClass: (t: string, r: Reader, budget?: ReadBudget) => edit(bundle.readClass(t, r, budget) as Obj),
+    });
+    const one = page(payloadHex([GAMES[0]!]));
+    const nth = (o: Obj, i: number) => Object.values(o).filter((_, k) => Object.keys(o)[k] !== '$type')[i];
+
+    it('the synthetic bundle decodes records with the client\'s field counts (27, 10, 24)', () => {
+      const w = new Writer();
+      writeGameInfo(w, GAMES[0]!);
+      const gi = bundle.readClass(GAME_INFO, new Reader(w.bytes())) as Obj;
+      const count = (o: Obj) => Object.keys(o).filter((k) => k !== '$type').length;
+      expect(count(gi)).toBe(27);
+      expect(count((nth(gi, 16) as Obj[])[0]!)).toBe(10);
+      expect(count(nth(gi, 21) as Obj)).toBe(24);
+    });
+
+    it('a GameInfo with a field inserted before the settings', () => {
+      expect(() => parseOpenGamesPage(one, editing((gi) => inserted(gi, 21, null)))).toThrow(OpenGamesFormatError);
+      expect(() => parseOpenGamesPage(one, editing((gi) => inserted(gi, 21, null)))).toThrow(/GameInfo has 28 fields, not 27/);
+    });
+
+    it('a GameInfoPlayer with an int inserted before its id: id and state would both still read as ints', () => {
+      const edit = (gi: Obj) => {
+        const players = nth(gi, 16) as Obj[];
+        const key = Object.keys(gi).filter((k) => k !== '$type')[16]!;
+        return { ...gi, [key]: players.map((p) => inserted(p, 6, 999999)) };
+      };
+      expect(() => parseOpenGamesPage(one, editing(edit))).toThrow(/GameInfoPlayer has 11 fields, not 10/);
+    });
+
+    it('a GameInfoSettings with a field inserted first', () => {
+      const edit = (gi: Obj) => {
+        const key = Object.keys(gi).filter((k) => k !== '$type')[21]!;
+        return { ...gi, [key]: inserted(gi[key] as Obj, 0, null) };
+      };
+      expect(() => parseOpenGamesPage(one, editing(edit))).toThrow(/GameInfoSettings has 25 fields, not 24/);
+    });
+
+    it('a GameInfo too short to hold its fields', () => {
+      const a = answering({ $type: GAME_INFO, a: 1, b: 'x' });
+      expect(() => parseOpenGamesPage(page(a.hex), a.reader)).toThrow(OpenGamesFormatError);
+    });
   });
 
   it('accepts the script tag with its attributes in any order and lowercase hex', () => {

@@ -287,4 +287,23 @@ describe('readMyGames / summarizeMyGames', () => {
     expect(bad(ordered(MY_GAMES_RETURN, [[info({ 16: [player('A', 'x', 2, false)] })]]))).toThrow(/GameInfoPlayer/);
     expect(bad(ordered(MY_GAMES_RETURN, [[info({ 16: ['p'] })]]))).toThrow(/GameInfoPlayer/);
   });
+
+  it('throws a format error on a record with a field inserted, though every position read still type-checks (#133)', () => {
+    const bad = (ret: unknown) => () => readMyGames(stub(ret), reader(true));
+    const inserted = (o: Obj, at: number, value: unknown): Obj => {
+      const { $type, ...rest } = o;
+      const values = Object.values(rest);
+      values.splice(at, 0, value);
+      return ordered(String($type), values);
+    };
+    // An int before the state: the state would silently read the inserted field.
+    expect(bad(ordered(MY_GAMES_RETURN, [[inserted(info(), 22, PLAYING)]]))).toThrow(MyGamesFormatError);
+    expect(bad(ordered(MY_GAMES_RETURN, [[inserted(info(), 22, PLAYING)]]))).toThrow(/GameInfo has 28 fields, not 27/);
+    // An int before a player's state: the same for the player.
+    const shiftedPlayer = inserted(player('A', 9, P_PLAYING, false), 7, P_ELIMINATED);
+    expect(bad(ordered(MY_GAMES_RETURN, [[info({ 16: [shiftedPlayer] })]]))).toThrow(/GameInfoPlayer has 11 fields, not 10/);
+    // A field dropped from the end is as much a layout change.
+    const short = ordered(GAME_INFO, Object.values(info()).slice(1, -1));
+    expect(bad(ordered(MY_GAMES_RETURN, [[short]]))).toThrow(MyGamesFormatError);
+  });
 });

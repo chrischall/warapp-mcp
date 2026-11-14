@@ -437,8 +437,12 @@ speed first turn in `rules` and `plannerGaps`. The record carries no fog level a
 sizes: `warapp_join_game` reads those from the lobby's GameFeed settings for its screen. The plan expected the open seats as
 `warlight.shared.GameOpenSeat` records; inside `GameInfo` they read as a plain int32 list with one
 **team per open seat** (`-1` = no team), and that team is what a join sends. Anything the reader
-cannot place is omitted, never guessed; a record that does not fit is skipped and a payload that
-stops decoding keeps what was read. A missing tag or bad hex is an empty list with a note.
+cannot place is omitted, never guessed. Each `GameInfo`, `GameInfoPlayer` and `GameInfoSettings`
+must have exactly the client's field count (27, 10 and 24, read from the bundle 2026-11-14; GetMyGames
+checks the same counts): a field inserted or dropped would shift every position, so it fails with a
+typed `OpenGamesFormatError` (`MyGamesFormatError` for GetMyGames), never a silently wrong list (#133).
+A record whose positions do not hold their types is skipped and a payload that stops decoding keeps
+what was read. A missing tag or bad hex is an empty list with a note.
 
 **Team games** (verified from the bundle; the live "…-Teams V4" lobby that read as no-team is not
 yet explained). The client's own "Team Game" test, the one behind its settings icon, uses exactly
