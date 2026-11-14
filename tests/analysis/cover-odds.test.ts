@@ -92,3 +92,48 @@ describe('#167: cover odds', () => {
     expect(line).not.toMatch(/50%/);
   });
 });
+
+describe('#201: cover odds when the split deploy funds only some of the short borders', () => {
+  // Three separate 15-stacks of player 20 each face a 10 of mine (16 to take): each border is 2
+  // short of its stack alone. A ~5 deploy funds two of those shortfalls at once, not all three.
+  const three: GameMap = {
+    id: 3,
+    name: 'Synthetic',
+    territories: [
+      { id: 1, name: 'T1', connectedTo: [2] },
+      { id: 2, name: 'T2', connectedTo: [1] },
+      { id: 3, name: 'T3', connectedTo: [4] },
+      { id: 4, name: 'T4', connectedTo: [3] },
+      { id: 5, name: 'T5', connectedTo: [6] },
+      { id: 6, name: 'T6', connectedTo: [5] },
+    ],
+    bonuses: [
+      { id: 1, name: 'B1', value: 5, territoryIds: [1], bonusIds: [] },
+      { id: 3, name: 'B3', value: 5, territoryIds: [3], bonusIds: [] },
+      { id: 5, name: 'B5', value: 5, territoryIds: [5], bonusIds: [] },
+    ],
+    distributionModes: [],
+  };
+  const run = (deploy: number) =>
+    planTurn({
+      graph: buildGraph(three),
+      board: board([mine(1, 10), enemy(2, 15), mine(3, 10), enemy(4, 15), mine(5, 10), enemy(6, 15)]),
+      me: 10,
+      income: 0,
+      settings: { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true },
+      game: { players: [{ id: 10 }, { id: 20 }], turn: 6 },
+      options: { enemyDeploy: deploy },
+    }).rationale.find((l) => /Cover odds/.test(l));
+
+  it('two of three: each holds with chance 33%, never a flat 0%', () => {
+    const line = run(5);
+    expect(line).toMatch(
+      /its ~5 deploy, split, can take 2 of the 3 borders facing it at once \(T1 \(#1\) short 2, T3 \(#3\) short 2, T5 \(#5\) short 2\): if it picks 2 of those 3 at random, each holds with chance 33%, and all of them with 0%\./,
+    );
+    expect(line).not.toMatch(/each of those holds with chance 0%/);
+  });
+
+  it('a deploy that funds all three says 0%', () => {
+    expect(run(6)).toMatch(/can take 3 of the 3 borders facing it at once \(.*\): each of those holds with chance 0%\./);
+  });
+});

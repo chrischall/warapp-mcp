@@ -776,8 +776,9 @@
 //     borders, those holding against its stacks alone but not with its whole deploy on them are a
 //     gamble on where that one deploy lands; a rationale line names them and the chance each (and
 //     all) hold if it picks at random. A deploy can be split: those whose shortfall it funds
-//     together with another's are no gamble — the line says how many the split takes at once and
-//     gives each 0%. Left alone: every visible enemy territory next to mine that no
+//     together with another's are no gamble — the line says how many (k) the split takes at once and
+//     gives each 0% when there are k of them or fewer; with m > k (#201), it picks k of the m, so
+//     each holds with (m − k) ÷ m and all of them with 0%. Left alone: every visible enemy territory next to mine that no
 //     order attacks is named in one line, "Not attacking … next to mine", with its first reason: a
 //     special unit, the offence report's reason (a second front, unaffordable, a trade below even), a
 //     capture lowering income, its size against the most a neighbour can spare, a lead strike's sure
@@ -9498,10 +9499,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       for (let left = d; k < gaps.length && gaps[k]! <= left; k++) left -= gaps[k]!;
       const flips = short.filter((s) => !splits.includes(s));
       const parts: string[] = [];
-      if (splits.length)
+      // #201: the split takes k at once. Each of those holds with chance 0% only when there are
+      // k of them or fewer; with more, it picks k of them and each holds with (m − k) ÷ m.
+      if (splits.length) {
+        const m = splits.length;
+        const named = `(${splits.map(({ x, gap }) => `${label(x)} short ${gap}`).join(', ')})`;
         parts.push(
-          `its ~${d} deploy, split, can take ${k} of the ${n} borders facing it at once (${splits.map(({ x, gap }) => `${label(x)} short ${gap}`).join(', ')}): each of those holds with chance 0%.`,
+          m <= k
+            ? `its ~${d} deploy, split, can take ${k} of the ${n} borders facing it at once ${named}: each of those holds with chance 0%.`
+            : `its ~${d} deploy, split, can take ${k} of the ${n} borders facing it at once ${named}: if it picks ${k} of those ${m} at random, each holds with chance ${Math.round(((m - k) / m) * 100)}%, and all of them with 0%.`,
         );
+      }
       if (flips.length)
         parts.push(
           `${splits.length ? 'Besides, its' : 'its'} one ~${d} deploy can land on one of the ${n} borders facing it; ${flips.length} hold${flips.length === 1 ? 's' : ''} against its stacks alone but not with that deploy on ${flips.length === 1 ? 'it' : 'them'} (${flips.map(({ x }) => label(x)).join(', ')}) — a gamble on where it lands: if it picks among the ${n} at random, ${
