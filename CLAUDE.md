@@ -166,8 +166,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   can only be used for games you are in…"), which confirms it.
 - **A lottery is read from the data, never the name** (#217, `lotteryOf` in `src/open-games.ts`): a
   map of at most `LOTTERY_MAX_TERRITORIES` (4) territories is one; base income 0 with overridden
-  bonuses and the map size unread is a likely one (`lottery: null`, unchecked in the policy, not a
-  break). The open-games record carries no map size, so `markLotteries` asks GameFeed (map included)
+  bonuses and the map size unread is a likely one (`lottery: null`, a policy break
+  too). The open-games record carries no map size, so `markLotteries` asks GameFeed (map included)
   only for lobbies with that settings shape, at most `LOTTERY_LOOKUPS` (5) per call, else uses a
   cached map. A lottery breaks the joining policy.
 - **Open games come from the `/MultiPlayer/OpenGames` page payload (`AllOpenGamesData`), not a `/Services` call; joining is `AcceptOpenSeat` (61) via `warapp_join_game`, confirm-gated** and reported `joined` only once GameFeed or `GetMyGames` shows the account seated (`docs/WEB-PROTOCOL.md` "Open games").

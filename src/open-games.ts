@@ -575,7 +575,7 @@ interface JoinPolicy {
  * the lobby, its neutral-cost screen: no Commerce, mods or custom scenarios; the cheapest neutral
  * costs at most one turn of base income; at most four seats; a boot time of at least 12 hours (no
  * boot time — war.app's "never" — keeps it); no lotteries (#217: `game.lottery`; a likely one whose
- * map size went unread is unchecked, not a break). Lobbies are not counted against the game cap. Pure.
+ * map size went unread breaks it too). Lobbies are not counted against the game cap. Pure.
  */
 export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null): JoinPolicy {
   const breaks: string[] = [];
