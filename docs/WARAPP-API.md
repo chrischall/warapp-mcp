@@ -481,8 +481,13 @@ types are verified on the lobby fixture.
   accepted" when off. Read: booleans and `True`/`False`, `Instant` = on, a few spellings of "not
   instant" = off; any other string is kept (`instantSurrenderRaw`) and treated as unknown.
   **UNVERIFIED:** the string GameFeed sends when it is off, and whether a two-player game with it off
-  really waits for the opponent to accept. `warapp_surrender` reads acceptance from it, falling back
-  to the player count (more than two players) when it does not read.
+  really waits for the opponent to accept. `warapp_surrender` reads acceptance from it (#228: the
+  game read with `GetSettings=true` — GameFeed sends no settings without it, so the preview had
+  always fallen back), falling back to the player count when it does not read: two players, no
+  acceptance; more than two, unknown (`needed: null`, "may"). #228: the cached settings records of
+  every recently planned game carry the key, as `"Instant"`; no other key names it. The two
+  multi-player surrenders of #228 went through at once, consistent with it (the setting was
+  never read there).
 - `AIsSurrenderWhenOneHumanRemains` (wiki): once one human is left the AIs give up, so the profile's
   `endsWith` names the last other human. **UNVERIFIED** live.
 - Boots (`leavers`): a human still `Playing` who has not committed, with the minutes left until

@@ -268,12 +268,36 @@ describe('warapp_surrender', () => {
       expect(undo.confirmToken).toEqual(expect.any(String));
     });
 
-    it('falls back to the player count when the setting cannot be read, and says so', async () => {
+    it('reads the game with its settings, which carry InstantSurrender (#228: the preview never asked for them)', async () => {
+      // GameFeed sends the settings only with GetSettings=true; the setting came as the string "Instant".
+      h = await harness([feedGame(THREE, 'Playing', 'Synthetic Duel', { InstantSurrender: 'Instant' })]);
+      const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID }));
+      const feedCalls = h.calls.filter((c) => c.url.includes('/API/GameFeed'));
+      expect(feedCalls).toHaveLength(1);
+      expect(feedCalls[0]!.url).toContain('GetSettings=true');
+      expect((preview.preview as Record<string, unknown>).acceptance).toMatchObject({ needed: false, from: 'setting' });
+    });
+
+    it('with the setting unread and more than two players, says acceptance MAY be needed (unknown), not that it is', async () => {
       h = await harness([feedGame(THREE, 'Playing', 'Synthetic Duel', { InstantSurrender: 'Mystery' })]);
       const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID }));
       const v = preview.preview as Record<string, unknown>;
-      expect(v.acceptance).toMatchObject({ needed: true, from: 'player count' });
+      expect(v.acceptance).toMatchObject({ needed: null, from: 'player count' });
       expect(String((v.acceptance as { note: string }).note)).toMatch(/could not be read/);
+      expect(String((v.acceptance as { note: string }).note)).toMatch(/MAY have to accept/);
+      expect(String(v.note)).toMatch(/may have to accept .* \(unknown\)/);
+      expect(JSON.stringify(preview)).not.toMatch(/others must accept/);
+    });
+
+    it('with the setting unread, the result reading stays: still playing after the send reads pending, and undo is allowed', async () => {
+      const s = surrenderServer();
+      const unread = feedGame(THREE, 'Playing', 'Synthetic Duel', { InstantSurrender: 'Mystery' });
+      h = await harness([unread], s.warapp);
+      const p = payload(await confirmed({ game_id: GAME_ID }));
+      expect(p.status).toBe('pending');
+      expect(String(p.message)).toMatch(/may ask for acceptance/);
+      const undo = payload(await h.call('warapp_surrender', { game_id: GAME_ID, undo: true }));
+      expect(undo.confirmToken).toEqual(expect.any(String));
     });
 
     it('says what my land becomes and which opponents are AIs', async () => {
