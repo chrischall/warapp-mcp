@@ -15,7 +15,7 @@ import {
   type LiveTerritory,
 } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
-import { writePickable, writePickList } from '../pick-list.js';
+import { pickingNeutrals, writePickable, writePickList } from '../pick-list.js';
 import { Method, writeSendTerritoryPicksParams } from '../protocol/methods.js';
 import {
   currentTurn,
@@ -401,7 +401,8 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
             const pickable = board.filter((t) => !t.fogged && t.owner === OWNER_PICKABLE).map((t) => t.territoryId);
             const pickableCount = pickable.length;
             // Kept for the turns to come: where a player could have started (warapp_locate_opponents).
-            if (ctx.dataDir) await writePickable(ctx.dataDir, game.id, me.id, pickable);
+            // #201: with the picking board's neutrals, so a fogged one keeps its size later.
+            if (ctx.dataDir) await writePickable(ctx.dataDir, game.id, me.id, pickable, pickingNeutrals(board));
             const bounds = clientPickLimits({
               territoryLimit: game.settings?.territoryLimit,
               players: game.players.length,

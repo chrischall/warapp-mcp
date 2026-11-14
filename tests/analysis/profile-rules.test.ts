@@ -354,8 +354,11 @@ describe('rule 0p.3: behind defends first in an FFA', () => {
     expect(p.profile.standing).toBe('behind');
     expect(p.goal).toBe('defend');
     const d = planTurn(input({ goal: 'defend' }));
+    // #201: behind, each border is sized for the expected attack (movable + the whole deploy); with
+    // no growth trend on this board that is the worst case too, so the plan is goal defend's.
     expect(p.deploys).toEqual(d.deploys);
     expect(p.moves).toEqual(d.moves);
+    expect(p.warnings.join('\n')).not.toMatch(/Behind \(#201\)/);
     expect(why(p)).toMatch(/Goal defend from the game profile \(ffa, contact, behind\): behind on income \(3 against ~5\)/);
   });
 

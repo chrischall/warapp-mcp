@@ -383,7 +383,8 @@ describe('the pickable territories are kept during distribution', () => {
   it('by warapp_plan_picks, for the signed-in account', async () => {
     h = await live(PICK_BOARD, picking(), { pages: SIGNED_IN_ANN });
     expect((await h.call('warapp_plan_picks', { game_id: GAME })).isError).toBeFalsy();
-    expect(await readPickRecord(h.dataDir, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, pickable: [133, 134, 135, 157, 159, 161] });
+    // #201: the picking board's neutrals too (158, a neutral 2).
+    expect(await readPickRecord(h.dataDir, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, pickable: [133, 134, 135, 157, 159, 161], neutrals: [[158, 2]] });
   });
 
   it('by warapp_plan_picks not at all when the signed-in account cannot be told, and the plan still comes', async () => {
@@ -398,7 +399,8 @@ describe('the pickable territories are kept during distribution', () => {
     const preview = payload<{ confirmToken?: string }>(await h.call('warapp_submit_picks', { game_id: GAME, territories: [159, 161] }));
     expect(preview.confirmToken).toEqual(expect.any(String));
     expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
-    expect(await readPickRecord(h.dataDir, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, pickable: [133, 134, 135, 157, 159, 161] });
+    // #201: the picking board's neutrals too (158, a neutral 2).
+    expect(await readPickRecord(h.dataDir, GAME, ME)).toEqual({ gameId: GAME, playerId: ME, pickable: [133, 134, 135, 157, 159, 161], neutrals: [[158, 2]] });
   });
 
   it('and a later turn then finds them: the whole path, picks to the first turn', async () => {
@@ -411,5 +413,10 @@ describe('the pickable territories are kept during distribution', () => {
     expect(o.starts.source).toBe('pickable');
     // 157 shows as a neutral; 159 and 161 are mine; 133, 134 and 135 are left (158 was never pickable).
     expect(o.starts.likely.map((s) => s.territory.id)).toEqual([133, 134, 135]);
+    // #201: the turn planner prices the fogged 158 at the 2 the picking board showed.
+    await h.harness.close();
+    h = await live(board({ 135: { fogLevel: 2, owner: 0, armies: 2 } }), game(1), { dataDir: dir, pages: SIGNED_IN_ANN });
+    const plan = payload<{ rationale?: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, view: 'full' }));
+    expect((plan.rationale ?? []).join('\n')).toMatch(/\(#158\), fogged now, was a neutral of 2 on the picking board \(#201\): costed at that\./);
   });
 });

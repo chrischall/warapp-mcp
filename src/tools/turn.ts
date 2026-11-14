@@ -84,12 +84,15 @@ import {
   CACHED_TURNS,
   readBoardHistory,
   readCachedOrders,
+  readExpectedIncome,
   writeBoardCache,
   writeOrdersCache,
   type TrendSource,
 } from '../trend.js';
 import { gameOutlook } from '../analysis/outlook.js';
+import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
+import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -985,6 +988,64 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
   return { boards, ...(previous ? { previous } : {}) };
 }
 
+/**
+ * The "since last turn" view (#194): one line comparing this turn's income with the next income
+ * the previous turn's plan expected, and naming the bonuses broken and territories lost since the
+ * previous board. `full` adds the figures and the lists by id and name beside the line.
+ */
+function sinceLastView(
+  s: SinceLast,
+  previousTurn: number,
+  hasBoard: boolean,
+  map: GameMap,
+  players: readonly Player[],
+  rung: string,
+) {
+  const name = namer(map);
+  const bonus = (id: number) => map.bonuses.find((b) => b.id === id)?.name ?? String(id);
+  const player = (id: number) => ({ id, name: players.find((p) => p.id === id)?.name ?? String(id) });
+  const when = `when turn ${previousTurn} was planned`;
+  const head =
+    s.expected === null
+      ? `Income ${s.income}; turn ${previousTurn} was not planned here.`
+      : s.income < s.expected
+        ? `Income ${s.income}, ${s.expected - s.income} below the ${s.expected} expected ${when}.`
+        : s.income > s.expected
+          ? `Income ${s.income}, ${s.income - s.expected} above the ${s.expected} expected ${when}.`
+          : `Income ${s.income}, as expected ${when}.`;
+  const broken = s.bonusesBroken ?? [];
+  const lost = s.territoriesLost ?? [];
+  const parts = [
+    ...(broken.length
+      ? [`${broken.length === 1 ? 'bonus' : 'bonuses'} broken — ${broken.map((b) => `${bonus(b.bonusId)} (+${b.value})`).join(', ')}`]
+      : []),
+    ...(lost.length
+      ? [
+          `lost ${lost
+            .map((t) => `${name(t.territoryId).name} (#${t.territoryId})${t.to !== null ? ` to ${player(t.to).name}` : ''}`)
+            .join(', ')}`,
+        ]
+      : []),
+  ];
+  const line = `${head} ${
+    hasBoard ? `Since turn ${previousTurn}: ${parts.length ? parts.join('; ') : 'nothing lost'}.` : `No board of turn ${previousTurn} to compare.`
+  }`;
+  if (rung !== 'full') return line;
+  return {
+    income: s.income,
+    expected: s.expected,
+    expectedTurn: s.expectedTurn,
+    shortfall: s.shortfall,
+    ...(hasBoard
+      ? {
+          bonusesBroken: broken.map((b) => ({ id: b.bonusId, name: bonus(b.bonusId), value: b.value })),
+          territoriesLost: lost.map((t) => ({ ...name(t.territoryId), to: t.to !== null ? player(t.to) : null })),
+        }
+      : {}),
+    line,
+  };
+}
+
 export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_plan_turn',
@@ -1000,7 +1061,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
           'armies + 3 × income held over 3 turns of boards, with its `basis`; thresholds unmeasured, so advice, not a verdict; ' +
-          'an opponent with cards on, an unknown start or nothing in view has no upper bound, so `winning` is never read in a fogged card game). With no `goal` the profile picks and tunes it (`goalSource` ' +
+          'an opponent with cards on, an unknown start or nothing in view has no upper bound, so `winning` is never read in a fogged card game; ' +
+          'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
           '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
           'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
           `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
@@ -1026,6 +1088,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'start for certain (in a two-player game they are planned as the opponent\'s while still fogged, with the ' +
           'starting armies on turn 1), whether you were awarded first or second and who moves first this turn under ' +
           "a `Cycle` move order, and with commanders the opponent's first award when the award pins it. " +
+          '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
+          "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
+          'and the bonuses broken and territories lost since the previous board. ' +
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +
@@ -1149,6 +1214,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         turn !== null
           ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
           : undefined;
+      // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
+      // #201: the planner reads it too — a decided game shortens its payback horizon.
+      const outlook = gameOutlook({
+        graph,
+        me: me.id,
+        boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
+        settings,
+        game: trackGame(game.players, game.settings, map),
+        cards: rules.inPlay.length > 0,
+      });
+      const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
       const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
       const gameContext: PlanGameContext = {
@@ -1187,6 +1263,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         options: {
           // No goal: the game profile picks it and tunes the plan (an explicit goal overrides it).
           adapt: true,
+          outlook: { state: outlook.state, turns: outlook.turns },
+          // #201: the picking board's neutrals, so a fogged one keeps its size (wastelands).
+          ...(picking?.neutrals ? { rememberedNeutrals: new Map(picking.neutrals) } : {}),
           ...(goal !== undefined ? { goal } : {}),
           focusBonusIds,
           ...(opponents > 0 ? { opponents } : {}),
@@ -1204,16 +1283,27 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           ...cardPieceOption(game.settings, hand),
         },
       });
-      if (ctx.dataDir && turn !== null) await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen);
-      // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
-      const outlook = gameOutlook({
-        graph,
-        me: me.id,
-        boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
-        settings,
-        game: trackGame(game.players, game.settings, map),
-        cards: rules.inPlay.length > 0,
-      });
+      // #194: since last turn — this turn's income (cards aside) against the next income the previous
+      // turn's plan expected, and what was lost since the previous board. Read before this turn's write.
+      const expectedNow =
+        ctx.dataDir && turn !== null && turn >= 2 ? await readExpectedIncome(ctx.dataDir, game.id, me.id, turn - 1) : undefined;
+      const since =
+        turn !== null && turn >= 2 && (trend || expectedNow !== undefined)
+          ? sinceLastTurn({
+              graph,
+              previous: trend?.board,
+              current: seen,
+              me: me.id,
+              income: income - cards.extraArmies,
+              expected: expectedNow,
+              expectedTurn: turn - 1,
+            })
+          : undefined;
+      // A what-if plan (an explicit goal or enemy_deploy) keeps the board but not its expected income:
+      // next turn's "since last turn" compares with the plan the profile chose, not the last one asked for.
+      const whatIf = goal !== undefined || enemy_deploy !== undefined;
+      if (ctx.dataDir && turn !== null)
+        await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       const name = namer(map);
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
@@ -1309,6 +1399,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         // #166: what the award of picks showed (absent when no pick list is kept for this game).
         ...(award ? { award: awardView(award, game, turn, name) } : {}),
         trendSource: trend?.source ?? null,
+        // #194: since last turn, when the previous turn's board or plan is known.
+        ...(since && turn !== null
+          ? { sinceLastTurn: sinceLastView(since, turn - 1, trend !== undefined, map, game.players, rung) }
+          : {}),
         conceded: plan.conceded.map(name),
         // #163: Order Delay when it is the only card advised (it is then in cards.advice.orderDelay too).
         cardAdvice: plan.cardAdvice ?? (advice.view.orderDelay ? ('order-delay' as const) : null),

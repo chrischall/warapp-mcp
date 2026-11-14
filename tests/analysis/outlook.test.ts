@@ -84,6 +84,19 @@ describe('gameOutlook (#178)', () => {
     expect(gameOutlook({ graph: g, me: ME, boards: turns(3, [front(10), front(12), front(14), moved]), game }).state).toBeNull();
   });
 
+  it('#201: a front the forecast says breaks is no stalemate, though nothing changed hands', () => {
+    // Player 20's 30 on T4 beside my 4 on T3: pressing every turn it grinds T3 down at once.
+    const lopsided = board([mine(1, 16), mine(2, 16), mine(3, 4), foe(4, 30), foe(5, 5), foe(6, 5), neutral(7, 2), neutral(8, 2)]);
+    const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [lopsided, lopsided, lopsided]), game });
+    expect(o.turns.at(-1)!.front).toMatchObject({ outcome: 'ground-down', mine: 4, theirs: 30 });
+    expect(o.turns.at(-1)!.state).toBe('even');
+    expect(o.state).toBe('even');
+    // Even stacks are a stand-off: the stalemate stands, and the turn carries that forecast.
+    const front = (a: number) => board([mine(1, a), mine(2, a), mine(3, a), foe(4, a), foe(5, a), foe(6, a), neutral(7, 2), neutral(8, 2)]);
+    const st = gameOutlook({ graph: g, me: ME, boards: turns(3, [front(10), front(12), front(14), front(16)]), game });
+    expect(st.turns.at(-1)!.front).toMatchObject({ outcome: 'stand-off' });
+  });
+
   it('under fog an opponent\'s strength is a range; an unbounded one is never a win', () => {
     const fog = (a: number) => board([mine(1, a), mine(2, a), mine(3, a), neutral(4, 2), fogged(5), fogged(6), foe(7, 2), fogged(8)]);
     const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [fog(30), fog(30), fog(30)]), game });

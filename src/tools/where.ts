@@ -50,14 +50,21 @@ const namer = (map: GameMap) => {
 
 /**
  * Keep the territories the live board shows as pickable, for the signed-in account when it is a
- * player of `game`: later turns have no other way to know where a player could have started.
+ * player of `game`: later turns have no other way to know where a player could have started; and
+ * (#201) the picking board's neutrals with their armies, for the turn planner's fogged neutrals.
  * Best effort: without a data directory or a readable account nothing is kept. Never throws.
  */
-export async function keepPickable(ctx: Pick<LiveContext, 'dataDir' | 'myInviteToken'>, game: Game, pickable: readonly number[]): Promise<void> {
+export async function keepPickable(
+  ctx: Pick<LiveContext, 'dataDir' | 'myInviteToken'>,
+  game: Game,
+  pickable: readonly number[],
+  neutrals?: readonly (readonly [number, number])[],
+): Promise<void> {
   if (!ctx.dataDir || !pickable.length) return;
   try {
     const account = await ctx.myInviteToken();
-    if (account !== undefined && game.players.some((p) => p.id === account)) await writePickable(ctx.dataDir, game.id, account, pickable);
+    if (account !== undefined && game.players.some((p) => p.id === account))
+      await writePickable(ctx.dataDir, game.id, account, pickable, neutrals);
   } catch {
     // Best effort: the picks are planned either way.
   }

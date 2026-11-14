@@ -18,13 +18,17 @@
 // Each turn gets a state: `winning` when even the low ratio is at least OUTLOOK_RATIO (or every
 // opponent is bounded at no strength at all while I have some), `losing`
 // when even the high ratio is at most 1 / OUTLOOK_RATIO, `stalemate` when neither and no territory
-// in view on both boards changed owner since the turn before while I face an enemy, else `even`.
+// in view on both boards changed owner since the turn before while I face an enemy and (#201) the
+// main front's multi-turn forecast is a stand-off, else `even`. The main front is my biggest stack
+// next to an enemy against the biggest enemy stack beside it, both owners deploying their visible
+// income there every turn (`forecastBorder`, exchange.ts): a front that breaks or grinds me down
+// within the horizon is not stuck, however quiet the last turns were.
 // The outlook reports a state only once it has held for OUTLOOK_TURNS consecutive turns; until
 // then `state` is null and the basis says what each turn read.
 //
 // OUTLOOK_RATIO (2.4×) is borrowed from a published bot's "lost" rule and has never been measured
-// for war.app: the outlook is a basis for a decision, not a verdict, and the planner does not act
-// on it.
+// for war.app: the outlook is a basis for a decision, not a verdict. The planner acts on it in one
+// way only (#201): once winning or losing, its payback tests count the turns the game has left.
 
 import type { BoardState } from '../board.js';
 import { carriesTeam } from '../teams.js';
@@ -33,6 +37,7 @@ import { trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
 import type { PlannerSettings } from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
 import { STRENGTH_INCOME_TURNS } from './profile.js';
+import { forecastBorder, type BorderOutcome } from './exchange.js';
 
 /** Turns a state must hold before it is reported. */
 export const OUTLOOK_TURNS = 3;
@@ -51,6 +56,11 @@ export interface OutlookTurn {
   ratio: { low: number; high: number | null };
   /** Territories in view on this board and the one before that changed owner (`null` without the board before). */
   changed: number | null;
+  /**
+   * #201: the main front's forecast — my biggest stack next to an enemy against the biggest enemy
+   * stack beside it, both deploying their visible income every turn. Absent with no front.
+   */
+  front?: { mine: number; theirs: number; player: number; outcome: BorderOutcome; turn: number | null };
   state: OutlookState;
 }
 
@@ -191,15 +201,42 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         return o?.kind === 'player' && !ally(o.playerId);
       }),
     );
+    // #201: the main front, forecast forward.
+    let main: { mine: number; theirs: number; player: number } | undefined;
+    for (const x of [...(held.get(me) ?? [])].sort((a, b) => a - b)) {
+      const ours = board.territories.find((t) => t.territoryId === x)?.armies ?? 0;
+      for (const n of neighborsOf(g, x)) {
+        const o = ownerById.get(n);
+        const st = board.territories.find((t) => t.territoryId === n);
+        if (o?.kind !== 'player' || ally(o.playerId) || st?.armies == null) continue;
+        if (!main || ours > main.mine || (ours === main.mine && st.armies > main.theirs))
+          main = { mine: ours, theirs: st.armies, player: o.playerId };
+      }
+    }
+    let forecast: OutlookTurn['front'];
+    if (main) {
+      const f = forecastBorder({
+        mine: main.mine,
+        theirs: main.theirs,
+        myIncome: boardIncome(g, held.get(me) ?? new Set(), rules).total,
+        theirIncome: boardIncome(g, held.get(main.player) ?? new Set(), rules).total,
+        settings: {
+          ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
+          ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
+          ...(settings.oneArmyStandsGuard !== undefined ? { oneArmyStandsGuard: settings.oneArmyStandsGuard } : {}),
+        },
+      });
+      forecast = { ...main, outcome: f.outcome, turn: f.turn };
+    }
     const state: OutlookState =
       dominated || (rows.length && ratio.low >= OUTLOOK_RATIO)
         ? 'winning'
         : ratio.high !== null && ratio.high <= 1 / OUTLOOK_RATIO
           ? 'losing'
-          : changed === 0 && front
+          : changed === 0 && front && (!forecast || forecast.outcome === 'stand-off')
             ? 'stalemate'
             : 'even';
-    return { turn, mine, strongest, ratio, changed, state };
+    return { turn, mine, strongest, ratio, changed, ...(forecast ? { front: forecast } : {}), state };
   });
 
   const last = turns.at(-1);
@@ -207,7 +244,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   for (let i = turns.length - 1; i >= 0 && turns[i]!.state === last?.state; i--) heldTurns++;
   const state = last && heldTurns >= OUTLOOK_TURNS ? last.state : null;
   const measure = `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). Per player: my strength alone against the single strongest opponent, teams not summed.${teamGame ? ' In a team game a teammate can transfer armies to an opponent, so its high is not a ceiling.' : ''}`;
-  const thresholds = `Winning at ${OUTLOOK_RATIO}× the strongest opponent or more even at its high, losing at 1/${OUTLOOK_RATIO} (${round2(1 / OUTLOOK_RATIO)}×) or less even at its low, stalemate when nothing in view changed hands for ${OUTLOOK_TURNS} turns along a front. The ${OUTLOOK_RATIO}× is borrowed from a bot and was never measured for war.app: a basis for a decision, not a verdict.`;
+  const thresholds = `Winning at ${OUTLOOK_RATIO}× the strongest opponent or more even at its high, losing at 1/${OUTLOOK_RATIO} (${round2(1 / OUTLOOK_RATIO)}×) or less even at its low, stalemate when nothing in view changed hands for ${OUTLOOK_TURNS} turns along a front whose forecast is a stand-off. The ${OUTLOOK_RATIO}× is borrowed from a bot and was never measured for war.app: a basis for a decision, not a verdict.`;
   let reading: string;
   if (!last) reading = 'No board to judge.';
   else {

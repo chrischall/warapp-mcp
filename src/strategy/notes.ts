@@ -1522,6 +1522,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'weakest hands the leader the game.',
     source: S.forumKeepingPlayers,
     basis: 'derived',
+    encoded: "in part (#201): adapting, the planner finishes off or presses a smaller player who is not the leader only when its income added to mine reaches the leader's (warapp_plan_turn)",
   },
   {
     id: 'ffa-hide-strength',
@@ -1554,6 +1555,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'you. Either take its last territories, or do not cripple it and leave it able to fight someone else.',
     source: S.forumKingmaking,
     basis: 'derived',
+    encoded: "in part (#201): the planner warns when a capture breaks an FFA player's bonus without eliminating it (warapp_plan_turn)",
   },
   {
     id: 'ffa-neighbour-leaves',
@@ -1719,6 +1721,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'bonuses and stacks.',
     source: S.forumNeverSurrender,
     basis: 'derived',
+    encoded: 'in part (#201): once the outlook says the game is decided, every payback test counts the turns it has left (warapp_plan_turn)',
   },
   {
     id: 'fighting-more-threats-than-deploy',
@@ -2019,6 +2022,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'pile-on.',
     source: S.forumFfaLeague,
     basis: 'derived',
+    encoded: 'in part (#201): leading an FFA, the planner holds each border against every adjacent opponent together and sizes breaks against one deploy (warapp_plan_turn)',
   },
   {
     id: 'ffa-buffer-neighbour',

@@ -5,12 +5,13 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { clientPickLimits, planPicks, type CoverageReport, type PickGroup, type PickSettings } from '../analysis/picks.js';
-import { OWNER_NEUTRAL, OWNER_PICKABLE } from '../live.js';
+import { OWNER_PICKABLE } from '../live.js';
 import type { Game, GameMap, GameSettings } from '../normalize.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveTerritories, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
+import { pickingNeutrals } from '../pick-list.js';
 import { mapOf } from './map.js';
 import { keepPickable } from './where.js';
 
@@ -116,12 +117,10 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           hint: 'Check warapp_get_live_board: picks may already be closed, or this game distributes territories automatically.',
         });
       }
-      // Kept for the turns to come: where a player could have started (warapp_locate_opponents).
-      await keepPickable(ctx, game, pickable);
-      const neutralArmies = new Map<number, number>();
-      for (const t of territories) {
-        if (!t.fogged && t.owner === OWNER_NEUTRAL && t.armies !== null) neutralArmies.set(t.territoryId, t.armies);
-      }
+      const neutralArmies = new Map(pickingNeutrals(territories));
+      // Kept for the turns to come: where a player could have started (warapp_locate_opponents), and
+      // (#201) the neutrals' sizes, which the fog may hide later (wastelands).
+      await keepPickable(ctx, game, pickable, [...neutralArmies]);
       const warnings: string[] = [];
       let territoryLimit = game.settings?.territoryLimit;
       if (territoryLimit === undefined || territoryLimit <= 0) {

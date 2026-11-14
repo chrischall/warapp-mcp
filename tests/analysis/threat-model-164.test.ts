@@ -236,6 +236,51 @@ describe('stacks that leave view (#164)', () => {
     const t = tracks.find((x) => x.playerId === FOE)!;
     expect(t.lostStacks).toEqual([{ territoryId: 5, turn: 3, armies: 30 }]);
   });
+  it('#201: an attack out of the fog fixes where the lost stack is: beside the territory it took', () => {
+    // Turn 3: its 30 on 4, in view (two steps from my 2). Turn 4: 3–6 fogged, my 1 and 2 in view, nothing of its beside 2.
+    // Turn 5: it took my 2 out of the fog (the 4 survivors stand there): the attack came from a
+    // fogged neighbour of 2, so the stack stood next to 2 during turn 4 — fixed at 2, turn 4.
+    const seen = board([mine(1, 5), mine(2, 3), mine(7, 2), neutral(3, 2), foe(4, 30), neutral(5, 2), neutral(6, 2)]);
+    const gone = board([mine(1, 5), mine(2, 3), mine(7, 2), fogged(3), fogged(4), fogged(5), fogged(6)]);
+    const took = board([mine(1, 5), foe(2, 4), mine(7, 2), fogged(3), fogged(4), fogged(5), fogged(6)]);
+    const t = trackOpponents(g, [
+      { turn: 3, board: seen },
+      { turn: 4, board: gone },
+      { turn: 5, board: took },
+    ], ME, STD, { players: [{ id: ME }, { id: FOE }] }).find((x) => x.playerId === FOE)!;
+    expect(t.lostStacks).toEqual([{ territoryId: 2, turn: 4, armies: 30 }]);
+    expect(t.notes.join('\n')).toMatch(/attacked territory 2 out of the fog between turns 4 and 5 \(#201\)/);
+  });
+
+  it('#201: two captures out of the fog on one turn fix one stack once, not twice', () => {
+    // 8 is a fogged neighbour of 2. Turn 3: its 30 on 4. Turn 4: 4, 5, 6 and 8 fogged; my 2 and 3 in
+    // view. Turn 5: it took both 2 and 3. Its one lost stack is fixed at the first (2); the second
+    // capture next to it cannot pick the same stack again.
+    const g2 = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7, 8], [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [1, 7], [2, 8]], [[101, 3, [1, 7]]]));
+    const seen = board([mine(1, 5), mine(2, 3), mine(3, 3), mine(7, 2), foe(4, 30), neutral(5, 2), neutral(6, 2), neutral(8, 2)]);
+    const gone = board([mine(1, 5), mine(2, 3), mine(3, 3), mine(7, 2), fogged(4), fogged(5), fogged(6), fogged(8)]);
+    const took = board([mine(1, 5), foe(2, 4), foe(3, 4), mine(7, 2), fogged(4), fogged(5), fogged(6), fogged(8)]);
+    const t = trackOpponents(g2, [
+      { turn: 3, board: seen },
+      { turn: 4, board: gone },
+      { turn: 5, board: took },
+    ], ME, STD, { players: [{ id: ME }, { id: FOE }] }).find((x) => x.playerId === FOE)!;
+    expect(t.lostStacks).toEqual([{ territoryId: 2, turn: 4, armies: 30 }]);
+    expect(t.notes.filter((n) => /out of the fog between turns 4 and 5 \(#201\)/.test(n))).toHaveLength(1);
+  });
+
+  it('#201: a capture with a stack of its in view beside it fixes nothing', () => {
+    const seen = board([mine(1, 5), mine(2, 3), mine(7, 2), foe(3, 6), foe(4, 30), neutral(5, 2), neutral(6, 2)]);
+    const gone = board([mine(1, 5), mine(2, 3), mine(7, 2), foe(3, 6), fogged(4), fogged(5), fogged(6)]);
+    const took = board([mine(1, 5), foe(2, 4), mine(7, 2), foe(3, 1), fogged(4), fogged(5), fogged(6)]);
+    const t = trackOpponents(g, [
+      { turn: 3, board: seen },
+      { turn: 4, board: gone },
+      { turn: 5, board: took },
+    ], ME, STD, { players: [{ id: ME }, { id: FOE }] }).find((x) => x.playerId === FOE)!;
+    expect(t.lostStacks).toEqual([{ territoryId: 4, turn: 3, armies: 30 }]);
+  });
+
   it('a stack seen again where it stood (its territory in view, the stack still there) is not lost', () => {
     // (A stack seen again much smaller, its armies gone into the fog, did leave view: see the Normal fog cases.)
     const seen = board([mine(1, 5), mine(7, 2), neutral(2, 2), neutral(3, 2), foe(4, 3), foe(5, 30), foe(6, 2)]);

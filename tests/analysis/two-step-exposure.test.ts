@@ -496,3 +496,53 @@ describe('the shared look-ahead simulates my moves as submitted, options include
     expect(half!.armies).toBe(reach([{ from: 1, to: 4, armies: 13 }])!.armies);
   });
 });
+
+// Issue #192: when the one-step hold (or #128's) already pins more than a stack two steps away
+// needs, the two-step line names no "kept N" — that would read as if the two-step hold claimed
+// the armies the adjacent stack pins. It says they are already held against the adjacent stack.
+//
+//   T3 (enemy 40) ─ T2 (neutral 25) ─ T1 (+12, 78) ─ T5 (enemy 100)
+//                                      └─ T4 (mine 20) ─ T6 (enemy 20)
+describe('the two-step line claims only what the two-step hold pins (#192)', () => {
+  const map = makeMap([1, 2, 3, 4, 5, 6], [[1, 2], [2, 3], [1, 5], [1, 4], [4, 6]], KEEP);
+  const at = (adjacent: number) =>
+    board([mine(1, 78), neutral(2, 25), player(3, 40, ENEMY), mine(4, 20), player(5, adjacent, ENEMY), player(6, 20, ENEMY)]);
+
+  it('a one-step hold that binds: "already held against the adjacent stack", no "kept N"', () => {
+    const b = at(100);
+    const p = plan(map, b, 40);
+    const text = p.rationale.join('\n');
+    const line = p.rationale.find((l) => l.startsWith('Hold T1 (#1) against a stack two steps away'));
+    expect(line).toBeDefined();
+    expect(line).not.toMatch(/kept \d+ on T1/);
+    expect(line).toMatch(
+      /^Hold T1 \(#1\) against a stack two steps away \(already held against the adjacent stack \(~\d+; it needs \d+ to hold\): player 20 can reach it next turn from T3 \(#3\) via T2 \(#2\) \(~\d+ attacking; the two-step reach needs (\d+)\)\)\.$/,
+    );
+    // The two-step reach needs fewer than the adjacent stack pins.
+    const [, adjNeeds] = line!.match(/adjacent stack \(~\d+; it needs (\d+) to hold\)/)!;
+    const [, farNeeds] = line!.match(/the two-step reach needs (\d+)/)!;
+    expect(Number(farNeeds)).toBeLessThanOrEqual(Number(adjNeeds));
+    expect(text.match(/can reach it next turn/g)).toHaveLength(1);
+    expect(valid(map, p, b, 40)).toEqual([]);
+  });
+
+  it("#128's hold binds (an attack on the adjacent player is pending): the same wording", () => {
+    // T1 attacks T5 (a +5 enemy bonus of its own): until that lands, T1 holds against T5's stack
+    // as if it failed, which needs more than the reach through T2 does.
+    //   T3 (enemy 15) ─ T2 (neutral 6) ─ T1 (+12, 30) ─ T5 (enemy 20, +5) ─ T4 (mine 30); T1 ─ T6 (mine 40)
+    const m = makeMap([1, 2, 3, 4, 5, 6], [[1, 2], [2, 3], [1, 5], [4, 5], [1, 6]], [...KEEP, [102, 5, [5]]]);
+    const b = board([mine(1, 30), neutral(2, 6), player(3, 15, ENEMY), mine(4, 30), player(5, 20, ENEMY), mine(6, 40)]);
+    const p = plan(m, b, 20);
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 1, to: 5, kind: 'attack' }));
+    const line = p.rationale.find((l) => l.startsWith('Hold T1 (#1) against a stack two steps away'));
+    expect(line).toMatch(/\(already held against the adjacent stack \(~\d+; it needs \d+ to hold\): player 20 can reach it next turn from T3 \(#3\) via T2 \(#2\)/);
+    expect(line).not.toMatch(/kept \d+ on T1/);
+    expect(valid(m, p, b, 20)).toEqual([]);
+  });
+
+  it('the reported shape (no adjacent stack) still says what the two-step hold kept', () => {
+    const p = plan(reportedMap, reported(98), 40);
+    expect(p.rationale.join('\n')).toMatch(/Hold T1 \(#1\) against a stack two steps away \(kept 28 on T1 \(#1\): /);
+    expect(p.rationale.join('\n')).not.toMatch(/already held against the adjacent stack/);
+  });
+});

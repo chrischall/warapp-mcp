@@ -517,7 +517,10 @@ describe('warapp_submit_picks', () => {
       playerId: Number(ANN.feed),
       list: [161, 159, 135],
       pickable: previewed!.pickable,
+      // #201: the picking board's neutrals, kept by the preview.
+      neutrals: previewed!.neutrals,
     });
+    expect(previewed!.neutrals).toEqual([[158, 4]]);
   });
 
   it('a read-back that fails after the send still reports sent: true (#130)', async () => {

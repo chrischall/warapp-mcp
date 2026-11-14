@@ -45,6 +45,11 @@ function modelledSettings(): Record<string, unknown> {
   return { ...(lobbyFixture().settings as Record<string, unknown>), SanctionsCard: 'none' };
 }
 
+function bonusName(id: number): string {
+  const map = lobbyFixture().map as { bonuses: Array<{ id: string; name: string }> };
+  return map.bonuses.find((b) => Number(b.id) === id)!.name;
+}
+
 function mapName(id: number): string {
   const map = lobbyFixture().map as { territories: Array<{ id: string; name: string }> };
   return map.territories.find((t) => Number(t.id) === id)!.name;
@@ -789,6 +794,96 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(counts).toEqual([4, 3, 2]);
     expect(live.calls.map((c) => c.url.includes('GetMap=false'))).toEqual([false, true, true, true, true]);
     expect(live.calls.filter((c) => c.url.includes('GetHistory=true'))).toHaveLength(2);
+  });
+
+  it('(h) says since last turn: income against the expected, and the bonuses broken and territories lost (#194)', async () => {
+    // Turn 3: Ann holds the whole of bonus 118 (159, 161, 157); the plan's expected next income is kept.
+    const held = BOARD.map((t) => (t.id === 157 ? { ...t, owner: ANN.inGame } : t));
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(held) }) });
+    const first = payload<PlanPayload & { sinceLastTurn?: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    // Nothing kept for turn 2: no line at all.
+    expect(first.sinceLastTurn).toBeUndefined();
+    const expected = first.expected.nextIncome;
+    const dir = h.dataDir;
+    await h.harness.close();
+
+    // Turn 4: Bob took Sheepshead Hills (161), breaking the bonus.
+    const lost = held.map((t) => (t.id === 161 ? { ...t, owner: BOB.inGame, armies: 2 } : t));
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3' }), game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(lost) }),
+    });
+    const compact = payload<PlanPayload & { sinceLastTurn: string }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    const short = expected - compact.income;
+    expect(short).toBeGreaterThan(0);
+    expect(compact.sinceLastTurn).toBe(
+      `Income ${compact.income}, ${short} below the ${expected} expected when turn 3 was planned. ` +
+        `Since turn 3: bonus broken — ${bonusName(118)} (+2); lost ${mapName(161)} (#161) to Bob.`,
+    );
+    const full = payload<{
+      sinceLastTurn: {
+        income: number;
+        expected: number;
+        expectedTurn: number;
+        shortfall: number;
+        bonusesBroken: Array<{ id: number; name: string; value: number }>;
+        territoriesLost: Array<{ id: number; name: string; to: { id: number; name: string } | null }>;
+        line: string;
+      };
+    }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+    expect(full.sinceLastTurn).toEqual({
+      income: compact.income,
+      expected,
+      expectedTurn: 3,
+      shortfall: short,
+      bonusesBroken: [{ id: 118, name: bonusName(118), value: 2 }],
+      territoriesLost: [{ id: 161, name: mapName(161), to: { id: Number(BOB.feed), name: 'Bob' } }],
+      line: compact.sinceLastTurn,
+    });
+  });
+
+  it('(h) a what-if plan (an explicit goal or enemy_deploy) keeps no expected income for since last turn (#194)', async () => {
+    h = await liveHarness({ feed: [game('Playing'), game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', enemy_deploy: 40 });
+    const dir = h.dataDir;
+    await h.harness.close();
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const p = payload<PlanPayload & { sinceLastTurn: string }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.sinceLastTurn).toMatch(/^Income \d+; turn 3 was not planned here\./);
+  });
+
+  it('(h) since last turn with nothing lost and the income met says so (#194)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const first = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    const dir = h.dataDir;
+    await h.harness.close();
+    // Turn 4 on a board that earns what was expected: the plan's captures taken.
+    const after = BOARD.map((t) =>
+      first.expected.captures.some((c) => c.id === t.id) ? { ...t, owner: ANN.inGame, fogged: false, fogLevel: 1 } : t,
+    );
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(after) }),
+    });
+    const p = payload<PlanPayload & { sinceLastTurn: string }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(first.expected.nextIncome);
+    expect(p.sinceLastTurn).toBe(`Income ${p.income}, as expected when turn 3 was planned. Since turn 3: nothing lost.`);
+  });
+
+  it('(h) since last turn from a history board when turn 3 was not planned here (#194)', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { numberOfTurns: '3', history: [{ turn: 0, standing: [] }, { turn: 1, standing: [] }, { turn: 2, standing: previous }] })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD.map((t) => (t.id === 161 ? { ...t, owner: 0 } : t))) }),
+    });
+    const p = payload<PlanPayload & { sinceLastTurn: string }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.sinceLastTurn).toBe(`Income ${p.income}; turn 3 was not planned here. Since turn 3: lost ${mapName(161)} (#161).`);
   });
 
   it('(h) an unusable history standing is ignored', async () => {

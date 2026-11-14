@@ -63,6 +63,7 @@
 
 import type { BoardState } from '../board.js';
 import { bonusTerritories } from './bonuses.js';
+import { breaksLuckFree, searchChains } from './chains.js';
 import { COMMANDER_STRENGTH, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import type { MapGraph } from './graph.js';
 import { neighborsOf } from './graph.js';
@@ -113,10 +114,8 @@ export interface StressInput {
 }
 
 export const DEFAULT_MAX_REPLIES = 8;
-/** The most attacks one chain is searched to (#180). */
-export const CHAIN_MAX_STEPS = 6;
-/** The most attacks tried while searching one stack's chains (#180). */
-export const CHAIN_MAX_NODES = 4000;
+/** The chain search's caps (#180), shared with the planner (chains.ts, #199). */
+export { CHAIN_MAX_NODES, CHAIN_MAX_STEPS } from './chains.js';
 
 export type StressReplyKind = 'attack' | 'reinforce' | 'all-attack' | 'dodge' | 'joint' | 'chain';
 
@@ -345,16 +344,8 @@ export function stressPlan(input: StressInput): StressReport {
   };
 
   /** Luck-free: `sent` armies (and a commander, when it goes along) take `t` as it stands. */
-  const breaks = (sent: number, withCommander: boolean, t: SimTerritory | undefined): boolean => {
-    if (!t || t.owner === 'unknown' || sent < 0) return false;
-    const power = sent + (withCommander ? COMMANDER_STRENGTH : 0);
-    const defPower = t.armies + (t.commander !== undefined ? COMMANDER_STRENGTH : 0);
-    const kills = straightKills(power, off);
-    const defenceGone = kills >= t.armies && (t.commander === undefined || kills - t.armies >= COMMANDER_STRENGTH);
-    const losses = straightKills(defPower, def);
-    const lives = sent - Math.min(sent, losses) > 0 || (withCommander && losses - sent < COMMANDER_STRENGTH);
-    return defenceGone && lives;
-  };
+  const breaks = (sent: number, withCommander: boolean, t: SimTerritory | undefined): boolean =>
+    breaksLuckFree(sent, withCommander, t, { offensiveKillRate: off, defensiveKillRate: def });
   /** The board after my deploys: what dodges and chains are searched on. */
   const afterMyDeploys = new Map([...start].map(([id, t]) => [id, { ...t }]));
   for (const d of myDeploys) {
@@ -372,21 +363,19 @@ export function stressPlan(input: StressInput): StressReport {
   const chainFrom = (opp: number, s: number, dep: number): Candidate | undefined => {
     const first = Math.max(0, allOf(s, dep) - guard);
     if (first <= 0) return undefined;
-    let nodes = 0;
     let best: { path: number[]; sends: number[]; income: number; mine: number } | undefined;
     const hostile = (owner: SimTerritory['owner']): boolean => owner === 'neutral' || (typeof owner === 'number' && owner !== opp && !sameTeam(owner, opp));
-    const visit = (at: number, sending: number, path: number[], sends: number[]): void => {
-      for (const n of neighborsOf(graph, at)) {
-        if (nodes >= CHAIN_MAX_NODES) return;
-        if (path.includes(n)) continue;
-        const t = afterMyDeploys.get(n);
-        if (!t || !hostile(t.owner)) continue;
-        nodes++;
-        if (!breaks(sending, false, t)) continue;
-        const defPower = t.armies + (t.commander !== undefined ? COMMANDER_STRENGTH : 0);
-        const survivors = sending - Math.min(sending, straightKills(defPower, def));
-        const p = [...path, n];
-        const sd = [...sends, sending];
+    searchChains({
+      graph,
+      territories: afterMyDeploys,
+      from: s,
+      sending: first,
+      guard,
+      offensiveKillRate: off,
+      defensiveKillRate: def,
+      hostile: (_id, t) => hostile(t.owner),
+      onAttack: ({ path: p, sends: sd, captured }) => {
+        if (!captured) return;
         const took = p.slice(1).filter((x) => mineEither.has(x));
         if (p.length >= 3 && took.length) {
           const income = bonusesWith(took).reduce((k, b) => k + Math.max(0, bonusValue(b)), 0);
@@ -394,13 +383,10 @@ export function stressPlan(input: StressInput): StressReport {
             !best ||
             income > best.income ||
             (income === best.income && (took.length > best.mine || (took.length === best.mine && p.length < best.path.length)));
-          if (better) best = { path: p, sends: sd, income, mine: took.length };
+          if (better) best = { path: [...p], sends: [...sd], income, mine: took.length };
         }
-        const next = survivors - guard;
-        if (next > 0 && p.length <= CHAIN_MAX_STEPS) visit(n, next, p, sd);
-      }
-    };
-    visit(s, first, [s], []);
+      },
+    });
     if (!best) return undefined;
     const b = best;
     // The first order asks for everything (the resolver sends what can move); each next one the survivors less the guard.

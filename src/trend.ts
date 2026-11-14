@@ -14,6 +14,9 @@
 // deployed (analysis/opponents.ts `measureOrders`). Orders sent from the web client
 // stay unknown, which changes nothing; a confirmed `warapp_uncommit_turn` drops the
 // turn's cached orders, so a resend from the web client does not leave them standing.
+//
+// And, by turn, the next income the plan of that turn expected (`expected.nextIncome`, #194): the
+// next turn's plan compares its income with it ("since last turn").
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { boardFromStanding, type BoardState, type TerritoryState } from './board.js';
@@ -161,25 +164,34 @@ interface CachedBoards {
   turns: Record<string, BoardState>;
   /** The orders this server sent, by turn (#119); absent when none were. */
   orders?: Record<string, MyOrders>;
+  /** The next income the plan of each turn expected (#194); absent when none was planned. */
+  expected?: Record<string, number>;
 }
 
-/** The raw cache for `gameId` as `playerId` saw it: boards and orders by turn; empty when absent or unusable. */
-async function readCache(
-  dir: string,
-  gameId: number,
-  playerId: number,
-): Promise<{ turns: Record<string, unknown>; orders: Record<string, unknown> }> {
+type RawCache = { turns: Record<string, unknown>; orders: Record<string, unknown>; expected: Record<string, unknown> };
+
+/** The raw cache for `gameId` as `playerId` saw it: boards, orders and expected incomes by turn; empty when absent or unusable. */
+async function readCache(dir: string, gameId: number, playerId: number): Promise<RawCache> {
   try {
     const c: unknown = JSON.parse(await readFile(boardCachePath(dir, gameId), 'utf8'));
-    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId) return { turns: {}, orders: {} };
+    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId) return { turns: {}, orders: {}, expected: {} };
     const orders = isRec(c.orders) ? c.orders : {};
-    if (isRec(c.turns)) return { turns: c.turns, orders };
+    const expected = isRec(c.expected) ? c.expected : {};
+    if (isRec(c.turns)) return { turns: c.turns, orders, expected };
     // A single-board cache written before turns were kept.
-    if (typeof c.turn === 'number') return { turns: { [String(c.turn)]: c.board }, orders };
-    return { turns: {}, orders };
+    if (typeof c.turn === 'number') return { turns: { [String(c.turn)]: c.board }, orders, expected };
+    return { turns: {}, orders, expected };
   } catch {
-    return { turns: {}, orders: {} };
+    return { turns: {}, orders: {}, expected: {} };
   }
+}
+
+/** The cache's optional parts as written back: the orders and expected incomes, when any are kept. */
+function extras(cache: RawCache): Pick<CachedBoards, 'orders' | 'expected'> {
+  return {
+    ...(Object.keys(cache.orders).length ? { orders: cache.orders as Record<string, MyOrders> } : {}),
+    ...(Object.keys(cache.expected).length ? { expected: cache.expected as Record<string, number> } : {}),
+  };
 }
 
 /** The cached boards by turn for `gameId` as `playerId` saw them; `{}` when absent or unusable. */
@@ -250,7 +262,7 @@ export async function writeOrdersCache(
     const all = { ...cache.orders, [String(turn)]: { deploys: orders.deploys, moves: orders.moves } };
     const kept: Record<string, MyOrders> = {};
     for (const n of newestTurns(all)) kept[String(n)] = all[String(n)] as MyOrders;
-    await writeCache(dir, { gameId, playerId, turns: cache.turns as Record<string, BoardState>, orders: kept });
+    await writeCache(dir, { gameId, playerId, turns: cache.turns as Record<string, BoardState>, ...extras(cache), orders: kept });
     return true;
   } catch {
     return false;
@@ -268,7 +280,7 @@ export async function dropOrdersCache(dir: string, gameId: number, playerId: num
     if (!(String(turn) in cache.orders)) return true;
     const orders = { ...cache.orders } as Record<string, MyOrders>;
     delete orders[String(turn)];
-    await writeCache(dir, { gameId, playerId, turns: cache.turns as Record<string, BoardState>, orders });
+    await writeCache(dir, { gameId, playerId, turns: cache.turns as Record<string, BoardState>, ...extras(cache), orders });
     return true;
   } catch {
     return false;
@@ -324,9 +336,25 @@ export async function readBoardHistory(
 }
 
 /**
+ * The next income the plan of turn `turn` of `gameId` expected (#194), as `playerId` planned it;
+ * `undefined` when that turn was not planned here or the figure is unusable. Never throws.
+ */
+export async function readExpectedIncome(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  turn: number,
+): Promise<number | undefined> {
+  const v = (await readCache(dir, gameId, playerId)).expected[String(turn)];
+  return isNum(v) && v >= 0 ? v : undefined;
+}
+
+/**
  * Cache the board just planned on (turn `turn` of `gameId`, as `playerId` sees
  * it), keeping the newest {@link CACHED_TURNS} turns; a different player's
- * cache is replaced. Never throws.
+ * cache is replaced. With `expectedNextIncome` (a plan's `expected.nextIncome`,
+ * #194), that figure is kept for the turn too, the newest plan of a turn winning;
+ * without it, the turn's figure already kept stays. Never throws.
  */
 export async function writeBoardCache(
   dir: string,
@@ -334,14 +362,17 @@ export async function writeBoardCache(
   playerId: number,
   turn: number,
   board: BoardState,
+  expectedNextIncome?: number,
 ): Promise<boolean> {
   try {
     const cache = await readCache(dir, gameId, playerId);
     const kept = { ...cache.turns, [String(turn)]: board };
     const turns: Record<string, BoardState> = {};
     for (const n of newestTurns(kept, turn)) turns[String(n)] = kept[String(n)] as BoardState;
-    const orders = Object.keys(cache.orders).length ? { orders: cache.orders as Record<string, MyOrders> } : {};
-    await writeCache(dir, { gameId, playerId, turns, ...orders });
+    const allExpected = { ...cache.expected, ...(expectedNextIncome !== undefined ? { [String(turn)]: expectedNextIncome } : {}) };
+    const expected: Record<string, unknown> = {};
+    for (const n of newestTurns(allExpected, turn)) expected[String(n)] = allExpected[String(n)];
+    await writeCache(dir, { gameId, playerId, turns, ...extras({ ...cache, expected }) });
     return true;
   } catch {
     return false;
