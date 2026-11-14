@@ -7,7 +7,7 @@ import { straightKills } from '../combat.js';
 import { neighborsOf } from '../graph.js';
 import type { PlannedMove } from './shared.js';
 import type { Captures, MustHold } from './captures.js';
-import type { Holds } from './holds.js';
+import { lateArrivals, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
@@ -184,7 +184,8 @@ export function standStillKit(
       if (m.kind !== 'attack' || m.to !== t || conceded.has(m.from)) continue;
       const th = threatAt(m.from, (n) => captured.has(n));
       if (!th) continue;
-      const stays = stayAt(m.from);
+      // #215: armies withdrawn into it count only when I am known to move first.
+      const stays = stayAt(m.from) - lateArrivals(pc, ps, m.from);
       const holds = (n: number) => (toTake(stays + n + unitsAt(m.from)) ?? Infinity) > th.threat;
       if (holds(0)) continue;
       const spare = Math.max(0, spareAt(m.from));

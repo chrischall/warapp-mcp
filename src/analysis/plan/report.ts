@@ -31,7 +31,7 @@ import {
 } from './shared.js';
 import type { MoveSlot } from '../schedule.js';
 import type { Captures } from './captures.js';
-import type { Holds } from './holds.js';
+import { lateArrivals, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { LeadBlock, Targets } from './targets.js';
@@ -318,6 +318,25 @@ export function reportOffence(
       );
   /** What the final orders send at `t` (a top-up of idle armies can raise a capture's size). */
   const sentAt = (t: number) => moves.reduce((n, m) => (m.kind === 'attack' && m.to === t ? n + m.armies : n), 0);
+  /**
+   * #215: a border of mine that holds only with the armies withdrawn into it, which land after the
+   * opponent's first attack when it moves first (unless I am known to move first, {@link lateArrivals}):
+   * the extra deploy that would hold it whoever moves first, the threat and the player; `null` when
+   * it holds either way, falls either way, or is conceded. `atStart` is the threat warned of before
+   * the deploys (its worst case, #201), judged once this turn's captures are done (#212).
+   */
+  const firstOnlyAt = (id: number, atStart: number): { late: number; own: number; d: number; threat: number; player: number } | null => {
+    if (!mineSet.has(id) || conceded.has(id)) return null;
+    const late = lateArrivals(pc, ps, id);
+    const after = borderAt(id, (x) => captured.has(x));
+    if (late <= 0 || !after) return null;
+    const threat = Math.min(atStart, after.worst ?? after.threat);
+    const own = stayAt(id) - late + unitsAt(id);
+    if ((toTake(own + late) ?? Infinity) <= threat || (toTake(own) ?? Infinity) > threat) return null;
+    let d = 0;
+    while ((toTake(own + d) ?? Infinity) <= threat) d++;
+    return { late, own: own - unitsAt(id), d, threat, player: after.player };
+  };
   // A border warned about before the deploys may have been deployed to since: say what the
   // plan leaves there, so the warning does not contradict the hold, floor or spread lines.
   for (let i = 0; i < warnings.length; i++) {
@@ -333,6 +352,8 @@ export function reportOffence(
     // sized is called short against a stack it takes this turn.
     const after = borderAt(id, (x) => captured.has(x));
     const threat = after ? Math.min(atStart, after.worst ?? after.threat) : 0;
+    // #215: one that holds only with the armies withdrawn into it says so (the warning below).
+    const firstOnly = firstOnlyAt(id, atStart) !== null;
     // The opponents' territories beside it that this turn's attacks take.
     const takenNear = neighborsOf(g, id)
       .filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player')
@@ -343,9 +364,21 @@ export function reportOffence(
       !after
         ? `; nothing can reach it${once ? ` ${once}` : ''}: it holds`
         : take !== null && take > threat
-          ? `, more than the ${threat} that can ${lower ? `still reach it ${once}` : 'reach it'}: it holds`
+          ? `, more than the ${threat} that can ${lower ? `still reach it ${once}` : 'reach it'}: it holds${firstOnly ? ' only if I move first' : ''}`
           : `; ${lower ? `even ${once}, ` : ''}the ${threat} that can reach it still could`
     }).`;
+  }
+  // #215: every border that holds only if I move first, and what would hold it either way (the
+  // leftover sizes such a hold when it can, plan/leftover.ts: one named here it could not afford).
+  for (const id of [...borders.keys()].sort(byNum)) {
+    const b = borders.get(id)!;
+    const f = firstOnlyAt(id, b.worst ?? b.threat);
+    if (!f) continue;
+    warnings.push(
+      `${label(id)} holds only if I move first: ${f.late} of its armies are withdrawn into it this turn, and ${
+        pc.opts.movesFirst === false ? `player ${f.player} moves first, so its attack` : `if player ${f.player} moves first its attack`
+      } (~${f.threat}) lands before them. Its own ${f.own} need ${toTake(f.own + unitsAt(id))} to take; ${f.d} more deployed there would hold it whoever moves first, more than the plan had left to deploy there.`,
+    );
   }
   // #201: the FFA leader's borders held against two or more opponents attacking together.
   if (ffaLeader)

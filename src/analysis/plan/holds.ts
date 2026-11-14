@@ -152,7 +152,8 @@ export function holdBasics(pc: PlanCtx, ps: PlanState, book: DeployBook, threats
    * left out: once taken they threaten nothing); 0 with no enemy next to it. When it cannot
    * hold on what it has: everything on my commander's territory (rule 1k: nothing leaves it),
    * else everything only if `room` deploys would make it hold, and nothing otherwise (triage
-   * would concede it, so keeping its armies home saves nothing).
+   * would concede it, so keeping its armies home saves nothing). Armies withdrawn into it count
+   * only when I am known to move first (#215, {@link lateArrivals}).
    */
   const keepFor = (x: number, gone: (n: number) => boolean, room = Infinity) => {
     const a = avail.get(x)!;
@@ -160,7 +161,8 @@ export function holdBasics(pc: PlanCtx, ps: PlanState, book: DeployBook, threats
     const b = borderAt(x, (n) => captured.has(n) || gone(n));
     if (!b) return covering;
     const need = Math.max(0, holdArmies(b.threat) - unitsAt(x));
-    const short = need - stayAt(x);
+    // #215: armies withdrawn into it hold it only if I move first: sized for the worse order.
+    const short = need - (stayAt(x) - lateArrivals(pc, ps, x));
     if (short > room && !myCommanders.has(x)) return covering;
     return Math.max(covering, a - Math.max(0, Math.min(a, -short)));
   };
@@ -1138,6 +1140,18 @@ export function floorTier(
     }
   };
   return { keptShort, floorOrConcede, settleContested, triage, mayComplete };
+}
+
+/**
+ * #215: the armies withdrawn into my `id` this turn (rule 1b) that a hold may count only if I move
+ * first. A transfer in is my own order: when the opponent moves first, its first order — an all-in
+ * on `id` — runs before any of mine. So unless I am known to move first (#127) they are late, and a
+ * hold sized for the worse order leaves them out. 0 when I am known to move first.
+ */
+export function lateArrivals(pc: PlanCtx, ps: PlanState, id: number): number {
+  if (pc.opts.movesFirst === true) return 0;
+  const sent = ps.moves.reduce((n, m) => (m.kind === 'transfer' && m.to === id ? n + m.armies : n), 0);
+  return Math.max(0, Math.min(ps.incoming.get(id) ?? 0, sent));
 }
 
 /** Rule 1b: withdraw from conceded borders (and Order Priority when a withdrawal must go first). */

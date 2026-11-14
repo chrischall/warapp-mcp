@@ -425,6 +425,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     goes to the border with the most to spare after its best such strike (most armies only when
     none can strike), and fog pressure paid outright from idle armies is not priced against
     expansion (`PRESSURE_FACTOR`).
+  - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
+    own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
+    the leftover first makes each open border that falls without them hold on its own (when it can
+    afford the whole hold), what a border keeps from captures and top-ups (`keepFor`) leaves them
+    out, and a border that still holds only with them is warned "holds only if I move first".
+    Known to move first, they count as before (#127).
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin (with several, each is brought to its margin first, and a conceded border the leftover
     can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies

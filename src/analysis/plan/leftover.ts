@@ -1,5 +1,6 @@
-// Rule 5, the leftover deploy (#72, #102, #103, #121, #124, #125, #163; #133): the income no
-// capture or hold took goes, in order, to the borders short of their hold before the strike stack,
+// Rule 5, the leftover deploy (#72, #102, #103, #121, #124, #125, #163, #215; #133): the income no
+// capture or hold took goes, in order, to the borders that fall without the armies withdrawn into
+// them unless I am known to move first (#215), to the borders short of their hold before the strike stack,
 // to a conceded border it can make hold after all (its withdrawal taken back), then to the strike
 // stack, the short borders' comfortable margins, the step it saves toward, the expansion stack,
 // the most fogged border or the biggest stack — split against a Bomb when it concentrates for
@@ -9,7 +10,7 @@
 import { neighborsOf } from '../graph.js';
 import { chargeDeploys } from '../local-deploy.js';
 import { COMFORT_MARGIN, type PlannedMove } from './shared.js';
-import type { Holds } from './holds.js';
+import { lateArrivals, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { SaveStep } from './stand-still.js';
 import type { PlanCtx, PlanState } from './state.js';
@@ -89,6 +90,28 @@ export function leftoverDeploy(
   /** Set by the leftover deploy (rule 5): the step it saved toward, which idle stacks stage toward (rule 6). */
   let staging: Staging | undefined;
   // ---- leftover deploy ----
+  if (ps.budget > 0) {
+    // #215: armies withdrawn into a border hold it only if I move first: when the opponent moves
+    // first, its first order (an all-in there) runs before my transfer in. Unless I am known to
+    // move first, the leftover first makes each open border that falls without them hold on its
+    // own — the worse order — most at stake first, when it can afford it whole; the steps below
+    // then count them only for comfort. One that holds only with them is named in the report.
+    for (const b of [...borders.values()].sort((x, y) => valueOf(y.id) - valueOf(x.id) || x.id - y.id)) {
+      const late = lateArrivals(pc, ps, b.id);
+      // No-Split (#124): a deploy on a territory that issues an order leaves with it, holding nothing.
+      if (late <= 0 || !open(b.id) || orderOf(b.id)) continue;
+      const own = stays(b.id) - late + unitsAt(b.id);
+      if ((toTake(own) ?? Infinity) > b.threat) continue;
+      let d = 0;
+      while ((toTake(own + d) ?? Infinity) <= b.threat) d++;
+      if (d > ps.budget || d > roomAt(b.id)) continue;
+      rationale.push(
+        `Deploy ${d} to ${label(b.id)} so it holds whoever moves first (protects +${valueOf(b.id)}): the ${late} withdrawn into it land after player ${b.player}'s attack if it moves first, and without them its ${own + d - unitsAt(b.id)} need ${toTake(own + d)} to take, above the ~${b.threat} threat.`,
+      );
+      deploy(b.id, d);
+      locked.add(b.id);
+    }
+  }
   if (ps.budget > 0) {
     const foggedNext = (id: number) =>
       neighborsOf(g, id).filter((n) => {

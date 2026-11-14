@@ -801,9 +801,15 @@
 //     finisher keep what holds a safe border too; in rule 4e a step
 //     that fails only because of a keep is reported as the hold it would leave short.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
-//     goes to a conceded border: it goes to the held border with the highest
-//     protected value still short of COMFORT_MARGIN × its threat (counting armies
-//     withdrawn into it) — but first (#121), when it would go to such margins (no strike stack),
+//     goes to a conceded border. #215: armies withdrawn into a border (rule 1b) land by my own
+//     order, after the opponent's first attack when it moves first, so unless `movesFirst` the
+//     leftover first makes each open border that falls without them hold on its own ("so it holds
+//     whoever moves first", most protected value first, only when it can afford the whole hold),
+//     and a border's keep (`keepFor`: what a capture, a top-up or rule 4e's fallback may not spend)
+//     leaves them out too; a border that still holds only with them gets a warning ("holds only
+//     if I move first", with the deploy that would hold it either way). Then it goes to the held
+//     border with the highest protected value still short of COMFORT_MARGIN × its threat (counting
+//     armies withdrawn into it) — but first (#121), when it would go to such margins (no strike stack),
 //     a conceded border the leftover can make hold is held after all, from what is left once
 //     every held border that would fall as it stands has its hold (best worth per army; its
 //     withdrawal taken back unless the territory it went to needs it to hold; never one that
