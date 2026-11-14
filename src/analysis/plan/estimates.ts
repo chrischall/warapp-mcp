@@ -51,6 +51,7 @@ import {
 import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type ProfilePlayer } from '../profile.js';
 import type { BoardCtx, CombatCtx, OpponentsCtx, PlanCtx, PlanState, StandingCtx } from './state.js';
 import { byNum } from './util.js';
+import { truceOf } from './relations.js';
 
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
@@ -125,8 +126,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
   const ctx = input.game ?? {};
   /** My teammates (#128): players on my team, never a threat, a target or an estimate. */
   const allies = alliesOf(me, ctx.players);
-  /** A player whose stacks threaten me and whose territories I may attack: not me, not a teammate. */
-  const foe = (p: number) => p !== me && !allies.has(p);
+  /** Not me, not a teammate: whose deploy is estimated. */
+  const notAlly = (p: number) => p !== me && !allies.has(p);
   /** The turn being planned, when known (the opening board is the first turn's only, #128). */
   const turnNow = input.turn ?? ctx.turn ?? null;
   const { estimates: allEstimates, prior: incomePrior } = planEnemyEstimates({
@@ -141,7 +142,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     game: ctx,
     turn: turnNow,
   });
-  const estimateList = allEstimates.filter((e) => foe(e.playerId));
+  const estimateList = allEstimates.filter((e) => notAlly(e.playerId));
   /** An opponent's income: its deploy estimate less the Reinforcement card the clock adds (#164). */
   const incomeOf = (e: EnemyDeployEstimate) => e.estimate - (e.card?.armies ?? 0);
   // ---- 0p. the game profile ----
@@ -174,6 +175,10 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
       t.earnedAtLeast ? [{ playerId: t.playerId, turnsUnseen: t.turnsUnseen, turnsUnseenAtLeast: t.turnsUnseenAtLeast, earnedAtLeast: t.earnedAtLeast.total }] : [],
     ),
   });
+  // B2: the truces in force (plan/relations.ts). T9: a player an enforced truce holds is no foe.
+  const truce = truceOf(input, { notFoe: (p) => !notAlly(p), format: profile.format, turnNow });
+  /** A player whose stacks threaten me and whose territories I may attack: not me, not a teammate. */
+  const foe = (p: number) => notAlly(p) && !truce.enforced.has(p);
   /** The profile picks the goal and tunes the scoring (rule 0p): adapting, with no explicit goal. */
   const auto = opts.adapt === true && opts.goal === undefined;
   /** Rule 0p.3: behind on income. */
@@ -254,6 +259,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     game: ctx,
     allies,
     foe,
+    truce,
     turnNow,
     incomePrior,
     estimateList,

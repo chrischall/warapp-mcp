@@ -500,6 +500,8 @@ export function reportOffence(
       const st = state.get(n)!;
       const p = (st.owner as { playerId: number }).playerId;
       if (uncounted(n)) return `it holds ${uncountedKind(n)}, whose strength the board does not carry`;
+      // B2 (T1): the truce covers it.
+      if (pc.truce.noTarget(n)) return `my truce with player ${p} covers it (T1)`;
       if (unitsAt(n) > 0) return `an enemy commander stands there: only a commander strike (rule 1s) attacks it, sized for its owner's whole deploy`;
       if (spared.has(n) && unabsorbed.has(p))
         return `absorbing player ${p} would not bring my income to the FFA leader's: the armies are better spent against the leader (#201)`;

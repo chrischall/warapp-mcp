@@ -348,6 +348,74 @@ export interface PlanInput {
   options?: PlanOptions;
   /** The game around the board, for the profile (rule 0p). */
   game?: PlanGameContext;
+  /**
+   * B2 (docs/PLAN-TEAMS.md): the truces in force with other players, resolved by warapp_plan_turn
+   * from the agreement ledger, its watch flags and the trust. Only in a free-for-all; with teams or
+   * two players they are ignored with a warning. Absent or empty, the plan is what it was without.
+   */
+  relations?: readonly PlanRelation[];
+}
+
+/** Why a truce's trust is `watch` ({@link PlanRelation.watch}). */
+export type TruceWatchReason = 'broken' | 'cap-exceeded' | 'massing' | 'outgrowing' | 'their-notice' | 'endgame';
+
+/**
+ * B2: one truce as the planner reads it. `coveredMine` and `coveredTheirs` are the territories the
+ * terms cover on each side; `state` `active` or `notice` binds (a notice until `endsTurn`, the first
+ * turn it no longer binds), `broken` (T8: broken by them, `breach` saying how) does not. `trust`
+ * `watch` (with its reasons) keeps every border's full hold (T3). `enforced` (T9): a Diplomacy card
+ * the decoder is sure of — that player cannot attack me, nor I it.
+ */
+export interface PlanRelation {
+  player: number;
+  coveredMine: readonly number[];
+  coveredTheirs: readonly number[];
+  state: 'active' | 'notice' | 'broken';
+  endsTurn?: number;
+  borderCap?: number;
+  trust: 'clear' | 'watch';
+  watch?: readonly TruceWatchReason[];
+  enforced?: boolean;
+  /** The ledger's agreement id, for the report. */
+  agreement?: string;
+  /** In notice: who gave it. */
+  noticeBy?: 'me' | 'them';
+  /** T8: what broke it — the term, the turn and the board's evidence. */
+  breach?: { term: string; turn: number; evidence: string; territories: readonly number[] };
+}
+
+/** B2: one truce as the plan reports it. */
+export interface PlanRelationView {
+  player: number;
+  agreement?: string;
+  /** `ignored`: not in a free-for-all; `over`: its notice has run; `not-a-foe`: a teammate or me. */
+  state: 'active' | 'notice' | 'broken' | 'over' | 'ignored' | 'not-a-foe';
+  /** Whether the plan honours it this turn (T1, T2, T4, T5). */
+  honoured: boolean;
+  enforced: boolean;
+  trust: 'clear' | 'watch';
+  flags: TruceWatchReason[];
+  endsTurn?: number;
+  /** T2: my covered borders sized for the partner's visible stacks with no deploy, ascending. */
+  relaxed: number[];
+  /** T3: my covered borders facing only the partner that keep the full hold, and why. */
+  fullHold: { territory: number; why: 'commander' | 'value' | 'watch' }[];
+  /**
+   * The armies the relaxed holds need less this turn: per relaxed border, what its full hold needs
+   * beyond the armies there less what the truce hold needs.
+   */
+  armiesFreed: number;
+  /** T5: the armies moved back from a covered border to keep at most the cap there. */
+  capMoved?: { from: number; to: number; armies: number }[];
+  breach?: PlanRelation['breach'];
+}
+
+/** B2 (T7): advice the plan gives about an agreement; the planner itself sends nothing. */
+export interface PlanAdvice {
+  kind: 'give-notice';
+  player: number;
+  agreement?: string;
+  why: string;
 }
 
 export interface PlannedDeploy {
@@ -471,6 +539,10 @@ export interface TurnPlan {
    * warapp_plan_turn feeds it for the turn being played. Present only when the front outlook ran.
    */
   front?: FrontView;
+  /** B2: each truce given in the input, as the plan treated it. Absent without relations. */
+  relations?: PlanRelationView[];
+  /** B2 (T7): advice about the agreements (give notice). Absent when there is none. */
+  advice?: PlanAdvice[];
 }
 
 /** #218: a front forecast: the pair, the incomes deployed there every turn, and the outcome. */

@@ -332,6 +332,8 @@ export function captureHelper(
     fromConceded?: number,
     bare = false,
   ): boolean => {
+    // B2 (T1): a truce's covered territory is never captured, whichever pass asks.
+    if (pc.truce.noTarget(t)) return false;
     // #203: a lead step lands even if its owner deploys there first (its survivors counted so) —
     // assumed while it is tried, kept only when it is taken.
     const lead = leadSteps.get(t);
