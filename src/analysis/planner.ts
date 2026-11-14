@@ -3400,6 +3400,18 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     }
     return byPlayer;
   };
+  /**
+   * #199: the force of a Multi-Attack chain onto my `t`: its player's, its armies all of it (the
+   * deploy that reaches its stack is already inside them), no growth or separate deploy.
+   */
+  const chainForce = (t: number, chain: ChainThreat): Force => ({
+    player: chain.player,
+    movable: chain.armies,
+    growth: 0,
+    deploy: 0,
+    threat: bombSized(t, chain.armies),
+    chain,
+  });
   const forceAt = (
     t: number,
     gone: (n: number) => boolean,
@@ -3407,7 +3419,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   ): Force | null => {
     const byPlayer = stacksAt(t, gone, o.trend);
     const chain = chainAt(t, gone);
-    if (!byPlayer.size) return chain ? { player: chain.player, movable: chain.armies, growth: 0, deploy: 0, threat: bombSized(t, chain.armies), chain } : null;
+    if (!byPlayer.size) return chain ? chainForce(t, chain) : null;
     const each = [...byPlayer]
       .sort((a, b) => a[0] - b[0])
       .map(([player, p]) => {
@@ -3454,19 +3466,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     let threat = best.single;
     if (split && split.takes > takesAlone(best.single)) threat = Math.max(threat, toTake(split.takes) ?? threat);
     else split = undefined;
-    // #199: a Multi-Attack chain that lands more than the stacks next to it.
-    const chained = chain && chain.armies > threat ? chain : undefined;
-    if (chained) threat = chained.armies;
-    // #163: sized as if a Bomb halved my stack first ({@link bombSized}).
-    threat = bombSized(t, threat);
+    // #199: a Multi-Attack chain that lands more than the stacks next to it is the threat, and
+    // the force is its player's: the chain (its deploy included) is all of it.
+    if (chain && chain.armies > threat) return chainForce(t, chain);
     return {
       player: best.player,
       movable: best.movable,
       growth: best.growth,
       deploy: best.deploy,
-      threat,
+      // #163: sized as if a Bomb halved my stack first ({@link bombSized}).
+      threat: bombSized(t, threat),
       ...(split ? { split } : {}),
-      ...(chained ? { chain: chained } : {}),
     };
   };
   /**
@@ -3922,7 +3932,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const units = unitsAt(b.id);
       const take = toTake(have + units);
       if (take === null || take > b.threat) continue;
-      const text = `${label(b.id)} (${have} armies${units ? ' and my commander' : ''}) could be taken next turn: player ${b.player} has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}, and ${bombOn ? toTake(Math.floor(have / 2) + units) : take} would do${b.split ? ` — sent as separate attacks (${b.split.attacks.join(' then ')}), its stacks take up to ${b.split.takes}` : ''}${bombOn ? ' once a Bomb halves it (an opponent may hold one)' : ''}.`;
+      const text = `${label(b.id)} (${have} armies${units ? ' and my commander' : ''}) could be taken next turn: player ${b.player} ${b.chain ? `can attack it with ~${b.chain.armies} armies by a Multi-Attack chain from ${label(b.chain.path[0]!)} (its deploy included)` : `has ${b.movable} movable armies next to it plus ~${b.growth > b.deploy ? `${b.growth} (its growth per turn)` : `${b.deploy} deploy`}`}, and ${bombOn ? toTake(Math.floor(have / 2) + units) : take} would do${b.split ? ` — sent as separate attacks (${b.split.attacks.join(' then ')}), its stacks take up to ${b.split.takes}` : ''}${bombOn ? ' once a Bomb halves it (an opponent may hold one)' : ''}.`;
       threatWarnings.set(b.id, { text, threat: b.threat });
       warnings.push(text);
       // armiesToTake grows at least one army per ~(100 / offensive kill rate) defenders, so this ends.

@@ -75,8 +75,75 @@ describe('planner: Multi-Attack chains as a threat (#199)', () => {
     expect(why(p)).not.toMatch(/Multi-Attack chain/);
   });
 
-  it('runs only through territories not mine: a chain through my 3 is the border at 3, not a threat to 2', () => {
-    const p = plan(true, [mine(1, 1), mine(2, 1), mine(3, 2), foe(4, 8), neutral(5, 1)]);
-    expect(why(p)).not.toMatch(/Multi-Attack chain/);
+  it('runs only through territories not mine: a chain onto my 3 does not go on to my 2', () => {
+    // No enemy stack touches 3 or 2: the chain 5 → 4 → 3 is 3's threat; through my 3 to my 2 it is none.
+    const p = plan(true, [mine(1, 1), mine(2, 1), mine(3, 1), neutral(4, 1), foe(5, 12)]);
+    expect(why(p)).toMatch(/Multi-Attack chain: player 20's stack on T5 \(#5\) can take T4 \(#4\) and attack T3 \(#3\)/);
+    expect(why(p)).not.toMatch(/attack T2 \(#2\)/);
+  });
+
+  it('says the chain is the threat, not movable armies next to it plus a deploy', () => {
+    const p = plan(true, entries);
+    expect(why(p)).toMatch(/T3 \(#3\) \(2 armies\) could be taken next turn: player 20 can attack it with ~9 armies by a Multi-Attack chain from T5 \(#5\)/);
+    expect(why(p)).not.toMatch(/movable armies next to it plus ~0 deploy/);
+  });
+});
+
+// 1 ─ 2 ─ 3 ─ 4 ─ 5 ─ 6: my +3 bonus is 1, 2, 3.
+const LINE6: GameMap = {
+  ...MAP,
+  territories: [1, 2, 3, 4, 5, 6].map((id) => ({ id, name: `T${id}`, connectedTo: [id - 1, id + 1].filter((x) => x >= 1 && x <= 6) })),
+};
+const OTHER = 30;
+
+describe('planner: a chain against the stacks next to the border (#199)', () => {
+  const run = (entries: TerritoryState[], income = 2) =>
+    planTurn({
+      graph: buildGraph(LINE6),
+      board: board(entries),
+      me: ME,
+      income,
+      settings: { ...STD, multiAttack: true },
+      options: { enemyDeploy: 4 },
+    });
+
+  it('a bigger chain from another player is the threat, and its player is named', () => {
+    // Player 30's 2 on T4 are next to my 3; player 20's 30 on T6 take T5 then T4 and land ~29 on 3.
+    const p = run([mine(1, 1), mine(2, 1), mine(3, 2), mine(4, 2, OTHER), neutral(5, 1), foe(6, 30)]);
+    expect(why(p)).toMatch(/Multi-Attack chain: player 20's stack on T6 \(#6\) can take T5 \(#5\) then T4 \(#4\) and attack T3 \(#3\) with ~29 armies/);
+    expect(why(p)).toMatch(/T3 \(#3\) \(2 armies\) could be taken next turn: player 20 can attack it with ~29 armies by a Multi-Attack chain from T6 \(#6\)/);
+    expect(why(p)).not.toMatch(/could be taken next turn: player 30/);
+  });
+
+  it('a bigger stack next to the border is the threat, not a smaller chain', () => {
+    // Player 30's 20 on T4 are next to my 3; player 20's 6 on T6 take the neutral 5 but not them.
+    const p = run([mine(1, 1), mine(2, 1), mine(3, 2), mine(4, 20, OTHER), neutral(5, 1), foe(6, 6)]);
+    expect(why(p)).not.toMatch(/Multi-Attack chain: player/);
+    expect(why(p)).toMatch(/T3 \(#3\) \(2 armies\) could be taken next turn: player 30 has 19 movable armies next to it/);
+  });
+});
+
+// 1 ─ 2 ─ 3 ─ 4 ─ 5 ─ 6 ─ 7: my +3 bonus is 1, 2, 3; T4 alone is a +2 bonus.
+const LINE7: GameMap = {
+  ...MAP,
+  territories: [1, 2, 3, 4, 5, 6, 7].map((id) => ({ id, name: `T${id}`, connectedTo: [id - 1, id + 1].filter((x) => x >= 1 && x <= 7) })),
+  bonuses: [...MAP.bonuses, { id: 101, name: 'Far', value: 2, territoryIds: [4], bonusIds: [] }],
+};
+
+describe('planner: a chain through a territory the plan captures (#199)', () => {
+  it('no longer counts once the plan takes a territory on its path', () => {
+    // Player 20's 10 on T6 take T5 then T4 and land ~9 on my 3; the plan takes T4 from my 3, so
+    // after the attack that chain is cut and my 3 needs no deploy to stay held behind it.
+    const p = planTurn({
+      graph: buildGraph(LINE7),
+      board: board([mine(1, 1), mine(2, 1), mine(3, 6), neutral(4, 1), neutral(5, 1), foe(6, 10), neutral(7, 1)]),
+      me: ME,
+      income: 5,
+      settings: { ...STD, multiAttack: true },
+      options: { goal: 'expand', enemyDeploy: 4 },
+    });
+    expect(p.moves.map((m) => [m.from, m.to])).toContainEqual([3, 4]);
+    expect(why(p)).toMatch(/Multi-Attack chain: player 20's stack on T6 \(#6\) can take T5 \(#5\) then T4 \(#4\) and attack T3 \(#3\)/);
+    expect(why(p)).not.toMatch(/so it still holds its border after the attack on T4/);
   });
 });
