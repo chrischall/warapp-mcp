@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { armiesToTake } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import { chargeDeploys, deployPools } from '../../src/analysis/local-deploy.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, mine, neutral } from './helpers.js';
@@ -251,22 +251,35 @@ const BOARD_D = board(
 
 describe('#122 (d): a completion that pays back in a turn is not deferred to top a near miss up to sure', () => {
   const g = buildGraph(MAP_D);
-  const plan = planTurn({
-    graph: g,
-    board: BOARD_D,
-    me: ME,
-    income: 8,
-    settings: { ...RATES, localDeployments: true },
-    game: { players, turn: 12 },
-    options: { adapt: true },
-  });
+  const run = (options: PlanInput['options']) =>
+    planTurn({
+      graph: g,
+      board: BOARD_D,
+      me: ME,
+      income: 8,
+      settings: { ...RATES, localDeployments: true },
+      game: { players, turn: 12 },
+      options,
+    });
 
   it('completes Ash and keeps Slate as a near miss with its own pool', () => {
+    // An explicit balanced goal: no standing rule (#201 changes the adapting plan below).
+    const plan = run({ goal: 'balanced' });
     expect(plan.expected.bonusesCompleted).toEqual([782]);
     expect(plan.conceded).toEqual([]);
     expect(deployedTo(plan, 81) + deployedTo(plan, 82)).toBe(5);
     expect(plan.warnings.join('\n')).toMatch(/Bonus Slate \(#781\) \(\+3\) is held though short/);
     expect(plan.rationale.join('\n')).not.toMatch(/Complete bonus Ash \(#782\).*only after holding/);
+  });
+
+  it('#201: ahead (8 against ~5), Slate is held for the worst case before any capture, and Ash waits', () => {
+    const plan = run({ adapt: true });
+    expect(plan.profile.standing).toBe('ahead');
+    expect(plan.rationale.join('\n')).toMatch(/Ahead \(#201\): every held bonus is held for the worst case/);
+    expect(plan.expected.bonusesCompleted).toEqual([]);
+    expect(plan.conceded).toEqual([]);
+    expect(deployedTo(plan, 81) + deployedTo(plan, 82)).toBeGreaterThanOrEqual(7);
+    expect(plan.warnings.join('\n')).not.toMatch(/is held though short/);
   });
 });
 

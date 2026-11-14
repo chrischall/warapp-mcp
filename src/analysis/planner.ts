@@ -309,6 +309,13 @@
 //     the armies already there (#122: a start facing an enemy start was stripped for want of
 //     2 armies). Under `goal: 'defend'` the plan deploys each hold, and a held
 //     border then makes no moves.
+//     #201, holds by the standing (adapting, the profile's standing): ahead, every held bonus is held
+//     for the worst case — its units (rule 1h) run before any capture in rule 4a's greedy step,
+//     completions included ("Ahead (#201): …"); behind, a border facing a player whose visible stacks
+//     stand next to two or more territories of mine is sized for the expected case — that player's
+//     one deploy lands on one of them, so each is held against the stacks next to it (#118's floor;
+//     one attack: no split, chain, Bomb sizing or `enemyDeploy` override) — and a warning names the
+//     gamble ("Behind (#201): …"; the cover odds give its chances). Even keeps the rules above.
 //     Scope of "protected value", deliberately narrow: only bonuses containing T
 //     count (not a bonus T merely borders; a negative bonus I hold in full that contains T
 //     counts against it, #128 — losing T lifts it — floored at 0), and an incomplete one counts in full
@@ -2779,6 +2786,21 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
    * break is sized to land against its owner's one deploy.
    */
   const ffaLeader = opts.adapt === true && opts.goal === undefined && profile.format === 'ffa' && profile.opponents >= 2 && profile.ranking?.leader === me;
+  /**
+   * #201: fund holds by the standing (adapting). Ahead: every held bonus is held for the worst case
+   * (each border against the whole deploy) before any capture, completions included. Behind: a
+   * border facing a player that faces two or more of my territories is sized for the expected case
+   * — its one deploy lands on one of them, so each most likely faces only the stacks next to it
+   * (#118's floor) — and the plan says what that gambles.
+   */
+  const holdPasses: 'worst' | 'expected' | undefined =
+    opts.adapt === true && opts.goal === undefined
+      ? profile.standing === 'ahead'
+        ? 'worst'
+        : profile.standing === 'behind'
+          ? 'expected'
+          : undefined
+      : undefined;
   /** "3.3×" */
   const leadText = () => (Number.isFinite(armyLead.ratio) ? `${(Math.round(armyLead.ratio * 10) / 10).toFixed(1)}×` : 'unbounded (no opponent army in view)');
   /** My territories where my own commander stands: must-hold (rule 1k). */
@@ -3617,9 +3639,34 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /** Every visible enemy player with a stack next to one of my territories. */
   const facing = new Set<number>();
   /** The strongest visible enemy threat to my `t` (territories in `gone` excluded), or `null` with none next to it. */
+  /** #201: how many of my territories each visible opponent's stacks stand next to (the expected case shares its deploy over them). */
+  const facingCount = new Map<number, number>();
+  for (const t of mine) {
+    const by = new Set<number>();
+    for (const n of neighborsOf(g, t)) {
+      const st = state.get(n);
+      if (st?.owner.kind === 'player' && foe(st.owner.playerId) && st.armies !== null) by.add(st.owner.playerId);
+    }
+    for (const p of by) facingCount.set(p, (facingCount.get(p) ?? 0) + 1);
+  }
+  /** #201: borders sized for the expected case (behind): what each would need against the whole deploy. */
+  const gambled = new Map<number, { player: number; worst: number; expected: number; of: number }>();
   const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
     const f = forceAt(t, gone, { trend: true, allPlayers: true });
-    return f ? { id: t, ...f } : null;
+    if (!f) return null;
+    // #201, behind: its one deploy lands on one of the territories of mine its owner faces, so each
+    // most likely meets only the stacks next to it (one attack: no split, chain or Bomb sizing, whose
+    // arithmetic differs). Cover odds name the gamble.
+    const n = facingCount.get(f.player) ?? 0;
+    if (holdPasses === 'expected' && n >= 2 && !f.split && !f.chain && !bombOn && !custom) {
+      const expected = f.movable;
+      if (expected < f.threat) {
+        gambled.set(t, { player: f.player, worst: f.threat, expected, of: n });
+        return { id: t, ...f, threat: expected };
+      }
+    }
+    gambled.delete(t);
+    return { id: t, ...f };
   };
   for (const t of mine) {
     for (const n of neighborsOf(g, t)) {
@@ -7360,6 +7407,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     candidates.sort(
       (a, b) =>
         Number(b.focus) - Number(a.focus) ||
+        // #201: ahead, every held bonus is held for the worst case before any capture (said below).
+        (holdPasses === 'worst' ? Number(b.kind === 'unit') - Number(a.kind === 'unit') : 0) ||
         (oneVsOne ? Number(a.kind === 'advance') - Number(b.kind === 'advance') : 0) ||
         b.score - a.score ||
         a.cost - b.cost ||
@@ -7367,6 +7416,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         rank[a.kind] - rank[b.kind] ||
         a.id - b.id,
     );
+    if (holdPasses === 'worst' && candidates.some((c) => c.kind === 'unit'))
+      rationale.push(
+        `Ahead (#201): every held bonus is held for the worst case (each threatened border against the whole deploy) before any capture, completions included — the leader takes the option that still works when the opponent guesses right.`,
+      );
     // #101: completions and advances keep the slots their scores give them, but fill them
     // closest to completion first.
     if (committing) {
@@ -9619,12 +9672,28 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       `Frontier after this plan: ${frontier.borders} borders, ${frontier.enemyBorders} facing an enemy, needing ${frontier.holdCost} next turn to hold at the expected deploy (next income ${nextIncomeText}); every capture's score paid for the borders it adds.`,
     );
 
+  // #201, behind: the borders sized for the expected case, per player — what that gambles.
+  {
+    const byPlayer = new Map<number, number[]>();
+    for (const [id, x] of gambled) if (mineSet.has(id) && !conceded.has(id)) byPlayer.set(x.player, [...(byPlayer.get(x.player) ?? []), id]);
+    for (const [p, ids] of [...byPlayer].sort((a, b) => a[0] - b[0])) {
+      const first = gambled.get(ids[0]!)!;
+      const short = ids.sort(byNum).filter((id) => (toTake(stayAt(id) + unitsAt(id)) ?? Infinity) <= gambled.get(id)!.worst);
+      warnings.push(
+        `Behind (#201): the borders facing player ${p} are sized for the expected case — its one ~${deployOf(p)} deploy lands on one of the ${first.of} territories of mine it faces, so each is held against the stacks next to it, not all of the deploy on each, and the armies go to more borders and to the captures. ${
+          short.length
+            ? `Gambled: ${short.map((id) => `${label(id)} (it holds against ~${gambled.get(id)!.expected}, not the ~${gambled.get(id)!.worst} of the whole deploy)`).join(', ')} — each falls if player ${p} lands all of it there.`
+            : 'Each still holds against the whole deploy as the plan leaves it.'
+        }`,
+      );
+    }
+  }
   // Issue #69, second point: several borders facing one opponent are each sized for its whole
   // deploy. That is each border's worst case — the opponent picks where to land after I
   // commit — so a sure hold of all of them needs every one sized for it; no army is counted
   // twice on one border (movable + max(deploy, growth)).
   for (const [p, ids] of [...heldAgainst].sort((a, b) => a[0] - b[0])) {
-    const held = [...ids].filter((id) => !conceded.has(id)).sort(byNum);
+    const held = [...ids].filter((id) => !conceded.has(id) && !gambled.has(id)).sort(byNum);
     if (held.length < 2) continue;
     rationale.push(
       `Each of the ${held.length} borders held against player ${p} (${held.map(label).join(', ')}) is sized for its full ~${deployOf(p)} deploy: it chooses where to land after seeing my orders, so any one of them can face all of it, and a share each would leave whichever it picks short. Each border's threat counts its stacks next to that border once plus one deploy, never the deploy twice.`,
