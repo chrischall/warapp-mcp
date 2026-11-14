@@ -94,8 +94,9 @@ const field = (x = 7): BoardState =>
 /** The board one turn earlier: T1 was player 20's (taken last turn). */
 const before = (b: BoardState): BoardState =>
   boardOf(b.territories.map((t) => (t.territoryId === 1 ? { ...t, owner: { kind: 'player', playerId: FOE } } : t)));
-const input = (o: { x?: number; recent?: boolean; income?: number } = {}): PlanInput => {
-  const board = field(o.x);
+const input = (o: { x?: number; recent?: boolean; income?: number; t2?: number } = {}): PlanInput => {
+  const board =
+    o.t2 === undefined ? field(o.x) : boardOf(field(o.x).territories.map((t) => (t.territoryId === 2 ? { ...t, armies: o.t2! } : t)));
   return {
     graph: g,
     board,
@@ -132,14 +133,30 @@ describe('#215: a hopeless border that protects nothing is conceded and attacks 
   });
 
   it('the skip line never says a conceded border keeps armies back to hold its border', () => {
-    // T2 (the 35-stack) is next to T1 alone: the line gives what T1 has left once its attack and
+    // T2 (the 35-stack) is next to T1 alone: the line gives what T1 can still send once its attack and
     // withdrawal leave, named as conceded, not "spare once it holds its border is 0".
     // (With 12 on T1 a hold of 28 fits the 30 deploy, and a border taken last turn is held.)
     for (const [x, recent] of [[7, true], [9, true], [7, false], [12, false]] as const) {
       const p = planTurn(input({ x, recent }));
       const t2 = notAttacking(p).split('; T')[0]!;
-      expect(t2, `x=${x} recent=${recent}`).toMatch(/T2 \(#2\).*the most a neighbour of mine has left for it is \d+ \(T1 \(#1\), conceded: what stays there once its other orders leave\)/);
+      expect(t2, `x=${x} recent=${recent}`).toMatch(/T2 \(#2\).*the most a neighbour of mine has left for it is \d+ \(T1 \(#1\), conceded: what it can still send once its other orders leave\)/);
       expect(t2, `x=${x} recent=${recent}`).not.toMatch(/once it holds its border/);
+    }
+  });
+
+  it('a pending hold the greedy step concedes attacks out before it withdraws', () => {
+    // T1=20, T2=10, income 15: T1's hold (5) fits the deploy, so triage keeps it pending; the
+    // greedy step tries the breaks while T1 is still locked (both fail: T1 is their only source),
+    // funds held B910 with all 15, then concedes T1. Unlocked, T1 breaks both bonuses out of its
+    // own 20 armies instead of withdrawing them.
+    for (const recent of [true, false]) {
+      const p = planTurn(input({ x: 20, t2: 10, income: 15, recent }));
+      expect(p.warnings.join('\n'), `recent=${recent}`).toMatch(/T1 \(#1\) cannot be held with the 0 armies left to deploy \(needs 5, protects \+0\): conceded/);
+      const out = attacksFrom(p, 1);
+      expect(out.map((m) => m.to).sort(), `recent=${recent}`).toEqual([2, 3]);
+      expect(out.find((m) => m.to === 2)!.reason).toMatch(/breaks enemy bonus B950/);
+      expect(out.find((m) => m.to === 3)!.reason).toMatch(/breaks enemy bonus B900/);
+      expect(notAttacking(p)).not.toMatch(/T[23] \(#[23]\)/);
     }
   });
 });

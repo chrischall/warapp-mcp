@@ -1047,11 +1047,9 @@ export function floorTier(
         // turn from a weak opponent, exempt from the economic test, sat on 7 armies beside a 2-army
         // member of an enemy bonus while the deploy went elsewhere). The budget only shrinks from
         // here, so the greedy step could never have held it.
-        if (t.holdCost > left) {
-          if (quiet) conceded.add(t.id);
-          else concedeUnaffordable(t, left);
-          return;
-        }
+        // Never quiet here: under `balanced` this triage runs only non-quietly (quiet concessions
+        // go through the greedy step's `singleNow` / `singleLate`).
+        if (t.holdCost > left) return concedeUnaffordable(t, left);
         // Its armies stay put until the greedy step decides: holding assumes they are all there.
         holds.push(t);
         locked.add(t.id);

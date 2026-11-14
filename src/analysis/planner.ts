@@ -387,9 +387,12 @@
 //     hold costs more than the whole deploy left is conceded here as under every other goal (the
 //     greedy step could never fund it; left pending, a border just taken from a weak opponent —
 //     exempt from the economic test — kept its armies home beside a 2-army member of an enemy
-//     bonus), and a pending hold the greedy step concedes may attack out in the passes after it.
-//     The "Not attacking" line gives a conceded neighbour's armies left once its orders leave
-//     ("has left for it … conceded"), never "spare once it holds its border".
+//     bonus), and a pending hold the greedy step concedes is unlocked: every break and counter
+//     candidate next to it that has not yet captured runs again, in its order, before rule 1b
+//     withdraws (the breaks were tried while it was still locked, so its armies would otherwise
+//     only withdraw). The "Not attacking" line gives what a conceded neighbour can still send
+//     once its orders leave ("has left for it … conceded"; the guard-off cover's army excluded),
+//     never "spare once it holds its border".
 //  1h. Held bonuses (under `balanced` and `defend`; issue #51). Every bonus I hold in
 //     full with a threatened border is one unit: its threatened borders are all held
 //     or none (holding some while conceding another breaks it anyway). Its hold cost
@@ -1270,18 +1273,22 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       focus: boolean;
       /** External borders of the bonus (fewer is easier to keep); 0 for holds. */
       borders: number;
+      /** A break's or counter's territory to capture (#215: retried once a source is unlocked). */
+      target?: number;
       run: () => void;
     }
     const rank = { unit: 0, hold: 0, complete: 1, advance: 2, break: 3, counter: 3 } as const;
     const candidates: Candidate[] = [];
     const deferred: Threatened[] = [];
+    /** #215: pending holds this step conceded and unlocked, whose armies may still attack out. */
+    const unlocked = new Set<number>();
     /**
      * #215: a pending hold (locked by triage until this step decides) conceded here is unlocked: as
      * any conceded border, it may still attack out with the armies on it (rule 1a).
      */
     const concedePending = (t: Threatened, room: number) => {
       concedeUnaffordable(t, room);
-      if (!heldBorders.has(t.id)) locked.delete(t.id);
+      if (!heldBorders.has(t.id) && locked.delete(t.id)) unlocked.add(t.id);
     };
     let expansionLeft = 0;
     let expansionSpent = 0;
@@ -1430,6 +1437,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         value: b.value,
         focus: false,
         borders: analyzeBonus(g, b.bonusId)!.borderTerritoryIds.length,
+        target: o.t,
         run: spend(() => {
           // Already broken (by a border attacking its only threat): one capture is enough.
           if (broken(b)) return;
@@ -1467,6 +1475,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         value: worth,
         focus: false,
         borders: 0,
+        target: t,
         run: spend(() => {
           if (captured.has(t)) return;
           if (!tryCapture(t, reason)) return;
@@ -1757,6 +1766,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (t.holdCost > room) concedePending(t, room);
       else hold(t);
     }
+    // #215: a break or counter tried while a pending hold still locked its source runs again, in
+    // its order, once the greedy step has conceded and unlocked that hold: the border's armies
+    // attack out before rule 1b withdraws them (one already taken returns at once).
+    if (unlocked.size)
+      for (const c of candidates)
+        if (c.target !== undefined && !captured.has(c.target) && targets.get(c.target)?.sources.some((x) => unlocked.has(x))) c.run();
     settleContested();
     reconsider();
     withdraw();

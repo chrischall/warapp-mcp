@@ -376,7 +376,7 @@ export function reportOffence(
   // that no order attacks, with the first reason that applies: a special unit there, a reason the
   // offence report already gave (rule 0p.2's second front among them), a capture that lowers income,
   // its size against the most any neighbour of mine can spare once it holds its border (#215: a conceded
-  // one, its garrison not standing, offers what is left on it once its orders leave), or that it is
+  // one, its garrison not standing, offers what it can still send once its orders leave), or that it is
   // no target of the plan's (rule 2: a player's territory is attacked to break a bonus, counter-attack,
   // finish a player off, strike, or as rule 4e's fallback; adapting in an FFA, the lead strikes).
   {
@@ -384,8 +384,9 @@ export function reportOffence(
     const givenUp = (x: number) => conceded.has(x) && !stood.has(x) && !myCommanders.has(x);
     const spareNow = (x: number, n: number) => {
       if (!mineSet.has(x) || myCommanders.has(x) || orderOf(x)) return 0;
-      // #215: a conceded border (its garrison not standing) holds nothing: what is left on it once
-      // its orders leave (an attack out, rule 1b's withdrawal) is free.
+      // #215: a conceded border (its garrison not standing) holds nothing: what it can still send
+      // once its orders leave (an attack out, rule 1b's withdrawal) is free — every army on it but
+      // what the guard-off cover keeps there (coverOf), so it is below what stays on it.
       if (givenUp(x)) return Math.max(0, avail.get(x)! - coverOf(x));
       if (holdLocked.has(x)) return 0;
       const gone = (m: number) => m === n;
@@ -446,7 +447,7 @@ export function reportOffence(
       if (best.spare < need)
         return `taking it needs ${need}${sure !== null && sure > need ? ` (${sure} if player ${p} deploys its ~${extra} there first)` : ''}, and ${
           givenUp(best.x)
-            ? `the most a neighbour of mine has left for it is ${best.spare} (${label(best.x)}, conceded: what stays there once its other orders leave)`
+            ? `the most a neighbour of mine has left for it is ${best.spare} (${label(best.x)}, conceded: what it can still send once its other orders leave)`
             : `the most a neighbour of mine can spare once it holds its border is ${best.spare}${best.spare > 0 ? ` (${label(best.x)})` : ''}`
         }${deployText}`;
       if (goal !== 'balanced') {
