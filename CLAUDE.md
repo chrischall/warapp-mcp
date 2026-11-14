@@ -652,7 +652,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   An opponent the outlook cannot measure (nothing in view now, or no observed income) gets a
   peer-paced likely high (#214, `peerPace` in `src/analysis/outlook.ts`, pure and exported for the
   planner): each turn 2 × the higher of my income and the most any opponent was tracked earning, the
-  map's even share only a ceiling, starting as I did — never sized by the map; it can still block `winning`.
+  map's even share only a ceiling — never sized by the map; it can still block `winning`. Every likely
+  high starts symmetric: the given start, the even share under full distribution (the real start
+  then), else my opening board, else the default territory limit (3) at the starting armies — never
+  the territories I hold on a later board; my income before my first board ramps up from that
+  opening's.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

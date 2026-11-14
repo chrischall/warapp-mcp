@@ -246,6 +246,12 @@ export interface TrackGame {
    * started with at most ⌈territories ÷ players⌉ of them, an upper bound for the outlook.
    */
   startArmiesPerTerritory?: number;
+  /**
+   * #214 review: full distribution split every territory among the players, so the even share
+   * (⌈territories ÷ seated players⌉ × `startArmiesPerTerritory`) is every player's real start, not
+   * only a bound on it.
+   */
+  fullDistribution?: true;
   /** Settings under which the base income each turn may not be a floor (e.g. Sanctions), said in the note. */
   incomeCaveats?: string[];
 }
@@ -366,6 +372,7 @@ export function trackGame(
       ...base,
       startUnknown: 'the game uses full distribution, which splits every territory among the players whatever the territory limit',
       ...perTerritory,
+      fullDistribution: true,
     };
   const mode = map?.distributionModes.find((d) => d.id === settings?.distributionMode);
   if (mode?.type !== undefined && mode.type !== 'normal')
@@ -378,6 +385,9 @@ export function trackGame(
     return { ...base, startUnknown: 'the settings do not give the armies each starting territory had (InitialPlayerArmiesPerTerritory)' };
   return { ...base, start: { territories, armiesPerTerritory: Math.max(0, armiesPerTerritory) } };
 }
+
+/** TerritoryLimit assumed when the settings do not say (war.app's usual default). */
+export const DEFAULT_TERRITORY_LIMIT = 3;
 
 /** GameFeed's DistributionMode for full distribution (unverified, docs/WARAPP-API.md). */
 const FULL_DISTRIBUTION = -1;

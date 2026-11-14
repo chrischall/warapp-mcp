@@ -31,7 +31,9 @@
 // nothing in view on this board, or never measured, gets a modest labelled prior instead
 // (`source: 'prior'`), PEER-PACED (`peerPace`, owner's decision on #214): each turn's income is
 // LIKELY_INCOME_MARGIN × the higher of my income that turn (on a turn without my board, my latest
-// board before it, else my earliest) and the most any opponent was tracked earning by then
+// board before it; before my first board, unknown — the cache keeps ten turns — so a linear ramp
+// from the symmetric opening's income below up to my first board's) and the most any opponent was
+// tracked earning by then
 // (observed deploys up to that turn; on the judged turn its tracked or visible income), the base
 // income at least — at most an even share of the map's income (an even share of the territories at
 // the base income, plus the map's bonuses ÷ the seated players; base income alone when no one is
@@ -41,10 +43,12 @@
 // one was measured before it went out of view; one out of view now also keeps at least the armies
 // and income it held on the latest board it was in view on. So less evidence never reads more
 // hopeful than a measure would — and never its loose high, which used to stand in for it and then
-// outranked every real estimate. Every likely high (tracked or prior) starts symmetric, as I did:
-// the given start, else my armies on my opening board (turn 1), else the armies each starting
-// territory had on the territories of my earliest board — either at most the bound's start (an
-// even share of the map × those armies), never that share itself. None is
+// outranked every real estimate. Every likely high (tracked or prior) starts symmetric, never on my
+// fortunes since (#214 review: shrinking would read every opponent weaker): the given start; under
+// full distribution the even share, which is then every player's real start; else (TerritoryLimit
+// unknown, so the share is only a bound) my armies on my opening board (turn 1), else war.app's
+// default territory limit (DEFAULT_TERRITORY_LIMIT) at the armies each starting territory had —
+// either at most the bound's start. None is
 // made while any opponent is unbounded. When an estimate exists but does not show a win, the
 // basis names the opponent that blocks it and why.
 // Each turn gets a state: `winning` when even the low ratio is at least OUTLOOK_RATIO (or every
@@ -66,7 +70,7 @@
 import type { BoardState } from '../board.js';
 import { carriesTeam } from '../teams.js';
 import { neighborsOf, type MapGraph } from './graph.js';
-import { trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
+import { DEFAULT_TERRITORY_LIMIT, trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
 import { ownerShown, type PlannerSettings } from './planner.js';
 import { bonusTerritories } from './bonuses.js';
 import { cardArmiesBy, type CardArmyCeiling } from '../strategy/card-clock.js';
@@ -241,32 +245,47 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   // thousands on a big map whatever anyone earned).
   const evenShare =
     seated > 0 ? territoryIncome(share ?? 0, rules.base, rules.per) + Math.floor(allBonuses / seated) : rules.base;
-  // My income on each of my boards, and on a turn I have no board of, on the latest board before it,
-  // else the earliest after it.
+  // #214: the likely high's start — symmetric, never my fortunes since. The given start; under full
+  // distribution the even share, which is then every player's real start; else (TerritoryLimit
+  // unknown, so the share is only a bound) my opening board (turn 1) when I have it, else war.app's
+  // default territory limit at the starting armies — each at most the bound's start. Never the
+  // territories I held on a later board: shrinking would read every opponent weaker.
+  const mineOn = (t: number) =>
+    byTurn.get(t)!.board.territories.filter((x) => g.territoryById.has(x.territoryId) && x.owner.kind === 'player' && x.owner.playerId === me);
+  const opening = ((): { armies: number; territories: number } | null => {
+    if (start === null) return null;
+    if (game?.start) return { armies: start, territories: game.start.territories };
+    if (game?.fullDistribution) return { armies: start, territories: share ?? 0 };
+    const first = all.find((t) => t <= 1);
+    if (first !== undefined) {
+      const ts = mineOn(first);
+      return { armies: Math.min(start, ts.reduce((s, x) => s + (x.armies ?? 0), 0)), territories: ts.length };
+    }
+    const n = Math.min(share ?? 0, DEFAULT_TERRITORY_LIMIT);
+    return { armies: Math.min(start, n * (game?.startArmiesPerTerritory ?? 0)), territories: n };
+  })();
+  const likelyStart = opening?.armies ?? null;
+  // My income on each of my boards; on a turn between them, the latest board before it. Before my
+  // first board it is unknown (the board cache keeps ten turns), so it ramps linearly from that
+  // symmetric opening's income (its territories at the base, no bonus) up to my first board's.
   const myIncome = new Map<number, number>();
   for (const t of all) {
     const ts = new Set<number>();
-    for (const x of byTurn.get(t)!.board.territories)
-      if (g.territoryById.has(x.territoryId) && x.owner.kind === 'player' && x.owner.playerId === me) ts.add(x.territoryId);
+    for (const x of mineOn(t)) ts.add(x.territoryId);
     myIncome.set(t, boardIncome(g, ts, rules).total);
   }
+  const openingIncome = territoryIncome(opening?.territories ?? 0, rules.base, rules.per);
   const myIncomeAt = (t: number): number => {
-    let at: number | undefined;
-    for (const x of all) if (x <= t) at = x;
-    return myIncome.get(at ?? all[0]!) ?? rules.base;
-  };
-  // #214: the likely high's start — symmetric, as I started: the given start, else my armies on my
-  // opening board (turn 1), else the armies each starting territory had on the territories of my
-  // earliest board — each at most the bound's start, never an even share of the map at those armies.
-  const likelyStart = ((): number | null => {
-    if (start === null || game?.start) return start;
-    const mineOn = (t: number) =>
-      byTurn.get(t)!.board.territories.filter((x) => g.territoryById.has(x.territoryId) && x.owner.kind === 'player' && x.owner.playerId === me);
-    const opening = all.find((t) => t <= 1);
-    if (opening !== undefined) return Math.min(start, mineOn(opening).reduce((s, x) => s + (x.armies ?? 0), 0));
     const first = all[0];
-    return first === undefined ? start : Math.min(share ?? 0, mineOn(first).length) * (game?.startArmiesPerTerritory ?? 0);
-  })();
+    if (first === undefined) return rules.base;
+    if (t < first) {
+      const to = myIncome.get(first)!;
+      return first <= 1 ? to : Math.round(openingIncome + ((to - openingIncome) * Math.max(0, t - 1)) / (first - 1));
+    }
+    let at = first;
+    for (const x of all) if (x <= t) at = x;
+    return myIncome.get(at)!;
+  };
   // Cards: unbounded unless the card clock bounds what they add.
   const cardsBound = !input.cards ? null : (input.cardArmies ?? undefined);
 
@@ -358,7 +377,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         // #214: only with territory in view now and an observed income, else at the peer-paced
         // prior (`peerPace`). An unmeasured one keeps the margin on its visible income too, and an
         // unseen one measured on earlier boards keeps it on that tracked income: less evidence never
-        // reads lower. Both start as I did (`likelyStart`).
+        // reads lower. Both start symmetric (`likelyStart`).
         const tr = trackedOf(playerId);
         const why: PriorWhy | undefined = !tr || tr.visible === 0 ? 'unseen' : tr.income === null ? 'unmeasured' : undefined;
         const source: LikelySource = why ? 'prior' : 'tracked';
@@ -491,7 +510,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     // that does not show a win names the opponent that blocks it.
     const l = last.likely;
     const rests = l?.source === 'prior'
-      ? `for player ${l.playerId} a prior (${l.why === 'unmeasured' ? 'no observed income: no pair of my boards measured its deploy' : 'no territory in view now'}), paced by its peers: it starts as I did, and each turn earns ${LIKELY_INCOME_MARGIN === 2 ? 'twice' : `${LIKELY_INCOME_MARGIN}×`} the higher of my income that turn and the most any opponent was tracked earning by then (the base income at least), at most an even share of the map's income (${evenShare}) and that turn's cap, and at least ${LIKELY_INCOME_MARGIN}× its visible income (and any income tracked earlier)${l.why === 'unmeasured' ? '' : ', and at least the armies and income it held when last in view'}`
+      ? `for player ${l.playerId} a prior (${l.why === 'unmeasured' ? 'no observed income: no pair of my boards measured its deploy' : 'no territory in view now'}), paced by its peers: it starts as a symmetric opening, and each turn earns ${LIKELY_INCOME_MARGIN === 2 ? 'twice' : `${LIKELY_INCOME_MARGIN}×`} the higher of my income that turn (ramped up from the opening's before my first board) and the most any opponent was tracked earning by then (the base income at least), at most an even share of the map's income (${evenShare}) and that turn's cap, and at least ${LIKELY_INCOME_MARGIN}× its visible income (and any income tracked earlier)${l.why === 'unmeasured' ? '' : ', and at least the armies and income it held when last in view'}`
       : `each turn at most ${LIKELY_INCOME_MARGIN}× the income the tracker reads off my boards`;
     let est = '';
     if (l && (l.high !== s?.high || l.source === 'prior'))
