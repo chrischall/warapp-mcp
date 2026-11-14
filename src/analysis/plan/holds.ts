@@ -1168,7 +1168,11 @@ export const knownFirst = (pc: PlanCtx) => pc.opts.movesFirst === true && pc.opt
  * they are late, and a hold sized for the worse order leaves them out. 0 when I am known to move first.
  */
 export function lateArrivals(pc: PlanCtx, ps: PlanState, id: number): number {
-  if (knownFirst(pc)) return 0;
+  return knownFirst(pc) ? 0 : withdrawnInto(ps, id);
+}
+
+/** #215: the armies withdrawn into my `id` this turn (rule 1b), whatever the move order. */
+export function withdrawnInto(ps: PlanState, id: number): number {
   const sent = ps.moves.reduce((n, m) => (m.kind === 'transfer' && m.to === id ? n + m.armies : n), 0);
   return Math.max(0, Math.min(ps.incoming.get(id) ?? 0, sent));
 }

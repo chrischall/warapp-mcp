@@ -193,4 +193,13 @@ describe('#215 review: a border that holds only with idle armies transferred in 
     const told = planTurn(input({ ...near, movesFirst: true }));
     expect(told.warnings.join('\n')).not.toMatch(/holds only if I move first/);
   });
+
+  it('names the one transfer that lands in time when I am known to move first (#215 review)', () => {
+    // Moving first, only my first order runs before player 20's first: the 12 transferred in do not
+    // all land in time, so T1 holds only if its first order is the 8 from T3.
+    const told = planTurn(input({ ...near, movesFirst: true }));
+    expect(told.warnings).toContain(
+      'T1 (#1) holds only if my first order is the 8 from T3 (#3): 12 of its armies are idle armies transferred into it this turn, and I move first, so only my first order runs before player 20\'s first attack (~24). Its own 9 need 15 to take; 6 more deployed there would hold it with no transfer in.',
+    );
+  });
 });

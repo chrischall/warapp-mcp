@@ -816,10 +816,14 @@
 //     first mover is the wiki's rule, and holds treat it as unknown, the warning naming it); and
 //     idle armies rule 6 transfers in never count toward a hold — a border that holds only with
 //     them gets the same warning, naming the one transfer that must be my first order (moving
-//     first, only that one lands before the opponent's first). Then it goes to the held
+//     first, only that one lands before the opponent's first; when I am known to move first, the
+//     warning is "holds only if my first order is …"). The warning names why the leftover made no
+//     deploy there (too little left, Local Deployment, No-Split sending the stack with its order)
+//     only when that was the reason. Then it goes to the held
 //     border with the highest protected value still short of COMFORT_MARGIN × its threat (counting
-//     armies withdrawn into it) — but first (#121), when it would go to such margins (no strike stack),
-//     a conceded border the leftover can make hold is held after all, from what is left once
+//     armies withdrawn into it) — but first (#121), when it would go to such margins (no strike stack;
+//     #215 review: judged without the worse-order deploys above, so a border they made comfortable
+//     does not stop it), a conceded border the leftover can make hold is held after all, from what is left once
 //     every held border that would fall as it stands has its hold (best worth per army; its
 //     withdrawal taken back unless the territory it went to needs it to hold; never one that
 //     attacks out or whose garrison already stays); with two or more such borders, each is first brought to that

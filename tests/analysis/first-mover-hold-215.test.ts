@@ -64,9 +64,9 @@ const map = makeMap(
   ],
 );
 const g = buildGraph(map);
-const field = (o: { y?: number; e?: number } = {}): BoardState =>
+const field = (o: { y?: number; e?: number; w?: number; t9?: number } = {}): BoardState =>
   boardOf([
-    at(1, 27, ME),
+    at(1, o.w ?? 27, ME),
     at(2, 60, FOE),
     at(3, o.y ?? 10, ME),
     at(4, 1, 'neutral'),
@@ -74,11 +74,12 @@ const field = (o: { y?: number; e?: number } = {}): BoardState =>
     at(6, o.e ?? 28, FOE),
     at(7, 10, ME),
     at(8, 4, FOE),
-    at(9, 3, ME),
+    at(9, o.t9 ?? 3, ME),
     at(10, 2, FOE),
     at(11, 2, FOE),
   ]);
-const input = (o: { income?: number; movesFirst?: boolean; unverified?: boolean; y?: number; e?: number } = {}): PlanInput => ({
+type Shape = { income?: number; movesFirst?: boolean; unverified?: boolean; y?: number; e?: number; w?: number; t9?: number };
+const input = (o: Shape = {}): PlanInput => ({
   graph: g,
   board: field(o),
   me: ME,
@@ -94,16 +95,16 @@ const input = (o: { income?: number; movesFirst?: boolean; unverified?: boolean;
 const deployedOn = (p: TurnPlan, id: number) => p.deploys.filter((d) => d.territoryId === id).reduce((n, d) => n + d.armies, 0);
 const withdrawal = (p: TurnPlan) => p.moves.find((m) => m.kind === 'transfer' && m.from === 1 && m.to === 3);
 /** What player 20's single replies take of mine when it moves first (`warapp_check_plan`'s test). */
-const lostIfOpponentFirst = (p: TurnPlan) =>
+const lostIfOpponentFirst = (p: TurnPlan, o: Shape = {}, firstMover: 'opponent' | 'me' = 'opponent') =>
   stressPlan({
     graph: g,
-    board: field(),
+    board: field(o),
     me: ME,
     deploys: p.deploys,
     moves: p.moves,
     opponents: [{ id: FOE, deploy: 5 }],
     settings: RATES,
-    firstMover: 'opponent',
+    firstMover,
     lookAhead: false,
   }).replies.flatMap((r) => r.lost);
 
@@ -169,11 +170,50 @@ describe('#215: a hold is sized for the worse move order when the first mover is
     expect(p.warnings.join('\n')).toMatch(/T3 \(#3\) holds only if I move first: 26 of its armies are withdrawn into it this turn, and player 20 moves first, so its attack \(~33\) lands before them\./);
   });
 
+  it('says why no deploy was made when No-Split sends the border\'s stack with its order (#215 review)', () => {
+    // Under No-Split T3's attack on T4 carries its whole stack, deploys included: a deploy there
+    // holds nothing, so "more than the plan had left to deploy there" would misstate why.
+    const i = input();
+    i.settings = { ...RATES, noSplit: true };
+    const p = planTurn(i);
+    const w = p.warnings.find((l) => l.startsWith('T3 (#3) holds only if I move first')) ?? '';
+    expect(w).toMatch(/No-Split sends every army of its own with its order, deploys included, so no deploy there holds it whoever moves first\.$/);
+    expect(w).not.toMatch(/more than the plan had left/);
+  });
+
   it('leaves a border alone that holds on its own whoever moves first', () => {
     // A 12-stack (~17): T3's own 8 already need 13 to take it.
     const p = planTurn(input({ e: 8 }));
     expect(p.rationale.join('\n')).not.toMatch(/whoever moves first/);
     expect(p.warnings.join('\n')).not.toMatch(/only if I move first/);
+  });
+});
+
+describe('#215 review: the worse-order hold does not stop a conceded border being held after all (#121)', () => {
+  // Nearby: T1 10 (still hopeless against the 60), T3 4, player 20's T6 12 (~17 with its deploy).
+  // T9 (3, in no bonus) is conceded at triage and withdraws 2 into T7. The leftover first sizes T3
+  // for the worse order (7, without the 9 withdrawn into it). Before that deploy T3 was short of its
+  // comfortable margin, so the leftover still buys comfort, and #121 holds T9 after all
+  // (8) before the rest goes to the expansion stack (T3, 20 armies with the 9 withdrawn, already has
+  // its comfortable margin in the order where they land in time).
+  const near: Shape = { income: 40, w: 10, y: 4, e: 12 };
+  it('holds T9 after all before the rest goes to the expansion stack', () => {
+    const p = planTurn(input(near));
+    expect(p.rationale.join('\n')).toMatch(/Deploy 7 to T3 \(#3\) so it holds whoever moves first/);
+    expect(p.rationale.join('\n')).toMatch(/Hold T9 \(#9\) after all \(not conceded\): deploy 8 there, and keep the 2 that would have withdrawn/);
+    expect(deployedOn(p, 9)).toBe(8);
+    expect(p.moves.some((m) => m.from === 9)).toBe(false);
+    expect(deployedOn(p, 3)).toBe(7);
+    expect(deployedOn(p, 7)).toBe(25);
+  });
+
+  it('loses nothing of T3 and T9 whoever moves first', () => {
+    const p = planTurn(input(near));
+    for (const who of ['opponent', 'me'] as const) {
+      const lost = lostIfOpponentFirst(p, near, who);
+      expect(lost).not.toContain(3);
+      expect(lost).not.toContain(9);
+    }
   });
 });
 

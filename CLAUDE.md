@@ -428,15 +428,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover first makes each open border that falls without them hold on its own (when it can
-    afford the whole hold), what a border keeps from captures and top-ups (`keepFor`) leaves them
-    out, and a border that still holds only with them is warned "holds only if I move first".
+    afford the whole hold; whether the leftover then buys comfort margins, and so revives a conceded
+    border under #121, is judged as before those deploys), what a border keeps from captures and
+    top-ups (`keepFor`) leaves them out, and a border that still holds only with them is warned
+    "holds only if I move first" (naming why no deploy was made only when that was the reason).
     Known to move first, they count as before (#127). Known means the user said so (`first_mover`,
     now or on a remembered turn): a first move only the award of picks gives (the wiki's rule, not
     verified live) still orders the moves and decides card advice, but holds treat it as unknown
     (`movesFirstUnverified`) and the warning names the award. Idle armies rule 6 transfers into a
     border never count toward its hold; when the border holds only with them the same warning says
     so (moving first, only my first order lands before the opponent's first: it names the one transfer
-    that must be that order).
+    that must be that order; known to move first, "holds only if my first order is …").
   - **A contested held bonus comes before an advance in a 1v1 in contact (#215, rule 0p.1).** A held
     bonus whose hold pays back within `PAYBACK_TURNS` but costs more than `CONCEDE_FACTOR` × its
     worth is contested (#118: the captures go first). Under rule 0p.1 an advance ranks below every

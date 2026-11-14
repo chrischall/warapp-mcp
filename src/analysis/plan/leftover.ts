@@ -89,26 +89,40 @@ export function leftoverDeploy(
   };
   /** Set by the leftover deploy (rule 5): the step it saved toward, which idle stacks stage toward (rule 6). */
   let staging: Staging | undefined;
+  /** #215 review: what the worse-order step below deployed on each border. */
+  const worseOrder = new Map<number, number>();
   // ---- leftover deploy ----
-  if (ps.budget > 0) {
+  {
     // #215: armies withdrawn into a border hold it only if I move first: when the opponent moves
     // first, its first order (an all-in there) runs before my transfer in. Unless I am known to
     // move first, the leftover first makes each open border that falls without them hold on its
-    // own — the worse order — most at stake first, when it can afford it whole; the steps below
-    // then count them only for comfort. One that holds only with them is named in the report.
+    // own — the worse order — most at stake first, when it can afford it whole. The steps below
+    // still count the withdrawal (their holds and comfortable margins are judged in the order where
+    // it lands in time), but whether the leftover buys comfort at all — #121's trigger — is judged
+    // without this step's deploys (`worseOrder`), as it was before it: a border it made comfortable
+    // must not stop a conceded border being held after all (#215 review). One that holds only with
+    // the withdrawal is named in the report.
     for (const b of [...borders.values()].sort((x, y) => valueOf(y.id) - valueOf(x.id) || x.id - y.id)) {
       const late = lateArrivals(pc, ps, b.id);
       // No-Split (#124): a deploy on a territory that issues an order leaves with it, holding nothing.
-      if (late <= 0 || !open(b.id) || orderOf(b.id)) continue;
+      if (late <= 0) continue;
+      if (!open(b.id) || orderOf(b.id)) {
+        ps.firstOnlySkip.set(b.id, orderOf(b.id) ? 'order' : 'closed');
+        continue;
+      }
       const own = stays(b.id) - late + unitsAt(b.id);
       if ((toTake(own) ?? Infinity) > b.threat) continue;
       let d = 0;
       while ((toTake(own + d) ?? Infinity) <= b.threat) d++;
-      if (d > ps.budget || d > roomAt(b.id)) continue;
+      if (d > ps.budget || d > roomAt(b.id)) {
+        ps.firstOnlySkip.set(b.id, d > ps.budget ? 'budget' : 'room');
+        continue;
+      }
       rationale.push(
         `Deploy ${d} to ${label(b.id)} so it holds whoever moves first (protects +${valueOf(b.id)}): the ${late} withdrawn into it land after player ${b.player}'s attack if it moves first, and without them its ${own + d - unitsAt(b.id)} need ${toTake(own + d)} to take, above the ~${b.threat} threat.`,
       );
       deploy(b.id, d);
+      worseOrder.set(b.id, d);
       locked.add(b.id);
     }
   }
@@ -171,7 +185,17 @@ export function leftoverDeploy(
     // has its hold; best worth per army first. Its withdrawal is taken back, unless the
     // territory it went to needs those armies to hold; a border that attacks out, my
     // commander's, or one whose garrison already stays is not revived.
-    if (!stack && short.length) {
+    // #215 review: judged as before the worse-order step's deploys, which must not make a border
+    // read as comfortable here (the leftover then went to the expansion stack and the conceded
+    // border fell under either order).
+    const shortBefore =
+      short.length > 0 ||
+      [...worseOrder].some(([id, d]) => {
+        const b = borders.get(id)!;
+        const take = toTake(stays(id) - d + unitsAt(id));
+        return take !== null && take <= COMFORT_MARGIN * b.threat;
+      });
+    if (!stack && shortBefore) {
       let falling = 0;
       for (const b of borders.values()) {
         if (conceded.has(b.id) || orderOf(b.id)) continue;
