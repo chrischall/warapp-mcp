@@ -10,7 +10,11 @@ import { newPlanState } from '../../src/analysis/plan/state.js';
 import { threatsPhase } from '../../src/analysis/plan/threats.js';
 import { syntheticInput } from './golden/corpus.js';
 
-describe('plan/orders and plan/threats (#133)', () => {
+// These tests loop over hundreds of synthetic boards: v8 coverage (CI runs `npm run test:coverage`)
+// slows them about 6x, past vitest's default 5 s.
+const SEEDED_LOOP_TIMEOUT = 120_000;
+
+describe('plan/orders and plan/threats (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
   it("their rationale and warnings follow the estimates' in planTurn's, in order", () => {
     let checked = 0;
     for (let i = 0; i < 2000; i += 37) {
@@ -56,7 +60,7 @@ describe('plan/orders and plan/threats (#133)', () => {
   });
 });
 
-describe('plan/holds (#133)', () => {
+describe('plan/holds (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
   it('defines the holds without deploying, moving or saying anything', () => {
     let defined = 0;
     for (let i = 0; i < 2000; i += 43) {

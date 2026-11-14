@@ -15,6 +15,10 @@ import { targetsPhase } from '../../src/analysis/plan/targets.js';
 import { threatsPhase } from '../../src/analysis/plan/threats.js';
 import { syntheticInput } from './golden/corpus.js';
 
+// These tests loop over hundreds of synthetic boards: v8 coverage (CI runs `npm run test:coverage`)
+// slows them about 6x, past vitest's default 5 s.
+const SEEDED_LOOP_TIMEOUT = 120_000;
+
 const noPass = (): planner.TwoStepPass => ({
   cut: new Set<number>(),
   relaxAttacks: false,
@@ -43,7 +47,7 @@ function upToStrikes(i: number) {
   return { input, ctx, state, book, threats, pass, hd, tgt, caps };
 }
 
-describe('plan/strike (#133)', () => {
+describe('plan/strike (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
   it("strikesPhase's rationale lines follow the capture passes' in planTurn's, in order", () => {
     let checked = 0;
     for (let i = 0; i < 2000; i += 37) {

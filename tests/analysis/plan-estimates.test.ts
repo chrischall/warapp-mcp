@@ -6,7 +6,11 @@ import * as estimates from '../../src/analysis/plan/estimates.js';
 import { newPlanState } from '../../src/analysis/plan/state.js';
 import { syntheticInput } from './golden/corpus.js';
 
-describe('plan/estimates (#133)', () => {
+// These tests loop over hundreds of synthetic boards: v8 coverage (CI runs `npm run test:coverage`)
+// slows them about 6x, past vitest's default 5 s.
+const SEEDED_LOOP_TIMEOUT = 120_000;
+
+describe('plan/estimates (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
   it('planner.ts re-exports the moved helpers unchanged', () => {
     expect(planner.alliesOf).toBe(estimates.alliesOf);
     expect(planner.planEnemyEstimates).toBe(estimates.planEnemyEstimates);
