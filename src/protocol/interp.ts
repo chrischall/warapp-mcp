@@ -123,11 +123,18 @@ interface ParsedBundle {
   varOf: Map<string, string>;
 }
 
+/**
+ * A `W["<type name>"]=<var>;` registration. The minifier wraps long lines, and a wrap can fall right
+ * after the `=` (the real bundle has CRLF there, e.g. for `GameMessage`), so whitespace is allowed
+ * around it.
+ */
+const REGISTRATION = /W\["([\w.$]+)"\]\s*=\s*([\w$]+)\s*;/g;
+
 /** Index the `W["<type name>"]=<var>;` registrations of a bundle. */
 export function parseBundle(src: string): ParsedBundle {
   const typeNameOf = new Map<string, string>();
   const varOf = new Map<string, string>();
-  for (const m of src.matchAll(/W\["([\w.$]+)"\]=([\w$]+);/g)) {
+  for (const m of src.matchAll(REGISTRATION)) {
     if (!typeNameOf.has(m[2]!)) typeNameOf.set(m[2]!, m[1]!);
     if (!varOf.has(m[1]!)) varOf.set(m[1]!, m[2]!);
   }
@@ -998,7 +1005,7 @@ export class BundleInterpreter {
     for (const m of src.matchAll(/function ([\w$]+)\(/g)) if (!ctors.has(m[1]!)) ctors.set(m[1]!, m.index);
     // Where each class's first registration (`W["<type name>"]=<var>;`) sits.
     const registrations = new Map<string, number>();
-    for (const m of src.matchAll(/W\["([\w.$]+)"\]=([\w$]+);/g)) {
+    for (const m of src.matchAll(REGISTRATION)) {
       if (!registrations.has(m[2]!) && typeNameOf.get(m[2]!) === m[1]) registrations.set(m[2]!, m.index);
     }
     this.defs = { statics, ctors, registrations };
