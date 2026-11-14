@@ -247,6 +247,16 @@ describe('notesMarkdown', () => {
 describe('strategy notes: rules checked against the wiki, and gating', () => {
   const note = (id: string) => STRATEGY_NOTES.find((n) => n.id === id)!;
 
+  it('the #201 FFA and decided-game rules say where the planner encodes them, as STRATEGY.md does', () => {
+    const doc = readFileSync(new URL('../../docs/STRATEGY.md', import.meta.url), 'utf8');
+    for (const id of ['ffa-leader-only', 'ffa-leader-combined-holds', 'ffa-finish-or-spare', 'fighting-ahead-stop-expanding']) {
+      expect(note(id).encoded, id).toMatch(/#201/);
+      const entry = doc.slice(doc.indexOf(`- \`${id}\``)).split('\n- ')[0]!;
+      expect(entry, id).not.toMatch(/Advice only/);
+      expect(entry, id).toMatch(/\*\*Encoded/);
+    }
+  });
+
   it('no-luck-exact is not offered under weighted-random rounding (3 against 2 wins 80% there)', () => {
     expect(ids(profile())).toContain('settings-no-luck-exact');
     expect(ids(profile({}, { rounding: 'WeightedRandom' }))).not.toContain('settings-no-luck-exact');

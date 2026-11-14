@@ -375,7 +375,10 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `ffa-leader-only` — With a clear leader who is not you, the smaller players lose by fighting
   each other. Attack a smaller neighbour only if its income added to yours would match the
   leader's; otherwise hold that border and attack the leader only where the exchange favours
-  you. With three left, hitting the weakest hands the leader the game. **Advice only.** Derived.
+  you. With three left, hitting the weakest hands the leader the game. **Encoded** in part (#201):
+  adapting, the planner finishes off or presses a smaller player who is not the leader only when its
+  income added to mine reaches the leader's ("Absorb player …"), and otherwise leaves it standing
+  ("Not finishing off player … (#201)"); where to attack the leader stays advice. Derived.
   Source: <https://war.app/Forum/169693-keeping-players-game-longer>
 - `ffa-hide-strength` — The armies neighbours see you deploy are what they count. Where fog
   hides it, deploy out of their sight and move up when you can spare the turn; everywhere, keep
@@ -388,7 +391,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   <https://war.app/Forum/4723-best-way-quality-ffa-games>
 - `ffa-finish-or-spare` — A player you have broken but not eliminated has nothing left to lose
   and may throw every army at you. Either take its last territories, or do not cripple it and
-  leave it able to fight someone else. **Advice only.** Derived. Source:
+  leave it able to fight someone else. **Encoded** in part (#201): a capture that breaks an FFA
+  player's bonus without eliminating it is warned of ("… invites retaliation"); the choice stays
+  yours. Derived. Source:
   <https://war.app/Forum/699119-kingmaking-reportableagainst-rules>
 - `ffa-neighbour-leaves` — When a neighbour surrenders or is booted, its land goes to an AI or
   turns neutral (set separately for each; neutral after a boot is players' report, no wiki page
@@ -934,7 +939,9 @@ Fighting:
   striking it with a first order on a turn you move first. **Advice only.** Source:
   <https://war.app/Forum/376144-people-never-surrender>
 - `fighting-ahead-stop-expanding` — once decided, count the turns to finish and take a neutral bonus
-  only if it pays back within them and opens no border. **Advice only.** Derived. Source:
+  only if it pays back within them and opens no border. **Encoded** in part (#201): once the outlook
+  says the game is decided, every payback test counts the turns it has left instead of the usual
+  horizon ("Outlook (#201): …"). Derived. Source:
   <https://war.app/Forum/376144-people-never-surrender>
 - `fighting-more-threats-than-deploy` — ahead, threaten more captures than one deployment can save, in
   different bonuses, unless it can strike back instead (`warapp_check_plan`). **Advice only.** Derived.
@@ -1004,7 +1011,9 @@ Format:
 - `ffa-second-needs-third` — second of three cannot win without the third; the third can ask for a quiet
   border. **Advice only.** Source: <https://war.app/Forum/169693-keeping-players-game-longer>
 - `ffa-leader-combined-holds` — the leader sizes each border for every neighbour at once, fights one at a
-  time, says nothing in public chat. **Advice only.** Derived. Source: <https://war.app/Forum/546500-ffa-competition-league>
+  time, says nothing in public chat. **Encoded** in part (#201): leading an FFA on strength, the planner
+  holds each border against every adjacent opponent together and sizes a break to land against its
+  owner's one deploy ("I lead this free-for-all"); chat stays advice. Derived. Source: <https://war.app/Forum/546500-ffa-competition-league>
 - `ffa-buffer-neighbour` — an elimination pays only the land; a weak neighbour may be a buffer worth
   keeping. **Advice only.** Derived. Source: <https://war.app/Forum/169693-keeping-players-game-longer>
 - `ffa-surrender-veto` — where surrenders must be accepted, accepting one is a move; done in the game
