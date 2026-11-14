@@ -670,6 +670,14 @@
 //     target is a player's or it is not certain, else an attack between breakpoints is named;
 //     and an attack on a player's still sized below that deploy keeps the warning, which then
 //     gives its win chance against the reinforced target and the size that would be sure.
+//     #240, repeated failure is evidence: a territory `input.repulsed` names (`repulsedAttacks`
+//     over my board history and cached orders: my attacks on it failed on REPULSE_MIN (2) or more
+//     of the last REPULSE_WINDOW (3) turns, its owner reinforcing it each time — its armies after
+//     plus my kills above its armies before), still that player's, next to mine and its owner able
+//     to deploy there, is a target only at that sure size: its capture cost is its defenders plus
+//     the owner's deploy (rule 2's targets, rule 4e's fallback and the 1v1 strike stack alike;
+//     a worst case, so no warning and no bare retry), so it ranks by that cost and is not made
+//     when it does not fit; a rationale line names the failed turns.
 //     #226, a margin: once the transfers (rule 6) have moved what they move, an attack on a
 //     player's territory whose owner may deploy there (not a combined capture; not under No-Split,
 //     which sends the whole stack already) takes the armies still on its source beyond what holds

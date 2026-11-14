@@ -389,13 +389,13 @@ export function neverStandStill(
 ): { saveStep: SaveStep | undefined; standStill: StandStillNote | undefined } {
   const {
     g, s, opts, income, foe, profile, auto, goal, deployOf, territories: state, label, bonusName, mine, mineSet,
-    armiesOf, unitsAt, uncounted, defenceAt, bonusTs, guard, costAt, toTake, leadLever, clearLeader,
+    armiesOf, unitsAt, uncounted, defenceAt, bonusTs, guard, toTake, leadLever, clearLeader,
   } = pc;
   const { warnings, rationale, spared, captured } = ps;
   const { gainWith } = book;
   const { growthOf, facing } = threats;
   const { conceded } = hd;
-  const { targets, bonusTarget, targetScoreCost, toFinish, plans, finishCost } = tgt;
+  const { targets, bonusTarget, targetScoreCost, toFinish, plans, finishCost, costFor } = tgt;
   const { stopped, outgrows } = caps;
   /**
    * #125: the step rule 4e ranked first and could not afford this turn (its size, nothing else):
@@ -444,7 +444,8 @@ export function neverStandStill(
           const sources = neighborsOf(g, t).filter((n) => mineSet.has(n));
           if (!sources.length || gainWith([t]) < 0) continue;
           if (!targets.has(t)) {
-            const cost = costAt(t);
+            // #240: a territory my attacks failed on repeatedly is sized for its owner's deploy.
+            const cost = costFor(t);
             if (cost === null) continue;
             targets.set(t, { id: t, cost, enemy: true, sources });
             added.push(t);

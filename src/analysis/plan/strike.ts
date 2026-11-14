@@ -1111,7 +1111,8 @@ export function spendStrikeStack(
       if (captured.has(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null || uncounted(n)) continue;
       // B2 (T1): never a truce's covered territory.
       if (pc.truce.noTarget(n)) continue;
-      const cost = costAt(n);
+      // #240: a territory my attacks failed on repeatedly is sized for its owner's deploy.
+      const cost = tgt.costFor(n);
       // Never a capture that lowers income (rule 4c): it completes a negative bonus. Re-checked
       // below against the strike's own captures, which can complete one only together.
       if (cost === null || gainWith([n]) < 0) continue;
@@ -1263,6 +1264,8 @@ export function spendStrikeStack(
         sent += c.cost;
         captured.add(c.id);
         survivorsAt.set(c.id, c.cost - straightKills(defenceAt(c.id), rates.defensiveKillRate));
+        const rep = tgt.repulsed.get(c.id);
+        if (rep) worstCase.set(c.id, rep.defenders + rep.extra);
         captureOrder.push(c.id);
         again = true;
         break;

@@ -219,7 +219,7 @@ export function captureHelper(
   const { coverOf, orderOf, warnSplit, deploy, spareAt, local } = book;
   const { borderAt, safeAtStart, holdArmies } = threats;
   const { conceded, heldBorders, keepFor, stayAt, twoStepBound, twoStepCite, twoStepHold, twoStepKeep } = hd;
-  const { targets, leadSteps, leadTry, leadNote, skipOffence, badTrades } = tgt;
+  const { targets, leadSteps, leadTry, leadNote, skipOffence, badTrades, repulsed } = tgt;
   const { defensible, mustHold, warnHold } = prev;
   // ---- capture helper ----
   /** How far a combined capture of a player's territory trades below even (see `ps.evenTradesOnly`). */
@@ -337,8 +337,10 @@ export function captureHelper(
     // #203: a lead step lands even if its owner deploys there first (its survivors counted so) —
     // assumed while it is tried, kept only when it is taken.
     const lead = leadSteps.get(t);
-    const sure = lead !== undefined && !worstCase.has(t);
-    if (sure) worstCase.set(t, lead.defenders + lead.extra);
+    // #240: a territory my attacks failed on repeatedly, its owner reinforcing it, is sized the same way.
+    const sized = lead ?? repulsed.get(t);
+    const sure = sized !== undefined && !worstCase.has(t);
+    if (sure) worstCase.set(t, sized.defenders + sized.extra);
     shortAt = undefined;
     belowEven = undefined;
     combinedR3 = false;
@@ -351,7 +353,7 @@ export function captureHelper(
     // sure step stands), and the target keeps its sure cost for every later try.
     // #214 review: shortAt is set before tryCombined runs, so a combined capture refused for a
     // below-even trade (belowEven) or by R3 (combinedR3, which sets no refusal) is a refusal too.
-    if (bareOn && sure && bare && !ok && shortAt !== undefined && ps.refusal === undefined && belowEven === undefined && !combinedR3) {
+    if (bareOn && lead !== undefined && sure && bare && !ok && shortAt !== undefined && ps.refusal === undefined && belowEven === undefined && !combinedR3) {
       const tg = targets.get(t)!;
       const cheap = costAt(t);
       const note = leadNote(t);

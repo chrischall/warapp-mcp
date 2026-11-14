@@ -600,6 +600,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     beside each target having moved in first — as a margin over an
     estimate that is only a floor (never from a source rule 5's leftover went to for a comfortable
     margin, a hold or saving toward a step: those armies are not idle); a "Margin on the attack on …" line says what deploy it covers.
+    **Repeated failure is evidence (#240):** `warapp_plan_turn` reads my cached orders over the board
+    history (`repulsedAttacks`, `PlanInput.repulsed`): a territory my attacks failed on, on two or more
+    of the last three turns, its owner reinforcing it each time (its armies after plus my kills above
+    its armies before; still that player's now), is captured only at that sure size — its cost is its
+    defenders plus the owner's deploy (every pass: targets, rule 4e's fallback, the 1v1 strike stack),
+    so it ranks by that and is not made when it does not fit — and a rationale line names the failed turns.
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can

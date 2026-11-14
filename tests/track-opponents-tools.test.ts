@@ -336,3 +336,35 @@ describe('warapp_plan_turn with a tracked history', () => {
     expect((last as { rationale: string[] }).rationale.join('\n')).not.toMatch(/Tracked income/);
   });
 });
+
+describe('warapp_plan_turn with failed attacks in my cached orders (#240)', () => {
+  /** Plan turns 3, 4, 5 with Bob's 158 at each count; Ann's cached orders attack 158 from 159 on the given turns. */
+  async function planWithAttacks(bobs: number[], attackOn: number[]) {
+    let dir: string | undefined;
+    let last: { rationale: string[] } | undefined;
+    for (const [i, bob] of bobs.entries()) {
+      const turn = i + 3;
+      h = await liveHarness({ ...(dir ? { dataDir: dir } : {}), feed: [game('Playing', String(turn - 1))], warapp: live(boardAt(bob)) });
+      dir = h.dataDir;
+      last = payload<{ rationale: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+      if (attackOn.includes(turn))
+        await writeOrdersCache(dir, GAME, Number(ANN.feed), turn, { deploys: [], moves: [{ from: 159, to: 158, armies: 5 }] });
+      if (i < bobs.length - 1) {
+        await h.harness.close();
+        h = undefined;
+      }
+    }
+    return last!;
+  }
+
+  it('names the failed turns when Bob reinforced 158 after both of my attacks', async () => {
+    // Ann's 5 kill 3 each time: 7 → 9 and 9 → 11 mean Bob put 5 there each turn.
+    const p = await planWithAttacks([7, 9, 11], [3, 4]);
+    expect(p.rationale.join('\n')).toMatch(/My attacks on .*\(#158\) failed on turns 3 and 4, player \d+ reinforcing it each time \(5 against 7, 9 after; 5 against 9, 11 after\)/);
+  });
+
+  it('one failed attack only: no such line', async () => {
+    const p = await planWithAttacks([7, 9, 11], [4]);
+    expect(p.rationale.join('\n')).not.toMatch(/My attacks on/);
+  });
+});
