@@ -74,6 +74,7 @@ import {
   viewArg,
 } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
+import { chatSummary } from './chat.js';
 import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { guessOrdersOf, guessView } from './guess-view.js';
@@ -1134,7 +1135,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       }),
     },
     async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, first_mover, view }) => {
-      const game = await ctx.client.getGame(game_id, { settings: true });
+      // The chat comes in the same GameFeed read: the fallback for the unread counts (part A1).
+      const game = await ctx.client.getGame(game_id, { settings: true, chat: true });
       requireTurnPhase(game);
       const map = mapOf(game);
       const focusBonusIds = (focus ?? []).map((b) => resolveBonus(map, b).id);
@@ -1147,9 +1149,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       // GameFeed after the tool has returned (one wasted, harmless read; boardHistory never throws).
       const me = await resolveMe(ctx, game.players, player);
       requirePlayingSeat(game, me);
-      const [{ territories, info }, history] = await Promise.all([
+      const [{ territories, info }, history, chat] = await Promise.all([
         loadLiveGame(ctx, game),
         boardHistory(ctx, game, me, turn),
+        // Unread chat per channel (counts only), so the agent reads chat before it submits.
+        chatSummary(ctx, game),
       ]);
       const graph = graphOf(map);
       // The board as war.app shows it: what is tracked and cached. The plan is made on the board
@@ -1346,6 +1350,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, turn: currentTurn(game) },
         player: { id: me.id, name: me.name },
+        // Part A1: messages not yet marked seen (warapp_get_chat reads them); absent when no chat can be read.
+        ...(chat ? { chat } : {}),
         goal: plan.goal,
         goalSource: goal !== undefined ? 'explicit' : 'profile',
         profile:

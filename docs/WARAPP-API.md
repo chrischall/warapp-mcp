@@ -411,7 +411,10 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
     tracker credits each owner-only territory an opponent visibly took (the guard left there and
     the capture's cost), so `unexplained` is not simply everything it earned.
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
-  through raw. `GetChat` is passed through raw too, and it is third-party text.
+  through raw. `GetChat` is passed through raw too, and it is third-party text: `src/chat.ts` reads
+  it loosely (`{ playerID, date, turn, message }`, `playerID` the in-game id). **Whether it returns
+  team or private messages, and with which fields, is UNVERIFIED** (V2 in `docs/PLAN-TEAMS.md`): a
+  message with no channel field is `unknown`.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a
   second, best-effort GameFeed call) to find the previous turn's standing for the threat
   trend — only when the previous two turns are not both cached, and it only fills turns the cache lacks:
@@ -495,3 +498,18 @@ public wiki page "Game ID feed API" (read 2026-11-12, not called live):
   (`unreadable`) and **not** cached (#132): it would otherwise sit in every denominator forever.
   A cached record of that kind from an older version is dropped on read and fetched again.
   When the feed is called live, record its method, auth and reply here.
+
+## Chat settings and the Terms — key verified (lobby), the Terms not re-read
+
+- `PrivateMessaging` (bool, in the settings; `privateMessaging` in `GameSettings`): whether players
+  may message each other privately. The key is in the lobby fixture; the wiki documents it
+  (<https://war.app/wiki/Private_Messaging>, <https://war.app/wiki/Mod_API_Reference:GameSettings>).
+  `warapp_send_chat` refuses a private message when it is `false` (the client names server error 202,
+  `PrivateMessagingDisabled`).
+- **The Terms of Service** (<https://www.war.app/TermsOfService>), as the research for
+  `docs/PLAN-TEAMS.md` reported them and **not re-read by anyone since**: section 6 (Prohibited
+  Conduct) bans automated systems (bots, scrapers, scripts) except through "authorized APIs", which
+  the Terms do not define; section 7 (Communication Rules) bans false, defamatory, harassing or
+  offensive messages. The wiki's Rules page (<https://war.app/wiki/Rules>) says players working
+  together is not against the rules. Owner decision D1 in `docs/PLAN-TEAMS.md` is still open; until
+  it is made, every chat send stays confirm-gated.

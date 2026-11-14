@@ -38,6 +38,8 @@ export interface GameUpdate {
   gameId: number;
   /** ISO time the push was received. */
   at: string;
+  /** The push's chat flag was set: a chat message arrived (UNVERIFIED live). */
+  chat?: true;
 }
 
 /** A connect, or a Subscribe that went through after one failed: pushes before it were lost. */
@@ -438,7 +440,7 @@ export class PushListener {
     // Only a game some wait watches: a push for one whose waits have ended (no Unsubscribe is sent,
     // so the session still carries it) is not recorded (#148).
     if (!this.games.has(msg.gameId)) return;
-    const update: GameUpdate = { gameId: msg.gameId, at: new Date(this.now()).toISOString() };
+    const update: GameUpdate = { gameId: msg.gameId, at: new Date(this.now()).toISOString(), ...(msg.chat ? { chat: true as const } : {}) };
     this.events.push(update);
     if (this.events.length > this.maxEvents) this.events.splice(0, this.events.length - this.maxEvents);
     for (const fn of this.listeners) fn(update);

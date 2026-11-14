@@ -141,6 +141,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn. Disagreement is a warning; `firstMover` reports `{ who, source, from? }`. The game history is not
   read for it (UNVERIFIED whether an in-progress `GetHistory` carries the orders in the order they ran).
   `warapp_check_plan` writes nothing and still tries both orders unless `first_mover` is given.
+- **Chat has channels (part A1 of `docs/PLAN-TEAMS.md`; UNVERIFIED live).** `warapp_get_chat` reads
+  `GameRefresh` (39, chat only) → `GameDetailsAndChat` → `GameMessage` by type name (`src/chat.ts`:
+  fields by read order, a private counterpart first, then a game group (`unknown`), then the channel,
+  -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
+  failure, GameFeed's `chat` (no channel: `unknown`). Bodies go out through `untrustedBody` (the
+  `untrustedText` cleaning, capped at 2,000). "New" is a name-free cursor at `<dataDir>/chat/<gameId>.json`
+  (`src/chat-cursor.ts`: per channel the count and newest time marked seen, plus the whole chat, against
+  which GameFeed's `unknown` messages are judged); only `mark_seen: true` writes it; mine are never new.
+  `warapp_plan_turn` reports `chat.unread` from the GameFeed chat of its own game read (no extra request).
+  `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
+  one) and refuses `to` when `PrivateMessaging` is false; it reads the reply's message list back
+  (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
+  is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`. The interpreter's registration
+  scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'

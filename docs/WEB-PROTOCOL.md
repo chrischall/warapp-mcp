@@ -89,7 +89,7 @@ string email                  the signed-in account's email
 |---|---|---|
 | 10 | GetOpenGames | exists, but the web client never calls it — the open games list comes from a page payload (see [Open games](#open-games)); do not use |
 | 38 | GetGameDetails | |
-| 39 | GameRefresh | params: int32 gameId, bool, bool, string "-1", string "-1", bool, dict, dict |
+| 39 | **GameRefresh** | params: int32 gameId, bool chat, bool nonChat, string "-1", string "-1", bool lobby, optional dict, optional dict; reply `GameDetailsAndChat` — see [Chat](#chat) (UNVERIFIED live) |
 | 40 | GetLatestGameInfo | params: int32 gameId; reply class `NE` — expected to carry the board |
 | 48 | GetGameSettings | |
 | 60 | AcceptGame | accept an invitation (not used) |
@@ -109,7 +109,7 @@ string email                  the signed-in account's email
 | 80 | **UnCommit** | params: int32 gameId — see [UnCommit](#uncommit) |
 | 81 | GetTurns | |
 | 238 | Subscribe | push channel only, **no auth**; params: bool true, list of topic strings, string null; reply dict topic→int32 error |
-| 241 | GameUpdated | server push, **no auth**; msgNum `0x80000000`, 61 bytes, starts with the game id; carries no detail — re-read GameFeed |
+| 241 | GameUpdated | server push, **no auth**; msgNum `0x80000000`, 61 bytes: the game id, then bools `chat` and `nonChat` (named by the client's own log line; UNVERIFIED live) and an optional dict — re-read GameFeed |
 
 Server error codes seen in the client: 11 = deployed armies ≠ income, 208 = game already
 advanced to the next turn, 88 = game deleted, 483 = game started without you.
@@ -402,14 +402,58 @@ bridged POSTs time out while GETs still work; reloading the tab clears it.
 
 ## Chat
 
-- **Read:** the official `GameFeed` answers `GetChat=true` with a `chat` list of
-  `{ playerID, date, turn, message }` — use that. `playerID` there is the **in-game id**, not
-  the check-digit-wrapped id GameFeed uses for players.
+Everything below except GameFeed's list is read from the client bundle and is **UNVERIFIED live**
+(checks V2, V3, V4 and V10 in `docs/PLAN-TEAMS.md`).
+
+- **Read (web client):** `GameRefresh` (39): auth, int32 gameId, bool chat, bool nonChat, the public
+  and team "last seen" markers as decimal text (a client that has seen nothing sends `"-1"`; the
+  client writes `"null"` for none), bool lobby (true while the game waits for players), then two
+  optional int32→string dicts (game-group chat views; sent absent). `warapp_get_chat` asks for the
+  chat only (`chat` true, `nonChat` false). Reply: bool present, then
+  **`warlight.shared.GameDetailsAndChat`**, whose first field is the chat: an optional list of
+  optional **`warlight.shared.GameMessage`** (then the game details `GameWL`, a dict, the players,
+  the game groups — all optional, absent when `nonChat` is false). `src/chat.ts` reads both by
+  type name through the interpreter and takes the message fields by read order:
+
+  | # | Field | Read as |
+  |---|---|---|
+  | 0 | date | datetime |
+  | 1 | sender | optional int32: the in-game player id; absent on a system line |
+  | 2 | game group | optional int32: a game-group message (no channel of ours: `unknown`) |
+  | 3 | (unknown) | optional int32 |
+  | 4 | message id | string, parsed by the client as a long |
+  | 5 | text | string |
+  | 6 | channel | int32: `-1` public, else the team |
+  | 7 | private counterpart | optional int32: the recipient's in-game id; set means a private message |
+  | 8 | (unknown) | optional int32 |
+  | 9 | turn | optional int32 |
+
+  The client sorts a message into its tabs the same way: a private counterpart first, then a game
+  group, then the channel. The bundle's registration of `GameMessage` has a line break right after
+  its `=`, so the interpreter's registration scan allows whitespace there.
+- **Read (GameFeed):** `GetChat=true` adds a `chat` list of `{ playerID, date, turn, message }`.
+  `playerID` there is the **in-game id**, not the check-digit-wrapped id GameFeed uses for players.
+  It names no channel or recipient, and whether it returns team or private messages is unknown: a
+  message there is `unknown` unless it carries a channel or recipient field. `warapp_get_chat`
+  uses it when GameRefresh cannot be read (no signed-in account readable, a refusal, a reply it
+  does not understand); `warapp_plan_turn` counts unread chat from it (the game read carries it).
 - **Send:** `SendChat` (42): auth, int32 gameId, string text, int32 channel (`-1` = public,
-  otherwise a team), optional int32 private recipient, optional int32 game-group id, two
-  marker strings, two optional "last seen" dicts. Reply: the updated message list
-  (`uv` objects). Server errors the client names: 36 rate-limited, 33 too long, 88 game
-  deleted, 333 game archived. A send reaches other people, so it is always confirm-gated.
+  otherwise the sender's team: the client sends its own player's team), optional int32 private
+  recipient (the client then sends channel `-1`; server error 201 is "cannot specify team in a
+  private message"), optional int32 game-group id, two marker strings, two optional "last seen"
+  dicts. Reply: bool present, then the updated message list straight after it (no second flag),
+  each a present flag and a `GameMessage`. `warapp_send_chat` reads it back: `confirmed` when my
+  newest message on that channel has the text sent, `unconfirmed` when it is another, `accepted`
+  when the reply cannot be read. Server errors the client names: 36 rate-limited, 33 too long,
+  88 game deleted, 333 game archived, 17 not in the game, 202 private messaging disabled. A send
+  reaches other people, so it is always confirm-gated, and a refusal is never retried.
+- **Other chat methods** (not used): 43 RegisterChatView, 44 RetrieveChat (gameId and the two
+  markers), 45 RetrievePrivateMessageHistory, 46 RetrieveGameGroupMessageHistory. Push 242
+  `ChatRoomNewMessage` is the site's chat rooms, not a game's chat.
+- **Push:** `GameUpdated` (241) carries, after the game id, two bools the client's handler logs as
+  `chat=` and `nonChat=`. `src/push/socketio.ts` reads the first when present: a push with it set is
+  chat activity (`warapp_wait_for_turn` reports `chatActivity: true` for the game, no text), and
+  the game is re-read as for any push.
 
 ## Open games
 
@@ -633,8 +677,8 @@ strings, then a trailing `string null`. A game's topic is `Game.<gameId>`. The r
 dict means every topic was accepted.
 
 **GameUpdated (method 241).** The server push: a request-shaped frame (carries `MessageExtrasUp`,
-no auth) with message number `0x80000000`, 61 bytes, that **starts with the game id and carries no
-other detail**. On receipt, re-read the game from GameFeed — it arrives within ~1 s of the turn
+no auth) with message number `0x80000000`, 61 bytes, that **starts with the game id**; the bools
+after it are the chat and non-chat flags (see [Chat](#chat), UNVERIFIED live). On receipt, re-read the game from GameFeed — it arrives within ~1 s of the turn
 resolving. `src/push/listener.ts` holds one socket per process, (re)subscribes to every watched
 `Game.<id>` on each connect, answers heartbeats, and reconnects with backoff. A Subscribe that fails
 (not sent, or answered with a server error) is retried on the same session; when the retry goes

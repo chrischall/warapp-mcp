@@ -131,6 +131,27 @@ describe('warapp_wait_for_turn', () => {
     expect(h.calls[2]!.url).toContain(`GameID=${GAME}`);
   });
 
+  it('a push whose chat flag is set reports chatActivity for its game, with no text (UNVERIFIED live)', async () => {
+    const { h, socket } = await setup([COMMITTED(), COMMITTED(), READY()]);
+    const pending = call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 60 });
+    await until(() => subscribes(socket).length === 1 && h.calls.length === 2, 'subscribe + first checks');
+    socket.push(`3:::${gameUpdatedHex(GAME, { chat: true })}`);
+    const p = payload(await pending);
+    expect(p.status).toBe('your_turn');
+    expect((p.games as Array<Record<string, unknown>>)[0]).toMatchObject({ id: GAME, chatActivity: true });
+    const events = payload(await call('warapp_recent_events', {})).events as Array<Record<string, unknown>>;
+    expect(events).toEqual([{ game_id: GAME, at: expect.any(String), chat: true }]);
+  });
+
+  it('a plain push reports no chatActivity', async () => {
+    const { h, socket } = await setup([COMMITTED(), COMMITTED(), READY()]);
+    const pending = call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 60 });
+    await until(() => subscribes(socket).length === 1 && h.calls.length === 2, 'subscribe + first checks');
+    socket.push(`3:::${gameUpdatedHex(GAME)}`);
+    const p = payload(await pending);
+    expect((p.games as Array<Record<string, unknown>>)[0]).not.toHaveProperty('chatActivity');
+  });
+
   it('re-reads GameFeed after the push socket reconnects, so a turn that came in the gap is not missed', async () => {
     const { h, socket } = await setup([COMMITTED(), COMMITTED(), READY()]);
     const pending = call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 30 });

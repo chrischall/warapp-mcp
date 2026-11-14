@@ -796,6 +796,28 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(live.calls.filter((c) => c.url.includes('GetHistory=true'))).toHaveLength(2);
   });
 
+  it('reports unread chat as counts only, from the GameFeed chat read with the game (part A1)', async () => {
+    const SIGNED_IN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+    const chat = [
+      { playerID: ANN.inGame, message: 'gl hf', date: '2026-11-01T10:00:00Z' },
+      { playerID: 765432, message: 'secret plan', date: '2026-11-01T10:01:00Z' },
+    ];
+    h = await liveHarness({ feed: [game('Playing', { chat })], pages: SIGNED_IN, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const res = await h.call('warapp_plan_turn', { game_id: GAME });
+    const p = payload<{ chat: unknown }>(res);
+    // My own message is never unread; GameFeed names no channel.
+    expect(p.chat).toEqual({ unread: { public: 0, team: 0, private: 0, unknown: 1 }, source: 'gamefeed' });
+    expect(textOf(res)).not.toContain('secret plan');
+    expect(h.calls[0]!.url).toContain('GetChat=true');
+    // No extra request for it: the game's own read carried the chat.
+    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
+  });
+
+  it('no chat in the game read: no chat field', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    expect(payload<Record<string, unknown>>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }))).not.toHaveProperty('chat');
+  });
+
   it('(h) says since last turn: income against the expected, and the bonuses broken and territories lost (#194)', async () => {
     // Turn 3: Ann holds the whole of bonus 118 (159, 161, 157); the plan's expected next income is kept.
     const held = BOARD.map((t) => (t.id === 157 ? { ...t, owner: ANN.inGame } : t));

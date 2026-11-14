@@ -8,6 +8,7 @@ import type { DirectFetch } from '../src/direct/transport.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { registerAllTools } from '../src/tools/index.js';
+import { CHAT_BUNDLE } from './protocol/chat-bundle.js';
 import { fakeWarapp, mockWarappBridge, type MockBridgeServer, type WarappExchange } from './bridge-mock.js';
 import { LIVE_BUNDLE } from './protocol/live-bundle.js';
 import { withSocket, type FakeSocketIo } from './push/fake-socket.js';
@@ -93,7 +94,7 @@ export async function liveHarness(
     : answer) as typeof fetch;
   const fake = fakeWarapp(opts.warapp ?? NO_RESULT, opts.pages);
   const { bridge, mock } = mockWarappBridge(opts.socket ? withSocket(opts.socket, fake.handler) : fake.handler);
-  const bundle = opts.bundle ?? new WarappBundle(`${LIVE_BUNDLE}\n${MY_GAMES_BUNDLE}`, 'test');
+  const bundle = opts.bundle ?? new WarappBundle(`${LIVE_BUNDLE}\n${MY_GAMES_BUNDLE}\n${CHAT_BUNDLE}`, 'test');
   const harness = await createTestHarness((s) =>
     registerAllTools(s, {
       env: { ...CREDS, MCP_DATA_DIR: dataDir, ...opts.env },

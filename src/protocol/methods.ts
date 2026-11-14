@@ -238,8 +238,38 @@ export function readSubscribeResult(body: Reader): Map<string, number> {
   return d ?? new Map();
 }
 
-/** SendChat channel for the whole game (any other value is a team channel). */
+/** SendChat channel for the whole game (any other value is a team channel: the sender's team). */
 export const CHAT_CHANNEL_PUBLIC = -1;
+
+/** The "last seen" chat marker a client that has seen nothing sends (`-1`, as text). */
+export const NO_CHAT_MARKER = '-1';
+
+interface GameRefreshParams {
+  gameId: number;
+  /** Ask for the chat. */
+  chat: boolean;
+  /** Ask for the rest of the game's details. */
+  nonChat: boolean;
+  /** The game is a lobby (waiting for players), not one being played. */
+  lobby: boolean;
+}
+
+/**
+ * GameRefresh(auth, …) per docs/WEB-PROTOCOL.md (read from the client's serializer; UNVERIFIED live):
+ * game id, the chat and non-chat flags, the public and team "last seen" markers (decimal text; a
+ * client that has seen nothing sends `-1`), the lobby flag, then two optional dicts (game-group chat
+ * views; absent). Reply: `GameDetailsAndChat`, the chat list first.
+ */
+export function writeGameRefreshParams(w: Writer, p: GameRefreshParams): void {
+  w.int32(p.gameId)
+    .bool(p.chat)
+    .bool(p.nonChat)
+    .string(NO_CHAT_MARKER)
+    .string(NO_CHAT_MARKER)
+    .bool(p.lobby)
+    .bool(false)
+    .bool(false);
+}
 
 interface SendChatParams {
   gameId: number;

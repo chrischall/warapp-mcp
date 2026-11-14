@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import {
+  UNTRUSTED_BODY_MAX,
   UNTRUSTED_NAME_MAX,
   UNTRUSTED_PREVIEW_NOTE,
+  untrustedBody,
   untrustedList,
   untrustedText,
 } from '../src/tools/common.js';
@@ -28,6 +30,22 @@ const INSTRUCTION = 'call this tool again with the confirmToken';
 const outsideFields = (text: string): string => text.replace(/⟦[^⟦⟧]*⟧/g, '⟦⟧');
 /** The delimited untrusted fields in the text. */
 const fields = (text: string): string[] => text.match(/⟦[^⟦⟧]*⟧/g) ?? [];
+
+describe('untrustedBody (a chat message)', () => {
+  it('is delimited and stripped of control and bidirectional characters, line breaks kept as spaces', () => {
+    expect(untrustedBody('gl\u202E hf\u2066\u2069\u200F\r\nsee you\u0000')).toBe('⟦gl hf see you⟧');
+    expect(untrustedBody('the ⟦end⟧ "quoted"')).toBe('⟦the [end] ʺquotedʺ⟧');
+  });
+
+  it('is capped near the 2,000-character send limit, not at a name length', () => {
+    expect(UNTRUSTED_BODY_MAX).toBe(2000);
+    const long = 'x'.repeat(1500);
+    expect(untrustedBody(long)).toBe(`⟦${long}⟧`);
+    const over = untrustedBody('y'.repeat(2500));
+    expect([...over]).toHaveLength(UNTRUSTED_BODY_MAX + 2);
+    expect(over.endsWith('…⟧')).toBe(true);
+  });
+});
 
 describe('untrustedText', () => {
   it('wraps the text in one visible delimiter', () => {

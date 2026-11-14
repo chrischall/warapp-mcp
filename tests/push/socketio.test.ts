@@ -79,6 +79,11 @@ describe('packet helpers', () => {
     expect(parsePushFrame(hex)).toEqual({ kind: 'game-updated', gameId: 12345678 });
   });
 
+  it('reads the chat flag after the game id (UNVERIFIED live); a push without the flags is a plain update', () => {
+    expect(parsePushFrame(gameUpdatedHex(7, { chat: true }))).toEqual({ kind: 'game-updated', gameId: 7, chat: true });
+    expect(parsePushFrame(gameUpdatedHex(7, { bare: true }))).toEqual({ kind: 'game-updated', gameId: 7 });
+  });
+
   it('decodes Subscribe replies, ignores other frames and garbage', () => {
     expect(parsePushFrame(subscribeReplyHex(3, null))).toEqual({ kind: 'subscribe-reply', msgNum: 3, rejected: new Map() });
     expect(parsePushFrame(subscribeReplyHex(4, { 'Game.9': 12 }))).toEqual({
