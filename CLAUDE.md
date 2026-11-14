@@ -14,8 +14,9 @@ Advisor MCP for war.app (Warzone) with two transports:
 Build plans: `docs/PLAN.md` (phase 1, GameFeed), `docs/PLAN-LIVE.md` (phase 2, live board),
 `docs/PLAN-TURN.md` (phase 3, plan and submit a turn), `docs/PLAN-SCOUT.md` (phase 4, my games
 and opponent scouting), `docs/PLAN-CARDS-PUSH.md` (phase 5, cards, turn notifications,
-threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, from a lost game) and
-`docs/PLAN-PICKS.md` (the pick advisor; its heuristics and sources are in `docs/STRATEGY.md`).
+threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, from a lost game),
+`docs/PLAN-PICKS.md` (the pick advisor; its heuristics and sources are in `docs/STRATEGY.md`) and
+`docs/PLAN-TEAMS.md` (chat, truces in free-for-alls and team play).
 
 ## What is true only of this repo
 
@@ -140,6 +141,24 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn. Disagreement is a warning; `firstMover` reports `{ who, source, from? }`. The game history is not
   read for it (UNVERIFIED whether an in-progress `GetHistory` carries the orders in the order they ran).
   `warapp_check_plan` writes nothing and still tries both orders unless `first_mover` is given.
+- **Chat has channels (part A1 of `docs/PLAN-TEAMS.md`; UNVERIFIED live).** `warapp_get_chat` reads
+  `GameRefresh` (39, chat only) → `GameDetailsAndChat` → `GameMessage` by type name (`src/chat.ts`:
+  fields by read order, a private counterpart first, then a game group (`unknown`), then the channel,
+  -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
+  failure, GameFeed's `chat` (no channel: `unknown`). Bodies go out through `untrustedBody` (the
+  `untrustedText` cleaning, capped at 2,000). "New" is a name-free cursor at `<dataDir>/chat/<gameId>.json`
+  (`src/chat-cursor.ts`: per channel the count and newest time marked seen, plus the whole chat, against
+  which every message is judged too — a named channel by time only: seen by either mark is not new); only
+  `mark_seen: true` writes it (from GameFeed only `unknown` and the whole chat, never a named channel, so a
+  later web read keeps what was seen; `markedUnshown` counts unread messages `limit` cut); mine are never
+  new. GameFeed chat in a shape no reader knows goes out as `raw` with every string through `untrustedBody`. `warapp_plan_turn` reports `chat.unread` from the GameFeed chat of its own
+  game read (no extra request), so every count is under `unknown` (its `note` says so). Third-party names in
+  results (sender, recipient, game) go through `untrustedText`.
+  `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
+  one) and refuses `to` when `PrivateMessaging` is false; it reads the reply's message list back
+  (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
+  is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`. The interpreter's registration
+  scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — more than two players need the others'
@@ -237,8 +256,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (no session, signed out, no `websocket` transport, failed upgrade) — **xhr-polling over the
   bridge** (`src/push/socketio.ts`): the first poll must return the connect packet `1::` before
   any POST (a POST first is HTTP 400). Both answer `2::` heartbeats and send `Subscribe`
-  (method 238, no auth block) to `Game.<id>`. A push is method 241 `GameUpdated` carrying only
-  the game id, so `warapp_wait_for_turn` re-reads GameFeed after one (debounced per game, below). **A reconnect loses the
+  (method 238, no auth block) to `Game.<id>`. A push is method 241 `GameUpdated` carrying the game
+  id and its chat flags (no text), so `warapp_wait_for_turn` re-reads GameFeed after one (debounced per game, below). **A reconnect loses the
   pushes sent during the gap** (war.app has closed a healthy socket after ~60 s): close, error
   or a missed heartbeat reconnects (new handshake, new sid, re-subscribe) and `onReconnect`
   fires, on which `warapp_wait_for_turn` re-reads every watched game — as it does when a failed

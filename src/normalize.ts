@@ -217,6 +217,8 @@ export interface GameSettings {
   allowAttackOnly?: boolean;
   /** Orders may send a percentage of the armies (`AllowPercentageAttacks`; error 360 otherwise). */
   allowPercentageAttacks?: boolean;
+  /** Players may message each other privately (`PrivateMessaging`; war.app refuses a private message otherwise, error 202). */
+  privateMessaging?: boolean;
   /**
    * How many mods the game runs (`Mods`): 0 for none, -1 when the feed sends something that is
    * not a list (mods present, count unknown); absent when the feed does not send the key. The
@@ -273,6 +275,7 @@ const BOOL_SETTINGS = {
   allowTransferOnly: 'AllowTransferOnly',
   allowAttackOnly: 'AllowAttackOnly',
   allowPercentageAttacks: 'AllowPercentageAttacks',
+  privateMessaging: 'PrivateMessaging',
 } as const;
 const STR_SETTINGS = { pace: 'Pace', fog: 'Fog', roundingMode: 'RoundingMode', moveOrder: 'MoveOrder' } as const;
 

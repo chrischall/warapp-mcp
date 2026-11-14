@@ -5,6 +5,7 @@ import {
   readTerritoryPicks,
   writeGetLatestGameInfoParams,
   writeSendChatParams,
+  writeGameRefreshParams,
   writeAttackTransferOrder,
   writeDeployOrder,
   writeCardPlayOrder,
@@ -76,9 +77,36 @@ describe('SendChat params', () => {
     );
   });
 
+  it('team: the channel is the team number', () => {
+    expect(hex((w) => writeSendChatParams(w, { gameId: 5, text: 'go', channel: 2 }))).toBe(
+      '05000000' + str('go') + '02000000' + '00' + '00' + '00' + '00' + '00' + '00',
+    );
+  });
+
   it('private: the recipient is a present int32', () => {
     expect(hex((w) => writeSendChatParams(w, { gameId: 5, text: 'hi', recipient: 1234567 }))).toBe(
       '05000000' + str('hi') + 'FFFFFFFF' + '01' + '87D61200' + '00' + '00' + '00' + '00' + '00',
+    );
+  });
+});
+
+describe('GameRefresh params (UNVERIFIED live, from the client serializer)', () => {
+  const str = (s: string) => {
+    const w = new Writer();
+    w.string(s);
+    return toHex(w.bytes());
+  };
+
+  it('chat only, in a game being played: game id, chat, no details, two -1 markers, not a lobby, no group dicts', () => {
+    expect(hex((w) => writeGameRefreshParams(w, { gameId: 5, chat: true, nonChat: false, lobby: false }))).toBe(
+      '05000000' + '01' + '00' + str('-1') + str('-1') + '00' + '00' + '00',
+    );
+    expect(str('-1')).toBe('01022D31');
+  });
+
+  it('a lobby sets the lobby flag', () => {
+    expect(hex((w) => writeGameRefreshParams(w, { gameId: 5, chat: true, nonChat: false, lobby: true }))).toBe(
+      '05000000' + '01' + '00' + '01022D31' + '01022D31' + '01' + '00' + '00',
     );
   });
 });

@@ -101,6 +101,8 @@ interface WaitOutcome {
   waitedMs: number;
   /** GameFeed re-reads that failed after a push (the wait carried on). */
   errors: string[];
+  /** Games a push said had chat activity while waiting (no text: read it with warapp_get_chat). */
+  chatActivity: number[];
 }
 
 /**
@@ -123,9 +125,11 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
   /** Set by a reconnect: report it once the loop resumes. */
   let reconnectNote = false;
   const errors: string[] = [];
+  const chatActivity = new Set<number>();
   const off = opts.push.onUpdate((u) => {
     if (!ids.has(u.gameId)) return;
     updates++;
+    if (u.chat) chatActivity.add(u.gameId);
     // Debounced (#131): a burst of pushes while the game is queued is one re-read; one arriving
     // while its re-read is in flight queues one more (the read in flight may predate the change).
     if (!queue.includes(u.gameId)) queue.push(u.gameId);
@@ -178,6 +182,7 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
       reconnects,
       waitedMs: now() - start,
       errors,
+      chatActivity: [...ids].filter((id) => chatActivity.has(id)),
     });
     const allEnded = () => [...latest.values()].every((c) => c.ended !== undefined);
     if ([...latest.values()].some((c) => c.waitingOnYou)) return outcome('your_turn');
@@ -372,7 +377,7 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         status: out.status,
         watching: ids,
         ...(out.status === 'your_turn' ? { ready: out.games.filter((g) => g.waitingOnYou).map((g) => g.id) } : {}),
-        games: out.games,
+        games: out.games.map((g) => (out.chatActivity.includes(g.id) ? { ...g, chatActivity: true as const } : g)),
         waited_seconds: Math.round(out.waitedMs / 1000),
         updates: out.updates,
         ...(out.reconnects ? { reconnects: out.reconnects } : {}),
@@ -417,7 +422,7 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         .recent()
         .filter((e) => only === undefined || e.gameId === only)
         .slice(0, limit ?? 20)
-        .map((e) => ({ game_id: e.gameId, at: e.at }));
+        .map((e) => ({ game_id: e.gameId, at: e.at, ...(e.chat ? { chat: true as const } : {}) }));
       const st = push.status();
       return respond(undefined, VIEWS, () => ({
         events,

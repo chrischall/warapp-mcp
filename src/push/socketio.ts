@@ -39,13 +39,17 @@ export function subscribeFrameHex(topics: readonly string[], msgNum: number, ext
 }
 
 type PushMessage =
-  | { kind: 'game-updated'; gameId: number }
+  /** `chat`: the push's chat flag was set (a chat message, by the client's own log line; UNVERIFIED live). */
+  | { kind: 'game-updated'; gameId: number; chat?: true }
   | { kind: 'subscribe-reply'; msgNum: number; rejected: Map<string, number>; error?: number }
   | { kind: 'other'; method: number };
 
 /**
  * Decode a frame from a message packet. A server push is a request-shaped
- * frame (MessageExtrasUp, no auth): GameUpdated (241) starts with the game id.
+ * frame (MessageExtrasUp, no auth): GameUpdated (241) starts with the game id,
+ * then two bools the client logs as `chat` and `nonChat` (read from the bundle's
+ * handler; UNVERIFIED live), then an optional dict this server does not read.
+ * The flags are read only when present: a push without them is a plain update.
  * Returns undefined for anything that does not decode — never throws.
  */
 export function parsePushFrame(hex: string): PushMessage | undefined {
@@ -61,7 +65,14 @@ export function parsePushFrame(hex: string): PushMessage | undefined {
     }
     if (header.method !== Method.GameUpdated) return { kind: 'other', method: header.method };
     readExtrasUp(r);
-    return { kind: 'game-updated', gameId: r.int32() };
+    const gameId = r.int32();
+    let chat = false;
+    try {
+      chat = r.bool();
+    } catch {
+      // No flags: a plain update.
+    }
+    return chat ? { kind: 'game-updated', gameId, chat: true } : { kind: 'game-updated', gameId };
   } catch {
     return undefined;
   }

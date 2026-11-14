@@ -60,6 +60,19 @@ describe('parseBundle', () => {
     const b = parseBundle('W["a.First"]=X;W["a.Second"]=X;');
     expect(b.typeNameOf.get('X')).toBe('a.First');
   });
+
+  it('finds a registration the minifier wrapped after the `=` (the real bundle wraps lines with CRLF)', () => {
+    const b = parseBundle('W["a.Wrapped"]=\r\nWr;W["a.Spaced"] = Sp ;');
+    expect(b.varOf.get('a.Wrapped')).toBe('Wr');
+    expect(b.typeNameOf.get('Sp')).toBe('a.Spaced');
+  });
+
+  it('a wrapped registration reads by its type name', () => {
+    const src = 'var P={};P.Ya=function(a){return a.Og()};function Wr(){}W["a.Wrapped"]=\r\nWr;' +
+      'Wr.Ha=function(a){var b=new Wr;b.v=P.Ya(a);return b};';
+    const r = new Reader(new Writer().int32(7).bytes());
+    expect(new BundleInterpreter(parseBundle(src)).readClass('a.Wrapped', r)).toEqual({ $type: 'a.Wrapped', v: 7 });
+  });
 });
 
 describe('BundleInterpreter', () => {

@@ -134,15 +134,18 @@ const PUSH_EXTRAS: ExtrasUp = {
 /** The message number every server push carries (0x80000000 as an int32). */
 export const PUSH_MSG_NUM = -0x80000000;
 
-/** A synthetic GameUpdated push frame, as uppercase hex. */
-export function gameUpdatedHex(gameId: number): string {
+/**
+ * A synthetic GameUpdated push frame, as uppercase hex: the game id, the chat and non-chat flags, no
+ * dict. `bare`: the game id alone (an older shape, still read as a plain update).
+ */
+export function gameUpdatedHex(gameId: number, opts: { chat?: boolean; bare?: boolean } = {}): string {
   return toHex(
     encodeRequest({
       method: Method.GameUpdated,
       msgNum: PUSH_MSG_NUM,
       extras: PUSH_EXTRAS,
       email: null,
-      params: (w) => w.int32(gameId).bool(false).bool(false).bool(false),
+      params: (w) => (opts.bare ? w.int32(gameId) : w.int32(gameId).bool(opts.chat ?? false).bool(!opts.chat).bool(false)),
     }),
   );
 }

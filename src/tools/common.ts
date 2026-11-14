@@ -80,6 +80,16 @@ export function untrustedText(value: unknown, max = UNTRUSTED_NAME_MAX): string 
   return `${OPEN}${capped}${CLOSE}`;
 }
 
+/** The most characters of one chat message `untrustedBody` keeps: war.app's send limit. */
+export const UNTRUSTED_BODY_MAX = 2000;
+
+/**
+ * A chat message's body (other players' words), cleaned and delimited exactly as
+ * {@link untrustedText} cleans a name, but capped at the send limit rather than a
+ * name's length. It still travels inside the untrusted-content envelope.
+ */
+export const untrustedBody = (value: unknown): string => untrustedText(value, UNTRUSTED_BODY_MAX);
+
 /**
  * At most `max` items, comma-separated, then a count of the rest. Each item is
  * shown by `show` — by default the item itself through `untrustedText`; a
