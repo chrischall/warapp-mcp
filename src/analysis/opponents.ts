@@ -240,6 +240,12 @@ export interface TrackGame {
   start?: { territories: number; armiesPerTerritory: number };
   /** Why `start` is absent (said in the note). */
   startUnknown?: string;
+  /**
+   * #205: with `start` absent but every player given the same share of the map (full
+   * distribution, or no TerritoryLimit), the armies each starting territory had: a player
+   * started with at most ⌈territories ÷ players⌉ of them, an upper bound for the outlook.
+   */
+  startArmiesPerTerritory?: number;
   /** Settings under which the base income each turn may not be a floor (e.g. Sanctions), said in the note. */
   incomeCaveats?: string[];
 }
@@ -353,15 +359,21 @@ export function trackGame(
     ? ['the game has the Sanctions card, which can cut a sanctioned player\'s income below the base']
     : [];
   const base = { players: list, ...(caveats.length ? { incomeCaveats: caveats } : {}) };
+  const perTerritory =
+    settings?.initialPlayerArmiesPerTerritory !== undefined ? { startArmiesPerTerritory: Math.max(0, settings.initialPlayerArmiesPerTerritory) } : {};
   if (settings?.distributionMode === FULL_DISTRIBUTION)
-    return { ...base, startUnknown: 'the game uses full distribution, which splits every territory among the players whatever the territory limit' };
+    return {
+      ...base,
+      startUnknown: 'the game uses full distribution, which splits every territory among the players whatever the territory limit',
+      ...perTerritory,
+    };
   const mode = map?.distributionModes.find((d) => d.id === settings?.distributionMode);
   if (mode?.type !== undefined && mode.type !== 'normal')
     return { ...base, startUnknown: `the game uses the map's "${mode.name}" distribution (${mode.type}), which sets its own starting armies` };
   const territories = settings?.territoryLimit;
   const armiesPerTerritory = settings?.initialPlayerArmiesPerTerritory;
   if (territories === undefined || territories <= 0)
-    return { ...base, startUnknown: "the settings do not give the territories each player started with (TerritoryLimit)" };
+    return { ...base, startUnknown: "the settings do not give the territories each player started with (TerritoryLimit)", ...perTerritory };
   if (armiesPerTerritory === undefined)
     return { ...base, startUnknown: 'the settings do not give the armies each starting territory had (InitialPlayerArmiesPerTerritory)' };
   return { ...base, start: { territories, armiesPerTerritory: Math.max(0, armiesPerTerritory) } };

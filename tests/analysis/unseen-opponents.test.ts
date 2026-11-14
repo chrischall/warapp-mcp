@@ -245,6 +245,17 @@ describe('trackGame and the caveats on the bound (#94 review)', () => {
     expect(game.startUnknown).toMatch(/full distribution/);
   });
 
+  it('#205: with the starts unknown under an even split, keeps the armies per starting territory for an upper bound', () => {
+    expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: -1, cards: [] }).startArmiesPerTerritory).toBe(2);
+    expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 4, distributionMode: 0, cards: [] }).startArmiesPerTerritory).toBe(4);
+    // A scenario sets its own starts, and without the armies per territory there is nothing to bound.
+    const scenario = { distributionModes: [{ id: 7, name: 'Scenario', type: 'scenario' }] };
+    expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 4, distributionMode: 7, cards: [] }, scenario).startArmiesPerTerritory).toBeUndefined();
+    expect(trackGame(GAME.players, { territoryLimit: 3, distributionMode: -1, cards: [] }).startArmiesPerTerritory).toBeUndefined();
+    // Known starts need no ceiling.
+    expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] }).startArmiesPerTerritory).toBeUndefined();
+  });
+
   it('manual or automatic distribution keeps TerritoryLimit × InitialPlayerArmiesPerTerritory', () => {
     const game = trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] });
     expect(game.start).toEqual({ territories: 3, armiesPerTerritory: 2 });

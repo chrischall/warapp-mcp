@@ -90,6 +90,7 @@ import {
   type TrendSource,
 } from '../trend.js';
 import { gameOutlook } from '../analysis/outlook.js';
+import { cardArmyCeiling } from '../strategy/card-clock.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { readPickRecord } from '../pick-list.js';
@@ -1061,7 +1062,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
           'armies + 3 × income held over 3 turns of boards, with its `basis`; thresholds unmeasured, so advice, not a verdict; ' +
-          'an opponent with cards on, an unknown start or nothing in view has no upper bound, so `winning` is never read in a fogged card game; ' +
+          'an opponent is bounded above by all it can have received (its start, or an even share of the map; each turn\'s most it could earn; ' +
+          'a fixed Reinforcement card by the card clock) — a scenario\'s starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never read; ' +
           'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
           '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
           'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
@@ -1216,6 +1218,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
           : undefined;
       // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
       // #201: the planner reads it too — a decided game shortens its payback horizon.
+      const cardArmies = cardArmyCeiling(game.settings);
       const outlook = gameOutlook({
         graph,
         me: me.id,
@@ -1223,6 +1226,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext): void {
         settings,
         game: trackGame(game.players, game.settings, map),
         cards: rules.inPlay.length > 0,
+        // #205: what the card clock lets cards add, so a fogged card game can still be bounded.
+        ...(cardArmies ? { cardArmies } : {}),
       });
       const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
       // Players still in the game besides me (a break is worth less when the bonus's loss is shared).

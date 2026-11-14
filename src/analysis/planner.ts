@@ -32,6 +32,12 @@
 //          my commander's territory or the strike stack; not under No-Split), when that covers an
 //          attack sized for its defenders plus its owner's deploy there (rule 3's #120 sizing):
 //          breaks first, then a step into a positive bonus, then cheapest, then id ("army lead: …").
+//          #203: before that, such a territory in a positive bonus is a step into the bonus in the
+//          bonus passes (rules 4, 4a, 4f) with the same sure sizing, funded from this turn's deploy
+//          in rule 4f's order — the closest bonus's enemy member gets the deploy before a farther
+//          bonus does ("… player P's member, taken on my army lead", whichever pass takes it). One
+//          those passes do not take is an ordinary enemy territory again for every later rule (rule
+//          4e's fallback, 4g's card pieces, the lead strikes): its plain size, no sure sizing.
 //       2f. Front outlook (#167; adapting, contact and late phases): rule 4a's expansion share stands
 //          only when the main front (the biggest enemy stack next to me against my biggest stack
 //          beside it) is no worse than a stand-off with the income less the share deployed there each
@@ -817,7 +823,10 @@
 //     order attacks is named in one line, "Not attacking … next to mine", with its first reason: a
 //     special unit, the offence report's reason (a second front, unaffordable, a trade below even), a
 //     capture lowering income, its size against the most a neighbour can spare, a lead strike's sure
-//     size against what a neighbour can spare for it, or that it is no target of the plan's (rule 2;
+//     size against what a neighbour can spare for it (#203: and why its bonus's step failed when
+//     that pass tried it — the source it tried, what that source could spare and what of the deploy
+//     could still reach it then; or R3, a trade below even, rule 4d's frontier budget), or that it
+//     is no target of the plan's (rule 2;
 //     under another goal, naming the player's territories other rules do attack). The first
 //     NOT_ATTACKING_REASONS (by id) get a reason, the rest are named.
 //     Retaliation (#201; an FFA with two or more opponents): a capture that breaks a positive bonus
@@ -5130,6 +5139,35 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- 2. targets ----
   const targets = new Map<number, Target>();
+  /**
+   * #203: adapting in a free-for-all on a big army lead (the lead strikes' conditions, #167), an
+   * enemy member of a positive bonus next to mine (no special unit on it) is a step into that bonus
+   * like a neutral one — sized like a lead strike (its defenders plus what its owner may deploy
+   * there first), so the bonus passes fund it from this turn's deploy in rule 4f's order, under the
+   * Local Deployment pools. Left to the lead strikes, which run once the income is spent, the
+   * closest bonus's enemy member lost its deploy to a farther bonus's step.
+   */
+  const leadSteps = new Map<number, { player: number; defenders: number; extra: number }>();
+  const leadStepsOn = auto && balanced && profile.format === 'ffa' && profile.opponents >= 2 && leadLever && !noSplit;
+  /**
+   * #203: why a bonus pass's last try at a lead step failed, for its "Not attacking" line: short
+   * (the source it tried, what that source could spare and what of this turn's deploy could still
+   * reach it, both measured then; no source: none was free), refused by R3 or a trade below even,
+   * or stopped by rule 4d's frontier budget. A try that succeeds clears it.
+   */
+  type LeadTry =
+    | { kind: 'short'; from?: number; spare: number; reach: number }
+    | { kind: 'r3' }
+    | { kind: 'trade'; lost: number; killed: number }
+    | { kind: 'frontier' };
+  const leadTry = new Map<number, LeadTry>();
+  /** #203: a lead step's capture reason names it, in every bonus pass that takes it. */
+  const leadNote = (t: number) => {
+    const lead = leadSteps.get(t);
+    return lead
+      ? ` — player ${lead.player}'s member, taken on my army lead (${leadText()}): sure even if player ${lead.player} deploys its ~${lead.extra} there first (${lead.defenders} + ${lead.extra} defenders)`
+      : '';
+  };
   for (const t of [...g.territoryById.keys()].sort(byNum)) {
     if (mineSet.has(t)) continue;
     const sources = neighborsOf(g, t).filter((n) => mineSet.has(n));
@@ -5170,14 +5208,24 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       continue;
     }
     const enemy = st.owner.kind === 'player';
-    if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t)))) continue;
+    if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t)))) {
+      if (!leadStepsOn || unitsAt(t) > 0 || !g.map.bonuses.some((b) => b.value > 0 && bonusTs.get(b.id)!.includes(t))) continue;
+      const defenders = defenceAt(t);
+      const extra = reinforcementAt(t);
+      const sure = costAt(t, defenders + extra);
+      if (sure === null) continue;
+      leadSteps.set(t, { player: (st.owner as { playerId: number }).playerId, defenders, extra });
+      targets.set(t, { id: t, cost: sure, enemy, sources });
+      continue;
+    }
     const cost = costAt(t);
     if (cost === null) continue;
     targets.set(t, { id: t, cost, enemy, sources });
   }
 
   // Bonus passes work toward my own bonuses; under `balanced` enemy targets are only break candidates.
-  const bonusTarget = (t: number) => targets.has(t) && !(balanced && targets.get(t)!.enemy);
+  // #203: a lead step is a bonus target too.
+  const bonusTarget = (t: number) => targets.has(t) && !(balanced && targets.get(t)!.enemy && !leadSteps.has(t));
 
   // ---- 4d. frontier cost (#71) ----
   /** Armies a capture of `t` leaves there: its attack's survivors. */
@@ -5744,6 +5792,33 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     force?: { from: number; keep: number },
     fromConceded?: number,
   ): boolean => {
+    // #203: a lead step lands even if its owner deploys there first (its survivors counted so) —
+    // assumed while it is tried, kept only when it is taken.
+    const lead = leadSteps.get(t);
+    const sure = lead !== undefined && !worstCase.has(t);
+    if (sure) worstCase.set(t, lead.defenders + lead.extra);
+    shortAt = undefined;
+    const ok = captureOnce(t, reason, force, fromConceded);
+    if (sure && !ok) worstCase.delete(t);
+    if (lead) {
+      // Set inside captureOnce (control flow does not see it).
+      const short = shortAt as { from?: number; spare: number; reach: number } | undefined;
+      const r = refusal;
+      if (ok) leadTry.delete(t);
+      else if (r?.kind === 'r3') leadTry.set(t, { kind: 'r3' });
+      else if (r?.kind === 'trade') leadTry.set(t, { kind: 'trade', lost: r.lost, killed: r.killed });
+      else if (short) leadTry.set(t, { kind: 'short', ...short });
+    }
+    return ok;
+  };
+  /** #203: the source the last {@link captureOnce} found short, what it could spare and what deploy could reach it then. */
+  let shortAt: { from?: number; spare: number; reach: number } | undefined;
+  const captureOnce = (
+    t: number,
+    reason: string,
+    force?: { from: number; keep: number },
+    fromConceded?: number,
+  ): boolean => {
     refusal = undefined;
     if (spared.has(t)) return false;
     const tg = targets.get(t)!;
@@ -5775,6 +5850,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const need = src === undefined ? Infinity : needAt(src);
     // No single source can afford it: try a combined capture (never for a forced source).
     if (src === undefined || need > spareAt(src)) {
+      shortAt =
+        src === undefined ? { spare: 0, reach: 0 } : { from: src, spare: Math.max(0, spare(src)), reach: Math.max(0, spareAt(src)) };
       if (force) return false;
       if (tryCombined(t, reason)) return true;
       const trade = belowEven;
@@ -6021,6 +6098,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       combined: new Set(combined),
       survivorsAt: new Map(survivorsAt),
       staged: new Map(staged),
+      worstCase: new Map(worstCase),
       captureOrder: captureOrder.length,
       moves: moves.length,
       rationale: rationale.length,
@@ -6041,6 +6119,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       for (const [k, v] of snap.survivorsAt) survivorsAt.set(k, v);
       staged.clear();
       for (const [k, v] of snap.staged) staged.set(k, v);
+      // A lead step's sure sizing (#203) goes with its undone capture.
+      worstCase.clear();
+      for (const [k, v] of snap.worstCase) worstCase.set(k, v);
       captureOrder.length = snap.captureOrder;
       rationale.length = snap.rationale;
       warnings.length = snap.warnings;
@@ -6056,7 +6137,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const restore = snapshot();
     const before = incomeGain(heldNow());
     const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
-    const ok = todo.every((t) => tryCapture(t, `completes bonus ${bonusName(p.bonusId)} (${worth})`));
+    const ok = todo.every((t) => tryCapture(t, `completes bonus ${bonusName(p.bonusId)} (${worth})${leadNote(t)}`));
     // Rule 4c: completing it must not lower income (its members' negative bonuses included).
     if (ok && !p.focus && incomeGain(heldNow()) < before) {
       const net = incomeGain(heldNow()) - before;
@@ -6158,6 +6239,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const why = outgrows(t);
     if (why === null) return true;
     restore();
+    if (leadSteps.has(t)) leadTry.set(t, { kind: 'frontier' });
     if (!rationale.includes(why)) rationale.push(why);
     return false;
   };
@@ -6166,10 +6248,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       .filter((t) => bonusTarget(t) && !captured.has(t))
       .sort((a, b) => targetScoreCost(a) - targetScoreCost(b) || targets.get(a)!.cost - targets.get(b)!.cost || a - b);
     for (const t of todo) {
-      const stepping = !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
+      const lead = leadSteps.get(t);
+      // #203: a lead step never lowers income (as a lead strike).
+      if (lead && gainWith([t]) < 0) continue;
+      const stepping = !lead && !p.focus && gainWith([t]) < 0 ? stage(p, t) : undefined;
       if (stepping === null) continue;
       const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
-      const reason = stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${toFinish(p.cost, p.fogged, p.fogEach)})`;
+      const reason =
+        (stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${toFinish(p.cost, p.fogged, p.fogEach)})`) + leadNote(t);
       if (tryExpand(t, reason)) {
         anchor ??= moves[moves.length - 1]!.from;
         if (stepping) {
@@ -7590,6 +7676,15 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     reconsider();
     if (acting) withdraw();
   }
+
+  // #203: a lead step the bonus passes did not take is an ordinary enemy territory again: out of
+  // the targets (rule 4e's fallback, the card-piece pass and the lead strikes size it their own
+  // way), its sure cost and sizing gone with it.
+  for (const t of [...leadSteps.keys()])
+    if (!captured.has(t)) {
+      targets.delete(t);
+      leadSteps.delete(t);
+    }
 
   // ---- pass 3: other expansion ----
   if (goal !== 'complete-bonus') {
@@ -9259,7 +9354,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // enemy territory next to mine (no special unit on it, never one whose capture lowers income) is
   // attacked from the territory of mine beside it with the most to spare — armies beyond what holds
   // it once the target falls (rule 1's arithmetic, #172's two-step keep too; never a hold, a conceded
-  // border, my commander's territory or the strike stack; no deploys: the income is spent) — when
+  // border, my commander's territory or the strike stack; no deploys: the leftover has spent the
+  // income, and a positive bonus's enemy member was already a step in the bonus passes, #203) — when
   // that covers an attack sized for its defenders plus what its owner may deploy there first (rule
   // 3's #120 sizing, so it lands for sure). Breaks first, then a step into a positive bonus, then
   // cheapest, then id. Not under No-Split (an order carries the whole stack).
@@ -9912,8 +10008,27 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           .filter((x) => mineSet.has(x))
           .map((x) => ({ x, spare: leadSpareFor(x, n) }))
           .sort((a, b) => b.spare - a.spare || a.x - b.x)[0]!;
+        // #203: why its bonus's step failed, as measured when that pass tried it (later deploys,
+        // counted in the spare above, could not fund it then).
+        const tried = leadTry.get(n);
+        const deployText =
+          tried === undefined
+            ? ''
+            : tried.kind === 'r3'
+              ? `; its bonus's step was refused: what survives the attack would not hold it next turn (R3)`
+              : tried.kind === 'trade'
+                ? `; its bonus's step was refused: a trade below even (~${tried.lost} lost for ${tried.killed} killed)`
+                : tried.kind === 'frontier'
+                  ? `; its bonus's step was stopped by rule 4d's frontier budget: it adds a border facing an enemy`
+                  : tried.from === undefined
+                    ? `; when its bonus's step was tried, no neighbour of mine was free to attack it`
+                    : `; when its bonus's step was tried, ${label(tried.from)} could spare ${tried.spare} for it and ${
+                        tried.reach === 0
+                          ? 'none of this turn\'s deploy could still reach it'
+                          : `this turn's deploy could add at most ${tried.reach} there${local ? ' (Local Deployment)' : ''}: ${tried.spare + tried.reach} in all`
+                      }`;
         if (lead.spare < sure)
-          return `a lead strike (my army lead is ${leadText()}, over ${SECOND_FRONT_LEAD}×) needs ${sure} — sized for its ${defenceAt(n)} defenders plus player ${p}'s ~${extra} deploy — and the most a neighbour of mine can spare for it is ${lead.spare}${lead.spare > 0 ? ` (${label(lead.x)})` : ''}`;
+          return `a lead strike (my army lead is ${leadText()}, over ${SECOND_FRONT_LEAD}×) needs ${sure} — sized for its ${defenceAt(n)} defenders plus player ${p}'s ~${extra} deploy — and the most a neighbour of mine can spare for it is ${lead.spare}${lead.spare > 0 ? ` (${label(lead.x)})` : ''}${deployText}`;
       }
       return `${label(best.x)} could spare ${best.spare} for it, but it breaks no bonus and is no counter-attack, finishing blow or strike — the only reasons the plan attacks a player's territory (rule 2), besides rule 4e's fallback when nothing else is captured${
         !ffaLead

@@ -125,9 +125,9 @@ describe('gameOutlook (#178)', () => {
     const b = (a: number) => board([mine(1, a), mine(2, a), mine(3, a), neutral(4, 2), neutral(5, 2), mine(6, 3), foe(7, 2), fogged(8)]);
     const start = { territories: 2, armiesPerTerritory: 5 };
     const o = gameOutlook({ graph: gx, me: ME, boards: turns(8, [b(60), b(60), b(60)]), game: { ...game, start } });
-    // Turns 1–8 at most 5 + 10 = 15 each, turns 9–10 (observed: X is broken) at most 5:
-    // 10 + 8 × 15 + 2 × 5 = 140, plus 3 × 5 = 155.
-    expect(o.turns.at(-1)!.strongest).toMatchObject({ playerId: FOE, low: 2 + 3 * 5, high: 155 });
+    // Turns 1–7 at most 5 + 10 = 15 each, turns 8–10 (#205: on my boards X is broken) at most 5:
+    // 10 + 7 × 15 + 3 × 5 = 130, plus 3 × 5 = 145.
+    expect(o.turns.at(-1)!.strongest).toMatchObject({ playerId: FOE, low: 2 + 3 * 5, high: 145 });
     expect(o.turns.map((t) => t.state)).not.toContain('winning');
     expect(o.state).not.toBe('winning');
   });
@@ -151,10 +151,14 @@ describe('gameOutlook (#178)', () => {
     });
     const s = o.turns.at(-1)!.strongest!;
     // It could really hold 15 + 12 × 15 + 3 × 15 = 240; the bound charges the whole map's
-    // territory income, max(5, floor(41 / 2)) = 20, on every turn: 15 + 12 × 20 + 3 × 20 = 315.
+    // territory income, max(5, floor(41 / 2)) = 20, on every turn before my boards, and (#205) on
+    // turns 10–12 the 31 territories I do not see someone else hold, floor(31 / 2) = 15:
+    // 15 + 9 × 20 + 3 × 15 + 3 × 15 = 285.
     expect(s.high).toBeGreaterThanOrEqual(240);
-    expect(s).toMatchObject({ playerId: FOE, high: 315 });
-    expect(o.turns.map((t) => t.state)).not.toContain('winning');
+    expect(s).toMatchObject({ playerId: FOE, high: 285 });
+    // Turn 10's bound (15 + 9 × 20 + 15 + 3 × 15 = 255) is under my 615 ÷ 2.4, and it really could
+    // hold no more than 210 then: winning that turn is sound. By turn 12 the bound no longer is.
+    expect(o.turns.map((t) => t.state)).toEqual(['winning', 'even', 'even']);
   });
 
   it('a bounded opponent with no strength at all is dominated: winning', () => {
@@ -176,12 +180,73 @@ describe('gameOutlook (#178)', () => {
     expect(o.basis).toMatch(/teammate can transfer armies.*not a ceiling/i);
   });
 
-  it('counts an opponent still playing with nothing in view as unbounded', () => {
+  it('counts an opponent still playing with nothing in view as unbounded without its start, and (#205) bounds it by what it received with one', () => {
     const hidden = board([mine(1, 30), mine(2, 30), mine(3, 30), neutral(4, 2), fogged(5), fogged(6), fogged(7), fogged(8)]);
     const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [hidden, hidden, hidden]), game });
     expect(o.turns.at(-1)!.strongest).toMatchObject({ playerId: FOE, low: 3 * 5, high: null });
     expect(o.turns.at(-1)!.ratio.low).toBe(0);
     expect(o.state).toBe('even');
+    // Started with 2 × 5: by turn 6 at most 10 + 6 × 5 = 40, plus 3 × 5 = 55.
+    const known = gameOutlook({ graph: g, me: ME, boards: turns(4, [hidden, hidden, hidden]), game: { ...game, start: { territories: 2, armiesPerTerritory: 5 } } });
+    expect(known.turns.at(-1)!.strongest).toMatchObject({ playerId: FOE, low: 3 * 5, high: 55 });
+  });
+
+  describe('#205: a fogged opponent bounded by what it can have received', () => {
+    const OTHER = 30;
+    const ffa = { players: [{ id: ME }, { id: FOE }, { id: OTHER }] };
+    // A 4-player-style fogged FFA on the line: me on 1–3, each opponent with one territory in view.
+    const fog = (a: number) => board([mine(1, a), mine(2, a), mine(3, a), neutral(4, 2), fogged(5), foe(6, 2), fogged(7), foe(8, 3, OTHER)]);
+
+    it('the starts unknown under an even split: at most ⌈territories ÷ players⌉ × armies each, so a fogged FFA can read winning', () => {
+      const game = { ...ffa, startUnknown: 'full distribution', startArmiesPerTerritory: 5 };
+      const o = gameOutlook({ graph: g, me: ME, boards: turns(2, [fog(40), fog(40), fog(40)]), game });
+      // Started with at most ⌈8 ÷ 3⌉ = 3 territories × 5 = 15; by turn 4 at most 15 + 4 × 5 = 35
+      // received, plus 3 × 5: 50 against my 120 + 15 = 135, 2.7×.
+      const last = o.turns.at(-1)!;
+      expect(last.strongest).toMatchObject({ high: 50 });
+      expect(last.ratio.low).toBeGreaterThanOrEqual(OUTLOOK_RATIO);
+      expect(o.state).toBe('winning');
+      // A scenario's starts stay unknown: unbounded, never winning.
+      const scenario = gameOutlook({ graph: g, me: ME, boards: turns(2, [fog(40), fog(40), fog(40)]), game: { ...ffa, startUnknown: 'scenario' } });
+      expect(scenario.turns.at(-1)!.strongest!.high).toBeNull();
+      expect(scenario.state).not.toBe('winning');
+    });
+
+    it('a player who never took a seat (Invited, Declined, RemovedByHost) does not shrink the even share', () => {
+      const game = { ...ffa, startUnknown: 'full distribution', startArmiesPerTerritory: 5 };
+      const unseated = [
+        { id: 41, state: 'Declined' },
+        { id: 42, state: 'RemovedByHost' },
+        { id: 43, state: 'Invited' },
+      ];
+      const listed = { ...game, players: [...ffa.players, ...unseated] };
+      const o = gameOutlook({ graph: g, me: ME, boards: turns(2, [fog(40), fog(40), fog(40)]), game: listed });
+      // Still ⌈8 ÷ 3⌉ = 3 territories × 5, not ⌈8 ÷ 6⌉ = 2 × 5: high 50, as with the seated three alone.
+      expect(o.turns.at(-1)!.strongest).toMatchObject({ high: 50 });
+    });
+
+    it('cards on: a fixed Reinforcement card adds at most what the card clock lets it hold', () => {
+      const start = { territories: 2, armiesPerTerritory: 5 };
+      const cardArmies = { armiesPerCard: 5, pieces: 4, initialPieces: 0, piecesPerTurn: 1 };
+      const o = gameOutlook({ graph: g, me: ME, boards: turns(2, [fog(40), fog(40), fog(40)]), game: { ...ffa, start }, cards: true, cardArmies });
+      // Turn 4: 10 + 4 × 5 = 30 received and no card yet (3 pieces); the next 3 turns at most 3 × 5
+      // and one card (6 pieces by turn 7): 30 + 15 + 5 = 50.
+      expect(o.turns.at(-1)!.strongest).toMatchObject({ high: 50 });
+      expect(o.state).toBe('winning');
+      // Cards on without that bound (a Gift card, a progressive Reinforcement card): unbounded.
+      const loose = gameOutlook({ graph: g, me: ME, boards: turns(2, [fog(40), fog(40), fog(40)]), game: { ...ffa, start }, cards: true });
+      expect(loose.turns.at(-1)!.strongest!.high).toBeNull();
+    });
+
+    it('a turn with a board earns at most the base plus the bonuses nobody else visibly holds that turn', () => {
+      // Bonus X {6, 7, 8} worth 10, broken by me on every board I have (turns 1–3).
+      const gx = buildGraph({ ...line(8), bonuses: [{ id: 100, name: 'X', value: 10, territoryIds: [6, 7, 8], bonusIds: [] }] });
+      const b = board([mine(1, 30), mine(2, 30), mine(3, 30), neutral(4, 2), neutral(5, 2), mine(6, 3), foe(7, 2), fogged(8)]);
+      const start = { territories: 2, armiesPerTerritory: 5 };
+      const o = gameOutlook({ graph: gx, me: ME, boards: turns(1, [b, b, b]), game: { ...game, start } });
+      // 10 + 3 × 5 = 25, plus 3 × 5: 40 (not 10 + 3 × 15 + 3 × 15 = 100).
+      expect(o.turns.at(-1)!.strongest).toMatchObject({ playerId: FOE, high: 40 });
+    });
   });
 
   it('leaves out teammates and players no longer playing, and is deterministic', () => {
