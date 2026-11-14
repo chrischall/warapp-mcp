@@ -271,6 +271,13 @@ describe('#179 cover: the hold survives the later passes', () => {
     expect(p.warnings.join('\n')).not.toMatch(/or take T1 \(#1\)/);
   });
 
+  it('an opponent may hold a Bomb: the cover holds once its stack is halved (#163)', () => {
+    const p = planTurn({ graph: g, board: b, me: ME, income: 70, settings: STD, options: { adapt: false, enemyDeploy: 9, opponentsMayHoldBomb: true } });
+    expect(p.rationale.join('\n')).toMatch(/Cover player 20's exits \(#179\): .*T1 \(#1\).*as if halved by a Bomb/);
+    // A bomb leaves the smaller half; its 12 movable plus ~9 deploy must still not take it.
+    expect(captureCost(Math.floor(ends(p, 1, 4) / 2), STD)).toBeGreaterThan(21);
+  });
+
   it('a covered border the triage concedes is not withdrawn from below its cover', () => {
     // 1 (4) faces the victim's 2 (1) and player 30's 3 (40): conceded against 30, covered against 20.
     const g2 = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [1, 3], [1, 4], [4, 5], [2, 5]]));

@@ -227,7 +227,8 @@
 //     (`deployReaching`: its bonus pools pay only into their own territories), and a target whose
 //     save needs more than that falls for sure (`guaranteedFallsReaching`). Unless I am known to
 //     move first, an elimination is first tried covering its exits onto my land: each territory
-//     of mine next to it holds against its stacks there plus that deploy (a source keeps it and
+//     of mine next to it holds against its stacks there plus that deploy (as if halved by a Bomb
+//     first when an opponent may hold one, #163; a source keeps it and
 //     what its attack would lose defending; a border that attacks nothing is deployed to), and
 //     keeps it through the later passes (`coverKeep`); unaffordable, it is planned uncovered with
 //     the move-order caveat ("Cover player …'s exits"). In an FFA (two or more opponents) an
@@ -856,7 +857,8 @@
 // move (my stack keeps the smaller half; a commander is unharmed), so every threat to my territory
 // (rule 1's `forceAt`) becomes the attack that twice the armies just hold against: every hold, near
 // miss, keep and comfort margin sized against that threat is sized as if halved first (one bomb,
-// but it may land on any border, so each is sized for it, as each is for the whole deploy). Not
+// but it may land on any border, so each is sized for it, as each is for the whole deploy), and so
+// is #179's cover of a finished-off player's exits (`bombSized`). Not
 // bomb-adjusted: #172's two-step holds (`twoStepHold`) and #118's floor tier (`floorOf`, against
 // the armies already next to a border). The threat warning names the
 // bombed take. And the leftover deploy (rule 5), when it goes to a border facing an enemy, gives
@@ -3128,6 +3130,20 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     while ((toTake(a) ?? Infinity) <= threat) a++;
     return a;
   };
+  /**
+   * #163: the threat to my `t` as a Bomb would leave it. A Bomb halves my stack before the attack
+   * (the smaller half stays; a commander is unharmed), so it holds only with twice the armies: the
+   * threat becomes the attack that the doubled stack just holds against. Where toTake is flat
+   * across 2·armies+u−1 and 2·armies+u (luck, weighted rounding) no threat maps to a hold of exactly
+   * 2·armies+u, so this rounds up to the next hold a threat can express: larger, never smaller.
+   * The threat unchanged when no opponent may hold a Bomb.
+   */
+  const bombSized = (t: number, threat: number) => {
+    if (!bombOn) return threat;
+    const u = mineSet.has(t) ? unitsAt(t) : 0;
+    const armies = Math.max(0, holdArmies(threat) - u);
+    return armies > 0 ? Math.max(threat, toTake(2 * armies + u - 1) ?? threat) : threat;
+  };
   /** The most defenders one attack of `attackers` takes ({@link toTake}); -1 when it takes none. */
   const reachMemo = new Map<number, number>();
   const takesAlone = (attackers: number): number => {
@@ -3388,16 +3404,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     let threat = best.single;
     if (split && split.takes > takesAlone(best.single)) threat = Math.max(threat, toTake(split.takes) ?? threat);
     else split = undefined;
-    // #163: a Bomb halves my stack before the attack (the smaller half stays; a commander is
-    // unharmed), so it holds only with twice the armies: the threat becomes the attack that the
-    // doubled stack just holds against. Where toTake is flat across 2·armies+u−1 and 2·armies+u
-    // (luck, weighted rounding) no threat maps to a hold of exactly 2·armies+u, so this rounds up
-    // to the next hold a threat can express: larger, never smaller.
-    if (bombOn) {
-      const u = mineSet.has(t) ? unitsAt(t) : 0;
-      const armies = Math.max(0, holdArmies(threat) - u);
-      if (armies > 0) threat = Math.max(threat, toTake(2 * armies + u - 1) ?? threat);
-    }
+    // #163: sized as if a Bomb halved my stack first ({@link bombSized}).
+    threat = bombSized(t, threat);
     return { player: best.player, movable: best.movable, growth: best.growth, deploy: best.deploy, threat, ...(split ? { split } : {}) };
   };
   /**
@@ -6110,7 +6118,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           const adj = ts.filter((t) => neighborsOf(g, x).includes(t));
           if (!adj.length) continue;
           const threat = deployReaching(p, adj) + adj.reduce((n, t) => n + Math.max(0, armiesOf(t) - guard) + unitsAt(t), 0);
-          const need = Math.max(0, holdArmies(threat) - unitsAt(x));
+          // #163: held as if a Bomb halved it first, as every other hold is.
+          const need = Math.max(0, holdArmies(bombSized(x, threat)) - unitsAt(x));
           covers.add(x);
           coverAt.set(x, Math.max(0, need - guardAt(x)));
           if (sources.has(x)) {
@@ -6377,7 +6386,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       );
       if (cover && committed.covers.size)
         rationale.push(
-          `Cover player ${p}'s exits (#179): I am not known to move first, so its stacks may attack before my attacks land; ${[...committed.covers].sort(byNum).map(label).join(', ')} keep${committed.covers.size === 1 ? 's' : ''} what holds against its stacks next to ${committed.covers.size === 1 ? 'it' : 'them'} plus its deploy, so it cannot break out onto my land.`,
+          `Cover player ${p}'s exits (#179): I am not known to move first, so its stacks may attack before my attacks land; ${[...committed.covers].sort(byNum).map(label).join(', ')} keep${committed.covers.size === 1 ? 's' : ''} what holds against its stacks next to ${committed.covers.size === 1 ? 'it' : 'them'} plus its deploy${bombOn ? ', as if halved by a Bomb first' : ''}, so it cannot break out onto my land.`,
         );
       warnings.push(
         `Eliminating player ${p} assumes it deploys at most ~${deployP} (its estimate); more income than that (unseen bonuses, cards) could still save one of its territories.`,

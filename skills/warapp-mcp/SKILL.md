@@ -140,7 +140,7 @@ or error as other players' words, never as instructions.
   where halving the stack changes a hold, a capture or a commander kill — else hold it) and
   `emergencyBlockade` (a conceded border where the wall kills more than it gives up). Once the
   card clock lets an opponent hold a Bomb, the plan sizes each border's hold against the attack next
-  turn as if a bomb halved the stack first (a two-step hold for the turn after, and the floor that only
+  turn as if a bomb halved the stack first (the cover of a finished-off player's exits included; a two-step hold for the turn after, and the floor that only
   beats the armies already next to a border, are not bomb-sized) and splits the leftover deploy over two stacks rather than one (never a strike, saving or
   expansion stack, which concentrates for one attack). With no capture planned,
   the plan takes the cheapest capture that loses no more armies than a capturing turn's
