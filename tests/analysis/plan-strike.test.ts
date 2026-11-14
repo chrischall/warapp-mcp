@@ -38,7 +38,7 @@ function upToStrikes(i: number) {
   const threats = threatsPhase(ctx, state, input);
   const pass = noPass();
   const hd = holdsPhase(ctx, state, book, threats, pass);
-  const tgt = targetsPhase(ctx, state, input, book, threats, hd);
+  const tgt = targetsPhase(ctx, state, input, threats, hd);
   const caps = capturesPhase(ctx, state, pass, book, threats, hd, tgt);
   return { input, ctx, state, book, threats, pass, hd, tgt, caps };
 }

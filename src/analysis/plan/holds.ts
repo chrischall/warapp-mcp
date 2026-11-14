@@ -681,7 +681,7 @@ export function floorTier(
   const { warnings, rationale, locked, captured } = ps;
   const { deploy, undeploy, pools, roomAt } = book;
   const local = pools !== null && pools.bonuses.length > 0;
-  const { chainAt, stacksAt, forceAt, borders } = threats;
+  const { chainAt, stacksAt, borders } = threats;
   const { threatened, conceded, units, holds } = hb;
   const {
     uneconomic, acting, concedeUnaffordable, heldStack, hold, heldBorders, commanderHeld, buildUnits, unitBorders,

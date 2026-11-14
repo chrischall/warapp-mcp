@@ -20,7 +20,6 @@ import {
   type PlanInput,
   type Target,
 } from '../planner.js';
-import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Threats } from './threats.js';
@@ -62,22 +61,20 @@ export function targetsPhase(
   pc: PlanCtx,
   ps: PlanState,
   input: PlanInput,
-  book: DeployBook,
   threats: Threats,
   hd: Holds,
 ) {
-  const c0 = breakTargets(pc, ps, input);
-  const c1 = { ...c0, ...captureTargets(pc, ps, input, threats, hd, c0) };
-  const c2 = { ...c1, ...frontierCosts(pc, ps, book, threats, hd, c1) };
+  const c0 = breakTargets(pc, input);
+  const c1 = { ...c0, ...captureTargets(pc, ps, input, threats, c0) };
+  const c2 = { ...c1, ...frontierCosts(pc, threats, hd, c1) };
   const c3 = { ...c2, ...bonusScoring(pc, ps, threats, c2) };
-  const c4 = { ...c3, ...closestBonus(pc, ps, input, threats, hd, c3) };
+  const c4 = { ...c3, ...closestBonus(pc, ps, input, c3) };
   return c4;
 }
 
 /** The enemy bonuses I could break and the counter-attacks (under `balanced`, #72). */
-export function breakTargets(pc: PlanCtx, ps: PlanState, input: PlanInput) {
+export function breakTargets(pc: PlanCtx, input: PlanInput) {
   const { g, me, foe, balanced, territories: state, mineSet, unitsAt, costAt } = pc;
-  const { } = ps;
   // ---- enemy bonuses I could break (under `balanced`) ----
   // A bonus is breakable when every territory in it is visible and held by one enemy, or (#72)
   // when the opponent tracker infers it behind the fog: its track (over at least
@@ -187,7 +184,6 @@ export function captureTargets(
   ps: PlanState,
   input: PlanInput,
   threats: Threats,
-  hd: Holds,
   prev: ReturnType<typeof breakTargets>,
 ) {
   const {
@@ -196,7 +192,6 @@ export function captureTargets(
   } = pc;
   const { warnings } = ps;
   const { reinforcementAt, hiddenFoe, hiddenMovable, hiddenPool } = threats;
-  const { } = hd;
   const { breakMember, counterAt } = prev;
   // ---- 2. targets ----
   const targets = new Map<number, Target>();
@@ -282,15 +277,11 @@ export function captureTargets(
 /** Rule 4d: what a capture adds to the frontier (#71), and the offence report (#72). */
 export function frontierCosts(
   pc: PlanCtx,
-  ps: PlanState,
-  book: DeployBook,
   threats: Threats,
   hd: Holds,
   prev: ReturnType<typeof breakTargets> & ReturnType<typeof captureTargets>,
 ) {
   const { g, guarded, mineSet, armiesOf, unitsAt, defenceAt, rates } = pc;
-  const { } = ps;
-  const { } = book;
   const { holdArmies, threatAt } = threats;
   const { conceded, stood } = hd;
   const { targets } = prev;
@@ -591,14 +582,10 @@ export function closestBonus(
   pc: PlanCtx,
   ps: PlanState,
   input: PlanInput,
-  threats: Threats,
-  hd: Holds,
   prev: ReturnType<typeof breakTargets> & ReturnType<typeof captureTargets> & ReturnType<typeof frontierCosts> & ReturnType<typeof bonusScoring>,
 ) {
   const { g, me, income, profile, territories: state, label, bonusName, mine, mineSet, bonusTs, toTake } = pc;
   const { rationale } = ps;
-  const { } = threats;
-  const { } = hd;
   const { fogNote, plans } = prev;
   // ---- #101: commit to the closest bonus ----
   // While no bonus is held (and in the opening and expansion phases), expansion goes to the bonus

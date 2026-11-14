@@ -2,6 +2,24 @@
 // board. Pure and deterministic (every choice tie-breaks on ascending id); no
 // I/O. Advisory only — it never submits orders.
 //
+// Where each rule lives. `planPass` (below) runs the phases in order; each phase is a module
+// under src/analysis/plan/ taking `(ctx, state)`:
+//   estimates, the enemy estimates and the plan context ........ plan/estimates.ts
+//   the deploy book (budget, guard, deploys, pools) ............. plan/orders.ts
+//   1. defence, 1t. trend ....................................... plan/threats.ts
+//   1a. triage, 1h, 1b, 1c, 1g / #122 garrisons, #172 ........... plan/holds.ts
+//   2. targets, 4. bonus scoring, 4d. frontier cost, 4f / #101 .. plan/targets.ts
+//   R3 / 4b, No-Split, 3a. combined, passes 1 and 2 ............. plan/captures.ts
+//   1e, 1s, #165, 0p.3c strike stack, #102 spend, #167 lead ..... plan/strike.ts
+//   4e. never stand still ...................................... plan/stand-still.ts
+//   5. the leftover deploy ..................................... plan/leftover.ts
+//   6. transfers, #125 staging ................................. plan/transfers.ts
+//   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
+//   7r. reports, the offence report, the final plan ............. plan/report.ts
+// Still inline in planPass (ordering dependencies on the shared state): rules 0p.1 / 0p.2 and
+// 4a's `balanced` greedy, pass 3, 4g card pieces, rule 4c's guard, No-Split's whole-stack carry
+// (#124), and S2's efficient sizes with their #120 warnings.
+//
 // Rules, in decision order:
 //  0p. Game profile (`gameProfile`, src/analysis/profile.ts), computed on every plan and
 //     returned as `profile`: format (1v1 / ffa / teams), phase (opening / expansion /
@@ -2490,7 +2508,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   } = hd;
 
   // ---- 2. targets, 4d. frontier cost, bonus scoring, #101 (plan/targets.ts) ----
-  const tgt = targetsPhase(pc, ps, input, book, threats, hd);
+  const tgt = targetsPhase(pc, ps, input, threats, hd);
   const {
     breakable, counterAt, targets, leadSteps, targetScoreCost, landScoreCost, offence, skipOffence, plans,
     economicMember, uneconomicMember, negativeMember, ratio, committing, byCloseness, retakeChecks, retakeWarning,

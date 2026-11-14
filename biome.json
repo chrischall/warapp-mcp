@@ -38,7 +38,7 @@
 			}
 		},
 		{
-			"includes": ["src/analysis/planner.ts"],
+			"includes": ["src/analysis/planner.ts", "src/analysis/plan/**"],
 			"linter": {
 				"rules": {
 					"complexity": { "useOptionalChain": "off" },
