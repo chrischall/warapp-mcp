@@ -682,6 +682,31 @@ each card (a teammate for what they entered, me for my plays and discards, nobod
   it and sends it with `channel: 'team'`. In a team everything true and concrete is shared.
 - `warapp_join_game` takes a `team`, and its preview lists the seats on it by id, human or AI.
 
+*As built (C4):* `warapp_team_brief` (`src/tools/team-brief.ts`, read-only, never sends) resolves the teams
+(`resolveTeamsFor`, after the phase and seat refusals) and refuses outside a team game or a game neither picking
+nor playing. Its pure parts are `src/analysis/team-brief.ts`. **Picking:** my list (`GetTerritoryPicks` for me),
+each teammate's (`readTeammatePicks`: `TeammateOrders` picks, else V6; an AI seat or a refusal is `null`), the
+`overlap` (both 1-based positions) and the positive bonuses with a member on both lists (`sharedBonuses`,
+superbonuses included). **Turn 1:** the picks my kept list lost (`picksLost`), `teammate` when the first board shows
+it as a teammate's, `opponent` otherwise; the award is computed with `readAward` and never written (plan_turn keeps
+it). **Each turn:** it plans exactly as plan_turn would (`livePlanSetup` with `award: false`, `planTurn`) and writes
+nothing — no board cache, no outlook; `opponents` lists every opponent still playing with its estimate (the plan's
+`planEnemyEstimates`) and a one-line `basis` per source (`null` when nothing of theirs is in view); `deploys`,
+`attacks`, `conceded` and `bonusesCompleted` are the plan's; `asks` are each joint capture (keep the attack, and
+`mustGoFirst` under a cyclic order) and each conceded border of mine a teammate's stack borders (`cover`: advice to
+them — a move onto my territory is V7); `offers` are the plan's `team.support`; `cards` the plays (with an advised
+Order Priority) and discards, and the cards left to a teammate (C3.7); `conflicts.list` has `same-target` (we both
+attack it, unless a joint capture — `joint`), `bonus` (their attack in a bonus my plan completes), `attacks-me`
+(`attack_teammates` onto mine) and `onto-mine` (a plain order onto mine, V7), with `conflicts.read: null` when no
+teammate's orders were read (unknown). Third-party names go through `untrustedText`. **Joining:** `warapp_join_game`
+takes `team` (implies `allow_team`): refused outside a team game, with random teams, and when the team has no open
+seat — "full" when a seated player is on it, else "not offered", naming the teams with an open seat. The choice is
+the int32 AcceptOpenSeat already sends: in the bundle the client collects the open seats' distinct teams and, when
+there are several, asks which and passes the chosen one there (read 2026-11-15; golden-pinned, UNVERIFIED live). The
+preview's `team` lists the teams offered, the open seats on the chosen team and its seated players by in-game id,
+`human` or `ai` (`GameInfoPlayer`'s 5th field is IsAI in the bundle; unverified live). No 1v1 or FFA plan changes:
+the golden corpus is untouched (no planner change).
+
 ## 10. Part D — cards for diplomacy and teams
 
 Coordinate with #163. Encoders for Gift, Diplomacy, Sanctions, Spy-type cards and Airlift from the
@@ -724,6 +749,9 @@ with `channel` / `to` / `commitments`, `warapp_record_agreement`, `warapp_get_re
 - **Team games.** Part C is not built, so the skill carries only a placeholder: team coordination tools are
   coming; meanwhile `channel: "team"` for plain facts. The `warapp_get_team` / `warapp_team_brief` lines
   above arrive with C1/C4.
+  *As built (C4):* the placeholder is replaced: the skill's "Team games" bullet now says to call
+  `warapp_get_team` and `warapp_team_brief` every turn, the brief early and the commit late, what each stage of
+  the brief carries, and that in a team everything true and concrete is shared.
 - **Notes.** E1 is the skill only; the strategy notes and any `NoteCondition` for private messaging or an
   active relation are left to the notes step.
 

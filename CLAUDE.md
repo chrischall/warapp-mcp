@@ -213,6 +213,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `game.moveOrder`) are advisory: a move onto a teammate is V7, so neither is ever in `orders`. Cards
   (`src/team-cards.ts`): a card a teammate entered a play or discard of leaves my hand before `chooseCardPlays`, and
   plan_turn's `cards.team.roles` says who plays each card (V5, V8 unverified).
+- **The team brief (C4) is `warapp_team_brief`, read-only: data for a team-chat message, never sent.** It plans
+  as plan_turn does (`livePlanSetup`, `award: false`) and writes nothing (no board cache, award or outlook); the
+  pure parts are `src/analysis/team-brief.ts` (`opponentIncomes`/`incomeBasis`, `briefConflicts`, `briefAsks`,
+  `pickOverlap`, `picksLost`). Stages: picking (my list, teammates' lists, overlap, shared bonuses), turn 1 (the
+  picks my kept list lost, `readAward` computed without writing), each turn (incomes and basis, deploys and
+  attacks, asks, offers = `team.support`, cards, conflicts; `conflicts.read: null` = no teammate orders read).
+  `warapp_join_game` takes `team`: refused outside a team game, with random teams, or when full or not offered;
+  it is the int32 AcceptOpenSeat already sends (the client's team picker passes the chosen team: bundle, UNVERIFIED
+  live). The preview lists that team's seats by in-game id, human or AI (`GameInfoPlayer` field 4 is IsAI).
 - **The agreement ledger (part A2 of `docs/PLAN-TEAMS.md`).** An agreement (a truce) exists only when
   recorded with `warapp_record_agreement` (structured terms; chat is never parsed into one), at
   `<dataDir>/relations/<gameId>-<playerId>.json` (`src/relations-store.ts`: one file per account, ids,

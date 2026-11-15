@@ -193,6 +193,10 @@
       "description": "Read your team in a team game: teammates (human or AI, committed or not, visible income, entered orders or picks), the team hand and unread team chat"
     },
     {
+      "name": "warapp_team_brief",
+      "description": "The facts for a team-chat message, never sent: pick-list overlap, picks lost, opponent incomes, my plan, asks, offers, cards and conflicts with my teammates' orders"
+    },
+    {
       "name": "warapp_send_chat",
       "description": "Post a game chat message, public or private (confirm-gated)"
     },
