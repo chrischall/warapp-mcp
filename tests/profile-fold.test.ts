@@ -171,6 +171,26 @@ describe('foldGame', () => {
     }
   });
 
+  it('refuses a store at another version, and reads malformed parts of a version-1 store loosely (dropped, then written back without them)', async () => {
+    const dir = tmp();
+    await foldGame(dir, fold({ seats: [human(BOB, habits([1, 1]))] }), {});
+    const other = JSON.stringify({ ...JSON.parse(readFileSync(profilePlayersPath(dir), 'utf8')), version: 2 });
+    writeFileSync(profilePlayersPath(dir), other);
+    expect(await foldGame(dir, fold({ gameId: GAME2, seats: [human(BOB, habits([1, 1]))] }), {})).toBe('failed');
+    expect(readFileSync(profilePlayersPath(dir), 'utf8')).toBe(other);
+
+    const dir2 = tmp();
+    await foldGame(dir2, fold({ seats: [human(BOB, habits([1, 1]))] }), {});
+    const stored = JSON.parse(readFileSync(profilePlayersPath(dir2), 'utf8'));
+    const pk = Object.keys(stored.players)[0]!;
+    stored.players[pk].entries = 'not an array';
+    stored.players['f'.repeat(32)] = { seq: 'x' };
+    writeFileSync(profilePlayersPath(dir2), JSON.stringify(stored));
+    expect(await foldGame(dir2, fold({ gameId: GAME2, seats: [human(BOB, habits([1, 1]))] }), {})).toBe('folded');
+    const after = JSON.parse(readFileSync(profilePlayersPath(dir2), 'utf8'));
+    expect(Object.keys(after.players)).toEqual([pk]);
+  });
+
   it('reads an empty history before anything is folded, and writes no salt for a read', async () => {
     const dir = tmp();
     const h = await history(dir, BOB);

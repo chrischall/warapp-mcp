@@ -31,8 +31,21 @@
 // shows it finished (warapp_get_game, warapp_wait_for_turn's re-read); its per-game file is then
 // marked `folded: 'live'` and kept until the age rule deletes it (part C, which would read the
 // game's history first, is not built), and a file reaching that age unfolded is folded with every
-// ending `unknown`, then deleted. A store or salt that exists but cannot be parsed is never
-// overwritten: reads say `unreadable`, folds fail.
+// ending `unknown`, then deleted. A store or salt that exists but is not JSON, not an object or not
+// version 1 is never overwritten: reads say `unreadable`, folds fail. Inside a version-1 store the
+// read is loose, like the board cache's: a malformed player record, entry or total is dropped (an
+// `entries` that is not an array reads as none), and the next fold writes the store back without it.
+//
+// Folding is idempotent only while the game's entry is still stored: `foldGame` finds "this game
+// again" among a player's last `MAX_PROFILE_ENTRIES` entries and the population's last
+// `MAX_POPULATION_ENTRIES`. A game folded again after its entry was dropped (part C's history
+// replacement arriving that late) is faded and counted a second time. Likewise the
+// `MAX_PROFILE_GAME_FILES` bound can fold a game still in progress (endings `unknown`) and delete
+// its file; if play goes on, `recordBehaviour` starts a new file with the later turns only, and the
+// fold at the finish replaces the earlier entry with that shorter one, so the turns before the
+// eviction leave the totals. Both are rare today (30 games with one opponent, 200 games in play);
+// part C must guard them (a kept tombstone of folded keys, or merging into the stored entry) before
+// it relies on refolding.
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -455,7 +468,11 @@ function entryFrom(v: unknown): ProfileEntry | undefined {
   return { key: v.key, format: v.format, players: v.players, turnsSeen: v.turnsSeen, source: v.source, habits, ...(ending ? { ending } : {}), weight: v.weight };
 }
 
-/** Read a store: `missing` (empty), the parsed object, or `unreadable` (exists, not JSON or not an object). */
+/**
+ * Read a store: `missing` (empty), the parsed object, or `unreadable` (exists, not JSON or not an
+ * object). Callers refuse a wrong version as `unreadable` and read the rest loosely: a malformed part
+ * is dropped, never a reason to refuse the store.
+ */
 async function readStore(path: string): Promise<Rec | 'missing' | 'unreadable'> {
   let text: string;
   try {
@@ -518,7 +535,9 @@ const bump = (t: Partial<Record<ProfileFormat, Habits>>, f: ProfileFormat, h: Ha
  * the totals moved by the difference from the entry already stored for this game (zero the first
  * time), a player's totals faded once when the game is new to it; AI seats into the AI pool only. A
  * `live` entry never replaces a `history` one. `folded` when written; `off` when profiling is off;
- * `failed` when it could not be (a store or salt that cannot be parsed is never overwritten). Never
+ * `failed` when it could not be (a store or salt that is not JSON, not an object or not version 1 is
+ * never overwritten; malformed parts inside a version-1 store are dropped on read, so they are not
+ * written back). Idempotent only while this game's entry is still stored (see the file header). Never
  * throws.
  */
 export async function foldGame(dir: string, input: FoldInput, env: EnvSource = process.env): Promise<'folded' | 'off' | 'failed'> {
