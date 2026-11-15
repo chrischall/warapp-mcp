@@ -215,9 +215,10 @@ hit first, a fog reveal on X, orders unknown), and that re-deriving from the sam
   re-observes that turn without them.
 - With `WARAPP_PLAYER_PROFILE=off` nothing is read or written.
 - Never a teammate (principle 3): nothing is kept in a game of more than two seats whose teams
-  `resolveTeams` could not read (`known: false`: GameFeed carries none and the game list failed, did
-  not hold the game, left a seat out or was not trusted), since any player may be my teammate; the
-  tool then reports `profile: not-kept`. Every write also drops what the file holds for a player now
+  `resolveTeams` could not read (`known: false`: GameFeed carries a team on some seats but not all, or
+  none and the game list failed, did not hold the game, left a seat out or was not trusted), since any
+  player may be my teammate; the tool then reports `profile: not-kept` and flags every other player
+  `mayBeTeammate: true`. Every write also drops what the file holds for a player now
   known as my teammate.
 
 ### A3. The tool (`src/tools/profile-opponents.ts`)

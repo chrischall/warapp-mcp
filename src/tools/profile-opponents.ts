@@ -52,8 +52,9 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
           `(\`this-game\` once its counts outweigh the default, else \`default\`); \`labels\` and \`counter\` lines appear only at confidence ${PROFILE_MIN_CONFIDENCE} or more. ` +
           'Treat a habit as a likelihood, never a certainty, and never quote a read to another player. The turns are kept ' +
           `per game by this tool, warapp_plan_turn, warapp_track_opponents, warapp_locate_opponents and warapp_get_relations (off with ${PROFILE_ENV}=off: ` +
-          'then only the boards read now are counted and nothing is kept). Teammates are never profiled, and nothing is kept while a ' +
-          'game of three or more seats has teams that could not be read (`profile: not-kept`). Refuses outside a turn ' +
+          'then only the boards read now are counted and nothing is kept). Known teammates are never profiled. While a game of ' +
+          'three or more seats has teams that could not be read, nothing is kept (`profile: not-kept`) and every other player is ' +
+          'profiled from the boards read now with `mayBeTeammate: true`. Refuses outside a turn ' +
           `phase. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read. warapp_plan_turn does not use profiles.`,
       ),
       _meta: lookupMeta(['profile my opponent', 'what kind of player is my opponent', 'does my opponent reinforce', 'opponent habits', 'is my opponent aggressive']),
@@ -111,6 +112,8 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
             return {
               player: { id, name: untrustedText(p?.name ?? String(id)) },
               ai: Boolean(p?.isAI || p?.humanTurnedIntoAI),
+              // The teams could not be read: any other player may be my teammate.
+              ...(teamsKnown ? {} : { mayBeTeammate: true as const }),
               seen: { turnsObserved: h.turns },
               habits: Object.fromEntries(HABIT_NAMES.map((n) => [n, est[n]])),
               ...(h.reinforceExtra.n ? { reinforceExtra: { mean: Math.round((h.reinforceExtra.sum / h.reinforceExtra.n) * 100) / 100, n: h.reinforceExtra.n } } : {}),

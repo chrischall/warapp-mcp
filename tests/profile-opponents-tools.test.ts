@@ -29,14 +29,21 @@ const CAT_ID = Number(CAT.feed);
 
 /**
  * A three-player game on turn `turn` (0% luck, straight rounding, 60/70: the fixture's settings);
- * with `teams`, GameFeed puts Ann and Bob on team 0 and Cat on team 1.
+ * with `teams`, GameFeed puts Ann and Bob on team 0 and Cat on team 1; with `'partial'`, Ann on team 0 and
+ * Cat on team 1, Bob on none.
  */
-function game(turn: number, names = ['Ann', 'Bob', 'Cat'], teams = false): Record<string, unknown> {
+function game(turn: number, names = ['Ann', 'Bob', 'Cat'], teams: boolean | 'partial' = false): Record<string, unknown> {
   const f = lobbyFixture();
   const ids = [ANN, BOB, CAT];
   const players = (f.players as Array<Record<string, string>>)
     .slice(0, 3)
-    .map((p, i) => ({ ...p, id: ids[i]!.feed, name: names[i]!, state: 'Playing', ...(teams ? { team: i < 2 ? '0' : '1' } : {}) }));
+    .map((p, i) => ({
+      ...p,
+      id: ids[i]!.feed,
+      name: names[i]!,
+      state: 'Playing',
+      ...(teams && !(teams === 'partial' && i === 1) ? { team: i < 2 ? '0' : '1' } : {}),
+    }));
   return { ...f, state: 'Playing', numberOfTurns: String(turn - 1), players, settings: { ...(f.settings as object), InitialPlayerArmiesPerTerritory: 5, TerritoryLimit: 2 } };
 }
 
@@ -92,7 +99,7 @@ const showing = (territories: SyntheticTerritory[], list: List = 'ffa') => (req:
 };
 
 /** Turns 1–4 cached with my orders, the live board on turn 5. */
-async function setUp(env: Record<string, string> = {}, names?: string[], o: { list?: List; teams?: boolean; dataDir?: string } = {}): Promise<Harness> {
+async function setUp(env: Record<string, string> = {}, names?: string[], o: { list?: List; teams?: boolean | 'partial'; dataDir?: string } = {}): Promise<Harness> {
   const hh = await liveHarness({
     feed: [game(5, names, o.teams)],
     warapp: showing(live(5), o.list),
@@ -122,6 +129,7 @@ interface Opponent {
   labels: string[];
   counter: string[];
   reinforceExtra?: { mean: number; n: number };
+  mayBeTeammate?: true;
   counts?: Record<string, unknown>;
   turns?: Array<{ turn: number }>;
 }
@@ -225,6 +233,7 @@ describe('warapp_profile_opponents', () => {
       const p = await profile(h);
       expect(p.profile).toBe('kept');
       expect(p.opponents.map((o) => o.player.id)).toEqual([CAT_ID]);
+      expect(p.opponents[0]!.mayBeTeammate).toBeUndefined();
       expect(storedIds(h.dataDir)).toEqual([String(CAT_ID)]);
       expect(readFileSync(profileGamePath(h.dataDir, GAME, ME), 'utf8')).not.toContain(String(BOB_ID));
     });
@@ -236,6 +245,19 @@ describe('warapp_profile_opponents', () => {
       const p = await profile(h);
       expect(p.profile).toBe('not-kept');
       expect(existsSync(profileGamePath(h.dataDir, GAME, ME))).toBe(false);
+      // Any of them may be my teammate: each is flagged so.
+      expect(p.opponents.map((o) => o.player.id).sort()).toEqual([BOB_ID, CAT_ID].sort());
+      expect(p.opponents.every((o) => o.mayBeTeammate === true)).toBe(true);
+    });
+
+    it('a team on some GameFeed seats but not all is no known teams: nothing kept, every opponent flagged', async () => {
+      h = await setUp({}, undefined, { teams: 'partial' });
+      for (const tool of ['warapp_plan_turn', 'warapp_track_opponents'])
+        await h.call(tool, { game_id: GAME, player: ME });
+      const p = await profile(h);
+      expect(p.profile).toBe('not-kept');
+      expect(existsSync(profileGamePath(h.dataDir, GAME, ME))).toBe(false);
+      expect(p.opponents.every((o) => o.mayBeTeammate === true)).toBe(true);
     });
 
     it('entries kept for a player before it was known as my teammate are dropped on the next write', async () => {

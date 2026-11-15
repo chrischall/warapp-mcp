@@ -172,8 +172,8 @@ export interface ResolvedTeams {
   game: Game;
   source: TeamSource;
   /**
-   * Whether the teams are known: GameFeed's or the list's, two seats or fewer, or a trusted list that
-   * shows none. False when a game of more than two seats carries no team and the list was not read,
+   * Whether the teams are known: GameFeed's (on every seat) or the list's, two seats or fewer, or a
+   * trusted list that shows none. False when GameFeed gives some seats a team and others none. False when a game of more than two seats carries no team and the list was not read,
    * did not hold the game, left a seat out or was not trusted: any other player may be my teammate.
    */
   known: boolean;
@@ -186,7 +186,9 @@ export interface ResolvedTeams {
  * GameFeed sent it (`none`). Never throws.
  */
 export async function resolveTeams(ctx: LiveContext, game: Game): Promise<ResolvedTeams> {
-  if (isTeamGame(game.players)) return { game, source: 'gamefeed', known: true };
+  // A team on some seats but not all (GameFeed's team field is unverified): a seat without one may be
+  // my teammate, so the teams are not known.
+  if (isTeamGame(game.players)) return { game, source: 'gamefeed', known: game.players.every((p) => carriesTeam(p.team)) };
   if (game.players.length <= 2) return { game, source: 'none', known: true };
   const none = { game, source: 'none' as const, known: false };
   const kept = ctx.dataDir ? await readTeamFile(ctx.dataDir, game.id) : undefined;

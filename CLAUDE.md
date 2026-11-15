@@ -638,8 +638,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   overwritten; newest 200 files, none unwritten past the board cache's 60 days), written by `recordProfile` (`src/tools/profile-hook.ts`) right after
   `writeBoardCache` in warapp_plan_turn (never a what-if plan), warapp_track_opponents,
   warapp_locate_opponents and warapp_get_relations. `WARAPP_PLAYER_PROFILE=off`: nothing read or written.
-  Teammates are never profiled: nothing is kept while `resolveTeams` says a game of 3+ seats has teams it could not
-  read (`known: false`), and each write drops what the file holds for a known teammate. Read-only `warapp_profile_opponents` reports each habit shrunk toward a
+  Known teammates are never profiled: nothing is kept while `resolveTeams` says a game of 3+ seats has teams it could not
+  read (`known: false`; also when GameFeed gives some seats a team and others none), the tool then flags every other
+  player `mayBeTeammate: true`, and each write drops what the file holds for a known teammate. Read-only `warapp_profile_opponents` reports each habit shrunk toward a
   neutral default (`PROFILE_PRIOR_WEIGHT` 4) with `n`, `confidence`, `basis` (`this-game` / `default`),
   and labels with a counter-play line at confidence 0.5; `profile` is `kept`, `not-kept` (no data dir, or the teams unknown) or `off`. **Profiles inform only:** the planner reads none
   of it until part 0's measurement is reported and the owner approves each hook (P1).
