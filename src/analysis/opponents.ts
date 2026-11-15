@@ -58,6 +58,14 @@
 // ({@link carryIncome}); a capture from me is priced at the guard unless my orders say what stood
 // there.
 //
+// An income set by one turn far above the turns before it (#250, {@link incomeJump}: more than
+// {@link INCOME_JUMP_FACTOR} × the most it was seen to earn on them) is kept — such a turn is
+// usually the first true reading after turns it deployed out of sight — and a warning says, in
+// numbers, whether the boards back it: its armies in view after the jump plus its losses seen
+// against its armies in view before plus what it was seen to earn since. More, even leaving out the
+// armies that only came into view, is armies it could not have banked; otherwise the warning hedges
+// (old armies revealed, or armies it banked out of view). The figure never changes for it.
+//
 // Given the game's players (#94), every opponent still playing is listed — teammates and
 // players out of the game are not — even with no territory in view: `visible` counts its
 // territories in view on the newest board, `turnsUnseen` the latest turns none was, counted back
@@ -347,7 +355,15 @@ export interface OpponentTrack {
    * {@link LOST_STACK_TURNS} turns before the newest board). Absent on a track built by hand.
    */
   lostStacks?: LostStack[];
-  /** Unseen-banking warnings (also in `notes`), naming it. */
+  /**
+   * #250: the income rests on one turn far above the turns before it ({@link incomeJump}), with the
+   * evidence for and against it; absent otherwise. The income itself is never changed for it.
+   */
+  incomeJump?: IncomeJump;
+  /**
+   * Unseen-banking warnings (#94) and the line on an income set by one high turn (#250), each
+   * naming it (also in `notes`).
+   */
   warnings: string[];
   /** Confidence notes, plain sentences. */
   notes: string[];
@@ -920,6 +936,167 @@ function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
   return carry;
 }
 
+/** #250: a turn that reads more than this many times the most it was seen to earn before it is a jump. */
+export const INCOME_JUMP_FACTOR = 2;
+
+/**
+ * #250: a tracked income set by one observed turn far above the turns before it. Such a turn is
+ * usually the first true reading after turns that deployed into the fog (a play session lowered one
+ * by hand and lost the game), so the figure is kept; this says whether the boards back it.
+ */
+export interface IncomeJump {
+  /** The turn (its `from`) whose reading set the income. */
+  turn: number;
+  /** Its observed deploy. */
+  observed: number;
+  /** The most it was seen to earn (`earned`) on the consecutive observed turns just before it. */
+  before: number;
+  /** The first of those turns: the board the evidence starts from. */
+  since: number;
+  /** Its armies in view on the board of turn `since`. */
+  armiesBefore: number;
+  /** What it was seen to earn from `since` up to the jump, plus its visible income on the jump turn. */
+  earnedSince: number;
+  /** Its armies in view on the board after the jump. */
+  armiesNow: number;
+  /** What it was seen to lose over those turns (`losses` + `combat`). */
+  lossesSeen: number;
+  /**
+   * Of `armiesNow` and those turns' readings, the armies that only came into view: on territories
+   * hidden on the board of `since`, plus those read as arriving out of the fog (`fogArmies`). An
+   * upper bound (the two may overlap): it only ever weakens the case for the jump.
+   */
+  cameIntoView: number;
+  /**
+   * The whole game at the earlier rate, when its starting armies are known (an upper bound under
+   * full distribution): had it earned no more than `rate` (the most it was seen to earn before the
+   * jump, or its visible income on the jump turn when more) every turn from turn 1 through the jump
+   * turn, it received at most `start + rate × turns` (`received`). Its armies in view after the jump
+   * plus every loss seen up to it (`lossesAll`) beyond that are armies it could not have had: the
+   * high turn, or a higher income before it than was read, is real. Old armies coming into view
+   * cannot explain them — this counts every army it has, wherever it stood.
+   */
+  stock?: { start: number; rate: number; turns: number; received: number; lossesAll: number };
+  /**
+   * `supported`: armiesNow + lossesSeen − cameIntoView > armiesBefore + earnedSince (more armies
+   * than it could have banked, even leaving out what came into view), or armiesNow + lossesAll >
+   * `stock.received`; `reveal`: neither, but the first holds counting what came into view;
+   * `banked`: neither.
+   */
+  verdict: 'supported' | 'reveal' | 'banked';
+}
+
+/** The armies of `playerId` on territories shown with armies on `board`, and their ids. */
+function armiesInView(g: MapGraph, board: BoardState, playerId: number): { total: number; ids: Set<number> } {
+  let total = 0;
+  const ids = new Set<number>();
+  for (const t of board.territories) {
+    if (!g.territoryById.has(t.territoryId)) continue;
+    const st = visibleState(t);
+    if (st?.owner.kind !== 'player' || st.owner.playerId !== playerId) continue;
+    total += st.armies!;
+    ids.add(t.territoryId);
+  }
+  return { total, ids };
+}
+
+/**
+ * #250: when the income was set by the most observed in its window (`max-observed`, or carried from
+ * such a window) and that turn read more than {@link INCOME_JUMP_FACTOR} × the most it was seen to
+ * earn on the consecutive observed turns just before it (up to {@link INCOME_TURNS} − 1 of them),
+ * weigh the boards: its armies in view after the jump plus what it was seen to lose since the first
+ * of those turns, against its armies in view then plus what it was seen to earn since (the jump turn
+ * at its visible income only). More than that, even without the armies that only came into view, is
+ * armies it could not have banked: `supported`. Given its starting armies (`startArmies`), the whole
+ * game is weighed too ({@link IncomeJump.stock}), which no reveal of old armies can explain. Undefined
+ * without such a jump, or without the boards to weigh it.
+ */
+export function incomeJump(
+  g: MapGraph,
+  byTurn: ReadonlyMap<number, BoardState>,
+  playerId: number,
+  observed: readonly ObservedTurn[],
+  window: readonly ObservedTurn[],
+  method: IncomeMethod,
+  startArmies?: number,
+): IncomeJump | undefined {
+  if (method !== 'max-observed' || !window.length) return undefined;
+  const max = Math.max(...window.map((x) => x.observed));
+  const x = window.find((w) => w.observed === max)!;
+  // The consecutive observed turns just before it (at most INCOME_TURNS − 1): a carried window may
+  // start at the jump (#119), so they are looked up in the whole history.
+  const at = observed.indexOf(x);
+  let first = at;
+  while (first > 0 && at - first < INCOME_TURNS - 1 && observed[first - 1]!.to === observed[first]!.from) first--;
+  const prev = observed.slice(first, at);
+  if (!prev.length) return undefined;
+  const before = Math.max(...prev.map((p) => p.earned));
+  if (before <= 0 || x.observed <= INCOME_JUMP_FACTOR * before) return undefined;
+  const since = prev[0]!.from;
+  const start = byTurn.get(since);
+  const end = byTurn.get(x.to);
+  if (!start || !end) return undefined;
+  const then = armiesInView(g, start, playerId);
+  const now = armiesInView(g, end, playerId);
+  const span = [...prev, x];
+  const earnedSince = prev.reduce((s, p) => s + p.earned, 0) + x.visibleIncome;
+  const lossesSeen = span.reduce((s, p) => s + p.losses + p.combat, 0);
+  let cameIntoView = span.reduce((s, p) => s + p.fogArmies, 0);
+  for (const t of end.territories)
+    if (now.ids.has(t.territoryId) && !then.ids.has(t.territoryId)) cameIntoView += t.armies!;
+  const seen = now.total + lossesSeen;
+  const banked = then.total + earnedSince;
+  let stock: IncomeJump['stock'];
+  if (startArmies !== undefined) {
+    const rate = Math.max(before, x.visibleIncome);
+    const turns = Math.max(0, x.from);
+    const lossesAll = observed.filter((p) => p.from <= x.from).reduce((s, p) => s + p.losses + p.combat, 0);
+    stock = { start: startArmies, rate, turns, received: startArmies + rate * turns, lossesAll };
+  }
+  const verdict =
+    seen - cameIntoView > banked || (stock && now.total + stock.lossesAll > stock.received) ? 'supported' : seen > banked ? 'reveal' : 'banked';
+  return {
+    turn: x.from,
+    observed: x.observed,
+    before,
+    since,
+    armiesBefore: then.total,
+    earnedSince,
+    armiesNow: now.total,
+    lossesSeen,
+    cameIntoView,
+    ...(stock ? { stock } : {}),
+    verdict,
+  };
+}
+
+/** #250: the sentence for an {@link IncomeJump} (the subject — "Player X's" — prefixed by the caller). */
+export function incomeJumpText(j: IncomeJump, income: number, earlier: readonly ObservedTurn[]): string {
+  const seen = j.armiesNow + j.lossesSeen;
+  const banked = j.armiesBefore + j.earnedSince;
+  const readings = earlier.map((p) => `turn ${p.from} +${p.earned}`).join(', ');
+  const onJump = j.earnedSince - earlier.reduce((s, p) => s + p.earned, 0);
+  const head = `tracked income ~${income}/turn rests on one turn: turn ${j.turn} +${j.observed}, more than ${INCOME_JUMP_FACTOR}× the most it was seen to earn on the turns before it (${j.before}). Its armies in view on turn ${j.turn + 1} (${j.armiesNow}) plus what it was seen to lose since turn ${j.since} (${j.lossesSeen}) come to ${seen}, against what it had in view on turn ${j.since} (${j.armiesBefore}) plus what it was seen to earn since (${j.earnedSince}: ${readings}, and its visible income ${onJump} on turn ${j.turn}) = ${banked}`;
+  const believed =
+    'so the high turn is believed: most likely the first true reading after turns it deployed out of sight. Do not lower it without new evidence.';
+  if (j.verdict === 'supported' && seen - j.cameIntoView > banked)
+    return `${head}: more by ${seen - banked}${
+      j.cameIntoView ? `, ${seen - j.cameIntoView - banked} even leaving out the ${j.cameIntoView} armies that only came into view` : ''
+    } — armies it could not have banked, ${believed}`;
+  if (j.verdict === 'supported' && j.stock) {
+    const k = j.stock;
+    const had = j.armiesNow + k.lossesAll;
+    return `${head}${seen > banked ? `, more only counting the ${j.cameIntoView} armies that came into view since` : ''}. But at the most it was seen to earn before it (${k.rate} a turn) from turn 1 through turn ${j.turn}, it would have received at most ${k.received} (starting armies ${k.start} + ${k.rate} × ${k.turns} turns), and it shows ${j.armiesNow} in view after it and has been seen to lose ${k.lossesAll}: ${had}, more by ${had - k.received} — armies it could not have had at that rate wherever they stood (Reinforcement cards aside), so this turn or its income before it was higher than read; ${believed}`;
+  }
+  // Neither test proved it: what the whole game allows at the earlier rate, when known.
+  const whole = j.stock
+    ? ` At the most it was seen to earn before it (${j.stock.rate} a turn) it could have received up to ${j.stock.received} by turn ${j.turn} (starting armies ${j.stock.start} + ${j.stock.rate} × ${j.stock.turns} turns), enough for the ${j.armiesNow + j.stock.lossesAll} it shows in view and has been seen to lose.`
+    : '';
+  if (j.verdict === 'reveal')
+    return `${head}: more only counting the ${j.cameIntoView} armies that came into view since (territories hidden on turn ${j.since}, or read as arriving out of the fog): those could be old armies revealed, so the high turn is not confirmed.${whole} The figure is kept (each observed deploy is a lower bound).`;
+  return `${head}: no more, so the high turn could be armies it had banked out of view coming into view, not income.${whole} The figure is kept (each observed deploy is a lower bound), but it is not confirmed.`;
+}
+
 /**
  * Per opponent: its observed deploys turn by turn, an income estimate, the armies that must be
  * in the fog and the bonuses that could explain an income gap. Those visible on the newest
@@ -997,6 +1174,13 @@ export function trackOpponents(
     ...(g.map.bonuses.some((b) => b.value < 0) ? ['the map has a negative-value bonus, which can take income below the base'] : []),
     ...(game?.incomeCaveats ?? []),
   ];
+
+  const seated = players.length;
+  const startArmies = game?.start
+    ? game.start.territories * game.start.armiesPerTerritory
+    : game?.fullDistribution && game.startArmiesPerTerritory !== undefined && seated > 0
+      ? Math.ceil(g.territoryById.size / seated) * game.startArmiesPerTerritory
+      : undefined;
 
   return [...visibleIds, ...unseenIds].map((playerId) => {
     const seenOn = turns.filter((t) => seesPlayer(byTurn.get(t)!, g, playerId));
@@ -1119,6 +1303,12 @@ export function trackOpponents(
       : lastWindow;
     const incomeWindow = carried ? carried.window : recent;
     const income = estimate?.income ?? null;
+    // #250: an income set by one turn far above the turns before it, with the evidence for it. Its
+    // starting armies, when known (under full distribution, an even share: an upper bound).
+    const jump =
+      estimate && observed.length >= 2
+        ? incomeJump(g, byTurn, playerId, observed, incomeWindow, carried ? carried.est.method : estimate.method, startArmies)
+        : undefined;
     const unexplained = observed.length
       ? Math.max(0, observed.reduce((s, x) => s + x.earned - x.net - x.losses - x.combat, 0))
       : null;
@@ -1169,6 +1359,10 @@ export function trackOpponents(
       if (earnedAtLeast.exceedsTotal)
         warnings.push(`${head}; it could be banking more than your total visible armies (${visibleArmies}).`);
     }
+    if (jump)
+      warnings.push(
+        `Player ${nameOf(playerId)}'s ${incomeJumpText(jump, income!, observed.filter((x) => x.from >= jump.since && x.from < jump.turn))}`,
+      );
     if (firstSeen === null) {
       // Never in view: there is nothing else to say about it.
     } else if (observed.length < 2)
@@ -1418,6 +1612,7 @@ export function trackOpponents(
       turnsUnseenAtLeast,
       earnedAtLeast,
       lostStacks,
+      ...(jump ? { incomeJump: jump } : {}),
       warnings,
       notes,
     };

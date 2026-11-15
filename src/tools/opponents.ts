@@ -136,6 +136,8 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
               ...(t.incomeLowered ? { lowered: t.incomeLowered } : {}),
               observedRange: t.observedRange,
               usedByPlanner: t.income !== null && t.turns.length >= TRACKED_MIN_TURNS,
+              // #250: set by one turn far above the turns before it, with what the boards say of it.
+              ...(t.incomeJump ? { jump: t.incomeJump } : {}),
             },
             unexplainedArmies: t.unexplained,
             // #164: large stacks last seen on a territory hidden since (the planner counts each where it can reach).

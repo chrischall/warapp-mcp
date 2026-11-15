@@ -567,7 +567,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the tracked income in place of the single-turn observed figure (`PlanInput.tracks`) and says so
   in its rationale (a newest turn its bound cut is labelled, never counted: #235 1c, see the fog prior
   above); fewer, and the plan is exactly what it
-  was without tracking.
+  was without tracking. **An income set by one turn far above the turns before it is kept (#250):**
+  more than `INCOME_JUMP_FACTOR` (2) × the most it was seen to earn on the (up to two) consecutive
+  observed turns just before it is usually the first true reading after turns it deployed out of
+  sight (a play session lowered a real +66 after +8 and +5 and lost). `incomeJump` weighs the boards
+  and a track warning (so a `warapp_plan_turn` warning too; `income.jump` in the track tool) says
+  why in numbers: its armies in view after the jump plus its losses seen against its armies in
+  view before plus what it was seen to earn since, leaving out the armies that only came into view;
+  and, with its starting armies known, the whole game at the earlier rate (start + rate × turns),
+  which no reveal of old armies can explain. Either beaten → believed; else it hedges (old armies
+  revealed, or armies banked out of view). The figure never changes for it.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in

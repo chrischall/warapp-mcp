@@ -281,6 +281,38 @@ describe('warapp_track_opponents', () => {
     expect(bob.income).toMatchObject({ estimate: 18, method: 'carried', lowered: 2 });
   });
 
+  it('#250: an income set by one turn far above the turns before it says why it is believed, in the tool and in the plan', async () => {
+    // Bob visibly holds bonus 116 (+2: 133, 134, 135, 158) and earns 7: +5, +5, then +40 on 158.
+    const at = (bob: number): SyntheticTerritory[] => [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 6 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 157, fogLevel: 2, owner: 0, armies: 2 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: bob },
+      { id: 133, fogLevel: 1, owner: BOB.inGame, armies: 1 },
+      { id: 134, fogLevel: 1, owner: BOB.inGame, armies: 1 },
+      { id: 135, fogLevel: 1, owner: BOB.inGame, armies: 1 },
+    ];
+    const seq = [7, 12, 17, 57];
+    let dir: string | undefined;
+    let p: (TrackPayload & { warnings: string[] }) | undefined;
+    for (const [i, bob] of seq.entries()) {
+      if (h) {
+        await h.harness.close();
+        h = undefined;
+      }
+      h = await liveHarness({ ...(dir ? { dataDir: dir } : {}), feed: [game('Playing', String(i + 2))], warapp: live(at(bob)) });
+      dir = h.dataDir;
+      p = payload(await h.call('warapp_track_opponents', { game_id: GAME, player: 'Ann' }));
+    }
+    const bob = p!.opponents.find((o) => o.player.name === 'Bob')!;
+    expect(bob.observed.map((o) => o.deploy)).toEqual([5, 5, 40]);
+    expect(bob.income).toMatchObject({ estimate: 40, method: 'max-observed', jump: expect.objectContaining({ turn: 5, observed: 40, verdict: 'supported' }) });
+    const line = /Player Bob's tracked income ~40\/turn rests on one turn: turn 5 \+40.*could not have banked/;
+    expect(p!.warnings.join('\n')).toMatch(line);
+    const plan = payload<{ warnings: string[] }>(await h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(plan.warnings.join('\n')).toMatch(line);
+  });
+
   it('refuses outside a turn phase', async () => {
     h = await liveHarness({ feed: [game('WaitingForPlayers', '-1')] });
     const res = await h.call('warapp_track_opponents', { game_id: GAME });
