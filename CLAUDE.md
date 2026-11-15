@@ -49,8 +49,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. `warapp_record_agreement`
   also writes, but only the server's own agreement ledger and player record (nothing reaches war.app or a
   player), so it is not confirm-gated and not counted above. Chat (owner decisions of 2026-11-14,
-  `docs/PLAN-TEAMS.md` §5): D1 chat proceeds with every send confirm-gated; D2 the play session sends
-  within the honesty line without the owner approving each message; D3 the honesty line is the plan's
+  `docs/PLAN-TEAMS.md` §5): D1 every send confirm-gated; D2 automated chat is OFF until the owner
+  enables it (2026-11-15, superseding the 2026-11-14 answer; the tools stay built, chat is read); D3 the honesty line is the plan's
   default (no false statement of fact, no promise the plan does not intend, withholding is free, never
   claim to be human, a truce ends with the agreed notice). Every other tool
   is read-only, `warapp_plan_turn`, `warapp_track_opponents` and `warapp_advise_diplomacy` included. The two-step token
