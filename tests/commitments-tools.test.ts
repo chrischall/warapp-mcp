@@ -9,6 +9,7 @@ import { readLedger, writeLedger, emptyLedger } from '../src/relations-store.js'
 import { writeOrdersCache } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import * as T from './team-fallback.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -406,5 +407,82 @@ describe('warapp_submit_turn: an attack into the fog under a promise over all te
       new RegExp(`Your chat commitment c1 \\(sent turn 2\\) promised player ${BOB.feed} no attack on any of its territories through turn 3: move 1 \\(159 → 135\\) goes into a territory whose owner is not shown — it may be player ${BOB.feed}'s, which was not checked`),
     );
     expect(text).toMatch(/Find out whose it is before committing these orders/);
+  });
+});
+
+describe('warapp_send_chat: teams from the game list when GameFeed sends none (#246)', () => {
+  /** war.app as T.teamServer, SendChat recording each message's text and channel. */
+  function chatServer(myGames?: Parameters<typeof T.teamServer>[0]) {
+    const sent: Array<{ text: string | null; channel: number }> = [];
+    const warapp = T.teamServer(myGames, {
+      other: (req) => {
+        if (req.method !== Method.SendChat) return undefined;
+        req.body.int32();
+        const text = req.body.string();
+        sent.push({ text, channel: req.body.int32() });
+        return { body: (w) => w.bool(false) };
+      },
+    });
+    return { sent, warapp };
+  }
+  const chat = (args: Record<string, unknown>) => h!.call('warapp_send_chat', { game_id: T.TEAM_GAME, message: 'push north', ...args });
+
+  it('team channel: my team is the one the list names; sent on it once confirmed, the list asked once', async () => {
+    const s = chatServer();
+    h = await liveHarness({ feed: [T.teamGame()], pages: T.SIGNED_IN_ANN, warapp: s.warapp });
+    const preview = payload<{ confirmToken: string }>(await chat({ channel: 'team' }));
+    expect(JSON.stringify(preview)).toContain('to your team (team 4) only');
+    expect(s.sent).toEqual([]);
+    const done = payload(await chat({ channel: 'team', confirmToken: preview.confirmToken }));
+    expect(done).toMatchObject({ status: 'sent', channel: 'team', to: 'your team (team 4)' });
+    expect(s.sent).toEqual([{ text: 'push north', channel: 4 }]);
+    expect(T.listReads(h)).toBe(1);
+  });
+
+  it('team channel without the game list: refused, nothing sent (the control)', async () => {
+    const s = chatServer('fail');
+    h = await liveHarness({ feed: [T.teamGame()], pages: T.SIGNED_IN_ANN, warapp: s.warapp });
+    const res = await chat({ channel: 'team' });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/not a team game, or your team there is unknown/);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('commitments: a truce with the teammate the list names is refused; nothing sent', async () => {
+    const s = chatServer();
+    h = await liveHarness({ feed: [T.teamGame()], pages: T.SIGNED_IN_ANN, warapp: s.warapp });
+    const res = await chat({ commitments: [{ kind: 'propose', player: 'Bob' }] });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(new RegExp(`player ${T.BOB.feed} is your teammate`));
+    expect(s.sent).toEqual([]);
+    expect(T.listReads(h)).toBe(1);
+  });
+
+  it('commitments without the game list: Bob is no teammate (the control)', async () => {
+    const s = chatServer('fail');
+    h = await liveHarness({ feed: [T.teamGame()], pages: T.SIGNED_IN_ANN, warapp: s.warapp });
+    const res = await chat({ commitments: [{ kind: 'propose', player: 'Bob' }] });
+    expect(textOf(res)).not.toMatch(/your teammate/);
+  });
+
+  it('commitments on the team channel: by the list\'s two teams a truce with an opponent leaves no one aside, so it is refused', async () => {
+    const s = chatServer();
+    h = await liveHarness({ feed: [T.teamGame()], pages: T.SIGNED_IN_ANN, warapp: s.warapp });
+    const res = await chat({ channel: 'team', commitments: [{ kind: 'propose', player: 'Cy' }] });
+    expect(res.isError).toBe(true);
+    // Without teams Dee would be the third player a truce with Cy leaves aside.
+    expect(textOf(res)).toMatch(/no third player or team remains outside you, your team and the partner's team/);
+    expect(s.sent).toEqual([]);
+    expect(T.listReads(h)).toBe(1);
+  });
+
+  it('GameFeed with teams: the game list is never asked, for the team channel or for commitments', async () => {
+    const s = chatServer();
+    h = await liveHarness({ feed: [T.teamGame({ teams: true })], pages: T.SIGNED_IN_ANN, warapp: s.warapp });
+    const preview = payload<{ confirmToken: string }>(await chat({ channel: 'team' }));
+    expect(JSON.stringify(preview)).toContain('to your team (team 0) only');
+    const res = await chat({ commitments: [{ kind: 'propose', player: 'Bob' }] });
+    expect(textOf(res)).toMatch(/your teammate/);
+    expect(T.listReads(h)).toBe(0);
   });
 });

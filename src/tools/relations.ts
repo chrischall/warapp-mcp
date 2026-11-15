@@ -38,7 +38,7 @@ import { boardStateFromLive } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
 import { entryKey, legacyEntryKey, playerRecordEnabled, playerRecordState, readPlayerRecord, updatePlayerRecord } from '../player-record-store.js';
 import { emptyLedger, nextAgreementId, nextCommitmentId, readLedger, readLedgerForWrite, withLedgerLock, writeLedger, type RelationsLedger } from '../relations-store.js';
-import { isTeamGame } from '../teams.js';
+import { isTeamGame, teammatesOf } from '../teams.js';
 import { readBoardHistory, readCachedOrders, writeBoardCache } from '../trend.js';
 import { writeGameRecord } from '../replay.js';
 import { currentTurn, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
@@ -89,7 +89,9 @@ interface Incomes {
 function incomesOf(graph: MapGraph, boards: readonly TurnBoard[], game: Game, me: Player, map: GameMap): Incomes {
   const newest = [...boards].sort((a, b) => a.turn - b.turn).at(-1);
   const opponents = new Map<number, number | null>();
-  for (const p of game.players) if (p.id !== me.id && alive(p)) opponents.set(p.id, null);
+  // A teammate is no opponent: its income is no rival's (#246).
+  const mates = new Set(teammatesOf(game.players, me).map((p) => p.id));
+  for (const p of game.players) if (p.id !== me.id && !mates.has(p.id) && alive(p)) opponents.set(p.id, null);
   if (!newest) return { mine: null, opponents };
   const held = new Set(
     newest.board.territories.filter((t) => t.owner.kind === 'player' && t.owner.playerId === me.id).map((t) => t.territoryId),
@@ -513,8 +515,12 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           ...(await recordFor(ctx.dataDir, a.with, env)),
         });
       }
-      const open = new Set(ledger.agreements.filter((a) => !TERMINAL_STATUSES.has(a.status)).map((a) => a.with));
-      const tacit = tacitTruces({ graph, boards, me: me.id, exclude: open });
+      // A teammate's quiet border is no tacit truce (#246): left out like a partner with an agreement.
+      const excluded = new Set([
+        ...ledger.agreements.filter((a) => !TERMINAL_STATUSES.has(a.status)).map((a) => a.with),
+        ...teammatesOf(game.players, me).map((p) => p.id),
+      ]);
+      const tacit = tacitTruces({ graph, boards, me: me.id, exclude: excluded });
       const recordState = await playerRecordState(ctx.dataDir, env);
       const name = namer(map);
       const playerName = (id: number) => {

@@ -13,6 +13,7 @@ import { readGameRecord } from '../src/replay.js';
 import { boardCachePath } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import * as T from './team-fallback.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -421,5 +422,30 @@ describe('the pickable territories are kept during distribution', () => {
     h = await live(board({ 135: { fogLevel: 2, owner: 0, armies: 2 } }), game(1), { dataDir: dir, pages: SIGNED_IN_ANN });
     const plan = payload<{ rationale?: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, view: 'full' }));
     expect((plan.rationale ?? []).join('\n')).toMatch(/\(#158\), fogged now, was a neutral of 2 on the picking board \(#201\): costed at that\./);
+  });
+});
+
+describe('warapp_locate_opponents: teams from the game list when GameFeed sends none (#246)', () => {
+  const located = async () =>
+    payload<{ opponents: Array<{ player: { id: number } }> }>(await h!.call('warapp_locate_opponents', { game_id: T.TEAM_GAME })).opponents.map(
+      (o) => o.player.id,
+    );
+
+  it('the teammate the list names is not located as an opponent, and the list is asked once', async () => {
+    h = await liveHarness({ feed: [T.teamGame()], pages: T.SIGNED_IN_ANN, warapp: T.teamServer() });
+    expect((await located()).sort()).toEqual([Number(T.CY.feed), Number(T.DEE.feed)]);
+    expect(await located()).not.toContain(Number(T.BOB.feed));
+    expect(T.listReads(h)).toBe(1);
+  });
+
+  it('without the game list the teammate is located as an opponent (the control)', async () => {
+    h = await liveHarness({ feed: [T.teamGame()], pages: T.SIGNED_IN_ANN, warapp: T.teamServer('fail') });
+    expect(await located()).toContain(Number(T.BOB.feed));
+  });
+
+  it('GameFeed with teams: the game list is never asked', async () => {
+    h = await liveHarness({ feed: [T.teamGame({ teams: true })], pages: T.SIGNED_IN_ANN, warapp: T.teamServer() });
+    expect((await located()).sort()).toEqual([Number(T.CY.feed), Number(T.DEE.feed)]);
+    expect(T.listReads(h)).toBe(0);
   });
 });
