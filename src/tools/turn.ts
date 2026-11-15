@@ -1276,14 +1276,16 @@ function sinceLastView(
   const bonus = (id: number) => map.bonuses.find((b) => b.id === id)?.name ?? String(id);
   const player = (id: number) => ({ id, name: players.find((p) => p.id === id)?.name ?? String(id) });
   const when = `when turn ${previousTurn} was planned`;
+  // #253: a cut by the army cap is named, so a shortfall it explains is not read as a border lost.
+  const inc = s.capCut ? `Income ${s.income} (the army cap took ${s.capCut.cut} of ${s.capCut.uncapped})` : `Income ${s.income}`;
   const head =
     s.expected === null
-      ? `Income ${s.income}; turn ${previousTurn} was not planned here.`
+      ? `${inc}; turn ${previousTurn} was not planned here.`
       : s.income < s.expected
-        ? `Income ${s.income}, ${s.expected - s.income} below the ${s.expected} expected ${when}.`
+        ? `${inc}, ${s.expected - s.income} below the ${s.expected} expected ${when}.`
         : s.income > s.expected
-          ? `Income ${s.income}, ${s.income - s.expected} above the ${s.expected} expected ${when}.`
-          : `Income ${s.income}, as expected ${when}.`;
+          ? `${inc}, ${s.income - s.expected} above the ${s.expected} expected ${when}.`
+          : `${inc}, as expected ${when}.`;
   const broken = s.bonusesBroken ?? [];
   const lost = s.territoriesLost ?? [];
   const parts = [
@@ -1307,6 +1309,7 @@ function sinceLastView(
     expected: s.expected,
     expectedTurn: s.expectedTurn,
     shortfall: s.shortfall,
+    ...(s.capCut ? { armyCapCut: s.capCut } : {}),
     ...(hasBoard
       ? {
           bonusesBroken: broken.map((b) => ({ id: b.bonusId, name: bonus(b.bonusId), value: b.value })),
@@ -1694,8 +1697,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board. ' +
-          'With an army cap, `income` is what the cap leaves, min(income, cap × income − your armies on the board) (one ' +
-          'live case), and `incomeCapped` gives the arithmetic; Reinforcement card armies come on top. ' +
+          'With an army cap, `income` is what the cap leaves, min(income, cap × income − your armies on the board) (two ' +
+          'live cases; the line names a cut), and `incomeCapped` gives the arithmetic; Reinforcement card armies come on top. ' +
           'In a free-for-all, `relations` reports each truce recorded with warapp_record_agreement as the plan treated it ' +
           '(no covered territory of the partner attacked while it is active or in notice; a covered border facing only ' +
           'the partner held against its stacks with no deploy, except your commander\'s, a valuable border, or while trust ' +
@@ -1854,6 +1857,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               income: income - cards.extraArmies,
               expected: expectedNow,
               expectedTurn: turn - 1,
+              armyCap: setup.incomeCap,
             })
           : undefined;
       // A what-if plan (an explicit goal or enemy_deploy) keeps the board but not its expected income:
@@ -2575,6 +2579,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ],
         });
         if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
+        // J1 review: as warapp_plan_turn says, an unreadable army count of mine leaves the cap unapplied.
+        else if (givenIncome === undefined && incomeOnBoard.capUnknown)
+          warnings.unshift(
+            `Deploys checked against income ${modelled}, not cut by the army cap: an army count of yours is unreadable on the board, ` +
+              "so the cap's cut could not be worked out (pass the game's own number as income if it differs).",
+          );
         if (breaks.length)
           warnings.unshift(
             `${breaksText(breaks, moves, bombPlays)}. break_agreement is true: once these orders are committed the ledger records ` +

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { enemyDeployEstimates, incomeFor, planTurn, type PlannerSettings } from '../../src/analysis/planner.js';
-import { analyzePlayer, armyCapIncome, incomeUncertainties, territoryIncome } from '../../src/analysis/player.js';
+import { analyzePlayer, armyCapIncome, armyCapText, incomeUncertainties, territoryIncome } from '../../src/analysis/player.js';
 import { incomeDetail } from '../../src/analysis/plan/shared.js';
 import type { GameMap, GameSettings } from '../../src/normalize.js';
 import { board, mine, neutral } from './helpers.js';
@@ -203,6 +203,12 @@ describe('the army cap (#253): received = min(income, round(cap × income) − m
     expect(armyCapIncome(52, 8, 900)).toMatchObject({ received: 0, cut: true });
   });
 
+  it('the arithmetic text floors a negative limit at 0 and says by how much the armies are over the cap', () => {
+    expect(armyCapText(armyCapIncome(52, 8, 375)!)).toBe('8 × 52 = 416, less your 375 armies on the board, is 41');
+    expect(armyCapText(armyCapIncome(52, 8, 416)!)).toBe('8 × 52 = 416, less your 416 armies on the board, is 0');
+    expect(armyCapText(armyCapIncome(52, 8, 420)!)).toBe('8 × 52 = 416, less your 420 armies on the board, is 0 (over the cap by 4)');
+  });
+
   it("rounds a fractional cap's limit to the nearest, .5 down (the client's rounding)", () => {
     expect(armyCapIncome(5, 2.5, 10)).toMatchObject({ limit: 12, received: 2 });
     expect(armyCapIncome(5, 2.6, 10)).toMatchObject({ limit: 13, received: 3 });
@@ -214,16 +220,17 @@ describe('the army cap (#253): received = min(income, round(cap × income) − m
     expect(incomeDetail(g, s, ME, settings({ minimumArmyBonus: 52, armyCap: 8 }))).toEqual({ income: 52, capUnknown: true });
   });
 
-  it('the uncertainty states the formula, that it rests on one live case, and that card armies are outside it', () => {
+  it('the uncertainty states the formula, that it rests on two live cases, and that card armies are outside it', () => {
     const text = incomeUncertainties(settings({ minimumArmyBonus: 52, armyCap: 8 })).join('\n');
     expect(text).toMatch(/min\(income, 8 × income − your armies on the board\)/);
-    expect(text).toMatch(/one live case/);
+    expect(text).toMatch(/two live cases/);
+    expect(text).toMatch(/this turn's income/);
     expect(text).toMatch(/Reinforcement card/);
     expect(text).not.toMatch(/does not apply it/);
     const computed = incomeUncertainties(settings({ minimumArmyBonus: 52, armyCap: 8 }), {
       armyCap: { uncapped: 52, cap: 8, armies: 375, limit: 416, received: 41, cut: true },
     }).join('\n');
     expect(computed).toMatch(/8 × 52 = 416, less your 375 armies on the board, is 41: income 41, not 52/);
-    expect(computed).toMatch(/one live case/);
+    expect(computed).toMatch(/two live cases/);
   });
 });

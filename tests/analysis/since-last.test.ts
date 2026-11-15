@@ -83,4 +83,16 @@ describe('sinceLastTurn (#194)', () => {
     const s = sinceLastTurn({ graph, previous, current, me: ME, income: 5 });
     expect(s.territoriesLost!.map((t) => t.territoryId)).toEqual([1, 3]);
   });
+
+  // The first live case: 8 × 52 = 416, less 375 armies on the board, is 41.
+  const CUT = { uncapped: 52, cap: 8, armies: 375, limit: 416, received: 41, cut: true };
+  it('names the army cap\'s cut when it took part of this turn\'s income (#253)', () => {
+    const b = board([mine(1, 3, ME), mine(2, 3, ME), mine(3, 3, ME), neutral(4, 2)]);
+    const s = sinceLastTurn({ graph, previous: b, current: b, me: ME, income: 41, expected: 52, expectedTurn: 20, armyCap: CUT });
+    expect(s.capCut).toEqual({ uncapped: 52, cut: 11 });
+    expect(s.shortfall).toBe(11);
+    // No cut: no field.
+    expect(sinceLastTurn({ graph, previous: b, current: b, me: ME, income: 52, expected: 52, armyCap: { ...CUT, armies: 300, received: 52, cut: false } })).not.toHaveProperty('capCut');
+    expect(sinceLastTurn({ graph, previous: b, current: b, me: ME, income: 52, expected: 52 })).not.toHaveProperty('capCut');
+  });
 });
