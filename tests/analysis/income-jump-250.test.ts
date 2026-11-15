@@ -70,7 +70,7 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
       verdict: 'supported',
     });
     const line = t!.warnings.find((w) => /one turn/.test(w));
-    expect(line).toMatch(/turn 9 \+66/);
+    expect(line).toMatch(/\+66 on one turn \(turn 9\)/);
     expect(line).toMatch(/103/);
     expect(line).toMatch(/24/);
     expect(line).toMatch(/18/);
@@ -171,16 +171,16 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     });
     const line = small!.warnings.find((w) => /one turn/.test(w));
     expect(line).toMatch(/at most 78 \(starting armies 6 \+ 8 × 9 turns\)/);
-    expect(line).toMatch(/151, more by 73/);
+    expect(line).toMatch(/151 with its losses, more by 73/);
     expect(line).toMatch(/could not have had at that rate/);
     // The earlier readings are lower bounds too: this proves some turn was higher, not the jump turn.
-    expect(line).toMatch(/does not prove the high turn itself/);
-    expect(line).not.toMatch(/Do not lower it/);
+    expect(line).toMatch(/not proof of this turn/);
+    expect(line).not.toMatch(/do not lower it/i);
     // Started with 20 × 5 = 100: 100 + 72 = 172 covers the 151, so the reveal hedge stands.
     const [big] = trackOpponents(g, boards, ME, STD, { players, start: { territories: 20, armiesPerTerritory: 5 } });
     expect(big!.income).toBe(66);
     expect(big!.incomeJump).toMatchObject({ verdict: 'reveal', stock: { received: 172 } });
-    expect(big!.warnings.join(' ')).toMatch(/could be old armies.*could have received up to 172 by turn 9 \(starting armies 100 \+ 8 × 9 turns\), enough for the 151/);
+    expect(big!.warnings.join(' ')).toMatch(/could be old armies.*At 8 a turn it could have received up to 172 by turn 9 \(starting armies 100 \+ 8 × 9 turns\), enough for the 151/);
   });
 
   it('under full distribution only seated players split the map: a Declined or Invited player does not shrink the start', () => {
@@ -228,7 +228,7 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     });
     const line = t!.warnings.find((w) => /one turn/.test(w));
     expect(line).toMatch(/could be armies it had banked/);
-    expect(line).toMatch(/\(30 a turn\) it could have received up to 216/);
+    expect(line).toMatch(/At 30 a turn it could have received up to 216/);
     expect(line).not.toMatch(/could not have had/);
   });
 
@@ -257,7 +257,7 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
       const line = t.warnings.find((w) => /one turn/.test(w))!;
       expect(line).toMatch(new RegExp(`turn 7 reads \\+5 to \\+${observed}`, 'i'));
       expect(line).not.toMatch(/could not have banked/);
-      expect(line).not.toMatch(/Do not lower it/);
+      expect(line).not.toMatch(/do not lower it/i);
     }
   });
 
@@ -289,7 +289,7 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     const [t] = trackOpponents(g, history([7, at(20)], [8, at(28)], [9, at(33)], [10, b10]), ME, STD);
     expect(t!.incomeJump?.fromMe).toMatchObject({ territories: [2], armies: 70, guardPriced: true });
     const line = t!.warnings.find((w) => /one turn/.test(w));
-    expect(line).toMatch(/70 of them on territory 2, taken from me on turn 9/);
+    expect(line).toMatch(/70 on territory 2 taken from me/);
     expect(line).toMatch(/priced at the guard I may have left/);
   });
 
@@ -303,7 +303,7 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     expect(t!.income).toBe(66);
     expect(t!.incomeMethod).toBe('carried');
     expect(t!.incomeJump).toMatchObject({ turn: 9, verdict: 'supported', since: 7 });
-    expect(t!.warnings.join(' ')).toMatch(/~66\/turn rests on one turn: turn 9 \+66/);
+    expect(t!.warnings.join(' ')).toMatch(/\+66 on one turn \(turn 9\): confirmed/);
   });
 
   it('no jump: a steady reading, or a high turn under twice the turns before it, adds no line', () => {
@@ -334,7 +334,7 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     expect(t!.turns.map((x) => x.observed)).toEqual([8, 5, 66, 60]);
     expect(t!.income).toBe(66);
     expect(t!.incomeJump).toBeUndefined();
-    expect(t!.warnings.join(' ')).not.toMatch(/rests on one turn/);
+    expect(t!.warnings.join(' ')).not.toMatch(/on one turn/);
     expect(t!.warnings.join(' ')).not.toMatch(/not confirmed/);
   });
 
@@ -372,8 +372,8 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
       high: 66,
       verdict: 'supported',
     };
-    expect(incomeJumpText(j, 66, [])).not.toMatch(/carried/);
-    expect(incomeJumpText(j, 50, [])).toMatch(/^tracked income ~50\/turn rests on one turn: turn 9 \+66 \(carried since, less 16/);
+    expect(incomeJumpText(j, 66, [])).not.toMatch(/Tracked ~/);
+    expect(incomeJumpText(j, 50, [])).toMatch(/^\+66 on one turn \(turn 9\): confirmed[^.]*\. Tracked ~50\/turn, less 16 since \(a bonus broken/);
   });
 
   it('the likely combat deaths are no proof: a transfer beside my shrinking stack is not counted as a loss', () => {
@@ -393,5 +393,59 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
   it('a jump on the first observed turn has no turn before it to stand out from: no line', () => {
     const [t] = trackOpponents(g, history([9, at(33)], [10, at(99)]), ME, STD);
     expect(t!.incomeJump).toBeUndefined();
+  });
+});
+
+// #254: the line led with ~1,100 characters of arithmetic before its conclusion. It now opens with
+// the verdict in about a dozen words, then one shorter sentence of numbers (the full figures stay in
+// `income.jump`).
+describe('#254: the income-jump line leads with its verdict', () => {
+  const hidden = fogged(5);
+  const lineOf = (t: { warnings: string[] } | undefined) => t!.warnings.find((w) => /on one turn/.test(w))!;
+  const lead = (line: string) => line.slice(0, line.indexOf('. ') + 1);
+  // The verdict after the colon, in words (a dash is no word).
+  const words = (s: string) => s.slice(s.indexOf(': ') + 2).split(/\s+/).filter((w) => /\w/.test(w)).length;
+
+  it('supported: confirmed, armies it could not have banked, do not lower it — then a short sentence of numbers', () => {
+    const [t] = trackOpponents(g, history([7, at(20)], [8, at(28)], [9, at(33)], [10, at(99)]), ME, STD);
+    const line = lineOf(t);
+    expect(lead(line)).toBe(`Player ${ENEMY}'s +66 on one turn (turn 9): confirmed — armies it could not have banked; do not lower it.`);
+    expect(words(lead(line))).toBeLessThanOrEqual(14);
+    expect(line.length).toBeLessThan(400);
+  });
+
+  it('banked: not confirmed, kept as a lower bound; could be armies it had banked', () => {
+    const [t] = trackOpponents(
+      g,
+      history([7, at(20, enemy(4, 2), enemy(5, 80))], [8, at(28, enemy(4, 2), hidden)], [9, at(33, enemy(4, 2), hidden)], [10, at(99, enemy(4, 2), hidden)]),
+      ME,
+      STD,
+    );
+    const line = lineOf(t);
+    expect(lead(line)).toBe(`Player ${ENEMY}'s +66 on one turn (turn 9): not confirmed, kept as a lower bound; could be armies it had banked.`);
+    expect(line.length).toBeLessThan(400);
+  });
+
+  it('reveal: not confirmed, kept as a lower bound; could be old armies revealed', () => {
+    const b10 = board([mine(1, 5), mine(2, 5), enemy(3, 99), enemy(4, 2), hidden, enemy(6, 50), fogged(7), fogged(8)]);
+    const [t] = trackOpponents(
+      g,
+      history([7, at(20, enemy(4, 2), enemy(5, 80))], [8, at(28, enemy(4, 2), hidden)], [9, at(33, enemy(4, 2), hidden)], [10, b10]),
+      ME,
+      STD,
+    );
+    const line = lineOf(t);
+    expect(lead(line)).toBe(`Player ${ENEMY}'s +66 on one turn (turn 9): not confirmed, kept as a lower bound; could be old armies revealed.`);
+    expect(line.length).toBeLessThan(400);
+  });
+
+  it('supported by the whole game only: kept, more than its earlier rate allows, without claiming this turn', () => {
+    const b10 = board([mine(1, 5), mine(2, 5), enemy(3, 99), enemy(4, 2), hidden, enemy(6, 50), fogged(7), fogged(8)]);
+    const boards = history([7, at(20, enemy(4, 2), enemy(5, 80))], [8, at(28, enemy(4, 2), hidden)], [9, at(33, enemy(4, 2), hidden)], [10, b10]);
+    const [t] = trackOpponents(g, boards, ME, STD, { players: [{ id: ME }, { id: ENEMY }], start: { territories: 3, armiesPerTerritory: 2 } });
+    const line = lineOf(t);
+    expect(lead(line)).toBe(`Player ${ENEMY}'s +66 on one turn (turn 9): kept — more armies than its earlier rate allows; not proof of this turn.`);
+    expect(words(lead(line))).toBeLessThanOrEqual(14);
+    expect(line.length).toBeLessThan(600);
   });
 });

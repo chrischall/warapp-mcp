@@ -588,6 +588,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   jump turn are named (`fromMe`, with the low–high reading when the capture is priced at the guard).
   No line when a later observed turn also reads more than the factor × that most: the income then
   rests on more than one turn. A carried figure cut below the jump since says so in the line.
+  The line leads with its verdict in about a dozen words (#254: confirmed / kept / not confirmed, kept
+  as a lower bound), then one short sentence of numbers; every figure is in `income.jump`.
   The figure never changes for it.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
