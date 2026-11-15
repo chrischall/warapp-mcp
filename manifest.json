@@ -38,7 +38,8 @@
         "WARAPP_TRANSPORT": "${user_config.transport}",
         "WARAPP_SESSION_FILE": "${user_config.session_file}",
         "WARAPP_ENV_FILE": "${user_config.env_file}",
-        "WARAPP_PLAYER_RECORD": "${user_config.player_record}"
+        "WARAPP_PLAYER_RECORD": "${user_config.player_record}",
+        "WARAPP_PLAYER_PROFILE": "${user_config.player_profile}"
       }
     }
   },
@@ -84,6 +85,12 @@
       "type": "string",
       "title": "Player record (optional)",
       "description": "The name-free record of how other players kept truces, across games (salted hashes, no names). On by default; 'off' turns it off.",
+      "required": false
+    },
+    "player_profile": {
+      "type": "string",
+      "title": "Opponent profiles (optional)",
+      "description": "Counts of what each opponent did on the turns your boards showed (gameplay only, no names or chat), kept per game to profile its habits, and folded name-free (salted-hash keys) into counts across finished games. On by default; 'off' turns it off.",
       "required": false
     }
   },
@@ -167,6 +174,10 @@
     {
       "name": "warapp_locate_opponents",
       "description": "Guess where each opponent is and what it may be doing: what you saw kept apart from likely starts, hidden territories, approaches and what to prepare for"
+    },
+    {
+      "name": "warapp_profile_opponents",
+      "description": "Profile each opponent's habits from what your boards showed: how often it reinforces, attacks, strikes first, stacks, retaliates and retakes, with counts and counter-play"
     },
     {
       "name": "warapp_plan_picks",

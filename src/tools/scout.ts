@@ -2,27 +2,31 @@
 // with them, from war.app's Profile and CommonGames pages (GETs through the
 // signed-in tab). Only allowlisted fields leave src/scout.ts — never location
 // or any other personal detail.
-import { McpToolError } from '@chrischall/mcp-utils';
+import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { commonGamesUrl, isProfile, parseCommonGames, parseProfile, profileUrl } from '../scout.js';
 import { gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
+import { metRead } from './profile-reads.js';
 import { resolvePlayer } from './resolve.js';
 
-/** The player's invite token (= GameFeed player id): looked up in a game, or given raw. */
-async function tokenOf(ctx: LiveContext, gameId: string | number | undefined, player: string | number): Promise<string> {
+/**
+ * The player's invite token (= GameFeed player id), looked up in a game or given raw, and the numeric
+ * id the profile store keys it by (a raw token read as GameFeed ids are).
+ */
+async function tokenOf(ctx: LiveContext, gameId: string | number | undefined, player: string | number): Promise<{ token: string; id: number }> {
   const raw = String(player).trim();
   if (gameId === undefined) {
-    if (/^\d{5,20}$/.test(raw)) return raw;
+    if (/^\d{5,20}$/.test(raw)) return { token: raw, id: Number(raw) };
     throw new McpToolError(`Pass game_id to look up ${JSON.stringify(raw)} by name, or pass the player's id.`, {
       hint: 'warapp_get_game lists each player with their id; warapp_my_games lists game ids.',
     });
   }
   const game = await ctx.client.getGame(gameId, { map: false });
   const p = resolvePlayer(game.players, raw);
-  return p.feedId ?? String(p.id);
+  return { token: p.feedId ?? String(p.id), id: p.id };
 }
 
 async function page(ctx: LiveContext, url: string, what: string): Promise<string> {
@@ -37,7 +41,8 @@ async function page(ctx: LiveContext, url: string, what: string): Promise<string
   }
 }
 
-export function registerScoutTool(server: McpServer, ctx: LiveContext): void {
+export function registerScoutTool(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
+  const env = opts.env ?? process.env;
   server.registerTool(
     'warapp_scout_player',
     {
@@ -49,7 +54,9 @@ export function registerScoutTool(server: McpServer, ctx: LiveContext): void {
           'losses (games without teams only: in a team game they may have been your teammate, so those are counted ' +
           'as `teamGames`) and games in progress. Name the player with game_id + player (name or id), or pass just their ' +
           'player id. Reads war.app pages through your signed-in tab (ContextMint Bridge). Fields a new player ' +
-          'lacks are null. Read-only.',
+          'lacks are null. When your earlier finished games with them are in the opponent-profile record (WARAPP_PLAYER_PROFILE), ' +
+          '`met` gives how many you met them in and the read from those games (each habit with its value, n, confidence and ' +
+          'basis, and the labels): a likelihood, never a certainty, and never to be quoted to them. Read-only.',
       ),
       _meta: lookupMeta(['scout player', 'opponent stats', 'warzone player', 'head to head', 'who am i playing']),
       annotations: readAnnotations('Scout a war.app player'),
@@ -61,7 +68,7 @@ export function registerScoutTool(server: McpServer, ctx: LiveContext): void {
       }),
     },
     async ({ game_id, player }) => {
-      const token = await tokenOf(ctx, game_id, player);
+      const { token, id } = await tokenOf(ctx, game_id, player);
       const [profileHtml, commonHtml] = await Promise.all([
         page(ctx, profileUrl(token), 'profile'),
         page(ctx, commonGamesUrl(token), 'common games'),
@@ -77,10 +84,13 @@ export function registerScoutTool(server: McpServer, ctx: LiveContext): void {
       }
       const headToHead = parseCommonGames(commonHtml);
       const { name, ...stats } = profile;
+      // Part D (docs/PLAN-PROFILES.md section 11): the cross-game read, when the record has the player.
+      const met = await metRead(ctx.dataDir, env, id).catch(() => undefined);
       return respond(undefined, ['compact'], () => ({
         player: { id: token, name },
         profile: stats,
         headToHead,
+        ...(met ? { met } : {}),
       }));
     },
   );

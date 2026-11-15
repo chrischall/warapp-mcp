@@ -72,8 +72,13 @@ export async function playerRecordSalt(dir: string): Promise<string | undefined>
   return typeof s === 'object' ? s.salt : undefined;
 }
 
-/** The salt for a write: the one on record, else a new one (never over an existing file); `undefined` when malformed or unwritable. */
-async function saltForWrite(dir: string): Promise<string | undefined> {
+/**
+ * The salt for a write: the one on record, else a new one (never over an existing file); `undefined`
+ * when malformed. The one "read or make" for every store keyed by `playerKey` (this record and the
+ * opponent profiles, src/profile-store.ts), so two salts can never exist. Throws when it cannot be
+ * written (callers run it inside their own never-throw guard).
+ */
+export async function playerSaltForWrite(dir: string): Promise<string | undefined> {
   const s = await readSalt(dir);
   if (typeof s === 'object') return s.salt;
   if (s === 'malformed') return undefined;
@@ -97,6 +102,8 @@ const hmac = (salt: string, text: string) => createHmac('sha256', salt).update(t
 
 /** A player's key in the record: never the id itself. */
 export const playerKey = (salt: string, playerId: number) => hmac(salt, `player:${playerId}`);
+/** A game's key in the opponent profiles: my account and the game, never the ids themselves. */
+export const profileGameKey = (salt: string, myId: number, gameId: number) => hmac(salt, `profile-game:${myId}:${gameId}`);
 /** An agreement's key in the record: my account, the game and the agreement, never the ids themselves. */
 export const entryKey = (salt: string, myId: number, gameId: number, agreementId: string) =>
   hmac(salt, `agreement:${myId}:${gameId}:${agreementId}`);
@@ -229,7 +236,7 @@ export async function updatePlayerRecord(
     return await withPathLock(playerRecordPath(dir), async () => {
       const file = await readFileRecord(dir);
       if (file === 'unreadable') return 'failed';
-      const salt = await saltForWrite(dir);
+      const salt = await playerSaltForWrite(dir);
       if (!salt) return 'failed';
       const key = playerKey(salt, playerId);
       const current = file.players[key] ?? { tallies: { ...ZERO_COUNTS }, entries: [], updated: 0 };

@@ -59,6 +59,12 @@
           "description": "The name-free cross-game record of how other players kept truces (salted hashes, no names). On by default; set off to turn it off.",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "WARAPP_PLAYER_PROFILE",
+          "description": "Opponent profiling: counts of what each opponent did on the turns your boards showed (gameplay only, no names or chat), kept per game, and folded name-free (salted-hash keys) into counts across finished games. On by default; set off to turn it off.",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

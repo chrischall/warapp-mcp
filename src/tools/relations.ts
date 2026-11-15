@@ -46,6 +46,7 @@ import { lookupMeta, mintMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
+import { recordProfile } from './profile-hook.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 import { boardHistory, plannerSettings } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
@@ -460,7 +461,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
       const feed = await ctx.client.getGame(game_id, { settings: true });
       const seat = await resolveMe(ctx, feed.players, player);
       // The teams, once my seat is found: GameFeed's, else the game list's (asked once per game, kept).
-      const { game, me } = await resolveTeamsFor(ctx, feed, seat);
+      const { game, me, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       const map = mapOf(game);
       const graph = graphOf(map);
       const turn = currentTurn(game) ?? 0;
@@ -478,6 +479,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           if (ctx.dataDir) {
             await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
             await writeGameRecord(ctx.dataDir, game);
+            await recordProfile(ctx.dataDir, env, game, me, boards, teamsKnown);
           }
         } catch {
           notes.push(`The live board could not be read: flags come from the cached boards only (turns ${boards.map((b) => b.turn).join(', ') || 'none'}).`);

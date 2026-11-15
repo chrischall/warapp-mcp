@@ -15,8 +15,9 @@ Build plans: `docs/PLAN.md` (phase 1, GameFeed), `docs/PLAN-LIVE.md` (phase 2, l
 `docs/PLAN-TURN.md` (phase 3, plan and submit a turn), `docs/PLAN-SCOUT.md` (phase 4, my games
 and opponent scouting), `docs/PLAN-CARDS-PUSH.md` (phase 5, cards, turn notifications,
 threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, from a lost game),
-`docs/PLAN-PICKS.md` (the pick advisor; its heuristics and sources are in `docs/STRATEGY.md`) and
-`docs/PLAN-TEAMS.md` (chat, truces in free-for-alls and team play).
+`docs/PLAN-PICKS.md` (the pick advisor; its heuristics and sources are in `docs/STRATEGY.md`),
+`docs/PLAN-TEAMS.md` (chat, truces in free-for-alls and team play) and `docs/PLAN-PROFILES.md`
+(opponent profiling: reading opponents' habits, and using the read next time).
 
 ## What is true only of this repo
 
@@ -618,6 +619,56 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   The line leads with its verdict in about a dozen words (#254: confirmed / kept / not confirmed, kept
   as a lower bound), then one short sentence of numbers; every figure is in `income.jump`.
   The figure never changes for it.
+- **Opponent profiles (`docs/PLAN-PROFILES.md`, part A; owner decisions P1–P4 of 2026-11-15).** A habit is
+  counts, never a story: events out of opportunities (`{ e, n }`) or a size (`{ n, sum, sq }`).
+  `src/analysis/opponent-profile.ts` (pure) observes each pair of my consecutive boards with my cached orders
+  (`observeTurn` → `TurnPrimitives` per opponent: contact, `attackedMe` — `null` when it cannot be told —,
+  `iAttacked`, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
+  arithmetic cannot read —, `stack`, `tookFromMe` / `lostToMe`; visibility through `visibleState` / `ownerShown`)
+  and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake) from the
+  whole list, so re-deriving never double-counts. A territory an order only `sent` holds (percentage, Attack
+  Only, Transfer Only) or my Airlift touches is never read from armies; orders cached without their card plays
+  (`MyOrders.cards`, cached since A1) read nothing from armies when the game may have Airlift, and when it
+  may have Gift captures from me cannot be told (`tookFromMe: null`: no retake counted, no "did not attack";
+  a gift of mine is no capture); a failure is read only when the armies back match the exact result; a border with a neighbour whose owner is hidden
+  is not tested, and one a move of mine left without landing on a territory of mine (a failed attack, its survivors
+  may come back), or entered from a territory I only took this turn (a Multi-Attack chain), reads only a drop, never
+  a "did not attack"; under Multi-Attack (or when the settings do not say) a border is read only when every territory
+  within two steps shows its owner and none is a third player's (it may have chained through the neighbour); boards from GameFeed history (`TurnBoard.source: 'history'`) are never observed.
+  `src/profile-store.ts` keeps every observed turn at
+  `<dataDir>/profiles/games/<gameId>-<myId>.json` (real ids, counts only; a turn observed again is
+  overwritten; newest 200 files, none unwritten past the board cache's 60 days), written by `recordProfile` (`src/tools/profile-hook.ts`) right after
+  `writeBoardCache` in warapp_plan_turn (never a what-if plan), warapp_track_opponents,
+  warapp_locate_opponents and warapp_get_relations. `WARAPP_PLAYER_PROFILE=off`: nothing read or written.
+  Known teammates are never profiled: nothing is kept while `resolveTeams` says a game of 3+ seats has teams it could not
+  read (`known: false`; also when GameFeed gives some seats a team and others none), the tool then flags every other
+  player `mayBeTeammate: true`, and each write drops what the file holds for a known teammate. Read-only `warapp_profile_opponents` reports each habit
+  (B1) as this game's counts pooled with the player's faded counts from earlier finished games, shrunk by
+  `PROFILE_PRIOR_WEIGHT` (4) toward a prior: the population pool for this format, then all players, once it has
+  `POPULATION_MIN_OPPORTUNITIES` (10) for that habit (an AI seat: the AI pool), else the neutral default; with `n`,
+  `confidence`, `basis` (whichever weighs most: `this-game`, `past-games`, `population`, `default`; the prior wins a
+  tie), `seen.gamesMet`, and labels with a counter-play line at confidence 0.5; `profile` is `kept`, `not-kept` (no data dir, or the teams unknown) or `off`.
+  **Across games (B2, `src/profile-store.ts`)** two name-free stores: `profiles/players.json` keyed by the deal
+  record's `playerKey` under the ONE shared salt (`playerSaltForWrite` in `src/player-record-store.ts` is the only
+  "read or make"), each player with at most 30 per-game entries (keyed by an HMAC of my account and the game) and its
+  faded totals by format, at most 1000 players by an update counter (no clock); `profiles/population.json` with the
+  human totals per format, the pooled `ai` profile, a games count and its per-game entries (500). `foldGame` moves
+  totals by the difference from the entry stored for the game (never double counts; `history` replaces `live`, never
+  the reverse), and a game new to a player first fades its totals and entry weights by `PROFILE_DECAY` (0.9). AI
+  seats reach the pool only; a human who became an AI is left out of the game. `foldFinishedGame` runs on the first
+  read showing the game `Finished` (warapp_get_game, warapp_wait_for_turn's read; no request) and marks the per-game
+  file `folded: 'live'`; part C is not built, so the file then goes by the 60-day age rule, and one reaching it (or the
+  200-file bound) unfolded is folded with every ending `unknown` from the seats it kept, then deleted. A store or salt
+  that cannot be parsed is never overwritten (`pastGames: 'unreadable'`, folds fail). **Profiles inform only:** the planner reads none
+  of it until part 0's measurement is reported and the owner approves each hook (P1).
+  **Where the read is reported (part D, `src/tools/profile-reads.ts`, read-only, never throws):** one computation
+  (`readOpponents`) serves `warapp_profile_opponents` and three reports, none of which any plan, price or verdict
+  reads (the golden corpus is unchanged): `warapp_plan_turn`'s `reads` (each opponent in contact on the live board
+  with a habit at the confidence bar or a label: its labels, those habits with `n` and `basis`, `gamesMet`; full adds
+  the counter lines; a what-if plan reports it too and still keeps nothing; absent with profiling off or the teams
+  unknown), `warapp_advise_diplomacy`'s per-neighbour `habits` (`retaliate` and `attack`, beside `record`; it keeps no
+  turn) and `warapp_scout_player`'s `met` (`metRead`: games met and every habit from the cross-game record alone,
+  shrunk toward the all-formats pool; only when the record holds the player).
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in

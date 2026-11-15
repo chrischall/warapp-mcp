@@ -33,6 +33,7 @@ import { registerTurnTools } from './turn.js';
 import { registerUncommitTool } from './uncommit.js';
 import { registerLeaveGameTool } from './leave-game.js';
 import { registerWhereTool } from './where.js';
+import { registerProfileOpponentsTool } from './profile-opponents.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { pushWebSocketLeg } from '../push/websocket.js';
 import { readSession } from '../direct/session.js';
@@ -91,7 +92,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     identity: () => bridge.identityState(),
   });
   registerHealthcheckTool(server, fetchproxy, bridge, deps);
-  registerGameTool(server, client, () => dataDir(deps.env));
+  registerGameTool(server, client, () => dataDir(deps.env), deps.env);
   registerMapTool(server, client);
   // Opt-in (WARAPP_STATS=1), never hosted: the tool refuses before any request
   // when off. One collector per registration, so its 1 s throttle spans calls.
@@ -115,12 +116,14 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerLeaveGameTool(server, live);
   registerSurrenderTool(server, live);
   registerBeginTurnTool(server, live);
-  registerScoutTool(server, live);
+  registerScoutTool(server, live, deps.env ? { env: deps.env } : {});
   registerTurnTools(server, live, deps.env ? { env: deps.env } : {});
   registerCheckPlanTool(server, live);
-  registerOpponentsTool(server, live);
+  registerOpponentsTool(server, live, deps.env ? { env: deps.env } : {});
   // Reads the map statistics cache only when they are on (WARAPP_STATS=1, never hosted).
   registerWhereTool(server, live, deps.env ? { env: deps.env } : {});
+  // Opponent profiling, read-only: habits counted from the boards seen (on unless WARAPP_PLAYER_PROFILE=off).
+  registerProfileOpponentsTool(server, live, deps.env ? { env: deps.env } : {});
   registerUncommitTool(server, live);
   registerChatTools(server, live, deps.env ? { env: deps.env } : {});
   registerChatInboxTool(server, live);
@@ -155,5 +158,5 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     hosted,
     ...(env ? { env } : {}),
   });
-  registerPushTools(server, live, push);
+  registerPushTools(server, live, push, deps.env ? { env: deps.env } : {});
 }

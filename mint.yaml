@@ -106,7 +106,10 @@ state:
     ($MCP_DATA_DIR/relations: the truces recorded per game) lives there too, and
     so does the cross-game player record (relations/players.json and its salt:
     owner decision D5, on hosted as well, name-free and keyed by a salted hash;
-    WARAPP_PLAYER_RECORD=off switches it off). GameFeed maps are kept at
+    WARAPP_PLAYER_RECORD=off switches it off), and the opponent profile turns
+    ($MCP_DATA_DIR/profiles/games: gameplay counts per game, owner decision P4,
+    on hosted as well, folded when a game finishes into the name-free
+    profiles/players.json and population.json, keyed by the same salt; WARAPP_PLAYER_PROFILE=off switches it off). GameFeed maps are kept at
     $MCP_DATA_DIR/maps/<mapId>.json (public map data, base bonus values, at most
     40, re-downloaded after 30 days) with maps/games.json naming each game's map,
     so a known game is not downloaded with its map again after a cold start; and

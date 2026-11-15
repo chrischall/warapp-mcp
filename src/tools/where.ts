@@ -34,6 +34,7 @@ import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
+import { recordProfile } from './profile-hook.js';
 import { boardHistory, currentTurn, plannerSettings, requireTurnPhase } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
 
@@ -160,7 +161,7 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
       requireTurnPhase(feed);
       const seat = await resolveMe(ctx, feed.players, player);
       // The teams, once my seat is found: GameFeed's, else the game list's (asked once per game, kept).
-      const { game, me } = await resolveTeamsFor(ctx, feed, seat);
+      const { game, me, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       const map = mapOf(game);
       const { territories } = await loadLiveGame(ctx, game);
       const graph = graphOf(map);
@@ -204,6 +205,7 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
       if (ctx.dataDir && turn !== null) {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
         await writeGameRecord(ctx.dataDir, game);
+        await recordProfile(ctx.dataDir, deps.env, game, me, boards, teamsKnown);
       }
 
       const name = namer(map);

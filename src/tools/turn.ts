@@ -95,6 +95,8 @@ import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type L
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { guessOrdersOf, guessView } from './guess-view.js';
 import { guessSalt } from '../guess-salt.js';
+import { recordProfile } from './profile-hook.js';
+import { confidentHabits, counterOf, neighboursOf, readOpponents, type OpponentRead } from './profile-reads.js';
 import { mapOf } from './map.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveBonus, resolveTerritory } from './resolve.js';
@@ -1185,6 +1187,19 @@ export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
     sent: orders.flatMap((o) =>
       o.kind === 'move' ? [{ from: o.from, to: o.to, ...(o.mode === AttackTransferMode.Transfer ? { transferOnly: true as const } : {}) }] : [],
     ),
+    // Profiles A1: an Airlift or a Gift changes what my territories hold or who holds them.
+    cards: orders.flatMap((o) =>
+      o.kind === 'card'
+        ? [
+            {
+              card: o.card,
+              ...(o.from !== undefined ? { from: o.from } : {}),
+              ...(o.to !== undefined ? { to: o.to } : {}),
+              ...(o.target !== undefined ? { target: o.target } : {}),
+            },
+          ]
+        : [],
+    ),
   };
 }
 
@@ -1237,7 +1252,7 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
     .sort(([a], [b]) => a - b)
     .map(([t, b]): TurnBoard => {
       const o = orders.get(t);
-      return { turn: t, board: b.board, ...(o ? { orders: o } : {}) };
+      return { turn: t, board: b.board, ...(o ? { orders: o } : {}), ...(b.source === 'history' ? { source: 'history' as const } : {}) };
     });
   const previous = byTurn.get(turn - 1);
   return { boards, ...(previous ? { previous } : {}) };
@@ -1400,6 +1415,30 @@ export async function truceRelations(
   });
 }
 
+
+/**
+ * The reads of my opponents in contact on `board` (a territory of theirs next to one of mine) with at
+ * least one habit at the confidence bar or a label (docs/PLAN-PROFILES.md part D); none with profiling
+ * off. Read-only. Never throws: profiling never blocks a plan.
+ */
+async function contactReads(
+  ctx: LiveContext,
+  env: EnvSource,
+  game: Game,
+  me: Player,
+  boards: readonly TurnBoard[],
+  graph: MapGraph,
+  board: BoardState,
+): Promise<OpponentRead[] | undefined> {
+  try {
+    const { on, reads } = await readOpponents({ dataDir: ctx.dataDir, env, game, me, teamsKnown: true, boards });
+    if (!on) return undefined;
+    const contact = new Set(neighboursOf(graph, board, me.id));
+    return reads.filter((r) => contact.has(r.id) && (r.labels.length || Object.keys(confidentHabits(r.estimates)).length));
+  } catch {
+    return undefined;
+  }
+}
 
 /** The arguments of a live plan (warapp_plan_turn's, by their planner names). */
 export interface LivePlanArgs {
@@ -1669,6 +1708,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           '`guess` is a randomized split, weighted by what each border is worth, against an opponent who would read a fixed ' +
           'one, and `guessOrders` the plan\'s `orders` with that split — optional (the user chooses; `orders` stay the ' +
           "plan's), and a model: one opponent, one deploy, its visible stacks. " +
+          '`reads` (opponent profiles, as warapp_profile_opponents reads them; reported only, the plan never uses them): ' +
+          'each opponent in contact with a habit at the confidence bar or a label — its labels, those habits with `n` and ' +
+          '`basis`, `gamesMet` — a likelihood, never a certainty, and never to be quoted to another player. ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -1757,7 +1799,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const seat = await resolveMe(ctx, feed.players, player);
       requirePlayingSeat(feed, seat);
       // The teams: GameFeed's, else the game list's (asked once per game, kept).
-      const { game, me, source: teamSource } = await resolveTeamsFor(ctx, feed, seat);
+      const { game, me, source: teamSource, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       const [{ territories, info }, history, chat] = await Promise.all([
         loadLiveGame(ctx, game),
         boardHistory(ctx, game, me, turn),
@@ -1812,6 +1854,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const whatIf = goal !== undefined || enemy_deploy !== undefined;
       if (ctx.dataDir && turn !== null)
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
+      // The opponent profile (docs/PLAN-PROFILES.md A2): the turns these boards show, never on a what-if plan.
+      if (ctx.dataDir && turn !== null && !whatIf)
+        await recordProfile(ctx.dataDir, opts.env, game, me, [...history.boards, { turn, board: seen }], teamsKnown);
+      // Part D (docs/PLAN-PROFILES.md section 11): each opponent in contact, its labels and the habits
+      // at the confidence bar. Reported only: the planner above read none of it (owner decision P1).
+      // None with profiling off, or while the teams cannot be read (any player may be my teammate).
+      const reads = turn !== null && teamsKnown ? await contactReads(ctx, opts.env ?? process.env, game, me, [...history.boards, { turn, board: seen }], graph, seen) : undefined;
       if (ctx.dataDir && turn !== null) await writeGameRecord(ctx.dataDir, game);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       // B2: what each honoured truce freed this turn and what a break would have cost (T6), for "has it
@@ -1946,6 +1995,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               },
         // #178: the outlook and its basis; full adds each turn judged.
         outlook: rung === 'full' ? outlook : { state: outlook.state, basis: outlook.basis },
+        // Part D: the opponent reads (reported only, never planned on); absent when none is at the bar.
+        ...(reads?.length
+          ? {
+              reads: reads.map((r) => ({
+                player: playerRef(r.id),
+                labels: r.labels,
+                habits: confidentHabits(r.estimates),
+                ...(r.gamesMet !== undefined ? { gamesMet: r.gamesMet } : {}),
+                ...(rung === 'full' ? { counter: counterOf(r.labels) } : {}),
+              })),
+            }
+          : {}),
         income,
         enemyDeploy: plan.enemyDeploy,
         // #127: who moves first this turn and how it is known; null when unknown.
