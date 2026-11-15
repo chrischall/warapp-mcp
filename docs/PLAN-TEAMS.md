@@ -657,7 +657,8 @@ captures gone) takes, given what they entered (armies + their deploys there − 
 order as its share; armies moved in left out, as for my own borders), where my idle armies beside it make it
 hold: idle is `avail` after every order less `keepFor` / the two-step keep / cover and central keeps, on a
 territory not locked, conceded or my commander's (No-Split: none from a territory with an order, and a whole
-stack). **Joint captures (C3.6):** `team.jointCaptures[]` — a foe's territory a teammate attacks, resolved on
+stack). Each idle army is allotted once (G3): the borders are served by the armies they need, fewest first (then
+by id), each from its sources with the most left, and a border its sources can no longer cover is left out. **Joint captures (C3.6):** `team.jointCaptures[]` — a foe's territory a teammate attacks, resolved on
 `simulateTurn` with only their entered attacks (and deploys) and mine (the plan's own attacks on it, `inPlan`,
 else my idle armies beside it, attack-only): skipped when either side takes it alone; reported when some
 order of the two takes it, with `cases` (each side first: captured, by whom, and whether it still falls when
@@ -672,6 +673,8 @@ choice (`chooseCardPlays`, Order Priority, the card advice) works on the rest, s
 card twice and a teammate's discard counts toward the limit (V8: how the team hand is keyed is unverified).
 `warapp_plan_turn` warns per claimed card and reports `cards.team.roles` in a team game with a hand: who plays
 each card (a teammate for what they entered, me for my plays and discards, nobody for a card held).
+`warapp_submit_turn` and `warapp_check_plan` (G3) warn when my own orders play or discard a claimed card
+(`claimedCardUses`), and resolve a card named by its type to an unclaimed one first (`unclaimedFirst`).
 
 ### C4. The team brief and joining
 
@@ -696,7 +699,8 @@ nothing — no board cache, no outlook; `opponents` lists every opponent still p
 `mustGoFirst` under a cyclic order) and each conceded border of mine a teammate's stack borders (`cover`: advice to
 them — a move onto my territory is V7); `offers` are the plan's `team.support`; `cards` the plays (with an advised
 Order Priority) and discards, and the cards left to a teammate (C3.7); `conflicts.list` has `same-target` (we both
-attack it, unless a joint capture — `joint`), `bonus` (their attack in a bonus my plan completes), `attacks-me`
+attack it, unless a joint capture — `joint`), `bonus` (their attack in a bonus my plan completes — `completes: true` — or, G3, a positive bonus one of my
+planned attacks goes into a direct member of — `completes: false`; superbonuses only when completed), `attacks-me`
 (`attack_teammates` onto mine) and `onto-mine` (a plain order onto mine, V7), with `conflicts.read: null` when no
 teammate's orders were read (unknown). Third-party names go through `untrustedText`. **Joining:** `warapp_join_game`
 takes `team` (implies `allow_team`): refused outside a team game, with random teams, and when the team has no open
