@@ -492,7 +492,8 @@ describe('warapp_submit_picks', () => {
     expect(text).toContain(mapName(161));
     expect(text).toContain('Replaces any picks already submitted');
     expect(s.sent).toEqual([]);
-    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
+    // The game list is asked for the teams (nine seats, none with a team from GameFeed); nothing is sent.
+    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetMyGames, Method.GetLatestGameInfo]);
   });
 
   it('sends SendTerritoryPicks in priority order, reads them back, and reports verified', async () => {

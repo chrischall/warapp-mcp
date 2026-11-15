@@ -13,10 +13,9 @@ import { incomeFor } from '../analysis/plan/shared.js';
 import { cardRules, handReadable, readHand } from '../cards.js';
 import { parseGameId } from '../client.js';
 import { boardStateFromLive, playersByInGameId } from '../live.js';
-import { myGamesTeams } from '../my-games.js';
-import type { Game, Player } from '../normalize.js';
+import type { Player } from '../normalize.js';
 import { withTeammateOrders, type TeammateOrders, type TeamOrders } from '../team-orders.js';
-import { carriesTeam, isTeamGame, teammatesOf } from '../teams.js';
+import { carriesTeam, teammatesOf } from '../teams.js';
 import { handOwners } from './card-advice.js';
 import { chatUnread, readChat, type ChatMe } from './chat.js';
 import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText } from './common.js';
@@ -24,36 +23,9 @@ import { lookupMeta } from './hints.js';
 import { loadLiveGame, loadPicks, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
 import { mapOf } from './map.js';
-import { fetchMyGames } from './my-games.js';
+import { resolveTeams } from './team-source.js';
 import { currentTurn } from './turn.js';
 import { accountUnknown } from './write-kit.js';
-
-/** Where the game's teams were read from. */
-export type TeamSource = 'gamefeed' | 'my-games';
-
-/**
- * The game with each player's team: GameFeed's when it sends any (V1, UNVERIFIED), else GetMyGames'
- * GameInfoPlayer team for the players it can match by in-game id. `source` is `null` when neither gives a
- * team. Never throws: a GetMyGames failure leaves the game as GameFeed sent it.
- */
-export async function gameWithTeams(ctx: LiveContext, game: Game): Promise<{ game: Game; source: TeamSource | null }> {
-  if (isTeamGame(game.players)) return { game, source: 'gamefeed' };
-  let teams: Map<number, number>;
-  try {
-    teams = myGamesTeams((await fetchMyGames(ctx)).games, game.id);
-  } catch {
-    return { game, source: null };
-  }
-  if (!teams.size) return { game, source: null };
-  const byInGame = playersByInGameId(game.players);
-  const teamOf = new Map<number, number>();
-  for (const [inGame, team] of teams) {
-    const p = byInGame.get(inGame);
-    if (p) teamOf.set(p.id, team);
-  }
-  const players = game.players.map((p) => (teamOf.has(p.id) ? { ...p, team: teamOf.get(p.id)! } : p));
-  return isTeamGame(players) ? { game: { ...game, players }, source: 'my-games' } : { game, source: null };
-}
 
 const NOTES = [
   "GameFeed's player team is UNVERIFIED (V1); when it sends none, the team comes from GetMyGames (from the client bundle).",
@@ -94,14 +66,14 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
       const identity = await ctx.myIdentity().catch(() => undefined);
       if (!identity) throw accountUnknown(ctx.hosted, 'your team cannot be read');
       const read = await ctx.client.getGame(gameId, { settings: true, chat: true });
-      const { game, source } = await gameWithTeams(ctx, read);
+      const { game, source } = await resolveTeams(ctx, read);
       const me = game.players.find((p) => p.id === identity.token);
       if (!me) {
         throw new McpToolError(`The signed-in war.app account is not a player in game ${game.id}.`, {
           hint: 'Check the game id with warapp_my_games.',
         });
       }
-      if (!source || !carriesTeam(me.team)) {
+      if (source === 'none' || !carriesTeam(me.team)) {
         throw new McpToolError(`Game ${game.id} is not a team game, or your team there is unknown.`, {
           hint:
             "GameFeed's team field is unverified and your game list did not name a team either. Outside a team game " +

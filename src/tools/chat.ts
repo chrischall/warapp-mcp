@@ -40,6 +40,7 @@ import { recordCommitments, type CommitmentRecorded } from './relations.js';
 import { requireApprovedAccount, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
 import { defineGatedWrite, requireMe, sendAndVerify } from './write-kit.js';
+import { resolveTeams } from './team-source.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_CHAT_LENGTH = 2000;
@@ -356,11 +357,14 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
         // Read the game for every message (#130): one GameFeed does not know is refused here. Its
         // settings say whether private messages are allowed. Commitments are checked on a plan: the map too.
         const promises = commitments?.length ? commitments : undefined;
-        const game = await ctx.client.getGame(gameId, { map: promises !== undefined, settings: true });
+        const feed = await ctx.client.getGame(gameId, { map: promises !== undefined, settings: true });
         // The message goes out as whoever is signed in: bind that account, so an
         // approval given while one account was signed in never posts as another (#133:
         // refused when it cannot be read, as every write is).
         const me = await requireMe(ctx);
+        // The teams, only where they matter (the team channel, a promise's audience): GameFeed's, else the
+        // game list's (asked once per game, kept).
+        const { game } = channel === 'team' || promises ? await resolveTeams(ctx, feed) : { game: feed };
         const account = String(me);
         const seat = game.players.find((p) => p.id === me);
         let meInGame: number | undefined;

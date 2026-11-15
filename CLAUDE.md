@@ -174,9 +174,22 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Team games read (part C1 of `docs/PLAN-TEAMS.md`).** One team test everywhere: `isTeamGame` /
   `teammatesOf` (`src/teams.ts`, over `carriesTeam`); teammate ids are GameFeed ids at the tool boundary
   (an AI seat has no in-game id: it owns nothing on the board, never a throw). The read-only
-  `warapp_get_team` (`src/tools/team.ts`) refuses outside a team game; when GameFeed sends no team (V1) it
-  takes GetMyGames' `GameInfoPlayer` team (`myGamesTeams`, by in-game id) and says so — no other tool does
-  yet. Teammate orders and picks come from `LatestGameInfo`'s `TeammateOrders` dict (`src/team-orders.ts`,
+  `warapp_get_team` (`src/tools/team.ts`) refuses outside a team game. **The team source is one helper,
+  `resolveTeams` / `resolveTeamsFor` (`src/tools/team-source.ts`), used by every tool that decides teams**
+  (plan_turn, check_plan, submit_turn, advise_diplomacy, get_relations, record_agreement, plan_picks,
+  submit_picks, track/locate_opponents, send_chat to the team channel or with commitments, get_team): GameFeed's
+  team when any player carries one (`gamefeed`); else, only in a game of more than two seats and only with the
+  signed-in account readable, GetMyGames' `GameInfoPlayer` team (`myGamesTeams`, by in-game id; `my-games`);
+  else `none`. The list's answer is judged against GameFeed's seats first (`judgeList`): only every seat on a
+  team with at least two distinct teams, or every seat listed without one (a free-for-all), is trusted; every
+  seat on one team is not (a misread field reads that way) and is never kept; a seat left out, or teams on some
+  seats only, is incomplete. A trusted answer is kept name-free at `<dataDir>/teams/<gameId>.json` (newest 200),
+  so the list is asked once per game; an incomplete one keeps only `incompleteTurn` (no teams), so it is asked
+  again at most once per turn; a failed read, or a list without the game, is not kept and the teams stay
+  unknown. The record carries `TEAM_RECORD_VERSION`: bump it whenever the GameInfoPlayer team decode or the
+  trust check changes (another version's record is ignored). Tools resolve after their
+  cheap refusals (turn phase, seat), so a refusal reads nothing more. `teamSource` is reported by plan_turn and
+  check_plan (team games only), `team.source` by plan_picks and get_team. Teammate orders and picks come from `LatestGameInfo`'s `TeammateOrders` dict (`src/team-orders.ts`,
   found by type name, orders by class and read order). `withTeammateOrders` sets `BoardState.teammateOrders`
   (by GameFeed id, my entry out) on the live boards of `warapp_plan_turn`, `warapp_check_plan`,
   `warapp_submit_turn` and `warapp_get_team` when the dict is there — no key otherwise (1v1, FFA: goldens

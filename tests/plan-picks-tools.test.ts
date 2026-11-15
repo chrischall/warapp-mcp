@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
+import type { DecodedRequest, ReplyFrame, Writer } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -364,7 +365,7 @@ describe('warapp_plan_picks in a team game (C2)', () => {
     h = await liveHarness({ feed: [fourSeats()], pages: SIGNED_IN_ANN, warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
     const p = payload<PlanPicksPayload & TeamView>(await h.call('warapp_plan_picks', { game_id: GAME }));
     expect(p.players).toBe(4);
-    expect(p.team).toEqual({ teammates: [{ id: Number(BOB.feed), name: '⟦Bob⟧' }], opponents: 2 });
+    expect(p.team).toEqual({ teammates: [{ id: Number(BOB.feed), name: '⟦Bob⟧' }], opponents: 2, source: 'gamefeed' });
     // Six pickables, four players: one each, and the list is starts × all players (lists are not agreed).
     expect(p.maxPicks).toBe(4);
     expect(p.award?.orders).toEqual(['reversing', 'repeating']);
@@ -381,10 +382,44 @@ describe('warapp_plan_picks in a team game (C2)', () => {
     expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
   });
 
+  it('takes the teams from the game list when GameFeed sends none, and asks it once (team source)', async () => {
+    const list = () => ({
+      body: (w: Writer) =>
+        writeMyGamesReturn(w, [
+          {
+            id: GAME,
+            name: 'synthetic',
+            lastTurn: -1,
+            state: 2,
+            // Ann and Bob share a team, Cy and Dee the other: two teams over every seat, so it is trusted.
+            players: [
+              { id: ANN.inGame, name: 'Ann', state: 2, committed: false, team: 3 },
+              { id: BOB.inGame, name: 'Bob', state: 2, committed: false, team: 3 },
+              { id: 222222, name: 'Cy', state: 2, committed: false, team: 4 },
+              { id: 333333, name: 'Dee', state: 2, committed: false, team: 4 },
+            ],
+          },
+        ]),
+    });
+    // Synthetic GameFeed ids for the other two seats: their in-game ids wrapped in two check digits each end.
+    const seats = fourSeats(false);
+    const ids = ['5522222211', '6633333322'];
+    const players = (seats.players as Array<Record<string, string>>).map((p, i) => (i >= 2 ? { ...p, id: ids[i - 2]! } : p));
+    h = await liveHarness({
+      feed: [{ ...seats, players }],
+      pages: SIGNED_IN_ANN,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD), [Method.GetMyGames]: list }),
+    });
+    const p = payload<PlanPicksPayload & TeamView>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.team).toEqual({ teammates: [{ id: Number(BOB.feed), name: '⟦Bob⟧' }], opponents: 2, source: 'my-games' });
+    await h.call('warapp_plan_picks', { game_id: GAME });
+    expect(h.exchanges.filter((e) => e.request.method === Method.GetMyGames)).toHaveLength(1);
+  });
+
   it('when my seat cannot be told, every other player is an opponent, with a warning', async () => {
     h = await liveHarness({ feed: [fourSeats()], warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
     const p = payload<PlanPicksPayload & TeamView>(await h.call('warapp_plan_picks', { game_id: GAME }));
-    expect(p.team).toEqual({ teammates: [], opponents: 3 });
+    expect(p.team).toEqual({ teammates: [], opponents: 3, source: 'gamefeed' });
     expect(p.warnings.join(' ')).toMatch(/Could not tell which seat is yours.*every other player is treated as an opponent/);
   });
 });

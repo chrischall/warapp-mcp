@@ -111,6 +111,7 @@ import { recordBrokenByMe } from './relations.js';
 import { withTeammateOrders } from '../team-orders.js';
 import { teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
+import { resolveTeams, resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
@@ -1294,7 +1295,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       );
     if (!ctx.dataDir) return notRecorded('this server keeps no data directory');
     try {
-      const game = await ctx.client.getGame(st.gameId, { settings: true });
+      const { game } = await resolveTeams(ctx, await ctx.client.getGame(st.gameId, { settings: true }));
       const me = game.players.find((p) => p.id === st.feedPlayerId);
       if (!me) return notRecorded('you are no longer listed in the game');
       return await recordBrokenByMe({ dir: ctx.dataDir, env: opts.env, game, me, map: mapOf(game), agreements: ids, turn: st.turnNumber });
@@ -1437,19 +1438,21 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
     },
     async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, first_mover, view }) => {
       // The chat comes in the same GameFeed read: the fallback for the unread counts (part A1).
-      const game = await ctx.client.getGame(game_id, { settings: true, chat: true });
-      requireTurnPhase(game);
-      const map = mapOf(game);
+      const feed = await ctx.client.getGame(game_id, { settings: true, chat: true });
+      requireTurnPhase(feed);
+      const map = mapOf(feed);
       const focusBonusIds = (focus ?? []).map((b) => resolveBonus(map, b).id);
-      const turn = currentTurn(game);
+      const turn = currentTurn(feed);
       // My seat is checked before the board is read (#130): an eliminated or booted seat has no turn,
       // so nothing is read for it. Then the live board and the board history are independent reads:
       // in parallel, not in series (#131). History needed my seat anyway, so the board waiting for it
       // adds no step to the slowest chain (account, then history). Accepted trade-off of not
       // serializing them: when the board read fails, a history read already under way still reaches
       // GameFeed after the tool has returned (one wasted, harmless read; boardHistory never throws).
-      const me = await resolveMe(ctx, game.players, player);
-      requirePlayingSeat(game, me);
+      const seat = await resolveMe(ctx, feed.players, player);
+      requirePlayingSeat(feed, seat);
+      // The teams: GameFeed's, else the game list's (asked once per game, kept).
+      const { game, me, source: teamSource } = await resolveTeamsFor(ctx, feed, seat);
       const [{ territories, info }, history, chat] = await Promise.all([
         loadLiveGame(ctx, game),
         boardHistory(ctx, game, me, turn),
@@ -1736,6 +1739,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             }
           : {}),
         ...(plan.advice ? { advice: plan.advice.map((a) => ({ ...a, player: playerRef(a.player) })) } : {}),
+        // Where the teams came from (GameFeed, else the game list), in a team game only.
+        ...(teamSource !== 'none' ? { teamSource } : {}),
         // PLAN-TEAMS C3.3: the bonuses I share with a teammate, advisory.
         ...(plan.team
           ? {
@@ -1853,19 +1858,21 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       }),
       inputSchema: submitSchema,
       async plan({ game_id, player, orders, income: givenIncome, break_agreement }) {
-        const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
-        requireTurnPhase(game);
+        const feed = await ctx.client.getGame(parseGameId(game_id), { settings: true });
+        requireTurnPhase(feed);
         // The bridge always acts as the signed-in account: an explicit `player` naming anyone
         // else is refused, and so is a call when that account cannot be read (never trust `player` alone).
-        const me = await requireMySeat(ctx, game, { player, playing: false });
-        requirePlayingSeat(game, me);
-        if (me.hasCommittedOrders) {
-          throw new McpToolError(`You have already committed orders for this turn of game ${game.id}.`, {
+        const seat = await requireMySeat(ctx, feed, { player, playing: false });
+        requirePlayingSeat(feed, seat);
+        if (seat.hasCommittedOrders) {
+          throw new McpToolError(`You have already committed orders for this turn of game ${feed.id}.`, {
             hint:
               'To change them, withdraw them first with warapp_uncommit_turn (confirm-gated), then submit again — ' +
               'or use "Modify orders" in the game itself; this tool does not replace committed orders.',
           });
         }
+        // The teams (the teammate set): GameFeed's, else the game list's (asked once per game, kept).
+        const { game, me } = await resolveTeamsFor(ctx, feed, seat);
         const turnNumber = currentTurn(game);
         if (turnNumber === null || game.numberOfTurns === undefined) {
           throw new McpToolError(`GameFeed did not say how many turns game ${game.id} has had, so the turn number is unknown.`, {

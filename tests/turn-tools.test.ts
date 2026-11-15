@@ -18,6 +18,7 @@ import { writeAward, writePickList } from '../src/pick-list.js';
 import { writeFirstMover } from '../src/move-order.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 import { CHAT_SUMMARY_NOTE } from '../src/tools/chat.js';
+import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -772,7 +773,7 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(existsSync(cacheFile(h.dataDir))).toBe(true);
   });
 
-  it('(h) counts its upstream reads: cold 4, warm 3, with the two earlier turns cached 2 — the board and history in parallel (#148)', async () => {
+  it('(h) counts its upstream reads: cold 5, warm 3, with the two earlier turns cached 2 — the board and history in parallel (#148)', async () => {
     const SIGNED_IN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
     let live: Harness | undefined;
     const boardRead = () => live!.exchanges.some((e) => e.request.method === Method.GetLatestGameInfo);
@@ -783,7 +784,26 @@ describe('warapp_plan_turn — threat trend', () => {
       // Pinned to the bridge: in auto mode the first call's fall-back to the bridge moves the transport
       // state, so the signed-in account read in it is not cached (by design) and a second call re-reads it.
       env: { WARAPP_TRANSPORT: 'fetchproxy' },
-      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+      warapp: routes({
+        [Method.GetLatestGameInfo]: board(BOARD),
+        // Nine seats and no team from GameFeed: the game list is asked once, and its answer (every seat with an
+        // in-game id listed, none on a team: a free-for-all) kept.
+        [Method.GetMyGames]: () => ({
+          body: (w) =>
+            writeMyGamesReturn(w, [
+              {
+                id: GAME,
+                name: 'synthetic',
+                lastTurn: 2,
+                state: 3,
+                players: [
+                  { id: ANN.inGame, name: 'Ann', state: 2, committed: false },
+                  { id: BOB.inGame, name: 'Bob', state: 2, committed: false },
+                ],
+              },
+            ]),
+        }),
+      }),
       // A history read is held until the board has been read, with no deadline: were the history read
       // first and the board after it, the call would never finish and the test fails on its timeout.
       // No wall-clock budget decides the outcome, so a loaded machine cannot report a parallel read serial.
@@ -802,9 +822,10 @@ describe('warapp_plan_turn — threat trend', () => {
       expect(res.isError, textOf(res)).toBeFalsy();
       counts.push(upstream() - before);
     }
-    // Cold: the signed-in account, the game (with its map), the board, the history. Warm: the account and
-    // the map are cached. Then turns 3 and 4 are cached on disk, so no history read at all.
-    expect(counts).toEqual([4, 3, 2]);
+    // Cold: the signed-in account, the game (with its map), the game list (its teams), the board, the history.
+    // Warm: the account, the map and the teams are cached. Then turns 3 and 4 are cached on disk, so no
+    // history read at all.
+    expect(counts).toEqual([5, 3, 2]);
     expect(live.calls.map((c) => c.url.includes('GetMap=false'))).toEqual([false, true, true, true, true]);
     expect(live.calls.filter((c) => c.url.includes('GetHistory=true'))).toHaveLength(2);
   });
@@ -824,8 +845,9 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(CHAT_SUMMARY_NOTE).toMatch(/`unknown`.*warapp_get_chat/);
     expect(textOf(res)).not.toContain('secret plan');
     expect(h.calls[0]!.url).toContain('GetChat=true');
-    // No extra request for it: the game's own read carried the chat.
-    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
+    // No extra request for it: the game's own read carried the chat. (The game list is asked for the teams:
+    // nine seats, none with a team from GameFeed.)
+    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetMyGames, Method.GetLatestGameInfo]);
   });
 
   it('no chat in the game read: no chat field', async () => {
@@ -1112,7 +1134,8 @@ describe('warapp_submit_turn', () => {
     for (const id of [159, 161, 157, 158]) expect(text).toContain(untrustedText(mapName(id)));
     expect(text).toMatch(/"turn":3/);
     expect(s.sent).toEqual([]);
-    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
+    // The game list is asked for the teams (nine seats, none with a team from GameFeed); nothing is sent.
+    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetMyGames, Method.GetLatestGameInfo]);
   });
 
   it('sends SendOrders (deploys first, turn = numberOfTurns + 1) and reports resolved when the turn advanced', async () => {
