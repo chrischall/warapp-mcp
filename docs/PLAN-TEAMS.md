@@ -351,7 +351,7 @@ the opponents, marks a reply that attacks a covered territory `breaksTruce` (any
 joint strike's partner) and reports `safeIfTruceHolds` over the rest (`null` when none is left). Departure:
 an all-attack that mixes a break with attacks elsewhere is left out of `safeIfTruceHolds` whole, since its
 attacks elsewhere are each tried alone too. `warapp_submit_turn` refuses an order (not transfer-only) that
-attacks a territory the partner holds and an active or in-notice agreement covers (`truceBreaksIn`: the
+attacks a territory the partner holds and an active or in-notice agreement covers, or a Bomb on one (`truceBreaksIn`: the
 ledger's own states and the live board; the breach watch is not consulted, so a break by them is recorded
 `broken-by-them` first) unless `break_agreement: true`; with it the preview names the agreement, and once the
 outcome is `confirmed` the ledger records `broken-by-me` through warapp_record_agreement's path

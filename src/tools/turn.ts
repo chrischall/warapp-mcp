@@ -1301,11 +1301,21 @@ function sinceLastView(
   };
 }
 
-/** The agreements `breaks` names and the orders that break each, in a sentence (ids only). */
-function breaksText(breaks: readonly TruceBreak[], moves: readonly { from: { id: number }; to: { id: number } }[]): string {
+/**
+ * The agreements `breaks` names and the orders that break each, in a sentence (ids only). A Bomb is named
+ * by its place among the card plays (`bombPlays`: the index of each Bomb in that list).
+ */
+function breaksText(
+  breaks: readonly TruceBreak[],
+  moves: readonly { from: { id: number }; to: { id: number } }[],
+  bombPlays: readonly number[] = [],
+): string {
   const one = (b: TruceBreak) =>
     `agreement ${b.agreement} with player ${b.with} (${b.state === 'notice' ? 'in notice, still binding' : 'active'}): ` +
-    b.moves.map((m) => `move ${m.index + 1} (${moves[m.index]!.from.id} → ${m.to}) attacks a territory it covers`).join(', ');
+    [
+      ...b.moves.map((m) => `move ${m.index + 1} (${moves[m.index]!.from.id} → ${m.to}) attacks a territory it covers`),
+      ...(b.bombs ?? []).map((x) => `the Bomb (card play ${(bombPlays[x.index] ?? x.index) + 1}) on ${x.target} attacks a territory it covers`),
+    ].join(', ');
   return `These orders break ${breaks.length === 1 ? 'a truce' : `${breaks.length} truces`} — ${breaks.map(one).join('; ')}`;
 }
 
@@ -2209,7 +2219,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       .boolean()
       .optional()
       .describe(
-        'Only when an order attacks a territory an active or in-notice truce covers (warapp_get_relations): true breaks ' +
+        'Only when an order attacks (or a Bomb hits) a territory an active or in-notice truce covers (warapp_get_relations): true breaks ' +
           'it on purpose — the preview names the agreement, and once the orders are committed the ledger records it ' +
           'broken-by-me (the partner\'s player record too). Without it such orders are refused. Ask the owner first.',
       ),
@@ -2253,7 +2263,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ. ' +
         'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
         'several attacks on one target in the order listed, each against what the earlier ones leave) ' +
-        'and warns about one that cannot capture. An order that attacks a territory an active or in-notice truce ' +
+        'and warns about one that cannot capture. An order that attacks (or a Bomb that hits) a territory an active or in-notice truce ' +
         'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
         'and, once the orders are committed, the ledger records it broken-by-me. Always sent as ' +
         'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
@@ -2421,6 +2431,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             : undefined;
         // B2: an order that attacks a territory an active or in-notice truce covers is refused unless the
         // caller breaks the agreement on purpose (the plan never orders a surprise break, T7).
+        const bombs = plays.flatMap((p, play) =>
+          p.kind === 'Bomb' && p.targets?.territory ? [{ play, target: p.targets.territory.id }] : [],
+        );
+        const bombPlays = bombs.map((x) => x.play);
         const ledger = ctx.dataDir ? await readLedger(ctx.dataDir, game.id, me.id) : undefined;
         const breaks = ctx.dataDir
           ? truceBreaksIn({
@@ -2437,10 +2451,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 ...(p.team !== undefined ? { team: p.team } : {}),
               })),
               moves: moves.map((m) => ({ from: m.from.id, to: m.to.id, ...(m.mode !== undefined ? { mode: m.mode } : {}) })),
+              // A Bomb halves its target's armies: an attack on the partner like a move into it.
+              bombs: bombs.map((x) => x.target),
             })
           : [];
         if (breaks.length && break_agreement !== true) {
-          throw new McpToolError(`${breaksText(breaks, moves)}: nothing was sent.`, {
+          throw new McpToolError(`${breaksText(breaks, moves, bombPlays)}: nothing was sent.`, {
             hint:
               'Drop those orders, or give notice (warapp_record_agreement status notice-by-me) and wait until it runs. ' +
               'If the partner broke it first, record broken-by-them with warapp_record_agreement. To break it on purpose ' +
@@ -2477,7 +2493,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
         if (breaks.length)
           warnings.unshift(
-            `${breaksText(breaks, moves)}. break_agreement is true: once these orders are committed the ledger records ` +
+            `${breaksText(breaks, moves, bombPlays)}. break_agreement is true: once these orders are committed the ledger records ` +
               `${breaks.length === 1 ? 'it' : 'them'} broken-by-me, and the partner's player record says so. That is final: ` +
               'withdrawing the orders afterwards (warapp_uncommit_turn) does not undo it.',
           );

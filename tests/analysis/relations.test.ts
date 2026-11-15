@@ -287,6 +287,19 @@ describe('truceBreaksIn', () => {
   it('nothing binds once only two players remain', () => {
     expect(check([agreed()], [{ from: 4, to: 5 }], 4, players({ [OTHER]: { state: 'Eliminated' } }))).toEqual([]);
   });
+
+  it('a Bomb on a covered territory is an attack: it breaks the truce on its own, beside a move or not', () => {
+    const bombs = (targets: number[], moves: { from: number; to: number }[] = []) =>
+      truceBreaksIn({ agreements: [agreed()], graph, board: b, me: ME, turn: 4, players: players(), moves, bombs: targets });
+    expect(bombs([5])).toEqual([{ agreement: 'a1', with: P, state: 'active', moves: [], bombs: [{ index: 0, target: 5 }] }]);
+    expect(bombs([2, 5], [{ from: 4, to: 5 }])).toEqual([
+      { agreement: 'a1', with: P, state: 'active', moves: [{ index: 0, from: 4, to: 5 }], bombs: [{ index: 1, target: 5 }] },
+    ]);
+    // A Bomb on a territory the truce does not cover breaks nothing.
+    expect(
+      truceBreaksIn({ agreements: [agreed({ scope: { territories: [6] } })], graph, board: b, me: ME, turn: 4, players: players(), moves: [], bombs: [5] }),
+    ).toEqual([]);
+  });
 });
 
 describe('planRelationsFrom: Diplomacy cards in effect (PLAN-TEAMS D3, T9)', () => {

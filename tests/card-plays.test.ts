@@ -2,6 +2,8 @@
 // Surveillance, Airlift, Gift, Diplomacy and Sanctions. Synthetic fixtures only: made-up ids,
 // the hand-written mini-bundle, and bytes built by the encoder.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
@@ -543,6 +545,34 @@ describe('submit_turn plays Bomb and Emergency Blockade (UNVERIFIED live)', () =
         3,
       ),
     );
+  });
+
+  // A Bomb on a territory an active truce covers is an attack on the partner: refused like a move into it
+  // unless break_agreement is true, and then recorded broken-by-me once the orders are in.
+  it('refuses a Bomb on a territory a truce covers without break_agreement; with it, warns and records broken-by-me', async () => {
+    const s = server(COMBAT_HAND);
+    const cs = combatSettings();
+    // record, refused submit, preview, confirm, read back (the turn resolved), then the re-read for the record.
+    h = await liveHarness({
+      feed: [game({ settings: cs }), game({ settings: cs }), game({ settings: cs }), game({ settings: cs }), game({ settings: cs, turns: '3' })],
+      pages: ME_PAGE,
+      warapp: s.warapp,
+    });
+    payload(await h.call('warapp_record_agreement', { game_id: GAME, player: 'Ann', with: 'Bob', status: 'agreed' }));
+    const orders = [{ kind: 'card', card: 'Bomb', target: 158 }, DEPLOY];
+    const refused = await h.call('warapp_submit_turn', { game_id: GAME, orders });
+    expect(refused.isError).toBe(true);
+    expect(textOf(refused)).toMatch(/These orders break a truce — agreement a1 with player \d+ \(active\): the Bomb \(card play 1\) on 158 attacks a territory it covers: nothing was sent/);
+    expect(textOf(refused)).toMatch(/break_agreement: true/);
+    expect(s.sent).toEqual([]);
+    const { preview, result } = await confirmed({ game_id: GAME, orders, break_agreement: true });
+    expect((preview as unknown as Preview).preview.warnings?.join('\n')).toMatch(
+      /the Bomb \(card play 1\) on 158 attacks a territory it covers\. break_agreement is true: once these orders are committed the ledger records it broken-by-me/,
+    );
+    expect(s.sent).toHaveLength(1);
+    expect(result).toMatchObject({ status: 'resolved', agreementsBroken: [{ agreement: 'a1', ledger: 'recorded' }] });
+    const ledger = JSON.parse(readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')) as { agreements: Array<{ status: string }> };
+    expect(ledger.agreements[0]!.status).toBe('broken-by-me');
   });
 
   it('bombs a neutral or fogged territory next to mine', async () => {
