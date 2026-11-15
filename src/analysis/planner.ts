@@ -1114,9 +1114,11 @@
 //     idle armies walked to a territory beside empty neutrals while the conceded border the plan
 //     attacked from, just as near, would have held with them. The front is the territories a visible
 //     enemy holds. When no revival applies and the front is reached only through a conceded border
-//     the plan attacks an enemy from (#260), an idle stack still steps toward it, into that border,
-//     when the nearest territory not mine is no nearer ("… is reached only through a border the plan
-//     concedes …; they are lost with it if it falls"); never into another conceded border or one a
+//     the plan attacks an enemy from (#260; #272: or strictly sooner through it than any other way —
+//     live, the other way ran through a neutral captured this turn, one step longer, and the stack
+//     went there), an idle stack still steps toward it, into that border,
+//     when the nearest territory not mine is no nearer ("… is reached only (or soonest) through a border
+//     the plan concedes …; they are lost with it if it falls"); never into another conceded border or one a
 //     withdrawal leaves. Live, 10 idle armies walked to an empty neutral edge while the border the
 //     plan attacked from missed holding by one; the stress test preferred them there. Only an
 //     interior stack steps so: never one beside a visible enemy at the start of the turn, interior

@@ -205,3 +205,37 @@ describe('#260: an idle stack steps toward the enemy front through a conceded bo
     expect(why(p)).not.toMatch(/is reached only through a border the plan concedes/);
   });
 });
+
+// #272 item 4: the play session's board (a 10-player game, turn 3, made up here) still sent the idle
+// stack to S. The only enemy territory in view, D, borders only the conceded v and gT — and a neutral
+// beside S that the plan captures this turn. That capture counts as held, so rule 6's plain distance
+// reached D through it (U → S → the neutral → D, 3 steps): the #260 via rule only ran when the front
+// was out of plain reach, so the stack stepped to S though the border the plan attacks D from is one
+// step nearer (U → v → D, 2 steps). Now the via route is taken when it is strictly nearer than the
+// plain one too.
+describe('#272: the via step also wins when the plain route to the front is longer, through a capture', () => {
+  it('moves the idle stack into the conceded border the plan attacks from, not to S', () => {
+    // N = 22: a 0-army neutral in a +2 bonus with 23 (mine), beside S and D: the plan takes it from S.
+    // T2 (3 armies) breaks the opponent's B900 (D and the far E = 12) with its 2 movable armies.
+    const N = 22;
+    const E = 12;
+    const p = plan(2, 3, {
+      ids: [N, 23, E],
+      edges: [[U, 2], [U, 3], [U, S], [2, D], [3, D], [S, 20], [S, 21], [S, N], [N, D], [N, 23], [D, 11], [D, E]],
+      armies: [
+        at(U, 11, ME), at(2, 3, ME), at(3, 1, ME), at(S, 12, ME), at(D, 1, FOE), at(11, 30, FOE), at(E, 1, FOE),
+        at(20, 6, 'neutral'), at(21, 6, 'neutral'), at(N, 0, 'neutral'), at(23, 1, ME),
+      ],
+      bonuses: [
+        { id: 900, name: 'B900', value: 5, territoryIds: [D, E], bonusIds: [] },
+        { id: 901, name: 'B901', value: 2, territoryIds: [N, 23], bonusIds: [] },
+      ],
+    });
+    expect(p.moves.some((m) => m.kind === 'attack' && m.to === N)).toBe(true);
+    expect(p.moves.find((m) => m.kind === 'attack' && m.to === D)?.from).toBe(2);
+    expect(p.conceded).toEqual(expect.arrayContaining([2, 3]));
+    expect(into(p, S)).toBe(0);
+    expect(into(p, 2)).toBe(10);
+    expect(why(p)).toMatch(/Transfer 10 from T1 \(#1\) to T2 \(#2\): moves idle interior armies toward the front \(the enemy front, T10 \(#10\), is reached soonest \(2 steps against 3 any other way\) through a border the plan concedes/);
+  });
+});

@@ -903,7 +903,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     can make hold is held after all before any margin, #121; #257: so is one an idle interior stack
     beside it makes hold by transferring in, rule 6's first step, the border the plan attacks from
     first; #260: when none does and the enemy front lies only past a conceded border the plan attacks
-    an enemy from, rule 6 still steps the stack into that border rather than to a neutral edge no
+    an enemy from (#272: or strictly nearer past it than by any other way, a capture this turn included), rule 6 still steps the stack into that border rather than to a neutral edge no
     nearer, never into another conceded border or one a withdrawal leaves, and only from a stack
     no visible enemy borders at the start of the turn — one interior only once a strike lands keeps
     its armies for that strike's #226 margin, which is sized after rule 6; when several such steps
