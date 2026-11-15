@@ -222,7 +222,13 @@ export function captureTargets(
    * — the sure size only decides whether it fits and what is sent ({@link sizeOf}). Ranked on the sure
    * size, a target that fitted dropped behind a worse one (under No-Split the whole stack went anyway).
    */
-  const repulsed = new Map<number, { player: number; defenders: number; extra: number; cost: number }>();
+  /**
+   * `sure` (#272 review): `extra` is the owner's whole deploy estimate, so the capture lands even if it
+   * deploys there first — a worst case (no "assumes" warning; rule 6 counts the target as held). False
+   * when the most it reinforced it by is below the estimate: the attack is sized for that, but a larger
+   * deploy can still repel it, so it is no worst case and is judged like any other attack on a player.
+   */
+  const repulsed = new Map<number, { player: number; defenders: number; extra: number; cost: number; sure: boolean }>();
   for (const r of input.repulsed ?? []) {
     const t = r.territoryId;
     const st = state.get(t);
@@ -238,12 +244,12 @@ export function captureTargets(
     const extra = Math.min(estimate, seen);
     const cost = costAt(t, defenders + extra);
     if (extra <= 0 || cost === null) continue;
-    repulsed.set(t, { player: r.playerId, defenders, extra, cost });
+    repulsed.set(t, { player: r.playerId, defenders, extra, cost, sure: extra >= estimate });
     const turns = r.attacks.map((a) => a.turn);
     const listed = turns.length > 1 ? `${turns.slice(0, -1).join(', ')} and ${turns[turns.length - 1]}` : `${turns[0]}`;
     const size =
       extra < estimate
-        ? `the most it reinforced it by on those turns, ~${extra}, below its owner's ~${estimate} deploy estimate (${defenders} + ${extra} defenders, ${cost} armies: a larger deploy there can still repel it), or not made (#240, #272)`
+        ? `the most it reinforced it by on those turns, ~${extra}, below its owner's ~${estimate} deploy estimate (${defenders} + ${extra} defenders, ${cost} armies: a larger deploy there can still repel it, so it is no sure capture), or not made (#240, #272)`
         : `its owner's ~${extra} deploy there (${defenders} + ${extra} defenders, ${cost} armies), or not made (#240)`;
     rationale.push(
       `My attacks on ${label(t)} failed on turns ${listed}, player ${r.playerId} reinforcing it each time (${r.attacks

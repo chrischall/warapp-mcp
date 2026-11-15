@@ -174,10 +174,19 @@ describe('#272: under the cap, a fork on one owner beats a single attack', () =>
   const fg = buildGraph(forkMap());
   const forkBoard = (twoOwner = P2): BoardState =>
     board([...live().territories.map((t) => (t.territoryId === 2 ? player(2, 0, twoOwner) : t)), player(6, 4, P2)]);
-  const cappedFork = (b: BoardState) => {
+  const cappedFork = (b: BoardState, enemyDeploy?: number) => {
     const armies = b.territories.filter((t) => t.owner.kind === 'player' && t.owner.playerId === ME).reduce((n, t) => n + (t.armies ?? 0), 0);
     const incomeCap = armyCapIncome(10, 5, armies)!;
-    return planTurn({ graph: fg, board: b, me: ME, income: incomeCap.received, incomeCap, settings: { ...STD, armyCap: 5 }, game: SEVEN });
+    return planTurn({
+      graph: fg,
+      board: b,
+      me: ME,
+      income: incomeCap.received,
+      incomeCap,
+      settings: { ...STD, armyCap: 5 },
+      game: SEVEN,
+      ...(enemyDeploy !== undefined ? { options: { enemyDeploy } } : {}),
+    });
   };
 
   it('player 30 loses its empty 2 to the cap, so its 4-army 6 is attacked too: a fork', () => {
@@ -185,8 +194,17 @@ describe('#272: under the cap, a fork on one owner beats a single attack', () =>
     expect(targetsOf(p)).toEqual(expect.arrayContaining([2, 3, 6]));
     expect(attacks(p).find((m) => m.to === 6)?.from).toBe(1);
     expect(p.rationale.join('\n')).toMatch(
-      /Take T6 \(#6\) for the army cap \(rule 4h, #253\)[^\n]*a fork \(#272\): player 30 is attacked on 2 territories this turn \(T2 \(#2\), T6 \(#6\)\), more than its one deploy can all save/,
+      /Take T6 \(#6\) for the army cap \(rule 4h, #253\)[^\n]*a fork \(#272\): player 30 is attacked on 2 territories this turn \(T2 \(#2\), T6 \(#6\)\), so its one deploy must be split to save them all/,
     );
+  });
+
+  // #272 review: "more than its deploy can all save" is said only when the deploys each attack needs
+  // to fail, summed, exceed the owner's estimate.
+  it('says the deploy cannot save them all only when the summed saves exceed its estimate', () => {
+    const p = cappedFork(forkBoard(), 1);
+    const line = p.rationale.find((l) => l.startsWith('Take T6 (#6) for the army cap'));
+    expect(line).toMatch(/a fork \(#272\): player 30 is attacked on 2 territories this turn \(T2 \(#2\), T6 \(#6\)\), more than its ~1 deploy can all save \(saving them all takes ~(\d+)\)/);
+    expect(Number(/takes ~(\d+)\)/.exec(line!)![1])).toBeGreaterThan(1);
   });
 
   it('without a fork (2 is another player’s) the 4-army 6 is no candidate, as before', () => {

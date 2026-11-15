@@ -1302,7 +1302,8 @@ export function spendStrikeStack(
     // sends at least as much): it is sized for its owner's deploy already, and says so.
     for (const x of taken) {
       const rep = tgt.repulsed.get(x.c.id);
-      if (!rep || x.armies < rep.cost) continue;
+      // #272 review: one sized below its owner's deploy estimate is no worst case (#120 below may still size it up).
+      if (!rep?.sure || x.armies < rep.cost) continue;
       worstCase.set(x.c.id, rep.defenders + rep.extra);
       reinforced.set(x.c.id, rep.extra);
     }

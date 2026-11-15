@@ -721,9 +721,12 @@
 //     of the last REPULSE_WINDOW (3) turns, its owner reinforcing it each time — its armies after
 //     plus my kills above its armies before), still that player's, next to mine and its owner able
 //     to deploy there, is attacked only at that sure size: its defenders plus the owner's deploy
-//     (#272: or plus the most it reinforced it on those turns, after + my kills − before, when less)
 //     (a worst case, so no warning and no bare retry), or not at all; a rationale line names the
-//     failed turns. Every pass: rule 2's targets and the bonus, break and counter passes, rule 4e's
+//     failed turns. #272: when the most its owner reinforced it on those turns (after + my kills −
+//     before) is less than that deploy, it is sized for that instead — no worst case then: a larger
+//     deploy can still repel it, so it keeps #120's "assumes" warning, may still be sized up to the
+//     whole deploy by #120 when the source has the armies, and rule 6 does not count it as held
+//     (`repulsed`'s `sure` is false). Never retried at its bare cost either way. Every pass: rule 2's targets and the bonus, break and counter passes, rule 4e's
 //     fallback, the 1v1 strike stack, finishing off and fog pressure (rule 1e: its only sizing, or
 //     not attacked — never a share of the deploy) and the guard-off one-army break (#165: skipped,
 //     with a line saying why). It ranks on its PLAIN cost (#240 review: ranked on the sure size, a
@@ -2770,6 +2773,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const at = moves.filter((m) => m.kind === 'attack' && m.to === t);
     const sent = at.reduce((n, m) => n + m.armies, 0);
     if (sent >= rep.cost) {
+      // #272 review: sized below its owner's deploy estimate, it stays an attack that assumes no more.
+      if (!rep.sure) continue;
       worstCase.set(t, Math.max(worstCase.get(t) ?? 0, rep.defenders + rep.extra));
       const w = warnings.indexOf(assumes(t));
       if (w >= 0) warnings.splice(w, 1);
@@ -2786,7 +2791,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (warnings[i]!.startsWith(`Attack on enemy ${label(t)} `) || warnings[i]!.startsWith(`${label(t)} can be retaken `))
         warnings.splice(i, 1);
     rationale.push(
-      `Drop the attack on ${label(t)}: it could send only ${sent} by the end of the turn, short of the ${rep.cost} that take it even if player ${rep.player} deploys its ~${rep.extra} there first, and my attacks on it failed before, its owner reinforcing it (#240); its armies stay where they are.`,
+      `Drop the attack on ${label(t)}: it could send only ${sent} by the end of the turn, short of the ${rep.cost} that take it ${rep.sure ? `even if player ${rep.player} deploys its ~${rep.extra} there first` : `against the ~${rep.extra} player ${rep.player} put there on those turns`}, and my attacks on it failed before, its owner reinforcing it (#240); its armies stay where they are.`,
     );
   }
 

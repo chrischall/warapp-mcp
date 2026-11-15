@@ -6,8 +6,8 @@
 // army-cap fallback (#104) runs only when the plan captures nothing; this rule runs whatever else the
 // plan captures (live, a plan that completed a bonus elsewhere parked 54 armies beside two enemy
 // territories holding 0 and 1). #272: once one of a player's territories is taken so, its owner's
-// other territories beside mine are candidates whatever they hold — a fork its one deploy cannot all
-// save — each still only while its loss is below the income at stake. planPass runs it after rules
+// other territories beside mine are candidates whatever they hold — a fork its one deploy must split to
+// save them all (the line says it cannot when the summed saves exceed its estimate) — each still only while its loss is below the income at stake. planPass runs it after rules
 // 4e and 4g.
 import { straightKills } from '../combat.js';
 import { neighborsOf } from '../graph.js';
@@ -176,12 +176,34 @@ export function spendUnderCap(
     const paid = before - ps.budget;
     const p = ownerOf(t);
     const lost = p === undefined ? [] : lostBy(p);
+    // #272 review: the fork's claim is stated only when computed — the deploy each attacked territory
+    // needs to repel what this plan sends there, summed, against the owner's deploy estimate.
+    const forkText = () => {
+      const est = Math.max(0, ...lost.map((x) => threats.reinforcementAt(x)));
+      let need = 0;
+      for (const x of lost) {
+        const sent = moves.filter((m) => m.kind === 'attack' && m.to === x).reduce((n, m) => n + m.armies, 0);
+        const d = pc.defenceAt(x);
+        let e = 0;
+        // The least deploy there that makes the attack fall short (capped one past the estimate).
+        while (e <= est) {
+          const c = pc.costAt(x, d + e);
+          if (c === null || c > sent) break;
+          e++;
+        }
+        need += e;
+      }
+      const head = `a fork (#272): player ${p} is attacked on ${lost.length} territories this turn (${lost.map(label).join(', ')})`;
+      return est > 0 && need > est
+        ? `${head}, more than its ~${est} deploy can all save (saving them all takes ~${need})`
+        : `${head}, so its one deploy must be split to save them all`;
+    };
     rationale.push(
       `Take ${label(t)} for the army cap (rule 4h, #253): ${capText(now)}; it loses ~${loss}${
         exposed ? ` (and its ${exposed.survivors} may fall next turn)` : ''
       }, below that, ${paid > 0 ? `paid from idle armies and ${paid} of the deploys left` : 'paid from idle armies'}${
         fork
-          ? `; a fork (#272): player ${p} is attacked on ${lost.length} territories this turn (${lost.map(label).join(', ')}), more than its one deploy can all save`
+          ? `; ${forkText()}`
           : ''
       }.`,
     );

@@ -8,7 +8,8 @@
 // (a neutral, or a foe's with no special unit; never a truce's or, under `expand`, a player's), in a
 // positive bonus whose capture completes it or advances one I am building (another member mine or
 // captured; under No-Split, which sends the whole stack, a completion only), is taken with that
-// border's own armies (no deploy) when they cover its cost — completions
+// border's own armies (no deploy) when they cover what the capture sends (a lead step's or a
+// repulsed territory's size included) beyond its exit cover — completions
 // first, then by bonus value, cost, a teammate's focus (C3.4) and id, repeated while a capture makes another complete. R3 does
 // not refuse it (the armies would otherwise leave the border it gives up); a completed bonus then
 // keeps the border as rule 1c keeps any member of a bonus this turn completes. The rest withdraw.
@@ -31,7 +32,7 @@ export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook
   const { avail, captured, spared, rationale } = ps;
   const { conceded } = hd;
   const { targets } = tgt;
-  const { gainWith } = book;
+  const { gainWith, coverOf } = book;
   if (!conceded.size) return;
   const holding = (x: number) => mineSet.has(x) || captured.has(x);
   /** The positive bonuses taking `t` completes, and those it advances (another member already mine or captured). */
@@ -52,7 +53,9 @@ export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook
     const cands: { t: number; from: number; cost: number; bonus: number; value: number; completes: boolean; focus: boolean }[] = [];
     for (const x of [...conceded].sort(byNum)) {
       if (!mineSet.has(x) || myCommanders.has(x)) continue;
-      const n = avail.get(x) ?? 0;
+      // #272 review: what tryCapture's forced source may spend: a covered exit (#179) keeps its cover
+      // (No-Split sends the whole stack).
+      const n = (avail.get(x) ?? 0) - (noSplit ? 0 : coverOf(x));
       if (n <= 0) continue;
       for (const t of neighborsOf(g, x)) {
         if (mineSet.has(t) || captured.has(t) || spared.has(t) || tried.has(t) || pc.truce.noTarget(t)) continue;
@@ -62,8 +65,10 @@ export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook
         if (st.owner.kind !== 'player' && st.owner.kind !== 'neutral') continue;
         if (defenceAt(t) > CONCEDED_OUT_MAX) continue;
         const cost = costAt(t);
-        // What the capture must send: a repulsed territory's sure size (#240) may be more.
-        if (cost === null || tgt.sizeOf(t, cost) > n || gainWith([t]) < 0) continue;
+        // What the capture must send (#272 review: what tryCapture sends, the target's cost): a repulsed
+        // territory's size (#240) or a lead step's sure size (#203) may be more than the plain cost.
+        // Never more than the border's own armies: a conceded border gets no deploy.
+        if (cost === null || Math.max(tgt.sizeOf(t, cost), targets.get(t)?.cost ?? cost) > n || gainWith([t]) < 0) continue;
         const { completes, advances } = stepOf(t);
         // No-Split: the whole stack goes, none withdraws — only for a completion.
         const ids = completes.length ? completes : noSplit ? [] : advances;
@@ -106,8 +111,14 @@ export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook
     }
     // What the attack sends (a repulsed territory's sure size may be more than its plain cost, #240).
     const sent = ps.moves.filter((m) => m.kind === 'attack' && m.from === c.from && m.to === c.t).reduce((n, m) => n + m.armies, 0);
+    // #272 review: rule 1b withdraws only into a neighbour of mine that is not conceded; with none, the
+    // armies would have stayed, and the attack thins the border instead.
+    const canWithdraw = neighborsOf(g, c.from).some((x) => mineSet.has(x) && !conceded.has(x));
+    const verb = `${c.completes ? 'completing' : 'advancing'} bonus ${bonusName(c.bonus)} (+${c.value}) (#272)`;
     rationale.push(
-      `Attack out of conceded ${label(c.from)} before withdrawing: ${label(c.t)} holds ${defenceAt(c.t)}, and ${sent} of the armies leaving the border anyway take it, ${c.completes ? 'completing' : 'advancing'} bonus ${bonusName(c.bonus)} (+${c.value}) (#272).`,
+      canWithdraw
+        ? `Attack out of conceded ${label(c.from)} before withdrawing: ${label(c.t)} holds ${defenceAt(c.t)}, and ${sent} of the armies leaving the border anyway take it, ${verb}.`
+        : `Attack out of conceded ${label(c.from)}: ${label(c.t)} holds ${defenceAt(c.t)}, and ${sent} of its armies take it, ${verb}; it has nowhere to withdraw to, so they leave a border that keeps the rest.`,
     );
     if (passed)
       rationale.push(

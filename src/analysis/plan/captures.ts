@@ -353,8 +353,10 @@ export function captureHelper(
     // #240: a territory my attacks failed on repeatedly, its owner reinforcing it, is sized the same way.
     // #240 review: not while rule 4e's contact ranking tries it at its plain size (ps.plainRepulsed).
     const rep = lead === undefined && !ps.plainRepulsed ? repulsed.get(t) : undefined;
-    const sized = lead ?? rep;
-    const sure = sized !== undefined && !worstCase.has(t);
+    // #272 review: a repulsed size below the owner's deploy estimate is sent, but is no worst case.
+    const sized = lead ?? (rep?.sure ? rep : undefined);
+    const fresh = !worstCase.has(t);
+    const sure = sized !== undefined && fresh;
     if (sure) worstCase.set(t, sized.defenders + sized.extra);
     shortAt = undefined;
     belowEven = undefined;
@@ -374,7 +376,7 @@ export function captureHelper(
     const shortNow = shortAt as Omit<Extract<LeadTry, { kind: 'short' }>, 'kind'> | undefined;
     if (
       rep &&
-      sure &&
+      fresh &&
       !ok &&
       shortNow?.from !== undefined &&
       shortNow.spare + Math.max(0, ps.budget) >= rep.cost &&

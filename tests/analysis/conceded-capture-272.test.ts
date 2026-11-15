@@ -95,3 +95,33 @@ describe('#272 item 1: a conceded border attacks out for a free step into a bonu
     expect(p.rationale.join('\n')).not.toMatch(/#272/);
   });
 });
+
+// #272 review: with no neighbour of mine to withdraw into, the conceded border's armies would have
+// stayed: the line does not say they were leaving anyway.
+describe('#272 review: a conceded border with nowhere to withdraw to', () => {
+  it('says the attack thins a border that keeps the rest, not that the armies were leaving', () => {
+    // Only 3 is mine (1 and 2 player 20's): it is conceded and has nowhere to withdraw to.
+    const b = board([
+      at(1, 2, BIG),
+      at(2, 3, BIG),
+      at(3, 12, ME),
+      at(4, 0, WEAK),
+      at(5, 0, WEAK),
+      at(8, 30, BIG),
+      at(9, 67, WEAK),
+      at(10, 5, BIG),
+      at(11, 5, BIG),
+      at(12, 9, WEAK),
+      at(13, 9, WEAK),
+      at(14, 9, WEAK),
+      at(15, 9, WEAK),
+    ]);
+    const p = plan(b);
+    const lines = p.rationale.filter((l) => l.startsWith('Attack out of conceded T3'));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) {
+      expect(l).not.toMatch(/leaving the border anyway|before withdrawing/);
+      expect(l).toMatch(/it has nowhere to withdraw to, so they leave a border that keeps the rest/);
+    }
+  });
+});

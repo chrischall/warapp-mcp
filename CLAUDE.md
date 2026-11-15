@@ -45,7 +45,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `requireMe` / `requireMySeat` (every write refuses an unreadable signed-in account, one wording),
   `sendAndVerify` (a refusal throws; no answer is `unknown` and is never read back or resent; #272: a
   failure before the request left — no email, the bridge not ready, marked by `WarappRpc.call`, `notSent` —
-  throws "The request was not sent …, so nothing changed"), and
+  throws "The request was not sent …, so nothing changed"; a failure inside the bridge's fetch, such as
+  "fetch failed", may have left and stays `unknown`), and
   `defineGatedWrite`. Every write result carries `outcome` (`confirmed`, `accepted`, `unconfirmed`,
   `unknown`, `not_applied`; the per-tool mapping is in that file's header) beside its own `status`,
   which callers still read. `warapp_submit_picks` validates against the live board and reports
@@ -856,11 +857,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     size, targets that fitted dropped behind worse ones. One the turn cannot fund at capture time, but its
     source and the whole budget could reach, is taken pending at its plain size and dropped after the
     #226 margin if still short ("Drop the attack on …"), since the plain plan pays the sure size from
-    the leftover. Evidence of a reinforcement at or above the estimate never shrinks the attack (#272: one
-    below it sizes the attack for what the owner actually put there, which can be less): rule 5 judges its source's
+    the leftover. A size below the deploy estimate (#272) is no worst case: the attack keeps #120's
+    "assumes" warning, #120 still sizes it up to the whole deploy when its source has the armies, and rule 6
+    does not count the target as held (`repulsed`'s `sure`, #272 review) — so where the source has the
+    armies the attack is as large as without the evidence, and it never sends less. Rule 5 judges its source's
     comfort (and whether to revive a conceded border) as the plan without it would, with the surplus over the
     plain size still on it, and the leftover there is not kept from the #226 margin (`repulsedSurplus`,
-    `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes".
+    `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes" (only when that size is
+    the whole deploy estimate).
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can
@@ -895,7 +899,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     neutrals and of foe territories holding at most 1 army (no truce, teammate or commander) are taken
     from idle armies while each one's expected loss is below the income the cap would eat, every hold
     kept. Once one of a player's territories is captured this turn, its other territories beside mine are
-    candidates too whatever they hold (#272: a fork its one deploy cannot all save), under the same loss
+    candidates too whatever they hold (#272: a fork its one deploy must split to save them all; the line says
+    it cannot only when the deploys each attack needs to fail, summed, exceed its estimate), under the same loss
     test. It runs whatever else the plan captures (rule 4e's army-cap fallback, #104, runs only when the
     plan captures nothing: live, a plan that completed a bonus parked 54 armies beside enemy territories
     of 0 and 1). The rationale names the cap's arithmetic, the "Not attacking" line says when rule 4h
