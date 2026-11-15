@@ -5,7 +5,10 @@
 // make up a shortfall: deployed or not, they count against the cap), every hold respected. Rule 4e's
 // army-cap fallback (#104) runs only when the plan captures nothing; this rule runs whatever else the
 // plan captures (live, a plan that completed a bonus elsewhere parked 54 armies beside two enemy
-// territories holding 0 and 1). planPass runs it after rules 4e and 4g.
+// territories holding 0 and 1). #272: once one of a player's territories is taken so, its owner's
+// other territories beside mine are candidates whatever they hold — a fork its one deploy cannot all
+// save — each still only while its loss is below the income at stake. planPass runs it after rules
+// 4e and 4g.
 import { straightKills } from '../combat.js';
 import { neighborsOf } from '../graph.js';
 import { armyCapIncome, type ArmyCapIncome } from '../player.js';
@@ -114,59 +117,106 @@ export function spendUnderCap(
     ps.capRefused.set(t, why);
   };
   const taken: number[] = [];
+  /** A candidate's owner, when a player holds it. */
+  const ownerOf = (t: number) => {
+    const o = state.get(t)?.owner;
+    return o?.kind === 'player' ? o.playerId : undefined;
+  };
+  /** The territories `p` loses to this plan's captures, sorted. */
+  const lostBy = (p: number) => [...captured].filter((x) => ownerOf(x) === p).sort(byNum);
+  /**
+   * Try `t`, the `i`th of `list`. 'stop' when it loses as much as the income still at stake (the list
+   * is ranked by loss, so every later one does too: one clause for them all). `fork`: #272, a
+   * territory above CAP_SPEND_ENEMY_MAX taken only beside another of its owner's this turn.
+   */
+  const tryOne = (t: number, i: number, list: number[], fork: boolean): 'stop' | undefined => {
+    const now = nextCap();
+    if (now.eaten <= 0) return 'stop';
+    const loss = lossAt(t);
+    if (loss >= now.eaten) {
+      const rest = list.slice(i + 1);
+      const tail = `more than the ~${now.eaten} of next income the army cap would take`;
+      ps.capRefused.set(t, `loses ~${loss}, ${tail}`);
+      for (const x of rest) ps.capRefused.set(x, `loses ~${lossAt(x)}, ${tail}`);
+      refused.push(
+        rest.length
+          ? `${label(t)} and ${rest.length} more ${rest.length === 1 ? 'candidate' : 'candidates'} lose ~${loss} or more, ${tail}`
+          : `${label(t)} loses ~${loss}, ${tail}`,
+      );
+      return 'stop';
+    }
+    const reach = kit.reachOf(t);
+    const cand: Cand = { ...reach, t, cost: targets.get(t)!.cost };
+    if (reach.from === undefined) {
+      refuse(t, kit.failText(cand, undefined));
+      return undefined;
+    }
+    if (conceded.has(reach.from)) {
+      refuse(t, `could be taken only from conceded ${label(reach.from)}, whose armies stay or withdraw`);
+      return undefined;
+    }
+    const before = ps.budget;
+    const reason = `the army cap: ${capText(now)}, and this capture loses ~${loss} (#253, rule 4h)`;
+    const undo = kit.attempt(cand, reason);
+    if (!undo) {
+      const r = ps.refusal;
+      refuse(t, kit.failText(cand, r));
+      return undefined;
+    }
+    // Every source keeps what holds its border (deploys still free may top one up).
+    const short = kit.holdLeftShort(t);
+    if (short) {
+      undo();
+      refuse(t, `is not taken: attacking it would leave ${label(short.from)} unable to hold its border (${kit.holdText(short)})`);
+      return undefined;
+    }
+    // Its survivors stay on the board (above the cap they cost nothing either): named, not priced.
+    const exposed = kit.exposure(t);
+    taken.push(t);
+    const paid = before - ps.budget;
+    const p = ownerOf(t);
+    const lost = p === undefined ? [] : lostBy(p);
+    rationale.push(
+      `Take ${label(t)} for the army cap (rule 4h, #253): ${capText(now)}; it loses ~${loss}${
+        exposed ? ` (and its ${exposed.survivors} may fall next turn)` : ''
+      }, below that, ${paid > 0 ? `paid from idle armies and ${paid} of the deploys left` : 'paid from idle armies'}${
+        fork
+          ? `; a fork (#272): player ${p} is attacked on ${lost.length} territories this turn (${lost.map(label).join(', ')}), more than its one deploy can all save`
+          : ''
+      }.`,
+    );
+    return undefined;
+  };
   ps.evenTradesOnly = true;
   try {
-    for (const [i, t] of cands.entries()) {
-      const now = nextCap();
-      if (now.eaten <= 0) break;
-      const loss = lossAt(t);
-      if (loss >= now.eaten) {
-        // Ranked by loss, and the stake only falls: every later candidate loses as much. One clause for all.
-        const rest = cands.slice(i + 1);
-        const tail = `more than the ~${now.eaten} of next income the army cap would take`;
-        ps.capRefused.set(t, `loses ~${loss}, ${tail}`);
-        for (const x of rest) ps.capRefused.set(x, `loses ~${lossAt(x)}, ${tail}`);
-        refused.push(
-          rest.length
-            ? `${label(t)} and ${rest.length} more ${rest.length === 1 ? 'candidate' : 'candidates'} lose ~${loss} or more, ${tail}`
-            : `${label(t)} loses ~${loss}, ${tail}`,
-        );
-        break;
+    for (const [i, t] of cands.entries()) if (tryOne(t, i, cands, false) === 'stop') break;
+    // #272: a fork. Live, the cap spend took three near-empty territories of one weakened owner and
+    // left two more of its territories beside my stacks (4 and 14 armies) though its one deploy could
+    // not save five attacks at once. A foe's territory holding more than CAP_SPEND_ENEMY_MAX is a
+    // candidate once another of its owner's is taken this turn, ranked as above, its loss still below
+    // the income at stake.
+    const forks: number[] = [];
+    for (const t of [...g.territoryById.keys()].sort(byNum)) {
+      if (mineSet.has(t) || captured.has(t) || spared.has(t) || pc.truce.noTarget(t) || cands.includes(t)) continue;
+      const st = state.get(t);
+      if (st?.owner.kind !== 'player' || st.armies === null || st.armies <= CAP_SPEND_ENEMY_MAX) continue;
+      if (goal === 'expand' || !foe(st.owner.playerId) || uncounted(t) || unitsAt(t) > 0) continue;
+      if (!targets.get(t)) {
+        const sources = neighborsOf(g, t).filter((n) => mineSet.has(n));
+        const cost = pc.costAt(t);
+        if (!sources.length || cost === null) continue;
+        targets.set(t, { id: t, cost, enemy: true, sources });
+        added.push(t);
       }
-      const reach = kit.reachOf(t);
-      const cand: Cand = { ...reach, t, cost: targets.get(t)!.cost };
-      if (reach.from === undefined) {
-        refuse(t, kit.failText(cand, undefined));
-        continue;
-      }
-      if (conceded.has(reach.from)) {
-        refuse(t, `could be taken only from conceded ${label(reach.from)}, whose armies stay or withdraw`);
-        continue;
-      }
-      const before = ps.budget;
-      const reason = `the army cap: ${capText(now)}, and this capture loses ~${loss} (#253, rule 4h)`;
-      const undo = kit.attempt(cand, reason);
-      if (!undo) {
-        const r = ps.refusal;
-        refuse(t, kit.failText(cand, r));
-        continue;
-      }
-      // Every source keeps what holds its border (deploys still free may top one up).
-      const short = kit.holdLeftShort(t);
-      if (short) {
-        undo();
-        refuse(t, `is not taken: attacking it would leave ${label(short.from)} unable to hold its border (${kit.holdText(short)})`);
-        continue;
-      }
-      // Its survivors stay on the board (above the cap they cost nothing either): named, not priced.
-      const exposed = kit.exposure(t);
-      taken.push(t);
-      const paid = before - ps.budget;
-      rationale.push(
-        `Take ${label(t)} for the army cap (rule 4h, #253): ${capText(now)}; it loses ~${loss}${
-          exposed ? ` (and its ${exposed.survivors} may fall next turn)` : ''
-        }, below that, ${paid > 0 ? `paid from idle armies and ${paid} of the deploys left` : 'paid from idle armies'}.`,
-      );
+      if (gainWith([t]) < 0) continue;
+      forks.push(t);
+    }
+    forks.sort((a, b) => lossAt(a) - lossAt(b) || gainWith([b]) - gainWith([a]) || targets.get(a)!.cost - targets.get(b)!.cost || a - b);
+    const open = forks.filter((t) => lostBy(ownerOf(t)!).length > 0);
+    for (const [i, t] of open.entries()) {
+      // A fork only while its owner still loses another territory this turn.
+      if (!lostBy(ownerOf(t)!).length) continue;
+      if (tryOne(t, i, open, true) === 'stop') break;
     }
   } finally {
     ps.evenTradesOnly = false;

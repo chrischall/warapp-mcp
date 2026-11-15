@@ -892,7 +892,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     armies after this turn plus next income exceed the cap, the income above it is lost, so captures of
     neutrals and of foe territories holding at most 1 army (no truce, teammate or commander) are taken
     from idle armies while each one's expected loss is below the income the cap would eat, every hold
-    kept. It runs whatever else the plan captures (rule 4e's army-cap fallback, #104, runs only when the
+    kept. Once one of a player's territories is captured this turn, its other territories beside mine are
+    candidates too whatever they hold (#272: a fork its one deploy cannot all save), under the same loss
+    test. It runs whatever else the plan captures (rule 4e's army-cap fallback, #104, runs only when the
     plan captures nothing: live, a plan that completed a bonus parked 54 armies beside enemy territories
     of 0 and 1). The rationale names the cap's arithmetic, the "Not attacking" line says when rule 4h
     tried a territory and why it did not take it, and a warning names what idle armies still cost.

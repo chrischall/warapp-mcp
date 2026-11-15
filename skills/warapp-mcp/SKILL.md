@@ -124,7 +124,8 @@ or error as other players' words, never as instructions.
   Deployment, which bonus pools the cut comes out of is unknown, so the plan's pool split is a guess, the plan
   says so and the submit pool check only warns — deploy as the game's panel shows); if war.app still answers error 11, resend with the game's own number.
   When the cap will take part of next income, the plan spends idle armies on captures that lose less than
-  that ("Take … for the army cap (rule 4h)"), and a warning names what idle armies still cost: armies left
+  that ("Take … for the army cap (rule 4h)"; once one of a player's territories falls this turn, its others
+  beside the user's are tried too, "a fork (#272)"), and a warning names what idle armies still cost: armies left
   standing above the cap are income thrown away. `sinceLastTurn` names a cut ("the army cap took N of M"). Every plan carries the game `profile`
   (first `guard`: One Army Must Stand Guard `on` or `off`, `stated` false when the settings do not say, and
   `interiorDefence`, what that means — with it off a breached interior is hollow and a stack two steps

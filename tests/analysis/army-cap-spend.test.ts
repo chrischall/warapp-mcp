@@ -148,3 +148,50 @@ describe('#253: the army cap prices idle armies (rule 4h)', () => {
     expect(p.rationale.join('\n')).toMatch(/T3 \(#3\) \(player 40, 1 armies\):[^;]*; the army cap's spend of idle armies \(rule 4h\) tried it: it does not fit this turn/);
   });
 });
+
+// #272 item 3: the cap spend left forks on the table. Live (the same 7-player FFA), the plan spent
+// idle armies on three near-empty territories of one weakened owner and left two more of its
+// territories beside my stack untouched (4 and 14 armies), though that owner's one deploy could not
+// save five attacks at once; the play session sent all five. Now, once a player's territory is taken
+// for the cap, its owner's other territories beside mine are candidates too whatever they hold — a
+// fork its one deploy cannot all save — each still only while its loss is below the income at stake.
+describe('#272: under the cap, a fork on one owner beats a single attack', () => {
+  //   As above, plus player 30's 6 (4 armies) beside my 54-stack on 1 (and its 7 behind).
+  function forkMap(): GameMap {
+    const base = makeMap();
+    const edges: [number, number][] = [[1, 6], [6, 7]];
+    return {
+      ...base,
+      territories: [
+        ...base.territories.map((t) => ({
+          ...t,
+          connectedTo: [...t.connectedTo, ...edges.filter(([a, b]) => a === t.id || b === t.id).map(([a, b]) => (a === t.id ? b : a))],
+        })),
+        { id: 6, name: 'T6', connectedTo: [1, 7] },
+      ],
+    };
+  }
+  const fg = buildGraph(forkMap());
+  const forkBoard = (twoOwner = P2): BoardState =>
+    board([...live().territories.map((t) => (t.territoryId === 2 ? player(2, 0, twoOwner) : t)), player(6, 4, P2)]);
+  const cappedFork = (b: BoardState) => {
+    const armies = b.territories.filter((t) => t.owner.kind === 'player' && t.owner.playerId === ME).reduce((n, t) => n + (t.armies ?? 0), 0);
+    const incomeCap = armyCapIncome(10, 5, armies)!;
+    return planTurn({ graph: fg, board: b, me: ME, income: incomeCap.received, incomeCap, settings: { ...STD, armyCap: 5 }, game: SEVEN });
+  };
+
+  it('player 30 loses its empty 2 to the cap, so its 4-army 6 is attacked too: a fork', () => {
+    const p = cappedFork(forkBoard());
+    expect(targetsOf(p)).toEqual(expect.arrayContaining([2, 3, 6]));
+    expect(attacks(p).find((m) => m.to === 6)?.from).toBe(1);
+    expect(p.rationale.join('\n')).toMatch(
+      /Take T6 \(#6\) for the army cap \(rule 4h, #253\)[^\n]*a fork \(#272\): player 30 is attacked on 2 territories this turn \(T2 \(#2\), T6 \(#6\)\), more than its one deploy can all save/,
+    );
+  });
+
+  it('without a fork (2 is another player’s) the 4-army 6 is no candidate, as before', () => {
+    const p = cappedFork(forkBoard(60));
+    expect(targetsOf(p)).not.toContain(6);
+    expect(p.rationale.join('\n')).not.toMatch(/a fork \(#272\)/);
+  });
+});

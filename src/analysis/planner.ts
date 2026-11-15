@@ -990,7 +990,11 @@
 //     rationale names the cap's arithmetic per capture ("Take … for the army cap (rule 4h, #253): …");
 //     what it did not take is listed with why, and the "Not attacking" line repeats it ("the army
 //     cap's spend of idle armies (rule 4h) tried it: …"); while the cap still eats income a warning
-//     names the largest idle stack.
+//     names the largest idle stack. #272, a fork: once one of a player's territories is captured this
+//     turn (by any pass), its other foe territories next to mine are candidates whatever they hold,
+//     ranked and taken the same way after the first list ("… a fork (#272): player P is attacked on N
+//     territories this turn (…), more than its one deploy can all save"). Live, three near-empty
+//     territories of one owner were taken and two more beside mine (4 and 14 armies) left untouched.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, in
 //     the opening and expansion phases, and in an FFA while a neutral borders a territory of mine
 //     (#132: one front leaves the rest of the map to expand into; the rationale says "neutrals in
