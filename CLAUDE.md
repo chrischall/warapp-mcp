@@ -573,7 +573,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   sight (a play session lowered a real +66 after +8 and +5 and lost). `incomeJump` weighs the boards
   and a track warning (so a `warapp_plan_turn` warning too; `income.jump` in the track tool) says
   why in numbers: its armies in view after the jump plus its losses seen against its armies in
-  view before plus what it was seen to earn since, leaving out the armies that only came into view;
+  view before plus what it was seen to earn since, leaving out the armies that only came into view
+  (on territories some board from the first of those turns to the jump did not show, or read as out
+  of the fog — a capture from a neutral or player in view on every board is no reveal);
   and, with its starting armies known, the whole game at the earlier rate (start + rate × turns),
   which no reveal of old armies can explain. Either beaten → believed; else it hedges (old armies
   revealed, or armies banked out of view). The figure never changes for it.

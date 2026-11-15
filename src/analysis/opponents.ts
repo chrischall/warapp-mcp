@@ -963,8 +963,10 @@ export interface IncomeJump {
   lossesSeen: number;
   /**
    * Of `armiesNow` and those turns' readings, the armies that only came into view: on territories
-   * hidden on the board of `since`, plus those read as arriving out of the fog (`fogArmies`). An
-   * upper bound (the two may overlap): it only ever weakens the case for the jump.
+   * it holds after the jump that a board from `since` up to the jump did not show (owner and armies;
+   * a territory shown on all of them under another owner — a capture from a neutral or player in
+   * view — is in the readings, not a reveal), plus those read as arriving out of the fog
+   * (`fogArmies`). An upper bound (the two may overlap): it only ever weakens the case for the jump.
    */
   cameIntoView: number;
   /**
@@ -1031,6 +1033,10 @@ export function incomeJump(
   const prev = observed.slice(first, at);
   if (!prev.length) return undefined;
   const before = Math.max(...prev.map((p) => p.earned));
+  // `earned` is floored at its visible income (base income + visibly held bonuses), so a fogged turn
+  // that read 0 still counts at least its base income here: `before` is 0 only in a game whose base
+  // income is 0 with no bonus held in view, where no ratio means anything (any positive turn would be
+  // "more than twice"), so no line is given.
   if (before <= 0 || x.observed <= INCOME_JUMP_FACTOR * before) return undefined;
   const since = prev[0]!.from;
   const start = byTurn.get(since);
@@ -1042,8 +1048,12 @@ export function incomeJump(
   const earnedSince = prev.reduce((s, p) => s + p.earned, 0) + x.visibleIncome;
   const lossesSeen = span.reduce((s, p) => s + p.losses + p.combat, 0);
   let cameIntoView = span.reduce((s, p) => s + p.fogArmies, 0);
-  for (const t of end.territories)
-    if (now.ids.has(t.territoryId) && !then.ids.has(t.territoryId)) cameIntoView += t.armies!;
+  // A territory it holds after the jump that some board from `since` up to the jump did not show
+  // (owner and armies): its armies may be old ones revealed. One shown on every one of them is no
+  // reveal, whoever held it: a capture there (from a neutral or a player in view) is in the readings.
+  const boards = span.map((p) => byTurn.get(p.from));
+  const shownThroughout = (id: number) => boards.every((b) => b?.territories.some((t) => t.territoryId === id && visibleState(t)));
+  for (const t of end.territories) if (now.ids.has(t.territoryId) && !shownThroughout(t.territoryId)) cameIntoView += t.armies!;
   const seen = now.total + lossesSeen;
   const banked = then.total + earnedSince;
   let stock: IncomeJump['stock'];
@@ -1093,7 +1103,7 @@ export function incomeJumpText(j: IncomeJump, income: number, earlier: readonly 
     ? ` At the most it was seen to earn before it (${j.stock.rate} a turn) it could have received up to ${j.stock.received} by turn ${j.turn} (starting armies ${j.stock.start} + ${j.stock.rate} × ${j.stock.turns} turns), enough for the ${j.armiesNow + j.stock.lossesAll} it shows in view and has been seen to lose.`
     : '';
   if (j.verdict === 'reveal')
-    return `${head}: more only counting the ${j.cameIntoView} armies that came into view since (territories hidden on turn ${j.since}, or read as arriving out of the fog): those could be old armies revealed, so the high turn is not confirmed.${whole} The figure is kept (each observed deploy is a lower bound).`;
+    return `${head}: more only counting the ${j.cameIntoView} armies that came into view since (territories out of view on a board from turn ${j.since} to turn ${j.turn}, or read as arriving out of the fog): those could be old armies revealed, so the high turn is not confirmed.${whole} The figure is kept (each observed deploy is a lower bound).`;
   return `${head}: no more, so the high turn could be armies it had banked out of view coming into view, not income.${whole} The figure is kept (each observed deploy is a lower bound), but it is not confirmed.`;
 }
 

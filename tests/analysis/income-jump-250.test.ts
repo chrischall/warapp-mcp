@@ -10,7 +10,7 @@ import { buildGraph } from '../../src/analysis/graph.js';
 import { trackOpponents, type TurnBoard } from '../../src/analysis/opponents.js';
 import type { PlannerSettings } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, fogged, mine } from './helpers.js';
+import { board, fogged, mine, neutral } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -116,6 +116,43 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     expect(line).toMatch(/50 armies that came into view/);
     expect(line).toMatch(/could be old armies/);
     expect(line).not.toMatch(/could not have banked/);
+  });
+
+  it('a capture from a neutral in view on every board is no reveal: the big deploy then the attack is believed', () => {
+    // T4 a neutral 2 in view on turns 7–10. +8, +5, then +65 on T3, which takes T4 with 78 and keeps 19.
+    const n4 = neutral(4, 2);
+    const [t] = trackOpponents(g, history([7, at(20, n4)], [8, at(28, n4)], [9, at(33, n4)], [10, at(19, enemy(4, 78))]), ME, STD);
+    expect(t!.turns.map((x) => x.observed)).toEqual([8, 5, 65]);
+    expect(t!.incomeJump).toMatchObject({ verdict: 'supported', armiesBefore: 22, armiesNow: 99, cameIntoView: 0 });
+    const line = t!.warnings.find((w) => /one turn/.test(w));
+    expect(line).toMatch(/could not have banked/);
+    expect(line).not.toMatch(/could be old armies/);
+    expect(line).not.toMatch(/came into view/);
+  });
+
+  it('a territory hidden on the first board of the evidence still counts as come into view, though held in view since', () => {
+    // T4 hidden on turn 7, a neutral 2 in view on turns 8–9, then taken with 78: its armies may be old ones.
+    const n4 = neutral(4, 2);
+    const [t] = trackOpponents(
+      g,
+      history([7, at(20, fogged(4))], [8, at(28, n4)], [9, at(33, n4)], [10, at(19, enemy(4, 78))]),
+      ME,
+      STD,
+    );
+    expect(t!.incomeJump).toMatchObject({ verdict: 'reveal', cameIntoView: 78 });
+    expect(t!.warnings.find((w) => /one turn/.test(w))).toMatch(/could be old armies/);
+  });
+
+  it('a territory out of view on a board between counts as come into view, though shown on the first', () => {
+    // T4 a neutral 2 on turn 7, hidden on turn 8, a neutral again on turn 9, then taken with 78.
+    const n4 = neutral(4, 2);
+    const [t] = trackOpponents(
+      g,
+      history([7, at(20, n4)], [8, at(28, fogged(4))], [9, at(33, n4)], [10, at(19, enemy(4, 78))]),
+      ME,
+      STD,
+    );
+    expect(t!.incomeJump).toMatchObject({ verdict: 'reveal', cameIntoView: 78 });
   });
 
   it('with its starting armies known, the whole game weighs it: more than it could have had at the earlier rate is believed, whatever came into view', () => {
