@@ -11,8 +11,11 @@ import {
   armiesToTake,
   DEFAULT_DEFENSIVE_KILL_RATE,
   DEFAULT_OFFENSIVE_KILL_RATE,
+  fewestAttackersToKill,
+  fewestAttackersToTake,
   guaranteedKills,
   luckFraction,
+  specialUnitStrength,
   straightKills,
   winChance,
   type CombatSettings,
@@ -1096,6 +1099,30 @@ export interface DeployObservation {
    * ({@link ambiguousBound}). 0 without my orders.
    */
   attackKills: number;
+  /**
+   * #271 (3): the armies standing on its captures that its stacks in view on the earlier board beside
+   * them, hidden on the later one, may have sent (each stack's armies less the guard, claimed once,
+   * after what its stacks in view on both boards visibly sent): arrivals, never deploy nor a move
+   * out of the fog. The source's shrink is unseen, so they count in no figure but `high` (had the
+   * source stayed put, they were deployed).
+   */
+  arrivals: number;
+  /**
+   * #271 (2): its captures of a neutral in view beside the fog that needed more attackers
+   * ({@link fewestAttackersToTake}) than its stacks in view sent: what stands there beyond those is
+   * read as deploy within the turn's bound ({@link ambiguousBound}), the rest a move out of the fog.
+   */
+  unseenAttackers: number[];
+  /**
+   * The attackers those captures needed beyond what its stacks in view sent (the capture's cost
+   * included when none of them sent any), unbounded: the opponent tracker reads a repeated pattern
+   * of them as income.
+   */
+  unseenAttackerArmies: number;
+  /** #271 (1): my holds it attacked and failed to take, read as a bound on its deploy ({@link repelledFloor}); given my orders. */
+  repelled: number[];
+  /** #271 (1): that bound: the deploy, `low` and `high` are never below it. 0 without my orders. */
+  repelledFloor: number;
   /** The deploy with every ambiguous army read the low way (fog moves, emptied captures), floored at 0. */
   low: number;
   /** The deploy with every ambiguous army read the high way (deploys, my stack standing), floored at 0. */
@@ -1184,6 +1211,125 @@ function failedAttackMoves(
       owns(was.get(m.to), playerId) &&
       owns(now.get(m.to), playerId),
   );
+}
+
+/** A hold of mine (mine, with armies, on both boards) that lost armies my orders do not explain. */
+export interface HoldLoss {
+  territoryId: number;
+  /** What stood there when it was attacked: my armies there, plus what I deployed there, less what I sent out. */
+  defenders: number;
+  /** What it lost beyond what my orders explain: the defenders plus what I moved in, less what the later board shows. */
+  loss: number;
+}
+
+/**
+ * My holds (mine, with armies, on both boards) that lost armies my orders do not explain, by id: the
+ * defenders were my armies there plus what I deployed there, less what I sent out; what the later
+ * board shows less (what I moved in from a territory mine on the earlier board counted on top) is what
+ * an attack on it that failed killed. A hold I attacked out of and failed is skipped: the survivors of
+ * my own attack came back to it, so its loss is not known. The opponent tracker's attacks on my holds
+ * and the #271 bound ({@link repelledFloor}) both read these.
+ */
+export function holdLosses(g: MapGraph, before: BoardState, after: BoardState, me: number, orders: MyOrders): HoldLoss[] {
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  const owns = (t: TerritoryState | undefined, p: number) => t?.owner.kind === 'player' && t.owner.playerId === p;
+  const held = (id: number) => owns(visibleState(was.get(id)), me) && owns(visibleState(now.get(id)), me);
+  const deployed = new Map<number, number>();
+  for (const d of orders.deploys) deployed.set(d.territoryId, (deployed.get(d.territoryId) ?? 0) + Math.max(0, d.armies));
+  const sent = new Map<number, number>();
+  const came = new Map<number, number>();
+  const failedFrom = new Set<number>();
+  for (const m of orders.moves) {
+    const armies = Math.max(0, m.armies);
+    sent.set(m.from, (sent.get(m.from) ?? 0) + armies);
+    if (held(m.to) && owns(visibleState(was.get(m.from)), me)) came.set(m.to, (came.get(m.to) ?? 0) + armies);
+    if (!owns(visibleState(was.get(m.to)), me) && !owns(visibleState(now.get(m.to)), me)) failedFrom.add(m.from);
+  }
+  const out: HoldLoss[] = [];
+  for (const id of [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum)) {
+    if (!g.territoryById.has(id) || !held(id) || failedFrom.has(id)) continue;
+    const defenders = Math.max(0, visibleState(was.get(id))!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0));
+    const loss = defenders + (came.get(id) ?? 0) - visibleState(now.get(id))!.armies!;
+    if (loss > 0) out.push({ territoryId: id, defenders, loss });
+  }
+  return out;
+}
+
+/** #271: what {@link repelledFloor} read: the holds of mine `playerId` attacked and failed to take. */
+export interface RepelledAttacks {
+  /** My holds it attacked, by id. */
+  territories: number[];
+  /** The fewest attackers my losses there needed, summed. */
+  attackers: number;
+  /** What its stacks beside them could send at the start of the turn (each counted once, less the guard; a commander as 7). */
+  supply: number;
+  /** The lower bound on its deploy that turn: the attackers beyond that supply, at least 0. */
+  floor: number;
+}
+
+/**
+ * #271: a failed attack on a hold of mine is a measurement, the mirror of #226. My loss there
+ * ({@link holdLosses}: what my orders do not explain) needed at least {@link fewestAttackersToKill}
+ * attackers (every attacker killing its most, luck included), and without Multi-Attack each army
+ * moves once, so they all came from its territories beside the hold at the start of the turn: their
+ * armies then (less the guard) plus what it deployed there. A hold counts only when every neighbour
+ * showed its owner on the earlier board, every territory of `playerId` beside it showed its armies,
+ * and `playerId` is the only other player beside it. Over every such hold the bound is the larger of
+ * the best single hold and all of them together (the attackers summed against the stacks beside any
+ * of them, each counted once). A Bomb card played on the hold reads as an attack too.
+ */
+export function repelledFloor(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  me: number,
+  playerId: number,
+  orders: MyOrders,
+  settings: PlannerSettings = {},
+  guard = (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
+): RepelledAttacks {
+  const none: RepelledAttacks = { territories: [], attackers: 0, supply: 0, floor: 0 };
+  if (settings.multiAttack) return none;
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const sendable = (id: number) => {
+    const st = visibleState(was.get(id))!;
+    return Math.max(0, st.armies! - guard) + specialUnitStrength(st.specialUnits?.filter((u) => u.playerId === playerId));
+  };
+  const holds: { id: number; attackers: number; beside: number[] }[] = [];
+  for (const h of holdLosses(g, before, after, me, orders)) {
+    const ns = neighborsOf(g, h.territoryId);
+    if (ns.some((n) => !ownerShown(was.get(n)))) continue;
+    const others = new Set<number>();
+    const beside: number[] = [];
+    let hidden = false;
+    for (const n of ns) {
+      const o = ownerShown(was.get(n))!.owner;
+      if (o.kind !== 'player' || o.playerId === me) continue;
+      others.add(o.playerId);
+      if (o.playerId === playerId) {
+        if (!visibleState(was.get(n))) hidden = true;
+        beside.push(n);
+      }
+    }
+    if (hidden || others.size !== 1 || !others.has(playerId)) continue;
+    const attackers = fewestAttackersToKill(h.loss, settings, settings.luckModifier, settings.roundingMode);
+    if (attackers === null) continue;
+    holds.push({ id: h.territoryId, attackers, beside });
+  }
+  if (!holds.length) return none;
+  const supplyOf = (ids: Iterable<number>) => [...new Set(ids)].reduce((n, id) => n + sendable(id), 0);
+  let best: RepelledAttacks = { ...none, territories: holds.map((h) => h.id) };
+  const all = {
+    attackers: holds.reduce((n, h) => n + h.attackers, 0),
+    supply: supplyOf(holds.flatMap((h) => h.beside)),
+  };
+  best = { ...best, ...all, floor: Math.max(0, all.attackers - all.supply) };
+  for (const h of holds) {
+    const supply = supplyOf(h.beside);
+    if (h.attackers - supply > best.floor) best = { ...best, attackers: h.attackers, supply, floor: h.attackers - supply };
+  }
+  return best;
 }
 
 /** #240: the turns {@link repulsedAttacks} looks back over, ending on the board being planned. */
@@ -1306,7 +1452,13 @@ export function repulsedAttacks(
  * Given those orders here (`context.myOrders`, #226), the defenders my failed attack killed on a
  * territory that stayed its count back into its growth there (`attacked`, `attackKills`): after =
  * before + deploy + transfers in − kills, so deploy ≥ after + kills − before — beside the fog an
- * ambiguous growth like any other, read as deploy up to the turn's bound.
+ * ambiguous growth like any other, read as deploy up to the turn's bound. #271: given those orders,
+ * a failed attack on a hold of mine bounds the deploy from below ({@link repelledFloor}: `deploy`,
+ * `low` and `high` never below it). A capture also claims, after the visible sources, what its stacks
+ * in view last turn and hidden now could have sent (`arrivals`: no figure counts them but `high`); a
+ * capture of a neutral beside the fog that no visible source sent into reads the attackers it needed
+ * beyond its cost ({@link fewestAttackersToTake}) as ambiguous, deploy up to the bound
+ * (`unseenAttackers`; the tracker reads a pattern of them as income), the rest a move out of the fog.
  * One turn only, not smoothed (the tracker reads a history). Transfers in from (or out to) the
  * fog still bias it — income in the fog is unseen anyway.
  */
@@ -1315,7 +1467,7 @@ export function observeDeploy(
   board: BoardState,
   previous: BoardState,
   playerId: number,
-  rates: KillRates = {},
+  rates: PlannerSettings = {},
   context: ObserveContext = {},
 ): DeployObservation {
   const { signed: _signed, ...o } = observeSigned(g, board, previous, playerId, rates, context);
@@ -1331,7 +1483,7 @@ export function observeSigned(
   board: BoardState,
   previous: BoardState,
   playerId: number,
-  rates: KillRates = {},
+  rates: PlannerSettings = {},
   context: ObserveContext = {},
 ): DeployObservation & { signed: number } {
   const before = new Map(previous.territories.map((t) => [t.territoryId, t]));
@@ -1353,7 +1505,7 @@ export function observeSigned(
    * sent (deploy-then-capture, or a stack out of the fog joined). Read after the loop against
    * one bound, the same for both ({@link ambiguousBound}).
    */
-  const ambiguous: { id: number; armies: number; kind: 'growth' | 'capture' }[] = [];
+  const ambiguous: { id: number; armies: number; kind: 'growth' | 'capture' | 'needed' }[] = [];
   const now = new Map(board.territories.map((t) => [t.territoryId, t]));
   const defensive = rates.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
   const guard = Math.max(0, context.guard ?? 1);
@@ -1380,6 +1532,20 @@ export function observeSigned(
   for (const t of board.territories)
     if (g.territoryById.has(t.territoryId) && heldBothTimes(t.territoryId))
       shrinkLeft.set(t.territoryId, Math.max(0, visibleState(before.get(t.territoryId))!.armies! - t.armies! - killsAt(t.territoryId)));
+  /**
+   * #271 (3): its territories shown with armies on the earlier board and hidden on the later one: what
+   * each could have sent (its armies less the guard), the most a capture beside it can have received
+   * from it. Claimed after `shrinkLeft`, in ascending ids, each army once.
+   */
+  const hiddenLeft = new Map<number, number>();
+  for (const t of previous.territories) {
+    const b = visibleState(t);
+    if (!g.territoryById.has(t.territoryId) || b?.owner.kind !== 'player' || b.owner.playerId !== playerId) continue;
+    if (!visibleState(now.get(t.territoryId))) hiddenLeft.set(t.territoryId, Math.max(0, b.armies! - guard));
+  }
+  let arrivals = 0;
+  const unseenAttackers: number[] = [];
+  let unseenAttackerArmies = 0;
   /** Not shown with armies on both boards: armies could have left it unseen. */
   const hidden = (id: number) => !visibleState(now.get(id)) || !visibleState(before.get(id));
   for (const t of [...board.territories].sort((a, b) => a.territoryId - b.territoryId)) {
@@ -1427,12 +1593,41 @@ export function observeSigned(
         claimed += take;
         total += take;
       }
+      // #271 (3): its stacks in view last turn beside it, hidden now, may have moved in: arrivals.
+      let came = 0;
+      for (const n of ns) {
+        const left = hiddenLeft.get(n);
+        if (!left || !arrived) continue;
+        const take = Math.min(left, arrived);
+        hiddenLeft.set(n, left - take);
+        arrived -= take;
+        came += take;
+      }
+      arrivals += came;
+      // Had its source stayed put (hidden now, it may have), they were deployed: the high reading.
+      highExtra += came;
       if (arrived > 0 && ns.some(hidden)) {
+        // #271 (2): a neutral in view needed attackers; what stands there beyond what its stacks in
+        // view sent, up to what that need leaves standing, came from out of sight.
+        let unseen = 0;
+        if (was.owner.kind === 'neutral') {
+          const need = fewestAttackersToTake(was.armies!, rates, rates.luckModifier, rates.roundingMode);
+          const cost = straightKills(was.armies!, defensive);
+          unseen = need === null ? 0 : Math.min(arrived, Math.max(0, need - cost - claimed - came));
+          if (unseen > 0) {
+            unseenAttackers.push(t.territoryId);
+            unseenAttackerArmies += unseen + (claimed + came === 0 ? cost : 0);
+          }
+        }
         if (claimed > 0) ambiguous.push({ id: t.territoryId, armies: arrived, kind: 'capture' });
         else {
-          fromFog.push(t.territoryId);
-          fogArmies += arrived;
-          highExtra += arrived;
+          if (unseen > 0) ambiguous.push({ id: t.territoryId, armies: unseen, kind: 'needed' });
+          const rest = arrived - unseen;
+          if (rest > 0) {
+            fromFog.push(t.territoryId);
+            fogArmies += rest;
+            highExtra += rest;
+          }
         }
       } else total += arrived;
     }
@@ -1464,6 +1659,8 @@ export function observeSigned(
     if (x.kind === 'capture') {
       if (deployed > 0) reinforced.push(x.id);
       if (moved > 0) fromFog.push(x.id);
+    } else if (x.kind === 'needed') {
+      if (moved > 0 && !fromFog.includes(x.id)) fromFog.push(x.id);
     } else if (moved > 0) {
       grewFromFog.push(x.id);
       fogGrowth += moved;
@@ -1471,8 +1668,14 @@ export function observeSigned(
     fogArmies += moved;
   }
   fromFog.sort((a, b) => a - b);
+  // #271 (1): a failed attack on a hold of mine bounds its deploy from below, fog or not.
+  const repelled =
+    context.me !== undefined && context.myOrders
+      ? repelledFloor(g, previous, board, context.me, playerId, context.myOrders, rates, guard)
+      : { territories: [], floor: 0 };
+  const floor = repelled.floor;
   return {
-    deploy: Math.max(0, total),
+    deploy: Math.max(0, total, floor),
     signed: total,
     counted,
     captured,
@@ -1487,8 +1690,13 @@ export function observeSigned(
     attackKills: [...kills.values()].reduce((n, k) => n + k, 0),
     emptied,
     emptiedHigh,
-    low: Math.max(0, total + lowExtra),
-    high: Math.max(0, total + highExtra),
+    arrivals,
+    unseenAttackers,
+    unseenAttackerArmies,
+    repelled: repelled.territories,
+    repelledFloor: floor,
+    low: Math.max(0, total + lowExtra, floor),
+    high: Math.max(0, total + highExtra, floor),
   };
 }
 

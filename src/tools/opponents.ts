@@ -97,6 +97,10 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
           ...(x.broken.length ? { brokenBonuses: x.broken.map(bonusOf) } : {}),
           // #123: an ambiguous turn reads between these (fog moves vs deploys, my emptied stacks).
           ...(x.low !== x.high ? { range: { low: x.low, high: x.high } } : {}),
+          // #271: a failed attack on a hold of mine bounds the turn's deploy; a pattern of captures that
+          // needed attackers out of sight is income.
+          ...(x.repelled && x.repelledFloor ? { repelled: { territories: x.repelled.territories.map(name), attackers: x.repelled.attackers, besideStacks: x.repelled.supply, deployAtLeast: x.repelledFloor } } : {}),
+          ...(x.fogCaptures ? { fogCaptures: x.fogCaptures } : {}),
           ...(rung === 'full'
             ? {
                 counted: x.counted.map(name),
@@ -105,6 +109,8 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
                 ...(x.reinforced.length ? { reinforced: x.reinforced.map(name) } : {}),
                 ...(x.grewFromFog.length ? { grewFromFog: x.grewFromFog.map(name) } : {}),
                 ...(x.emptied.length ? { emptied: x.emptied.map(name) } : {}),
+                ...(x.unseenAttackers?.length ? { unseenAttackers: x.unseenAttackers.map(name), unseenAttackerArmies: x.unseenAttackerArmies } : {}),
+                ...(x.arrivals ? { arrivals: x.arrivals } : {}),
                 reveals: x.reveals.map(name),
                 armyChange: x.net,
                 losses: x.losses,

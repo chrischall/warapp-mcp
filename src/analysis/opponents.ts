@@ -18,7 +18,12 @@
 //    above that turn's could-earn cap (`incomeMethod` 'carried'). Given my own orders on a turn
 //    (`TurnBoard.orders`), they are measurements ({@link measureOrders}): the defenders my failed
 //    attacks killed, what a hold of mine that fell really killed, and what its failed attack on a
-//    hold of mine cost it;
+//    hold of mine cost it — and that failed attack bounds the turn's deploy from below (#271,
+//    `repelledFloor`: the attackers my loss needed less its stacks beside the hold). A pattern of
+//    captures of neutrals in view that needed attackers its stacks in view did not send
+//    ({@link FOG_CAPTURE_MIN} turns in {@link FOG_CAPTURE_TURNS}, #271 `fogCaptures`) is income: those
+//    attackers spread over the turns, a carry no later quiet turn disproves; arrivals from its stacks
+//    hidden the turn after (#271) are left out of the stock and flow like fog arrivals;
 //  - unexplained armies (#123): the income it earned since first seen (each turn: what it
 //    visibly earned, or what it was seen to deploy when more) minus the change of its visible
 //    armies, what it visibly lost, and what it may have lost fighting where its stack and a
@@ -94,7 +99,17 @@ import { neutralizeSeats, staticSeats, type SeatEndRules } from './static-seats.
 import { bonusTerritories } from './bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
-import { enemyDeployEstimates, failedAttackKills, observeSigned, ownerShown, visibleState, type PlannerSettings } from './planner.js';
+import {
+  enemyDeployEstimates,
+  failedAttackKills,
+  holdLosses,
+  observeSigned,
+  ownerShown,
+  repelledFloor,
+  visibleState,
+  type PlannerSettings,
+  type RepelledAttacks,
+} from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 
 /** #164: a stack is large when its armies are at least this many turns of its visible income. */
@@ -155,6 +170,13 @@ export interface MyCardPlay {
 
 /** Observed turns (the latest) feeding the income estimate (#99: {@link trackedIncome}). */
 const INCOME_TURNS = 3;
+/**
+ * #271 (2): turns with a capture of a neutral in view that needed attackers out of sight, among the
+ * last {@link FOG_CAPTURE_TURNS} turns, that make a pattern: income, not a move.
+ */
+export const FOG_CAPTURE_MIN = 3;
+/** #271 (2): the turns a pattern of such captures is looked for in. */
+export const FOG_CAPTURE_TURNS = 6;
 /** Most bonuses in one inferred combination. */
 const MAX_COMBINATION = 3;
 /** Inferred combinations listed; when more fit, none is (#123: too many to name any). */
@@ -223,6 +245,28 @@ export interface ObservedTurn {
   grewFromFog: number[];
   /** Captures from me priced at the guard I may have left (#123; my orders, when known, measure them). */
   emptied: number[];
+  /**
+   * #271 (3): armies on its captures that its stacks in view beside them, hidden the turn after,
+   * may have sent: arrivals, in `net` but neither income nor a move out of the fog —
+   * {@link trackedIncome}'s stock and flow takes them out. Absent (0) on a turn built by hand, as are
+   * the #271 fields below.
+   */
+  arrivals?: number;
+  /** #271 (2): its captures of a neutral in view that needed attackers its stacks in view did not send. */
+  unseenAttackers?: number[];
+  /** #271 (2): the attackers they needed beyond those, unbounded (read as income only as a pattern: `fogCaptures`). */
+  unseenAttackerArmies?: number;
+  /** #271 (1): its failed attacks on my holds that turn, as {@link repelledFloor} read them (given my orders); else null. */
+  repelled?: RepelledAttacks | null;
+  /** #271 (1): the attackers my losses there needed less its stacks beside them: `raw`, `low` and `high` are at least this. */
+  repelledFloor?: number;
+  /**
+   * #271 (2): a pattern of such captures ending on this turn: {@link FOG_CAPTURE_MIN} or more turns
+   * with one among the last {@link FOG_CAPTURE_TURNS} observed turns (by turn number). `income` is
+   * their attackers spread over the turns from the first of them to this one, at most this turn's
+   * `cap`; {@link trackedIncome} takes it as income. Absent without a pattern.
+   */
+  fogCaptures?: { turns: number[]; armies: number; income: number };
   /**
    * #123: armies it may have lost fighting where its stack and a neighbour of another player both
    * shrank (the neighbour's losses at the kill rates: round(shrink × offensive ÷ defensive)), each
@@ -507,9 +551,10 @@ const byNum = (a: number, b: number) => a - b;
  * `stock-flow` its visible army change plus visible losses (less fog arrivals) per turn, `visible` what it visibly
  * earns on the newest board (base + bonuses it visibly holds in full), `carried` an earlier
  * window's figure kept (#119: an income never decays unless a bonus it visibly held is visibly
- * broken, or the most it could earn falls below it).
+ * broken, or the most it could earn falls below it), `fog-captures` a pattern of captures of neutrals in
+ * view that needed attackers out of sight (#271: {@link ObservedTurn.fogCaptures}).
  */
-export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried';
+export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried' | 'fog-captures';
 
 /** A tracked income and how it was reached ({@link trackedIncome}). */
 interface TrackedIncome {
@@ -540,11 +585,14 @@ interface TrackedIncome {
 export function trackedIncome(window: readonly ObservedTurn[], visibleIncome: number): TrackedIncome {
   const observed = window.map((x) => x.observed);
   const maxObserved = Math.max(...observed);
-  const stockFlow = Math.max(0, Math.ceil(window.reduce((s, x) => s + x.net + x.losses - x.fogArmies, 0) / window.length));
+  const stockFlow = Math.max(0, Math.ceil(window.reduce((s, x) => s + x.net + x.losses - x.fogArmies - (x.arrivals ?? 0), 0) / window.length));
   const cap = Math.max(...window.map((x) => x.cap));
   const flow = Math.min(cap, stockFlow);
-  const fromWindow = Math.max(maxObserved, flow);
-  const method: IncomeMethod = visibleIncome >= fromWindow ? 'visible' : maxObserved >= flow ? 'max-observed' : 'stock-flow';
+  // #271 (2): a pattern of captures that needed attackers out of sight, ending in the window.
+  const pattern = Math.max(0, ...window.map((x) => x.fogCaptures?.income ?? 0));
+  const fromWindow = Math.max(maxObserved, flow, pattern);
+  const method: IncomeMethod =
+    visibleIncome >= fromWindow ? 'visible' : maxObserved >= Math.max(flow, pattern) ? 'max-observed' : flow >= pattern ? 'stock-flow' : 'fog-captures';
   return {
     income: Math.max(visibleIncome, fromWindow),
     method,
@@ -574,6 +622,7 @@ export function incomeBasis(
       : `carried from ${span}, ${range}: no bonus it visibly held has been visibly broken since`;
   if (t.incomeMethod === 'max-observed') return `max observed over ${span}, ${range}`;
   if (t.incomeMethod === 'stock-flow') return `visible army growth plus losses (fog arrivals left out) over ${span}, ${range}`;
+  if (t.incomeMethod === 'fog-captures') return `captures of neutrals in view that needed attackers out of sight, ending in ${span}, ${range}`;
   return `its visible base + bonuses, ${range} over ${span}`;
 }
 
@@ -793,40 +842,20 @@ function attacksOnMyHolds(
   const offensive = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
   const defensive = settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
   const was = new Map(before.territories.map((t) => [t.territoryId, t]));
-  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
-  const owns = (t: ReturnType<typeof visibleState>, p: number) => t?.owner.kind === 'player' && t.owner.playerId === p;
-  const held = (id: number) => owns(visibleState(was.get(id)), me) && owns(visibleState(now.get(id)), me);
-  const deployed = new Map<number, number>();
-  for (const d of orders.deploys) deployed.set(d.territoryId, (deployed.get(d.territoryId) ?? 0) + Math.max(0, d.armies));
-  const sent = new Map<number, number>();
-  const came = new Map<number, number>();
-  const failedFrom = new Set<number>();
-  for (const m of orders.moves) {
-    const armies = Math.max(0, m.armies);
-    sent.set(m.from, (sent.get(m.from) ?? 0) + armies);
-    if (held(m.to) && owns(visibleState(was.get(m.from)), me)) came.set(m.to, (came.get(m.to) ?? 0) + armies);
-    if (!owns(visibleState(was.get(m.to)), me) && !owns(visibleState(now.get(m.to)), me)) failedFrom.add(m.from);
-  }
-  const out: AttackOnMyHold[] = [];
-  for (const id of [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum)) {
-    if (!g.territoryById.has(id) || !held(id) || failedFrom.has(id)) continue;
-    const defenders = Math.max(0, visibleState(was.get(id))!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0));
-    const loss = defenders + (came.get(id) ?? 0) - visibleState(now.get(id))!.armies!;
-    if (loss <= 0) continue;
+  return holdLosses(g, before, after, me, orders).map(({ territoryId, defenders, loss }) => {
     const others = new Set<number>();
-    for (const n of neighborsOf(g, id)) {
+    for (const n of neighborsOf(g, territoryId)) {
       const st = visibleState(was.get(n));
       if (st?.owner.kind === 'player' && st.owner.playerId !== me) others.add(st.owner.playerId);
     }
     const attackers = Math.round((loss * 100) / offensive);
-    out.push({
-      territoryId: id,
+    return {
+      territoryId,
       loss,
       attacker: others.size === 1 ? [...others][0]! : null,
       attackerLoss: Math.min(attackers, straightKills(defenders, defensive)),
-    });
-  }
-  return out;
+    };
+  });
 }
 
 /**
@@ -938,6 +967,24 @@ function inferBonuses(all: readonly PossibleBonus[], gap: number, budget: number
 }
 
 /**
+ * #271 (2): a pattern of captures of neutrals in view that needed attackers out of sight, ending on
+ * the newest observed turn: {@link FOG_CAPTURE_MIN} or more turns with one among the observed turns
+ * of the last {@link FOG_CAPTURE_TURNS} (by turn number, the newest included). One such capture may
+ * be a banked stack walking out of the fog; three in six turns are income it earns out of sight. The
+ * attackers they needed (beyond what its stacks in view sent) are spread over the turns from the
+ * first of them to the newest, rounded up, at most the newest turn's could-earn cap. Null without one.
+ */
+function fogCapturePattern(observed: readonly ObservedTurn[]): ObservedTurn['fogCaptures'] | null {
+  const last = observed.at(-1);
+  if (!last) return null;
+  const hits = observed.filter((x) => x.from > last.from - FOG_CAPTURE_TURNS && (x.unseenAttackerArmies ?? 0) > 0);
+  if (hits.length < FOG_CAPTURE_MIN) return null;
+  const armies = hits.reduce((n, x) => n + (x.unseenAttackerArmies ?? 0), 0);
+  const income = Math.min(last.cap, Math.ceil(armies / (last.from - hits[0]!.from + 1)));
+  return { turns: hits.map((x) => x.from), armies, income };
+}
+
+/**
  * The income carried over the observed turns (#119): see the walk in {@link trackOpponents}.
  * `confirmed` when a turn of its window read in full (no army read as a move out of the fog) at
  * least that figure ({@link confirmedBy}).
@@ -951,7 +998,7 @@ type Carry = { income: number; set: number; window: ObservedTurn[]; est: Tracked
  * compounded.
  */
 const confirmedBy = (window: readonly ObservedTurn[], income: number) =>
-  window.some((x) => x.fogArmies === 0 && x.observed >= income);
+  window.some((x) => (x.fogArmies === 0 && x.observed >= income) || (x.fogCaptures?.income ?? 0) >= income);
 
 /**
  * #119: no decay. Walk the observed turns: each window's figure (as `trackedIncome` reads it)
@@ -968,19 +1015,30 @@ const confirmedBy = (window: readonly ObservedTurn[], income: number) =>
  */
 function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
   let carry = null as Carry | null;
+  /**
+   * #271 (2): the latest pattern of captures that needed attackers out of sight, as a carry: it is
+   * evidence, not a bound-cut guess, so no later turn read in full disproves it; like any carry it
+   * falls with the bonuses visibly broken since and never stays above a turn's could-earn cap.
+   */
+  let pattern = null as Carry | null;
   for (let i = 0; i < observed.length; i++) {
     const x = observed[i]!;
     const window = observed.slice(Math.max(0, i - INCOME_TURNS + 1), i + 1);
     const est = trackedIncome(window, 0);
     const fresh: Carry = { income: est.income, set: est.income, window, est, confirmed: confirmedBy(window, est.income) };
-    const prev: Carry | null = carry;
-    if (!prev) {
-      carry = fresh;
-      continue;
+    if (pattern) pattern = { ...pattern, income: Math.min(x.cap, pattern.income - x.brokenValue) };
+    if (x.fogCaptures && x.fogCaptures.income >= (pattern?.income ?? 0)) {
+      const income = x.fogCaptures.income;
+      pattern = { income, set: income, window, est: { ...est, income, method: 'fog-captures' }, confirmed: true };
     }
-    const disproved = !prev.confirmed && x.fogArmies === 0 && x.observed < prev.income;
-    const kept: number = Math.min(x.cap, prev.income - x.brokenValue);
-    carry = disproved || est.income >= kept ? fresh : { ...prev, income: kept };
+    const prev: Carry | null = carry;
+    if (!prev) carry = fresh;
+    else {
+      const disproved = !prev.confirmed && x.fogArmies === 0 && x.observed < prev.income;
+      const kept: number = Math.min(x.cap, prev.income - x.brokenValue);
+      carry = disproved || est.income >= kept ? fresh : { ...prev, income: kept };
+    }
+    if (pattern && pattern.income > carry.income) carry = pattern;
   }
   return carry;
 }
@@ -1129,7 +1187,8 @@ export function incomeJump(
   // The jump turn's ambiguous armies (#123) read as deploy may be a stack out of the fog: counting
   // them as income would make the case for the jump with the very armies it is about.
   const ambiguous = Math.max(0, x.observed - x.low);
-  let cameIntoView = span.reduce((s, p) => s + p.fogArmies, 0) + ambiguous;
+  // #271 (3): arrivals from its stacks hidden after came into view too.
+  let cameIntoView = span.reduce((s, p) => s + p.fogArmies + (p.arrivals ?? 0), 0) + ambiguous;
   // A territory it holds after the jump that some board from `since` up to the jump did not show
   // (owner and armies): its armies may be old ones revealed. One shown on every one of them is no
   // reveal, whoever held it: a capture there (from a neutral or a player in view) is in the readings.
@@ -1370,10 +1429,16 @@ export function trackOpponents(
         expected !== null && carriedSoFar > expected
           ? observeSigned(g, after, before, playerId, settings, context)
           : { ...e.observation, signed: e.observedRaw! };
-      const raw = measured ? Math.max(0, observeSigned(g, after, before, playerId, settings, context).signed + measured) : Math.max(0, signed);
+      // #271 (1): a failed attack on a hold of mine bounds its deploy from below, fog or not.
+      const repelled = orders ? repelledFloor(g, before, after, me, playerId, orders, settings, guard) : null;
+      const floor = repelled?.floor ?? 0;
+      const raw = Math.max(
+        measured ? Math.max(0, observeSigned(g, after, before, playerId, settings, context).signed + measured) : Math.max(0, signed),
+        floor,
+      );
       const losses = Math.max(0, change.losses + measured);
       // #123: with my orders known, what stood on an emptied capture is measured: no high reading.
-      const low = Math.max(0, o.low + measured);
+      const low = Math.max(0, o.low + measured, floor);
       const high = Math.max(raw, o.high + measured - (orders ? o.emptiedHigh : 0));
       const seenObserved = Math.min(raw, e.observedCap!);
       const broken = visiblyBroken(g, before, after, playerId);
@@ -1397,6 +1462,11 @@ export function trackOpponents(
         reinforced: o.reinforced,
         grewFromFog: o.grewFromFog,
         emptied: o.emptied,
+        arrivals: o.arrivals,
+        unseenAttackers: o.unseenAttackers,
+        unseenAttackerArmies: o.unseenAttackerArmies,
+        repelled: repelled?.territories.length ? repelled : null,
+        repelledFloor: floor,
         combat: combatLosses(
           g,
           before,
@@ -1419,6 +1489,9 @@ export function trackOpponents(
         net,
         losses,
       });
+      // #271 (2): captures that needed attackers out of sight on enough recent turns are a pattern.
+      const pattern = fogCapturePattern(observed);
+      if (pattern) observed[observed.length - 1]!.fogCaptures = pattern;
     }
     const v = visibleAt(lastTurn).get(playerId) ?? { base: baseIncome, bonusIncome: 0 };
     const visibleIncome = v.base + v.bonusIncome;
@@ -1542,6 +1615,23 @@ export function trackOpponents(
       notes.push(
         `My own orders on turn ${measuredTurns.map((x) => `${x.from} (${x.measured > 0 ? '+' : ''}${x.measured})`).join(', ')} count as measurements: the defenders my failed attacks killed, and what a hold of mine that fell really killed.`,
       );
+    // #271 (1): its failed attacks on my holds, each a bound on that turn's deploy.
+    for (const x of observed.filter((x) => (x.repelledFloor ?? 0) > 0)) {
+      const r = x.repelled!;
+      const one = r.territories.length === 1;
+      notes.push(
+        `Turn ${x.from}: its attack on territor${one ? 'y' : 'ies'} ${r.territories.join(', ')} that held needed at least ${r.attackers} attackers for what I lost there (my orders say what stood there); its stacks beside ${one ? 'it' : 'them'} could send ${r.supply} at the start of the turn, so it deployed at least ${r.floor} that turn, fog or not.`,
+      );
+    }
+    // #271 (2): a pattern of captures that needed attackers out of sight (the latest one).
+    const patternTurn = [...observed].reverse().find((x) => x.fogCaptures);
+    if (patternTurn) {
+      const p = patternTurn.fogCaptures!;
+      const n = observed.filter((x) => p.turns.includes(x.from)).reduce((k, x) => k + (x.unseenAttackers?.length ?? 0), 0);
+      notes.push(
+        `${n} captures of neutrals in view on turns ${p.turns.join(', ')} needed ${p.armies} attackers beyond what its stacks in view sent: ${FOG_CAPTURE_MIN} or more turns in ${FOG_CAPTURE_TURNS} are a pattern, read as income of ~${p.income}/turn (spread over turns ${p.turns[0]}–${patternTurn.from}), not stacks walking out of the fog.`,
+      );
+    }
     const reveals = observed.reduce((s, x) => s + x.reveals.length, 0);
     if (reveals) notes.push(`${reveals} fog reveal${reveals === 1 ? '' : 's'} skipped: stacks that only came into view are not income.`);
     // A reinforced capture whose surplus passed the bound is in `fromFog` too: its note is below.

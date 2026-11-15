@@ -74,8 +74,9 @@ describe('armies arriving by an attack are a move, not income (#86)', () => {
       reveals: [],
     });
     const [e] = enemyDeployEstimates(g, after, ME, STD, before);
-    // The base floor wins, not 556 + 3.
-    expect(e).toMatchObject({ playerId: ENEMY, observedRaw: cost, estimate: 5, source: 'visible' });
+    // The base floor wins, not 556 + 3. #271: taking a 3 needs 5 attackers, 3 more than its cost, and no
+    // stack in view sent any: within the bound (twice the 5 expected) those 3 read as deploy.
+    expect(e).toMatchObject({ playerId: ENEMY, observedRaw: cost + 3, estimate: 5, source: 'visible' });
   });
 
   it('the arrived stack is still the threat that sizes the hold on my border next to it', () => {
@@ -93,7 +94,7 @@ describe('armies arriving by an attack are a move, not income (#86)', () => {
   it('the rationale keeps the threat apart from the income and counts captures from the fog', () => {
     const p = planTurn({ graph: g, board: after, previousBoard: before, me: ME, income: 400, settings: STD, turn: 12 });
     const r = p.rationale.join('\n');
-    expect(r).toMatch(/Observed deploy for player 20, turn 11 → turn 12: \+2\/turn over 1 territories visible on both boards \(1 captured, 1 from the fog\)/);
+    expect(r).toMatch(/Observed deploy for player 20, turn 11 → turn 12: \+5\/turn over 1 territories visible on both boards \(1 captured, 1 from the fog\)/);
     expect(r).toMatch(/Player 20's stack next to you: 556 on T3 \(#3\) \(threat\), arrived from the fog by a capture: a move, not income\./);
     expect(r).toMatch(/Player 20's estimated income: ~5\/turn \(1 stack that arrived from the fog not counted in it\)\./);
     // One income line per player, however many stacks arrived from the fog.
@@ -160,7 +161,8 @@ describe('armies arriving by an attack are a move, not income (#86)', () => {
     const cost = straightKills(3, 70);
     expect(observeDeploy(g6, now, was, ENEMY, STD)).toMatchObject({ deploy: cost, counted: [3, 6], captured: [3], fromFog: [3], fogArmies: 556, reveals: [] });
     const e = enemyDeployEstimates(g6, now, ME, STD, was)[0]!;
-    expect(e.observedRaw).toBe(cost);
+    // #271: plus the 3 attackers beyond its cost that taking a 3 needs, read as deploy within the bound.
+    expect(e.observedRaw).toBe(cost + 3);
     expect(e.estimate).toBeLessThan(100);
   });
 

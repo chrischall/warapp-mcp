@@ -194,6 +194,36 @@ export function killBreakpoints(ratePct: number, upTo: number, luck = 0, roundin
 }
 
 /**
+ * #271: the fewest attackers that can have killed `kills` defenders, at the most every attacker may
+ * kill: the offensive rate plus luck's share of the rest (luck L lets each army kill with
+ * probability r on top of the (1 − L)·r it always kills, so at most r + L·(1 − r) of a defender
+ * each). Straight rounding rounds the share half up; weighted-random rounding may round any
+ * fraction up. A lower bound on an attack seen only by what it killed; `null` when attackers
+ * cannot kill at all.
+ */
+export function fewestAttackersToKill(kills: number, rates: KillRates = {}, luck = 0, rounding: RoundingMode | string = 'StraightRound'): number | null {
+  if (kills <= 0) return 0;
+  const off = rates.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const best = off + luckFraction(luck) * (100 - off);
+  if (best <= 0) return null;
+  // round(a·best/100) ≥ k  ⇔  a·best ≥ 100k − 50; weighted: a·best/100 > k − 1.
+  return weighted(rounding) ? Math.floor((100 * (kills - 1)) / best) + 1 : Math.ceil((100 * kills - 50) / best);
+}
+
+/**
+ * #271: the fewest attackers that can have taken a territory held by `defenders`: enough to kill
+ * every defender ({@link fewestAttackersToKill}) and one more than the defenders surely kill
+ * ({@link guaranteedKills}), so one survives to move in. {@link armiesToTake} when luck is off under
+ * straight rounding; `null` when attackers cannot kill at all.
+ */
+export function fewestAttackersToTake(defenders: number, rates: KillRates = {}, luck = 0, rounding: RoundingMode | string = 'StraightRound'): number | null {
+  if (defenders <= 0) return 1;
+  const kill = fewestAttackersToKill(defenders, rates, luck, rounding);
+  if (kill === null) return null;
+  return Math.max(kill, guaranteedKills(defenders, rates.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE, luck, rounding) + 1);
+}
+
+/**
  * The fewest attackers whose {@link winChance} reaches `minChance` against `defenders`;
  * `null` when attackers cannot kill at all.
  */

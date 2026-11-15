@@ -259,7 +259,17 @@
 //     (`previousOrders`, what warapp_submit_turn cached), the defenders my failed attack killed
 //     on a territory that stayed its count back into its growth there (after = before + deploy
 //     − kills, kills straight-rounded at the offensive kill rate; beside the fog an ambiguous
-//     growth like any other, within #123's bound), and a rationale line says so. A rationale line names
+//     growth like any other, within #123's bound), and a rationale line says so. #271: given those
+//     orders, a failed attack on a hold of mine (`repelledFloor`) bounds its deploy from below, fog or
+//     not: my loss there (what my orders do not explain) needed at least `fewestAttackersToKill`
+//     attackers (luck included), all from its stacks beside the hold at the start of the turn (less
+//     the guard) plus what it deployed there — counted when every neighbour showed its owner, its own
+//     showed their armies, it is the only other player beside the hold, and Multi-Attack is off. A
+//     capture of a neutral in view beside the fog that needed more attackers (`fewestAttackersToTake`)
+//     than its stacks in view sent (`unseenAttackers`) reads what stands there beyond those as deploy
+//     within #123's bound, the rest a move out of the fog. Its stacks in view beside a capture, hidden
+//     the turn after, may have moved in (`arrivals`): never deploy (only the high reading counts them).
+//     A rationale line says each. A rationale line names
 //     the turns compared and the territories counted vs skipped as reveals; the warning
 //     names which source won. Given `tracks` (`trackOpponents` over my board history, S3), an
 //     opponent observed over at least TRACKED_MIN_TURNS turns gets its tracked income (the

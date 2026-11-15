@@ -606,7 +606,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
   deploys and moves it sent beside the boards, and `boardHistory` attaches them as
   `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing;
-  `warapp_uncommit_turn` drops the turn's cached orders once the withdrawal is confirmed),
+  `warapp_uncommit_turn` drops the turn's cached orders once the withdrawal is confirmed; #271: a failed
+  attack on a hold of mine — my loss there needs at least loss ÷ the offensive kill rate attackers, luck
+  included, all from its stacks beside it at the start of the turn without Multi-Attack — bounds that
+  turn's deploy from below when it is the only other player beside the hold and every neighbour was in
+  view, `repelledFloor`, in the planner too given `previousOrders`),
   unexplained armies (earned since first seen − visible army change − visible losses − likely
   combat deaths) and inferred bonuses (combinations of up to three bonuses it could hold that
   best fit the income gap, within reach and affordable, none listed when too many fit — see the
@@ -932,7 +936,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     usable — so a steady hidden
     bonus is still seen; a carry only bound-cut readings reached ends at a later turn read in full
     that observed less) and at most what it could earn; beyond it, a stack out of the fog. A capture from me is
-    priced at the guard unless my cached orders say what stood there. Each observed turn has a low–high range for the ambiguity. The
+    priced at the guard unless my cached orders say what stood there. #271: a capture of a neutral in view
+    beside the fog needs `fewestAttackersToTake` attackers; what stands there beyond what its stacks in view
+    sent is ambiguous the same way (`unseenAttackers`), and captures like it on `FOG_CAPTURE_MIN` (3) of the
+    last `FOG_CAPTURE_TURNS` (6) turns are income in the tracker (`fogCaptures`: their attackers spread over
+    the turns, a carry no quiet turn disproves); its stacks in view beside a capture, hidden the turn after,
+    may have moved in (`arrivals`: never deploy, out of the stock and flow). Each observed turn has a low–high range for the ambiguity. The
     tracker's `unexplained` armies leave out likely combat deaths (its stack and a neighbour of
     another player both shrank), and inferred bonuses must lie within `INFER_REACH` hops and be
     affordable — none listed when more than `MAX_LISTED_COMBINATIONS` fit.
