@@ -13,6 +13,8 @@ import { luckFraction, straightKills, armiesToTake, specialUnitStrength, DEFAULT
 import { neighborsOf, type MapGraph } from './graph.js';
 import type { MyOrders } from './opponents.js';
 import { ownerShown, visibleState, type PlannerSettings } from './plan/shared.js';
+import { holdsSeat } from '../player-states.js';
+import { isTeamGame } from '../teams.js';
 
 /** What one opponent did on one turn (board T → board T+1), as counts. */
 export interface TurnPrimitives {
@@ -408,7 +410,7 @@ export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
   return h;
 }
 
-// ---- the estimate (part A: this game against a neutral default; part B pools past games) ----
+// ---- the estimate (B1): this game pooled with past games, shrunk toward the population or a default ----
 
 /** How many opportunities the prior weighs as (docs/PLAN-PROFILES.md B1). */
 export const PROFILE_PRIOR_WEIGHT = 4;
@@ -423,42 +425,135 @@ export const HABIT_DEFAULTS: Readonly<Record<HabitName, number>> = {
   retaliate: 0.5,
   retake: 0.4,
 };
+/**
+ * The least opportunities (readings, for a size) a population pool needs for one habit before its
+ * rate replaces the constant default as that habit's prior: fewer, and the next pool (or the default)
+ * is used. A pool of a handful would swing the prior on one game.
+ */
+export const POPULATION_MIN_OPPORTUNITIES = 10;
 
-export type HabitBasis = 'this-game' | 'default';
+/** The formats profiles are pooled by. */
+export const PROFILE_FORMATS = ['1v1', 'ffa', 'team'] as const;
+export type ProfileFormat = (typeof PROFILE_FORMATS)[number];
+
+/** A game's format for pooling: a team game, else `1v1` with two seats held, else `ffa`. */
+export function profileFormatOf(players: readonly { state?: string | undefined; team?: number | null | undefined }[]): ProfileFormat {
+  if (isTeamGame(players)) return 'team';
+  return players.filter((p) => holdsSeat(p.state)).length <= 2 ? '1v1' : 'ffa';
+}
+
+/** No counts at all. */
+export function emptyHabits(): Habits {
+  return {
+    reinforce: { e: 0, n: 0 },
+    reinforceExtra: { n: 0, sum: 0 },
+    attack: { e: 0, n: 0 },
+    firstStrike: { e: 0, n: 0 },
+    stacking: { n: 0, sum: 0, sq: 0 },
+    retaliate: { e: 0, n: 0 },
+    retake: { e: 0, n: 0 },
+    turns: 0,
+  };
+}
+
+/** Rounded to 1e-6, so faded totals do not drift with float noise (and a cancelled count is 0). */
+const tidy = (v: number) => {
+  const r = Math.round(v * 1e6) / 1e6;
+  return r === 0 ? 0 : r;
+};
+
+/** `a + scale × b`, count by count (`scale` −1 takes `b` back out). */
+export function addHabits(a: Habits, b: Habits, scale = 1): Habits {
+  const rate = (x: Rate, y: Rate): Rate => ({ e: tidy(x.e + scale * y.e), n: tidy(x.n + scale * y.n) });
+  return {
+    reinforce: rate(a.reinforce, b.reinforce),
+    reinforceExtra: { n: tidy(a.reinforceExtra.n + scale * b.reinforceExtra.n), sum: tidy(a.reinforceExtra.sum + scale * b.reinforceExtra.sum) },
+    attack: rate(a.attack, b.attack),
+    firstStrike: rate(a.firstStrike, b.firstStrike),
+    stacking: { n: tidy(a.stacking.n + scale * b.stacking.n), sum: tidy(a.stacking.sum + scale * b.stacking.sum), sq: tidy(a.stacking.sq + scale * b.stacking.sq) },
+    retaliate: rate(a.retaliate, b.retaliate),
+    retake: rate(a.retake, b.retake),
+    turns: tidy(a.turns + scale * b.turns),
+  };
+}
+
+/** Every count × `f` (the fade). */
+export const scaleHabits = (h: Habits, f: number): Habits => addHabits(emptyHabits(), h, f);
+
+export type HabitBasis = 'this-game' | 'past-games' | 'population' | 'default';
 
 export interface HabitEstimate {
-  /** The estimate: this game's counts shrunk toward the prior. */
+  /** The estimate: the counts shrunk toward the prior. */
   value: number;
-  /** Opportunities (or readings) behind it. */
+  /** Opportunities (or readings) behind it: this game's plus the past games' faded ones. */
   n: number;
   /** n ÷ (n + K). */
   confidence: number;
-  /** What contributed most: this game's counts, or the neutral default. */
+  /** What contributed most: this game's counts, the player's past games, or the prior (the population pool or the constant default). */
   basis: HabitBasis;
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
-/** `(p0 × K + e) ÷ (K + n)`, its confidence and basis. */
+/** `(p0 × K + e) ÷ (K + n)` from this game's counts alone, its confidence and basis. */
 export function estimate(events: number, n: number, p0: number, k = PROFILE_PRIOR_WEIGHT): HabitEstimate {
-  return {
-    value: round2((p0 * k + events) / (k + n)),
-    n,
-    confidence: round2(n / (n + k)),
-    basis: n > k ? 'this-game' : 'default',
-  };
+  return blend({ e: events, n }, { e: 0, n: 0 }, p0, 'default', k);
 }
 
-/** Every habit's estimate from a game's counts. */
-export function estimateHabits(h: Habits): Record<HabitName, HabitEstimate> {
-  const rate = (name: HabitName, r: Rate) => estimate(r.e, r.n, HABIT_DEFAULTS[name]);
+/**
+ * `(p0 × K + e) ÷ (K + n)` with `e` and `n` this game's and the past's together. The basis is the
+ * largest weight of this game's `n`, the past's `n` and the prior's K; the prior wins a tie, then
+ * this game.
+ */
+function blend(game: Rate, past: Rate, p0: number, prior: 'population' | 'default', k = PROFILE_PRIOR_WEIGHT): HabitEstimate {
+  const e = game.e + past.e;
+  const n = game.n + past.n;
+  let basis: HabitBasis = prior;
+  let weight = k;
+  if (game.n > weight) {
+    basis = 'this-game';
+    weight = game.n;
+  }
+  if (past.n > weight) basis = 'past-games';
+  return { value: round2((p0 * k + e) / (k + n)), n: round2(n), confidence: round2(n / (n + k)), basis };
+}
+
+/** What the estimate pools with this game's counts. */
+export interface EstimatePriors {
+  /** The player's faded totals from earlier games (never this game's). */
+  past?: Habits | undefined;
+  /**
+   * Population pools, tried in order per habit: the first with {@link POPULATION_MIN_OPPORTUNITIES}
+   * or more gives that habit's prior (all players in this format, then all players; the AI pool for
+   * an AI seat). None: the constant default.
+   */
+  pools?: readonly Habits[] | undefined;
+}
+
+/** Every habit's estimate from a game's counts, pooled with the past and shrunk toward the prior (B1). */
+export function estimateHabits(h: Habits, priors: EstimatePriors = {}): Record<HabitName, HabitEstimate> {
+  const past = priors.past ?? emptyHabits();
+  const pools = priors.pools ?? [];
+  const prior = (name: HabitName, pick: (x: Habits) => { e: number; n: number }): { p0: number; from: 'population' | 'default' } => {
+    for (const pool of pools) {
+      const r = pick(pool);
+      if (r.n >= POPULATION_MIN_OPPORTUNITIES) return { p0: r.e / r.n, from: 'population' };
+    }
+    return { p0: HABIT_DEFAULTS[name], from: 'default' };
+  };
+  const rate = (name: Exclude<HabitName, 'stacking'>) => {
+    const p = prior(name, (x) => x[name]);
+    return blend(h[name], past[name], p.p0, p.from);
+  };
+  const size = (x: Habits) => ({ e: x.stacking.sum, n: x.stacking.n });
+  const s = prior('stacking', size);
   return {
-    reinforce: rate('reinforce', h.reinforce),
-    attack: rate('attack', h.attack),
-    firstStrike: rate('firstStrike', h.firstStrike),
-    stacking: estimate(h.stacking.sum, h.stacking.n, HABIT_DEFAULTS.stacking),
-    retaliate: rate('retaliate', h.retaliate),
-    retake: rate('retake', h.retake),
+    reinforce: rate('reinforce'),
+    attack: rate('attack'),
+    firstStrike: rate('firstStrike'),
+    stacking: blend(size(h), size(past), s.p0, s.from),
+    retaliate: rate('retaliate'),
+    retake: rate('retake'),
   };
 }
 
