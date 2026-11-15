@@ -1,8 +1,10 @@
+import type { EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { WarappClient } from '../client.js';
 import { leavers, type Game, type GameSettings } from '../normalize.js';
 import { recordFinalResult } from '../outlook-log.js';
+import { foldFinishedGame } from '../profile-store.js';
 import { currentTurn, gameIdArg, mapSummary, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 
@@ -60,9 +62,10 @@ function compact(game: Game) {
 
 /**
  * `dir` is the data directory: a finished game this server planned gets its final result in the
- * outlook log (#178).
+ * outlook log (#178), and its opponent profile is folded into the cross-game stores (B2,
+ * docs/PLAN-PROFILES.md; off with `WARAPP_PLAYER_PROFILE=off` in `env`).
  */
-export function registerGameTool(server: McpServer, client: WarappClient, dir?: () => string): void {
+export function registerGameTool(server: McpServer, client: WarappClient, dir?: () => string, env?: EnvSource): void {
   server.registerTool(
     'warapp_get_game',
     {
@@ -99,7 +102,11 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
         ...(include_history ? { history: true } : {}),
         ...(include_chat ? { chat: true } : {}),
       });
-      if (dir) await recordFinalResult(dir(), game);
+      if (dir) {
+        await recordFinalResult(dir(), game);
+        // The first read that shows the game finished folds its opponent profile (best effort).
+        await foldFinishedGame(dir(), game, env ?? process.env);
+      }
       return respond(view, VIEWS, (rung) => {
         if (rung === 'compact') return compact(game);
         if (rung === 'full') return { game: { ...game, map: game.map ? mapSummary(game.map) : undefined } };

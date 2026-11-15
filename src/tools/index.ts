@@ -92,7 +92,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     identity: () => bridge.identityState(),
   });
   registerHealthcheckTool(server, fetchproxy, bridge, deps);
-  registerGameTool(server, client, () => dataDir(deps.env));
+  registerGameTool(server, client, () => dataDir(deps.env), deps.env);
   registerMapTool(server, client);
   // Opt-in (WARAPP_STATS=1), never hosted: the tool refuses before any request
   // when off. One collector per registration, so its 1 s throttle spans calls.
@@ -158,5 +158,5 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     hosted,
     ...(env ? { env } : {}),
   });
-  registerPushTools(server, live, push);
+  registerPushTools(server, live, push, deps.env ? { env: deps.env } : {});
 }

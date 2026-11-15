@@ -1,12 +1,13 @@
 // Turn notifications: wait until one of my games is waiting on me, woken by
 // war.app's push socket (src/push/), and list the pushes this process has
 // seen. Both are read-only.
-import { callerWantsProgress, currentCallSignal, McpToolError, reportProgress } from '@chrischall/mcp-utils';
+import { callerWantsProgress, currentCallSignal, McpToolError, reportProgress, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
 import { activeGameIds } from '../my-games.js';
 import type { Game } from '../normalize.js';
+import { foldFinishedGame } from '../profile-store.js';
 import type { PushListener } from '../push/listener.js';
 import { currentTurn, gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
@@ -290,7 +291,8 @@ export function coalesced<K, T>(read: (key: K) => Promise<T>): (key: K) => Promi
   };
 }
 
-export function registerPushTools(server: McpServer, ctx: LiveContext, push: PushListener): void {
+export function registerPushTools(server: McpServer, ctx: LiveContext, push: PushListener, deps: { env?: EnvSource } = {}): void {
+  const env = deps.env ?? process.env;
   // One GameFeed read per game at a time across every wait in the process, one queued (#131).
   const readGame = coalesced((id: number) => ctx.client.getGame(id, { map: false }));
   server.registerTool(
@@ -353,6 +355,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
             hint: 'Watch only games you play in.',
           });
         }
+        // The first read that shows a game of mine finished folds its opponent profile (B2; best effort, no request).
+        if (game.state === 'Finished' && ctx.dataDir) await foldFinishedGame(ctx.dataDir, game, env);
         return checkOf(game, token);
       };
       const timeoutSec = timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS;
