@@ -6,7 +6,7 @@ import type { EnvSource } from '@chrischall/mcp-utils';
 import type { ObserveInput } from '../analysis/opponent-profile.js';
 import type { TurnBoard } from '../analysis/opponents.js';
 import type { Game, Player } from '../normalize.js';
-import { recordBehaviour } from '../profile-store.js';
+import { profileSeatsOf, recordBehaviour } from '../profile-store.js';
 import { teammatesOf } from '../teams.js';
 import { graphOf } from './common.js';
 import { mapOf } from './map.js';
@@ -66,6 +66,8 @@ export async function recordProfile(
         opponents: profiledOpponents(game, me),
         teammates: teammatesOf(game.players, me).map((p) => p.id),
         boards,
+        // Kept for a fold by the age rule, when no read shows the game finished (B2).
+        seats: profileSeatsOf(game),
       },
       env ?? process.env,
     );
