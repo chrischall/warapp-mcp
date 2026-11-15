@@ -1739,6 +1739,31 @@ describe('cards in the turn tools', () => {
     expect(w).toMatch(/Holding a Reinforcement card: in a team game the team shares one hand/);
   });
 
+  it('plan_turn in a team game reports a bonus shared with my teammate, and who is nearer (C3.3)', async () => {
+    const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+    // Bob, my teammate, holds 157: bonus 118 (159, 161, 157) is shared, and I hold two of its three.
+    // The superbonus 212 over it is shared too, at two each (Bob holds 158 as well).
+    const shared = BOARD.map((t) => (t.id === 157 ? { ...t, owner: BOB.inGame } : t));
+    h = await liveHarness({
+      feed: [game('Playing', { players: teams })],
+      warapp: routes({ [Method.GetLatestGameInfo]: () => ({ body: (w) => writeLatestGameInfo(w, shared, [ANN.inGame, BOB.inGame]) }) }),
+    });
+    const p = payload<{ team?: { sharedBonuses: unknown[]; note: string }; rationale: string[] }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(p.team?.sharedBonuses).toEqual([
+      {
+        bonus: { id: 118, name: bonusName(118), value: 2 },
+        mine: [{ id: 159, name: mapName(159) }, { id: 161, name: mapName(161) }],
+        teammates: [{ player: { id: Number(BOB.feed), name: expect.stringContaining('Bob') }, territories: [{ id: 157, name: mapName(157) }] }],
+        others: 0,
+        nearer: 'me',
+      },
+      expect.objectContaining({ bonus: expect.objectContaining({ id: 212 }), nearer: 'even' }),
+    ]);
+    expect(p.team?.note).toMatch(/one owner per bonus/i);
+  });
+
   it('plan_turn with my Bomb says where it changes the turn, or to hold it (#163)', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: withHand([{ id: GF, type: 13 }]) }) });
     const p = payload<CardsPayload & { cards: { advice?: { bomb?: { target: number | null; why: string } } } }>(

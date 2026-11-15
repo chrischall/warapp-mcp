@@ -590,6 +590,18 @@ the corroborating incomes are summed by team too. A player with no team stays it
 playing with no estimate (out of view) is named and its side's sum is a lower bound: `behind` and `even`
 stand, `ahead` reads `unknown`. No 1v1 or FFA figure or note changes.
 
+*As built (C3.3):* bonus scoring (`src/analysis/plan/targets.ts`) skips a positive bonus with a member a
+teammate visibly holds (`teammateAt`), focused or not (a focus on it is warned about and ignored): no bonus
+plan, no armies-to-finish for rule 4e, its members neither economic nor uneconomic, so a neutral in it is
+judged as plain expansion. A rationale line ("Skip bonus …: my teammate holds …") appears when I could attack
+one of its members. `src/analysis/plan/team.ts` reports `team.sharedBonuses` on the plan: each positive bonus
+with members both I and a teammate hold (mine, each teammate's, the count of the others) and `nearer`, whoever
+holds the most members (`even` in the tool when tied), from the start-of-turn board; a teammate's territory in
+the fog counts as unknown (team vision unverified). Advisory: nothing else in the plan reads it. `warapp_plan_turn`
+shows it with a note. No 1v1 or FFA plan changes; the golden corpus's team boards change where a shared bonus
+was being advanced (moves become plain expansion or are dropped) and every team plan with a shared bonus gains
+the `team` field.
+
 ### C4. The team brief and joining
 
 - Read-only `warapp_team_brief`: the content of a team-chat message as data, by stage. Before picks:

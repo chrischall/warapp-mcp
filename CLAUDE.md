@@ -579,6 +579,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     attacks it on top of its hold (hold + capture deployed there, so it still holds if the
     member is reinforced and the attack fails); unable to afford both, it just holds — never
     a capture instead of the hold. `defend` holds first, `expand` never attacks players.
+  - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
+    teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
+    warning); its other members are plain expansion. `team.sharedBonuses` (advisory) lists each bonus
+    we both hold members of and who holds the most (`nearer`), from the start-of-turn board; a fogged
+    teammate territory is unknown (team vision unverified). Absent outside a team game.
   - **Commit to the closest bonus (#101, rule 4f).** While no bonus is held, and in the opening
     and expansion phases, completions and advances go to the bonus fewest turns from completion
     first (equally close ones by score); a bonus advanced last turn keeps priority unless another

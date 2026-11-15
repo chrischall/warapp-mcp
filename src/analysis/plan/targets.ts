@@ -21,7 +21,7 @@ import {
   type Target,
 } from './shared.js';
 import type { Holds } from './holds.js';
-import type { PlanCtx, PlanState } from './state.js';
+import { teammateAt, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
 
@@ -497,6 +497,17 @@ export function bonusScoring(
     }
     if (b.value <= 0 && !isFocus) continue;
     if (!remaining.length) continue;
+    // PLAN-TEAMS C3.3: a bonus pays only the player holding every member, so one with a member my
+    // teammate visibly holds is not mine to complete (plan/team.ts reports the shared ones).
+    const mates = remaining.filter((t) => teammateAt(pc, t));
+    if (mates.length) {
+      if (remaining.some(bonusTarget) || isFocus)
+        rationale.push(
+          `Skip bonus ${b.name} (#${b.id}): my teammate holds ${mates.map(label).join(', ')}, and a bonus pays only the player holding all of it.`,
+        );
+      if (isFocus) ps.warnings.push(`Focus on bonus ${b.name} (#${b.id}) ignored: my teammate holds ${mates.map(label).join(', ')} (one owner per bonus).`);
+      continue;
+    }
     // Cluster as a unit (#70): the negative bonuses its missing members complete come off its
     // worth (on a map without negative bonuses, net = value).
     const rest = new Set(remaining);

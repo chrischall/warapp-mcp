@@ -119,6 +119,13 @@ const TURN_PHASE_STATE = 'Playing';
 const MAX_ORDERS = 500;
 const MAX_FOCUS = 50;
 const MAX_ENEMY_DEPLOY = 10_000;
+/** PLAN-TEAMS C3.3: what `team.sharedBonuses` means, on every plan that has it. */
+const TEAM_SHARED_NOTE =
+  'One owner per bonus: a bonus pays only the player holding all of it, so the plan never works toward one with a ' +
+  "teammate's territory in it. `nearer` is whoever holds the most members ('even' when tied), read from the board at " +
+  "the start of the turn; `others` counts the members neither of us holds, a teammate's territory in the fog among them " +
+  '(team vision unverified). Advisory: ' +
+  'agree in team chat which of you takes each.';
 
 const territoryRef = z.union([z.string(), z.number()]);
 const armiesArg = z.coerce.number().int().min(1);
@@ -1347,6 +1354,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'the trust watch, a truce the board shows broken is planned as an ordinary opponent, and `tacit` lists quiet ' +
           'borders with no agreement (a report, never a truce). The plan never reads what your chat promised ' +
           "(warapp_send_chat's `commitments`): a warning says when its moves would break one still in force. " +
+          "In a team game a bonus with a teammate's territory in it is never planned toward (one owner per bonus), and " +
+          '`team.sharedBonuses` lists each bonus you and a teammate both hold members of and who is `nearer` to holding it. ' +
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +
@@ -1727,6 +1736,21 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             }
           : {}),
         ...(plan.advice ? { advice: plan.advice.map((a) => ({ ...a, player: playerRef(a.player) })) } : {}),
+        // PLAN-TEAMS C3.3: the bonuses I share with a teammate, advisory.
+        ...(plan.team
+          ? {
+              team: {
+                sharedBonuses: plan.team.sharedBonuses.map((b) => ({
+                  bonus: { id: b.bonusId, name: map.bonuses.find((x) => x.id === b.bonusId)?.name ?? String(b.bonusId), value: b.value },
+                  mine: b.mine.map(name),
+                  teammates: b.teammates.map((m) => ({ player: playerRef(m.player), territories: m.territories.map(name) })),
+                  others: b.others.length,
+                  nearer: b.nearer === null ? 'even' : b.nearer === me.id ? 'me' : playerRef(b.nearer),
+                })),
+                note: TEAM_SHARED_NOTE,
+              },
+            }
+          : {}),
         ...(truces?.tacit.length
           ? { tacit: truces.tacit.map((t) => ({ player: playerRef(t.player), quietTurns: t.quietTurns, border: t.border.map(name) })) }
           : {}),

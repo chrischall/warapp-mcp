@@ -73,3 +73,74 @@ describe("C3.2: the plan's standing sums my team", () => {
     expect(plan.profile?.notes.join('\n')).toMatch(/my team's income 16 \(mine 5, player 11 ~11\) against the strongest enemy team, team 1 \(~10: player 20 ~5, player 21 ~5/);
   });
 });
+
+describe('C3.3: one owner per bonus', () => {
+  // 1 2 (bonus 101, +3, neutrals) ─ 3 (mine, 12) ─ 4 (neutral) 5 (my teammate): bonus 102, +5 ─ 6 7 (neutrals) ─ 8 (player 20).
+  // Bonus 102 pays whoever holds 4 and 5; my teammate holds 5, so it is not mine to complete.
+  const g = buildGraph({
+    ...lineMap(8),
+    bonuses: [
+      { id: 101, name: 'B101', value: 3, territoryIds: [1, 2], bonusIds: [] },
+      { id: 102, name: 'B102', value: 5, territoryIds: [4, 5], bonusIds: [] },
+    ],
+  });
+  const settings = { ...STD, baseIncome: 5 };
+  const b = board([neutral(1, 2), neutral(2, 2), mine(3, 12), neutral(4, 2), player(5, 5, MATE), neutral(6, 2), neutral(7, 2), player(8, 5, 20)]);
+  const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings, game: { players: PLAYERS, turn: 3 }, options: { adapt: true } });
+  it("never works toward a bonus with my teammate's territory in it", () => {
+    const text = plan.rationale.join('\n');
+    expect(text).toMatch(/Skip bonus B102 \(#102\): my teammate holds T5 \(#5\)/);
+    expect(text).not.toMatch(/B102 \(#102\) 11/);
+    expect(plan.moves.some((m) => /advances bonus B102/.test(m.reason))).toBe(false);
+    expect(plan.moves.some((m) => m.to === 2 && /advances bonus B101/.test(m.reason))).toBe(true);
+  });
+  it('ignores a focus on such a bonus, with a warning', () => {
+    const focused = planTurn({
+      graph: g,
+      board: b,
+      me: ME,
+      income: 5,
+      settings,
+      game: { players: PLAYERS, turn: 3 },
+      options: { adapt: true, focusBonusIds: [102] },
+    });
+    expect(focused.warnings.join('\n')).toMatch(/Focus on bonus B102 \(#102\) ignored: my teammate holds T5 \(#5\)/);
+    expect(focused.moves.some((m) => /B102/.test(m.reason))).toBe(false);
+  });
+  it('reports no shared bonus when I hold none of it', () => {
+    expect(plan.team).toBeUndefined();
+  });
+  it('reports each shared bonus and who is nearer to holding it', () => {
+    // 102 grows to 3–5: I hold 3, my teammate 5 (tied, 4 neutral); 103 is 6–8 with my teammate on 6
+    // and 7 and me on 8 (my teammate nearer); 104 (7 alone) is my teammate's only.
+    const g2 = buildGraph({
+      ...lineMap(9),
+      bonuses: [
+        { id: 102, name: 'B102', value: 5, territoryIds: [3, 4, 5], bonusIds: [] },
+        { id: 103, name: 'B103', value: 4, territoryIds: [6, 7, 8], bonusIds: [] },
+        { id: 104, name: 'B104', value: 2, territoryIds: [7], bonusIds: [] },
+      ],
+    });
+    const b2 = board([neutral(1, 2), neutral(2, 2), mine(3, 12), neutral(4, 2), player(5, 5, MATE), player(6, 3, MATE), player(7, 3, MATE), mine(8, 4), player(9, 5, 20)]);
+    const p2 = planTurn({ graph: g2, board: b2, me: ME, income: 5, settings, game: { players: PLAYERS, turn: 3 }, options: { adapt: true } });
+    expect(p2.team?.sharedBonuses).toEqual([
+      { bonusId: 102, value: 5, mine: [3], teammates: [{ player: MATE, territories: [5] }], others: [4], nearer: null },
+      { bonusId: 103, value: 4, mine: [8], teammates: [{ player: MATE, territories: [6, 7] }], others: [], nearer: MATE },
+    ]);
+    // 103 has nothing left that I could attack, so it is skipped without a line.
+    expect(p2.rationale.join('\n')).not.toMatch(/B103/);
+  });
+  it('a no-team game still works toward the bonus and reports no team', () => {
+    const solo = planTurn({
+      graph: g,
+      board: board([neutral(1, 2), neutral(2, 2), mine(3, 12), neutral(4, 2), neutral(5, 2), neutral(6, 2), neutral(7, 2), player(8, 5, 20)]),
+      me: ME,
+      income: 5,
+      settings,
+      game: { players: [{ id: ME }, { id: 20 }], turn: 3 },
+      options: { adapt: true },
+    });
+    expect(solo.moves.some((m) => /advances bonus B102|completes bonus B102/.test(m.reason))).toBe(true);
+    expect(solo.team).toBeUndefined();
+  });
+});
