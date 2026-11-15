@@ -87,7 +87,8 @@ import type { BoardState } from '../board.js';
 import { holdsSeat } from '../player-states.js';
 import { carriesTeam, isTeamGame } from '../teams.js';
 import { neighborsOf, type MapGraph } from './graph.js';
-import { DEFAULT_TERRITORY_LIMIT, trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
+import { DEFAULT_TERRITORY_LIMIT, staticSeatsFor, trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
+import { neutralizeSeats } from './static-seats.js';
 import { ownerShown, type PlannerSettings } from './planner.js';
 import { bonusTerritories } from './bonuses.js';
 import { cardArmiesBy, type CardArmyCeiling } from '../strategy/card-clock.js';
@@ -253,7 +254,9 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   const settings = input.settings ?? {};
   const k = STRENGTH_INCOME_TURNS;
   const byTurn = new Map<number, TurnBoard>();
-  for (const b of input.boards) byTurn.set(b.turn, b);
+  // #270: a static seat (out, no AI on it) is no opponent: its territories read as neutrals.
+  const seats = staticSeatsFor(input.game, me);
+  for (const b of input.boards) byTurn.set(b.turn, seats.size ? { ...b, board: neutralizeSeats(b.board, seats) } : b);
   const all = [...byTurn.keys()].sort((a, b) => a - b);
   // The latest run of consecutive turns, at most OUTLOOK_TURNS long.
   const run: number[] = [];

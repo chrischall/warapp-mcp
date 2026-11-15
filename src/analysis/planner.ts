@@ -31,6 +31,14 @@
 // (#124), and S2's efficient sizes with their #120 warnings.
 //
 // Rules, in decision order:
+//  0s. Static seats (#270, src/analysis/static-seats.ts): a player out of the game (SurrenderAccepted,
+//     Booted, Eliminated, EndedByVote) whose seat no AI plays (not `humanTurnedIntoAI`, nor a surrender
+//     or boot the game's end rules turn into an AI) deploys and attacks nothing. `planTurn` first reads
+//     its territories as neutrals on the board and the previous board (`planningInput`; armies and
+//     units kept) and drops its tracks, truces, Sanctions and opening: it is no opponent in any
+//     estimate, threat, standing or strike, its land is priced like a wasteland, and no border beside
+//     only it needs a hold. A rationale line names each such player holding land. Never me or a
+//     teammate; an AI that replaced a player stays an opponent.
 //  0p. Game profile (`gameProfile`, src/analysis/profile.ts), computed on every plan and
 //     returned as `profile`: format (1v1 / ffa / teams), phase (opening / expansion /
 //     contact / late; in an FFA, contact only when an enemy stack as it stands can take a
@@ -1380,6 +1388,7 @@ import {
   captureCost,
 } from './plan/shared.js';
 import { emptyPlan, noteEstimates, planContext } from './plan/estimates.js';
+import { neutralizeSeats, seatTerritories, staticSeats } from './static-seats.js';
 import { deployBook } from './plan/orders.js';
 import { holdsPhase, type Threatened, type Unit } from './plan/holds.js';
 import { threatsPhase } from './plan/threats.js';
@@ -1449,6 +1458,42 @@ function settledPass(
  * (a fixed point, so no cut reach is still there); without one, the plan that cuts nothing.
  */
 export function planTurn(input: PlanInput): TurnPlan {
+  // #270: a player out of the game whose seat no AI plays deploys and attacks nothing: its
+  // territories are planned as neutrals (static armies), and it is no opponent anywhere below.
+  const seats = staticSeats(input.game?.players, input.game?.endRules, input.me);
+  const held = seatTerritories(input.board, seats);
+  const plan = planSettled(withoutStaticSeats(input, seats));
+  for (const [p, n] of [...held].sort((a, b) => a[0] - b[0]))
+    plan.rationale.push(
+      `Player ${p} is out (${seats.get(p)}) and no AI plays its seat: it deploys and attacks nothing, so its ${n} territor${n === 1 ? 'y is' : 'ies are'} planned as neutrals — static armies to take, no hold needed beside them (#270).`,
+    );
+  return plan;
+}
+
+/**
+ * #270: the input every pass plans on — {@link planTurn}'s first step: the static seats' territories
+ * neutral and the seats no opponent. The same object when the game has no static seat holding land.
+ */
+export function planningInput(input: PlanInput): PlanInput {
+  return withoutStaticSeats(input, staticSeats(input.game?.players, input.game?.endRules, input.me));
+}
+
+/** {@link PlanInput} with the static seats' territories neutral and the seats no opponent (#270). */
+function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>): PlanInput {
+  if (!seats.size) return input;
+  const opening = input.game?.opening;
+  return {
+    ...input,
+    board: neutralizeSeats(input.board, seats),
+    ...(input.previousBoard ? { previousBoard: neutralizeSeats(input.previousBoard, seats) } : {}),
+    ...(input.tracks ? { tracks: input.tracks.filter((t) => !seats.has(t.playerId)) } : {}),
+    ...(input.relations ? { relations: input.relations.filter((r) => !seats.has(r.player)) } : {}),
+    ...(input.sanctions ? { sanctions: input.sanctions.filter((x) => !seats.has(x.player)) } : {}),
+    ...(input.game && opening ? { game: { ...input.game, opening: new Map([...opening].filter(([p]) => !seats.has(p))) } } : {}),
+  };
+}
+
+function planSettled(input: PlanInput): TurnPlan {
   const plan = planRun(input, false);
   const bare = runOutcome.get(plan);
   if (!bare || !bare.bareSteps.length) return plan;

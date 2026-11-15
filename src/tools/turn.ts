@@ -123,6 +123,7 @@ import {
 } from '../trend.js';
 import { writeGameRecord } from '../replay.js';
 import { gameOutlook } from '../analysis/outlook.js';
+import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import { cardArmyCeiling } from '../strategy/card-clock.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
@@ -1522,7 +1523,7 @@ export async function livePlanSetup(
   // one still playing with nothing in view gets a received lower bound and a warning (#94).
   const tracks =
     turn !== null
-      ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
+      ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map, game.endRules))
       : undefined;
   // #240: territories my cached orders show failed attacks on, their owner reinforcing them each
   // time, on two or more of the last three turns: a further attack is sized for its owner's deploy.
@@ -1535,7 +1536,7 @@ export async function livePlanSetup(
     me: me.id,
     boards: [...history.boards, ...(turn !== null ? [{ turn, board: seen }] : [])],
     settings,
-    game: trackGame(game.players, game.settings, map),
+    game: trackGame(game.players, game.settings, map, game.endRules),
     cards: rules.inPlay.length > 0,
     // #205: what the card clock lets cards add, so a fogged card game can still be bounded.
     ...(cardArmies ? { cardArmies } : {}),
@@ -1554,9 +1555,8 @@ export async function livePlanSetup(
       ...(p.isAI ? { isAI: true } : {}),
       ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
     })),
-    ...(game.endRules?.aisSurrenderWhenOneHumanRemains !== undefined
-      ? { endRules: { aisSurrenderWhenOneHumanRemains: game.endRules.aisSurrenderWhenOneHumanRemains } }
-      : {}),
+    // #178, #270: who the game ends with, and whether a surrendered or booted seat is an AI's.
+    ...(game.endRules && Object.keys(seatEndRules(game.endRules)).length ? { endRules: seatEndRules(game.endRules) } : {}),
     turn,
     ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
     ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
@@ -1983,7 +1983,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       });
       const guessed = borderGuess({
         graph,
-        board,
+        // #270: a static seat's territories are neutrals here, as in the plan the guess splits.
+        board: neutralizeSeats(board, staticSeats(gameContext.players, gameContext.endRules, me.id)),
         me: me.id,
         settings,
         plan,

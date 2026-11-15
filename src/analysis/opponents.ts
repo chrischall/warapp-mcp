@@ -90,6 +90,7 @@ import type { BoardState } from '../board.js';
 import type { GameMap, GameSettings } from '../normalize.js';
 import { holdsSeat } from '../player-states.js';
 import { carriesTeam, isTeamGame } from '../teams.js';
+import { neutralizeSeats, staticSeats, type SeatEndRules } from './static-seats.js';
 import { bonusTerritories } from './bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
@@ -276,11 +277,19 @@ export interface TrackPlayer {
   team?: number;
   /** GameFeed state, e.g. `Playing`, `Eliminated`; absent counts as `Playing`. */
   state?: string;
+  /** #270: an AI now plays this human's seat (it stays an opponent when out). */
+  humanTurnedIntoAI?: boolean;
 }
 
 /** The game around the boards (#94): who is still playing, and what each started with. */
 export interface TrackGame {
   players: readonly TrackPlayer[];
+  /**
+   * #270: the players out of the game whose seat no AI plays ({@link staticSeats}), ascending, teammates
+   * included: a reader takes {@link staticSeatsFor} (no ally of mine), whose territories read as
+   * neutrals on every board, and who are tracked as no opponent.
+   */
+  staticSeats?: readonly number[];
   /** Territories each player started with, and the armies on each, when the settings give them. */
   start?: { territories: number; armiesPerTerritory: number };
   /** Why `start` is absent (said in the note). */
@@ -407,17 +416,22 @@ export function trackGame(
     | (Pick<GameSettings, 'territoryLimit' | 'initialPlayerArmiesPerTerritory' | 'distributionMode'> & { cards?: readonly string[] })
     | undefined,
   map?: Pick<GameMap, 'distributionModes'>,
+  /** #270: the game's end rules (`Game.endRules`): whether a surrendered or booted seat is played by an AI. */
+  endRules?: SeatEndRules,
 ): TrackGame {
   const list = players.map((p) => ({
     id: p.id,
     ...(p.name !== undefined ? { name: p.name } : {}),
     ...(p.team !== undefined ? { team: p.team } : {}),
     ...(p.state !== undefined ? { state: p.state } : {}),
+    ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
   }));
   const caveats = settings?.cards?.includes('Sanctions')
     ? ['the game has the Sanctions card, which can cut a sanctioned player\'s income below the base']
     : [];
-  const base = { players: list, ...(caveats.length ? { incomeCaveats: caveats } : {}) };
+  // Every static seat; a reader leaves out me and my teammates (`staticSeatsFor`).
+  const seats = [...staticSeats(list, endRules).keys()].sort(byNum);
+  const base = { players: list, ...(seats.length ? { staticSeats: seats } : {}), ...(caveats.length ? { incomeCaveats: caveats } : {}) };
   const perTerritory =
     settings?.initialPlayerArmiesPerTerritory !== undefined ? { startArmiesPerTerritory: Math.max(0, settings.initialPlayerArmiesPerTerritory) } : {};
   if (settings?.distributionMode === FULL_DISTRIBUTION)
@@ -437,6 +451,16 @@ export function trackGame(
   if (armiesPerTerritory === undefined)
     return { ...base, startUnknown: 'the settings do not give the armies each starting territory had (InitialPlayerArmiesPerTerritory)' };
   return { ...base, start: { territories, armiesPerTerritory: Math.max(0, armiesPerTerritory) } };
+}
+
+/**
+ * #270: the static seats of {@link TrackGame.staticSeats} that are not `me` nor a teammate of mine, by
+ * id with their state: the players whose territories a reader treats as neutrals.
+ */
+export function staticSeatsFor(game: TrackGame | undefined, me: number): Map<number, string> {
+  const ids = new Set(game?.staticSeats ?? []);
+  if (!ids.size) return new Map();
+  return staticSeats(game!.players.filter((p) => ids.has(p.id) || p.id === me), undefined, me);
 }
 
 /** TerritoryLimit assumed when the settings do not say (war.app's usual default). */
@@ -1223,11 +1247,13 @@ export function trackOpponents(
   settings: PlannerSettings = {},
   game?: TrackGame,
 ): OpponentTrack[] {
+  // #270: a static seat (out, no AI on it) deploys nothing: its territories read as neutrals.
+  const seats = staticSeatsFor(game, me);
   // One board per turn (the last given wins), oldest first.
   const byTurn = new Map<number, BoardState>();
   const ordersOn = new Map<number, MyOrders | undefined>();
   for (const b of boards) {
-    byTurn.set(b.turn, b.board);
+    byTurn.set(b.turn, neutralizeSeats(b.board, seats));
     ordersOn.set(b.turn, b.orders);
   }
   const turns = [...byTurn.keys()].sort(byNum);

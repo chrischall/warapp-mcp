@@ -314,8 +314,11 @@ export interface PlanGameContext {
    * run first). Read only by the team report.
    */
   moveOrder?: string;
-  /** #178: the end-of-game settings the profile reads (`Game.endRules`): who the game ends with. */
-  endRules?: { aisSurrenderWhenOneHumanRemains?: boolean };
+  /**
+   * #178: the end-of-game settings the profile reads (`Game.endRules`): who the game ends with.
+   * #270: and whether a surrendered or booted seat is played by an AI (else it is static, {@link staticSeats}).
+   */
+  endRules?: { aisSurrenderWhenOneHumanRemains?: boolean; surrenderedTurnIntoAI?: boolean; bootedTurnIntoAI?: boolean };
   /**
    * #164: when an opponent's Reinforcement card can first be in hand (the card clock), and what it
    * adds; absent when no Reinforcement card is in play or its armies are unknown.

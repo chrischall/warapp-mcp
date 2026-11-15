@@ -73,7 +73,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
       const turn = currentTurn(game);
       const history = await boardHistory(ctx, game, me, turn);
       const boards = turn !== null ? [...history.boards, { turn, board }] : [{ turn: 0, board }];
-      const tracks = trackOpponents(graph, boards, me.id, settings, trackGame(game.players, game.settings, map));
+      const tracks = trackOpponents(graph, boards, me.id, settings, trackGame(game.players, game.settings, map, game.endRules));
       if (ctx.dataDir && turn !== null) {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
         await writeGameRecord(ctx.dataDir, game);

@@ -8,6 +8,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { incomeDetail, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart } from '../analysis/index.js';
 import { stressPlan, type StressDodge, type StressExposure, type StressJoint, type StressReply } from '../analysis/stress.js';
+import { neutralizeSeats, seatEndRules, seatTerritories, staticSeats } from '../analysis/static-seats.js';
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners, opponentReinforcement } from './card-advice.js';
 import { boardCardsInEffect, sanctionMyIncome } from './card-effects.js';
@@ -154,7 +155,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // the board the orders are tried on; the history and tracks stay what war.app showed.
       const seen = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
       const award = await loadAward(ctx.dataDir, game, me, seen, turn);
-      const board = award?.board ?? seen;
+      // #270: a player out of the game whose seat no AI plays deploys and attacks nothing: its
+      // territories are neutrals here (static armies), and it is tried as no opponent.
+      const seats = staticSeats(game.players, game.endRules, me.id);
+      const board = neutralizeSeats(award?.board ?? seen, seats);
       const opening = openingThreat(award, game, graph, seen, turn);
       const settings = plannerSettings(game.settings);
 
@@ -238,7 +242,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // The same per-opponent estimates warapp_plan_turn works from.
       const tracks =
         turn !== null
-          ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
+          ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map, game.endRules))
           : undefined;
       // #253: what the army cap leaves me (the deploy check, the truces' trust and the Sanctions read
       // it, as warapp_plan_turn's do) and what I earn before the cut (the fog prior and the leader
@@ -256,7 +260,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         income,
         ...(incomeOnBoard.cap ? { incomeCap: incomeOnBoard.cap } : {}),
         settings,
-        ...(history.previous ? { previousBoard: history.previous.board } : {}),
+        ...(history.previous ? { previousBoard: neutralizeSeats(history.previous.board, seats) } : {}),
         // #226: my orders on that turn, when this server sent them, as warapp_plan_turn has them.
         ...(history.previous && turn !== null && history.boards.find((b) => b.turn === turn - 1)?.orders
           ? { previousOrders: history.boards.find((b) => b.turn === turn - 1)!.orders! }
@@ -268,7 +272,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             id: p.id,
             ...(p.team !== undefined ? { team: p.team } : {}),
             ...(p.state !== undefined ? { state: p.state } : {}),
+            ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
           })),
+          ...(game.endRules && Object.keys(seatEndRules(game.endRules)).length ? { endRules: seatEndRules(game.endRules) } : {}),
           turn,
           symmetricStart: symmetricStart(game.settings),
           // #235: why not, when it was not (the plan says so in a free-for-all).
@@ -286,7 +292,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const teamOf = new Map(game.players.map((p) => [p.id, p.team]));
       const friend = (id: number) => id === me.id || (myTeam !== undefined && teamOf.get(id) === myTeam);
       // Whoever holds a stack on the board can use it, whatever GameFeed says of the player (a booted
-      // seat may be an AI): every owner in view, then every other player still in the game.
+      // seat may be an AI): every owner in view, then every other player still in the game. A static
+      // seat's territories are neutral on `board` already (#270), so it is never among them.
       const onBoard = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' ? [t.owner.playerId] : [])));
       const stillIn = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').map((p) => p.id);
       const base = settings.baseIncome ?? 0;
@@ -529,6 +536,13 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const deployed = deploys.reduce((n, d) => n + d.armies, 0);
       const warnings = [
         ...(award ? assumedWarning(award) : []),
+        // #270: the static seats whose territories the test read as neutrals.
+        ...[...seatTerritories(award?.board ?? seen, seats)]
+          .sort((a, b) => a[0] - b[0])
+          .map(
+            ([p, n]) =>
+              `Player ${p} is out (${seats.get(p)}) and no AI plays its seat: its ${n} territor${n === 1 ? 'y was' : 'ies were'} tried as neutrals, and it makes no reply.`,
+          ),
         ...modsWarning(game.settings),
         // As plan/submit do (#165); a percentage order counts what it sent unanswered.
         ...guardOffWarnings(

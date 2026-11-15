@@ -512,6 +512,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   in `warapp_session_status` (`pushTransport`) and the push tools. One listener per process
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
   Tests drive a scripted fake bridge and a fake WebSocket, never a real socket.
+- **A player out with no AI on its seat is static (#270, `src/analysis/static-seats.ts`).** Out means
+  `SurrenderAccepted`, `Booted`, `Eliminated` or `EndedByVote`; an AI plays the seat when
+  `humanTurnedIntoAI`, or the game's `surrenderedTurnIntoAI` / `bootedTurnIntoAI` covers that ending,
+  and then it stays an opponent. A static seat's territories stay on the board (seen live), but it
+  deploys and attacks nothing, so the planner (`planTurn`'s first step, `planningInput`),
+  `planEnemyEstimates`, `warapp_check_plan`'s board and replies, the border guess, the tracker and the
+  outlook (`TrackGame.staticSeats`, `staticSeatsFor`) read them as neutrals — targets priced like a
+  wasteland, no hold beside them, never the standing or the strike stack's direction. Never me or a
+  teammate. The board cache keeps what war.app showed.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to

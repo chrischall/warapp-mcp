@@ -98,7 +98,7 @@ function incomesOf(graph: MapGraph, boards: readonly TurnBoard[], game: Game, me
     newest.board.territories.filter((t) => t.owner.kind === 'player' && t.owner.playerId === me.id).map((t) => t.territoryId),
   );
   const mine = boardIncome(graph, held, incomeRules(game.settings)).total;
-  const tracks = trackOpponents(graph, boards, me.id, plannerSettings(game.settings), trackGame(game.players, game.settings, map));
+  const tracks = trackOpponents(graph, boards, me.id, plannerSettings(game.settings), trackGame(game.players, game.settings, map, game.endRules));
   for (const t of tracks) if (opponents.has(t.playerId)) opponents.set(t.playerId, t.firstSeen === null ? null : (t.income ?? t.visibleIncome));
   return { mine, opponents };
 }
