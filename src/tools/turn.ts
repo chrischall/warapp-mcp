@@ -19,6 +19,7 @@ import {
   normalizeGuid,
   cardsToShed,
   handReadable,
+  isMyCard,
   readHand,
   reinforcementArmies,
   type Card,
@@ -1014,6 +1015,15 @@ function teamHandOver(held: number, rules: CardRules, shed: number, given: numbe
   );
 }
 
+/** Cards these orders use that were read only under a teammate's id (V8, #163): a warning, never a refusal. */
+export function teammateCardWarning(cards: readonly Card[]): string {
+  return (
+    `${cards.map((c) => `${c.name} ${c.id}`).join(', ')} ${cards.length === 1 ? 'was' : 'were'} read under a teammate, not under you. ` +
+    "A team shares one hand, but whether you can play or discard a card held under a teammate is not yet verified: war.app " +
+    'refusing it (e.g. error 50, CardInstanceUnavailable) means only that teammate can.'
+  );
+}
+
 /** The required-play refusal (war.app's error 51, `MustUseCard`), raised before anything is sent. */
 function mustPlayCard(hand: readonly Card[], rules: CardRules, shed: number, given: number): McpToolError {
   return new McpToolError(
@@ -1298,14 +1308,17 @@ export async function livePlanSetup(
   const owners = handOwners(game, me);
   const hand = readHand(info, owners);
   const handUnknown = rules.inPlay.length > 0 && !handReadable(info, owners);
-  const inGame = cardGame(game);
+  const inGame = cardGame(game, me);
   // PLAN-TEAMS C3.7: a card my teammate has entered a play or discard of is theirs this turn, so my plan
   // chooses from the rest (their orders: V5; the team hand's keying: V8 — both unverified live).
   const { left: myHand, claimed: teamClaimed } = teamHandLeft(
     hand,
     inGame.team ? teamCardClaims(seen.teammateOrders, new Set(teammatesOf(game.players, me).map((p) => p.id))) : [],
   );
+  // V8: of what is left, a card read under a teammate's id is not mine to play (unverified): chooseCardPlays
+  // and the card advice play, discard and advise only my own, so no card is both claimed and advised to me.
   const cards = chooseCardPlays(myHand, rules, inGame);
+  const myCards = myHand.filter((c) => isMyCard(c, inGame.me));
   // The board's income, card armies out: what the truces' trust reads (as warapp_check_plan passes it).
   const boardIncome = incomeFor(graph, board, me.id, game.settings);
   const income = boardIncome + cards.extraArmies;
@@ -1392,7 +1405,7 @@ export async function livePlanSetup(
       ...(goal !== undefined ? { goal } : {}),
       focusBonusIds,
       ...(opponents > 0 ? { opponents } : {}),
-      holdsOrderPriority: holdsOrderPriority(myHand, cards),
+      holdsOrderPriority: holdsOrderPriority(myCards, cards),
       ...(playsOrderPriority(cards) ? { orderPriorityForced: true } : {}),
       ...(reserve !== undefined ? { reserve } : {}),
       ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
@@ -1409,7 +1422,7 @@ export async function livePlanSetup(
     },
   };
   return {
-    graph, seen, award, board, opening, mover, settings, rules, owners, hand, myHand, teamClaimed, handUnknown, inGame, cards,
+    graph, seen, award, board, opening, mover, settings, rules, owners, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards,
     boardIncome, income, trend, previousOrders, tracks, outlookInput, outlook, picking, opponents, gameContext, truces, input,
   };
 }
@@ -1468,11 +1481,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'a neighbour whose armies the fog hides counts its unaccounted armies (at most two turns of its income), and a large stack that left view counts where it can reach, with a warning a turn ahead where it can stand beside a border next turn; ' +
           'growth beside the fog beyond twice what it was expected to deploy reads as a move out of the fog, not a deploy). Obeys the kill rates, luck, rounding, Local ' +
           'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement (in a team ' +
-          "game only when cards must be shed: the hand is the team's), and Order Priority only when the plan advises it (a " +
+          "game only when cards must be shed, and only cards read under you: the hand is the team's), and Order Priority only when the plan advises it (a " +
           'withdrawal worth a card, a commander strike) or it is the card that must go (over the hold limit the cards worth ' +
           'least in this game leave first; the timing cards are kept longest); never Blockade, Order Delay, Bomb or Emergency ' +
           'Blockade — `cards.advice` says where those pay (Order Delay above the calm orders, a Bomb target or hold it, an ' +
-          "Emergency Blockade wall), and the warnings flag an opponent's Bomb or Emergency Blockade and the cards in effect. Moves are listed in the " +
+          "Emergency Blockade wall; Diplomacy on the opponent pressing you hardest when two or more do, Sanctions on the leader, an Airlift onto a " +
+          "border of yours or a teammate's that falls without it, a Gift that completes a teammate's bonus — each with an `order` to pass to " +
+          "warapp_submit_turn, never added to the orders), and the warnings flag an opponent's Bomb or Emergency Blockade and the cards in effect. Moves are listed in the " +
           "order to send them (both players' orders interleave). The full rule list is in the planner's header and the warapp-mcp skill. " +
           'When this server kept your pick list (warapp_submit_picks or warapp_get_my_picks during distribution), ' +
           '`award` says what the award of picks showed: the territories of your list that are another player\'s ' +
@@ -1607,7 +1622,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         },
       });
-      const { graph, seen, award, board, mover, rules, hand, myHand, teamClaimed, handUnknown, inGame, cards, income, trend, previousOrders, tracks } = setup;
+      const { graph, seen, award, board, mover, rules, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards, income, trend, previousOrders, tracks } = setup;
       const { settings, outlookInput, gameContext, truces } = setup;
       let { outlook } = setup;
       const plan = planTurn(setup.input);
@@ -1669,9 +1684,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         return { id, name: p ? untrustedText(p.name) : null };
       };
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
-      // and the cards in effect. Advice only: the orders below are the plan's.
+      // and the cards in effect; D2: my Diplomacy, Sanctions, Airlift and Gift. Advice only: the orders
+      // below are the plan's (and the advised Order Delay).
+      const inForce = (truces?.relations ?? []).filter((r) => r.state === 'active' || r.state === 'notice');
       const advice = rules.inPlay.length
-        ? adviseCards({ game, me, turn, info, hand: myHand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})`, truceCovered: new Set((truces?.relations ?? []).filter((r) => r.state === 'active' || r.state === 'notice').flatMap((r) => r.coveredTheirs)) })
+        ? adviseCards({
+            game, me, turn, info, hand: myHand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})`,
+            truceCovered: new Set(inForce.flatMap((r) => r.coveredTheirs)),
+            truces: inForce.map((r) => ({ player: r.player, state: r.state as 'active' | 'notice', coveredMine: r.coveredMine, ...(r.endsTurn !== undefined ? { endsTurn: r.endsTurn } : {}) })),
+          })
         : { view: {}, warnings: [] };
       // B4: the planner does not read what my chat messages promised (words change no estimate), so a
       // plan that breaks a commitment still in force says so here; warapp_submit_turn warns again.
@@ -1705,18 +1726,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       ];
       // The plan advises Order Priority (a withdrawal, a commander strike): play the one I
       // hold, so the orders as returned carry it rather than only the advice.
-      const advised = plan.cardAdvice === 'order-priority' ? advisedOrderPriority(myHand, cards) : undefined;
+      const advised = plan.cardAdvice === 'order-priority' ? advisedOrderPriority(myCards, cards) : undefined;
       const plays = advised ? [...cards.plays, advised] : cards.plays;
+      // #163: an Order Delay that had to go is played where the plan advises it, not discarded.
+      const playedDelay = advice.view.orderDelay?.card;
       const orders = [
-        ...cards.discards.map((c) => ({ kind: 'discard' as const, card: c.id })),
+        ...cards.discards.filter((c) => c.id !== playedDelay).map((c) => ({ kind: 'discard' as const, card: c.id })),
         ...plays.map((c) => ({ kind: 'card' as const, card: c.id })),
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
         ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
         // #186: the advised Order Delay, placed above its move (war.app accepted the placement live;
         // whether the later moves wait for the opponent's is not yet seen in a replay).
-        ...(advice.view.orderDelay && !cards.discards.some((c) => c.id === advice.view.orderDelay!.card)
-          ? [advice.view.orderDelay.order]
-          : []),
+        ...(advice.view.orderDelay ? [advice.view.orderDelay.order] : []),
       ];
       // The border guess (docs/STRATEGY.md "Guessing at a border"): a randomized split of the deploys
       // the plan spends on one opponent's borders, when no fixed split holds them all. Optional: the
@@ -2302,6 +2323,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const unverifiedPlays = [...new Set(plays.filter((p) => UNVERIFIED_CARD_PLAYS.has(p.kind)).map((p) => p.card.name))];
         if (unverifiedPlays.length) warnings.push(unverifiedCardWarning(unverifiedPlays));
         if (used < teamShed) warnings.push(teamHandOver(hand.length, rules, teamShed, used));
+        // V8: a card read only under a teammate's id may be theirs to play; war.app has the last word.
+        const theirs = [...plays.map((p) => p.card), ...discards].filter((c) => !isMyCard(c, playerId));
+        if (theirs.length) warnings.push(teammateCardWarning(theirs));
         const placedDelays = plays.filter((p) => placedAt(p) !== undefined);
         for (const p of placedDelays) {
           const m = moves[placedAt(p)! - 1]!;

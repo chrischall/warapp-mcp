@@ -54,6 +54,11 @@ export interface Card {
   name: string;
   /** Armies a Reinforcement card adds, when the instance says. */
   armies?: number;
+  /**
+   * A team hand only (readHand given several ids): the in-game id the card was read under — mine when
+   * it is under me at all. How war.app keys a team's hand is UNVERIFIED (V8, #163).
+   */
+  owner?: number;
 }
 
 const GUID_RE = /^[0-9a-f]{32}$/;
@@ -97,12 +102,15 @@ function cardOf(o: Obj, key: unknown): Card | undefined {
  * A team shares one hand and one card limit (the wiki's Team Games). Given several in-game
  * ids (mine and my teammates'), the hand is every card under any of them, each GUID once.
  * UNVERIFIED live (#163): how war.app keys a team's hand — under each player, under one, or
- * repeated under all — has not been seen on a team board.
+ * repeated under all — has not been seen on a team board. So each card of a team hand carries the
+ * id it was read under (`owner`): the first id given (mine) when it is under that one at all.
  */
 export function readHand(info: unknown, myInGameId: number | readonly number[]): Card[] {
-  const owners = new Set(typeof myInGameId === 'number' ? [myInGameId] : myInGameId);
+  const ids = typeof myInGameId === 'number' ? [myInGameId] : [...myInGameId];
+  const owners = new Set(ids);
+  const team = owners.size > 1;
   const out: Card[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, Card>();
   const walk = (v: unknown, owner: number | undefined, key: unknown, depth: number): void => {
     if (depth > MAX_DEPTH) return;
     if (Array.isArray(v)) {
@@ -119,10 +127,15 @@ export function readHand(info: unknown, myInGameId: number | readonly number[]):
     if (typeof v.$type === 'string' && CARD_INSTANCE.test(v.$type)) {
       if (owner !== undefined && !owners.has(owner)) return;
       const card = cardOf(v, key);
-      if (card && !seen.has(card.id)) {
-        seen.add(card.id);
-        out.push(card);
+      if (!card) return;
+      const known = seen.get(card.id);
+      if (known) {
+        if (team && owner === ids[0]) known.owner = owner;
+        return;
       }
+      if (team && owner !== undefined) card.owner = owner;
+      seen.set(card.id, card);
+      out.push(card);
       return;
     }
     for (const [k, f] of Object.entries(v)) if (k !== '$type') walk(f, owner, undefined, depth + 1);
@@ -246,7 +259,15 @@ export interface CardGame {
   team?: boolean;
   /** GameFeed's `Fog` setting (`NoFog`, `Foggy`, …). */
   fog?: string;
+  /**
+   * A team game: my in-game id. A card read under another id (a teammate's, {@link Card.owner}) is
+   * never played or discarded for me (V8: whether I can is unverified).
+   */
+  me?: number;
 }
+
+/** Whether a card is mine to play: not read under a teammate's id (V8 unverified). */
+export const isMyCard = (c: Card, me: number | undefined): boolean => me === undefined || c.owner === undefined || c.owner === me;
 
 /**
  * A card's keep value in this game: the information cards (Spy, Reconnaissance, Surveillance)
@@ -286,8 +307,9 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules, game: C
   const warnings: string[] = [];
   let extraArmies = 0;
   let heldForTeam = 0;
+  const mineOnly = game.team ? game.me : undefined;
   for (const c of hand) {
-    if (c.type !== CARD_REINFORCEMENT) continue;
+    if (c.type !== CARD_REINFORCEMENT || !isMyCard(c, mineOnly)) continue;
     const armies = reinforcementArmies(c, rules);
     if (armies === undefined) {
       warnings.push(`Not playing Reinforcement card ${c.id}: the armies it adds are unknown.`);
@@ -315,7 +337,7 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules, game: C
   }
   if (plays.length < shed) {
     const used = new Set(plays.map((c) => c.id));
-    const rest = hand.filter((c) => !used.has(c.id));
+    const rest = hand.filter((c) => !used.has(c.id) && isMyCard(c, mineOnly));
     // A stable sort: equal-value cards go in hand order. The lowest-value cards leave the hand; an
     // Order Priority that must go anyway is played rather than discarded.
     const byValue = rest
@@ -324,7 +346,15 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules, game: C
     // At most one Order Priority is played: a second adds nothing over the first, and whether
     // war.app takes two plays of it in one turn is unverified, so the rest are discarded.
     const playOne = (c: Card): boolean => c.type === CARD_ORDER_PRIORITY && !plays.some((p) => p.type === CARD_ORDER_PRIORITY);
-    for (const { c } of byValue.slice(0, shed - plays.length)) (playOne(c) ? plays : discards).push(c);
+    const short = shed - plays.length;
+    for (const { c } of byValue.slice(0, short)) (playOne(c) ? plays : discards).push(c);
+    const theirs = short - Math.min(short, byValue.length);
+    if (theirs > 0) {
+      warnings.push(
+        `${theirs} more card${theirs === 1 ? '' : 's'} must leave the team's hand from your teammates' cards: ` +
+          'ask them to play or discard (whether you can play a card read under a teammate is not yet verified).',
+      );
+    }
   }
   const forced = plays.filter((c) => c.type === CARD_ORDER_PRIORITY);
   if (forced.length) {

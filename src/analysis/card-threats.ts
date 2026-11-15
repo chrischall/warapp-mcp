@@ -75,8 +75,8 @@ interface WallOffer {
   kills: number;
 }
 
-/** The common reads over the board and the plan. */
-function reader(cb: CardBoard) {
+/** The common reads over the board and the plan (shared with card-support.ts). */
+export function reader(cb: CardBoard) {
   const state = new Map<number, TerritoryState>(cb.board.territories.map((t) => [t.territoryId, t]));
   const guard = cb.settings?.oneArmyStandsGuard === false ? 0 : 1;
   const rates: KillRates = {
@@ -134,7 +134,24 @@ function reader(cb: CardBoard) {
     }
     return best;
   };
-  return { state, guard, rates, ownerOf, isMine, foe, armiesOf, commanderOf, deployAt, outOf, transfersInto, attacksOn, after, toTake, ids, reachOf };
+  /** Each opponent's reach at `t` alone (its movable stacks next to `t` plus its deploy), by player. */
+  const reachByPlayer = (t: number) => {
+    const by = new Map<number, number>();
+    for (const n of neighborsOf(cb.graph, t)) {
+      const p = ownerOf(n);
+      if (!foe(p) || state.get(n)?.armies === null) continue;
+      by.set(p, (by.get(p) ?? cb.enemyDeploy) + Math.max(0, armiesOf(n) - guard));
+    }
+    return by;
+  };
+  /** The fewest armies on `t` (its commander there counted apart) that `reach` cannot take. */
+  const holdNeed = (reach: number, commander: boolean) => {
+    const extra = commander ? COMMANDER_STRENGTH : 0;
+    let h = 0;
+    while (toTake(h + extra) <= reach) h++;
+    return h;
+  };
+  return { state, guard, rates, ownerOf, isMine, foe, armiesOf, commanderOf, deployAt, outOf, transfersInto, attacksOn, after, toTake, ids, reachOf, reachByPlayer, holdNeed };
 }
 
 const KIND_RANK = { commander: 0, hold: 1, capture: 2 } as const;

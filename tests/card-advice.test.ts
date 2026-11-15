@@ -5,6 +5,7 @@ import type { Card, CardChoice } from '../src/cards.js';
 import type { GameSettings, Player } from '../src/normalize.js';
 import { adviseCards, cardGame, cardPieceOption, handOwners, opponentReinforcement, type CardAdviceInput } from '../src/tools/card-advice.js';
 import { normalizeSettings } from '../src/normalize.js';
+import { turnOrdersArg } from '../src/tools/turn.js';
 import { board, mine, neutral, tinyMap } from './analysis/helpers.js';
 
 // Synthetic GameFeed ids: the in-game id wrapped in two check digits each end.
@@ -104,10 +105,89 @@ describe('adviseCards (#163)', () => {
   });
 });
 
+describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', () => {
+  const FOE2: Player = { ...FOE, id: 8811111299, name: 'Cy' };
+  const foe2 = (territoryId: number, armies: number): TerritoryState => ({ territoryId, owner: { kind: 'player', playerId: FOE2.id }, armies });
+  const card = (type: number, name: string, c = 'd'): Card => ({ id: c.repeat(32), type, name });
+  const ffa = { players: [ME, FOE, FOE2], settings: settings() };
+  // T4 (mine) between FOE's 10 on T3 and FOE2's 20 on T5.
+  const fronts = () => [neutral(1, 2), neutral(2, 2), foe(3, 10), me(4, 20), foe2(5, 20), neutral(6, 2)];
+
+  it('advises Diplomacy on the opponent pressing hardest, with the order to play it, never auto-played', () => {
+    const { view, warnings } = adviseCards(input({ territories: fronts(), game: ffa, hand: [card(8, 'Diplomacy')] }));
+    expect(view.diplomacy).toMatchObject({ player: FOE2.id, borders: [4], armies: 15, order: { kind: 'card', card: 'd'.repeat(32), players: [ME.id, FOE2.id] } });
+    expect(warnings.join('\n')).toMatch(/Diplomacy with player 8811111299: .*starts the turn after it is played.*Advice only, not in the orders/);
+  });
+
+  it('passes over a truce partner the truce already covers, and says so', () => {
+    const truces = [{ player: FOE2.id, state: 'active' as const, coveredMine: [4] }];
+    const { view, warnings } = adviseCards(input({ territories: fronts(), game: ffa, hand: [card(8, 'Diplomacy')], truces }));
+    expect(view.diplomacy?.player).toBe(FOE.id);
+    expect(warnings.join('\n')).toMatch(/Passed over: player 8811111299: your truce already covers every border it presses/);
+  });
+
+  it('says nothing of Diplomacy in a 1v1', () => {
+    const { view } = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 20)], hand: [card(8, 'Diplomacy')] }));
+    expect(view.diplomacy).toBeUndefined();
+  });
+
+  it('advises Sanctions on the leader, from the profile ranking when the plan has one', () => {
+    const { view } = adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')] }));
+    // Off the board: FOE2's 20 armies lead.
+    expect(view.sanctions).toEqual({ player: FOE2.id, order: { kind: 'card', card: 'd'.repeat(32), player: FOE2.id } });
+    const ranking = { leader: FOE.id, myRank: 2, of: 3, commonThreat: FOE.id, players: [{ playerId: FOE.id, armies: 9, income: 30, strength: 99 }, { playerId: ME.id, armies: 20, income: 5, strength: 35 }] };
+    const plan = { deploys: [], moves: [], moveSlots: [], enemyDeploy: 5, conceded: [], profile: { ranking } as never };
+    expect(adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')], plan })).view.sanctions?.player).toBe(FOE.id);
+  });
+
+  it('advises an Airlift onto a border that falls without it', () => {
+    const territories = [me(1, 20), me(2, 1), me(3, 1), me(4, 2), foe(5, 10), neutral(6, 2)];
+    const { view } = adviseCards(input({ territories, hand: [card(6, 'Airlift')] }));
+    expect(view.airlift).toEqual({ from: 1, to: 4, armies: 7, order: { kind: 'card', card: 'd'.repeat(32), from: 1, to: 4, armies: 7 } });
+  });
+
+  it("advises a Gift that completes a teammate's bonus, and never a card read under a teammate", () => {
+    const MATE: Player = { ...FOE, id: 5544444411, name: 'Dee', team: 1 };
+    const a = { ...ME, team: 1 };
+    const b = { ...FOE, team: 2 };
+    const mate = (territoryId: number, armies: number): TerritoryState => ({ territoryId, owner: { kind: 'player', playerId: MATE.id }, armies });
+    const team = { sharedBonuses: [{ bonusId: 101, value: 3, mine: [3], teammates: [{ player: MATE.id, territories: [1, 2] }], others: [], nearer: MATE.id }] };
+    const plan = { deploys: [], moves: [], moveSlots: [], enemyDeploy: 5, conceded: [], team };
+    const territories = [mate(1, 2), mate(2, 2), me(3, 4), me(4, 4), foe(5, 3)];
+    const game = { players: [a, MATE, b], settings: settings() };
+    const gift = { ...card(7, 'Gift'), owner: ME_IN };
+    const { view } = adviseCards(input({ territories, game, me: a, plan, hand: [gift] }));
+    expect(view.gift).toEqual({ player: MATE.id, bonus: 101, territories: [3], orders: [{ kind: 'card', card: 'd'.repeat(32), target: 3, player: MATE.id }] });
+    const theirs = { ...gift, owner: 444444 };
+    expect(adviseCards(input({ territories, game, me: a, plan, hand: [theirs] })).view.gift).toBeUndefined();
+  });
+
+  it('every advised order is one warapp_submit_turn takes', () => {
+    const hand = [card(8, 'Diplomacy', 'a'), card(9, 'Sanctions', 'b'), card(6, 'Airlift', 'c')];
+    const territories = [me(1, 20), me(2, 1), foe(3, 10), me(4, 2), foe2(5, 20), neutral(6, 2)];
+    const { view } = adviseCards(input({ territories, game: ffa, hand }));
+    const orders = [view.diplomacy?.order, view.sanctions?.order, view.airlift?.order];
+    expect(orders.every(Boolean)).toBe(true);
+    expect(turnOrdersArg.safeParse(orders).success).toBe(true);
+  });
+
+  it('plays an Order Delay that must leave the hand where the plan can use it, instead of discarding it (#163)', () => {
+    const od = card(5, 'Order Delay');
+    const choice: CardChoice = { ...none, required: true, discards: [od] };
+    const plan = { deploys: [], moves: [{ from: 4, to: 5, armies: 19, kind: 'attack' as const, reason: '' }], moveSlots: ['last' as const], enemyDeploy: 5, conceded: [] };
+    const { view, warnings } = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 4)], plan, hand: [od], choice }));
+    expect(view.orderDelay).toMatchObject({ card: od.id, before: 1, insteadOfDiscard: true });
+    expect(warnings.join('\n')).toMatch(/played \(below\) instead of discarded/);
+  });
+});
+
 describe('the game around the hand (#163)', () => {
   it('a team game, its players and fog', () => {
     expect(cardGame({ players: [ME, FOE], settings: settings() })).toEqual({ players: 2, team: false, fog: 'Foggy' });
     expect(cardGame({ players: [{ ...ME, team: 0 }, { ...FOE, team: 1 }], settings: undefined })).toEqual({ players: 2, team: true });
+    // With me, in a team game: my in-game id (V8: a card under a teammate is not mine to play).
+    expect(cardGame({ players: [{ ...ME, team: 0 }, { ...FOE, team: 1 }], settings: undefined }, ME)).toEqual({ players: 2, team: true, me: ME_IN });
+    expect(cardGame({ players: [ME, FOE], settings: undefined }, ME)).toEqual({ players: 2, team: false });
   });
 
   it("the hand's owners: me, and my teammates in a team game", () => {

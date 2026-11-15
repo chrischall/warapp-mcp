@@ -190,7 +190,7 @@ export function registerTeamBriefTool(server: McpServer, ctx: LiveContext): void
           ...(j.mustGoFirst !== undefined ? { mustGoFirst: j.mustGoFirst } : {}),
         })),
       });
-      const advised = plan.cardAdvice === 'order-priority' ? advisedOrderPriority(setup.myHand, setup.cards) : undefined;
+      const advised = plan.cardAdvice === 'order-priority' ? advisedOrderPriority(setup.myCards, setup.cards) : undefined;
       const plays: Card[] = advised ? [...setup.cards.plays, advised] : setup.cards.plays;
       const cardRef = (c: Card) => ({ id: c.id, type: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}) });
       const read = (setup.seen.teammateOrders ?? []).filter((e) => allies.has(e.playerId) && e.orders).map((e) => e.playerId);

@@ -716,6 +716,17 @@ commander cannot be gifted or airlifted to a teammate). Card advice: Diplomacy o
 me hardest when two or more are, Sanctions on the leader, Airlift and Gift as team support. The
 existing notes already state these.
 
+*As built (D2):* `src/analysis/card-support.ts` (pure) and `src/tools/card-support-advice.ts` add
+`cards.advice.diplomacy`, `.sanctions`, `.airlift` and `.gift` to `warapp_plan_turn`, each with the
+`order` to pass to `warapp_submit_turn`; none is put in `orders`. "Hitting me hardest" is read as the
+armies my borders (after the plan) keep against that opponent alone; a truce partner the truce covers is
+passed over unless the truce is in notice or leaves a border it presses uncovered, and the warning says
+which. The leader is the profile's FFA ranking, else visible armies + 3 × visible income. Airlift targets
+a falling border of mine or a teammate's (their entered deploys counted), from a source with armies to
+spare after what it must hold; Gift gives the members that complete a teammate's nearer bonus (C3.3). A
+team hand's cards carry the id they were read under (V8 unverified); only mine are played, discarded or
+advised. No planner rule changed: the golden corpus is unchanged.
+
 ## 11. Part E — the skill and the notes
 
 **`skills/warapp-mcp/SKILL.md`,** a section on chat and diplomacy:

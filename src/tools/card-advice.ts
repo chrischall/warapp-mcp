@@ -1,11 +1,14 @@
 // The card advice warapp_plan_turn adds to a plan (#163): the game around the hand (team, fog,
 // players), the team's hand, Order Delay's place, my Bomb and Emergency Blockade, the
-// opponents' Bomb and Emergency Blockade when they can hold one, and the cards in effect
-// (Diplomacy, Sanctions). Read-only; everything here is advice — no card play is added to the
-// orders.
+// opponents' Bomb and Emergency Blockade when they can hold one, the cards in effect
+// (Diplomacy, Sanctions), and (PLAN-TEAMS D2) where to play my Diplomacy, Sanctions, Airlift and
+// Gift. Read-only; everything here is advice — of these only the advised Order Delay is added to the
+// orders; the D2 cards carry an `order` to pass to warapp_submit_turn.
 
-import { adviseOrderDelay, CARD_REINFORCEMENT, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
+import { adviseOrderDelay, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
+import { supportAdvice, type SupportView } from './card-support-advice.js';
+import type { TruceCover } from '../analysis/card-support.js';
 import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';
 import type { Game, GameSettings, Player } from '../normalize.js';
@@ -15,12 +18,22 @@ import { isTeamGame, teammatesOf as teamOf } from '../teams.js';
 const CARD_BOMB = 13;
 const CARD_EMERGENCY_BLOCKADE = 3;
 
-/** The game around my hand, for the card policy. */
-export function cardGame(game: Pick<Game, 'players' | 'settings'>): CardGame {
+/** The game around my hand, for the card policy; in a team game with `me`, my in-game id (V8). */
+export function cardGame(game: Pick<Game, 'players' | 'settings'>, me?: Player): CardGame {
+  const team = isTeamGame(game.players);
+  let id: number | undefined;
+  if (team && me) {
+    try {
+      id = inGameId(me);
+    } catch {
+      // No in-game id: every card counts as mine, as before.
+    }
+  }
   return {
     players: game.players.length,
-    team: isTeamGame(game.players),
+    team,
     ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
+    ...(id !== undefined ? { me: id } : {}),
   };
 }
 
@@ -67,12 +80,19 @@ export function opponentCanHold(settings: GameSettings | undefined, card: string
   return first !== null && (turn === null || turn >= first);
 }
 
-interface CardAdviceView {
+interface CardAdviceView extends SupportView {
   /**
    * `before` is 1-based among the plan's moves (its `orders` moves, in order); `order` is the card
    * order to pass to warapp_submit_turn as is (#186: that placement is UNVERIFIED live).
+   * `insteadOfDiscard`: the card had to leave the hand, and is played here rather than discarded.
    */
-  orderDelay?: { card: string; before: number; attacks: number[]; order: { kind: 'card'; card: string; before: number } };
+  orderDelay?: {
+    card: string;
+    before: number;
+    attacks: number[];
+    order: { kind: 'card'; card: string; before: number };
+    insteadOfDiscard?: true;
+  };
   bomb?: { target: number | null; kind: string | null; why: string };
   emergencyBlockade?: { territory: number; givesUp: number; wall: number; player: number; reach: number; kills: number };
   active?: Array<{ card: string; players?: number[]; target?: number; playedBy?: number; expiresAfterTurn?: number; untilTurn?: number }>;
@@ -85,7 +105,7 @@ export interface CardAdviceInput {
   info: unknown;
   hand: readonly Card[];
   choice: CardChoice;
-  plan: Pick<TurnPlan, 'deploys' | 'moves' | 'moveSlots' | 'enemyDeploy' | 'conceded'>;
+  plan: Pick<TurnPlan, 'deploys' | 'moves' | 'moveSlots' | 'enemyDeploy' | 'conceded'> & Partial<Pick<TurnPlan, 'profile' | 'team'>>;
   board: CardBoard['board'];
   graph: CardBoard['graph'];
   settings: CardBoard['settings'];
@@ -93,6 +113,8 @@ export interface CardAdviceInput {
   label: (id: number) => string;
   /** Territories of a truce partner the truce covers (active or in notice): never a Bomb target. */
   truceCovered?: ReadonlySet<number>;
+  /** The truces in force (active or in notice): Diplomacy goes on a covered partner only when it adds protection. */
+  truces?: readonly TruceCover[];
 }
 
 /**
@@ -103,8 +125,10 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
   const { game, me, turn, hand, choice, plan, label } = input;
   const view: CardAdviceView = {};
   const warnings: string[] = [];
+  // V8: in a team game a card read under a teammate's id is theirs to play (unverified), never advised to me.
+  const own = hand.filter((c) => isMyCard(c, cardGame(game, me).me));
   const gone = new Set([...choice.plays, ...choice.discards].map((c) => c.id));
-  const holds = (type: number) => hand.some((c) => c.type === type && !gone.has(c.id));
+  const holds = (type: number) => own.some((c) => c.type === type && !gone.has(c.id));
   const friends = new Set(teammatesOf(game, me).map((p) => p.id));
   const cb: CardBoard = {
     graph: input.graph,
@@ -123,14 +147,19 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
   };
 
   // Order Delay: above every order that is not urgent, when an attack the opponent can answer is planned.
-  const delay = adviseOrderDelay(hand, choice, plan.moves, plan.moveSlots);
+  // #163: an Order Delay that must leave the hand is played where the plan can use it, not discarded.
+  const keepDelay = { ...choice, discards: choice.discards.filter((c) => c.type !== CARD_ORDER_DELAY) };
+  const delay = adviseOrderDelay(own, keepDelay, plan.moves, plan.moveSlots);
   if (delay) {
+    const insteadOfDiscard = choice.discards.some((c) => c.id === delay.card.id);
     view.orderDelay = {
       card: delay.card.id,
       before: delay.before,
       attacks: delay.attacks,
       order: { kind: 'card', card: delay.card.id, before: delay.before },
+      ...(insteadOfDiscard ? { insteadOfDiscard: true as const } : {}),
     };
+    if (insteadOfDiscard) warnings.push('The Order Delay that had to leave the hand is played (below) instead of discarded.');
     warnings.push(
       `Play Order Delay above move ${delay.before}${delay.before <= plan.moves.length ? ` (${moveLabel(delay.before)})` : ''}: ` +
         `${delay.attacks.map(moveLabel).join(', ')} ${delay.attacks.length === 1 ? 'is an attack' : 'are attacks'} the opponent can answer first, ` +
@@ -230,6 +259,14 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
     }
     warnings.push('Active cards are read from the live board by an unverified decoder (#163): check them in the game.');
   }
+
+  // PLAN-TEAMS D2: my Diplomacy, Sanctions, Airlift and Gift — advice only, each with its order.
+  const atPeace = new Set(
+    (view.active ?? []).flatMap((a) => (a.card === 'Diplomacy' && a.players?.includes(me.id) ? a.players.filter((p) => p !== me.id) : [])),
+  );
+  const support = supportAdvice({ game, me, plan, cards: own.filter((c) => !gone.has(c.id)), cb, atPeace, truces: input.truces ?? [] });
+  Object.assign(view, support.view);
+  warnings.push(...support.warnings);
   return { view, warnings };
 }
 

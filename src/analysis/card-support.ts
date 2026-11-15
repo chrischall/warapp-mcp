@@ -1,0 +1,278 @@
+// Where to play the cards warapp_submit_turn can play but the planner never does (PLAN-TEAMS part D2):
+// Diplomacy on the opponent pressing me hardest when two or more are, Sanctions on the leader, Airlift
+// onto a border of mine or a teammate's that falls without it, and Gift as team support (a territory
+// that completes a teammate's bonus). Advice only: nothing here changes the plan or its orders. Pure and
+// deterministic (ties on ascending id); no I/O.
+//
+// Rules (docs/STRATEGY.md, the wiki's card pages): a Diplomacy card stops attacks between its two
+// players from the turn after it is played; Sanctions cut the target's income from its next turn (a
+// negative percentage raises it); an Airlift lands after the deploys and before every attack, and armies
+// landing on a teammate's territory become the teammate's; a Gift moves a territory and its armies after
+// the airlifts and before the attacks. The card plays' encodings are UNVERIFIED live (V9).
+
+import { COMMANDER_STRENGTH } from './combat.js';
+import { reader, type CardBoard } from './card-threats.js';
+import type { SharedBonus } from './plan/team.js';
+
+/** A truce in force, as the Diplomacy advice reads it (the plan's relations). */
+export interface TruceCover {
+  player: number;
+  state: 'active' | 'notice';
+  /** My territories the truce covers. */
+  coveredMine: readonly number[];
+  endsTurn?: number;
+}
+
+/** What one opponent's stacks beside me tie down: the armies my borders keep against it alone. */
+interface Pressure {
+  player: number;
+  /** Armies my borders (after the plan) must hold against it alone, summed over the borders it touches. */
+  armies: number;
+  /** The borders it can take this turn as the plan leaves them. */
+  takes: number[];
+  /** My borders it touches, ascending. */
+  borders: number[];
+}
+
+/**
+ * Each opponent in contact with me (a visible stack beside a territory of mine), with the armies my
+ * borders must keep against it alone: what a Diplomacy card with it frees. Strongest pressure first
+ * (then ascending id).
+ */
+export function pressures(cb: CardBoard): Pressure[] {
+  const r = reader(cb);
+  const by = new Map<number, Pressure>();
+  for (const b of r.ids) {
+    if (!r.isMine(b)) continue;
+    const cmd = r.commanderOf(b, (q) => q === cb.me);
+    for (const [player, reach] of r.reachByPlayer(b)) {
+      const p = by.get(player) ?? { player, armies: 0, takes: [], borders: [] };
+      p.borders.push(b);
+      p.armies += r.holdNeed(reach, cmd) + (cmd ? COMMANDER_STRENGTH : 0);
+      if (r.toTake(r.after(b) + (cmd ? COMMANDER_STRENGTH : 0)) <= reach) p.takes.push(b);
+      by.set(player, p);
+    }
+  }
+  return [...by.values()].sort((a, b) => b.armies - a.armies || a.player - b.player);
+}
+
+export interface DiplomacyAdvice {
+  /** The opponent to name with me; absent: no opponent worth it. */
+  player?: number;
+  pressure?: Pressure;
+  /** A truce partner it is played on anyway, and why it adds protection. */
+  overTruce?: string;
+  why: string;
+  /** Opponents passed over, and why (a truce that covers them, a Diplomacy card already in force). */
+  skipped: string[];
+}
+
+/**
+ * Diplomacy on the opponent pressing me hardest, when two or more opponents are in contact (with
+ * one, peace with it is peace with everyone: the card is a truce for nothing). An opponent already at
+ * peace with me by a Diplomacy card in force is passed over, and so is a truce partner whose truce
+ * already covers every border it touches — unless the card adds protection: the truce is in notice
+ * (it ends), or the partner presses a border the truce does not cover. Either way it is said.
+ * `undefined` with fewer than two opponents in contact.
+ */
+export function diplomacyAdvice(
+  cb: CardBoard,
+  opts: { atPeace?: ReadonlySet<number>; truces?: readonly TruceCover[] } = {},
+): DiplomacyAdvice | undefined {
+  const all = pressures(cb);
+  if (all.length < 2) return undefined;
+  const skipped: string[] = [];
+  for (const p of all) {
+    if (opts.atPeace?.has(p.player)) {
+      skipped.push(`player ${p.player}: a Diplomacy card between you is already in force`);
+      continue;
+    }
+    const truce = opts.truces?.find((t) => t.player === p.player);
+    let overTruce: string | undefined;
+    if (truce) {
+      const covered = new Set(truce.coveredMine);
+      const open = p.borders.filter((b) => !covered.has(b));
+      if (truce.state === 'notice') {
+        overTruce = `your truce with player ${p.player} is in notice${truce.endsTurn !== undefined ? ` (it ends turn ${truce.endsTurn})` : ''}, and a Diplomacy card is enforced by the game`;
+      } else if (open.length) {
+        overTruce = `your truce with player ${p.player} does not cover ${open.join(', ')}, which it presses`;
+      } else {
+        skipped.push(`player ${p.player}: your truce already covers every border it presses, so the card adds nothing the truce does not`);
+        continue;
+      }
+    }
+    if (p.armies <= 0) break;
+    const takes = p.takes.length ? `; as the plan leaves them it can take ${p.takes.join(', ')}` : '';
+    return {
+      player: p.player,
+      pressure: p,
+      ...(overTruce ? { overTruce } : {}),
+      why:
+        `Diplomacy with player ${p.player}: of the ${all.length} opponents beside you it presses hardest — your borders ${p.borders.join(', ')} ` +
+        `keep ${p.armies} armies against it alone${takes}.${overTruce ? ` Played on a truce partner because ${overTruce}.` : ''}`,
+      skipped,
+    };
+  }
+  return { why: 'Hold the Diplomacy card: no opponent beside you is worth it this turn.', skipped };
+}
+
+/** One player's strength for the Sanctions advice: visible armies + a few turns of income. */
+export interface Strength {
+  playerId: number;
+  strength: number;
+}
+
+export interface SanctionsAdvice {
+  player: number;
+  why: string;
+}
+
+/**
+ * Sanctions on the strongest opponent (the leader, or the strongest other player when I lead); with a
+ * negative percentage the card raises income, so on me. `undefined` with no opponent in sight.
+ */
+export function sanctionsAdvice(input: { me: number; players: readonly Strength[]; percentage?: number }): SanctionsAdvice | undefined {
+  const { me, players, percentage } = input;
+  if (percentage !== undefined && percentage < 0) {
+    return { player: me, why: `Sanctions on yourself: this game's percentage is negative (${Math.round(percentage * 100)}%), so the card raises the target's income.` };
+  }
+  const ranked = [...players].sort((a, b) => b.strength - a.strength || a.playerId - b.playerId);
+  const top = ranked.find((p) => p.playerId !== me);
+  if (!top) return undefined;
+  const lead = ranked[0]!.playerId === me;
+  const pct = percentage !== undefined ? ` by ${Math.round(percentage * 100)}%` : '';
+  return {
+    player: top.playerId,
+    why:
+      `Sanctions on player ${top.playerId}: ${lead ? 'you lead, and it is the strongest opponent' : 'it leads'} on strength (visible armies + ` +
+      `income: ${top.strength}). A sanction cuts its income${pct} from its next turn, so a cut costs the largest player most; play it the turn before you attack.`,
+  };
+}
+
+export interface AirliftAdvice {
+  from: number;
+  to: number;
+  armies: number;
+  /** The teammate whose territory it lands on (the armies become theirs); absent: mine. */
+  teammate?: number;
+  /** What would take the territory without it. */
+  player: number;
+  reach: number;
+  commander: boolean;
+  why: string;
+}
+
+/**
+ * An Airlift onto a territory that falls this turn without it — mine as the plan leaves it, or (in a
+ * team game) a teammate's with the deploys it has entered; never one the plan moves armies out of — from a territory of mine with armies to
+ * spare (what stands there after the deploys, less what the plan moves out of it and what it must
+ * keep to hold). A commander's territory first, then the most armies at stake, then ascending id; the
+ * first one a source can save. `undefined` when none.
+ */
+export function airliftAdvice(cb: CardBoard): AirliftAdvice | undefined {
+  const r = reader(cb);
+  const teammateDeploy = (t: number) =>
+    (cb.board.teammateOrders ?? []).reduce(
+      (a, e) => a + (e.orders?.deploys ?? []).filter((d) => d.territoryId === t).reduce((x, d) => x + d.armies, 0),
+      0,
+    );
+  const friendOf = (t: number) => {
+    const p = r.ownerOf(t);
+    return p !== undefined && cb.friends?.has(p) ? p : undefined;
+  };
+  interface Target {
+    id: number;
+    teammate?: number;
+    armies: number;
+    commander: boolean;
+    player: number;
+    reach: number;
+    need: number;
+  }
+  const targets: Target[] = [];
+  for (const t of r.ids) {
+    const teammate = friendOf(t);
+    if (!r.isMine(t) && teammate === undefined) continue;
+    // A border the plan withdraws from is given up on purpose: no airlift into it.
+    if (teammate === undefined && r.outOf(t) > 0) continue;
+    if (r.state.get(t)?.armies === null) continue;
+    const reach = r.reachOf(t);
+    if (!reach) continue;
+    const owner = teammate ?? cb.me;
+    const commander = r.commanderOf(t, (q) => q === owner);
+    const armies = teammate === undefined ? r.after(t) : r.armiesOf(t) + teammateDeploy(t);
+    const need = r.holdNeed(reach.reach, commander) - armies;
+    if (need <= 0) continue;
+    targets.push({ id: t, ...(teammate !== undefined ? { teammate } : {}), armies, commander, player: reach.player, reach: reach.reach, need });
+  }
+  targets.sort((a, b) => Number(b.commander) - Number(a.commander) || b.armies - a.armies || a.id - b.id);
+  // What each territory of mine can spare: after the deploys, less the plan's moves out of it, less what it
+  // keeps to hold (a commander's own territory keeps its hold too).
+  const spare = new Map<number, number>();
+  for (const s of r.ids) {
+    if (!r.isMine(s)) continue;
+    const reach = r.reachOf(s)?.reach;
+    const keep = Math.max(r.guard, reach === undefined ? 0 : r.holdNeed(reach, r.commanderOf(s, (q) => q === cb.me)));
+    const can = Math.min(r.armiesOf(s) + r.deployAt(s) - r.outOf(s), r.after(s)) - keep;
+    if (can > 0) spare.set(s, can);
+  }
+  for (const t of targets) {
+    let best: number | undefined;
+    for (const [s, can] of spare) {
+      if (s === t.id || can < t.need) continue;
+      if (best === undefined || can > spare.get(best)! || (can === spare.get(best)! && s < best)) best = s;
+    }
+    if (best === undefined) continue;
+    const where = t.teammate !== undefined ? `your teammate ${t.teammate}'s ${t.id}` : `${t.id}`;
+    return {
+      from: best,
+      to: t.id,
+      armies: t.need,
+      ...(t.teammate !== undefined ? { teammate: t.teammate } : {}),
+      player: t.player,
+      reach: t.reach,
+      commander: t.commander,
+      why:
+        `Airlift ${t.need} from ${best} to ${where}${t.commander ? ' (a commander stands there)' : ''}: its ${t.armies} fall to player ${t.player}'s ~${t.reach}, ` +
+        `and ${t.armies + t.need} hold; the airlift lands before any attack.` +
+        (t.teammate !== undefined ? " The armies become your teammate's, and hold only if your teammate keeps them there: say so in team chat." : ''),
+    };
+  }
+  return undefined;
+}
+
+export interface GiftAdvice {
+  player: number;
+  bonus: number;
+  value: number;
+  territories: number[];
+  why: string;
+}
+
+/**
+ * A Gift as team support: my members of a bonus a teammate is nearer to holding, when giving them
+ * completes it (every other member is the teammate's) and I hold enough Gift cards — never a territory
+ * with a special unit on it (war.app refuses it) or one the plan moves armies out of. The most valuable
+ * bonus first, then ascending id. `undefined` when none.
+ */
+export function giftAdvice(cb: CardBoard, shared: readonly SharedBonus[], gifts: number): GiftAdvice | undefined {
+  if (gifts <= 0) return undefined;
+  const r = reader(cb);
+  const ok = (t: number) => !(r.state.get(t)?.specialUnits ?? []).length && r.outOf(t) === 0;
+  const best = [...shared]
+    .filter((b) => b.nearer !== null && b.nearer !== cb.me && !b.others.length && b.teammates.length === 1 && b.mine.length <= gifts && b.mine.every(ok))
+    .sort((a, b) => b.value - a.value || a.bonusId - b.bonusId)[0];
+  if (!best) return undefined;
+  const mate = best.teammates[0]!.player;
+  const borders = best.mine.filter((t) => r.reachOf(t) !== undefined);
+  return {
+    player: mate,
+    bonus: best.bonusId,
+    value: best.value,
+    territories: [...best.mine],
+    why:
+      `Gift ${best.mine.join(', ')} to your teammate ${mate}: it holds every other member of bonus ${best.bonusId}, so the gift completes it ` +
+      `(+${best.value} a turn for the team; a bonus pays only the player who holds all of it).` +
+      (borders.length ? ` ${borders.join(', ')} ${borders.length === 1 ? 'faces' : 'face'} an opponent: your teammate must hold ${borders.length === 1 ? 'it' : 'them'}.` : ''),
+  };
+}

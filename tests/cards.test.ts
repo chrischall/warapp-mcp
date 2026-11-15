@@ -159,6 +159,19 @@ describe('readHand', () => {
     expect(hand.map((c) => c.id)).toEqual([GA, GB]);
   });
 
+  it("tags a team hand's cards with the player they are under, mine first when a card is under several (#163, V8 unverified)", () => {
+    const hand = readHand(
+      liveInfo(standing({ [OTHER]: [inst(GA, 5), inst(GB, 1, 5)], [ME]: [inst(GA, 5)] })),
+      [ME, OTHER],
+    );
+    expect(hand.map((c) => [c.id, c.owner])).toEqual([
+      [GA, ME],
+      [GB, OTHER],
+    ]);
+    // One owner asked for: no tag, as before.
+    expect(readHand(liveInfo(standing({ [ME]: [inst(GA, 5)] })), ME)[0]).not.toHaveProperty('owner');
+  });
+
   it('is empty when the info carries no GameStanding', () => {
     const noStanding = { ...liveInfo(null), b: null, d: null };
     expect(readHand(noStanding, ME)).toEqual([]);
@@ -338,6 +351,29 @@ describe('chooseCardPlays', () => {
       expect(c.plays).toEqual([r(5)]);
       expect(c.discards).toEqual([]);
       expect(c.extraArmies).toBe(5);
+    });
+
+    // V8 (unverified): a card read under a teammate's id may be theirs to play, so only my own cards
+    // (or a card under no player) are played or discarded for me.
+    const ME_IN = 123;
+    const MATE_IN = 456;
+    const own = (c: Card, owner: number): Card => ({ ...c, owner });
+
+    it("sheds only my own cards: a teammate's Reinforcement is never auto-played for me", () => {
+      const c = chooseCardPlays([own(r(5), MATE_IN), own(r2, ME_IN), own(bl, ME_IN)], { maxCardsHold: 2, inPlay: [] }, { team: true, me: ME_IN });
+      expect(c.plays).toEqual([own(r2, ME_IN)]);
+      expect(c.discards).toEqual([]);
+    });
+
+    it("says how many must go from my teammates' cards when mine are not enough", () => {
+      const c = chooseCardPlays(
+        [own(r(5), MATE_IN), own(bl, MATE_IN), own(al, ME_IN), sp],
+        { maxCardsHold: 1, inPlay: [] },
+        { team: true, me: ME_IN },
+      );
+      expect(c.plays).toEqual([]);
+      expect(c.discards.map((x) => x.id)).toEqual([sp.id, al.id]);
+      expect(c.warnings.join('\n')).toMatch(/1 more card must leave the team's hand from your teammates' cards/);
     });
   });
 

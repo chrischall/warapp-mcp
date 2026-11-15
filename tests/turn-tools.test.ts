@@ -1831,6 +1831,85 @@ describe('cards in the turn tools', () => {
     expect(p.warnings.join('\n')).toMatch(new RegExp(`Reinforcement \\(${R1}\\): player ${BOB.feed} has already entered a play of it`));
   });
 
+  it('plan_turn in a team game never advises me a card my teammate has entered a play of (C3.7 with V8)', async () => {
+    // Cy (team 1) holds Bolton Moors; my Order Delay would be advised above the calm orders (as in the
+    // two-player case), until Bob, my teammate, enters a play of it. Every id is synthetic.
+    const CY = { feed: '5522222211', inGame: 222222 };
+    const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) =>
+      i === 2 ? { ...p, id: CY.feed, name: 'Cy', team: '1' } : { ...p, team: i < 2 ? '0' : '1' },
+    );
+    const attacking: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 30 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 157, fogLevel: 1, owner: 0, armies: 2 },
+      { id: 158, fogLevel: 1, owner: CY.inGame, armies: 7 },
+      { id: 135, fogLevel: 1, owner: 0, armies: 2 },
+    ];
+    type Advised = CardsPayload & {
+      cards: { advice?: { orderDelay?: { card: string } }; team?: { roles: Array<{ card: string; by: unknown; action: string }> } };
+    };
+    const plan = async (claimed: boolean) => {
+      h = await liveHarness({
+        feed: [game('Playing', { players: teams, settings: modelledSettings() })],
+        warapp: routes({
+          [Method.GetLatestGameInfo]: () =>
+            ({
+              body: (w) =>
+                writeLatestGameInfo(
+                  w,
+                  attacking,
+                  [ANN.inGame, BOB.inGame],
+                  { [ANN.inGame]: [{ id: OD, type: 5 }] },
+                  claimed ? { [BOB.inGame]: { orders: [{ kind: 'card', tag: 5, card: OD }] } } : undefined,
+                ),
+            }) satisfies Partial<ReplyFrame>,
+        }),
+      });
+      const p = payload<Advised>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+      await h.harness.close();
+      return p;
+    };
+    // Unclaimed, the card is mine and advised.
+    const free = await plan(false);
+    expect(free.cards.advice?.orderDelay?.card).toBe(OD);
+    // Claimed by Bob: left to him, never advised or played for me.
+    const p = await plan(true);
+    expect(p.cards.advice?.orderDelay).toBeUndefined();
+    expect(p.orders.some((o) => o.kind === 'card' || o.kind === 'discard')).toBe(false);
+    expect(p.cards.team?.roles.map((r) => [r.card, r.by, r.action])).toEqual([
+      [OD, { id: Number(BOB.feed), name: expect.stringContaining('Bob') }, 'play'],
+    ]);
+    expect(p.warnings.join('\n')).not.toMatch(/Play Order Delay/);
+  });
+
+  it("plan_turn in a team game never sheds a card read under a teammate: it says how many they must shed (V8)", async () => {
+    const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+    h = await liveHarness({
+      feed: [game('Playing', { players: teams, settings: modelledSettings() })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () =>
+          ({
+            body: (w) =>
+              writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], {
+                [ANN.inGame]: [{ id: BL, type: 12 }],
+                [BOB.inGame]: [
+                  { id: SP, type: 2 },
+                  { id: OP, type: 4 },
+                  { id: OD, type: 5 },
+                  { id: BL2, type: 12 },
+                  { id: AL, type: 6 },
+                ],
+              }),
+          }) satisfies Partial<ReplyFrame>,
+      }),
+    });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cards.hand).toHaveLength(6);
+    // Over the limit by one: my own Blockade goes, not Bob's Spy (worth less, but read under him).
+    expect(p.orders.filter((o) => o.kind === 'discard' || o.kind === 'card')).toEqual([{ kind: 'discard', card: BL }]);
+    expect(p.warnings.join('\n')).not.toMatch(/from your teammates' cards/);
+  });
+
   it('plan_turn in a team game reports a bonus shared with my teammate, and who is nearer (C3.3)', async () => {
     const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
     // Bob, my teammate, holds 157: bonus 118 (159, 161, 157) is shared, and I hold two of its three.
@@ -2331,6 +2410,19 @@ describe('cards in the turn tools', () => {
       expect(w).toMatch(/team's hand .*6 cards.*limit is 5/);
       expect(w).toMatch(/not yet verified/);
       expect(s.sent).toEqual([]);
+    });
+
+    it("warns when the orders play or discard a card read only under a teammate (V8)", async () => {
+      const s = teamServer([], [{ id: SP, type: 2 }]);
+      const feed = { players: teams(), settings: modelledSettings() };
+      h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+      const preview = await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [{ kind: 'discard', card: SP }, { kind: 'deploy', territory: 159, armies: 5 }],
+      });
+      expect(preview.isError).toBeFalsy();
+      const w = payload<{ preview: { warnings?: string[] } }>(preview).preview.warnings?.join('\n');
+      expect(w).toMatch(/Spy [0-9a-f]{32} was read under a teammate, not under you/);
     });
 
     it('still refuses when my own cards are over the limit', async () => {

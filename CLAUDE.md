@@ -418,7 +418,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   never gifted or airlifted to a teammate; no Spy on me or a teammate; no Diplomacy between teammates)
   plus Sanctions on my own side (an opponent instead when the percentage is negative); what an Airlift
   sends leaves its source's later moves (armies it lands cannot move that turn). The preview warns the encoding is unverified and the result
-  carries `cardPlayCheck`. The planner never plays them.
+  carries `cardPlayCheck`. The planner never plays them; `warapp_plan_turn`'s `cards.advice` (D2,
+  `src/analysis/card-support.ts`, pure) says where they pay, each with an `order`, never added to the
+  orders: Diplomacy on the opponent whose stacks tie down the most of my border armies, only with two or
+  more in contact (a truce partner the truce already covers is passed over unless the truce is in notice
+  or leaves a border it presses uncovered; one a Diplomacy card in force covers is passed over), Sanctions
+  on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
+  percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
+  Gift of the members that complete a teammate's nearer bonus. **A team hand's cards carry `owner`**
+  (the in-game id read under, mine when under me at all; V8 unverified): the planner plays, discards and
+  advises only my own, says how many must go from the teammates', and `warapp_submit_turn` warns on a
+  teammate's card. An Order Delay that must leave the hand is played where the schedule advises it, not
+  discarded.
 - **Turn notifications are a socket.io v0.9 client with two transports.** While the active
   transport is the direct leg, a **WebSocket** (`src/push/websocket.ts`): handshake GET with the
   `AuthToken` cookie (host-locked to war.app), then `wss://war.app/socket.io/1/websocket/<sid>`

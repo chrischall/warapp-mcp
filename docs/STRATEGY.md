@@ -410,7 +410,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
   Settle who owns each bonus; the other teammate moves out all but one army, then the owner
   takes the territory with an order set to treat teammates as enemies (no card piece): set
   `attack_teammates` on the move in `warapp_submit_turn` (#165; the option is UNVERIFIED live); a plain order there is a
-  transfer. **Advice only.** Source:
+  transfer. **Advice only**; with a Gift card in hand, `cards.advice.gift` (D2) gives the
+  teammate who is nearer the members that complete its bonus. Source:
   <https://war.app/wiki/Team_Games>
 - `teams-transfer-not-deploy` — You may transfer armies onto a teammate's territory but never
   deploy there. Pass idle armies across a shared border to the teammate nearer the fight: they
@@ -614,7 +615,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `cards-airlift-defend` — An airlift lands before any attack, so its strongest use is defence:
   fly a stack onto the territory the enemy is about to hit and their attack runs into it. The
   flown armies cannot move or attack again that turn, so it does not set up an attack this turn.
-  **Advice only.** Source: <https://war.app/wiki/Airlift_Card>
+  **Encoded as advice** (D2): `cards.advice.airlift` names a border of mine (or a teammate's) that
+  falls without it, a source with armies to spare and the armies, with its order; never auto-played.
+  Source: <https://war.app/wiki/Airlift_Card>
 - `cards-airlift-opponent` — While an opponent may hold an Airlift, any territory you attack can
   be reinforced from anywhere before your attack lands. Count their largest stack you have seen
   as a possible defender, and attack where you would still win, or not at all. **Advice only.**
@@ -627,7 +630,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `cards-diplomacy-target` — Diplomacy pays only with two or more enemies. Play it on the one
   attacking you hardest, not on a strong neighbour who is leaving you alone, and not when you
   are the one winning the fights; use the quiet turns for something that border would not have
-  allowed. **Advice only.** Source:
+  allowed. **Encoded as advice** (D2): `cards.advice.diplomacy` names the opponent whose stacks tie
+  down the most of my border armies, only when two or more are in contact, passing over a truce
+  partner the truce already covers; never auto-played. Source:
   <https://war.app/Forum/141245-ais-use-blockadegiftdiplomacybomb>
 - `cards-sanctions-sign-and-timing` — Read the Sanctions percentage first: a negative one raises
   the target's income, so that card goes on yourself or a teammate. A normal one resolves at the
@@ -993,8 +998,10 @@ Settings and cards:
 - `cards-diplomacy-three-sides` — with three left, Diplomacy makes a two-on-one (whether a card can put
   two other players at peace no page says); played in the game
   client. **Advice only.** Derived. Source: <https://war.app/wiki/Diplomacy_Card>
-- `cards-sanctions-on-leader` — Sanctions on the leader, together, the turn before the attack; played in
-  the game client. **Advice only.** Derived. Source: <https://war.app/wiki/Sanctions_Card>
+- `cards-sanctions-on-leader` — Sanctions on the leader, together, the turn before the attack;
+  `warapp_submit_turn` plays it (unverified live). **Encoded as advice** (D2): `cards.advice.sanctions`
+  names the strongest opponent (the profile's ranking, else visible armies + 3 × visible income); on
+  me when the percentage is negative. Derived. Source: <https://war.app/wiki/Sanctions_Card>
 
 Format:
 
