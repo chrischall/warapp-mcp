@@ -160,7 +160,9 @@ Exact definitions:
 - **`attackedMe`:** true when a territory I held on `previous` is its on `current`, or a territory
   of mine next to a stack of its holds fewer armies than `previous + my deploys − my moves out + my
   transfers in`. That second test needs my orders; without them it is true only on a capture and
-  otherwise `null`.
+  otherwise `null`. Survivors of a move out of the border that did not end on a territory of mine (a
+  failed attack, or a transfer that met a territory taken first) may come back and cover a hit, so
+  such a border still reads true on a drop below that figure but never counts toward a `false`.
 - **`reinforce`:** one opportunity per move of mine onto a territory X that `previous` shows as its
   with `D` armies, when all of these hold: combat is exact (0% luck, straight rounding); it is my
   only move onto X that turn; my source S ends the turn mine with exactly the armies my orders

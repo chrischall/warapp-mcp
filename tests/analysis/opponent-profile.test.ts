@@ -141,6 +141,27 @@ describe('observeTurn: attackedMe, contact, captures', () => {
     expect(of(observe(prev, board([...shown, mine(3, 7), its(4, 9)]), orders)).attackedMe).toBe(false);
   });
 
+  it('survivors of a failed attack of mine may come back to the border: a drop is still a yes, holding is no "no"', () => {
+    // 3 sends 8 onto its 6 on 4 and fails (4 keeps 1). Unhit, 4 of my 8 come back and 3 holds 6;
+    // it holds 3, so it was hit, but the orders alone (10 − 8 = 2) cannot say so.
+    const prev = board([...shown, mine(3, 10), its(4, 6)]);
+    const o = attack(3, 4, 8);
+    expect(of(observe(prev, board([...shown, mine(3, 3), its(4, 1)]), o)).attackedMe).toBeNull();
+    // Below what the orders leave, returns or not, it was hit.
+    expect(of(observe(prev, board([...shown, mine(3, 1), its(4, 1)]), o)).attackedMe).toBe(true);
+    // A capture sends none back: the border is tested.
+    expect(of(observe(prev, board([...shown, mine(3, 2), mine(4, 3)]), o)).attackedMe).toBe(false);
+  });
+
+  it('a transfer that met a territory taken first may send its survivors back: no "no"', () => {
+    // 3 transfers 5 to 2; another player took 2 first, so the transfer attacked it and failed.
+    const prev = board([neutral(1, 2), mine(2, 1), mine(3, 10), its(4, 6)]);
+    const now = board([neutral(1, 2), other(2, 3), mine(3, 7), its(4, 6)]);
+    expect(of(observe(prev, now, attack(3, 2, 5))).attackedMe).toBeNull();
+    // The transfer landed: 3 is tested and quiet.
+    expect(of(observe(prev, board([neutral(1, 2), mine(2, 6), mine(3, 5), its(4, 6)]), attack(3, 2, 5))).attackedMe).toBe(false);
+  });
+
   it('a neighbour whose owner the earlier board hides may hold the attacker: no reading', () => {
     const orders: MyOrders = { deploys: [], moves: [] };
     // 2 is fogged: another player may stand there and have hit 3.

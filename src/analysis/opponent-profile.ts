@@ -86,7 +86,10 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  * - `attackedMe`: a territory mine on T is its on T+1; or (orders known) a territory mine on both
  *   boards, next to a visible stack of its and of no other player, holds fewer armies than T's count
  *   + my deploys − my moves out + my transfers in (a transfer in counts only from a source next to no
- *   other player's territory, which nobody could have hit first). Without orders only a capture says
+ *   other player's territory, which nobody could have hit first). Survivors of a move out that did
+ *   not end on a territory of mine (a failed attack, or a transfer that met a territory taken first)
+ *   may come back and cover a hit, so such a border still reads yes on a drop but never tests a "no".
+ *   Without orders only a capture says
  *   so, else `null`; with orders and no testable territory, `null` too.
  * - `reinforce`: one opportunity per attack of mine onto X (its, with D armies on T) when combat is
  *   exact, it is my only move onto X, X carries no special unit, no move of mine leaves X, X shows its
@@ -198,12 +201,14 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         if (others.size !== 1 || !allShown(id)) continue;
         const transfersIn = into(id).filter((m) => mineWas(m.from));
         if (transfersIn.some((m) => enemiesNext(m.from).size > 0 || !allShown(m.from))) continue;
-        tested = true;
         const expected = a.armies + (deploys.get(id) ?? 0) - sum(outOf(id)) + sum(transfersIn);
         if (b.armies < expected) {
           attackedMe = true;
           break;
         }
+        // A move out that did not end on a territory of mine (a failed attack, or a transfer that met
+        // a territory taken first) may send survivors back, which can cover a hit: no "no" from here.
+        if (!outOf(id).some((m) => m.armies > 0 && !mineNow(m.to))) tested = true;
       }
       // A quiet border is a "no" only when captures can be told too (a capture elsewhere would be a yes).
       if (attackedMe === null && tested && tookFromMe !== null) attackedMe = false;
