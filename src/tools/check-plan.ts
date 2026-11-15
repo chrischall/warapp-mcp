@@ -307,6 +307,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         settings,
         ...(tripTeams ? { teams: tripTeams } : {}),
         estimates,
+        ...(effect.diplomacy.length ? { peace: effect.diplomacy.map((d) => d.player) } : {}),
         gameSettings: game.settings,
         map,
       });

@@ -1626,6 +1626,7 @@ export async function livePlanSetup(
     settings,
     ...(teams ? { teams } : {}),
     estimates,
+    ...(effect.diplomacy.length ? { peace: effect.diplomacy.map((d) => d.player) } : {}),
     gameSettings: game.settings,
     map,
   });
@@ -2055,6 +2056,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           setup.trip.tripwires,
           (w) => setup.input.untrusted?.find((u) => u.player === w.player)?.deploy ?? untrustedDeploy(w, setup.boardIncome),
           (p) => setup.trip.estimatesNow.get(p),
+          // Under enemy_deploy the planner ignores the mark (#275 review): say what the what-if used.
+          enemy_deploy,
         ),
         ...(me.hasCommittedOrders
           ? [

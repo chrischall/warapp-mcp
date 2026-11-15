@@ -73,6 +73,27 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run(boards, 5, STD, null)).toEqual([]);
   });
 
+  it('credits a stack of its in view that walked under the fog: a walk-in is not income (#123 lesson 5)', () => {
+    // Line 1-2-3-4-5, estimate 5: 2 on 3 and 50 on 4 on turn 3; 3 hidden on turn 4; 52 on 3 and 1 on 4 on
+    // turn 5. Its armies in view did not grow: the 49 that left 4 (one step away, two turns) walked in.
+    const G5 = buildGraph(line(5));
+    const run5 = (boards: TripBoard[]) => brokenEstimates({ graph: G5, boards, me: ME, settings: STD, start: START, estimateAt: () => 5 });
+    const t3 = at(3, [mine(1, 5), mine(2, 5), foe(3, 2), foe(4, 50), fogged(5)]);
+    const t5 = at(5, [mine(1, 5), mine(2, 5), foe(3, 52), foe(4, 1), fogged(5)]);
+    // 4 hidden on turn 4 too: its last sighting is turn 3, two steps of time for one hop.
+    expect(run5([t3, at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4), fogged(5)]), t5])).toEqual([]);
+    // 4 in view on turn 4 with 55: the 54 that left it since are credited.
+    expect(run5([t3, at(4, [mine(1, 5), mine(2, 5), fogged(3), foe(4, 55), fogged(5)]), t5])).toEqual([]);
+    // A stack that left view only counts within reach: 50 on 5, two hops from 3, on turn 4 (one turn
+    // before) could not have walked in. Allowed: 2 seen + 10 deployed.
+    const far = [
+      at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4), foe(5, 50)]),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4), foe(5, 50)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 52), fogged(4), foe(5, 1)]),
+    ];
+    expect(run5(far)).toEqual([{ player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 52, allowed: 12, implied: 25 }]);
+  });
+
   it('trips on a capture that needed more attackers than the stacks beside it plus the estimate', () => {
     // My 10 on 2 need 16 attackers; the stack of 3 sends 2, with a 5 deploy 7.
     const boards = [
@@ -122,6 +143,29 @@ describe('brokenEstimates (#275 b)', () => {
     // With the 10 my orders left there (and survivors back), the same failure trips.
     quiet[1] = at(5, [mine(1, 1), mine(2, 20), foe(3, 4), foe(4, 1)]);
     expect(run(quiet)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22 }]);
+  });
+
+  it('reads no held attack from a Transfer Only order, nor from a player a Diplomacy card may have kept at peace', () => {
+    const before = [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)];
+    const after = at(5, [mine(1, 1), mine(2, 20), foe(3, 4), foe(4, 1)]);
+    // A Transfer Only order into its territory does nothing: no attack failed.
+    const transfer = at(4, before, { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }], sent: [{ from: 2, to: 3, transferOnly: true }] });
+    expect(run([transfer, after])).toEqual([]);
+    // A Diplomacy card in force between us: my attacks did not run.
+    const plain = at(4, before, { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] });
+    expect(brokenEstimates({ graph: G, boards: [plain, after], me: ME, settings: STD, start: START, peace: new Set([FOE]), estimateAt: () => 5 })).toEqual([]);
+  });
+
+  it('counts only what a source had left for the attack after its earlier orders', () => {
+    // 40 on 2: 30 go to 1 first, so the attack on 3 sends 9 of its 35 (5 kills, 6 to hold): no trip.
+    const boards = [
+      at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 1, armies: 30 }, { from: 2, to: 3, armies: 35 }] }),
+      at(5, [mine(1, 31), mine(2, 1), foe(3, 4), foe(4, 1)]),
+    ];
+    expect(run(boards)).toEqual([]);
+    // Listed first, the attack had its 35.
+    boards[0] = at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }, { from: 2, to: 1, armies: 30 }] });
+    expect(run(boards)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22 }]);
   });
 
   it('needs the previous board: no reading across a gap', () => {

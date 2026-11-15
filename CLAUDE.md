@@ -685,13 +685,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   my income. `src/analysis/tripwire.ts` (pure) reads my two latest boards: a stack out of the fog, a capture,
   or an attack of mine held, needing `TRIP_RATIO` (1.5) × what the estimate allowed (and `TRIP_MIN_EXCESS`
   more), marks that opponent untrusted (a stack no board ever showed is credited its whole start, from the
-  settings, and is not read when they do not give it; a held attack is not read from a source another stack
-  beside it could have hit first, or that ended below what my orders left it: an order sends what is left) for `UNTRUSTED_TURNS` (3). The marks and each turn's per-opponent
+  settings, and is not read when they do not give it; a stack out of the fog is credited its armies in view that
+  left or shrank within reach since — a walk-in is not income, #123 lesson 5; a held attack is not read from a
+  source another stack beside it could have hit first, or that ended below what my orders left it, counts only
+  what the source had left after its earlier orders — an order sends what is left —, and is not read from a
+  Transfer Only order or on a player a Diplomacy card in force keeps at peace) for `UNTRUSTED_TURNS` (3). The marks and each turn's per-opponent
   estimates live in the board cache file (`estimates`, `tripwires`, ids only; `readSurvival`/`writeSurvival`
   in `src/trend.ts`, kept by every cache writer), written by `warapp_plan_turn` only. While untrusted, the
   planner sizes borders of bonuses held in full at the start for max(estimate, the figure) where the figure
   is max(implied, my income) (`PlanInput.untrusted`, forceAt; not under `enemyDeploy`), `warapp_check_plan`
-  tries that figure by default (source `untrusted`), and both say so in the first warning.
+  tries that figure by default (source `untrusted`), and both say so in the first warning (under `enemy_deploy`
+  `warapp_check_plan` says nothing of it and `warapp_plan_turn`'s warning names the what-if figure it used).
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
   turn, income = the most of the last three observed turns (or its stock and flow when more),

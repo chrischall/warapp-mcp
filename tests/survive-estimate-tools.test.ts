@@ -136,6 +136,16 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     expect(kept.estimates.get(3)?.has(Number(BOB.feed))).toBe(true);
   });
 
+  it('warapp_plan_turn under enemy_deploy still names the mark but not a sizing the what-if does not use', async () => {
+    const dir = await seeded();
+    h = await live(now, dir);
+    const p = payload<{ warnings: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', enemy_deploy: 3 }));
+    expect(p.warnings[0]).toMatch(/untrusted until turn 5/);
+    expect(p.warnings[0]).not.toMatch(/are sized for/);
+    expect(p.warnings[0]).toMatch(/would be sized for 14 /);
+    expect(p.warnings[0]).toMatch(/This what-if plan sizes every border for enemy_deploy 3 instead/);
+  });
+
   it('warapp_check_plan tries the untrusted figure by default and says so first, writing nothing', async () => {
     const dir = await seeded();
     h = await live(now, dir);

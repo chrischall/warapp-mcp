@@ -12,7 +12,11 @@
 //                than the armies last seen there (when it held it then) plus its estimate for every
 //                turn since that board. When no board here shows it, since turn 1 and with its whole
 //                start credited (`start`: territories × armies each — every start may have walked in
-//                there); with its start unknown such a stack is not read;
+//                there); with its start unknown such a stack is not read. A stack walking in is not
+//                income (#123 lesson 5): its armies that left view or shrank are credited too: for each other
+//                territory, from its latest sighting since the stack's own and when within reach (graph
+//                distance at most the turns since that sighting), its movable armies then less its
+//                movable armies there now (all of them when hidden now or another's);
 //   capture      it took a territory of mine or a visible neutral that needed more attackers
 //                (`armiesToTake` of the defenders) than its stacks beside it could move plus its
 //                estimate. Never when a territory beside it was hidden on the previous board (a
@@ -25,15 +29,18 @@
 //                rounding only, and not when a territory beside it was hidden. An order sends what is
 //                left, so not from a source another stack could have hit first (a territory beside the
 //                source, the target aside, hidden or holding a movable stack not mine on the previous
-//                board), nor from one that ended with fewer armies than my orders left it. The target's
-//                own stack attacking my source cannot fake a trip: what it sends leaves the defence.
+//                board), nor from one that ended with fewer armies than my orders left it; and only what
+//                the source had left after its earlier orders in list order. A Transfer Only order
+//                (flagged in `sent`) attacks nothing, and a player a Diplomacy card may have kept at
+//                peace with me (`peace`) is not read. The target's own stack attacking my source cannot
+//                fake a trip: what it sends leaves the defence.
 // `implied` is the deploy per turn the observation needs: what the estimate should have been.
 // The estimate compared is the one the plan used that turn (`estimateAt`), the caller's to supply.
 
 import type { BoardState, TerritoryState } from '../board.js';
 import { armiesToTake, luckFraction, straightKills } from './combat.js';
 import type { MapGraph } from './graph.js';
-import { neighborsOf } from './graph.js';
+import { bfsDistances, neighborsOf } from './graph.js';
 import type { MyOrders } from './opponents.js';
 import { visibleState } from './plan/shared.js';
 import type { SimSettings } from './turn-sim.js';
@@ -89,6 +96,8 @@ export interface TripInput {
   teams?: ReadonlyMap<number, number>;
   /** Every player's start (the settings' TerritoryLimit × InitialPlayerArmiesPerTerritory), when known. */
   start?: { territories: number; armiesPerTerritory: number };
+  /** Players a Diplomacy card in force may have kept from my attacks: no held attack is read on them. */
+  peace?: ReadonlySet<number>;
   /** The deploy estimate the plan used for `player` on turn `turn`. */
   estimateAt: (player: number, turn: number) => number;
 }
@@ -125,6 +134,33 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       return n + (playerOf(t) === p ? Math.max(0, t!.armies! - guard) : 0);
     }, 0);
   const myOrders = prev.orders;
+  /**
+   * #123 lesson 5: the armies of `p` that could have walked into `id` since `since[0]`: per other territory
+   * within reach, from its latest sighting among `since` (reach = the turns from that board to now), its
+   * movable armies then less its movable armies there now (all of them when hidden now or not its).
+   * A stack seen in two places on two boards may be counted twice: generous, never a false alarm.
+   */
+  const walkIn = (id: number, p: number, since: readonly TripBoard[]): number => {
+    const dist = bfsDistances(graph, [id]);
+    const latest = new Map<number, { turn: number; armies: number }>();
+    for (const b of since) {
+      for (const t of b.board.territories) {
+        const v = visibleState(t);
+        if (!v || t.territoryId === id) continue;
+        latest.set(t.territoryId, { turn: b.turn, armies: playerOf(v) === p ? v.armies! : 0 });
+      }
+    }
+    let credit = 0;
+    for (const [x, seen] of [...latest].sort((a, b) => a[0] - b[0])) {
+      const d = dist.get(x);
+      if (d === undefined || d > T - seen.turn) continue;
+      const then = Math.max(0, seen.armies - guard);
+      const v = visibleState(cur.get(x));
+      const nowArmies = v && playerOf(v) === p ? Math.max(0, v.armies! - guard) : 0;
+      credit += Math.max(0, then - nowArmies);
+    }
+    return credit;
+  };
 
   for (const id of [...cur.keys()].sort(byNum)) {
     const t = visibleState(cur.get(id));
@@ -145,7 +181,15 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       let deploys = 0;
       for (let k = from; k < T; k++) deploys += est(p, k);
       const turns = Math.max(1, T - from);
-      trip({ player: p, kind: 'fog-stack', territory: id, observed: armies, allowed: base + deploys, implied: Math.ceil((armies - base) / turns) });
+      const walked = last ? walkIn(id, p, boards.slice(boards.indexOf(last), -1)) : 0;
+      trip({
+        player: p,
+        kind: 'fog-stack',
+        territory: id,
+        observed: armies,
+        allowed: base + deploys + walked,
+        implied: Math.ceil((armies - base - walked) / turns),
+      });
       continue;
     }
 
@@ -177,15 +221,25 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     }
 
     // held-attack: my attack on its territory failed, and it still holds it.
-    if (wasOwner === p && exact && myOrders && clearAround(id)) {
-      const fromIds = [...new Set(myOrders.moves.filter((m) => m.to === id).map((m) => m.from))].sort(byNum);
+    if (wasOwner === p && exact && myOrders && clearAround(id) && !input.peace?.has(p)) {
+      const transferOnly = new Set((myOrders.sent ?? []).filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
+      const fromIds = [...new Set(myOrders.moves.filter((m) => m.to === id && !transferOnly.has(`${m.from}:${id}`)).map((m) => m.from))].sort(byNum);
       let attackers = 0;
       for (const f of fromIds) {
         const src = visibleState(before.get(f));
         const after = visibleState(cur.get(f));
         if (playerOf(src) !== me || playerOf(after) !== me) continue;
-        const sent = myOrders.moves.filter((m) => m.from === f && m.to === id).reduce((n, m) => n + m.armies, 0);
         const added = myOrders.deploys.filter((d) => d.territoryId === f).reduce((n, d) => n + d.armies, 0);
+        // An order sends what is left: in list order, each order out of the source takes from what the
+        // earlier ones left (transfers in are not counted: they may land after it).
+        let left = Math.max(0, src!.armies! + added - guard);
+        let sent = 0;
+        for (const m of myOrders.moves) {
+          if (m.from !== f) continue;
+          const took = Math.min(m.armies, left);
+          left -= took;
+          if (m.to === id) sent += took;
+        }
         // Another stack beside the source could have shrunk it first: my attack then sent less.
         const exposed = neighborsOf(graph, f).some((n) => {
           if (n === id) return false;
@@ -199,7 +253,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
         const outAll = myOrders.moves.filter((m) => m.from === f).reduce((n, m) => n + m.armies, 0);
         const inAll = myOrders.moves.filter((m) => m.to === f).reduce((n, m) => n + m.armies, 0);
         if (after!.armies! < src!.armies! + added - outAll + inAll) continue;
-        attackers = Math.max(attackers, Math.min(sent, src!.armies! + added - guard));
+        attackers = Math.max(attackers, sent);
       }
       if (attackers <= 0) continue;
       const defenders = straightKills(attackers, s.offensiveKillRate ?? 60) + 1;

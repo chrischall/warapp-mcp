@@ -39,6 +39,8 @@ export async function readTripwires(a: {
   settings: SimSettings;
   teams?: ReadonlyMap<number, number>;
   estimates: readonly EnemyDeployEstimate[];
+  /** Players a Diplomacy card in force keeps at peace with me: no held attack of mine is read on them. */
+  peace?: Iterable<number>;
   /** The game's settings and map: every player's start, credited to a stack no board ever showed. */
   gameSettings?: Parameters<typeof trackGame>[1];
   map?: GameMap;
@@ -56,6 +58,7 @@ export async function readTripwires(a: {
       me: a.me,
       settings: a.settings,
       ...(a.teams ? { teams: a.teams } : {}),
+      ...(a.peace ? { peace: new Set(a.peace) } : {}),
       // The estimate the plan of that turn used when kept, else this turn's.
       estimateAt: (p, t) => survival.estimates.get(t)?.get(p) ?? estimatesNow.get(p) ?? 0,
     });
@@ -83,20 +86,26 @@ const KIND_TEXT: Record<Tripwire['kind'], string> = {
 /**
  * One warning per untrusted opponent, by id (the first warning of the answer). `sizedFor` is the figure
  * the plan or the stress test used for it (`untrustedDeploy` on the income they used), so the warning
- * never names another.
+ * never names another. `whatIf` is the caller's `enemy_deploy`: the planner then ignores the mark, and
+ * the warning names that figure instead.
  */
 export function tripwireWarnings(
   tripwires: readonly Tripwire[],
   sizedFor: (w: Tripwire) => number,
   estimateOf: (player: number) => number | undefined,
+  whatIf?: number,
 ): string[] {
   return tripwires.map((w) => {
     const est = estimateOf(w.player);
     return (
       `Player ${w.player}'s deploy estimate${est !== undefined ? ` (${est})` : ''} is untrusted until turn ${w.until} (#275): on turn ${w.since} ` +
       `${KIND_TEXT[w.kind]} on territory ${w.territory} needed ${w.observed} armies where the estimate allowed ${w.allowed}, ` +
-      `about ${w.implied} a turn. Borders of your held bonuses facing it are sized for ${sizedFor(w)} ` +
-      '(the larger of that and your own income), and warapp_check_plan tries that deploy by default.'
+      `about ${w.implied} a turn. ` +
+      (whatIf !== undefined
+        ? `This what-if plan sizes every border for enemy_deploy ${whatIf} instead; without it, borders of your held ` +
+          `bonuses facing it would be sized for ${sizedFor(w)} (the larger of that and your own income).`
+        : `Borders of your held bonuses facing it are sized for ${sizedFor(w)} ` +
+          '(the larger of that and your own income), and warapp_check_plan tries that deploy by default.')
     );
   });
 }
