@@ -212,6 +212,11 @@ export interface PlanOptions {
   /** Default `balanced`. */
   goal?: PlanGoal;
   /**
+   * #274: `false` keeps my commander where it stands this turn (rule 1k alone, the walk of
+   * plan/commander.ts off). Default: it walks toward safety when it should.
+   */
+  commanderWalks?: boolean;
+  /**
    * #201: the outlook (#178, `gameOutlook`) from my boards over the last turns. Once it reports the
    * game decided (winning or losing), payback tests count the turns the game has left and the
    * forecasts below read it; adapting only.
@@ -541,6 +546,11 @@ export interface PlannedMove {
    * 1 when certain. A softener of a combined capture fails by design (0).
    */
   winChance?: number;
+  /**
+   * #274: my commander goes along (the order option of #165: encoding unverified live). Only a
+   * transfer one step toward safety (plan/commander.ts); it may carry no armies at all.
+   */
+  commander?: true;
 }
 
 /** A card the submission should play for the plan to work (the planner itself never plays cards). */

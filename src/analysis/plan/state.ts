@@ -24,6 +24,7 @@ import type {
   PlannerSettings,
   PlanOptions,
 } from './shared.js';
+import type { CommanderPlace } from './commander.js';
 
 /** The opponents, their estimates, the game profile and the goal it picks (rule 0p). */
 export interface OpponentsCtx {
@@ -124,6 +125,11 @@ export interface BoardCtx {
   territoryShare: (k: number) => number;
   plainWorth: (_t: number, gain: number) => number;
   inFocus: (t: number) => boolean;
+  /**
+   * #274: where my commander stands and, when it walks toward safety this turn (plan/commander.ts),
+   * its step. Absent with no commander of mine on the board (or more than one).
+   */
+  commanderAt: CommanderPlace | undefined;
 }
 
 /** The combat model: kill rates, luck, rounding, and what a capture or a hold costs. */

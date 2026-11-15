@@ -107,8 +107,25 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   found without `enemy_deploy`). `killedBy` is one deploy made by every opponent at once, with `partner` when the
   killing reply is a joint strike. My Airlifts are simulated (`airlifts`: applied with my deploys before the moves,
   the commander moved with one that takes it); a Blockade or Gift of a territory the commander stands on before or
-  after the orders is not simulated and is refused unless accepted. The submit skips the `killedBy` search. The
-  planner itself is unchanged: it never moves the commander yet (#274 items 2–3).
+  after the orders is not simulated and is refused unless accepted. The submit skips the `killedBy` search.
+- **The planner walks my commander to safety and holds it for the worst case (#274 items 2–3,
+  `src/analysis/plan/commander.ts`, rule 1w).** Within `COMMANDER_CLEAR_MOVES` (3) moves of an enemy or
+  fogged territory, with a territory of mine strictly farther from all of them reachable through my land
+  (never onto one nearer an enemy than where it stands, nor onto one beside an enemy or the fog: taken
+  first, the step would turn the transfer into an attack), it walks one step a turn: a transfer with
+  `commander: true` (the #165 option, encoding UNVERIFIED live; `warapp_plan_turn`'s `orders` carry it, and its
+  commander block and the submit's check follow the commander there) — the move to that step when the plan has
+  one, else its own 0-army transfer; under No-Split the territory's one order, reserved before any pass, with
+  the whole stack. The step is my commander's territory for rule 1k that turn; where it stood is held only for
+  its own worth (its 7 not counted there), except that, unless I am known to move first, after the strikes and
+  before triage it gets the deploys that survive the opponent's first order (`commanderTransit`), after the
+  step's own hold (all that is left when that falls short, with a warning). The walk is my first order after a
+  protected strike or kill (Order Priority advised for it when I hold one; the scheduler never holds it behind a
+  move into its territory). The plan's first warning says it walks; with nowhere safer it stays, and a hold it
+  cannot fund is the first warning. Rule 1k's threat is now the worst case: per opponent (a team together; the
+  FFA leader's every opponent) its whole deploy, at least my income (a what-if `enemyDeploy` as given), plus the
+  movable armies of every stack of its within two moves. `PlanOptions.commanderWalks: false` keeps it where it is
+  (the #61 tests use it). Golden: every commander board changed, no other.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
   researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or
@@ -429,7 +446,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   interleaves both players' attacks, so a strike never removes its owner's other stacks from
   this turn's threats. R3 never vetoes a strike; when what stays on my commander's territory
   after the plan's orders falls to the stacks next to it (the struck one included), `cardAdvice`
-  is Order Priority when I hold one. Planned moves never carry the commander.
+  is Order Priority when I hold one. Planned moves carry the commander only on its walk to safety (#274).
 - **Cards (`src/cards.ts`).** The hand is read from the live board (`LatestGameInfo` standing →
   my in-game id → GUID → card instance, by bundle type name); the card **type is `Gb`, the LAST
   integer field** (the base reader sets it last) and a Reinforcement card's armies are `tc`, the

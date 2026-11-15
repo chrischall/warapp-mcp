@@ -5,6 +5,7 @@ import * as planner from '../../src/analysis/planner.js';
 import * as estimates from '../../src/analysis/plan/estimates.js';
 import { newPlanState } from '../../src/analysis/plan/state.js';
 import { syntheticInput } from './golden/corpus.js';
+import { phaseWarnings } from './helpers.js';
 
 // These tests loop over hundreds of synthetic boards: v8 coverage (CI runs `npm run test:coverage`)
 // slows them about 6x, past vitest's default 5 s.
@@ -25,7 +26,7 @@ describe('plan/estimates (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
       estimates.noteEstimates(ctx, state);
       const plan = planner.planTurn(input);
       expect(plan.rationale.slice(0, state.rationale.length)).toEqual(state.rationale);
-      expect(plan.warnings.slice(0, state.warnings.length)).toEqual(state.warnings);
+      expect(phaseWarnings(plan.warnings).slice(0, state.warnings.length)).toEqual(state.warnings);
       expect(plan.goal).toBe(ctx.goal);
       expect(plan.profile).toEqual(ctx.profile);
       checked += state.rationale.length + state.warnings.length;

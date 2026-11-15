@@ -1858,6 +1858,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           '`partner`; null when none reaches it this turn) and whether it holds at the larger of the estimate and your income ' +
           '(`safe`, `needs`); when it does not, the first warning says so and whether warapp_submit_turn would refuse such ' +
           'orders (not without Commanders in the settings, nor when only an `enemy_deploy` what-if makes it unsafe). ' +
+          'Within three moves of an enemy or the fog, with a safer territory of yours reachable, your commander walks one ' +
+          'step a turn toward safety: a move in `orders` with `commander: true` (encoding not yet verified live), said in ' +
+          'the first warning. ' +
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board. ' +
@@ -2121,7 +2124,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...cards.discards.filter((c) => c.id !== playedDelay).map((c) => ({ kind: 'discard' as const, card: c.id })),
         ...plays.map((c) => ({ kind: 'card' as const, card: c.id })),
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
-        ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
+        // #274: my commander's walk takes it along (the #165 option, encoding unverified live).
+        ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
         // #186: the advised Order Delay, placed above its move (war.app accepted the placement live;
         // whether the later moves wait for the opponent's is not yet seen in a replay).
         ...(advice.view.orderDelay ? [advice.view.orderDelay.order] : []),
@@ -2159,7 +2163,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         hand,
         income: setup.boardIncome,
         deploys: plan.deploys,
-        moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })),
+        moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
         orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
         ...(enemy_deploy !== undefined ? { floor: enemy_deploy } : {}),
         killedBy: true,
@@ -2198,7 +2202,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             hand,
             income: setup.boardIncome,
             deploys: plan.deploys,
-            moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })),
+            moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
             orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
           });
           submit = plain?.text
@@ -2366,6 +2370,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           to: name(m.to),
           armies: m.armies,
           kind: m.kind,
+          ...(m.commander ? { commander: true } : {}),
           ...(m.winChance !== undefined ? { winChance: Math.round(m.winChance * 1000) / 1000 } : {}),
           ...(rung === 'full' ? { reason: m.reason } : {}),
         })),

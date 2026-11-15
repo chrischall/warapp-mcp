@@ -117,10 +117,12 @@ export function scheduleOrders(
       `The strike that eliminates player ${kill.p} is a combined capture of ${label(kill.order.to)} (${kill.attacks} attacks that must run in order): Order Priority moves only my first order ahead, so it cannot secure the kill; its stack can still flee or strike before the capture lands.`,
     );
   const killOrder = strikeOrder || (kill && combined.has(kill.order.to)) ? undefined : kill?.order;
-  const outOfConceded = moves.filter((m) => conceded.has(m.from) && m !== strikeOrder && m !== killOrder);
+  /** #274: my commander's walk toward safety: my first order after a strike, before any withdrawal. */
+  const commanderOrder = moves.find((m) => m.commander === true);
+  const outOfConceded = moves.filter((m) => conceded.has(m.from) && m !== strikeOrder && m !== killOrder && m !== commanderOrder);
   /** My first order: the one Order Priority would protect. Checked against the schedule below. */
   let firstOrder: PlannedMove | undefined =
-    strikeOrder ?? killOrder ?? [...outOfConceded].sort((a, b) => b.armies - a.armies || a.from - b.from || a.to - b.to)[0];
+    strikeOrder ?? killOrder ?? commanderOrder ?? [...outOfConceded].sort((a, b) => b.armies - a.armies || a.from - b.from || a.to - b.to)[0];
   /** The visible stacks of one player next to `t` plus its deploy: what can reach `t` this turn. */
   const reachOf = (t: number) => {
     const byPlayer = new Map<number, number>();
@@ -140,6 +142,8 @@ export function scheduleOrders(
   const lastWhy = new Map<PlannedMove, string>();
   const slotOf = (m: PlannedMove): MoveSlot => {
     if (m === firstOrder) return MoveSlot.Protected;
+    // #274: my commander's walk goes as early as it can.
+    if (m === commanderOrder) return MoveSlot.Early;
     if (m.kind === 'transfer') return conceded.has(m.from) || facesEnemy(m.to) ? MoveSlot.Early : MoveSlot.Filler;
     if (conceded.has(m.from)) return MoveSlot.Early;
     const st = state.get(m.to);
@@ -210,7 +214,7 @@ export function scheduleOrders(
   }
   const decided = [...moves];
   /** Within a slot, a larger early move first: one grouped early transfer beats several small ones. */
-  const rankOf = (m: PlannedMove) => (slotOf(m) === MoveSlot.Early ? m.armies : 0);
+  const rankOf = (m: PlannedMove) => (m === commanderOrder ? Infinity : slotOf(m) === MoveSlot.Early ? m.armies : 0);
   let scheduled = scheduleMoves(decided, slotOf, rankOf);
   if (firstOrder && scheduled[0] !== firstOrder) {
     // A move it depends on (one into its source, say) must run before it, so it is not my first
@@ -227,7 +231,7 @@ export function scheduleOrders(
         `The strike on ${strikeWho}'s commander cannot be my first order: ${label(head.from)} → ${label(head.to)} must run before it, so Order Priority would not make it land before ${strikeWho}'s attacks on my commander's territory.`,
       );
     }
-    firstOrder = outOfConceded.includes(head) ? head : undefined;
+    firstOrder = outOfConceded.includes(head) || head === commanderOrder ? head : undefined;
     lastWhy.clear();
     scheduled = scheduleMoves(decided, slotOf, rankOf);
   }
@@ -249,7 +253,7 @@ export function scheduleOrders(
         ? undefined
         : !opts.holdsOrderPriority
           ? 'I hold no Order Priority card to play'
-          : n < ORDER_PRIORITY_MIN_ARMIES && !opts.orderPriorityForced && firstOrder !== killOrder
+          : n < ORDER_PRIORITY_MIN_ARMIES && !opts.orderPriorityForced && firstOrder !== killOrder && firstOrder !== commanderOrder
             ? `it saves only ${n} ${n === 1 ? 'army' : 'armies'}, under the ${ORDER_PRIORITY_MIN_ARMIES} a card is worth`
             : undefined;
     ps.cardAdvice = why === undefined ? 'order-priority' : null;
@@ -265,6 +269,10 @@ export function scheduleOrders(
         `Play Order Priority: ${label(firstOrder.from)} → ${label(firstOrder.to)} is ${what}; ${contested ? mayHold(`player ${kill!.p}`) : `with the card it is my first order and runs before player ${kill!.p}'s first`}.`,
       );
     }
+    if (firstOrder === commanderOrder && ps.cardAdvice)
+      rationale.push(
+        `Play Order Priority: ${label(firstOrder.from)} → ${label(firstOrder.to)} walks my commander away (#274); with the card it is my first order and runs before the opponent's first.`,
+      );
     if (firstOrder === strikeOrder && contested) {
       const r = rationale.findIndex((l) => l.startsWith("Play Order Priority: my commander's territory"));
       if (r >= 0) rationale[r] = `${rationale[r]} ${mayHold(strikeWho)}.`;

@@ -160,11 +160,16 @@ describe('#121 transfers: what counts as held, and where the front is', () => {
       income: 5,
       settings: { offensiveKillRate: 60, defensiveKillRate: 70 },
       game: { players: [{ id: ME }, { id: ENEMY }], turn: 9, commanders: true },
-      options: { adapt: true },
+      // #274's walk off: the commander stands on T3 (rule 1k).
+      options: { adapt: true, commanderWalks: false },
     };
     const p = plan(input);
     expect(p.conceded).toEqual([2]);
     expect(transfersFrom(p, 3)).toEqual([]);
+    // #274: walking, the commander leaves T3 for T4, three moves clear of the enemy; T3 is then
+    // held for its own worth only, and its idle stack goes along, as any territory's would.
+    const walked = plan({ ...input, options: { adapt: true } });
+    expect(walked.moves.filter((m) => m.commander)).toEqual([expect.objectContaining({ from: 3, to: 4, kind: 'transfer' })]);
   });
 
   it('idle armies head for the enemy, not a worthless neutral', () => {

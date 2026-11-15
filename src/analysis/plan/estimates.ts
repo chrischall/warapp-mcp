@@ -55,6 +55,7 @@ import { sanctionedIncome } from '../cards-in-effect.js';
 import { truceOf } from './relations.js';
 import { teamFocusOf } from './team.js';
 import { neutralizeSeats, staticSeats } from '../static-seats.js';
+import { commanderPlace } from './commander.js';
 
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
@@ -387,8 +388,24 @@ function boardCtx(input: PlanInput, o: OpponentsCtx): BoardCtx {
   const nextIncomeWith = (gain: number) => Math.max(0, income - cardArmies + gain);
   const incomeAfter = (after: ReadonlySet<number>) => nextIncomeWith(incomeGain(after));
   const armiesOf = (id: number) => state.get(id)?.armies ?? 0;
-  /** The armies the special units on `id` fight as (a commander: {@link COMMANDER_STRENGTH}). */
-  const unitsAt = (id: number) => specialUnitStrength(state.get(id)?.specialUnits);
+  // #274: where my commander stands, and its step toward safety when it walks this turn: within
+  // COMMANDER_CLEAR_MOVES moves of an enemy or fogged territory, with a territory of mine farther
+  // from all of them reachable (plan/commander.ts). Only with one commander of mine on the board.
+  const myCommanderHomes = mine.filter((id) => (state.get(id)?.specialUnits ?? []).some((u) => u.kind === 'commander' && u.playerId === me));
+  const hostile = [...state.values()]
+    .filter((t) => t.owner.kind === 'unknown' || t.armies === null || (t.owner.kind === 'player' && t.owner.playerId !== me && !o.allies.has(t.owner.playerId)))
+    .map((t) => t.territoryId);
+  const place = myCommanderHomes.length === 1 ? commanderPlace(g, myCommanderHomes[0]!, (t) => mineSet.has(t), hostile) : undefined;
+  const commanderAt = place && o.opts.commanderWalks === false ? { territory: place.territory, distance: place.distance, pinned: true as const } : place;
+  const leaving = commanderAt?.retreat?.from;
+  /**
+   * The armies the special units on `id` fight as (a commander: {@link COMMANDER_STRENGTH}); #274: my
+   * commander walking away this turn is not counted where it stood (nor, until it lands, where it goes).
+   */
+  const unitsAt = (id: number) =>
+    specialUnitStrength(
+      id === leaving ? state.get(id)?.specialUnits?.filter((u) => !(u.kind === 'commander' && u.playerId === me)) : state.get(id)?.specialUnits,
+    );
   /**
    * #128: a territory holding a special unit whose strength the board does not carry (a boss, a
    * custom unit): it counts as 0 everywhere, so no attack on it is sized as sure.
@@ -462,6 +479,7 @@ function boardCtx(input: PlanInput, o: OpponentsCtx): BoardCtx {
     territoryShare,
     plainWorth,
     inFocus,
+    commanderAt,
   };
 }
 
@@ -632,6 +650,12 @@ function standingCtx(o: OpponentsCtx, b: BoardCtx): StandingCtx {
   const myCommanders = new Set(
     mine.filter((id) => (state.get(id)?.specialUnits ?? []).some((u) => u.kind === 'commander' && u.playerId === me)),
   );
+  // #274: a commander that walks this turn is pinned where it goes, no longer where it stood.
+  const step = b.commanderAt?.retreat;
+  if (step) {
+    myCommanders.delete(step.from);
+    myCommanders.add(step.to);
+  }
 
   // ---- rule 0p.3 (#72): behind on armies ----
   // Adapting in a 1v1: my visible armies against the strongest opponent's visible armies, each

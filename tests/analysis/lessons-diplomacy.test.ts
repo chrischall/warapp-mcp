@@ -151,9 +151,10 @@ describe('B2 T2: a truce hold frees armies', () => {
   });
 
   it("my commander's border is never thinned", () => {
-    const b = at(withCommander(mine(1, 24), ME));
-    const plain = planTurn(input(undefined, { board: b }));
-    const p = planTurn(input([truce()], { board: b }));
+    // #274's walk off: the commander stands on T1.
+    const b = { board: at(withCommander(mine(1, 24), ME)), options: { adapt: true, enemyDeploy: 5, commanderWalks: false } };
+    const plain = planTurn(input(undefined, b));
+    const p = planTurn(input([truce()], b));
     expect(p.relations![0]).toMatchObject({ relaxed: [], fullHold: [{ territory: 1, why: 'commander' }] });
     expect(p.deploys).toEqual(plain.deploys);
     expect(p.expected.bonusesCompleted).toEqual(plain.expected.bonusesCompleted);
@@ -352,8 +353,9 @@ describe('B2 T5: the border cap', () => {
   it("a cap that leaves my commander's territory short of its full hold says so (whole-branch review)", () => {
     // My commander on T1 (24) keeps its full hold against the partner's 39 movable and ~5 deploy
     // (T3); a cap of 10 moves the rest back, and the 10 and my commander no longer hold it.
+    // #274's walk off: the commander stands on T1.
     const b = at(withCommander(mine(1, 24), ME));
-    const i = input([truce({ borderCap: 10 })], { board: b });
+    const i = input([truce({ borderCap: 10 })], { board: b, options: { adapt: true, enemyDeploy: 5, commanderWalks: false } });
     const p = planTurn(i);
     expect(endsAt(p, i, 1)).toBe(10);
     expect(warned(p)).toMatch(
