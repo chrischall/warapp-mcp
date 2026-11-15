@@ -86,12 +86,21 @@ function live(turn: number): SyntheticTerritory[] {
     { id: 135, fogLevel: a[135].owner === ME ? 1 : 2, owner: a[135].owner === ME ? ANN.inGame : CAT.inGame, armies: a[135].armies },
   ];
 }
-/** The game list: the game as a free-for-all (no team on any seat), or failing (`'fail'`: teams unknown). */
-type List = 'ffa' | 'fail';
+/**
+ * The game list: the game as a free-for-all (no team on any seat), failing (`'fail'`: teams unknown),
+ * or (`'teams'`) Ann and Bob on team 0 and Cat on team 1.
+ */
+type List = 'ffa' | 'fail' | 'teams';
 const showing = (territories: SyntheticTerritory[], list: List = 'ffa') => (req: DecodedRequest): Partial<ReplyFrame> => {
   if (req.method === Method.GetMyGames) {
     if (list === 'fail') throw new Error('game list unavailable');
-    const players = [ANN, BOB, CAT].map((p, i) => ({ id: p.inGame, name: ['Ann', 'Bob', 'Cat'][i]!, state: 2, committed: false }));
+    const players = [ANN, BOB, CAT].map((p, i) => ({
+      id: p.inGame,
+      name: ['Ann', 'Bob', 'Cat'][i]!,
+      state: 2,
+      committed: false,
+      ...(list === 'teams' ? { team: i < 2 ? 0 : 1 } : {}),
+    }));
     return { body: (w) => writeMyGamesReturn(w, [{ id: GAME, name: 'synthetic', lastTurn: 4, state: 3, players }]) };
   }
   if (req.method !== Method.GetLatestGameInfo) throw new Error(`unexpected method ${req.method}`);
@@ -230,6 +239,19 @@ describe('warapp_profile_opponents', () => {
 
     it('in a team game whose teams GameFeed carries, only the other team is profiled or kept', async () => {
       h = await setUp({}, undefined, { teams: true });
+      const p = await profile(h);
+      expect(p.profile).toBe('kept');
+      expect(p.opponents.map((o) => o.player.id)).toEqual([CAT_ID]);
+      expect(p.opponents[0]!.mayBeTeammate).toBeUndefined();
+      expect(storedIds(h.dataDir)).toEqual([String(CAT_ID)]);
+      expect(readFileSync(profileGamePath(h.dataDir, GAME, ME), 'utf8')).not.toContain(String(BOB_ID));
+    });
+
+    it('in a team game whose teams only the game list carries, the teammate is neither profiled nor kept', async () => {
+      // GameFeed shows no team on any seat; GetMyGames puts Bob on my team.
+      h = await setUp({}, undefined, { list: 'teams' });
+      for (const tool of ['warapp_plan_turn', 'warapp_track_opponents', 'warapp_locate_opponents'])
+        await h.call(tool, { game_id: GAME, player: ME });
       const p = await profile(h);
       expect(p.profile).toBe('kept');
       expect(p.opponents.map((o) => o.player.id)).toEqual([CAT_ID]);
