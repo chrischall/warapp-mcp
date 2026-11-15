@@ -11,7 +11,8 @@ import { stressPlan, type StressDodge, type StressExposure, type StressJoint, ty
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners, opponentReinforcement } from './card-advice.js';
 import { boardCardsInEffect, sanctionMyIncome } from './card-effects.js';
-import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
+import { cardTypeByName, cardTypeName, normalizeGuid, readHand, type Card } from '../cards.js';
+import { claimedCardUses, claimedCardWarning, teamCardClaims, teamHandLeft, unclaimedFirst } from '../team-cards.js';
 import { boardStateFromLive } from '../live.js';
 import { withTeammateOrders } from '../team-orders.js';
 import { carriesTeam } from '../teams.js';
@@ -102,7 +103,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         orders: turnOrdersArg.describe(
           'The orders to test, in the order you would submit them: deploys and moves by territory id or name (the ' +
             '`orders` array warapp_plan_turn returns). An Order Priority card play makes your first order run before ' +
-            "everyone's; other card plays and discards are ignored. A move's options (mode, percent, commander, " +
+            "everyone's; other card plays and discards are ignored by the test (in a team game, one your teammate has " +
+            "already entered is warned of). A move's options (mode, percent, commander, " +
             'attack_teammates) are carried out as war.app would.',
         ),
         enemy_deploy: z.coerce
@@ -157,6 +159,18 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const s = game.settings;
       // A team shares one hand (#163): mine and my teammates' cards.
       const hand = readHand(info, handOwners(game, me));
+      // G3: the cards my teammates' entered orders already play or discard (V5, unverified live), warned of as
+      // warapp_submit_turn does; a card named by its type is taken as one nobody entered when there is one.
+      const { claimed } = teamHandLeft(hand, teamCardClaims(seen.teammateOrders, friendsOf(game.players, me)));
+      const uses: { card: Card; kind: 'play' | 'discard' }[] = [];
+      const useCard = (ref: string, kind: 'play' | 'discard') => {
+        const guid = normalizeGuid(ref.trim());
+        const type = guid === undefined ? cardTypeByName(ref) : undefined;
+        const card = unclaimedFirst(hand, claimed).find(
+          (c) => (guid !== undefined ? c.id === guid : c.type === type) && !uses.some((u) => u.card.id === c.id),
+        );
+        if (card) uses.push({ card, kind });
+      };
       let orderPriority = false;
       const ignored: string[] = [];
       const friends = friendsOf(game.players, me);
@@ -192,7 +206,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           if (o.mode === 'attack-only' && s?.allowAttackOnly !== true) refused.add('Attack Only (AllowAttackOnly is off)');
           if (o.percent && s?.allowPercentageAttacks !== true) refused.add('a percentage order (AllowPercentageAttacks is off)');
           if (o.commander && s?.commanders !== true) refused.add('a commander move (this game has no commanders)');
+        } else if (o.kind === 'discard') {
+          useCard(o.card, 'discard');
         } else if (o.kind === 'card') {
+          useCard(o.card, 'play');
           // By GUID it is looked up in my hand; by type name the name is enough (this is a what-if).
           const guid = normalizeGuid(o.card.trim());
           const type = guid !== undefined ? hand.find((c) => c.id === guid)?.type : cardTypeByName(o.card);
@@ -510,6 +527,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           : []),
         ...sanction.warnings,
         ...effect.unsure,
+        ...[claimedCardWarning(claimedCardUses(uses, claimed))].filter((w): w is string => w !== undefined),
         ...(deployed !== sanction.income
           ? [
               `The orders deploy ${deployed} and your income is ${sanction.income}: the test used the orders as given (a Reinforcement card adds to the income; otherwise war.app refuses a wrong total).`,

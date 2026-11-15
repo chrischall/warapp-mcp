@@ -128,7 +128,7 @@ import { commitmentWarnings } from '../analysis/commitments.js';
 import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
 import { recordBrokenByMe } from './relations.js';
 import { withTeammateOrders } from '../team-orders.js';
-import { teamCardClaims, teamCardRoles, teamHandLeft } from '../team-cards.js';
+import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, teamHandLeft, unclaimedFirst } from '../team-cards.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
@@ -2235,7 +2235,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'as the client does but not yet verified live, each refused where war.app would refuse it (a commander is never ' +
         'gifted or airlifted to a teammate, no Spy or Sanctions on yourself or a teammate, no Diplomacy between ' +
         'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
-        'when your hand is over the hold limit and the orders do not play or discard enough cards. The ' +
+        'when your hand is over the hold limit and the orders do not play or discard enough cards; in a team game warns ' +
+        'when they play or discard a card your teammate has already entered (a card named by type is one nobody ' +
+        'entered when there is one). The ' +
         'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
         'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
         'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
@@ -2333,7 +2335,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const myHand = readHand(info, playerId);
         const hand = owners.length > 1 ? readHand(info, owners) : myHand;
         const handUnknown = rules.inPlay.length > 0 && !handReadable(info, playerId);
-        const plays = resolveCardPlays(map, hand, rules, cardInputs);
+        // G3: the cards my teammates' entered orders already play or discard (V5, unverified live). A card named
+        // by its type resolves to one nobody entered when there is one; one named by id that they entered is warned of.
+        const { claimed } = teamHandLeft(hand, teamCardClaims(board.teammateOrders, new Set(teammatesOf(game.players, me).map((p) => p.id))));
+        const pickFrom = unclaimedFirst(hand, claimed);
+        const plays = resolveCardPlays(map, pickFrom, rules, cardInputs);
         // #186: an Order Delay's `before` names a move of this list (1-based); one past the last is the default.
         for (const p of plays) {
           if (p.before !== undefined && p.before > moves.length + 1) {
@@ -2345,7 +2351,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         }
         /** The move (1-based) an Order Delay is placed above, when it is placed among the moves. */
         const placedAt = (p: ResolvedCardPlay) => (p.before !== undefined && p.before <= moves.length ? p.before : undefined);
-        const discards = resolveDiscards(hand, plays, discardInputs);
+        const discards = resolveDiscards(pickFrom, plays, discardInputs);
         // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
         // than MaxCardsHold remain (verified, #20).
         const used = plays.length + discards.length;
@@ -2515,6 +2521,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // V8: a card read only under a teammate's id may be theirs to play; war.app has the last word.
         const theirs = [...plays.map((p) => p.card), ...discards].filter((c) => !isMyCard(c, playerId));
         if (theirs.length) warnings.push(teammateCardWarning(theirs));
+        const clash = claimedCardWarning(
+          claimedCardUses([...plays.map((p) => ({ card: p.card, kind: 'play' as const })), ...discards.map((c) => ({ card: c, kind: 'discard' as const }))], claimed),
+        );
+        if (clash) warnings.push(clash);
         const placedDelays = plays.filter((p) => placedAt(p) !== undefined);
         for (const p of placedDelays) {
           const m = moves[placedAt(p)! - 1]!;
