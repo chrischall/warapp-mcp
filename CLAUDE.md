@@ -397,10 +397,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the bundle's check is `remaining > MaxCardsHold` after removing every played and discarded
   card) war.app refuses a `SendOrders` (**error 51 `MustUseCard`**), so `cardsToShed` cards must
   be played or discarded and `warapp_submit_turn` refuses up front. The planner always plays
-  Reinforcement (its armies join the income); when cards must go, the lowest-value cards leave
-  first (#127: Order Delay is discarded before Order Priority is spent; an Order Priority that
-  must go is played, not discarded, one at most) — never playing Blockade (it gives a territory away) or
-  Order Delay (it holds back my attacks). A discard (`GameOrderDiscard`) is tag 9, the GUID, the
+  Reinforcement (its armies join the income); when cards must go, the lowest-value cards in the game leave
+  first (`keepValue`, #163: the information cards first, the timing cards — Order Delay, Order Priority,
+  Emergency Blockade, Bomb, Airlift — last). An Order Priority that must go is played, not discarded, one
+  at most (#127); an Order Delay that must go is played where the schedule advises it
+  (`cards.advice.orderDelay`, `insteadOfDiscard`) rather than discarded, and is discarded only when the
+  plan has no attack for it to delay. `chooseCardPlays` itself never plays
+  Blockade (it gives a territory away) or Order Delay (where it goes is the schedule's call). A discard (`GameOrderDiscard`) is tag 9, the GUID, the
   base — from the bundle's writer, not yet live-verified. Card plays must come in war.app's
   turn-phase order or the server answers **error 10 `OrdersInIncorrectOrder`**, so
   `writeSendOrdersParams` sorts every order by `TurnPhase` (discards 10, Order Priority 12,
