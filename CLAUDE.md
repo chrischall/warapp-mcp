@@ -409,10 +409,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `writeSendOrdersParams` sorts every order by `TurnPhase` (discards 10, Order Priority 12,
   Reinforcement 20, deploys 25, moves 50, Order Delay 50, Blockade 60). Order Delay (tag 11) runs
   in phase 50, verified live 2026-11-12 (sent in phase 12 it drew error 10). Within a phase,
-  card plays are written after the other orders (an Order Delay after every move, wherever it
-  was listed: the live-verified shape); that war.app accepts it ahead of a move is unverified,
-  so an Order Delay play delays nothing and the submit preview warns so. Order Delay may be
-  combined with other card plays.
+  card plays are written after the other orders (an Order Delay after every move, the
+  live-verified shape), unless an Order Delay names `before` (`beforeMove`, #186): then it is
+  written among the moves, which war.app accepted live 2026-11-13; whether the later moves then
+  wait for the opponent's is unverified (docs/WEB-PROTOCOL.md). Order Delay may be combined with
+  other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
   **The targeted cards (PLAN-TEAMS part D, UNVERIFIED live, V9):** Spy, Reconnaissance, Surveillance
   (phase 15), Airlift (43), Gift (47), Diplomacy (75), Sanctions (80), tags and fields from each
