@@ -26,6 +26,7 @@ import type { MoveSlot } from '../schedule.js';
 import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from '../player.js';
 import type { GameProfile, ProfilePlayer } from '../profile.js';
 import { byNum } from './util.js';
+import type { TeamView } from './team.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
@@ -595,6 +596,12 @@ export interface TurnPlan {
   relations?: PlanRelationView[];
   /** B2 (T7): advice about the agreements (give notice). Absent when there is none. */
   advice?: PlanAdvice[];
+  /**
+   * PLAN-TEAMS C3: the team section, advisory. `sharedBonuses` (C3.3): each positive bonus a
+   * teammate and I both hold members of, and who is nearer to holding it. Absent outside a team
+   * game and when there is nothing to report.
+   */
+  team?: TeamView;
 }
 
 /** #218: a front forecast: the pair, the incomes deployed there every turn, and the outcome. */

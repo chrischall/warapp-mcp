@@ -507,6 +507,22 @@ untouched. Choices and departures:
 - Read-only `warapp_get_team`: who is on my team, human or AI, committed or not, visible income, the
   orders or picks they have entered, the team hand, unread team chat.
 
+*As built (C1):* `isTeamGame` / `teammatesOf` in `src/teams.ts` are the one test (the submit's teammate
+set no longer throws on an AI seat). The GetMyGames fallback (`gameWithTeams`, `src/tools/team.ts`) is
+used by `warapp_get_team` only; the planner and the other tools still read GameFeed's team, so a team game
+GameFeed sends without teams still plans as a free-for-all until V1 is checked (applying the fallback in
+the shared live-game load costs one GetMyGames call per plan: an owner decision). `BoardState.teammateOrders`
+is set by `withTeammateOrders` (`src/team-orders.ts`, keyed by GameFeed id, my own entry left out) on the
+live boards of `warapp_plan_turn`, `warapp_check_plan`, `warapp_submit_turn` and `warapp_get_team` whenever
+`LatestGameInfo` carries the dict, and absent otherwise, so 1v1 and FFA boards and the golden corpus are
+unchanged; no planner rule reads it yet (C3), and the board cache strips it (a turn's entries, not the
+board). An offline decode against the cached client bundle (no war.app call) read a synthetic
+`TeammateOrders` entry — a deploy, an attack/transfer in each mode, a discard, picks — through the real
+readers to the same projection as the mini-bundle; the mode is the plain enum byte (`P.uq`). Live frames are
+still V5. The team hand is `{ inPlay: false }` when the settings put no card in play.
+Teammate picks come from `TeammateOrders`' pick list first, then `GetTerritoryPicks`. Team chat is counted
+only from the web chat (GameFeed names no channel).
+
 ### C2. Team-aware picks
 
 In two steps, since `src/analysis/picks.ts` is large.
@@ -519,6 +535,24 @@ In two steps, since `src/analysis/picks.ts` is large.
   pick in a bonus the teammate is also picking into, since a bonus pays one holder; offer a mirrored
   alternative (the same top N) beside a split one, and keep a pair that only works in one hand on
   positions the award gives to one player. Shorten the list only when the lists are disjoint.
+
+*As built (C2, correctness):* `planPicks` takes `team: { teammates }` in a team game (`warapp_plan_picks` looks
+up my seat only then; a seat it cannot tell is warned about and every other player is an opponent). Only
+the (players − 1 − teammates) opponents' starts enter the threat chance, and a known start of another
+player may be a teammate's, so only the known starts beyond the teammates' count are taken from the
+opponents' unknown ones (the worst case); a lost pick that threatens a bonus is still taken as an
+opponent's. `pickOutcomes` takes `orders` and a team game enumerates both the reversing and a repeating
+award order (unverified which war.app uses), reporting the worst of either (`award.orders`). The duel rules
+(entry weight, answering fallback, coverage alternative) stay `players === 2`; contest by centrality still
+counts every player, since a teammate's list can take a pick too. The list length stays starts × all
+players; `warapp_submit_picks` warns in a team game when the list is shorter. The award reading
+(`readAward`'s `teammateHeld`, from `loadAward`'s first board) moves a start the board shows as a
+teammate's to `teammateStarts`; a fogged one stays an opponent's (team vision unverified). The output is
+unchanged outside a team game, and the golden corpus (turn plans) is untouched.
+
+TODO (C2, coordination — a later PR): read the teammate's list (C1's `TeammateOrders` picks, then
+`GetTerritoryPicks`, V6), report the overlap, penalise a pick into a bonus the teammate also picks into,
+offer the mirrored alternative beside the split one, and shorten the list only when the lists are disjoint.
 
 ### C3. The planner with a teammate
 
@@ -539,6 +573,34 @@ Smallest and safest first; each is its own PR.
    give both cases.
 7. **Cards:** the card advice reads the teammate's entered card plays, so two teammates do not play
    the same card, and says who should play it.
+
+*As built (C3.1):* `teammateAt` (`src/analysis/plan/state.ts`) keeps a teammate's territory out of rule 6's
+"nearest territory not mine" front (`anyFront`, `plan/transfers.ts`), so a stack that faces only a teammate
+is interior and walks on toward a neutral or the fog. The truce cap's "another front" walk
+(`applyBorderCaps`) is unchanged: truces are ignored outside a free-for-all, so it never runs in a team game.
+The golden corpus's team boards change in their transfers only (deploys and attacks identical); no 1v1 or
+FFA plan changes.
+
+*As built (C3.2):* the profile's standing (`src/analysis/profile.ts`) compares sides in a team game: my
+income plus each playing teammate's estimate (the planner now passes teammates' estimates; one with none is
+named and left out, a lower bound) against each enemy team's summed estimate, and the armies in view are
+summed the same way for the overrule. The outlook (`src/analysis/outlook.ts`) sums my team's strength
+(`minePlayers`) and each enemy team's low, high and likely high (`strongest.team` / `players`, `likely.team`);
+the corroborating incomes are summed by team too. A player with no team stays its own side. An enemy still
+playing with no estimate (out of view) is named and its side's sum is a lower bound: `behind` and `even`
+stand, `ahead` reads `unknown`. No 1v1 or FFA figure or note changes.
+
+*As built (C3.3):* bonus scoring (`src/analysis/plan/targets.ts`) skips a positive bonus with a member a
+teammate visibly holds (`teammateAt`), focused or not (a focus on it is warned about and ignored): no bonus
+plan, no armies-to-finish for rule 4e, its members neither economic nor uneconomic, so a neutral in it is
+judged as plain expansion. A rationale line ("Skip bonus …: my teammate holds …") appears when I could attack
+one of its members. `src/analysis/plan/team.ts` reports `team.sharedBonuses` on the plan: each positive bonus
+with members both I and a teammate hold (mine, each teammate's, the count of the others) and `nearer`, whoever
+holds the most members (`even` in the tool when tied), from the start-of-turn board; a teammate's territory in
+the fog counts as unknown (team vision unverified). Advisory: nothing else in the plan reads it. `warapp_plan_turn`
+shows it with a note. No 1v1 or FFA plan changes; the golden corpus's team boards change where a shared bonus
+was being advanced (moves become plain expansion or are dropped) and every team plan with a shared bonus gains
+the `team` field.
 
 ### C4. The team brief and joining
 

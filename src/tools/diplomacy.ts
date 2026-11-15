@@ -33,7 +33,7 @@ import {
 import type { BoardState } from '../board.js';
 import type { Game, GameMap, Player } from '../normalize.js';
 import { readLedger } from '../relations-store.js';
-import { carriesTeam } from '../teams.js';
+import { isTeamGame } from '../teams.js';
 import { bonusNamer, currentTurn, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
@@ -61,7 +61,7 @@ export const DIPLOMACY_NOTE =
 
 /** Why `game` is not a free-for-all for `me`, or `undefined` when it is (a truce is advised only there). */
 export function ffaRefusal(game: Game): string | undefined {
-  if (game.players.some((p) => carriesTeam(p.team))) return 'this is a team game';
+  if (isTeamGame(game.players)) return 'this is a team game';
   if (game.players.length <= 2) return 'this is a 1v1: there is no third player for a truce to leave aside';
   const alive = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing');
   if (alive.length <= 2) return 'only two players remain: there is nothing a truce could leave aside';

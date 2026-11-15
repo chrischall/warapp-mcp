@@ -19,6 +19,7 @@
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
 //   7r. reports, the offence report, 1i (#109), the final plan .. plan/report.ts
 //   T1–T9. truces (B2, `relations`): the rule logic .............. plan/relations.ts
+//   PLAN-TEAMS C3.3, `team.sharedBonuses` ....................... plan/team.ts
 // Rule 1k's commander reserve is read by every phase that spends armies: captures, strike and
 // stand-still keep what holds my commander's territory. `byNum` and `pct` live in plan/util.ts.
 // plan/shared.ts is a leaf (it imports no phase and not planner.ts), and the phases import one
@@ -734,6 +735,11 @@
 //     A negative-value bonus is always uneconomic unless focused, so the plan
 //     never captures into it (completing one would cut income). A positive bonus is
 //     scored by its net worth (rule 4c), not its value, in every test above.
+//     One owner per bonus (PLAN-TEAMS C3.3): a positive bonus with a member my teammate visibly
+//     holds is not scored at all (a bonus pays only the player holding every member), focused or
+//     not (a focus on it is ignored with a warning); its other members are plain expansion. The
+//     plan's `team.sharedBonuses` (plan/team.ts) lists each such bonus I hold members of too, and
+//     who holds the most (`nearer`), from the start-of-turn board. No-team plans are unchanged.
 //  4c. Net income (#70). Maps with overlapping bonuses (each sea tile a single-territory
 //     −4 bonus and a member of a +22 group) are scored by every capture's effect on
 //     income: `incomeGain` — the one income rule's (`boardIncome`, #85) total after the
@@ -999,7 +1005,7 @@
 //     measured through, a conceded border
 //     (only when transfer-only orders are allowed). The front is the territories a visible
 //     enemy holds; only a stack no enemy can be reached from heads for the nearest territory
-//     not mine (neutral or fog) instead (#121: idle armies walked toward a worthless neutral
+//     not mine (neutral or fog; never a teammate's, PLAN-TEAMS C3) instead (#121: idle armies walked toward a worthless neutral
 //     while the enemy front was short, and a stack beside one never moved). This turn's
 //     captures count as mine only when they land for sure — a neutral, or an attack on a player
 //     sized for its owner's whole deploy (rule 1e, 1s, or rule 3's #120 sizing): an exact-sized attack on a player fails
@@ -1289,6 +1295,7 @@ import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
 import { newPlanState } from './plan/state.js';
+import { teamReport } from './plan/team.js';
 import { applyBorderCaps, armiesFreed, partnerFronts, reportBreakLosses, reportTruce, trucePass } from './plan/relations.js';
 
 export * from './plan/shared.js';
@@ -2608,6 +2615,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
   // #218: the main front's forecast at my whole income, for the game outlook to share.
   if (ps.front) plan.front = ps.front;
+  // PLAN-TEAMS C3.3: the bonuses I share with a teammate (plan/team.ts).
+  const team = teamReport(pc);
+  if (team) plan.team = team;
   if (truceReport) {
     // T6: what a break would cost, against the plan's final orders (plan/relations.ts).
     reportBreakLosses(pc, truceReport.relations, plan);

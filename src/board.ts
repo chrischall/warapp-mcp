@@ -8,6 +8,7 @@
 // `BoardState` only, so a browser-tab source can feed it later without
 // touching the analysis.
 
+import type { TeammateOrders } from './team-orders.js';
 import { asInt } from './scalars.js';
 
 /** Who holds a territory, as far as the viewer can see. */
@@ -45,6 +46,11 @@ export interface BoardState {
   /** `false` until the parser has been checked against a live in-progress game. */
   verified: boolean;
   territories: TerritoryState[];
+  /**
+   * My teammates' entered orders and picks (C1, a team game's live board only), by GameFeed id: absent when
+   * the board carries none (unknown, not "none entered"). From the client bundle, UNVERIFIED live (V5).
+   */
+  teammateOrders?: TeammateOrders[];
 }
 
 type Rec = Record<string, unknown>;

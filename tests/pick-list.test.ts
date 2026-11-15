@@ -37,6 +37,16 @@ describe('the stored pick list', () => {
     expect((await readPickRecord(d, GAME, ME))!.award).toBeNull();
   });
 
+  it('keeps a team game\'s teammate starts beside the award (C2); malformed ones are dropped', async () => {
+    const d = dir();
+    await writePickList(d, GAME, ME, [11, 12, 13, 14, 15, 16]);
+    const team: AwardReading = { ...READING, opponentStarts: [12], teammateStarts: [13] };
+    await writeAward(d, GAME, ME, team);
+    expect((await readPickRecord(d, GAME, ME))!.award).toEqual(team);
+    await writeAward(d, GAME, ME, { ...READING, teammateStarts: ['x'] as unknown as number[] });
+    expect((await readPickRecord(d, GAME, ME))!.award).toEqual(READING);
+  });
+
   it('a new list drops the award read from the old one; the same list keeps it', async () => {
     const d = dir();
     await writePickList(d, GAME, ME, [11, 12, 13]);

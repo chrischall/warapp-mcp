@@ -49,7 +49,11 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   game when any player carries a team other than -1 (the web client's own test, see
   docs/WEB-PROTOCOL.md "Open games"). The in-game `LatestGameInfo` carries no player list (read
   from the client bundle: orders, standings, turn, teammate orders, toasts), so GameFeed is the
-  only source the plan reads; without `team` a team game reads as an FFA.
+  only source the plan reads; without `team` a team game reads as an FFA. Every tool asks one test
+  (`isTeamGame` / `teammatesOf`, `src/teams.ts`; C1). `warapp_get_team` alone falls back on
+  `GetMyGames`' `GameInfoPlayer` team (from the client bundle, UNVERIFIED live) when GameFeed sends
+  none, matching players by in-game id, and reports which source gave the team (V1 in
+  `docs/PLAN-TEAMS.md`).
 - `settings` uses real JSON types (numbers, booleans, objects). A card is enabled when its
   `<Name>Card` value is an object and disabled when the value is the string `"none"`.
   `ArmyCap` is the string `"null"` when there is no cap. `Map` is the map id.
@@ -281,6 +285,10 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `warapp_plan_picks` lists as many picks as the client allows.
 - Picks are awarded round by round in move order, the order reversing each round, each player
   getting their highest-ranked territory still free (the community wiki; not read from the bundle).
+  UNVERIFIED for team games: whether the order reverses each round, or how teams interleave, so the
+  pick advisor enumerates both a reversing and a repeating order there and reports the worst (C2).
+  Also unverified: that teammates see each other's territories on the first board, which is how the
+  award reading tells a teammate's start from an opponent's.
 - What the award is read for (#166, `src/analysis/award.ts`) rests on that rule and two more from
   the wiki, none checked against a live game: under a `Cycle` move order the award is turn 0 of the
   cycle (the first awarded moves second on turn 1; the client's help text says so too, and under

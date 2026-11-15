@@ -13,6 +13,7 @@ import type { Game, Player } from '../normalize.js';
 import { holdsSeat, playerStateName } from '../player-states.js';
 import { Method, readDeclineGameReturn, writeDeclineGameParams } from '../protocol/methods.js';
 import { WarappServerError } from '../protocol/rpc.js';
+import { isTeamGame } from '../teams.js';
 import { gameIdArg, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { mintMeta } from './hints.js';
 import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
@@ -131,7 +132,7 @@ export function registerLeaveGameTool(server: McpServer, ctx: LiveContext): void
         const game = await ctx.client.getGame(parseGameId(game_id), { settings: true, map: false });
         const token = await requireMe(ctx);
         const seat = leavable(game, token);
-        const teamGame = game.players.some((p) => p.team !== undefined && p.team >= 0);
+        const teamGame = isTeamGame(game.players);
         return {
           gate: {
             action: 'warapp.leave_game',

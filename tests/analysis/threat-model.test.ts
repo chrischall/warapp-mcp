@@ -51,7 +51,13 @@ describe('teammates are allies (#128)', () => {
     const b = board([mine(1, 3), mine(2, 3), player(3, 20, TEAMMATE), player(4, 2, TEAMMATE), neutral(5, 2), neutral(6, 2), player(7, 3, 20)]);
     const plan = planTurn({ graph: g, board: b, me: ME, income: 9, settings: STD, game: { players, turn: 8 }, options: { adapt: true } });
     expect(plan.conceded).toEqual([]);
-    expect(plan.moves.filter((m) => m.from === 2 && m.kind === 'transfer')).toEqual([]);
+    // Nothing withdraws from 2. Its idle armies may walk toward the neutral front past 1 (PLAN-TEAMS
+    // C3: a border that faces only a teammate is no front).
+    expect(plan.moves.filter((m) => m.from === 2 && m.reason !== 'moves idle interior armies toward the front')).toEqual([]);
+    // Those idle armies go to 1, toward the neutral front at 5, never onto the teammate's 3 or 4.
+    const fromTwo = plan.moves.filter((m) => m.from === 2);
+    expect(fromTwo.map((m) => m.to)).toEqual([1]);
+    expect(plan.moves.filter((m) => m.to === 3 || m.to === 4)).toEqual([]);
     expect(plan.warnings.join('\n')).not.toMatch(/estimate for player 11/);
     expect(plan.rationale.join('\n')).not.toMatch(/cannot be held economically/);
   });

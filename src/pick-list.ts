@@ -70,6 +70,8 @@ function awardOf(v: unknown): AwardReading | null | undefined {
     allStartsKnown: v.allStartsKnown,
     role: v.role,
     opponentFirstAward: v.opponentFirstAward,
+    // A team game's (C2): kept only when it reads as ids.
+    ...(isIds(v.teammateStarts) ? { teammateStarts: v.teammateStarts } : {}),
   };
 }
 

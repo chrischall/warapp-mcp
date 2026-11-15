@@ -344,3 +344,47 @@ describe('warapp_plan_picks', () => {
     expect(tool.description).toMatch(/read-only/i);
   });
 });
+
+describe('warapp_plan_picks in a team game (C2)', () => {
+  const SIGNED_IN_ANN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  /** Four seats: Ann and Bob on team 0, the next two on team 1 (`teams: false` sends no team). */
+  const fourSeats = (teams = true) => {
+    const g = game('DistributingTerritories');
+    const players = (g.players as Array<Record<string, string>>)
+      .slice(0, 4)
+      .map((p, i) => ({ ...p, state: 'Playing', ...(teams ? { team: i < 2 ? '0' : '1' } : {}) }));
+    return { ...g, players };
+  };
+  interface TeamView {
+    team?: { teammates: Array<{ id: number; name: string }>; opponents: number };
+    award: { outcomes: number; orders?: string[] } | null;
+  }
+
+  it('treats only the players off my team as opponents, judges both award orders and lists starts × all players', async () => {
+    h = await liveHarness({ feed: [fourSeats()], pages: SIGNED_IN_ANN, warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
+    const p = payload<PlanPicksPayload & TeamView>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.players).toBe(4);
+    expect(p.team).toEqual({ teammates: [{ id: Number(BOB.feed), name: '⟦Bob⟧' }], opponents: 2 });
+    // Six pickables, four players: one each, and the list is starts × all players (lists are not agreed).
+    expect(p.maxPicks).toBe(4);
+    expect(p.award?.orders).toEqual(['reversing', 'repeating']);
+    expect(p.rationale.join(' ')).toMatch(/A team game: 2 opponents and 1 teammate/);
+  });
+
+  it('without teams the four-player plan carries no team block and the reversing order alone', async () => {
+    h = await liveHarness({ feed: [fourSeats(false)], warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
+    const p = payload<PlanPicksPayload & TeamView>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p).not.toHaveProperty('team');
+    expect(p.award?.orders).toBeUndefined();
+    expect(p.rationale.join(' ')).not.toMatch(/team game/);
+    // No account lookup outside a team game: one board read only.
+    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
+  });
+
+  it('when my seat cannot be told, every other player is an opponent, with a warning', async () => {
+    h = await liveHarness({ feed: [fourSeats()], warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
+    const p = payload<PlanPicksPayload & TeamView>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.team).toEqual({ teammates: [], opponents: 3 });
+    expect(p.warnings.join(' ')).toMatch(/Could not tell which seat is yours.*every other player is treated as an opponent/);
+  });
+});

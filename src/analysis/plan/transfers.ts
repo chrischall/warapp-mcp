@@ -1,6 +1,6 @@
 // Rule 6, the transfers (#121, #124, #125, #128, #172, #179; #133): once every deploy, attack and
 // withdrawal is planned, idle armies move one step toward the front — the enemy front first, else
-// the nearest territory not mine — never into or through a conceded border, and keeping what a
+// the nearest territory not mine (a teammate's is no front, C3) — never into or through a conceded border, and keeping what a
 // territory beside a pending capture, a stack two steps away or a finished-off player's exit needs.
 // First (#125) idle armies facing no visible enemy stage one step toward the source of the step
 // the leftover deploy saved toward. planPass runs it where it ran before: after the efficient
@@ -10,7 +10,7 @@ import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
 import type { Staging } from './leftover.js';
 import type { DeployBook } from './orders.js';
-import type { PlanCtx, PlanState } from './state.js';
+import { teammateAt, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { capStepRoom, truceKeep } from './relations.js';
 
@@ -48,9 +48,10 @@ export function transfers(
     };
     // Enemy front first (#121): idle armies head for the territories a visible enemy holds; only
     // with no enemy reachable do they head for the nearest territory not mine (neutral or fog).
+    // PLAN-TEAMS C3: a teammate's territory is no front either; nothing there is to be taken.
     const ids = [...g.territoryById.keys()];
     const enemyFront = ids.filter((id) => !held.has(id) && isEnemy(id));
-    const anyFront = ids.filter((id) => !held.has(id) && !pc.truce.noFront(id));
+    const anyFront = ids.filter((id) => !held.has(id) && !pc.truce.noFront(id) && !teammateAt(pc, id));
     const distEnemy = bfsDistances(g, enemyFront, { passable });
     const distAny = bfsDistances(g, anyFront, { passable });
     // #125: staging. Idle armies on a territory facing no visible enemy — a border beside neutrals

@@ -189,6 +189,10 @@
       "description": "Read a game's chat"
     },
     {
+      "name": "warapp_get_team",
+      "description": "Read your team in a team game: teammates (human or AI, committed or not, visible income, entered orders or picks), the team hand and unread team chat"
+    },
+    {
       "name": "warapp_send_chat",
       "description": "Post a game chat message, public or private (confirm-gated)"
     },

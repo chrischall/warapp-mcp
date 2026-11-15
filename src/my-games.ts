@@ -13,6 +13,7 @@ import type { ClassReader } from './live.js';
 import type { Reader } from './protocol/codec.js';
 import { playerStateName } from './player-states.js';
 import { fields, isObj } from './protocol/decoded.js';
+import { carriesTeam } from './teams.js';
 
 export const MY_GAMES_RETURN = 'warlight.shared.MyGamesReturn';
 export const GAME_INFO = 'warlight.shared.GameInfo';
@@ -34,7 +35,7 @@ const PLAYER_PLAYING = 2;
 const GI = { gameId: 7, name: 13, lastTurn: 14, players: 16, state: 22 } as const;
 export const GAME_INFO_FIELDS = 27;
 /** GameInfoPlayer field positions in read order, and its whole field count. */
-const GP = { committed: 2, name: 5, id: 6, state: 7 } as const;
+const GP = { committed: 2, name: 5, id: 6, state: 7, team: 8 } as const;
 export const GAME_INFO_PLAYER_FIELDS = 10;
 
 /** One game as GetMyGames has it (codes not yet named). */
@@ -44,7 +45,8 @@ export interface RawMyGame {
   /** -1 before turn 1. */
   lastTurn: number;
   stateCode: number;
-  players: Array<{ id: number; name: string; stateCode: number; committed: boolean }>;
+  /** `team` only when the player carries one (C1: a fallback for GameFeed's unverified team, V1). */
+  players: Array<{ id: number; name: string; stateCode: number; committed: boolean; team?: number }>;
 }
 
 /** One game as the tool reports it. */
@@ -85,7 +87,20 @@ function playerOf(p: unknown): RawMyGame['players'][number] {
   if (typeof committed !== 'boolean' || !isStr(name) || !isInt(id) || !isInt(state)) {
     throw new MyGamesFormatError('a GameInfoPlayer lacks its fields');
   }
-  return { id, name: name ?? '', stateCode: state, committed };
+  // The team is read loosely: it is a fallback for GameFeed's (C1), so a value that is not a number is left out
+  // rather than refusing the whole list.
+  const team = f[GP.team];
+  return { id, name: name ?? '', stateCode: state, committed, ...(isInt(team) && carriesTeam(team) ? { team } : {}) };
+}
+
+/**
+ * The teams GetMyGames gives a game's players, by in-game id (C1, docs/PLAN-TEAMS.md): what a tool falls back on
+ * when GameFeed sends no team (V1). Empty when the game is not in the list or no player carries a team.
+ */
+export function myGamesTeams(games: readonly RawMyGame[], gameId: number): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const p of games.find((g) => g.id === gameId)?.players ?? []) if (p.team !== undefined) out.set(p.id, p.team);
+  return out;
 }
 
 function gameOf(g: unknown): RawMyGame {

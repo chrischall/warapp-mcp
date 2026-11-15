@@ -18,8 +18,10 @@
 //     cards are on without that bound (a Gift card, a progressive or unknown Reinforcement card).
 //     With every territory in view, high = low.
 // The ratio is mine ÷ the strongest opponent's, as a range: `low` against the highest `high`,
-// `high` against the highest `low` (`null`: no upper limit). It is per player: in a team game my
-// strength alone against the single strongest opponent, teams are not summed.
+// `high` against the highest `low` (`null`: no upper limit). PLAN-TEAMS C3: in a team game it is by
+// team — mine is my team's (me and each teammate still playing, `minePlayers`), and each enemy team
+// is one side whose low, high and likely high are its players' summed (`strongest.team`, `players`);
+// summed, a teammate's transfers stay inside its team's high. A player with no team is its own side.
 //
 // #208: the high is a bound, and under fog it stays far too loose to call a win until late: the
 // most it could earn each turn is what the whole fog could pay, though most of the fog is
@@ -83,7 +85,7 @@
 
 import type { BoardState } from '../board.js';
 import { holdsSeat } from '../player-states.js';
-import { carriesTeam } from '../teams.js';
+import { carriesTeam, isTeamGame } from '../teams.js';
 import { neighborsOf, type MapGraph } from './graph.js';
 import { DEFAULT_TERRITORY_LIMIT, trackOpponents, type TrackGame, type TurnBoard } from './opponents.js';
 import { ownerShown, type PlannerSettings } from './planner.js';
@@ -126,10 +128,16 @@ export type OutlookState = 'winning' | 'losing' | 'even' | 'stalemate';
 
 export interface OutlookTurn {
   turn: number;
-  /** My strength: armies + k × income. */
+  /** My strength: armies + k × income; in a team game my team's (PLAN-TEAMS C3). */
   mine: number;
-  /** The strongest opponent (by `high`, unbounded first, then `low`, then id); `null` when there is none. */
-  strongest: { playerId: number; low: number; high: number | null } | null;
+  /** PLAN-TEAMS C3, a team game only: the players summed into `mine` (me first, then by id). */
+  minePlayers?: number[];
+  /**
+   * The strongest opponent (by `high`, unbounded first, then `low`, then id); `null` when there is
+   * none. In a team game an enemy team's figures are its players' summed: `team` and `players` say
+   * which, and `playerId` is its lowest id.
+   */
+  strongest: { playerId: number; low: number; high: number | null; team?: number; players?: number[] } | null;
   /** Mine ÷ the opponents' strength: `low` against the highest high (0 when unbounded or that high is 0), `high` against the highest low (`null`: no limit). */
   ratio: { low: number; high: number | null };
   /**
@@ -138,6 +146,9 @@ export interface OutlookTurn {
    */
   likely?: {
     playerId: number;
+    /** PLAN-TEAMS C3: an enemy team, its players' likely highs summed. */
+    team?: number;
+    players?: number[];
     high: number;
     ratio: number;
     /** #214: `tracked` from its observed income, `prior` from at least its even share of the map's income. */
@@ -253,7 +264,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   const players = input.game?.players ?? [];
   const myTeam = players.find((p) => p.id === me)?.team;
   const ally = (id: number) => id === me || (carriesTeam(myTeam) && players.find((p) => p.id === id)?.team === myTeam);
-  const teamGame = players.some((p) => carriesTeam(p.team));
+  const teamGame = isTeamGame(players);
   const stillPlaying = (id: number) => (players.find((p) => p.id === id)?.state ?? 'Playing') === 'Playing';
   const rules = { base: Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME)), per: settings.bonusArmyPer ?? 0 };
   const allBonuses = [...g.bonusById.values()].reduce((s, b) => s + Math.max(0, b.value), 0);
@@ -405,7 +416,12 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       held.get(p)!.add(t.territoryId);
       armies.set(p, (armies.get(p) ?? 0) + t.armies);
     }
-    const mine = (armies.get(me) ?? 0) + k * boardIncome(g, held.get(me) ?? new Set(), rules).total;
+    // PLAN-TEAMS C3: in a team game my side is my team: me and each teammate still playing.
+    const mates = teamGame
+      ? [...new Set([...held.keys(), ...players.map((p) => p.id)])].filter((p) => p !== me && ally(p) && stillPlaying(p)).sort((a, b) => a - b)
+      : [];
+    const strengthOf = (p: number) => (armies.get(p) ?? 0) + k * boardIncome(g, held.get(p) ?? new Set(), rules).total;
+    const mine = mates.reduce((n, p) => n + strengthOf(p), strengthOf(me));
     const open = fullyVisible(g, board);
     const ids = new Set<number>([...held.keys()].filter((p) => !ally(p)));
     for (const p of players) if (!ally(p.id) && stillPlaying(p.id)) ids.add(p.id);
@@ -453,26 +469,51 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
           Math.max(a, likelyReceived + now, since) + k * Math.max(income, last?.income ?? 0, Math.min(cap, pace)) + ahead;
         return { playerId, low, high, likely: Math.min(high, Math.max(low, likely)), source, why };
       });
-    const maxLow = rows.reduce((m, r) => Math.max(m, r.low), 0);
-    const unbounded = rows.some((r) => r.high === null);
-    const maxHigh = rows.reduce((m, r) => Math.max(m, r.high ?? 0), 0);
+    // PLAN-TEAMS C3: an enemy team is one side, its figures summed; elsewhere a side is a player.
+    const teamOf = (p: number) => {
+      const t = players.find((x) => x.id === p)?.team;
+      return teamGame && carriesTeam(t) ? t : undefined;
+    };
+    type Side = (typeof rows)[number] & { team?: number; players?: number[] };
+    const sides: Side[] = [];
+    for (const r of rows) {
+      const t = teamOf(r.playerId);
+      const side = t === undefined ? undefined : sides.find((x) => x.team === t);
+      if (t === undefined) sides.push(r);
+      else if (!side) sides.push({ ...r, team: t, players: [r.playerId] });
+      else {
+        side.low += r.low;
+        side.high = side.high === null || r.high === null ? null : side.high + r.high;
+        side.likely = side.likely === undefined || r.likely === undefined ? undefined : side.likely + r.likely;
+        if (r.source === 'prior' && side.source !== 'prior') {
+          side.source = 'prior';
+          side.why = r.why;
+        }
+        side.players!.push(r.playerId);
+      }
+    }
+    const sideOf = (x: Side) => (x.team !== undefined ? { team: x.team, players: x.players! } : {});
+    const maxLow = sides.reduce((m, r) => Math.max(m, r.low), 0);
+    const unbounded = sides.some((r) => r.high === null);
+    const maxHigh = sides.reduce((m, r) => Math.max(m, r.high ?? 0), 0);
     const top =
-      [...rows].sort(
+      [...sides].sort(
         (a, b) =>
           (a.high === null ? 0 : 1) - (b.high === null ? 0 : 1) || (b.high ?? 0) - (a.high ?? 0) || b.low - a.low || a.playerId - b.playerId,
       )[0];
-    const strongest = top ? { playerId: top.playerId, low: top.low, high: top.high } : null;
+    const strongest = top ? { playerId: top.playerId, low: top.low, high: top.high, ...sideOf(top) } : null;
     const ratio = {
       low: !unbounded && maxHigh > 0 ? round2(mine / maxHigh) : 0,
       high: maxLow > 0 ? round2(mine / maxLow) : null,
     };
     // #208: the highest likely high, when every opponent is bounded and one is not in full view.
     let likely: OutlookTurn['likely'];
-    if (!unbounded && !open && rows.length) {
-      const top = [...rows].sort((a, b) => (b.likely ?? 0) - (a.likely ?? 0) || a.playerId - b.playerId)[0]!;
+    if (!unbounded && !open && sides.length) {
+      const top = [...sides].sort((a, b) => (b.likely ?? 0) - (a.likely ?? 0) || a.playerId - b.playerId)[0]!;
       const high = top.likely ?? 0;
       likely = {
         playerId: top.playerId,
+        ...sideOf(top),
         high,
         ratio: high > 0 ? round2(mine / high) : 0,
         source: top.source ?? 'tracked',
@@ -480,7 +521,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       };
     }
     // Every opponent bounded at no strength at all while I have some: dominated.
-    const dominated = rows.length > 0 && !unbounded && maxHigh === 0 && mine > 0;
+    const dominated = sides.length > 0 && !unbounded && maxHigh === 0 && mine > 0;
     const prev = byTurn.get(turn - 1)?.board;
     let changed: number | null = null;
     if (prev) {
@@ -558,7 +599,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         turn: f.turn,
       };
     }
-    const bound = dominated || (rows.length > 0 && ratio.low >= OUTLOOK_RATIO);
+    const bound = dominated || (sides.length > 0 && ratio.low >= OUTLOOK_RATIO);
     const estimated = !bound && likely !== undefined && likely.high > 0 && likely.ratio >= OUTLOOK_RATIO;
     const lostOnBound = !bound && !estimated && ratio.high !== null && ratio.high <= 1 / OUTLOOK_RATIO;
     // #228: losing on the likely high — far below it (LIKELY_LOSING_RATIO, its margin taken back
@@ -566,10 +607,18 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     // every army received and none lost, so a game I lead can read 0.05×). Corroborated by the
     // main front grinding me down, or by my income at most BEHIND_RATIO × the most an opponent is
     // tracked earning (the profile's "behind").
-    const myNow = boardIncome(g, mineNow, rules).total;
+    // PLAN-TEAMS C3: in a team game my team's income, against the most an enemy team is tracked earning.
+    const myNow = mates.reduce((n, p) => n + boardIncome(g, held.get(p) ?? new Set(), rules).total, boardIncome(g, mineNow, rules).total);
     const mostTracked = () => {
+      const by = new Map<string, number>();
+      for (const [p, tr] of trackedAll()) {
+        if (ally(p) || tr.income === null) continue;
+        const t = teamOf(p);
+        const key = t === undefined ? `p${p}` : `t${t}`;
+        by.set(key, (by.get(key) ?? 0) + tr.income);
+      }
       let most = 0;
-      for (const [p, tr] of trackedAll()) if (!ally(p) && tr.income !== null) most = Math.max(most, tr.income);
+      for (const v of by.values()) most = Math.max(most, v);
       return most;
     };
     const lowLikely = !bound && !estimated && !lostOnBound && likely !== undefined && likely.high > 0 && likely.ratio <= LIKELY_LOSING_RATIO;
@@ -588,6 +637,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     return {
       turn,
       mine,
+      ...(teamGame ? { minePlayers: [me, ...mates] } : {}),
       strongest,
       ratio,
       ...(likely ? { likely } : {}),
@@ -603,26 +653,36 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   let heldTurns = 0;
   for (let i = turns.length - 1; i >= 0 && turns[i]!.state === last?.state; i--) heldTurns++;
   const state = last && heldTurns >= OUTLOOK_TURNS ? last.state : null;
-  const measure = `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). Per player: my strength alone against the single strongest opponent, teams not summed.${teamGame ? ' In a team game a teammate can transfer armies to an opponent, so its high is not a ceiling.' : ''}`;
+  const measure = teamGame
+    ? `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). By team: my team's strength (mine and my teammates' still playing) against the strongest enemy team's, each the sum of its players'; summed, a teammate's transfers stay inside its team's high.`
+    : `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). Per player: my strength alone against the single strongest opponent, teams not summed.`;
+  /** PLAN-TEAMS C3: how a side is named — an enemy team with its players, else the player. */
+  const sideName = (x: { playerId: number; team?: number; players?: number[] }) =>
+    x.team !== undefined ? `team ${x.team} (players ${x.players!.join(', ')})` : `player ${x.playerId}`;
+  const cap = (t: string) => `${t[0]!.toUpperCase()}${t.slice(1)}`;
   const thresholds = `Winning at ${OUTLOOK_RATIO}× the strongest opponent or more even at its high, losing at 1/${OUTLOOK_RATIO} (${round2(1 / OUTLOOK_RATIO)}×) or less even at its low (or, on an estimate under fog, at ${round2(LIKELY_LOSING_RATIO)}× or less of its likely strength while the main front grinds me down or my income is at most ${BEHIND_RATIO}× the most an opponent is tracked earning), stalemate when nothing in view changed hands for ${OUTLOOK_TURNS} turns along a front whose forecast is a stand-off. The ${OUTLOOK_RATIO}× is borrowed from a bot and was never measured for war.app: a basis for a decision, not a verdict.`;
+  // PLAN-TEAMS C3: in a team game the thresholds are against the strongest enemy team.
+  const thresholdsText = teamGame
+    ? thresholds.replace(/the strongest opponent/g, 'the strongest enemy team').replace('my income is at most', "my team's income is at most").replace('the most an opponent is tracked earning', 'the most an enemy team is tracked earning')
+    : thresholds;
   let reading: string;
   if (!last) reading = 'No board to judge.';
   else {
     const s = last.strongest;
     const figures = s
-      ? `turn ${last.turn}: mine ${last.mine}, the strongest opponent player ${s.playerId} at ${s.high === s.low ? s.low : `${s.low}–${s.high ?? 'unbounded'}`}, ratio ${last.ratio.high === last.ratio.low ? last.ratio.low : `${last.ratio.low}–${last.ratio.high ?? 'unbounded'}`}×`
+      ? `turn ${last.turn}: ${teamGame ? `my team's ${last.mine}, the strongest enemy ${s.team !== undefined ? `team, ${sideName(s)}` : sideName(s)}` : `mine ${last.mine}, the strongest opponent player ${s.playerId}`} at ${s.high === s.low ? s.low : `${s.low}–${s.high ?? 'unbounded'}`}, ratio ${last.ratio.high === last.ratio.low ? last.ratio.low : `${last.ratio.low}–${last.ratio.high ?? 'unbounded'}`}×`
       : `turn ${last.turn}: mine ${last.mine}, no opponent to compare`;
     // #208: the likely high, said as what it is; #214: a prior says so and why, and an estimate
     // that does not show a win names the opponent that blocks it.
     const l = last.likely;
     const rests = l?.source === 'prior'
-      ? `for player ${l.playerId} a prior (${l.why === 'unmeasured' ? 'no observed income: no pair of my boards measured its deploy' : 'no territory in view now'}), paced by its peers: it starts as a symmetric opening, and each turn earns ${LIKELY_INCOME_MARGIN === 2 ? 'twice' : `${LIKELY_INCOME_MARGIN}×`} the higher of my income that turn (ramped up from the opening's before my first board) and the most any opponent was tracked earning by then (the base income at least), at most an even share of the map's income (${evenShare}) and that turn's cap, and at least ${LIKELY_INCOME_MARGIN}× its visible income (and any income tracked earlier)${l.why === 'unmeasured' ? '' : ', and at least the armies and income it held when last in view'}`
+      ? `for ${sideName(l)} a prior (${l.why === 'unmeasured' ? 'no observed income: no pair of my boards measured its deploy' : 'no territory in view now'}), paced by its peers: it starts as a symmetric opening, and each turn earns ${LIKELY_INCOME_MARGIN === 2 ? 'twice' : `${LIKELY_INCOME_MARGIN}×`} the higher of my income that turn (ramped up from the opening's before my first board) and the most any opponent was tracked earning by then (the base income at least), at most an even share of the map's income (${evenShare}) and that turn's cap, and at least ${LIKELY_INCOME_MARGIN}× its visible income (and any income tracked earlier)${l.why === 'unmeasured' ? '' : ', and at least the armies and income it held when last in view'}`
       : `each turn at most ${LIKELY_INCOME_MARGIN}× the income the tracker reads off my boards`;
     let est = '';
     if (l && (l.high !== s?.high || l.source === 'prior'))
-      est = ` The likely high — an estimate, not a bound: ${rests} — is player ${l.playerId} at ${l.high}, ratio ${l.ratio}×${last.estimated ? `; ${last.state} rests on it` : ''}.`;
+      est = ` The likely high — an estimate, not a bound: ${rests} — is ${sideName(l)} at ${l.high}, ratio ${l.ratio}×${last.estimated ? `; ${last.state} rests on it` : ''}.`;
     if (l && l.high > 0 && last.state !== 'winning')
-      est += ` Player ${l.playerId} blocks a win on the estimate: winning needs mine at ${OUTLOOK_RATIO}× its likely high (${round2(OUTLOOK_RATIO * l.high)}), and mine is ${last.mine}.`;
+      est += ` ${cap(sideName(l))} blocks a win on the estimate: winning needs mine at ${OUTLOOK_RATIO}× its likely high (${round2(OUTLOOK_RATIO * l.high)}), and mine is ${last.mine}.`;
     reading =
       turns.length < OUTLOOK_TURNS
         ? `Only ${turns.length} turn${turns.length === 1 ? '' : 's'} of boards in a row (${OUTLOOK_TURNS} needed), so no state yet; ${figures}.`
@@ -634,7 +694,12 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     const low = last.lowLikely;
     if (low) {
       const share = `mine is at most 1/${round2(1 / LIKELY_LOSING_RATIO)} (${round2(LIKELY_LOSING_RATIO)}×) of the likely high`;
-      const incomeText = low.mostTracked > 0 ? `my income (${low.myIncome}) at most ${BEHIND_RATIO}× the most an opponent is tracked earning (${low.mostTracked})` : '';
+      const incomeText =
+        low.mostTracked > 0
+          ? teamGame
+            ? `my team's income (${low.myIncome}) at most ${BEHIND_RATIO}× the most an enemy team is tracked earning (${low.mostTracked})`
+            : `my income (${low.myIncome}) at most ${BEHIND_RATIO}× the most an opponent is tracked earning (${low.mostTracked})`
+          : '';
       const behind = low.mostTracked > 0 && low.myIncome <= BEHIND_RATIO * low.mostTracked;
       reading += low.losing
         ? ` Losing on the estimate: ${share}, corroborated by ${[low.groundDown ? 'the main front grinding me down on the incomes read off my boards' : '', behind ? incomeText : ''].filter(Boolean).join(' and ')}.`
@@ -662,5 +727,5 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       reading += ` The main front (the biggest enemy stack next to me against my biggest beside it), each side deploying its whole income there every turn (mine ${fr.myIncome}, player ${fr.player}'s ${fr.theirIncome}: ${theirs}): my ${fr.mine} on #${fr.from} against its ${fr.theirs} on #${fr.at}, ${outcome}.`;
     }
   }
-  return { state, heldTurns, turns, k, threshold: OUTLOOK_RATIO, basis: `${reading} ${measure} ${thresholds}` };
+  return { state, heldTurns, turns, k, threshold: OUTLOOK_RATIO, basis: `${reading} ${measure} ${thresholdsText}` };
 }

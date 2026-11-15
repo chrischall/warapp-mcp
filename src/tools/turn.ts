@@ -59,7 +59,7 @@ import {
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
-import { boardStateFromLive, inGameId, type LiveTerritory } from '../live.js';
+import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
 import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
 import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
@@ -108,6 +108,8 @@ import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
 import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
 import { recordBrokenByMe } from './relations.js';
+import { withTeammateOrders } from '../team-orders.js';
+import { teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -117,6 +119,13 @@ const TURN_PHASE_STATE = 'Playing';
 const MAX_ORDERS = 500;
 const MAX_FOCUS = 50;
 const MAX_ENEMY_DEPLOY = 10_000;
+/** PLAN-TEAMS C3.3: what `team.sharedBonuses` means, on every plan that has it. */
+const TEAM_SHARED_NOTE =
+  'One owner per bonus: a bonus pays only the player holding all of it, so the plan never works toward one with a ' +
+  "teammate's territory in it. `nearer` is whoever holds the most members ('even' when tied), read from the board at " +
+  "the start of the turn; `others` counts the members neither of us holds, a teammate's territory in the fog among them " +
+  '(team vision unverified). Advisory: ' +
+  'agree in team chat which of you takes each.';
 
 const territoryRef = z.union([z.string(), z.number()]);
 const armiesArg = z.coerce.number().int().min(1);
@@ -221,7 +230,7 @@ export { currentTurn, turnsCompleted } from './common.js';
 
 /** My teammates' GameFeed ids (empty outside a team game; GameFeed's team field is unverified). */
 export function friendsOf(players: readonly Player[], me: Player): Set<number> {
-  return new Set(me.team !== undefined && me.team >= 0 ? players.filter((p) => p.id !== me.id && p.team === me.team).map((p) => p.id) : []);
+  return new Set(teammatesOf(players, me).map((p) => p.id));
 }
 
 /** Throw unless the game is in a turn phase. */
@@ -1150,7 +1159,7 @@ export async function livePlanSetup(
   // The board as war.app shows it: what is tracked and cached. The plan is made on the board
   // the award of picks completes (#166): in a two-player game, the opponent's starts my own
   // pick list proves, where they are still fogged.
-  const seen = boardStateFromLive(territories, me, game.players);
+  const seen = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
   const award = a.award === false ? undefined : await loadAward(ctx.dataDir, game, me, seen, turn);
   const board = award?.board ?? seen;
   const opening = openingThreat(award, game, graph, seen, turn);
@@ -1345,6 +1354,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'the trust watch, a truce the board shows broken is planned as an ordinary opponent, and `tacit` lists quiet ' +
           'borders with no agreement (a report, never a truce). The plan never reads what your chat promised ' +
           "(warapp_send_chat's `commitments`): a warning says when its moves would break one still in force. " +
+          "In a team game a bonus with a teammate's territory in it is never planned toward (one owner per bonus), and " +
+          '`team.sharedBonuses` lists each bonus you and a teammate both hold members of and who is `nearer` to holding it. ' +
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +
@@ -1725,6 +1736,21 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             }
           : {}),
         ...(plan.advice ? { advice: plan.advice.map((a) => ({ ...a, player: playerRef(a.player) })) } : {}),
+        // PLAN-TEAMS C3.3: the bonuses I share with a teammate, advisory.
+        ...(plan.team
+          ? {
+              team: {
+                sharedBonuses: plan.team.sharedBonuses.map((b) => ({
+                  bonus: { id: b.bonusId, name: map.bonuses.find((x) => x.id === b.bonusId)?.name ?? String(b.bonusId), value: b.value },
+                  mine: b.mine.map(name),
+                  teammates: b.teammates.map((m) => ({ player: playerRef(m.player), territories: m.territories.map(name) })),
+                  others: b.others.length,
+                  nearer: b.nearer === null ? 'even' : b.nearer === me.id ? 'me' : playerRef(b.nearer),
+                })),
+                note: TEAM_SHARED_NOTE,
+              },
+            }
+          : {}),
         ...(truces?.tacit.length
           ? { tacit: truces.tacit.map((t) => ({ player: playerRef(t.player), quietTurns: t.quietTurns, border: t.border.map(name) })) }
           : {}),
@@ -1882,7 +1908,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           }
         }
         const { territories, info } = await loadLiveGame(ctx, game);
-        const board = boardStateFromLive(territories, me, game.players);
+        const board = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
         const playerId = inGameId(me);
         const rules = cardRules(game.settings);
         // A team shares one hand (#163): cards under my teammates may be played or discarded too. But how
@@ -1925,12 +1951,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             });
           }
         }
-        // A move into a teammate's territory is a transfer (GameFeed's team field is unverified).
-        const teammates = new Set(
-          me.team !== undefined && me.team >= 0
-            ? game.players.filter((p) => p !== me && p.team === me.team).map((p) => inGameId(p))
-            : [],
-        );
+        // A move into a teammate's territory is a transfer (GameFeed's team field is unverified). The live
+        // board keys owners by in-game id; a teammate without a GameFeed player id (an AI seat) owns nothing by one.
+        const teammates = new Set([...playersByInGameId(teammatesOf(game.players, me)).keys()]);
         // #165: each move's options, refused unless the game allows them.
         const deployedOn = new Map<number, number>();
         for (const d of deploys) deployedOn.set(d.territory.id, (deployedOn.get(d.territory.id) ?? 0) + d.armies);

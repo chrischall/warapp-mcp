@@ -254,6 +254,13 @@ export interface PlanState {
   soloHeld: Map<number, string>;
 }
 
+/** PLAN-TEAMS C3: a territory a teammate visibly holds (never one in a no-team game). */
+export function teammateAt(pc: Pick<PlanCtx, 'allies' | 'territories'>, id: number): boolean {
+  if (!pc.allies.size) return false;
+  const o = pc.territories.get(id)?.owner;
+  return o?.kind === 'player' && pc.allies.has(o.playerId);
+}
+
 /** An empty plan state: nothing deployed, moved, captured or said yet. */
 export function newPlanState(): PlanState {
   return {

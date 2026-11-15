@@ -12,6 +12,7 @@ import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners, opponentReinforcement } from './card-advice.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
 import { boardStateFromLive } from '../live.js';
+import { withTeammateOrders } from '../team-orders.js';
 import { carriesTeam } from '../teams.js';
 import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
 import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
@@ -139,7 +140,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const graph = graphOf(map);
       // As warapp_plan_turn does (#166): the opponent's starts the award of picks proves stand on
       // the board the orders are tried on; the history and tracks stay what war.app showed.
-      const seen = boardStateFromLive(territories, me, game.players);
+      const seen = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
       const award = await loadAward(ctx.dataDir, game, me, seen, turn);
       const board = award?.board ?? seen;
       const opening = openingThreat(award, game, graph, seen, turn);

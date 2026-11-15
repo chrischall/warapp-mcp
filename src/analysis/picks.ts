@@ -63,7 +63,9 @@
 //     pickables neither mine nor known, k the threats among them and L the opponent starts
 //     still unknown ((players − 1) × the territory limit, less the known ones) — their starts
 //     taken as drawn uniformly from the pickables left, a simplification. A pick of mine is
-//     never a threat, so also holding the threatening neighbour restores the credit.
+//     never a threat, so also holding the threatening neighbour restores the credit. In a team
+//     game (`team`, C2) L counts only the opponents' starts, and a known start may be a teammate's:
+//     only the known starts beyond the teammates' count are taken from L (the worst case).
 //     A negative bonus held in full costs
 //     its value × (PICK_HORIZON + 1 − turn), unscaled, and is listed among the pick's
 //     negatives; the simulation never steers for a bonus whose completion would also
@@ -126,7 +128,9 @@
 //     picks) only when another order raises that worst outcome. An answering fallback
 //     (item 5) depends on that order: it is chosen for the score order first, and when the
 //     award order prefers another, chosen again for it — the new order standing only if the
-//     list as it then reads still has a better worst outcome than the list it replaces.
+//     list as it then reads still has a better worst outcome than the list it replaces. A team
+//     game's award order is not settled (C2): both the reversing and a repeating order (the same
+//     every round) are enumerated, and the worst outcome of either is reported.
 //  5c. Commanders (#129): the first pick awarded carries the commander, so the primary's
 //     safest pick (fewest other pickables within COMPACT_DISTANCE hops, then fewest
 //     neighbours outside the primary, then score) is listed first; the award reorder keeps it.
@@ -229,6 +233,13 @@ export interface PlanPicksInput {
    * usually worse on large maps. Ignored with three or more players.
    */
   spread?: boolean;
+  /**
+   * A team game (C2, docs/PLAN-TEAMS.md): how many of the other `players` are on my team. They are
+   * no threat, so only the rest are opponents in the threat model; a start known to be another
+   * player's may still be a teammate's (the worst case keeps the opponent starts unknown), and the
+   * list is judged by both award orders that fit, since a team game's is not settled. Absent: no team.
+   */
+  team?: { teammates: number };
 }
 
 type PickGroupName = 'primary' | 'fallback';
@@ -297,6 +308,8 @@ export interface PickGroup {
 interface AwardReport {
   /** Distinct sets of picks the award order can grant from this list (see {@link pickOutcomes}). */
   outcomes: number;
+  /** A team game: the award orders enumerated, since which one war.app uses is not settled (C2). */
+  orders?: AwardOrder[];
   /** The outcome scoring least in the opening simulation, with the other players' starts it implies. */
   worst: { territoryIds: number[]; score: number; opponentStarts: number[] };
   /** The primary was reordered from score order because that raises the worst outcome. */
@@ -378,8 +391,10 @@ interface Ctx {
   twoOrders: boolean;
   /** Pickable territories on the map. */
   pickCount: number;
-  /** Starts the other players are granted in all: (players − 1) × the territory limit. */
+  /** Starts my opponents are granted in all: (players − 1 − teammates) × the territory limit. */
   opponentStarts: number;
+  /** Starts my teammates are granted in all (0 outside a team game): a known start may be one of these. */
+  teammateStarts: number;
   /**
    * Bonus id → by completion turn 0..PICK_HORIZON, the pickable territories that reach it by
    * then (hold a member, or a territory next to one), ascending (#166).
@@ -418,13 +433,15 @@ const NO_THREATS: readonly number[] = [];
  * The chance that an opponent starts on one of `threats` (pickables that are not mine). 1 when
  * a known opponent start (`taken`) is among them. Otherwise the opponent starts still unknown
  * — (players − 1) × the territory limit, less the known ones — are taken to be drawn uniformly
- * from the pickables that are neither mine nor known: 1 − C(N − k, L) / C(N, L).
+ * from the pickables that are neither mine nor known: 1 − C(N − k, L) / C(N, L). In a team game
+ * only the opponents' starts count, and a known start may be a teammate's: only the known starts
+ * beyond what my teammates hold are taken from the opponents' (the worst case).
  */
 function threatChance(ctx: Ctx, threats: readonly number[], mine: number, taken: ReadonlySet<number>, known: number): number {
   if (!threats.length) return 0;
   for (const q of threats) if (taken.has(q)) return 1;
   const n = Math.max(0, ctx.pickCount - mine - known);
-  const unknown = Math.min(Math.max(0, ctx.opponentStarts - known), n);
+  const unknown = Math.min(Math.max(0, ctx.opponentStarts - Math.max(0, known - ctx.teammateStarts)), n);
   const k = threats.length;
   if (unknown <= 0) return 0;
   if (n - k < unknown) return 1;
@@ -806,6 +823,7 @@ export function openingIncome(input: OpeningIncomeInput): number[] {
     twoOrders: luckFraction(s.luckModifier) === 0 && (s.roundingMode === undefined || s.roundingMode === 'StraightRound') && s.noSplit !== true,
     pickCount: pickSet.size,
     opponentStarts: 0,
+    teammateStarts: 0,
     threats: new Map(),
   };
   const sim = simulate(ctx, starts, taken);
@@ -940,6 +958,10 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   const maxPicks = Math.max(0, Math.floor(input.maxPicks));
   const limit = Math.max(0, Math.floor(input.territoryLimit));
   const duel = players <= 2;
+  // A team game (C2): teammates are no threat; at most every other player.
+  const teamGame = input.team !== undefined;
+  const teammates = teamGame ? Math.min(players - 1, Math.max(0, Math.floor(input.team!.teammates) || 0)) : 0;
+  const awardOrders: AwardOrder[] = teamGame ? ['reversing', 'repeating'] : ['reversing'];
   const entryWeight = duel ? ENTRY_WEIGHT_1V1 : ENTRY_WEIGHT;
   const rates = { offensiveKillRate: off, defensiveKillRate: def, luckModifier: s.luckModifier };
 
@@ -974,7 +996,8 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     def,
     twoOrders: luckFraction(s.luckModifier) === 0 && (s.roundingMode === undefined || s.roundingMode === 'StraightRound') && s.noSplit !== true,
     pickCount: pickable.length,
-    opponentStarts: (players - 1) * limit,
+    opponentStarts: Math.max(0, players - 1 - teammates) * limit,
+    teammateStarts: teammates * limit,
     threats: new Map(),
   };
 
@@ -1551,7 +1574,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
   };
   const outcomeSets =
     primary.length > 0
-      ? pickOutcomes({ listLength: primary.length + listed.tiers.flat().length, perPlayer: primary.length, players })
+      ? pickOutcomes({ listLength: primary.length + listed.tiers.flat().length, perPlayer: primary.length, players, orders: awardOrders })
       : null;
   let award: AwardReport | undefined;
   if (outcomeSets?.length) {
@@ -1588,6 +1611,7 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     primary.splice(0, primary.length, ...bestOrder);
     award = {
       outcomes: outcomeSets.length,
+      ...(teamGame ? { orders: awardOrders } : {}),
       worst: { ...bestWorst, opponentStarts: impliedOpponentStarts([...primary, ...listed.tiers.flat()], bestWorst.territoryIds) },
       reordered,
     };
@@ -1731,6 +1755,13 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     );
   } else if (primary.length)
     rationale.push('Picks are awarded round by round in a reversing move order; this list has too many possible outcomes to enumerate.');
+  if (teamGame)
+    rationale.push(
+      `A team game: ${players - 1 - teammates} opponent${players - 1 - teammates === 1 ? '' : 's'} and ${teammates} teammate${teammates === 1 ? '' : 's'}. ` +
+        'Only opponents threaten a bonus; a pick lost to another player is still taken as an opponent\'s start (it may be your teammate\'s), the worst case. ' +
+        'The award order of a team game is not settled (unverified): the list is judged by both a reversing and a repeating order, and the worst outcome of either is reported. ' +
+        'The list is as long as the client allows (starts × all players), since your list and your teammate\'s are not agreed: a pick you both list goes to one of you.',
+    );
 
   // The coverage-first alternative (#166): the primary is kept; this is offered beside it.
   const coverageOf = coverageModel({ graph: g, pickable, settings: s, neutralArmies: input.neutralArmies });
@@ -1819,6 +1850,13 @@ export function clientPickLimits(input: { territoryLimit: number | undefined; pl
   return { perPlayer, min: Math.min(10, perPlayer), max: players * perPlayer };
 }
 
+/**
+ * How picks are awarded round by round: `reversing` — the move order reversing each round (the
+ * community wiki's rule) — or `repeating`, the same order every round. A team game's is not settled
+ * (C2), so both are enumerated there.
+ */
+export type AwardOrder = 'reversing' | 'repeating';
+
 /** Most search states {@link pickOutcomes} explores before giving up (`null`). */
 const MAX_AWARD_STATES = 50_000;
 
@@ -1827,21 +1865,29 @@ const MAX_AWARD_STATES = 50_000;
  * awarded round by round in move order, the order reversing each round, each player getting
  * the highest-ranked territory still free on their own list (the community wiki). The other
  * players' lists are unknown, so each of their picks may be any free territory of this list
- * or one outside it; this player's move position is unknown too. A position set shorter than
+ * or one outside it; this player's move position is unknown too. `orders` (default the reversing
+ * one) are the award orders enumerated, the outcomes of each joined. A position set shorter than
  * `perPlayer` means the list ran out (war.app then grants what is left). Sorted ascending,
  * each set ascending; `null` when the search would pass {@link MAX_AWARD_STATES} states.
  */
-export function pickOutcomes(input: { listLength: number; perPlayer: number; players: number }): number[][] | null {
+export function pickOutcomes(input: {
+  listLength: number;
+  perPlayer: number;
+  players: number;
+  orders?: readonly AwardOrder[];
+}): number[][] | null {
   const n = Math.max(0, Math.floor(input.listLength));
   const rounds = Math.max(0, Math.floor(input.perPlayer));
   const players = Number.isFinite(input.players) ? Math.max(1, Math.floor(input.players)) : 2;
   if (n > 30) return null;
+  const orders = input.orders?.length ? [...new Set(input.orders)] : (['reversing'] as const);
   const outcomes = new Set<number>();
   const seen = new Set<string>();
   let states = 0;
+  let reversing = true;
   // step: index into the whole pick sequence; taken: bitmask of list positions anyone holds; mine: mine.
   const visit = (pos: number, step: number, taken: number, mine: number): boolean => {
-    const key = `${pos}:${step}:${taken}:${mine}`;
+    const key = `${reversing ? '' : 'r'}${pos}:${step}:${taken}:${mine}`;
     if (seen.has(key)) return true;
     seen.add(key);
     if (++states > MAX_AWARD_STATES) return false;
@@ -1851,7 +1897,7 @@ export function pickOutcomes(input: { listLength: number; perPlayer: number; pla
     }
     const round = Math.floor(step / players);
     const slot = step % players;
-    const mover = round % 2 === 0 ? slot : players - 1 - slot;
+    const mover = !reversing || round % 2 === 0 ? slot : players - 1 - slot;
     if (mover === pos) {
       let first = -1;
       for (let i = 0; i < n; i++)
@@ -1866,7 +1912,10 @@ export function pickOutcomes(input: { listLength: number; perPlayer: number; pla
     for (let i = 0; i < n; i++) if (!(taken & (1 << i)) && !visit(pos, step + 1, taken | (1 << i), mine)) return false;
     return true;
   };
-  for (let pos = 0; pos < players; pos++) if (!visit(pos, 0, 0, 0)) return null;
+  for (const order of orders) {
+    reversing = order === 'reversing';
+    for (let pos = 0; pos < players; pos++) if (!visit(pos, 0, 0, 0)) return null;
+  }
   const sets = [...outcomes].map((m) => Array.from({ length: n }, (_, i) => i).filter((i) => m & (1 << i)));
   return sets.sort((a, b) => {
     for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i]! - b[i]!;

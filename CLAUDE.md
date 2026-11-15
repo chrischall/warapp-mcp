@@ -125,6 +125,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the worst set it can yield and the other players' starts that implies; the primary is reordered only when that
   raises the worst outcome. With commanders on, the primary's safest pick (fewest other pickables within 2 hops)
   is listed first, since the first pick awarded carries the commander (#129).
+  In a team game (C2) only players off my team are threats (a known start may be a teammate's: the worst case), the award is
+  judged by both a reversing and a repeating order (`award.orders`, unverified), the duel rules stay two-player, the list stays
+  starts × all players, and the award reading puts a start the first board shows as a teammate's in `teammateStarts`.
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes; in a two-player game without `spread` it also offers a
   coverage-first `alternative` (a pair, then the picks that most raise `coverage` — the reasonable bonuses reached within 2 moves
   past no wasteland; `coverageModel`) with its own `submitPicks`, only when it covers more, the primary unchanged (#166). `docs/STRATEGY.md` states the community
@@ -168,6 +171,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
   is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`. The interpreter's registration
   scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
+- **Team games read (part C1 of `docs/PLAN-TEAMS.md`).** One team test everywhere: `isTeamGame` /
+  `teammatesOf` (`src/teams.ts`, over `carriesTeam`); teammate ids are GameFeed ids at the tool boundary
+  (an AI seat has no in-game id: it owns nothing on the board, never a throw). The read-only
+  `warapp_get_team` (`src/tools/team.ts`) refuses outside a team game; when GameFeed sends no team (V1) it
+  takes GetMyGames' `GameInfoPlayer` team (`myGamesTeams`, by in-game id) and says so — no other tool does
+  yet. Teammate orders and picks come from `LatestGameInfo`'s `TeammateOrders` dict (`src/team-orders.ts`,
+  found by type name, orders by class and read order). `withTeammateOrders` sets `BoardState.teammateOrders`
+  (by GameFeed id, my entry out) on the live boards of `warapp_plan_turn`, `warapp_check_plan`,
+  `warapp_submit_turn` and `warapp_get_team` when the dict is there — no key otherwise (1v1, FFA: goldens
+  unchanged); no rule reads it yet (C3), and the board cache never keeps it. Picks fall back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
+  the team hand is `readHand` over `handOwners` (`{ inPlay: false }` when the settings put no card in play); unread team chat is counted from the web chat only. All
+  UNVERIFIED live (V1, V5, V6, #163); absent means unknown (`null`), never "none".
 - **The agreement ledger (part A2 of `docs/PLAN-TEAMS.md`).** An agreement (a truce) exists only when
   recorded with `warapp_record_agreement` (structured terms; chat is never parsed into one), at
   `<dataDir>/relations/<gameId>-<playerId>.json` (`src/relations-store.ts`: one file per account, ids,
@@ -549,7 +564,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     (players' teams — the shared `carriesTeam` test in `src/teams.ts` — and who is still
     playing), phase, standing (my income vs the strongest opponent's estimate; the armies on
     the board overrule it — never `ahead` while my visible armies are below 0.8 × an opponent's
-    in view, and `behind` when below half, fog or not, since what it shows is the least it has)
+    in view, and `behind` when below half, fog or not, since what it shows is the least it has;
+    in a team game both incomes and armies are summed by team, PLAN-TEAMS C3, as is the outlook;
+    an enemy still playing with no estimate is named and forbids `ahead`, which reads `unknown`)
     and the strategy settings. `warapp_plan_turn` passes `adapt: true`: with no `goal` the profile picks
     it (behind → `defend`, else `balanced`) and its rules fire (1v1 in contact: advances rank
     below holds and breaks; FFA with 2+ opponents: no second front; behind: no pressure margin;
@@ -562,6 +579,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     attacks it on top of its hold (hold + capture deployed there, so it still holds if the
     member is reinforced and the attack fails); unable to afford both, it just holds — never
     a capture instead of the hold. `defend` holds first, `expand` never attacks players.
+  - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
+    teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
+    warning); its other members are plain expansion. `team.sharedBonuses` (advisory) lists each bonus
+    we both hold members of and who holds the most (`nearer`), from the start-of-turn board; a fogged
+    teammate territory is unknown (team vision unverified). Absent outside a team game.
   - **Commit to the closest bonus (#101, rule 4f).** While no bonus is held, and in the opening
     and expansion phases, completions and advances go to the bonus fewest turns from completion
     first (equally close ones by score); a bonus advanced last turn keeps priority unless another
@@ -585,7 +607,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     what holds it, as my commander's territory does: a capture from it spends only the armies
     above that (plus deploys), so a capture never leaves a safe border takeable. Idle armies
     transfer toward the enemy front first (the nearest non-held territory only when no enemy is
-    reachable), a capture of a player's territory sized without a reserve does not make the
+    reachable, and never a teammate's: PLAN-TEAMS C3), a capture of a player's territory sized without a reserve does not make the
     garrison beside it idle, and my commander's stack beside a conceded border stays.
   - **Attacks on a player are sized for its owner's deploy (#120).** When the armies beyond what
     holds the source cover it, an attack on a player's territory (break, counter-attack, strike,

@@ -84,6 +84,7 @@ interface Named {
 }
 interface Award {
   opponentStarts: Named[];
+  teammateStarts?: Named[];
   allStartsKnown: boolean;
   awarded: 'first' | 'second' | null;
   firstMover: 'you' | 'opponent' | null;
@@ -230,6 +231,36 @@ describe('warapp_plan_turn — the award of picks', () => {
     expect(ids(p.award!.opponentStarts)).toEqual([158]);
     expect(p.award).toMatchObject({ awarded: null, firstMover: null, assumedOnBoard: [] });
     expect(p.award!.notes.join(' ')).toMatch(/another player's start/);
+  });
+});
+
+describe('warapp_plan_turn — the award of picks in a team game (C2)', () => {
+  /** Ann and Bob on team 0, Cat on team 1. */
+  const teamGame = () => {
+    const g = game(1, {}, 3);
+    const teams = ['0', '0', '1'];
+    return { ...g, players: (g.players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: teams[i]! })) };
+  };
+
+  it("a lost pick the board shows as my teammate's is the teammate's start, not an opponent's", async () => {
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, [159, 158, 161, 157, 135, 9001]);
+    h = await live(board({ 158: { fogLevel: 1, owner: BOB.inGame, armies: 5 } }), teamGame(), dir);
+    const p = await plan(h);
+    expect(ids(p.award!.opponentStarts)).toEqual([]);
+    expect(ids(p.award!.teammateStarts!)).toEqual([158]);
+    expect(p.award!.notes.join(' ')).toMatch(/your teammate's start/);
+    expect(p.award!.notes.join(' ')).not.toMatch(/another player's start/);
+  });
+
+  it("a fogged lost pick stays an opponent's start, and the note says team vision is unverified", async () => {
+    const dir = tmp();
+    await writePickList(dir, GAME, ME, [159, 158, 161, 157, 135, 9001]);
+    h = await live(board(), teamGame(), dir);
+    const p = await plan(h);
+    expect(ids(p.award!.opponentStarts)).toEqual([158]);
+    expect(ids(p.award!.teammateStarts!)).toEqual([]);
+    expect(p.award!.notes.join(' ')).toMatch(/an opponent's start.*unverified/);
   });
 });
 

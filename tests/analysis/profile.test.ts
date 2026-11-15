@@ -327,6 +327,11 @@ describe('gameProfile: standing', () => {
           board: withMate,
           income: 10,
           players: [{ id: ME, team: 0 }, { id: 11, team: 0 }, { id: 20, team: 1 }, { id: 21, team: 1 }],
+          // Player 21 needs an estimate: an enemy still playing without one forbids ahead.
+          estimates: [
+            { playerId: 20, estimate: 5 },
+            { playerId: 21, estimate: 1 },
+          ],
         }),
       );
       expect(p.standing).toBe('ahead');
@@ -465,5 +470,152 @@ describe('gameProfile: humans, AIs and how the game ends (#178)', () => {
     const rule = { aisSurrenderWhenOneHumanRemains: true };
     expect(gameProfile(base({ players: [{ id: ME }, { id: 20 }, { id: 30 }, { id: 40, isAI: true }], endRules: rule })).endsWith).toBeNull();
     expect(gameProfile(base({ players: [{ id: ME }, { id: 20, isAI: true }], endRules: rule })).endsWith).toBeNull();
+  });
+});
+
+describe('gameProfile: team standing (PLAN-TEAMS C3)', () => {
+  const MATE = 11;
+  const PLAYERS = [
+    { id: ME, team: 0 },
+    { id: MATE, team: 0 },
+    { id: 20, team: 1 },
+    { id: 21, team: 1 },
+  ];
+  /** Me on 1–2, my teammate on 3, neutrals 4–5, player 20 on 6–7, player 21 on 8: all in view. */
+  const twoVtwo = (mate = 5, e20 = 5, e21 = 5) =>
+    board([mine(1, 5), mine(2, 5), enemy(3, mate, MATE), neutral(4, 2), neutral(5, 2), enemy(6, e20, 20), enemy(7, e20, 20), enemy(8, e21, 21)]);
+
+  it("sums my teammate's income into my side", () => {
+    // Me 5 + my teammate 5 = 10 against team 1's 6 + 1 = 7: ahead (alone, 5 against 6 read even).
+    const p = gameProfile(
+      base({
+        board: twoVtwo(),
+        players: PLAYERS,
+        income: 5,
+        estimates: [
+          { playerId: MATE, estimate: 5 },
+          { playerId: 20, estimate: 6 },
+          { playerId: 21, estimate: 1 },
+        ],
+      }),
+    );
+    expect(p.standing).toBe('ahead');
+    expect(p.notes.join('\n')).toMatch(/my team's income 10 \(mine 5, player 11 ~5\) against the strongest enemy team, team 1 \(~7: player 20 ~6, player 21 ~1, estimated\)/);
+  });
+
+  it('sums an enemy team against mine', () => {
+    // Me 10 + my teammate 2 = 12 against team 1's 8 + 8 = 16: behind (alone, 10 against 8 read ahead).
+    const p = gameProfile(
+      base({
+        board: twoVtwo(),
+        players: PLAYERS,
+        income: 10,
+        estimates: [
+          { playerId: MATE, estimate: 2 },
+          { playerId: 20, estimate: 8 },
+          { playerId: 21, estimate: 8 },
+        ],
+      }),
+    );
+    expect(p.standing).toBe('behind');
+  });
+
+  it('an enemy-team member still playing with no estimate is named, and the standing is never ahead without it', () => {
+    // Player 21 is out of view (8 fogged) and has no estimate. My team's 5 + 5 = 10 against
+    // player 20's ~6 alone would read ahead; team 1's true income could be anything above 6.
+    const fog = board([mine(1, 5), mine(2, 5), enemy(3, 5, MATE), neutral(4, 2), neutral(5, 2), enemy(6, 5, 20), enemy(7, 5, 20), fogged(8)]);
+    const p = gameProfile(
+      base({
+        board: fog,
+        players: PLAYERS,
+        income: 5,
+        estimates: [
+          { playerId: MATE, estimate: 5 },
+          { playerId: 20, estimate: 6 },
+        ],
+      }),
+    );
+    expect(p.standing).toBe('unknown');
+    expect(p.standingSource).toBeNull();
+    const notes = p.notes.join('\n');
+    expect(notes).toMatch(/Player 21, on team 1, has no income estimate/);
+    expect(notes).toMatch(/not ahead/i);
+  });
+
+  it('a missing enemy-team member leaves a behind standing as it is: the enemy side is a lower bound', () => {
+    const fog = board([mine(1, 5), mine(2, 5), enemy(3, 5, MATE), neutral(4, 2), neutral(5, 2), enemy(6, 5, 20), enemy(7, 5, 20), fogged(8)]);
+    const p = gameProfile(
+      base({
+        board: fog,
+        players: PLAYERS,
+        income: 2,
+        estimates: [
+          { playerId: MATE, estimate: 2 },
+          { playerId: 20, estimate: 9 },
+        ],
+      }),
+    );
+    expect(p.standing).toBe('behind');
+    expect(p.notes.join('\n')).toMatch(/Player 21, on team 1, has no income estimate/);
+  });
+
+  it('a teammate with no estimate is said to be left out', () => {
+    const p = gameProfile(base({ board: twoVtwo(), players: PLAYERS, income: 10, estimates: [{ playerId: 20, estimate: 5 }] }));
+    expect(p.notes.join('\n')).toMatch(/Player 11, on my team, has no income estimate and is not counted/);
+  });
+
+  it("the armies in view are summed by team: a teammate's big stack stops an overrule", () => {
+    // Incomes 20 against 10: ahead. My team's armies 10 + 30 = 40 against team 1's 20 + 15 = 35.
+    // Alone, my 10 against player 20's 20 would have read even.
+    const p = gameProfile(
+      base({
+        board: twoVtwo(30, 10, 15),
+        players: PLAYERS,
+        income: 10,
+        estimates: [
+          { playerId: MATE, estimate: 10 },
+          { playerId: 20, estimate: 5 },
+          { playerId: 21, estimate: 5 },
+        ],
+      }),
+    );
+    expect(p.standing).toBe('ahead');
+  });
+
+  it("a teammate no longer playing adds neither income nor armies to my side", () => {
+    // My teammate surrendered: its 30 armies are not mine to use. My 10 against player 20's 20 reads even.
+    const p = gameProfile(
+      base({
+        board: twoVtwo(30, 10, 15),
+        players: [{ id: ME, team: 0 }, { id: MATE, team: 0, state: 'SurrenderAccepted' }, { id: 20, team: 1 }, { id: 21, team: 1 }],
+        income: 10,
+        estimates: [
+          { playerId: MATE, estimate: 10 },
+          { playerId: 20, estimate: 2 },
+          { playerId: 21, estimate: 2 },
+        ],
+      }),
+    );
+    expect(p.standing).toBe('behind');
+    expect(p.notes.join('\n')).toMatch(/my team's income 10 \(mine 10\)/);
+    expect(p.notes.join('\n')).toMatch(/my team's 10 visible armies are less than half of team 1's 35/);
+  });
+
+  it('and an enemy team outnumbering mine more than twice over reads behind', () => {
+    // My team's 10 + 3 = 13 against team 1's 2 × 8 + 15 = 31.
+    const p = gameProfile(
+      base({
+        board: twoVtwo(3, 8, 15),
+        players: PLAYERS,
+        income: 10,
+        estimates: [
+          { playerId: MATE, estimate: 10 },
+          { playerId: 20, estimate: 5 },
+          { playerId: 21, estimate: 5 },
+        ],
+      }),
+    );
+    expect(p.standing).toBe('behind');
+    expect(p.notes.join('\n')).toMatch(/my team's 13 visible armies are less than half of team 1's 31/);
   });
 });

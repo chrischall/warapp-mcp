@@ -11,12 +11,47 @@
 import type { Writer } from '../../src/protocol/codec.js';
 import { REQUIRED_HELPER_DEFS } from './mini-bundle.js';
 
+/**
+ * The LatestGameInfo reader: a number, the current standing, teammates' entered orders (a dict in-game id →
+ * TeammateOrders, read through a closure as the client reads it), a number.
+ */
+export const LATEST_GAME_INFO_READER =
+  'Lg.Ha=function(a,b,d){null==d&&(d=242);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;' +
+  'e.k4=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Tq.Ha(a,e,d):null}):null;' +
+  'e.k3=P.Ya(a);return e};';
+
 export const LIVE_BUNDLE = [
   'var W={};',
   REQUIRED_HELPER_DEFS,
   'function Lg(){this.k1=0}function Gs(){}function Ts(){}function Pc(){}',
   'W["warlight.shared.LatestGameInfo"]=Lg;',
-  'Lg.Ha=function(a,b,d){null==d&&(d=242);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;e.k3=P.Ya(a);return e};',
+  LATEST_GAME_INFO_READER,
+  // TeammateOrders: a stamp, the orders entered (a turn), the picks entered (distribution).
+  'function Tq(){this.n1=0}',
+  'W["warlight.shared.TeammateOrders"]=Tq;',
+  'Tq.Ha=function(a,b,d){var e=new Tq;e.n1=P.Ya(a);' +
+    'e.n2=a.Ua()?P.ms(a,function(){return a.Ua()?Go.Ha(a,e,d):null}):null;' +
+    'e.n3=a.Ua()?P.ms(a,function(){return P.Ya(a)}):null;return e};',
+  // GameOrder: a byte tag, the subclass's fields, then the base: player (in-game id), an optional result,
+  // an optional list of standing updates.
+  'function Go(){}function Gd(){}function Ga(){}function Gk(){}function Gr(){}function Gx(){}function Ge(){}',
+  'W["warlight.shared.GameOrder"]=Go;',
+  'Go.Ha=function(a,b,d){var e=a.bc();switch(e){case 1:return Ga.r(a,b,d);case 2:return Gd.r(a,b,d);' +
+    'case 5:return Gr.r(a,b,d);case 9:return Gx.r(a,b,d);case 10:return Gk.r(a,b,d);case 22:return new Ge;' +
+    'default:throw Y.sa(new Pa("unknown order "+e))}};',
+  'Go.base=function(a,b,d){b.o9=P.Ya(a);b.oa=a.Ua()?P.Ya(a):null;b.ob=a.Ua()?P.Sd(a,function(){return P.Ya(a)}):null};',
+  'W["warlight.shared.GameOrderDeploy"]=Gd;',
+  'Gd.r=function(a,b,d){b=new Gd;b.o1=P.Ya(a);b.o2=P.Yc(a);b.o3=P.Ya(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderAttackTransfer"]=Ga;',
+  'Ga.r=function(a,b,d){b=new Ga;b.o1=P.Yc(a);b.o2=P.uq(a);b.o3=P.Yc(a);b.o4=P.Ya(a);b.o5=Am.Ha(a,b,d);' +
+    'b.o6=P.Ya(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderPlayCardReinforcement"]=Gr;',
+  'Gr.r=function(a,b,d){b=new Gr;b.o1=P.tL(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderPlayCardOrderPriority"]=Gk;',
+  'Gk.r=function(a,b,d){b=new Gk;b.o1=P.tL(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderDiscard"]=Gx;',
+  'Gx.r=function(a,b,d){b=new Gx;b.o1=P.tL(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderEvent"]=Ge;',
   'W["warlight.shared.GameStanding"]=Gs;',
   'Gs.Ha=function(a,b,d){var e=new Gs;' +
     'e.q1=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return Pc.Ha(a,e,d)}):null;' +
@@ -93,12 +128,57 @@ export interface SyntheticTerritory {
   units?: readonly SyntheticUnit[];
 }
 
+/** One order a teammate entered, as the synthetic bundle's GameOrder classes read it. */
+export type SyntheticOrder =
+  | { kind: 'deploy'; territory: number; armies: number; free?: boolean }
+  | {
+      kind: 'move';
+      from: number;
+      to: number;
+      armies: number;
+      /** 1 Attack, 2 Transfer, 3 AttackTransfer (the default). */
+      mode?: number;
+      percent?: boolean;
+      attackTeammates?: boolean;
+      units?: readonly SyntheticUnit[];
+    }
+  | { kind: 'card'; tag: 5 | 10; card: string }
+  | { kind: 'discard'; card: string }
+  /** An order class the projection does not read (tag 22, an event). */
+  | { kind: 'event' };
+
+/** A teammate's entry in LatestGameInfo's teammate orders: orders (a turn) and/or picks (distribution). */
+export interface SyntheticTeammateOrders {
+  stamp?: number;
+  /** `null` (or absent): none sent. */
+  orders?: readonly SyntheticOrder[] | null;
+  picks?: readonly number[] | null;
+}
+
+function writeOrder(w: Writer, o: SyntheticOrder, player: number): void {
+  if (o.kind === 'event') {
+    w.u8(22);
+    return;
+  }
+  if (o.kind === 'deploy') w.u8(2).int32(o.territory).bool(o.free ?? false).int32(o.armies);
+  else if (o.kind === 'move') {
+    const units = o.units ?? [];
+    w.u8(1).bool(o.attackTeammates ?? false).u8(o.mode ?? 3).bool(o.percent ?? false).int32(o.from);
+    w.bool(false).int32(o.armies).u8(units.length);
+    for (const u of units) writeUnit(w, u);
+    w.int32(o.to);
+  } else if (o.kind === 'card') w.u8(o.tag).guid(o.card);
+  else w.u8(9).guid(o.card);
+  w.int32(player).bool(false).bool(false);
+}
+
 /** The result of GetLatestGameInfo (present flag first), as the synthetic bundle reads it. */
 export function writeLatestGameInfo(
   w: Writer,
   territories: readonly SyntheticTerritory[] | null,
   playerIds: readonly number[] = [],
   hands: Readonly<Record<number, readonly SyntheticCard[]>> = {},
+  teammateOrders?: Readonly<Record<number, SyntheticTeammateOrders | null>>,
 ): void {
   w.bool(true).int32(1);
   if (territories === null) {
@@ -126,6 +206,26 @@ export function writeLatestGameInfo(
       ww.u8(units.length);
       for (const u of units) writeUnit(ww, u);
       ww.int32(t.owner).bool(false);
+    });
+  }
+  if (teammateOrders === undefined) w.bool(false);
+  else {
+    w.bool(true).list(Object.entries(teammateOrders), (ww, [key, t]) => {
+      const id = Number(key);
+      ww.int32(id);
+      if (t === null) {
+        ww.bool(false);
+        return;
+      }
+      ww.bool(true).int32(t.stamp ?? 1);
+      if (t.orders === undefined || t.orders === null) ww.bool(false);
+      else
+        ww.bool(true).list(t.orders, (ow, o) => {
+          ow.bool(true);
+          writeOrder(ow, o, id);
+        });
+      if (t.picks === undefined || t.picks === null) ww.bool(false);
+      else ww.bool(true).list(t.picks, (pw, n) => pw.int32(n));
     });
   }
   w.int32(2);

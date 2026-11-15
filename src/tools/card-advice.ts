@@ -10,7 +10,7 @@ import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';
 import type { Game, GameSettings, Player } from '../normalize.js';
 import { capturePieceValue, cardClock } from '../strategy/card-clock.js';
-import { carriesTeam } from '../teams.js';
+import { isTeamGame, teammatesOf as teamOf } from '../teams.js';
 
 const CARD_BOMB = 13;
 const CARD_EMERGENCY_BLOCKADE = 3;
@@ -19,14 +19,13 @@ const CARD_EMERGENCY_BLOCKADE = 3;
 export function cardGame(game: Pick<Game, 'players' | 'settings'>): CardGame {
   return {
     players: game.players.length,
-    team: game.players.some((p) => carriesTeam(p.team)),
+    team: isTeamGame(game.players),
     ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
   };
 }
 
 /** My teammates (never me), by GameFeed player. Empty outside a team game. */
-const teammatesOf = (game: Pick<Game, 'players'>, me: Player): Player[] =>
-  carriesTeam(me.team) ? game.players.filter((p) => p.id !== me.id && p.team === me.team) : [];
+const teammatesOf = (game: Pick<Game, 'players'>, me: Player): Player[] => teamOf(game.players, me);
 
 /**
  * The in-game ids whose cards are my hand: mine, and in a team game my teammates' (a team shares

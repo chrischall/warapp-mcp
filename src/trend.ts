@@ -373,7 +373,9 @@ export async function writeBoardCache(
 ): Promise<boolean> {
   try {
     const cache = await readCache(dir, gameId, playerId);
-    const kept = { ...cache.turns, [String(turn)]: board };
+    // A team game's teammate orders are this turn's entries, not the board: never cached (C1).
+    const { teammateOrders: _entries, ...plain } = board;
+    const kept = { ...cache.turns, [String(turn)]: plain };
     const turns: Record<string, BoardState> = {};
     for (const n of newestTurns(kept, turn)) turns[String(n)] = kept[String(n)] as BoardState;
     const allExpected = { ...cache.expected, ...(expectedNextIncome !== undefined ? { [String(turn)]: expectedNextIncome } : {}) };

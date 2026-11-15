@@ -17,7 +17,8 @@
 // With two players the reading is exact: every award that fits what I was granted is enumerated
 // (the opponent's own list is unknown, so each of its awards may be any free territory of my list
 // or one outside it), and only what holds in all of them is reported. With three or more players
-// only the first point is read, and not whose start it is.
+// only the first point is read, and not whose start it is — except in a team game (C2), where a start
+// the first board shows as a teammate's is the teammate's, never an opponent's.
 
 import { impliedOpponentStarts } from './picks.js';
 
@@ -28,8 +29,17 @@ export interface AwardReading {
   granted: number[];
   /** Territories I start on that my list does not hold (it ran out), ascending. */
   unlisted: number[];
-  /** Territories of my list that are another player's start for certain, in list order. */
+  /**
+   * Territories of my list that are another player's start for certain, in list order. In a team
+   * game (`teammateStarts` present), those the first board does not show as a teammate's.
+   */
   opponentStarts: number[];
+  /**
+   * A team game only (C2): the starts the award proves that the first board shows as a teammate's,
+   * in list order. A fogged one stays in `opponentStarts` (whether teammates see each other's
+   * territories is unverified).
+   */
+  teammateStarts?: number[];
   /** Two players: `opponentStarts` is every start the opponent has. */
   allStartsKnown: boolean;
   /** Two players: whether I was awarded first or second, when only one of them gives this start. */
@@ -51,7 +61,13 @@ const byNum = (a: number, b: number) => a - b;
  * board after distribution. `null` when the list cannot explain that start (it is not the list
  * the award used, or the board is not the first one), so nothing is inferred from it.
  */
-export function readAward(input: { list: readonly number[]; mine: readonly number[]; players: number }): AwardReading | null {
+export function readAward(input: {
+  list: readonly number[];
+  mine: readonly number[];
+  players: number;
+  /** A team game: the territories the first board shows as a teammate's. */
+  teammateHeld?: Iterable<number>;
+}): AwardReading | null {
   const list = [...new Set(input.list)];
   const mine = new Set(input.mine);
   const players = Number.isFinite(input.players) ? Math.floor(input.players) : 0;
@@ -60,13 +76,27 @@ export function readAward(input: { list: readonly number[]; mine: readonly numbe
   const granted = list.filter((t) => mine.has(t));
   const unlisted = [...mine].filter((t) => !list.includes(t)).sort(byNum);
   const exact = players === 2 && list.length <= 30 ? readDuel(list, granted, awards) : undefined;
-  if (exact !== undefined) return exact === null ? null : { granted, unlisted, ...exact };
+  if (exact !== undefined) return exact === null ? null : withTeammates({ granted, unlisted, ...exact }, input.teammateHeld);
 
   // Three or more players (or a duel too large to enumerate): only what needs no award order.
   // A list that ran out left me on territories I never listed: every listed one I lack was taken.
   const theirs = unlisted.length ? list.filter((t) => !mine.has(t)) : impliedOpponentStarts(list, granted);
   if (theirs.length > (players - 1) * awards) return null;
-  return { granted, unlisted, opponentStarts: theirs, allStartsKnown: false, role: null, opponentFirstAward: null };
+  return withTeammates(
+    { granted, unlisted, opponentStarts: theirs, allStartsKnown: false, role: null, opponentFirstAward: null },
+    input.teammateHeld,
+  );
+}
+
+/** In a team game, the starts the board shows as a teammate's move from `opponentStarts` to `teammateStarts`. */
+function withTeammates(r: AwardReading, teammateHeld: Iterable<number> | undefined): AwardReading {
+  if (teammateHeld === undefined) return r;
+  const mates = new Set(teammateHeld);
+  return {
+    ...r,
+    opponentStarts: r.opponentStarts.filter((t) => !mates.has(t)),
+    teammateStarts: r.opponentStarts.filter((t) => mates.has(t)),
+  };
 }
 
 type DuelReading = Pick<AwardReading, 'opponentStarts' | 'allStartsKnown' | 'role' | 'opponentFirstAward'>;
