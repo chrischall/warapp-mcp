@@ -87,6 +87,7 @@
 // warning says when the bound beats my largest stack, and separately my total visible armies.
 import type { BoardState } from '../board.js';
 import type { GameMap, GameSettings } from '../normalize.js';
+import { holdsSeat } from '../player-states.js';
 import { carriesTeam, isTeamGame } from '../teams.js';
 import { bonusTerritories } from './bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
@@ -1268,7 +1269,9 @@ export function trackOpponents(
     ...(game?.incomeCaveats ?? []),
   ];
 
-  const seated = players.length;
+  // Only seated players split the map: GameFeed also lists players who never took a seat (Invited,
+  // Declined, RemovedByHost), and counting them would shrink the share and the start with it.
+  const seated = players.filter((p) => holdsSeat(p.state)).length;
   const startArmies = game?.start
     ? game.start.territories * game.start.armiesPerTerritory
     : game?.fullDistribution && game.startArmiesPerTerritory !== undefined && seated > 0

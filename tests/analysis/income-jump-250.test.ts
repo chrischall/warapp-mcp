@@ -183,6 +183,19 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     expect(big!.warnings.join(' ')).toMatch(/could be old armies.*could have received up to 172 by turn 9 \(starting armies 100 \+ 8 × 9 turns\), enough for the 151/);
   });
 
+  it('under full distribution only seated players split the map: a Declined or Invited player does not shrink the start', () => {
+    // The reveal shape above (151 in view, 8 a turn through turn 9) on this 8-territory map at 20
+    // armies a territory. Two seated players start with ⌈8 ÷ 2⌉ × 20 = 80 each: 80 + 72 = 152 covers
+    // the 151, so the hedge stands. Counting the Declined and Invited players too would give
+    // ⌈8 ÷ 4⌉ × 20 = 40, receive 112 and call the jump believed.
+    const hidden = fogged(5);
+    const b10 = board([mine(1, 5), mine(2, 5), enemy(3, 99), enemy(4, 2), hidden, enemy(6, 50), fogged(7), fogged(8)]);
+    const boards = history([7, at(20, enemy(4, 2), enemy(5, 80))], [8, at(28, enemy(4, 2), hidden)], [9, at(33, enemy(4, 2), hidden)], [10, b10]);
+    const players = [{ id: ME }, { id: ENEMY }, { id: 30, state: 'Declined' }, { id: 40, state: 'Invited' }];
+    const [t] = trackOpponents(g, boards, ME, STD, { players, fullDistribution: true, startArmiesPerTerritory: 20 });
+    expect(t!.incomeJump).toMatchObject({ verdict: 'reveal', stock: { start: 80, rate: 8, turns: 9, received: 152 } });
+  });
+
   it('the whole-game rate is the most it was seen to earn on any turn before the jump, not only the two just before it', () => {
     // +30 on turn 4, then +8, +5, then +47 on turn 7. An 80 on T5 in view on turns 4–5 and out of
     // view after could explain the jump (112 in view against 132 + 18 banked). At 8 a turn the whole
