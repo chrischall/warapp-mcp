@@ -8,11 +8,13 @@ import { clientPickLimits, planPicks, type CoverageReport, type PickGroup, type 
 import { DEFAULT_TERRITORY_LIMIT } from '../analysis/opponents.js';
 import { OWNER_PICKABLE } from '../live.js';
 import type { Game, GameSettings } from '../normalize.js';
-import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
+import { bonusNamer, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
-import { loadLiveTerritories, type LiveContext } from './live-context.js';
+import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, resolveMe } from './live.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
+import { teammateOrdersOf } from '../team-orders.js';
+import { readTeammatePicks, type TeammatePicks } from './team.js';
 import { pickingNeutrals } from '../pick-list.js';
 import { mapOf } from './map.js';
 import { keepPickable } from './where.js';
@@ -72,6 +74,15 @@ async function teamOf(ctx: LiveContext, game: Game, warnings: string[]): Promise
   }
 }
 
+/** What the coordination block says about where a teammate's list comes from (C2). */
+const TEAM_LIST_NOTES = [
+  "A teammate's list is read from the live board's TeammateOrders (client bundle, UNVERIFIED live, V5), else from " +
+    "GetTerritoryPicks with the teammate's id (UNVERIFIED, V6); a list that cannot be read is unknown, and the plan is then " +
+    'the one made without it.',
+  "The award order of a team game is UNVERIFIED: the mirrored list is laid out for a reversing order, and `splits` names " +
+    'the bonuses a repeating order would split between you. Agree a list in team chat before relying on it.',
+];
+
 export function registerPickTools(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_plan_picks',
@@ -100,7 +111,11 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           'Its `submitPicks` is exactly what warapp_submit_picks ' +
           'takes — review it with the user first. Refuses outside the picking stage or when nothing is pickable. ' +
           'In a team game only the players off your team are threats, `team` names your teammates, and the list is judged by both award ' +
-          "orders that fit (`award.orders`; a team game's is unverified); your teammate's list is not read yet. " +
+          "orders that fit (`award.orders`; a team game's is unverified). When a teammate's pick list can be read (unverified), each " +
+          "teammate carries `picks`, and `team.coordination` reports the overlap with your list, the bonuses their top picks into " +
+          '(a bonus pays one holder, so yours there are not credited), and a `mirrored` alternative (the same top picks in both ' +
+          'lists, with its own submitPicks) beside the split list that `submitPicks` gives — which leaves their top picks to them ' +
+          'and is shortened only when disjoint from their list. ' +
           `${BRIDGE_NOTE} Read-only on war.app; it never submits picks.`,
       ),
       _meta: lookupMeta(['plan my picks', 'which territories to pick', 'suggest picks', 'warzone picks']),
@@ -123,7 +138,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
     async ({ game_id, view, spread }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requirePickPhase(feed);
-      const territories = await loadLiveTerritories(ctx, feed);
+      const { territories, info } = await loadLiveGame(ctx, feed);
       const pickable = territories.filter((t) => !t.fogged && t.owner === OWNER_PICKABLE).map((t) => t.territoryId);
       if (!pickable.length) {
         throw new McpToolError(`The live board of game ${feed.id} has no pickable territories.`, {
@@ -154,6 +169,14 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
       const settings = pickSettings(game.settings);
       // A team game (C2): only the players off my team are opponents. My seat is looked up only here.
       const team = isTeamGame(game.players) ? await teamOf(ctx, game, warnings) : undefined;
+      // My teammates' lists (C2, coordination): the teammate orders first, then GetTerritoryPicks.
+      const mateLists: Array<TeammatePicks | null> = [];
+      if (team?.length) {
+        const entries = teammateOrdersOf(info, game.players);
+        for (const mate of team)
+          mateLists.push(await readTeammatePicks(ctx, game.id, mate, entries?.find((e) => e.playerId === mate.id)));
+      }
+      const lists = mateLists.map((l) => l?.territories ?? []);
       const plan = planPicks({
         graph: graphOf(map),
         pickable,
@@ -163,9 +186,11 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         maxPicks,
         neutralArmies,
         spread: spread === true,
-        ...(team ? { team: { teammates: team.length } } : {}),
+        ...(team ? { team: { teammates: team.length, ...(lists.some((l) => l.length) ? { lists } : {}) } } : {}),
       });
       const name = namer(map);
+      const bonusName = bonusNamer(map);
+      const coord = plan.team;
       const groupView = (g: PickGroup) => ({
         territories: g.territoryIds.map(name),
         score: g.score,
@@ -200,9 +225,47 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         ...(team
           ? {
               team: {
-                teammates: team.map((p) => ({ id: p.id, name: untrustedText(p.name) })),
+                teammates: team.map((p, i) => {
+                  const read = mateLists[i];
+                  return {
+                    id: p.id,
+                    name: untrustedText(p.name),
+                    picks: read ? { source: read.source, territories: read.territories.map(name) } : null,
+                  };
+                }),
                 opponents: Math.max(0, players - 1 - team.length),
                 source: teamSource,
+                ...(coord
+                  ? {
+                      coordination: {
+                        theirTop: coord.tops.map((t) => t.map(name)),
+                        overlap: coord.overlap.map((o) => ({
+                          territory: name(o.territoryId),
+                          mine: o.mine,
+                          theirs: o.theirs,
+                          teammate: team[o.teammate]?.id ?? null,
+                        })),
+                        sharedBonuses: coord.sharedBonuses.map((b) => ({
+                          bonus: bonusName(b.bonusId),
+                          mine: b.mine.map(name),
+                          theirs: b.theirs.map(name),
+                        })),
+                        ...(coord.shortened ? { shortened: coord.shortened } : {}),
+                        mirrored: coord.mirrored
+                          ? {
+                              territories: coord.mirrored.top.map(name),
+                              hands: coord.mirrored.hands.map((h) => h.map(name)),
+                              splits: coord.mirrored.splits.map((x) => ({
+                                order: x.order,
+                                bonuses: x.bonuses.map((b) => ({ ...bonusName(b.bonusId), territories: b.picks.map(name) })),
+                              })),
+                              submitPicks: { game_id: game.id, territories: coord.mirrored.submitPicks },
+                            }
+                          : null,
+                        notes: TEAM_LIST_NOTES,
+                      },
+                    }
+                  : {}),
               },
             }
           : {}),

@@ -44,6 +44,32 @@ function inGameOf(p: Player): number | undefined {
   return [...playersByInGameId([p]).keys()][0];
 }
 
+/** A teammate's pick list while distributing (C1/C2): where it was read from, and the ids in priority order. */
+export interface TeammatePicks {
+  source: 'teammate-orders' | 'territory-picks';
+  territories: number[];
+}
+
+/**
+ * A teammate's pick list: the live board's TeammateOrders entry first (V5), else GetTerritoryPicks with the
+ * teammate's in-game id (V6). `null` is unknown — an AI seat, or a read war.app refused. Never throws.
+ */
+export async function readTeammatePicks(
+  ctx: LiveContext,
+  gameId: number,
+  mate: Player,
+  entry: TeammateOrders | undefined,
+): Promise<TeammatePicks | null> {
+  if (entry?.picks) return { source: 'teammate-orders', territories: entry.picks };
+  const inGame = inGameOf(mate);
+  if (inGame === undefined) return null;
+  try {
+    return { source: 'territory-picks', territories: await loadPicks(ctx, gameId, inGame) };
+  } catch {
+    return null; // refused or unreadable (V6): unknown
+  }
+}
+
 export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_get_team',
@@ -121,14 +147,8 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
         const entry: TeammateOrders | undefined = board?.teammateOrders?.find((e) => e.playerId === p.id);
         let picks: { source: string; territories: Array<{ id: number; name: string }> } | null = null;
         if (game.state === DISTRIBUTING && board) {
-          if (entry?.picks) picks = { source: 'teammate-orders', territories: entry.picks.map(name) };
-          else if (inGame !== undefined) {
-            try {
-              picks = { source: 'territory-picks', territories: (await loadPicks(ctx, game.id, inGame)).map(name) };
-            } catch {
-              picks = null; // refused or unreadable (V6): unknown
-            }
-          }
+          const read = await readTeammatePicks(ctx, game.id, p, entry);
+          picks = read && { source: read.source, territories: read.territories.map(name) };
         }
         teammates.push({
           id: p.id,

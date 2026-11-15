@@ -475,6 +475,7 @@ describe('warapp_submit_picks', () => {
     h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [seats(true)], warapp: s.warapp });
     const team = JSON.stringify(payload(await h.call('warapp_submit_picks', { game_id: GAME, territories: [161, 159] })));
     expect(team).toMatch(/team game.*teammate.*A list of 4 picks/);
+    expect(team).toMatch(/safe only when no teammate lists any of its picks/);
     await h.harness.close();
     h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [seats(false)], warapp: s.warapp });
     const ffa = JSON.stringify(payload(await h.call('warapp_submit_picks', { game_id: GAME, territories: [161, 159] })));

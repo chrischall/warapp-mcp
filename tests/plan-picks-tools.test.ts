@@ -365,7 +365,7 @@ describe('warapp_plan_picks in a team game (C2)', () => {
     h = await liveHarness({ feed: [fourSeats()], pages: SIGNED_IN_ANN, warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
     const p = payload<PlanPicksPayload & TeamView>(await h.call('warapp_plan_picks', { game_id: GAME }));
     expect(p.players).toBe(4);
-    expect(p.team).toEqual({ teammates: [{ id: Number(BOB.feed), name: '⟦Bob⟧' }], opponents: 2, source: 'gamefeed' });
+    expect(p.team).toEqual({ teammates: [{ id: Number(BOB.feed), name: '⟦Bob⟧', picks: null }], opponents: 2, source: 'gamefeed' });
     // Six pickables, four players: one each, and the list is starts × all players (lists are not agreed).
     expect(p.maxPicks).toBe(4);
     expect(p.award?.orders).toEqual(['reversing', 'repeating']);
@@ -411,7 +411,7 @@ describe('warapp_plan_picks in a team game (C2)', () => {
       warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD), [Method.GetMyGames]: list }),
     });
     const p = payload<PlanPicksPayload & TeamView>(await h.call('warapp_plan_picks', { game_id: GAME }));
-    expect(p.team).toEqual({ teammates: [{ id: Number(BOB.feed), name: '⟦Bob⟧' }], opponents: 2, source: 'my-games' });
+    expect(p.team).toEqual({ teammates: [{ id: Number(BOB.feed), name: '⟦Bob⟧', picks: null }], opponents: 2, source: 'my-games' });
     await h.call('warapp_plan_picks', { game_id: GAME });
     expect(h.exchanges.filter((e) => e.request.method === Method.GetMyGames)).toHaveLength(1);
   });
@@ -421,5 +421,97 @@ describe('warapp_plan_picks in a team game (C2)', () => {
     const p = payload<PlanPicksPayload & TeamView>(await h.call('warapp_plan_picks', { game_id: GAME }));
     expect(p.team).toEqual({ teammates: [], opponents: 3, source: 'gamefeed' });
     expect(p.warnings.join(' ')).toMatch(/Could not tell which seat is yours.*every other player is treated as an opponent/);
+  });
+});
+
+describe("warapp_plan_picks with my teammate's list (C2, coordination)", () => {
+  const SIGNED_IN_ANN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  /** Four seats: Ann and Bob on team 0, the next two on team 1. */
+  const fourSeats = () => {
+    const g = game('DistributingTerritories');
+    const players = (g.players as Array<Record<string, string>>)
+      .slice(0, 4)
+      .map((p, i) => ({ ...p, state: 'Playing', team: i < 2 ? '0' : '1' }));
+    return { ...g, players };
+  };
+  const withMates = (mates: Record<number, { picks: number[] }>) => () =>
+    ({ body: (w: Writer) => writeLatestGameInfo(w, PICK_BOARD, [ANN.inGame, BOB.inGame], {}, mates) }) satisfies Partial<ReplyFrame>;
+  const T = (id: number) => ({ id, name: mapName(id) });
+  interface CoordView {
+    team: {
+      teammates: Array<{ id: number; name: string; picks: { source: string; territories: Named[] } | null }>;
+      coordination?: {
+        theirTop: Named[][];
+        overlap: Array<{ territory: Named; mine: number; theirs: number; teammate: number }>;
+        sharedBonuses: Array<{ bonus: Named; mine: Named[]; theirs: Named[] }>;
+        mirrored: { territories: Named[]; hands: Named[][]; submitPicks: { game_id: number; territories: number[] } } | null;
+        notes: string[];
+      };
+    };
+  }
+
+  it("reads the teammate's picks from the teammate orders, leaves their top to them and offers the mirrored list", async () => {
+    h = await liveHarness({
+      feed: [fourSeats()],
+      pages: SIGNED_IN_ANN,
+      warapp: routes({ [Method.GetLatestGameInfo]: withMates({ [BOB.inGame]: { picks: [157, 159, 161] } }) }),
+    });
+    const p = payload<PlanPicksPayload & CoordView>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.team.teammates).toEqual([
+      { id: Number(BOB.feed), name: '⟦Bob⟧', picks: { source: 'teammate-orders', territories: [T(157), T(159), T(161)] } },
+    ]);
+    const c = p.team.coordination!;
+    expect(c.theirTop).toEqual([[T(157), T(159), T(161)]]);
+    // The split list leaves Bob's top three to him: mine is the other bonus.
+    expect(p.submitPicks.territories.slice().sort()).toEqual([133, 134, 135]);
+    expect(c.overlap).toEqual([]);
+    // Mirrored: both list the same six, laid so a reversing award keeps each three in one hand.
+    expect(c.mirrored!.territories).toHaveLength(6);
+    expect(c.mirrored!.hands.map((h) => h.map((t) => t.id).sort())).toEqual([
+      [133, 134, 135],
+      [157, 159, 161],
+    ]);
+    expect(c.mirrored!.submitPicks.game_id).toBe(GAME);
+    expect(c.notes.join(' ')).toMatch(/UNVERIFIED/);
+    // No GetTerritoryPicks when the teammate orders carry the list.
+    expect(h.exchanges.map((e) => e.request.method)).not.toContain(Method.GetTerritoryPicks);
+  });
+
+  it("falls back to GetTerritoryPicks with the teammate's id (V6)", async () => {
+    const asked: number[] = [];
+    h = await liveHarness({
+      feed: [fourSeats()],
+      pages: SIGNED_IN_ANN,
+      warapp: routes({
+        [Method.GetLatestGameInfo]: board(PICK_BOARD),
+        [Method.GetTerritoryPicks]: (req) => {
+          req.body.int32(); // game id
+          asked.push(req.body.int32());
+          return { body: (w) => w.bool(true).list([157], (ww, n) => ww.int32(n)) };
+        },
+      }),
+    });
+    const p = payload<PlanPicksPayload & CoordView>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(asked).toEqual([BOB.inGame]);
+    expect(p.team.teammates[0]!.picks).toEqual({ source: 'territory-picks', territories: [T(157)] });
+    expect(p.submitPicks.territories).not.toContain(157);
+    // One pick on Bob's list: his top is short of the limit, so no mirrored list.
+    expect(p.team.coordination!.mirrored).toBeNull();
+  });
+
+  it("plans exactly as before when the teammate's list cannot be read", async () => {
+    const refusing = await liveHarness({
+      feed: [fourSeats()],
+      pages: SIGNED_IN_ANN,
+      warapp: routes({
+        [Method.GetLatestGameInfo]: board(PICK_BOARD),
+        [Method.GetTerritoryPicks]: () => ({ error: { code: 4, message: 'no' } }),
+      }),
+    });
+    h = refusing;
+    const p = payload<PlanPicksPayload & CoordView>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.team.teammates[0]!.picks).toBeNull();
+    expect(p.team).not.toHaveProperty('coordination');
+    expect(p.rationale.join(' ')).not.toMatch(/teammate's list is read/);
   });
 });
