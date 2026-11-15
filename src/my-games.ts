@@ -29,6 +29,7 @@ const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
 const GAME_WAITING = 2;
 const GAME_PLAYING = 3;
 const GAME_DISTRIBUTING = 5;
+const GAME_FINISHED = 4;
 
 const PLAYER_PLAYING = 2;
 
@@ -141,6 +142,9 @@ export function readMyGames(bundle: ClassReader, body: Reader): RawMyGame[] {
   if (!Array.isArray(list)) throw new MyGamesFormatError('no game list');
   return list.filter((g) => g !== null).map(gameOf);
 }
+
+/** Whether the game has finished. */
+export const isFinished = (g: RawMyGame): boolean => g.stateCode === GAME_FINISHED;
 
 /**
  * Name the codes and decide which games wait on me (`myInGameId`): the game is

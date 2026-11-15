@@ -82,7 +82,7 @@ const NOT_IN_GAME = /can only be used for games you are in/i;
 /**
  * Whether game state shows account `me` (its GameFeed id) out of the game: GameFeed listing it
  * with no seat (declined) or not at all, else GetMyGames listing the game with its seat given up.
- * A game missing from GetMyGames proves nothing (the list is paged), and nothing read is `false`.
+ * A game missing from GetMyGames proves nothing (the list may be partial, #260), and nothing read is `false`.
  */
 async function confirmLeft(ctx: LiveContext, gameId: number, me: number): Promise<boolean> {
   try {

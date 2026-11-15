@@ -175,7 +175,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   game read (no extra request), so every count is under `unknown` (its `note` says so). Third-party names in
   results (sender, recipient, game) go through `untrustedText`.
   `warapp_chat_inbox` (#256, read-only, hosted too; a tool of its own, since it takes no game and pages a list)
-  reads every game `GetMyGames` lists but a finished one (`chatGameIds`: lobbies, picking, playing), in
+  reads exactly `game_ids` when given (#260), else every game `GetMyGames` lists but a finished one (`chatGameIds`:
+  lobbies, picking, playing; `gamesFrom`, with `listed`/`complete` and a warning when the list may be partial), in
   ascending id order, one at a time and at most `MAX_INBOX_GAMES` (10) per call (`next` = the last id read,
   passed back as `cursor`), each exactly as `warapp_get_chat` reads it; a game with new messages shows only
   those (`limit` newest, `markedUnshown`), the others are `quiet`, and a failed read is in `failed`, never
@@ -866,7 +867,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     margin (with several, each is brought to its margin first, and a conceded border the leftover
     can make hold is held after all before any margin, #121; #257: so is one an idle interior stack
     beside it makes hold by transferring in, rule 6's first step, the border the plan attacks from
-    first), else the top expansion's stack — never to a conceded border (the old "most enemies
+    first; #260: when none does and the enemy front lies only past a conceded border the plan attacks
+    an enemy from, rule 6 still steps the stack into that border rather than to a neutral edge no
+    nearer, never into another conceded border or one a withdrawal leaves, and only from a stack
+    no visible enemy borders at the start of the turn — one interior only once a strike lands keeps
+    its armies for that strike's #226 margin, which is sized after rule 6; when several such steps
+    together make the border hold, it is held after all, not reported conceded), else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border). #218: once every short border has its margin, the
     rest goes to the source of the step the leftover would save toward (#125) when that source is a
     border of equal defensive value (same player, threat, enemy territories, protected value and
@@ -1059,6 +1065,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `GameInfoPlayer`) — never a hand-transcribed layout. Its `MyGamesFilters` argument is
   required (absent, the server throws). `waitingOnYou` = the game is Playing or
   DistributingTerritories, my player is Playing, and my `committed` flag is false.
+  **The whole list (#260):** the client's default filters (`Default`, count 10) are the dashboard's
+  short list (live: 10 of 41 games), so `fetchMyGames` (`listMyGames`, `src/tools/my-games.ts`) asks
+  `MyGamesFilterType.All` with a count of 100, then 400, then 1600 while a reply fills its count
+  (`MY_GAMES_WINDOWS`; the client never pages GetMyGames: no start index), and says `partial` when the
+  widest is filled or a wider read fails. Every caller gets that list (`warapp_my_games`, the chat inbox,
+  the turn wait's default, the team fallback, the join/leave read-backs). `warapp_my_games` leaves finished
+  games out unless `include_finished` and reports `listed` and `complete` (a `warning` when partial).
+  UNVERIFIED live: `All` with a count above 10.
 - **Scouting reads two server-rendered pages** through the bridge (GETs the extension makes):
   `https://war.app/Profile?p=<invite token>` (level, games played, last seen, boots, ranked
   records) and `https://war.app/CommonGames?p=<invite token>` (the head-to-head games). The

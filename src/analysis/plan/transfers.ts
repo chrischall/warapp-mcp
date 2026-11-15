@@ -8,6 +8,12 @@
 // #257: before any of that, an idle interior stack beside a conceded border moves into it when that
 // transfer (plus what the plan leaves there) makes the border hold; the border is then held, not
 // conceded — the conceded border the plan attacks from first, as #121's revival from the leftover.
+// #260: when none revives and the enemy front is reached only through a conceded border the plan
+// attacks an enemy from, an idle stack still heads for it — into that border — when the nearest
+// territory not mine is no nearer; never into another conceded border or one a withdrawal leaves,
+// and never from a stack beside a visible enemy at the start of the turn (interior only once a
+// strike lands).
+// When those steps together make the border hold, it is held after all, never left reported conceded.
 import { bfsDistances, neighborsOf } from '../graph.js';
 import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
@@ -166,6 +172,18 @@ export function transfers(
     const anyFront = ids.filter((id) => !held.has(id) && !pc.truce.noFront(id) && !teammateAt(pc, id));
     const distEnemy = bfsDistances(g, enemyFront, { passable });
     const distAny = bfsDistances(g, anyFront, { passable });
+    // #260: when the enemy front is reached only through a conceded border the plan attacks an
+    // enemy from (no revival above made it hold), idle armies still head for it — into that border —
+    // rather than to a neutral edge no nearer. Never into any other conceded border (the plan gives
+    // it up), nor one a withdrawal leaves.
+    const attacksFrom = (x: number) =>
+      moves
+        .filter((m) => m.from === x && m.kind === 'attack' && isEnemy(m.to))
+        .map((m) => m.to)
+        .sort((a, b) => a - b);
+    const withdrawn = new Set(moves.filter((m) => m.kind === 'transfer' && conceded.has(m.from)).map((m) => m.from));
+    const viaOk = (id: number) => !conceded.has(id) || (!withdrawn.has(id) && attacksFrom(id).length > 0);
+    const distEnemyVia = bfsDistances(g, enemyFront, { passable: (id) => held.has(id) && viaOk(id) });
     // #125: staging. Idle armies on a territory facing no visible enemy — a border beside neutrals
     // included — walk one step toward the source of the capture the leftover saved toward, when
     // it is no farther than the enemy front; once there they help take it.
@@ -213,8 +231,19 @@ export function transfers(
         );
       }
     }
+    // #260 (review): the via steps into each conceded border, so that one that several steps make
+    // hold together (#257 tries one stack at a time) is held after all, not reported conceded.
+    const viaInto = new Map<number, { from: number[]; lines: { i: number; front: string }[] }>();
     for (const t of mine) {
-      const dist = distEnemy.has(t) ? distEnemy : distAny;
+      // Only an interior stack: one beside a visible enemy at the start of the turn (interior only
+      // once this turn's strike lands) keeps its armies for that strike and its own border, as
+      // #257's revival keeps them.
+      const via =
+        !distEnemy.has(t) &&
+        distEnemyVia.has(t) &&
+        distEnemyVia.get(t)! <= (distAny.get(t) ?? Infinity) &&
+        !neighborsOf(g, t).some((x) => isEnemy(x));
+      const dist = distEnemy.has(t) ? distEnemy : via ? distEnemyVia : distAny;
       const n = avail.get(t)!;
       if (n <= 0 || locked.has(t)) continue;
       // My commander's territory next to an enemy at the start of the turn keeps its armies,
@@ -231,7 +260,13 @@ export function transfers(
       // not mine yet, and a "transfer" into it would execute as an attack.
       // B2 (T5): never onto a truce's capped border past its cap, nor back along a transfer.
       const step = neighborsOf(g, t)
-        .filter((x) => mineSet.has(x) && !conceded.has(x) && (dist.get(x) ?? Infinity) < d && capStepRoom(pc, ps, t, x) > 0)
+        .filter(
+          (x) =>
+            mineSet.has(x) &&
+            (via ? viaOk(x) : !conceded.has(x)) &&
+            (dist.get(x) ?? Infinity) < d &&
+            capStepRoom(pc, ps, t, x) > 0,
+        )
         .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
       if (step === undefined) continue;
       const { pending, ifFail, twoStep, truceHold, keep } = keepOf(t);
@@ -258,8 +293,29 @@ export function transfers(
       const reason = 'moves idle interior armies toward the front';
       transfer(t, step, k, reason);
       arrived.set(step, (arrived.get(step) ?? 0) + k);
+      // #260: say why a step goes toward a front past a conceded border, and what it heads for.
+      let front = '';
+      if (via) {
+        const targets = attacksFrom(step);
+        const beside = neighborsOf(g, step).filter((x) => !held.has(x) && isEnemy(x)).sort((a, b) => a - b);
+        // An attack target that lands for sure is held, so it is not the front beside the step.
+        const landing = targets.filter((x) => !beside.includes(x));
+        front = ` (the enemy front${beside.length ? `, ${beside.map(label).join(', ')},` : ''} is reached only through a border the plan concedes, and no farther than the nearest territory not mine${
+          conceded.has(step)
+            ? `; ${label(step)} is the border the plan attacks ${targets.map(label).join(', ')} from${
+                landing.length ? ` (${landing.map(label).join(', ')}, a capture that lands this turn, not the front)` : ''
+              }; they are lost with it if it falls`
+            : ''
+        })`;
+      }
+      if (via && conceded.has(step)) {
+        const v = viaInto.get(step) ?? { from: [], lines: [] };
+        v.from.push(t);
+        v.lines.push({ i: rationale.length, front });
+        viaInto.set(step, v);
+      }
       rationale.push(
-        `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${
+        `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${front}${
           k < n && k === room
             ? ` (the rest stay: a truce caps the armies on ${label(step)} at what this leaves there)`
             : k < n && twoStep
@@ -272,6 +328,34 @@ export function transfers(
             ? ` (${stayAt(t)} stay: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat})`
             : ''
         }.`,
+      );
+    }
+    // #260 (review): what the via steps landed may make a conceded border hold — two idle stacks
+    // each too small to revive it alone (#257) — and then it is held, not conceded: the plan says
+    // so as #257 does, and its "cannot be held" warning goes. One they leave short stays conceded.
+    for (const [id, v] of [...viaInto].sort((a, b) => a[0] - b[0])) {
+      const threat = borders.get(id)?.threat;
+      if (threat === undefined) continue;
+      const total = stayAt(id) + (arrived.get(id) ?? 0) + unitsAt(id);
+      if ((toTake(total) ?? Infinity) <= threat) continue;
+      conceded.delete(id);
+      locked.add(id);
+      const conceding = `${label(id)} cannot be held `;
+      for (let i = warnings.length - 1; i >= 0; i--)
+        if (warnings[i]!.startsWith(conceding) && warnings[i]!.endsWith(': conceded')) warnings.splice(i, 1);
+      const sent = moves.filter((m) => m.kind === 'transfer' && m.to === id && v.from.includes(m.from)).reduce((n, m) => n + m.armies, 0);
+      for (const { i, front } of v.lines)
+        rationale[i] = rationale[i]!.replace(front, ` (into ${label(id)}, which these transfers make hold: it is held after all)`);
+      const value = threatened.find((x) => x.id === id)?.value ?? 0;
+      const from = attacksFrom(id);
+      rationale.push(
+        `Hold ${label(id)} after all (not conceded): the ${sent} idle armies transferred into it from ${v.from
+          .slice()
+          .sort((a, b) => a - b)
+          .map(label)
+          .join(', ')} make it hold together (${total} armies need ${toTake(total)} to take, above the ~${threat} threat; protects +${value})${
+          from.length ? `; the border the plan attacks ${from.map(label).join(', ')} from` : ''
+        }. They land only once the transfers run, so the border holds only if they run before the attack on it.`,
       );
     }
   }
