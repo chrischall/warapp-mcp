@@ -173,6 +173,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   new. GameFeed chat in a shape no reader knows goes out as `raw` with every string through `untrustedBody`. `warapp_plan_turn` reports `chat.unread` from the GameFeed chat of its own
   game read (no extra request), so every count is under `unknown` (its `note` says so). Third-party names in
   results (sender, recipient, game) go through `untrustedText`.
+  `warapp_chat_inbox` (#256, read-only, hosted too; a tool of its own, since it takes no game and pages a list)
+  reads every game `GetMyGames` lists but a finished one (`chatGameIds`: lobbies, picking, playing), in
+  ascending id order, one at a time and at most `MAX_INBOX_GAMES` (10) per call (`next` = the last id read,
+  passed back as `cursor`), each exactly as `warapp_get_chat` reads it; a game with new messages shows only
+  those (`limit` newest, `markedUnshown`), the others are `quiet`, and a failed read is in `failed`, never
+  thrown. Only `mark_seen: true` writes the cursor (every channel, `markChatSeen`, shared with `warapp_get_chat`).
   `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
   one) and refuses `to` when `PrivateMessaging` is false; it reads the reply's message list back
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id

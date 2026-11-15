@@ -6,6 +6,7 @@ import type { ClassReader } from '../live.js';
 import { registerBeginTurnTool } from './begin-turn.js';
 import { registerBoardTool } from './board.js';
 import { registerChatTools } from './chat.js';
+import { registerChatInboxTool } from './chat-inbox.js';
 import { registerCheckPlanTool } from './check-plan.js';
 import { registerGameTool } from './game.js';
 import { registerHealthcheckTool } from './healthcheck.js';
@@ -122,6 +123,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerWhereTool(server, live, deps.env ? { env: deps.env } : {});
   registerUncommitTool(server, live);
   registerChatTools(server, live, deps.env ? { env: deps.env } : {});
+  registerChatInboxTool(server, live);
   registerTeamTool(server, live);
   // C4: the team brief, read-only — the facts for a team-chat message, never sent.
   registerTeamBriefTool(server, live);

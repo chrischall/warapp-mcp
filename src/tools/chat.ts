@@ -150,11 +150,31 @@ export async function chatSummary(
   }
 }
 
+/**
+ * Mark every message of `read` on `channels` as seen (from GameFeed, which names no channel, only
+ * `unknown` and the whole chat): the channels marked, or undefined when nothing could be written.
+ */
+export async function markChatSeen(
+  ctx: Pick<LiveContext, 'dataDir'>,
+  gameId: number,
+  me: ChatMe,
+  read: { source: ChatSource; lines: readonly ChatLine[] },
+  cursor: ChatCursor | undefined,
+  channels: ChatChannel[],
+): Promise<ChatChannel[] | undefined> {
+  if (!ctx.dataDir) return undefined;
+  const base = cursor ?? { gameId, playerId: me?.token ?? null, channels: {} };
+  const opts = { namesChannels: read.source === 'web' };
+  return (await writeChatCursor(ctx.dataDir, advanceCursor(base, cursorLines(read.lines, me), channels, opts)))
+    ? markedChannels(channels, opts)
+    : undefined;
+}
+
 const playerOf = (players: readonly Player[], byInGame: Map<number, Player>, id: number): Player | undefined =>
   byInGame.get(id) ?? players.find((p) => p.id === id);
 
 /** A line as the tool shows it: players by GameFeed id, names and the text delimited. */
-function shown(line: ChatLine, isNew: boolean, players: readonly Player[], byInGame: Map<number, Player>, me: ChatMe) {
+export function shown(line: ChatLine, isNew: boolean, players: readonly Player[], byInGame: Map<number, Player>, me: ChatMe) {
   let from: string | null = null;
   let fromId: number | null = null;
   if (line.sender !== null) {
@@ -241,15 +261,9 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
       const wanted = (l: ChatLine) => channel === undefined || channel === 'all' || l.channel === channel;
       const picked = read.lines.map((l, i) => [l, fresh[i]!] as const).filter(([l]) => wanted(l));
       const messages = picked.slice(-n).map(([l, isNew]) => shown(l, isNew, game.players, byInGame, me));
-      let marked: ChatChannel[] | undefined;
-      if (mark_seen && ctx.dataDir) {
-        const channels = channel === undefined || channel === 'all' ? [...CHAT_CHANNELS] : [channel];
-        const base = cursor ?? { gameId: game.id, playerId: me?.token ?? null, channels: {} };
-        // GameFeed names no channel: its mark records only `unknown` (and the whole chat).
-        const opts = { namesChannels: read.source === 'web' };
-        if (await writeChatCursor(ctx.dataDir, advanceCursor(base, cursorLines(read.lines, me), channels, opts)))
-          marked = markedChannels(channels, opts);
-      }
+      const marked = mark_seen
+        ? await markChatSeen(ctx, game.id, me, read, cursor, channel === undefined || channel === 'all' ? [...CHAT_CHANNELS] : [channel])
+        : undefined;
       // Unread messages the mark covered that `limit` kept out of `messages`.
       const markedUnshown = marked ? picked.slice(0, Math.max(0, picked.length - n)).filter(([, isNew]) => isNew).length : 0;
       return respond(undefined, ['compact'], () => ({
