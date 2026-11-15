@@ -167,6 +167,10 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
   const baseIncome = Math.max(0, Math.floor(s.baseIncome ?? DEFAULT_BASE_INCOME));
   const opts = input.options ?? {};
   const income = Math.max(0, Math.floor(input.income));
+  // #253: what I earn before the army cap's cut. The fog prior and the standing compare economies,
+  // and the cap is mine alone, so they read it; what I deploy (`income`) is what the cap leaves.
+  const capCut = input.incomeCap ? Math.max(0, Math.floor(input.incomeCap.uncapped - input.incomeCap.received)) : 0;
+  const earnedIncome = income + capCut;
   const ctx = input.game ?? {};
   /** My teammates (#128): players on my team, never a threat, a target or an estimate. */
   const allies = alliesOf(me, ctx.players);
@@ -178,7 +182,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     graph: g,
     board,
     me,
-    income: income - Math.max(0, Math.floor(input.cardArmies ?? 0)),
+    income: earnedIncome - Math.max(0, Math.floor(input.cardArmies ?? 0)),
     settings: s,
     ...(input.previousBoard ? { previousBoard: input.previousBoard } : {}),
     ...(input.previousOrders ? { previousOrders: input.previousOrders } : {}),
@@ -211,7 +215,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     ...(ctx.turn !== undefined ? { turn: ctx.turn } : {}),
     ...(ctx.picking !== undefined ? { picking: ctx.picking } : {}),
     ...(ctx.endRules ? { endRules: ctx.endRules } : {}),
-    income,
+    income: earnedIncome,
     // #164 x #167: an opponent's Reinforcement card is a one-off deploy, not income: the standing
     // and the FFA ranking read each estimate less its card. PLAN-TEAMS C3: teammates' estimates go
     // too, for the team standing (the profile keeps them off the opponents' side).
@@ -305,6 +309,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     baseIncome,
     opts,
     income,
+    earnedIncome,
+    ...(input.incomeCap ? { incomeCap: input.incomeCap } : {}),
     game: ctx,
     allies,
     foe,
@@ -665,7 +671,7 @@ export function planContext(input: PlanInput): PlanCtx {
  * every plan, in this order.
  */
 export function noteEstimates(ctx: PlanCtx, state: PlanState): void {
-  const { board, s, opts, income, estimateList, profile, auto, strike, goal, minimal, pressureFactor, decidedGame } = ctx;
+  const { board, s, opts, earnedIncome: income, estimateList, profile, auto, strike, goal, minimal, pressureFactor, decidedGame } = ctx;
   const { rates, minWin, exactCombat, bombOn, luck, weightedRounding, noSplit, armiesBehindVs } = ctx;
   const { warnings, rationale } = state;
   const profileText = `${profile.format}, ${profile.phase}, ${profile.standing}`;

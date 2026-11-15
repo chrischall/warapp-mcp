@@ -83,16 +83,34 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `incomeFor`, the planner's protected value of a border, the per-opponent enemy deploy
   base (from that opponent's visible territories, a lower bound), and the pick advisor's
   opening simulation (`src/analysis/picks.ts`).
-- **Not modelled** (the same bundle function has these terms): an army cap (`ArmyCap`, can cut
-  income), the Sanctions card (cuts a sanctioned player's income by its `Percentage`), income
+- **Not modelled** (the same bundle function has these terms): the Sanctions card (cuts a sanctioned
+  player's income by its `Percentage`; applied only when the decoder reads it on me, below), income
   from cities, and per-player income mods. Overridden bonus values are modelled since #62 (see
-  "Overridden bonus values" below).
-  `incomeUncertainties` names the army cap, `OverriddenBonuses` it could not read and an enabled Sanctions card
+  "Overridden bonus values" below), and the army cap since #253 (below).
+  `incomeUncertainties` names the army cap (with its arithmetic, as it rests on one live case), `OverriddenBonuses` it could not read and an enabled Sanctions card
   (`SanctionsCard` present in the settings) when a game's settings switch them on; then `warapp_plan_turn` warns and
   `warapp_submit_turn`'s deploy-total check becomes a preview warning instead of a refusal.
   Cities and per-player income mods are **not detected** (no known settings key says they
   pay income; the `Commerce` key is present, as `{}`, even in a plain lobby game), so a game
   using them still gets the hard refusal and the owner must fall back to the in-game number.
+- **Army cap (#253) — the formula verified once live, 2026-11-15.** With `ArmyCap` set (a number, the
+  string `"null"` when off; `normalizeSettings` → `settings.armyCap`), war.app pays
+  **received = min(income, round(ArmyCap × income) − my armies on the board at the start of the turn)**,
+  never below 0. Live, one data point exact to the army: ArmyCap 8, modelled income 52, 375 of my
+  armies on the board — a `SendOrders` deploying 52 drew error 11 and the same orders deploying 41
+  committed (8 × 52 = 416, 416 − 375 = 41). The rest is from the client bundle's income function
+  (read-only, not verified live): the cap applies after base, bonuses and cities and before Sanctions;
+  `round` is to the nearest with .5 down; the armies counted are the plain army counts of my
+  territories in the current standing (special units such as a commander are not counted); under
+  Local Deployment the cut comes out of the free armies and the bonus pools in a way not modelled
+  (`deployPools` takes the cut income, so its anywhere pool absorbs it first). **Reinforcement card
+  armies are outside the cap**: the bundle adds them after it, and the client's own guide says they
+  are not income and always pay in full (unverified live). `incomeDetail` (`src/analysis/plan/shared.ts`)
+  computes it, so `warapp_plan_turn` (which reports `incomeCapped`: `uncapped`, `cap`, `armies`, `limit`,
+  `received`, `cut`) and `warapp_submit_turn`'s deploy check use the cut figure; while it rests on one
+  data point the check stays a preview warning that states the arithmetic. My armies a territory of mine
+  does not show (never seen) leave the income uncut, with a warning. An opponent's cap is not modelled:
+  its fogged armies are unknown.
 - **Wastelands and Commerce (#167).** `Wastelands` is `{ NumberOfWastelands, WastelandSize }` (verified
   as zeros on a lobby game; `normalizeSettings` → `settings.wastelands`). With wastelands on, the planner
   costs a fogged missing bonus member with the expected surcharge of being one (the picking board, where

@@ -856,9 +856,12 @@
 //     that falls next turn), No-Split, no neighbour able to attack (each named as holding its
 //     border or already ordered), the holds (it would fit without what they took), or its size
 //     (its cost against the movable armies and deploys that can reach it); #235: when the leftover
-//     then stages on another source toward that step (rule 5), the warning names that source. Army cap (`armyCap`, × income): when my
-//     armies after deploy exceed cap × income, armies above it are wasted, so the same fallback
-//     fires in any phase, and the rationale says so. The cap's cut to income is not modelled.
+//     then stages on another source toward that step (rule 5), the warning names that source. Army cap (`armyCap`, × income): war.app
+//     pays min(income, round(cap × income) − my armies on the board) (#253, one live case), so the
+//     caller passes the cut income and `incomeCap`, its arithmetic. When the cap cuts this turn's
+//     income, armies left standing cost income next turn, so the same fallback fires in any phase,
+//     and the rationale says so; without `incomeCap` it fires when my armies after deploy exceed
+//     cap × income. The fog prior and the standing read my income before the cut (the cap is mine).
 //     Contact and late phases (#107): a plan with no capture at all falls back too — unless the
 //     caller chose `defend` (a `defend` that adapt picked, rule 0p.3 behind outside a 1v1, still
 //     falls back: its holds come first), or the 1v1 strike stack (rule 0p.3c) spends itself this

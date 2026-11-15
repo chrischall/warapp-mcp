@@ -95,6 +95,7 @@ interface PlanPayload {
   goalSource: 'profile' | 'explicit';
   profile: Record<string, unknown>;
   income: number;
+  incomeCapped?: Record<string, unknown>;
   enemyDeploy: number;
   deploys: Array<{ territory: Named; armies: number }>;
   moves: Array<{ from: Named; to: Named; armies: number; kind: string; reason?: string }>;
@@ -124,6 +125,33 @@ describe('warapp_plan_turn', () => {
     h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.warnings.join('\n')).toMatch(/income 5 may be off.*army cap/i);
+  });
+
+  it('the army cap (#253): plans on what the cap leaves and reports the arithmetic', async () => {
+    // 9 armies of mine on the board, income 5, cap 2×: round(2 × 5) − 9 = 1.
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 2 };
+    h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(1);
+    expect(p.incomeCapped).toEqual({ uncapped: 5, cap: 2, armies: 9, limit: 10, received: 1, cut: true });
+    expect(p.deploys.reduce((n, d) => n + d.armies, 0)).toBe(1);
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/2 × 5 = 10, less your 9 armies on the board, is 1: income 1, not 5/);
+    expect(w).toMatch(/one live case/);
+    expect(w).not.toMatch(/army cap[^\n]*does not apply it/);
+  });
+
+  it('the army cap (#253): below the cap the income is unchanged, and no cap means no incomeCapped', async () => {
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 3 };
+    h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(5);
+    expect(p.incomeCapped).toEqual({ uncapped: 5, cap: 3, armies: 9, limit: 15, received: 5, cut: false });
+    await h.harness.close();
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const q = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(q.income).toBe(5);
+    expect(q.incomeCapped).toBeUndefined();
   });
 
   it('a speed first turn with no board yet says to call warapp_begin_turn, then plan and submit at once', async () => {
@@ -1369,6 +1397,23 @@ describe('warapp_submit_turn', () => {
     const text = JSON.stringify(preview);
     expect(text).toMatch(/deploy 4 armies.*modelled income is 5/);
     expect(text).toMatch(/army cap/i);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('the army cap (#253): the deploy check counts what the cap leaves', async () => {
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 2 };
+    // 9 armies on the board, income 5, cap 2×: 1 is received.
+    let s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: s.warapp });
+    const exact = JSON.stringify(payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 1 }] })));
+    expect(exact).not.toMatch(/These orders deploy/);
+    expect(exact).toMatch(/"income":1\b/);
+    await h.harness.close();
+    s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: s.warapp });
+    const full = JSON.stringify(payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] })));
+    expect(full).toMatch(/deploy 5 armies.*modelled income is 1/);
+    expect(full).toMatch(/2 × 5 = 10, less your 9 armies on the board, is 1/);
     expect(s.sent).toEqual([]);
   });
 

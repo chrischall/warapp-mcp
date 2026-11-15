@@ -260,12 +260,30 @@ describe('never stand still in the opening (#104)', () => {
     expect(p.warnings.join('\n')).not.toMatch(/standing still/i);
   });
 
-  it('the army cap warning names only what is still not modelled', () => {
+  it('(d, #253) with the cap\'s cut known, the fallback says the income was cut and why spending is free', () => {
+    const b = board(
+      opening(11, [player(22, 1, P2)]).territories.map((t) => (t.territoryId === 2 ? mine(2, 6) : t)),
+    );
+    // 17 armies on the board, income 5, cap 4×: round(4 × 5) − 17 = 3 received.
+    const incomeCap = { uncapped: 5, cap: 4, armies: 17, limit: 20, received: 3, cut: true };
+    const p = planTurn({ graph: g, board: b, me: ME, income: 3, settings: { ...STD, armyCap: 4 }, game: { ...FFA, turn: 9 }, incomeCap });
+    expect(attacks(p).length).toBeGreaterThan(0);
+    const text = p.rationale.join('\n');
+    expect(text).toMatch(/my 17 armies on the board reach the army cap of 20 \(4× income 5\): income is cut to 3, so armies left standing cost income next turn and spending them is free/);
+    expect(text).not.toMatch(/after deploy exceed/);
+    expect(valid(p, b, 3)).toEqual([]);
+    // Not cut: no cap reason (the contact or expansion fallback may still run on its own).
+    const free = { uncapped: 5, cap: 8, armies: 17, limit: 40, received: 5, cut: false };
+    const q = planTurn({ graph: g, board: b, me: ME, income: 5, settings: { ...STD, armyCap: 8 }, game: { ...FFA, turn: 9 }, incomeCap: free });
+    expect(q.rationale.join('\n')).not.toMatch(/army cap/);
+  });
+
+  it('the army cap warning states the formula and its one live case (#253)', () => {
     const s = { armyCap: 8, cards: [] } as unknown as GameSettings;
     const w = incomeUncertainties(s).join('\n');
     expect(w).toMatch(/army cap \(8× income\)/);
-    expect(w).toMatch(/income model does not apply it/);
-    expect(w).not.toMatch(/the model does not apply it/);
+    expect(w).toMatch(/one live case/);
+    expect(w).not.toMatch(/does not apply it/);
   });
 });
 

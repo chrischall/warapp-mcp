@@ -12,6 +12,7 @@ import type { MapGraph } from '../graph.js';
 import type { Refusal } from './captures.js';
 import type { Truce, TrucePass } from './relations.js';
 import type { GameProfile } from '../profile.js';
+import type { ArmyCapIncome } from '../player.js';
 import type {
   CardAdvice,
   EnemyDeployEstimate,
@@ -33,6 +34,10 @@ export interface OpponentsCtx {
   baseIncome: number;
   opts: PlanOptions;
   income: number;
+  /** #253: `income` before the army cap's cut (equal to it with no cut): the prior and the standing read it. */
+  earnedIncome: number;
+  /** #253: the army cap's arithmetic this turn, when the caller computed it. */
+  incomeCap?: ArmyCapIncome;
   /** The game context (`input.game`); planPass calls it `ctx`. */
   game: PlanGameContext;
   /** My teammates (#128): players on my team, never a threat, a target or an estimate. */

@@ -461,8 +461,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   with three, or early with four (offered at the 60/70 breakpoints with exact results).
   **Advice only**, derived. Source: Combat basics.
 - `settings-army-cap` — at most income × cap armies; at the cap nothing arrives, a Reinforcement
-  card still pays; spend rather than bank. **Advice only** (the income model does not compute the
-  cap; `warapp_submit_turn` only warns), derived. Source: Army cap.
+  card still pays; spend rather than bank. **Advice only**, derived (the income model computes the
+  cap's cut since #253, from one live case, so `warapp_submit_turn` still only warns on a mismatch).
+  Source: Army cap.
 - `settings-multi-attack` — armies chain captures, so a threat is any stack that can reach, not
   only an adjacent one. **Encoded** in part: the planner counts each visible stack's chain through
   territories not mine onto a territory of mine (#199, `chains.ts`); its own attacks never chain.

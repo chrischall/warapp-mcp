@@ -418,7 +418,10 @@ export function neverStandStill(
     const enemyFallback = contact && opts.goal !== 'expand';
     const cap = s.armyCap ?? null;
     const total = mine.reduce((n, id) => n + armiesOf(id), 0) + income;
-    const capped = cap !== null && cap > 0 && income > 0 && total > cap * income;
+    // #253: with the cap's arithmetic known, the fallback fires when the cap cuts this turn's income
+    // (armies left standing then cost income next turn); without it, the old test.
+    const capCut = pc.incomeCap;
+    const capped = capCut ? capCut.cut : cap !== null && cap > 0 && income > 0 && total > cap * income;
     if (early || capped || contact) {
       /** Ascending, safe for Infinity (a bonus that cannot be costed): Infinity − Infinity is NaN. */
       const asc = (a: number, b: number) => (a === b ? 0 : a < b ? -1 : 1);
@@ -492,7 +495,9 @@ export function neverStandStill(
             : []),
         ...(capped
           ? [
-              `my ${total} armies after deploy exceed the army cap of ${cap * income} (${cap}× income ${income}): armies above it are wasted, so spending them is free`,
+              capCut
+                ? `my ${capCut.armies} armies on the board reach the army cap of ${capCut.limit} (${capCut.cap}× income ${capCut.uncapped}): income is cut to ${capCut.received}, so armies left standing cost income next turn and spending them is free`
+                : `my ${total} armies after deploy exceed the army cap of ${cap! * income} (${cap}× income ${income}): armies above it are wasted, so spending them is free`,
             ]
           : []),
       ].join('; ');
