@@ -644,6 +644,35 @@ shows it with a note. No 1v1 or FFA plan changes; the golden corpus's team board
 was being advanced (moves become plain expansion or are dropped) and every team plan with a shared bonus gains
 the `team` field.
 
+*As built (C3.4–C3.7):* every item reads my teammates' entered orders (`board.teammateOrders`, V5 — UNVERIFIED
+live) and does nothing without them, so 1v1 and FFA plans and the whole golden corpus (no input carries teammate
+orders) are byte-identical. **Focus (C3.4):** `teamFocusOf` (`src/analysis/plan/team.ts`, `PlanCtx.teamFocus`)
+maps each opponent a teammate attacks (a move that is not transfer-only into a territory the board shows a foe
+holding) to the teammates attacking it. It is a tie-break, never a score: in the balanced greedy right after
+the score (breaks and counter-attacks carry their target's owner), in rule 4e's contact ranking before its
+last keys (the neutral rank and id); a "Team focus (PLAN-TEAMS C3.4)" rationale line, or rule 4e's "otherwise
+equal" line, names who attacks whom. Bonus plans (completions, advances) carry no owner and are never focused.
+**Support (C3.5):** `team.support[]` — per teammate border the planner's own threat model (`threatAt`, my
+captures gone) takes, given what they entered (armies + their deploys there − their orders out, a percentage
+order as its share; armies moved in left out, as for my own borders), where my idle armies beside it make it
+hold: idle is `avail` after every order less `keepFor` / the two-step keep / cover and central keeps, on a
+territory not locked, conceded or my commander's (No-Split: none from a territory with an order, and a whole
+stack). **Joint captures (C3.6):** `team.jointCaptures[]` — a foe's territory a teammate attacks, resolved on
+`simulateTurn` with only their entered attacks (and deploys) and mine (the plan's own attacks on it, `inPlan`,
+else my idle armies beside it, attack-only): skipped when either side takes it alone; reported when some
+order of the two takes it, with `cases` (each side first: captured, by whom, and whether it still falls when
+the owner first lands its whole deploy estimate there) and `exact`. Under a cyclic `game.moveOrder`
+(`PlanGameContext.moveOrder`, set by `warapp_plan_turn` in team games only) `mustGoFirst` names whose attack
+must run first (`null`/'either' when both orders work); otherwise both cases only. Every other order of the
+turn is left out, which the note says. Support and joint captures share the same idle armies (alternatives)
+and are advisory: neither is ever in `orders` until V7 is verified. **Cards (C3.7):** `src/team-cards.ts`:
+`teamCardClaims` reads my teammates' entered card plays and discards; `teamHandLeft` takes from the team hand
+the card each names (else, for a play naming only its type, the first card of that type), and the plan's card
+choice (`chooseCardPlays`, Order Priority, the card advice) works on the rest, so the team never plays one
+card twice and a teammate's discard counts toward the limit (V8: how the team hand is keyed is unverified).
+`warapp_plan_turn` warns per claimed card and reports `cards.team.roles` in a team game with a hand: who plays
+each card (a teammate for what they entered, me for my plays and discards, nobody for a card held).
+
 ### C4. The team brief and joining
 
 - Read-only `warapp_team_brief`: the content of a team-chat message as data, by stage. Before picks:

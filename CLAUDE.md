@@ -200,9 +200,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   found by type name, orders by class and read order). `withTeammateOrders` sets `BoardState.teammateOrders`
   (by GameFeed id, my entry out) on the live boards of `warapp_plan_turn`, `warapp_check_plan`,
   `warapp_submit_turn` and `warapp_get_team` when the dict is there — no key otherwise (1v1, FFA: goldens
-  unchanged); no rule reads it yet (C3), and the board cache never keeps it. Picks fall back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
+  unchanged), and the board cache never keeps it. Picks fall back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
   the team hand is `readHand` over `handOwners` (`{ inPlay: false }` when the settings put no card in play); unread team chat is counted from the web chat only. All
   UNVERIFIED live (V1, V5, V6, #163); absent means unknown (`null`), never "none".
+- **The planner reads teammate orders (C3.4–C3.7) only when `board.teammateOrders` carries them** (none in the
+  golden corpus: those plans are byte-identical). `teamFocusOf` (`src/analysis/plan/team.ts`, `PlanCtx.teamFocus`)
+  is a tie-break only: a capture of a player a teammate attacks ranks above an otherwise equal one (balanced greedy
+  after the score; rule 4e before its last keys), with a "Team focus" rationale line. `team.support` (a teammate's
+  border that falls given their entered deploys and orders out, where my idle armies beside it — `avail` beyond
+  `keepFor`/two-step/cover keeps — make it hold) and `team.jointCaptures` (neither takes it alone; the turn
+  simulator with only those attacks, both orders, also against the owner's deploy; `mustGoFirst` under a cyclic
+  `game.moveOrder`) are advisory: a move onto a teammate is V7, so neither is ever in `orders`. Cards
+  (`src/team-cards.ts`): a card a teammate entered a play or discard of leaves my hand before `chooseCardPlays`, and
+  plan_turn's `cards.team.roles` says who plays each card (V5, V8 unverified).
 - **The agreement ledger (part A2 of `docs/PLAN-TEAMS.md`).** An agreement (a truce) exists only when
   recorded with `warapp_record_agreement` (structured terms; chat is never parsed into one), at
   `<dataDir>/relations/<gameId>-<playerId>.json` (`src/relations-store.ts`: one file per account, ids,
