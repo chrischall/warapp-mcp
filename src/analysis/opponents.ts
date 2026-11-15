@@ -63,7 +63,8 @@
 // usually the first true reading after turns it deployed out of sight — and a warning says, in
 // numbers, whether the boards back it: its armies in view after the jump plus its losses seen
 // against its armies in view before plus what it was seen to earn since. More, even leaving out the
-// armies that only came into view, is armies it could not have banked; otherwise the warning hedges
+// armies that only came into view (the jump turn's own #123 ambiguous armies among them: read as
+// deploy, they may be a stack out of the fog), is armies it could not have banked; otherwise the warning hedges
 // (old armies revealed, or armies it banked out of view). Given its starting armies, the whole game
 // is weighed at the most it was seen to earn on any observed turn before the jump. The armies on
 // territory it took from me on the jump turn are named. The figure never changes for it.
@@ -968,10 +969,21 @@ export interface IncomeJump {
    * it holds after the jump that a board from `since` up to the jump did not show (owner and armies;
    * a territory shown on all of them under another owner — a capture from a neutral or player in
    * view — is in the readings, not a reveal), less what it had in view there on the board of `since`
-   * (those are in `armiesBefore` already), plus those read as arriving out of the fog (`fogArmies`).
-   * An upper bound (the two may overlap): it only ever weakens the case for the jump.
+   * (those are in `armiesBefore` already), plus those read as arriving out of the fog (`fogArmies`),
+   * plus the jump turn's {@link IncomeJump.ambiguous} armies. An upper bound (they may overlap): it
+   * only ever weakens the case for the jump.
    */
   cameIntoView: number;
+  /**
+   * The jump turn's ambiguous armies read as deploy (#123: growth beside the fog, a capture's surplus
+   * over what a visible stack sent): its reading less its low one. They may be a stack walking out of
+   * the fog, so they count as come into view (`cameIntoView`); the turn reads `low` to `high`.
+   * A capture from me priced at the guard is not among them (it only raises `high`).
+   */
+  ambiguous: number;
+  /** The jump turn's low and high readings (#123). */
+  low: number;
+  high: number;
   /**
    * The territories it took from me on the jump turn (in view on both boards), and its armies on
    * them after it: the part of the jump that went into capturing my territory. `guardPriced` when
@@ -1058,7 +1070,10 @@ export function incomeJump(
   const span = [...prev, x];
   const earnedSince = prev.reduce((s, p) => s + p.earned, 0) + x.visibleIncome;
   const lossesSeen = span.reduce((s, p) => s + p.losses + p.combat, 0);
-  let cameIntoView = span.reduce((s, p) => s + p.fogArmies, 0);
+  // The jump turn's ambiguous armies (#123) read as deploy may be a stack out of the fog: counting
+  // them as income would make the case for the jump with the very armies it is about.
+  const ambiguous = Math.max(0, x.observed - x.low);
+  let cameIntoView = span.reduce((s, p) => s + p.fogArmies, 0) + ambiguous;
   // A territory it holds after the jump that some board from `since` up to the jump did not show
   // (owner and armies): its armies may be old ones revealed. One shown on every one of them is no
   // reveal, whoever held it: a capture there (from a neutral or a player in view) is in the readings.
@@ -1110,6 +1125,9 @@ export function incomeJump(
     armiesNow: now.total,
     lossesSeen,
     cameIntoView,
+    ambiguous,
+    low: x.low,
+    high: x.high,
     ...(fromMe ? { fromMe } : {}),
     ...(stock ? { stock } : {}),
     verdict,
@@ -1131,22 +1149,26 @@ export function incomeJumpText(j: IncomeJump, income: number, earlier: readonly 
   const head = `tracked income ~${income}/turn rests on one turn: turn ${j.turn} +${j.observed}, more than ${INCOME_JUMP_FACTOR}× the most it was seen to earn on the turns before it (${j.before}). Its armies in view on turn ${j.turn + 1} (${j.armiesNow}${fromMe}) plus what it was seen to lose since turn ${j.since} (${j.lossesSeen}) come to ${seen}, against what it had in view on turn ${j.since} (${j.armiesBefore}) plus what it was seen to earn since (${j.earnedSince}: ${readings}, and its visible income ${onJump} on turn ${j.turn}) = ${banked}`;
   const believed =
     'so the high turn is believed: most likely the first true reading after turns it deployed out of sight. Do not lower it without new evidence.';
+  // #123: armies the jump turn read as deploy that may be a stack out of the fog.
+  const amb = j.ambiguous
+    ? ` Turn ${j.turn} reads +${j.low} to +${j.high}: ${j.ambiguous} of its armies (growth beside the fog, or a capture's surplus) were read as deploy and may be a stack walking out of the fog, so they count as come into view.`
+    : '';
   if (j.verdict === 'supported' && seen - j.cameIntoView > banked)
     return `${head}: more by ${seen - banked}${
       j.cameIntoView ? `, ${seen - j.cameIntoView - banked} even leaving out the ${j.cameIntoView} armies that only came into view` : ''
-    } — armies it could not have banked, ${believed}`;
+    } — armies it could not have banked, ${believed}${amb}`;
   if (j.verdict === 'supported' && j.stock) {
     const k = j.stock;
     const had = j.armiesNow + k.lossesAll;
-    return `${head}${seen > banked ? `, more only counting the ${j.cameIntoView} armies that came into view since` : ''}. But at the most it was seen to earn on any turn before it (${k.rate} a turn) from turn 1 through turn ${j.turn}, it would have received at most ${k.received} (starting armies ${k.start} + ${k.rate} × ${k.turns} turns), and it shows ${j.armiesNow} in view after it and has been seen to lose ${k.lossesAll}: ${had}, more by ${had - k.received} — armies it could not have had at that rate wherever they stood (Reinforcement cards aside), so this turn or its income before it was higher than read; ${believed}`;
+    return `${head}${seen > banked ? `, more only counting the ${j.cameIntoView} armies that came into view since` : ''}. But at the most it was seen to earn on any turn before it (${k.rate} a turn) from turn 1 through turn ${j.turn}, it would have received at most ${k.received} (starting armies ${k.start} + ${k.rate} × ${k.turns} turns), and it shows ${j.armiesNow} in view after it and has been seen to lose ${k.lossesAll}: ${had}, more by ${had - k.received} — armies it could not have had at that rate wherever they stood (Reinforcement cards aside), so this turn or its income before it was higher than read (each earlier reading is a lower bound too, so this does not prove the high turn itself). The figure is kept: it may be the first true reading after turns it deployed out of sight.${amb}`;
   }
   // Neither test proved it: what the whole game allows at the earlier rate, when known.
   const whole = j.stock
     ? ` At the most it was seen to earn on any turn before it (${j.stock.rate} a turn) it could have received up to ${j.stock.received} by turn ${j.turn} (starting armies ${j.stock.start} + ${j.stock.rate} × ${j.stock.turns} turns), enough for the ${j.armiesNow + j.stock.lossesAll} it shows in view and has been seen to lose.`
     : '';
   if (j.verdict === 'reveal')
-    return `${head}: more only counting the ${j.cameIntoView} armies that came into view since (territories out of view on a board from turn ${j.since} to turn ${j.turn}, or read as arriving out of the fog): those could be old armies revealed, so the high turn is not confirmed.${whole} The figure is kept (each observed deploy is a lower bound).`;
-  return `${head}: no more, so the high turn could be armies it had banked out of view coming into view, not income.${whole} The figure is kept (each observed deploy is a lower bound), but it is not confirmed.`;
+    return `${head}: more only counting the ${j.cameIntoView} armies that came into view since (territories out of view on a board from turn ${j.since} to turn ${j.turn}, or read as arriving out of the fog): those could be old armies revealed, so the high turn is not confirmed.${amb}${whole} The figure is kept (each observed deploy is a lower bound).`;
+  return `${head}: no more, so the high turn could be armies it had banked out of view coming into view, not income.${amb}${whole} The figure is kept (each observed deploy is a lower bound), but it is not confirmed.`;
 }
 
 /**

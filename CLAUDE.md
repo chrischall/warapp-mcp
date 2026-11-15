@@ -576,10 +576,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   view before plus what it was seen to earn since, leaving out the armies that only came into view
   (on territories some board from the first of those turns to the jump did not show, or read as out
   of the fog — a capture from a neutral or player in view on every board is no reveal; what it had
-  in view there on the first board is not counted twice);
+  in view there on the first board is not counted twice; the jump turn's own #123 ambiguous armies —
+  its reading less its low one, growth beside the fog or a capture's surplus read as deploy — count as
+  come into view too, and the warning says the turn reads +low to +high);
   and, with its starting armies known, the whole game at the earlier rate (start + rate × turns, the
   rate the most it was seen to earn on ANY observed turn before the jump, not only the two just before),
-  which no reveal of old armies can explain. Either beaten → believed; else it hedges (old armies
+  which no reveal of old armies can explain (the earlier readings are lower bounds too, so this one
+  says some turn was higher than read, not the jump turn itself). Either beaten → believed; else it hedges (old armies
   revealed, or armies banked out of view). The armies standing on territory it took from me on the
   jump turn are named (`fromMe`, with the low–high reading when the capture is priced at the guard).
   The figure never changes for it.

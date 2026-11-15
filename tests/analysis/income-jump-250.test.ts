@@ -173,6 +173,9 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     expect(line).toMatch(/at most 78 \(starting armies 6 \+ 8 × 9 turns\)/);
     expect(line).toMatch(/151, more by 73/);
     expect(line).toMatch(/could not have had at that rate/);
+    // The earlier readings are lower bounds too: this proves some turn was higher, not the jump turn.
+    expect(line).toMatch(/does not prove the high turn itself/);
+    expect(line).not.toMatch(/Do not lower it/);
     // Started with 20 × 5 = 100: 100 + 72 = 172 covers the 151, so the reveal hedge stands.
     const [big] = trackOpponents(g, boards, ME, STD, { players, start: { territories: 20, armiesPerTerritory: 5 } });
     expect(big!.income).toBe(66);
@@ -214,6 +217,35 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     expect(line).toMatch(/could be armies it had banked/);
     expect(line).toMatch(/\(30 a turn\) it could have received up to 216/);
     expect(line).not.toMatch(/could not have had/);
+  });
+
+  it('growth beside the fog read as deploy on the jump turn may be a stack walking out of it: hedged, never believed on it alone', () => {
+    // +30 on turn 4 carries a bound of 60, so on turn 7 the 40 that appear on T5 (beside the fogged
+    // T6) read as deploy: +45, low +5. All 40 could be a stack out of the fog: 112 in view, less
+    // those 40, is no more than the 54 it had on turn 5 plus the 18 it was seen to earn since.
+    const evidence = (t5: number) =>
+      trackOpponents(
+        g,
+        history([4, at(20)], [5, at(50)], [6, at(58)], [7, at(63)], [8, at(68, enemy(4, 2), enemy(5, t5))]),
+        ME,
+        STD,
+      )[0]!;
+    for (const [t5, observed] of [
+      [42, 45],
+      [57, 60],
+    ] as const) {
+      const t = evidence(t5);
+      expect(t.turns.map((x) => x.observed)).toEqual([30, 8, 5, observed]);
+      expect(t.turns.at(-1)).toMatchObject({ low: 5, high: observed });
+      expect(t.income).toBe(observed);
+      expect(t.incomeJump).toMatchObject({ turn: 7, ambiguous: t5 - 2, low: 5, high: observed });
+      expect(t.incomeJump!.verdict).not.toBe('supported');
+      expect(t.incomeJump!.cameIntoView).toBeGreaterThanOrEqual(t5 - 2);
+      const line = t.warnings.find((w) => /one turn/.test(w))!;
+      expect(line).toMatch(new RegExp(`turn 7 reads \\+5 to \\+${observed}`, 'i'));
+      expect(line).not.toMatch(/could not have banked/);
+      expect(line).not.toMatch(/Do not lower it/);
+    }
   });
 
   it('a stack in view on the first board of the evidence, out of view between and back after, counts only what it gained as come into view', () => {
