@@ -89,6 +89,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `src/analysis/lookahead.ts` (`twoStepReaches`), one computation shared with the planner's two-step
   hold (#172, applied wherever armies leave a guarded territory: attacks and their softeners,
   transfers, staging, top-ups): change it there, and `exposedNextTurn` and the planner move together.
+- **Commander safety (#274, `src/analysis/commander-safety.ts`, pure).** One question of the stress test: of
+  the single-deploy replies that strike my commander's territory after my orders (`stressPlan`'s `targets`,
+  no look-ahead), which kill it, and the armies it needs there to survive them all (`needs`, searched by adding
+  armies on its starting territory); plus the smallest deploy, the same for every opponent, that kills it
+  (`killedBy`) and the moves to the nearest enemy or fog. `warapp_submit_turn` refuses, in a Commanders game,
+  orders that leave it takeable with replies sized at max(each opponent's estimate, my income) — estimates from
+  `src/tools/stress-opponents.ts` (shared with `warapp_check_plan`), the cached boards only, never a GameFeed
+  request — unless `accept_commander_risk: true`, which the preview warns of first and the result records
+  (`commanderRiskAccepted`); never refused without commanders or with the commander safe. `warapp_check_plan`
+  reports `commander` and leads its summary with it when `atRisk.commander > 0`; `warapp_plan_turn` carries a
+  `commander` block every turn (and a first warning when the plan's orders would be refused). The planner itself
+  is unchanged: it never moves the commander yet (#274 items 2–3).
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
   researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or
