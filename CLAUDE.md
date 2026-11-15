@@ -411,6 +411,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   so an Order Delay play delays nothing and the submit preview warns so. Order Delay may be
   combined with other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
+  **The targeted cards (PLAN-TEAMS part D, UNVERIFIED live, V9):** Spy, Reconnaissance, Surveillance
+  (phase 15), Airlift (43), Gift (47), Diplomacy (75), Sanctions (80), tags and fields from each
+  `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). `warapp_submit_turn` takes their targets
+  (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
+  never gifted or airlifted to a teammate; no Spy on me or a teammate; no Diplomacy between teammates)
+  plus Sanctions on my own side (an opponent instead when the percentage is negative); what an Airlift
+  sends leaves its source's later moves (armies it lands cannot move that turn). The preview warns the encoding is unverified and the result
+  carries `cardPlayCheck`. The planner never plays them.
 - **Turn notifications are a socket.io v0.9 client with two transports.** While the active
   transport is the direct leg, a **WebSocket** (`src/push/websocket.ts`): handshake GET with the
   `AuthToken` cookie (host-locked to war.app), then `wss://war.app/socket.io/1/websocket/<sid>`

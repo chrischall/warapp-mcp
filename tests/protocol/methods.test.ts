@@ -680,3 +680,136 @@ describe('DeclineGame (method 64): leaving a lobby (#217)', () => {
     expect(read(() => {})).toBeUndefined();
   });
 });
+
+// Part D (PLAN-TEAMS): the targeted card plays. Each layout is read from the client bundle's
+// writer for its `GameOrderPlayCard<X>` class (the tag, the card's own fields in write order, the
+// card GUID, the order base) and its phase from the class's TurnPhase; UNVERIFIED live (V9).
+describe('targeted card play orders (bundle writers, UNVERIFIED live)', () => {
+  const card = '00112233445566778899aabbccddeeff';
+  const guid = '33221100554477668899AABBCCDDEEFF';
+  const base = '09030000' + '00' + '00';
+
+  it('Spy (6) writes the target player', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Spy', cardId: card, playerId: 777, player: 1234 }))).toBe(
+      '06' + 'D2040000' + guid + base,
+    );
+  });
+
+  it('Reconnaissance (16) writes the target territory', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Reconnaissance', cardId: card, playerId: 777, target: 42 }))).toBe(
+      '10' + '2A000000' + guid + base,
+    );
+  });
+
+  it('Surveillance (17) writes the target bonus', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Surveillance', cardId: card, playerId: 777, bonus: 7 }))).toBe(
+      '11' + '07000000' + guid + base,
+    );
+  });
+
+  it('Gift (13) writes the recipient, then the territory', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Gift', cardId: card, playerId: 777, player: 1234, target: 42 }))).toBe(
+      '0D' + 'D2040000' + '2A000000' + guid + base,
+    );
+  });
+
+  it('Diplomacy (14) writes the two players', () => {
+    expect(
+      hex((w) => writeCardPlayOrder(w, { card: 'Diplomacy', cardId: card, playerId: 777, players: [777, 1234] })),
+    ).toBe('0E' + '09030000' + 'D2040000' + guid + base);
+  });
+
+  it('Sanctions (15) writes the sanctioned player', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Sanctions', cardId: card, playerId: 777, player: 1234 }))).toBe(
+      '0F' + 'D2040000' + guid + base,
+    );
+  });
+
+  it('Airlift (12) writes a present Armies (not fogged, the count, no special units), from, a legacy 0 count, to', () => {
+    expect(
+      hex((w) => writeCardPlayOrder(w, { card: 'Airlift', cardId: card, playerId: 777, from: 6, to: 4, armies: 9 })),
+    ).toBe('0C' + '01' + '00' + '09000000' + '00' + '06000000' + '00000000' + '04000000' + guid + base);
+  });
+
+  it('Airlift carries a commander as one special unit in its Armies, as an AttackTransfer does', () => {
+    const unit = 'ffeeddccbbaa99887766554433221100';
+    expect(
+      hex((w) =>
+        writeCardPlayOrder(w, {
+          card: 'Airlift',
+          cardId: card,
+          playerId: 777,
+          from: 6,
+          to: 4,
+          armies: 0,
+          commander: { id: unit, owner: 777 },
+        }),
+      ),
+    ).toBe(
+      '0C' + '01' + '00' + '00000000' + '01' + '01' + 'CCDDEEFFAABB88997766554433221100' + '09030000' +
+        '06000000' + '00000000' + '04000000' + guid + base,
+    );
+  });
+
+  it('refuses a play missing its fields', () => {
+    const play = (o: Partial<Parameters<typeof writeCardPlayOrder>[1]> & { card: Parameters<typeof writeCardPlayOrder>[1]['card'] }) =>
+      hex((w) => writeCardPlayOrder(w, { cardId: card, playerId: 777, ...o }));
+    expect(() => play({ card: 'Spy' })).toThrow(/Spy.*player/);
+    expect(() => play({ card: 'Sanctions' })).toThrow(/Sanctions.*player/);
+    expect(() => play({ card: 'Gift', target: 42 })).toThrow(/Gift.*player/);
+    expect(() => play({ card: 'Gift', player: 1234 })).toThrow(/Gift.*territory/);
+    expect(() => play({ card: 'Reconnaissance' })).toThrow(/Reconnaissance.*territory/);
+    expect(() => play({ card: 'Surveillance' })).toThrow(/Surveillance.*bonus/);
+    expect(() => play({ card: 'Diplomacy' })).toThrow(/Diplomacy.*two players/);
+    expect(() => play({ card: 'Airlift', from: 6, to: 4 })).toThrow(/Airlift.*from, to and armies/);
+  });
+
+  it('run in the bundle phases: Spy-type 15, Airlift 43, Gift 47, Diplomacy 75, Sanctions 80', () => {
+    const phase = (c: Parameters<typeof writeCardPlayOrder>[1]['card']) => turnPhaseOf({ kind: 'card', card: c, cardId: card });
+    expect([phase('Spy'), phase('Reconnaissance'), phase('Surveillance')]).toEqual([15, 15, 15]);
+    expect(phase('Airlift')).toBe(43);
+    expect(phase('Gift')).toBe(47);
+    expect(phase('Diplomacy')).toBe(75);
+    expect(phase('Sanctions')).toBe(80);
+  });
+
+  it('writeSendOrdersParams orders them by phase among the other orders', () => {
+    const c = (n: number) => `${n.toString(16).padStart(2, '0')}112233445566778899aabbccddeeff`;
+    // A GUID's first four bytes are written reversed (.NET order), so the varying first byte lands fourth.
+    const g = (n: number) => `332211${n.toString(16).padStart(2, '0').toUpperCase()}554477668899AABBCCDDEEFF`;
+    const deploy = '0209000000000500000009030000' + '0000';
+    const move = '010003000600000000010000000004000000090300000000';
+    const sanctions = '0F' + 'D2040000' + g(1) + base;
+    const diplomacy = '0E' + '09030000' + 'D2040000' + g(2) + base;
+    const blockade = '12' + '9F000000' + g(3) + base;
+    const gift = '0D' + 'D2040000' + '2A000000' + g(4) + base;
+    const airlift = '0C' + '01' + '00' + '09000000' + '00' + '06000000' + '00000000' + '04000000' + g(5) + base;
+    const spy = '06' + 'D2040000' + g(6) + base;
+    const reinforcement = '05' + g(7) + base;
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'card', card: 'Sanctions', cardId: c(1), player: 1234 },
+            { kind: 'card', card: 'Diplomacy', cardId: c(2), players: [777, 1234] },
+            { kind: 'card', card: 'Blockade', cardId: c(3), target: 159 },
+            { kind: 'card', card: 'Gift', cardId: c(4), player: 1234, target: 42 },
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+            { kind: 'card', card: 'Airlift', cardId: c(5), from: 6, to: 4, armies: 9 },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+            { kind: 'card', card: 'Spy', cardId: c(6), player: 1234 },
+            { kind: 'card', card: 'Reinforcement', cardId: c(7) },
+          ],
+          2,
+        ),
+      ),
+    ).toBe(
+      '39300000' + '01' + '09000000' +
+        [spy, reinforcement, deploy, airlift, gift, move, blockade, diplomacy, sanctions].map((o) => '01' + o).join('') +
+        '02000000' + '0000',
+    );
+  });
+});

@@ -386,31 +386,113 @@ export function writeAttackTransferOrder(w: Writer, o: AttackTransferOrder): voi
 
 /**
  * The card plays this server can encode, by order tag. VERIFIED 2026-11-12
- * (docs/PLAN-CARDS-PUSH.md): Reinforcement (5) live, golden-pinned; the others
- * follow the same layout with the fields read from the client.
+ * (docs/PLAN-CARDS-PUSH.md): Reinforcement (5) live, golden-pinned; Order Priority, Order Delay
+ * and Blockade follow the same layout with the fields read from the client. The targeted cards
+ * (Spy 6, Airlift 12, Gift 13, Diplomacy 14, Sanctions 15, Reconnaissance 16, Surveillance 17;
+ * PLAN-TEAMS part D) are read from the bundle's `GameOrderPlayCard<X>` writers and golden-pinned,
+ * but UNVERIFIED live (V9): no commit carrying one has been sent.
  */
-const CardPlayTag = { Reinforcement: 5, OrderPriority: 10, OrderDelay: 11, Blockade: 18 } as const;
+const CardPlayTag = {
+  Reinforcement: 5,
+  Spy: 6,
+  OrderPriority: 10,
+  OrderDelay: 11,
+  Airlift: 12,
+  Gift: 13,
+  Diplomacy: 14,
+  Sanctions: 15,
+  Reconnaissance: 16,
+  Surveillance: 17,
+  Blockade: 18,
+} as const;
 export type CardPlayKind = keyof typeof CardPlayTag;
 
-interface CardPlayOrder {
+/** The card plays whose encoding is read from the bundle but not yet sent live (V9). */
+export const UNVERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set([
+  'Spy',
+  'Airlift',
+  'Gift',
+  'Diplomacy',
+  'Sanctions',
+  'Reconnaissance',
+  'Surveillance',
+]);
+
+/** A card play's own fields (what each card needs is checked by {@link writeCardPlayOrder}). */
+export interface CardPlayFields {
+  /** Blockade, Reconnaissance and Gift: the territory. */
+  target?: number;
+  /** Spy, Sanctions: the target player; Gift: the recipient (in-game ids). */
+  player?: number;
+  /** Diplomacy: the two players who may not attack each other (in-game ids). */
+  players?: readonly [number, number];
+  /** Surveillance: the bonus. */
+  bonus?: number;
+  /** Airlift: the territory the armies leave, the one they land on, and how many. */
+  from?: number;
+  to?: number;
+  armies?: number;
+  /** Airlift: my commander goes too (written in the Armies as one special unit). */
+  commander?: OrderCommander;
+}
+
+interface CardPlayOrder extends CardPlayFields {
   playerId: number;
   card: CardPlayKind;
   /** The card instance GUID (32 hex digits; dashes allowed). */
   cardId: string;
-  /** Blockade only: the territory to blockade. */
-  target?: number;
+}
+
+function need<T>(v: T | undefined, card: CardPlayKind, what: string): T {
+  if (v === undefined) throw new Error(`A ${card} card play needs ${what}.`);
+  return v;
 }
 
 /**
- * Encode a play-card order: the tag, the card's own fields (Blockade: the
- * target territory), the card instance GUID in .NET byte order, then the
- * player id and two false bools.
+ * Encode a play-card order: the tag, the card's own fields in the order the bundle's writer puts
+ * them, the card instance GUID in .NET byte order, then the player id and two false bools.
+ * Blockade, Reconnaissance: the territory. Spy, Sanctions: the player. Surveillance: the bonus.
+ * Gift: the recipient, then the territory. Diplomacy: the two players. Airlift: a present
+ * `Armies` (not fogged, the count, the special units: none, or my commander — as an AttackTransfer
+ * writes it), the from
+ * territory, a legacy army count the client leaves 0, the to territory. Throws when a card's
+ * fields are missing.
  */
 export function writeCardPlayOrder(w: Writer, o: CardPlayOrder): void {
   w.u8(CardPlayTag[o.card]);
-  if (o.card === 'Blockade') {
-    if (o.target === undefined) throw new Error('A Blockade card play needs a target territory.');
-    w.int32(o.target);
+  switch (o.card) {
+    case 'Blockade':
+    case 'Reconnaissance':
+      w.int32(need(o.target, o.card, 'a target territory'));
+      break;
+    case 'Spy':
+    case 'Sanctions':
+      w.int32(need(o.player, o.card, 'a target player'));
+      break;
+    case 'Surveillance':
+      w.int32(need(o.bonus, o.card, 'a target bonus'));
+      break;
+    case 'Gift': {
+      const player = need(o.player, o.card, 'a recipient player');
+      w.int32(player).int32(need(o.target, o.card, 'a territory'));
+      break;
+    }
+    case 'Diplomacy': {
+      const [a, b] = need(o.players, o.card, 'two players');
+      w.int32(a).int32(b);
+      break;
+    }
+    case 'Airlift':
+      if (o.from === undefined || o.to === undefined || o.armies === undefined) {
+        throw new Error('An Airlift card play needs from, to and armies.');
+      }
+      w.bool(true).bool(false).int32(o.armies);
+      if (o.commander) w.u8(1).u8(SPECIAL_UNIT_COMMANDER).guid(o.commander.id).int32(o.commander.owner);
+      else w.u8(0);
+      w.int32(o.from).int32(0).int32(o.to);
+      break;
+    default:
+      break;
   }
   w.guid(o.cardId);
   writeOrderBase(w, o.playerId);
@@ -448,18 +530,17 @@ export type TurnOrder =
       attackTeammates?: boolean;
       commander?: OrderCommander;
     }
-  | {
+  | (CardPlayFields & {
       kind: 'card';
       card: CardPlayKind;
       cardId: string;
-      target?: number;
       /**
        * Order Delay only (#186): the move (0-based, among this turn's moves in their order) the card
        * is written above. The move count, or absent, writes it after every move — the only
        * live-verified position; a smaller index is UNVERIFIED live (docs/WEB-PROTOCOL.md).
        */
       beforeMove?: number;
-    }
+    })
   | { kind: 'discard'; cardId: string };
 
 /**
@@ -474,10 +555,20 @@ export type TurnOrder =
 export const TurnPhase = {
   Discards: 10,
   OrderPriorityCards: 12,
+  /** Spy, Reconnaissance and Surveillance (bundle, UNVERIFIED live). */
+  SpyingCards: 15,
   ReinforcementCards: 20,
   Deploys: 25,
+  /** Bundle, UNVERIFIED live: after the deploys, before the attacks. */
+  AirliftCards: 43,
+  /** Bundle, UNVERIFIED live. */
+  GiftCards: 47,
   Attacks: 50,
   BlockadeCards: 60,
+  /** Bundle, UNVERIFIED live. */
+  DiplomacyCards: 75,
+  /** Bundle, UNVERIFIED live. */
+  SanctionsCards: 80,
 } as const;
 
 const CARD_PHASE: Readonly<Record<CardPlayKind, number>> = {
@@ -485,6 +576,13 @@ const CARD_PHASE: Readonly<Record<CardPlayKind, number>> = {
   OrderDelay: TurnPhase.Attacks,
   Reinforcement: TurnPhase.ReinforcementCards,
   Blockade: TurnPhase.BlockadeCards,
+  Spy: TurnPhase.SpyingCards,
+  Reconnaissance: TurnPhase.SpyingCards,
+  Surveillance: TurnPhase.SpyingCards,
+  Airlift: TurnPhase.AirliftCards,
+  Gift: TurnPhase.GiftCards,
+  Diplomacy: TurnPhase.DiplomacyCards,
+  Sanctions: TurnPhase.SanctionsCards,
 };
 
 /** The turn phase an order runs in. */
@@ -548,7 +646,9 @@ function sendOrderSequence(orders: readonly TurnOrder[]): TurnOrder[] {
  * the rest): discards, Order Priority and Reinforcement plays, then every deploy, then
  * the moves (AttackTransfers, mode 3 unless the move sets another) followed by any Order Delay
  * plays (or one written above a chosen move, `beforeMove`, UNVERIFIED live: {@link sendOrderSequence}),
- * then any Blockade plays.
+ * then any Blockade plays. The targeted cards (UNVERIFIED live, V9) take the bundle's phases: Spy,
+ * Reconnaissance and Surveillance with the early cards (15), Airlift (43) and Gift (47) between the
+ * deploys and the moves, Diplomacy (75) and Sanctions (80) last.
  */
 export function writeSendOrdersParams(
   w: Writer,
@@ -562,7 +662,8 @@ export function writeSendOrdersParams(
   for (const o of sorted) {
     w.bool(true);
     if (o.kind === 'card') {
-      writeCardPlayOrder(w, { playerId, card: o.card, cardId: o.cardId, ...(o.target !== undefined ? { target: o.target } : {}) });
+      const { kind: _kind, beforeMove: _beforeMove, ...play } = o;
+      writeCardPlayOrder(w, { playerId, ...play });
     } else if (o.kind === 'discard') {
       writeDiscardOrder(w, { playerId, cardId: o.cardId });
     } else if (o.kind === 'deploy') {

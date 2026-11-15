@@ -62,7 +62,14 @@ import { guardOffExposure } from '../analysis/guard-off.js';
 import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
 import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
-import { AttackTransferMode, Method, writeSendOrdersParams, type CardPlayKind, type TurnOrder } from '../protocol/methods.js';
+import {
+  AttackTransferMode,
+  Method,
+  UNVERIFIED_CARD_PLAYS,
+  writeSendOrdersParams,
+  type CardPlayKind,
+  type TurnOrder,
+} from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, type WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
@@ -88,6 +95,15 @@ import { guessSalt } from '../guess-salt.js';
 import { mapOf } from './map.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveBonus, resolveTerritory } from './resolve.js';
+import {
+  checkCardFields,
+  newCardPlaySeen,
+  resolveCardTargets,
+  type CardPlayContext,
+  type CardPlayer,
+  type CardTargetInput,
+  type CardTargets,
+} from './card-plays.js';
 import {
   boardFromHistory,
   CACHED_TURNS,
@@ -152,6 +168,7 @@ const TEAM_CARDS_NOTE =
   "a team's hand is unverified too (V8).";
 
 const territoryRef = z.union([z.string(), z.number()]);
+const playerRef = z.union([z.string().min(1).max(100), z.number()]);
 const armiesArg = z.coerce.number().int().min(1);
 
 /** One order of a turn: territories by id or name. */
@@ -201,7 +218,25 @@ const turnOrderArg = z.discriminatedUnion('kind', [
       .describe('Card to play from your hand: its id (GUID) or its type name, e.g. "Reinforcement".'),
     target: territoryRef
       .optional()
-      .describe('Blockade only: your territory to blockade (id or name).'),
+      .describe(
+        'Blockade: your territory to blockade. Gift: your territory to give away. Reconnaissance: the territory to see. Id or name.',
+      ),
+    player: playerRef
+      .optional()
+      .describe('Spy: the opponent to see. Sanctions: the player whose income it cuts. Gift: who receives `target`. Id or name.'),
+    players: z
+      .array(playerRef)
+      .length(2)
+      .optional()
+      .describe('Diplomacy: the two players who may not attack each other (usually you and one opponent). Ids or names.'),
+    bonus: territoryRef.optional().describe('Surveillance: the bonus to see (id or name).'),
+    from: territoryRef.optional().describe('Airlift: your territory the armies leave (id or name).'),
+    to: territoryRef.optional().describe("Airlift: your or a teammate's territory they land on (id or name), anywhere on the map."),
+    armies: armiesArg.optional().describe('Airlift: armies to send (at most what stands on `from` after the deploys).'),
+    commander: z
+      .boolean()
+      .optional()
+      .describe('Airlift (Commanders games): take your commander on `from` too — only to a territory of your own.'),
     before: z.coerce
       .number()
       .int()
@@ -285,6 +320,11 @@ interface NamedOrder {
   kind: 'deploy' | 'move' | 'card' | 'discard';
   card?: { id: string; name: string; armies?: number };
   target?: { id: number; name: string };
+  /** A targeted card's player(s) (Spy, Sanctions, Gift; Diplomacy): GameFeed id and name. */
+  player?: { id: number; name: string };
+  players?: Array<{ id: number; name: string }>;
+  /** Surveillance's bonus. */
+  bonus?: { id: number; name: string };
   territory?: { id: number; name: string };
   from?: { id: number; name: string };
   to?: { id: number; name: string };
@@ -304,10 +344,11 @@ const shownPlace = (x: { id: number; name: string }) => ({ id: x.id, name: untru
 /** An order as the preview shows it: every territory name delimited. */
 function shownOrder(o: NamedOrder): NamedOrder {
   const out: NamedOrder = { ...o };
-  for (const k of ['target', 'territory', 'from', 'to'] as const) {
+  for (const k of ['target', 'territory', 'from', 'to', 'bonus', 'player'] as const) {
     const place = o[k];
     if (place) out[k] = shownPlace(place);
   }
+  if (o.players) out.players = o.players.map(shownPlace);
   return out;
 }
 
@@ -328,6 +369,8 @@ interface TurnState {
   incomeGiven?: boolean;
   /** How to read back an Order Delay placed among the moves (#186, unverified live), when one was. */
   orderDelayCheck?: string;
+  /** How to read back a targeted card play (PLAN-TEAMS part D, unverified live, V9), when one was sent. */
+  cardPlayCheck?: string;
   /** B2: the agreements these orders break (`break_agreement: true`), recorded broken-by-me once committed. */
   breaks?: string[];
 }
@@ -346,6 +389,40 @@ export function orderDelayCheck(at: readonly number[]): string {
     "from your hand (warapp_plan_turn's `cards.hand`, or a played Order Delay in the turn's replay), and in the game's replay " +
     "of this turn your moves from that one on ran after the opponents' attacks instead of alternating with them. Report " +
     'what you see, so docs/WEB-PROTOCOL.md can mark the placement verified.'
+  );
+}
+
+/** A targeted card play's targets as the preview and the result name them (names raw here; {@link shownOrder} delimits them). */
+function namedTargets(t: CardTargets): Partial<NamedOrder> {
+  const player = (p: CardPlayer) => ({ id: p.id, name: p.name });
+  return {
+    ...(t.territory ? { target: t.territory } : {}),
+    ...(t.player ? { player: player(t.player) } : {}),
+    ...(t.players ? { players: t.players.map(player) } : {}),
+    ...(t.bonus ? { bonus: t.bonus } : {}),
+    ...(t.from ? { from: t.from } : {}),
+    ...(t.to ? { to: t.to } : {}),
+    ...(t.armies !== undefined ? { armies: t.armies } : {}),
+    ...(t.commander ? { commander: true as const } : {}),
+  };
+}
+
+/** The preview's warning for a targeted card play (PLAN-TEAMS part D): its encoding is not verified live (V9). */
+export function unverifiedCardWarning(cards: readonly string[]): string {
+  return (
+    `UNVERIFIED encoding: the ${cards.join(', ')} card play${cards.length > 1 ? 's are' : ' is'} written as the war.app client's ` +
+    'own writer does (read from its code), but no commit carrying one has been sent yet. If war.app refuses the orders, nothing ' +
+    'is committed: play the card in the game client instead and report the error.'
+  );
+}
+
+/** How to read back a targeted card play (V9) once sent. */
+export function cardPlayCheck(cards: readonly string[]): string {
+  return (
+    `The ${cards.join(', ')} card play${cards.length > 1 ? 's were' : ' was'} sent with an encoding not yet verified live, and war.app ` +
+    "did not refuse it. Once the turn resolves, check that the card left your hand (warapp_plan_turn's `cards.hand`) and did what " +
+    "it should in the turn's replay (a Gift's territory changed owner, an Airlift's armies moved, Diplomacy or Sanctions shows " +
+    'among the cards in effect), and report what you see so docs/WEB-PROTOCOL.md can mark it verified.'
   );
 }
 
@@ -506,6 +583,11 @@ export function validateTurn(args: {
    * hint naming the missing card play (#85).
    */
   unplayedReinforcements?: ReadonlyArray<{ id: string; armies: number }>;
+  /**
+   * Airlift card plays (PLAN-TEAMS part D): they run after the deploys and before the moves, so the
+   * armies they send leave their source before its moves; landing, they cannot move again that turn.
+   */
+  airlifts?: ReadonlyArray<{ from: number; to: number; armies: number }>;
 }): { warnings: string[] } {
   const warnings: string[] = [];
   const { map, board, myInGameId, income, deploys, moves } = args;
@@ -589,6 +671,11 @@ export function validateTurn(args: {
   }
   const deployedOn = new Map<number, number>();
   for (const d of deploys) deployedOn.set(d.territory.id, (deployedOn.get(d.territory.id) ?? 0) + d.armies);
+  // What can move from a territory when the moves start: its armies and deploys, less what it airlifts out.
+  // Armies airlifted in cannot move again that turn (the wiki's Airlift Card), so they add nothing.
+  const airlifted = new Map<number, number>();
+  for (const a of args.airlifts ?? []) airlifted.set(a.from, (airlifted.get(a.from) ?? 0) - a.armies);
+  const atMoves = (id: number) => (standing.get(id)?.armies ?? 0) + (deployedOn.get(id) ?? 0) + (airlifted.get(id) ?? 0);
   if (args.localDeployments) {
     const held = new Set(board.filter((t) => mine(t.territoryId)).map((t) => t.territoryId));
     const pools = deployPools(graph, held, income);
@@ -628,7 +715,7 @@ export function validateTurn(args: {
   const inflow = new Map<number, number>();
   let over: { from: { id: number; name: string }; armies: number; max: number } | undefined;
   for (const m of moves) {
-    const start = chained.has(m.from.id) ? 0 : (standing.get(m.from.id)?.armies ?? 0) + (deployedOn.get(m.from.id) ?? 0);
+    const start = chained.has(m.from.id) ? 0 : atMoves(m.from.id);
     const max = start + (inflow.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
     // A percentage order takes a share of what is left when it runs: it never over-sends, and what
     // it moves on is at most what the source could move (#165).
@@ -645,6 +732,7 @@ export function validateTurn(args: {
     throw new McpToolError(
       `These orders send ${armies} armies from ${label(from)}, which can send at most ${max} this turn` +
         `${args.guard ? ' (one army stands guard)' : ''}` +
+        `${airlifted.has(from.id) ? ', counting this turn\'s Airlift' : ''}` +
         `${inflow.has(from.id) ? '; that counts every army moved in earlier in the list, an upper bound: an attack\'s survivors are fewer' : ''}.`,
       { hint: 'A territory sends at most its armies plus what is deployed there this turn.' },
     );
@@ -656,7 +744,7 @@ export function validateTurn(args: {
   if (args.noSplit) {
     for (const m of moves) {
       if (chained.has(m.from.id)) continue;
-      const max = (standing.get(m.from.id)?.armies ?? 0) + (deployedOn.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
+      const max = atMoves(m.from.id) - (args.guard ? 1 : 0);
       if (m.percent ? m.armies < 100 : m.armies < max)
         warnings.push(
           `No-Split: ${label(m.from)} → ${label(m.to)} sends ${m.percent ? `${m.armies}%` : m.armies}, but this game moves the whole stack: war.app ` +
@@ -775,13 +863,29 @@ const PLAYABLE: Readonly<Record<number, CardPlayKind>> = {
   [CARD_ORDER_PRIORITY]: 'OrderPriority',
   [CARD_ORDER_DELAY]: 'OrderDelay',
   [CARD_BLOCKADE]: 'Blockade',
+  // PLAN-TEAMS part D: encoded from the bundle's writers, UNVERIFIED live (V9).
+  2: 'Spy',
+  6: 'Airlift',
+  7: 'Gift',
+  8: 'Diplomacy',
+  9: 'Sanctions',
+  10: 'Reconnaissance',
+  11: 'Surveillance',
 };
+
+/** A card order as the tool takes it: the card and its targets (`card-plays.ts`). */
+type CardInput = CardTargetInput & { card: string; before?: number | undefined };
 
 /** A card play resolved against the hand. */
 interface ResolvedCardPlay {
   card: Card;
   kind: CardPlayKind;
+  /** Its targets as given, resolved against the live board by {@link resolveCardTargets}. */
+  input: CardTargetInput;
+  /** Blockade's territory (the targeted cards' are in {@link targets}). */
   target?: { id: number; name: string };
+  /** The targeted cards' resolved targets (PLAN-TEAMS part D). */
+  targets?: CardTargets;
   /** Armies it adds to this turn's deploys (Reinforcement). */
   armies: number;
   /** Order Delay only (#186): the move (1-based) it is written above, as given. */
@@ -851,7 +955,7 @@ function resolveCardPlays(
   map: GameMap,
   hand: readonly Card[],
   rules: CardRules,
-  inputs: ReadonlyArray<{ card: string; target?: string | number | undefined; before?: number | undefined }>,
+  inputs: readonly CardInput[],
 ): ResolvedCardPlay[] {
   const used = new Set<string>();
   const out: ResolvedCardPlay[] = [];
@@ -861,18 +965,17 @@ function resolveCardPlays(
     const kind = PLAYABLE[card.type];
     if (!kind) {
       throw new McpToolError(`Playing a ${card.name} card is not supported here yet.`, {
-        hint: 'Play it in the game itself; this tool plays Reinforcement, Order Priority, Order Delay and Blockade cards.',
+        hint: 'Play it in the game itself; this tool plays every card but Emergency Blockade and Bomb.',
       });
     }
+    const { card: _card, before: _before, ...targets } = input;
     const hasTarget = input.target !== undefined && String(input.target).trim() !== '';
     if (kind === 'Blockade' && !hasTarget) {
       throw new McpToolError('A Blockade needs a `target`: the territory of yours to blockade.', {
         hint: 'A Blockade turns your territory neutral with multiplied armies — it gives the territory away.',
       });
     }
-    if (kind !== 'Blockade' && hasTarget) {
-      throw new McpToolError(`A ${card.name} card takes no target.`, { hint: 'Only Blockade takes a `target`.' });
-    }
+    checkCardFields(kind, card.name, targets);
     if (input.before !== undefined && kind !== 'OrderDelay') {
       throw new McpToolError(`Only an Order Delay takes \`before\`, not a ${card.name} card.`, {
         hint: '`before` places an Order Delay among the moves; other card plays run in their own phase.',
@@ -888,8 +991,8 @@ function resolveCardPlays(
       }
       armies = a;
     }
-    const play: ResolvedCardPlay = { card, kind, armies, ...(input.before !== undefined ? { before: input.before } : {}) };
-    if (hasTarget) {
+    const play: ResolvedCardPlay = { card, kind, input: targets, armies, ...(input.before !== undefined ? { before: input.before } : {}) };
+    if (kind === 'Blockade') {
       const t = resolveTerritory(map, input.target!);
       play.target = { id: t.id, name: t.name };
     }
@@ -1926,7 +2029,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'attacks/transfers (territories by id or name, cards by id or type name — usually the `orders` from ' +
         'warapp_plan_turn, reviewed with the user). Plays Reinforcement, Order Priority, Order Delay and Blockade ' +
         '(with a `target` of yours; an Order Delay goes after every move unless it has `before`: a move number to ' +
-        'place it above, unverified live) from your hand, and discards any card (`{ kind: "discard", card }`); refuses ' +
+        'place it above, unverified live) from your hand, and the targeted cards — Spy (`player`), Reconnaissance ' +
+        '(`target`), Surveillance (`bonus`), Airlift (`from` yours, `to` yours or a teammate\'s, `armies`, optional ' +
+        '`commander`), Gift (`target` yours, `player`) and Diplomacy (`players`: two) and Sanctions (`player`), encoded ' +
+        'as the client does but not yet verified live, each refused where war.app would refuse it (a commander is never ' +
+        'gifted or airlifted to a teammate, no Spy or Sanctions on yourself or a teammate, no Diplomacy between ' +
+        'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
         'when your hand is over the hold limit and the orders do not play or discard enough cards. The ' +
         'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
         'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
@@ -1989,11 +2097,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           commander?: boolean;
           attackTeammates?: boolean;
         }> = [];
-        const cardInputs: Array<{ card: string; target?: string | number | undefined; before?: number | undefined }> = [];
+        const cardInputs: CardInput[] = [];
         const discardInputs: Array<{ card: string }> = [];
         for (const o of orders) {
           if (o.kind === 'card') {
-            cardInputs.push({ card: o.card, target: o.target, before: o.before });
+            const { kind: _kind, ...card } = o;
+            cardInputs.push(card);
           } else if (o.kind === 'discard') {
             discardInputs.push({ card: o.card });
           } else if (o.kind === 'deploy') {
@@ -2060,9 +2169,31 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // A move into a teammate's territory is a transfer (GameFeed's team field is unverified). The live
         // board keys owners by in-game id; a teammate without a GameFeed player id (an AI seat) owns nothing by one.
         const teammates = new Set([...playersByInGameId(teammatesOf(game.players, me)).keys()]);
-        // #165: each move's options, refused unless the game allows them.
         const deployedOn = new Map<number, number>();
         for (const d of deploys) deployedOn.set(d.territory.id, (deployedOn.get(d.territory.id) ?? 0) + d.armies);
+        // PLAN-TEAMS part D: the targeted cards, refused where war.app's validator (the bundle's) would refuse them.
+        const cardContext: CardPlayContext = {
+          map,
+          board: territories,
+          me,
+          myInGameId: playerId,
+          players: game.players,
+          teammates: friendsOf(game.players, me),
+          settings: game.settings,
+          rules,
+          deployedOn,
+          movesFrom: new Set(moves.map((m) => m.from.id)),
+          seen: newCardPlaySeen(),
+        };
+        for (const p of plays) {
+          if (UNVERIFIED_CARD_PLAYS.has(p.kind)) p.targets = resolveCardTargets(p.kind, p.card.name, p.input, cardContext);
+        }
+        if (cardContext.seen.commanderAirlifted && moves.some((m) => m.commander)) {
+          throw new McpToolError('Your commander is both airlifted and taken along on a move.', {
+            hint: 'The Airlift runs before the moves; take the commander in one order only.',
+          });
+        }
+        // #165: each move's options, refused unless the game allows them.
         const options = checkMoveOptions({ moves, board: territories, myInGameId: playerId, settings: game.settings, teammates, deployedOn });
         const modelled = incomeFor(graphOf(map), board, me.id, game.settings);
         const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
@@ -2108,6 +2239,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           guard: game.settings?.oneArmyStandsGuard ?? true,
           deploys,
           moves,
+          airlifts: plays.flatMap((p) =>
+            p.kind === 'Airlift' && p.targets?.from && p.targets.to && p.targets.armies !== undefined
+              ? [{ from: p.targets.from.id, to: p.targets.to.id, armies: p.targets.armies }]
+              : [],
+          ),
           localDeployments: game.settings?.localDeployments ?? false,
           noSplit: game.settings?.noSplit ?? false,
           multiAttack: game.settings?.multiAttack ?? false,
@@ -2162,6 +2298,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ),
         );
         if (handUnknown) warnings.push(UNREADABLE_HAND);
+        for (const p of plays) warnings.push(...(p.targets?.warnings ?? []));
+        const unverifiedPlays = [...new Set(plays.filter((p) => UNVERIFIED_CARD_PLAYS.has(p.kind)).map((p) => p.card.name))];
+        if (unverifiedPlays.length) warnings.push(unverifiedCardWarning(unverifiedPlays));
         if (used < teamShed) warnings.push(teamHandOver(hand.length, rules, teamShed, used));
         const placedDelays = plays.filter((p) => placedAt(p) !== undefined);
         for (const p of placedDelays) {
@@ -2209,6 +2348,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             card: p.kind,
             cardId: p.card.id,
             ...(p.target ? { target: p.target.id } : {}),
+            ...(p.targets ? p.targets.fields : {}),
             ...(placedAt(p) !== undefined ? { beforeMove: placedAt(p)! - 1 } : {}),
           })),
           ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territoryId: d.territory.id, armies: d.armies })),
@@ -2232,6 +2372,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             kind: 'card' as const,
             card: cardView(p.card),
             ...(p.target ? { target: p.target } : {}),
+            ...(p.targets ? namedTargets(p.targets) : {}),
             ...(placedAt(p) !== undefined ? { before: placedAt(p)! } : {}),
           })),
           ...[...merged.values()].map((d) => ({ kind: 'deploy' as const, territory: d.territory, armies: d.armies })),
@@ -2275,6 +2416,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             income,
             ...(givenIncome !== undefined ? { incomeGiven: true } : {}),
             ...(placedDelays.length ? { orderDelayCheck: orderDelayCheck(placedDelays.map((p) => placedAt(p)!)) } : {}),
+            ...(unverifiedPlays.length ? { cardPlayCheck: cardPlayCheck(unverifiedPlays) } : {}),
             ...(breaks.length ? { breaks: breaks.map((b) => b.agreement) } : {}),
           } satisfies TurnState,
         };
@@ -2286,6 +2428,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           turn: st.turnNumber,
           orders: st.named,
           ...(st.orderDelayCheck ? { orderDelayCheck: st.orderDelayCheck } : {}),
+          ...(st.cardPlayCheck ? { cardPlayCheck: st.cardPlayCheck } : {}),
         };
         const check =
           `Check warapp_get_game: a \`turn\` above ${st.turnNumber} means this turn resolved; still ${st.turnNumber} with ` +
