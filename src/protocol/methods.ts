@@ -78,7 +78,11 @@ export const GAME_COLOR_COUNT = 436;
 
 interface AcceptOpenSeatParams {
   gameId: number;
-  /** The team of the open seat being taken, as its record carries it (-1: a no-team seat). */
+  /**
+   * The team of the open seat being taken, as its record carries it (-1: a no-team seat). In a game with open seats on
+   * several teams it is the team chosen (C4): the client's team picker passes the chosen team here (read from the
+   * bundle; UNVERIFIED live).
+   */
   team: number;
   /** The colour to play as: a `warlight.shared.GameColor` index (0..435). */
   color: number;

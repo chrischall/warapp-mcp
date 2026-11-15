@@ -61,6 +61,8 @@ export interface SyntheticGamePlayer {
   team?: number;
   /** The player's GameColor index; absent by default. */
   color?: number | null;
+  /** An AI seat (GameInfoPlayer's fifth field, the client's IsAI); default false. */
+  ai?: boolean;
 }
 
 /** GameInfoSettings, in read order (defaults: war.app's defaults, nothing unusual). */
@@ -119,7 +121,7 @@ export interface SyntheticGame {
 function writePlayer(w: Writer, p: SyntheticGamePlayer): void {
   if (p.color === undefined || p.color === null) w.bool(false);
   else w.bool(true).int32(p.color); // GameColor
-  w.bool(false).bool(p.committed).int32(0).bool(false).string(p.name).int32(p.id).u8(p.state).int32(p.team ?? -1).bool(false);
+  w.bool(false).bool(p.committed).int32(0).bool(p.ai ?? false).string(p.name).int32(p.id).u8(p.state).int32(p.team ?? -1).bool(false);
 }
 
 function writeOptionalInt(w: Writer, v: number | null | undefined): void {

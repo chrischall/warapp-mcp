@@ -97,7 +97,10 @@ function joinable(games: readonly OpenGame[], gameId: number, allowTeam: boolean
     );
   }
   if (game.teamGame && !allowTeam) {
-    refuse(`Game ${gameId} is a team game.`, 'Pass allow_team: true to take its first open seat (and that seat\'s team).');
+    refuse(
+      `Game ${gameId} is a team game.`,
+      "Pass team: a team number with an open seat (the preview lists them), or allow_team: true to take the first open seat's team.",
+    );
   }
   if (game.entryFeeCoins > 0 && !acceptFee) {
     refuse(
@@ -106,6 +109,42 @@ function joinable(games: readonly OpenGame[], gameId: number, allowTeam: boolean
     );
   }
   return game;
+}
+
+const TEAM_CHOICE_NOTE =
+  "The team is sent as the chosen open seat's team, the int32 AcceptOpenSeat already carries (the client's team " +
+  'picker passes it; read from the client bundle, UNVERIFIED live). Seats are by in-game id; an AI seat plays by rule.';
+
+/**
+ * The team to join (C4): `requested` when an open seat carries it — refused when the team is full (its players
+ * seated, no open seat) or not in the game — else the first open seat's team; NO_TEAM outside a team game (a
+ * team asked for there is refused).
+ */
+function chooseTeam(game: OpenGame, lobby: OpenLobby | undefined, requested: number | undefined): number {
+  const offered = [...new Set(game.openSeatTeams ?? [])].sort((a, b) => a - b);
+  if (requested === undefined) return game.teamGame ? (game.openSeatTeams?.[0] ?? NO_TEAM) : NO_TEAM;
+  if (!game.teamGame) refuse(`Game ${game.id} is not a team game, so it has no team to choose.`, 'Leave team out.');
+  if (game.randomTeamsOf !== undefined)
+    refuse(`Game ${game.id} deals random teams, so a team cannot be chosen.`, 'Leave team out (allow_team: true) to join it.');
+  if (offered.includes(requested)) return requested;
+  const list = offered.length ? offered.join(', ') : 'none';
+  if (lobby?.seated.some((p) => p.team === requested))
+    refuse(`Team ${requested} is full in game ${game.id}: no open seat is on it.`, `Teams with an open seat: ${list}.`);
+  refuse(`Team ${requested} is not offered in game ${game.id}.`, `Teams with an open seat: ${list}.`);
+}
+
+/** The preview's team section (C4): the team joined, the teams offered, and the seats already on it by id, human or AI. */
+function teamView(game: OpenGame, lobby: OpenLobby | undefined, team: number) {
+  return {
+    id: team,
+    offered: [...new Set(game.openSeatTeams ?? [])].sort((a, b) => a - b),
+    seats: (lobby?.seated ?? [])
+      .filter((p) => p.team === team)
+      .sort((a, b) => a.id - b.id)
+      .map((p) => ({ inGameId: p.id, kind: p.ai ? ('ai' as const) : ('human' as const) })),
+    openSeats: (game.openSeatTeams ?? []).filter((t) => t === team).length,
+    note: TEAM_CHOICE_NOTE,
+  };
 }
 
 /** Refuse a lobby the signed-in account (in-game id `me`) already holds a seat in. */
@@ -214,7 +253,17 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
       }),
       inputSchema: z.object({
         game_id: gameIdArg,
-        allow_team: z.boolean().optional().describe('Allow joining a team game (default false).'),
+        allow_team: z.boolean().optional().describe("Allow joining a team game on the first open seat's team (default false)."),
+        team: z.coerce
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe(
+            'In a team game: the team to join (a team number with an open seat; the preview lists the teams offered and ' +
+              'the seats on the chosen one). Implies allow_team. Refused outside a team game, with random teams, and for a ' +
+              'team that is full or not in the game.',
+          ),
         accept_entry_fee: z
           .boolean()
           .optional()
@@ -231,7 +280,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
               'standard colour no player in the game has.',
           ),
       }),
-      async plan({ game_id, allow_team, accept_entry_fee, color: requested }) {
+      async plan({ game_id, allow_team, team: askedTeam, accept_entry_fee, color: requested }) {
         const gameId = parseGameId(game_id);
         // One fresh read gives the account the gate binds and its in-game id (sliced from the
         // token TEXT, #130), so the already-joined check is for that same account. A join always
@@ -243,11 +292,9 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
         const parsed = parseOpenGamesPage(html, bundle);
         const lobby = parsed.lobbies.get(gameId);
         refuseJoined(lobby, gameId, myId);
-        const listed = joinable(parsed.games, gameId, allow_team ?? false, accept_entry_fee ?? false);
+        const listed = joinable(parsed.games, gameId, (allow_team ?? false) || askedTeam !== undefined, accept_entry_fee ?? false);
+        const team = chooseTeam(listed, lobby, askedTeam);
         const { color, source } = joinColor(requested, html, bundle, lobby, gameId);
-        // A no-team game's open seats all carry the no-team value (any other
-        // makes it a team game), so NO_TEAM is what its record holds.
-        const team = listed.teamGame ? (listed.openSeatTeams?.[0] ?? NO_TEAM) : NO_TEAM;
         // #217: the lobby's screen, then whether it is a lottery (its map read only for that settings shape).
         const screened = await lobbyScreen(ctx, gameId);
         const [game] = (await markLotteries(ctx, [listed])) as [OpenGame];
@@ -282,6 +329,8 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
               // #134: the owner's joining policy — advisory, the join is not refused for it.
               policy: joiningPolicy(game, screened.screen),
               color: { index: color, source },
+              // C4: in a team game, the team joined and who already sits on it.
+              ...(game.teamGame ? { team: teamView(game, lobby, team) } : {}),
               account: String(token),
               note: 'Joining makes you a player who must take turns until the game ends.',
               untrusted: UNTRUSTED_PREVIEW_NOTE,

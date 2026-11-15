@@ -539,6 +539,13 @@ describe('AcceptOpenSeat (join an open game)', () => {
     );
   });
 
+  it('a chosen team (C4) is the same int32: the team picker passes the chosen team where a lone seat passes its own (golden, UNVERIFIED live)', async () => {
+    const { writeAcceptOpenSeatParams } = await import('../../src/protocol/methods.js');
+    expect(hex((w) => writeAcceptOpenSeatParams(w, { gameId: 3007, team: 1, color: 5 }))).toBe(
+      'BF0B0000' + '01' + '05000000' + '01000000' + '00' + '00',
+    );
+  });
+
   it('refuses a colour index outside war.app\'s colour list', async () => {
     const { writeAcceptOpenSeatParams } = await import('../../src/protocol/methods.js');
     expect(() => hex((w) => writeAcceptOpenSeatParams(w, { gameId: 7, team: -1, color: 436 }))).toThrow(/colour/i);
