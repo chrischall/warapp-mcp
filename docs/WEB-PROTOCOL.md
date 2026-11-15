@@ -464,11 +464,24 @@ bridged POSTs time out while GETs still work; reloading the tab clears it.
   byte sort }` — **required**: absent filters make the server throw a NullPointerException
   (`ServerError … MyGamesFilters.Filter()`); the client's default is `{4, 10, 2}` — then
   bool, int32 0, bool, bool. Reply `warlight.shared.MyGamesReturn`: one entry per game with
-  id, name, map id and state codes (mapping the codes is still to do).
-  **Unverified (#130):** whether `count` (10, the client default, always sent) caps the reply —
-  an account in more than ten games may see only ten in `warapp_my_games` and
-  `warapp_wait_for_turn` with no truncation marker. Needs a live check with an account in at
-  least ten games before the count is raised or a marker added.
+  id, name, map id and state codes.
+  **The default is the dashboard's short list (#260, live):** with `{4, 10, 2}` an account in 41
+  games (15 running, 7 lobbies) got 10: 7 finished, 2 playing, 1 distributing. From the bundle:
+  `warlight.shared.MyGamesFilterType` is `ActiveGames` 0, `ActiveNotEliminated` 1, `YourTurn` 2,
+  `All` 3, `Default` 4, `YourTurnOrPendingChat` 5, `ActiveGameOrPendingChat` 7, `Finished` 8 (6
+  unused; the client's own labels: "Active games", "All Games", "Finished Games", …), written as a
+  byte (`EnumSerialization_MyGamesFilterType`); the count is an int32 (the "most games" — the one
+  other client list asks `Finished` with 100 and says "one of the last 100 games you played"); the
+  sort is a byte (`EnumSerialization_MyGamesSort`, values unnamed; the default 2, that list 3).
+  `MyGamesFilters.get_Default` is `{4, 10, 2}`. The client's GetMyGames writer sends the four
+  values after the filters as constants (bool false, int32 0, bool false, bool false): **the
+  client never pages GetMyGames**, so there is no start index to send. This server therefore asks
+  `{All (3), 100, 2}` and, while a reply fills its count, again with 400 and then 1600
+  (`MY_GAMES_WINDOWS`, `src/tools/my-games.ts`); a reply that fills 1600, or a wider read that
+  fails, is reported as possibly partial. Golden-pinned (`01 03 64000000 02 00 00000000 00 00`)
+  but **UNVERIFIED live**: that `All` lists lobbies and finished games together and that a count
+  above 10 is honoured. `MyGamesReturn` also carries an int32 after a bool behind the list (the
+  `MyTournamentsReturn` analogue is a total used for paging); it is not read.
 - `GetFullProfile` (180): auth, int32 in-game player id. Reply
   `warlight.shared.FullProfileData`: name, level, member-since, per-format records
   (`{Wins, Games, NumTeams, TeamSize}`) and many counters. It also carries the player's
@@ -728,7 +741,7 @@ chat messages that you sent to this game were removed." It is not a success sign
 a seat the account does not hold (absent, invited or declined) and a game whose GameFeed settings
 name mods; after sending it reports `left` only once GameFeed shows the account without a seat
 (declined, or no longer listed) — else, when GameFeed cannot be read, once `GetMyGames` lists the
-game with the account's seat given up (a game missing from that paged list proves nothing) — and
+game with the account's seat given up (a game missing from that list proves nothing: it may be partial) — and
 `unconfirmed` otherwise. A transport failure is `unknown` and is never retried. In a team game the
 client first warns that declining leaves the teammates a player short; the preview says so.
 Error codes, with the client's handling: **191** `CannotDeclineYourOwnOpenGame` (delete it

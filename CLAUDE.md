@@ -175,7 +175,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   game read (no extra request), so every count is under `unknown` (its `note` says so). Third-party names in
   results (sender, recipient, game) go through `untrustedText`.
   `warapp_chat_inbox` (#256, read-only, hosted too; a tool of its own, since it takes no game and pages a list)
-  reads every game `GetMyGames` lists but a finished one (`chatGameIds`: lobbies, picking, playing), in
+  reads exactly `game_ids` when given (#260), else every game `GetMyGames` lists but a finished one (`chatGameIds`:
+  lobbies, picking, playing; `gamesFrom`, with `listed`/`complete` and a warning when the list may be partial), in
   ascending id order, one at a time and at most `MAX_INBOX_GAMES` (10) per call (`next` = the last id read,
   passed back as `cursor`), each exactly as `warapp_get_chat` reads it; a game with new messages shows only
   those (`limit` newest, `markedUnshown`), the others are `quiet`, and a failed read is in `failed`, never
@@ -1059,6 +1060,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `GameInfoPlayer`) — never a hand-transcribed layout. Its `MyGamesFilters` argument is
   required (absent, the server throws). `waitingOnYou` = the game is Playing or
   DistributingTerritories, my player is Playing, and my `committed` flag is false.
+  **The whole list (#260):** the client's default filters (`Default`, count 10) are the dashboard's
+  short list (live: 10 of 41 games), so `fetchMyGames` (`listMyGames`, `src/tools/my-games.ts`) asks
+  `MyGamesFilterType.All` with a count of 100, then 400, then 1600 while a reply fills its count
+  (`MY_GAMES_WINDOWS`; the client never pages GetMyGames: no start index), and says `partial` when the
+  widest is filled or a wider read fails. Every caller gets that list (`warapp_my_games`, the chat inbox,
+  the turn wait's default, the team fallback, the join/leave read-backs). `warapp_my_games` leaves finished
+  games out unless `include_finished` and reports `listed` and `complete` (a `warning` when partial).
+  UNVERIFIED live: `All` with a count above 10.
 - **Scouting reads two server-rendered pages** through the bridge (GETs the extension makes):
   `https://war.app/Profile?p=<invite token>` (level, games played, last seen, boots, ranked
   records) and `https://war.app/CommonGames?p=<invite token>` (the head-to-head games). The

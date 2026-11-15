@@ -53,22 +53,51 @@ export function writeGetTerritoryPicksParams(w: Writer, gameId: number, playerId
   w.int32(gameId).int32(playerId);
 }
 
-/** GetMyGames filters (`MyGamesFilters`); the server throws when they are absent. */
-interface MyGamesFilters {
+/**
+ * `warlight.shared.MyGamesFilterType`, read from the client bundle (its enum names and the client's
+ * own descriptions: "Active games", "All Games", "Finished Games", …; 6 is unused). The filter is
+ * sent as one byte. #260: the client's default, `Default` with a count of 10, is the dashboard's
+ * short list (live: 10 of an account's 41 games, 7 of them finished).
+ */
+export const MyGamesFilterType = {
+  ActiveGames: 0,
+  ActiveNotEliminated: 1,
+  YourTurn: 2,
+  All: 3,
+  Default: 4,
+  YourTurnOrPendingChat: 5,
+  ActiveGameOrPendingChat: 7,
+  Finished: 8,
+} as const;
+
+/**
+ * GetMyGames filters (`warlight.shared.MyGamesFilters`; the server throws when they are absent):
+ * the filter type (a byte), the most games to return (an int32), the sort (a byte,
+ * `warlight.shared.EnumSerialization_MyGamesSort`, its values unnamed in the bundle).
+ */
+export interface MyGamesFilters {
   filterType: number;
   count: number;
   sort: number;
 }
 
-/** The web client's default filters, verified through the bridge. */
-const DEFAULT_MY_GAMES_FILTERS: Readonly<MyGamesFilters> = { filterType: 4, count: 10, sort: 2 };
+/** The client's sort for its game lists (`MyGamesFilters.get_Default`). */
+export const MY_GAMES_DEFAULT_SORT = 2;
+
+/** The web client's default filters (`MyGamesFilters.get_Default`), verified through the bridge. */
+export const DEFAULT_MY_GAMES_FILTERS: Readonly<MyGamesFilters> = {
+  filterType: MyGamesFilterType.Default,
+  count: 10,
+  sort: MY_GAMES_DEFAULT_SORT,
+};
 
 /**
- * GetMyGames(auth, …) — verified through the bridge: present + MyGamesFilters
- * { byte filterType, int32 count, byte sort } (required), then bool false,
- * int32 0, bool false, bool false.
+ * GetMyGames(auth, …) — verified through the bridge with the default filters: present +
+ * MyGamesFilters { byte filterType, int32 count, byte sort } (required), then bool false,
+ * int32 0, bool false, bool false (the client's writer sends those four as constants).
+ * Other filter values (#260) follow the same writer and are UNVERIFIED live.
  */
-export function writeGetMyGamesParams(w: Writer, filters: MyGamesFilters = DEFAULT_MY_GAMES_FILTERS): void {
+export function writeGetMyGamesParams(w: Writer, filters: Readonly<MyGamesFilters> = DEFAULT_MY_GAMES_FILTERS): void {
   w.bool(true).u8(filters.filterType).int32(filters.count).u8(filters.sort);
   w.bool(false).int32(0).bool(false).bool(false);
 }

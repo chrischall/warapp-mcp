@@ -188,6 +188,52 @@ describe('warapp_chat_inbox', () => {
     expect(p.games[0]).toMatchObject({ newCount: 5, markedUnshown: 3 });
   });
 
+  it('says it read the games from my game list, how many war.app returned, and that the list was whole (#260)', async () => {
+    const fake = warapp(GAMES, CHATS);
+    h = await liveHarness({ feed: FEED, pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    expect(p).toMatchObject({ gamesFrom: 'my_games', listed: 4, complete: true });
+    expect(p).not.toHaveProperty('warning');
+  });
+
+  it('warns when war.app filled the widest list it is asked for: the list may be partial (#260)', async () => {
+    const all = Array.from({ length: 1600 }, (_, i) => myGame(5000 + i, PLAYING));
+    const fake = warapp(all, {});
+    h = await liveHarness({
+      feed: [feedGame(5000, 'Playing')],
+      pages: SIGNED_IN_ANN,
+      warapp: (req) => {
+        if (req.method !== Method.GetMyGames) return fake.handler(req);
+        const count = (req.body.bool(), req.body.u8(), req.body.int32());
+        return { body: (w) => writeMyGamesReturn(w, all.slice(0, count)) };
+      },
+    });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { max_games: 1 }));
+    expect(p).toMatchObject({ gamesFrom: 'my_games', listed: 1600, complete: false, read: 1, remaining: 1599 });
+    expect(String(p.warning)).toMatch(/may be partial/);
+  }, 30_000);
+
+  it('game_ids: reads exactly those games, in ascending id order, without asking for my game list (#260)', async () => {
+    const fake = warapp(GAMES, { ...CHATS, 107: () => [{ id: 1, date: at(4), from: BOB.inGame, text: 'hi' }] });
+    h = await liveHarness({ feed: [feedGame(101, 'Playing'), feedGame(107, 'Playing')], pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: ['107', 101, 107] }));
+    expect(h.exchanges.map((e) => e.request.method)).not.toContain(Method.GetMyGames);
+    expect(fake.refreshed).toEqual([101, 107]);
+    expect(p.games.map((g) => g.id)).toEqual([101, 107]);
+    expect(p.gamesFrom).toBe('game_ids');
+    expect(p).not.toHaveProperty('listed');
+  });
+
+  it('game_ids pages with the cursor like the game list does', async () => {
+    const fake = warapp(GAMES, CHATS);
+    h = await liveHarness({ feed: [feedGame(101, 'Playing'), feedGame(102, 'DistributingTerritories')], pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const first = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: [102, 101], max_games: 1 }));
+    expect(first).toMatchObject({ read: 1, next: '101', remaining: 1 });
+    const second = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: [102, 101], max_games: 1, cursor: first.next }));
+    expect(second.quiet).toEqual([102]);
+    expect(second.next).toBeUndefined();
+  });
+
   it('refuses when the signed-in account cannot be read: its games cannot be listed', async () => {
     h = await liveHarness({ feed: FEED, warapp: warapp(GAMES, CHATS).handler });
     const res = await h.call('warapp_chat_inbox');

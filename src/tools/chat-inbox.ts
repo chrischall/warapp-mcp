@@ -3,8 +3,9 @@
 // with a cursor, and shows only the new messages — warapp_get_chat's `game_id`, `channel` and
 // `limit` would each mean something else here.
 //
-// The games come from GetMyGames (lobbies, games being picked or played; never a finished one), in
-// ascending id order; each is read as warapp_get_chat reads it (GameFeed with its chat, then
+// The games are `game_ids` when given (exactly those, #260), else every game GetMyGames lists (lobbies,
+// games being picked or played; never a finished one; the whole list, `fetchMyGames`), in ascending id
+// order; the answer says which (`gamesFrom`) and, from the list, whether it may be partial; each is read as warapp_get_chat reads it (GameFeed with its chat, then
 // GameRefresh while the account is known, else GameFeed's list), one game at a time — never in
 // parallel — and at most `max_games` per call, the rest behind `next`. A game whose read fails is
 // listed in `failed`, never thrown. Nothing is marked seen unless `mark_seen: true`.
@@ -14,7 +15,8 @@ import { CHAT_CHANNELS, type ChatChannel } from '../chat.js';
 import { chatGameIds } from '../my-games.js';
 import { playersByInGameId } from '../live.js';
 import { CHAT_SOURCE_NOTES, chatMe, chatUnread, markChatSeen, readChat, shown, type ChatSource } from './chat.js';
-import { readAnnotations, respond, untrustedDescription, untrustedText } from './common.js';
+import { parseGameId } from '../client.js';
+import { gameIdArg, readAnnotations, respond, untrustedDescription, untrustedText } from './common.js';
 import { mintMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
@@ -22,6 +24,8 @@ import { fetchMyGames } from './my-games.js';
 
 /** Games read per call, at most (each costs a GameFeed read and a GameRefresh). */
 export const MAX_INBOX_GAMES = 10;
+/** The most game ids a call may name. */
+export const MAX_INBOX_GAME_IDS = 100;
 /** New messages shown per game, by default (the newest). */
 const DEFAULT_INBOX_LIMIT = 20;
 /** The longest failure text a game carries. */
@@ -39,7 +43,9 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
       title: 'Read unseen chat across my war.app games',
       description: untrustedDescription(
         'The chat messages you have not yet marked seen, across all your war.app (Warzone) games in one call: your ' +
-          'lobbies and the games being picked or played (finished games are skipped), from your game list. Each game ' +
+          'lobbies and the games being picked or played (finished games are skipped), from your game list — or exactly ' +
+          'the games in `game_ids`; `gamesFrom` says which, and from the list `listed` and `complete` say how many ' +
+          'games war.app returned and whether the list was whole. Each game ' +
           'with something new is listed with its `unread` count per channel and only its new messages (newest ' +
           '`limit`, each like warapp_get_chat: `from`, delimited `text`, `time`, `turn`, `channel`); games with ' +
           'nothing new are in `quiet`, and a game that could not be read is in `failed` with the reason. At most ' +
@@ -51,6 +57,15 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
       _meta: mintMeta('whats-new', ['chat inbox', 'unread chat', 'new messages in my games', 'did anyone message me']),
       annotations: readAnnotations('Read unseen war.app chat'),
       inputSchema: z.object({
+        game_ids: z
+          .array(gameIdArg)
+          .min(1)
+          .max(MAX_INBOX_GAME_IDS)
+          .optional()
+          .describe(
+            'Read exactly these games (finished ones included) instead of your game list — e.g. a list of your own. ' +
+              'Omit to read every lobby and game being picked or played from your game list.',
+          ),
         max_games: z.coerce
           .number()
           .int()
@@ -79,11 +94,12 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
           ),
       }),
     },
-    async ({ max_games, cursor, limit, mark_seen }) => {
-      const { games: listed } = await fetchMyGames(ctx);
+    async ({ game_ids, max_games, cursor, limit, mark_seen }) => {
+      const given = game_ids ? [...new Set(game_ids.map((g) => parseGameId(g)))].sort((a, b) => a - b) : undefined;
+      const list = given ? undefined : await fetchMyGames(ctx);
       const me = await chatMe(ctx);
       const after = cursor === undefined ? undefined : Number(cursor);
-      const ids = chatGameIds(listed).filter((id) => after === undefined || id > after);
+      const ids = (given ?? chatGameIds(list!.games)).filter((id) => after === undefined || id > after);
       const batch = ids.slice(0, max_games ?? MAX_INBOX_GAMES);
       const n = limit ?? DEFAULT_INBOX_LIMIT;
       const channels: ChatChannel[] = [...CHAT_CHANNELS];
@@ -132,6 +148,20 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
         quiet,
         failed,
         read: batch.length,
+        gamesFrom: list ? 'my_games' : 'game_ids',
+        ...(list
+          ? {
+              listed: list.games.length,
+              complete: !list.partial,
+              ...(list.partial
+                ? {
+                    warning:
+                      `Your game list may be partial (war.app returned ${list.games.length} games, the most this server ` +
+                      'asks for): a game missing from it was not read. Pass `game_ids` to read particular games.',
+                  }
+                : {}),
+            }
+          : {}),
         ...(remaining > 0 ? { next: String(batch.at(-1)!), remaining } : {}),
         ...(sources.size ? { sourceNotes: Object.fromEntries([...sources].map((s) => [s, CHAT_SOURCE_NOTES[s]])) } : {}),
       }));
