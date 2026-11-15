@@ -123,6 +123,12 @@ export interface StressInput {
    * is still tried; replies that break a truce are marked, and `safeIfTruceHolds` leaves them out.
    */
   truces?: readonly { player: number; covered: readonly number[] }[];
+  /**
+   * #274: try only the replies that strike one of these territories (an order of theirs, a chain's
+   * path or a joint strike onto it); `considered`, `safe` and the rest count those alone. The look-ahead
+   * is unaffected (turn it off with `lookAhead: false`).
+   */
+  targets?: readonly number[];
 }
 
 const DEFAULT_MAX_REPLIES = 8;
@@ -516,6 +522,15 @@ export function stressPlan(input: StressInput): StressReport {
         candidates.push({ ...side(a, sa), kind: 'joint', partner: side(b, sb) });
       }
     }
+  }
+
+  // #274: only the replies that strike the territories asked about.
+  if (input.targets) {
+    const wanted = new Set(input.targets);
+    const strikes = (x: Side, path?: readonly number[]) => x.orders.some((o) => wanted.has(o.to)) || (path ?? []).some((t) => wanted.has(t));
+    const kept = candidates.filter((c) => strikes(c, c.path) || (c.partner !== undefined && strikes(c.partner)));
+    candidates.length = 0;
+    candidates.push(...kept);
   }
 
   // ---- B2 T6: which replies break a truce ----
