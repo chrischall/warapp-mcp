@@ -1046,7 +1046,13 @@
 //     stack), so one stack may hold several; never into a border a withdrawal leaves. Live, 10
 //     idle armies walked to a territory beside empty neutrals while the conceded border the plan
 //     attacked from, just as near, would have held with them. The front is the territories a visible
-//     enemy holds; only a stack no enemy can be reached from heads for the nearest territory
+//     enemy holds. When no revival applies and the front is reached only through a conceded border
+//     the plan attacks an enemy from (#260), an idle stack still steps toward it, into that border,
+//     when the nearest territory not mine is no nearer ("… is reached only through a border the plan
+//     concedes …; they are lost with it if it falls"); never into another conceded border or one a
+//     withdrawal leaves. Live, 10 idle armies walked to an empty neutral edge while the border the
+//     plan attacked from missed holding by one; the stress test preferred them there. Only a stack
+//     no enemy can be reached from heads for the nearest territory
 //     not mine (neutral or fog; never a teammate's, PLAN-TEAMS C3) instead (#121: idle armies walked toward a worthless neutral
 //     while the enemy front was short, and a stack beside one never moved). This turn's
 //     captures count as mine only when they land for sure — a neutral, or an attack on a player

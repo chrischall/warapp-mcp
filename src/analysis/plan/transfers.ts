@@ -8,6 +8,9 @@
 // #257: before any of that, an idle interior stack beside a conceded border moves into it when that
 // transfer (plus what the plan leaves there) makes the border hold; the border is then held, not
 // conceded — the conceded border the plan attacks from first, as #121's revival from the leftover.
+// #260: when none revives and the enemy front is reached only through a conceded border the plan
+// attacks an enemy from, an idle stack still heads for it — into that border — when the nearest
+// territory not mine is no nearer; never into another conceded border or one a withdrawal leaves.
 import { bfsDistances, neighborsOf } from '../graph.js';
 import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
@@ -166,6 +169,18 @@ export function transfers(
     const anyFront = ids.filter((id) => !held.has(id) && !pc.truce.noFront(id) && !teammateAt(pc, id));
     const distEnemy = bfsDistances(g, enemyFront, { passable });
     const distAny = bfsDistances(g, anyFront, { passable });
+    // #260: when the enemy front is reached only through a conceded border the plan attacks an
+    // enemy from (no revival above made it hold), idle armies still head for it — into that border —
+    // rather than to a neutral edge no nearer. Never into any other conceded border (the plan gives
+    // it up), nor one a withdrawal leaves.
+    const attacksFrom = (x: number) =>
+      moves
+        .filter((m) => m.from === x && m.kind === 'attack' && isEnemy(m.to))
+        .map((m) => m.to)
+        .sort((a, b) => a - b);
+    const withdrawn = new Set(moves.filter((m) => m.kind === 'transfer' && conceded.has(m.from)).map((m) => m.from));
+    const viaOk = (id: number) => !conceded.has(id) || (!withdrawn.has(id) && attacksFrom(id).length > 0);
+    const distEnemyVia = bfsDistances(g, enemyFront, { passable: (id) => held.has(id) && viaOk(id) });
     // #125: staging. Idle armies on a territory facing no visible enemy — a border beside neutrals
     // included — walk one step toward the source of the capture the leftover saved toward, when
     // it is no farther than the enemy front; once there they help take it.
@@ -214,7 +229,9 @@ export function transfers(
       }
     }
     for (const t of mine) {
-      const dist = distEnemy.has(t) ? distEnemy : distAny;
+      const via =
+        !distEnemy.has(t) && distEnemyVia.has(t) && distEnemyVia.get(t)! <= (distAny.get(t) ?? Infinity);
+      const dist = distEnemy.has(t) ? distEnemy : via ? distEnemyVia : distAny;
       const n = avail.get(t)!;
       if (n <= 0 || locked.has(t)) continue;
       // My commander's territory next to an enemy at the start of the turn keeps its armies,
@@ -231,7 +248,13 @@ export function transfers(
       // not mine yet, and a "transfer" into it would execute as an attack.
       // B2 (T5): never onto a truce's capped border past its cap, nor back along a transfer.
       const step = neighborsOf(g, t)
-        .filter((x) => mineSet.has(x) && !conceded.has(x) && (dist.get(x) ?? Infinity) < d && capStepRoom(pc, ps, t, x) > 0)
+        .filter(
+          (x) =>
+            mineSet.has(x) &&
+            (via ? viaOk(x) : !conceded.has(x)) &&
+            (dist.get(x) ?? Infinity) < d &&
+            capStepRoom(pc, ps, t, x) > 0,
+        )
         .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
       if (step === undefined) continue;
       const { pending, ifFail, twoStep, truceHold, keep } = keepOf(t);
@@ -258,8 +281,19 @@ export function transfers(
       const reason = 'moves idle interior armies toward the front';
       transfer(t, step, k, reason);
       arrived.set(step, (arrived.get(step) ?? 0) + k);
+      // #260: say why a step goes toward a front past a conceded border, and what it heads for.
+      let front = '';
+      if (via) {
+        const targets = attacksFrom(step);
+        const beside = neighborsOf(g, step).filter((x) => !held.has(x) && isEnemy(x)).sort((a, b) => a - b);
+        front = ` (the enemy front${beside.length ? `, ${beside.map(label).join(', ')},` : ''} is reached only through a border the plan concedes, and no farther than the nearest territory not mine${
+          conceded.has(step)
+            ? `; ${label(step)} is the border the plan attacks ${targets.map(label).join(', ')} from; they are lost with it if it falls`
+            : ''
+        })`;
+      }
       rationale.push(
-        `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${
+        `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${front}${
           k < n && k === room
             ? ` (the rest stay: a truce caps the armies on ${label(step)} at what this leaves there)`
             : k < n && twoStep
