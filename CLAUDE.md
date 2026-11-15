@@ -766,7 +766,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     47 armies from done, and fell to the 33 that could reach it whoever moved first.
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin (with several, each is brought to its margin first, and a conceded border the leftover
-    can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies
+    can make hold is held after all before any margin, #121; #257: so is one an idle interior stack
+    beside it makes hold by transferring in, rule 6's first step, the border the plan attacks from
+    first), else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border). #218: once every short border has its margin, the
     rest goes to the source of the step the leftover would save toward (#125) when that source is a
     border of equal defensive value (same player, threat, enemy territories, protected value and

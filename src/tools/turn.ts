@@ -2144,7 +2144,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ? {
               settings: {
                 ...settings,
-                allowTransferOnly: settings.allowTransferOnly ?? true,
+                // #257: the planner's switch under its own name, and beside it the game's own
+                // per-order options as GameFeed states them (null when it does not).
+                idleTransfers: settings.idleTransfers ?? true,
+                allowTransferOnly: game.settings?.allowTransferOnly ?? null,
+                allowAttackOnly: game.settings?.allowAttackOnly ?? null,
                 localDeployments: settings.localDeployments ?? false,
                 noSplit: settings.noSplit ?? false,
               },

@@ -5,6 +5,9 @@
 // First (#125) idle armies facing no visible enemy stage one step toward the source of the step
 // the leftover deploy saved toward. planPass runs it where it ran before: after the efficient
 // sizes (S2), before Order Priority for a strike (rule 1s).
+// #257: before any of that, an idle interior stack beside a conceded border moves into it when that
+// transfer (plus what the plan leaves there) makes the border hold; the border is then held, not
+// conceded — the conceded border the plan attacks from first, as #121's revival from the leftover.
 import { bfsDistances, neighborsOf } from '../graph.js';
 import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
@@ -24,13 +27,126 @@ export function transfers(
   caps: Captures,
   staging: Staging | undefined,
 ): void {
-  const { g, me, s, foe, territories: state, label, bonusName, mine, mineSet, unitsAt, noSplit, myCommanders } = pc;
-  const { rationale, avail, locked, coverKeep, centralKeep, captured, moves } = ps;
+  const { g, me, s, foe, territories: state, label, bonusName, mine, mineSet, unitsAt, toTake, noSplit, myCommanders } = pc;
+  const { warnings, rationale, avail, locked, coverKeep, centralKeep, captured, moves } = ps;
   const { guardAt, coverOf, orderOf, warnSplit } = book;
-  const { holdArmies, borderAt, ownerOf } = threats;
-  const { arrived, conceded, stayAt, twoStepCite, twoStepHold, twoStepKeep } = hd;
+  const { holdArmies, borderAt, ownerOf, borders } = threats;
+  const { arrived, conceded, threatened, stayAt, twoStepCite, twoStepHold, twoStepKeep } = hd;
   const { strikes, worstCase } = caps;
-  if (s.allowTransferOnly ?? true) {
+  /**
+   * #257: a transfer from `from` to `to`, added to one already planned between them (a territory
+   * issues each move once; only the largest move into a border lands before the opponent's first).
+   */
+  const transfer = (from: number, to: number, armies: number, reason: string) => {
+    const same = moves.find((m) => m.kind === 'transfer' && m.from === from && m.to === to);
+    if (same) same.armies += armies;
+    else moves.push({ from, to, armies, kind: 'transfer', reason });
+  };
+  /**
+   * What an idle stack on `t` keeps (rule 6's keeps): #128's hold while an attack on a player beside
+   * it may fail, #172's two-step hold, an exit's cover (#179), the leftover kept central (#218) and a
+   * truce's hold (B2).
+   */
+  const keepOf = (t: number) => {
+    // #128: interior only if this turn's attacks on players beside it land. Until they do, it
+    // keeps what holds against the threat there as if they failed (its neighbours' owners'
+    // stacks and deploy as they stand): a +12 bonus was left on 1 beside a capture.
+    const pending = neighborsOf(g, t).filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player');
+    const ifFail = pending.length ? borderAt(t, () => false) : null;
+    const keep128 = ifFail ? Math.max(0, holdArmies(ifFail.threat) - unitsAt(t)) : 0;
+    // #172: or it is interior now, but a stack two steps away can take the territory in between
+    // this turn and attack it next. The larger hold binds (never the two added together).
+    const far = twoStepHold(t);
+    const twoStep = far !== null && far.stay > keep128 ? far : null;
+    const truceHold = truceKeep(pc, threats, t);
+    const keep = Math.max(
+      keep128,
+      twoStep?.stay ?? 0,
+      coverKeep.has(t) ? coverKeep.get(t)! + guardAt(t) : 0,
+      // #218 (comment): the leftover kept central stays; the armies already there may still go.
+      centralKeep.has(t) ? centralKeep.get(t)! + guardAt(t) : 0,
+      // B2 (T4): beside a truce's covered territory, what holds it there.
+      truceHold,
+    );
+    return { pending, ifFail, twoStep, truceHold, keep };
+  };
+  /**
+   * #257: an idle interior stack (no enemy beside it, not my commander's, issuing no order under
+   * No-Split) moves into a conceded border beside it when that transfer, with what the plan leaves
+   * on the border (its deploys included), makes it hold against the threat it was conceded on: the
+   * border is then held. Only a conceded border no withdrawal leaves (its armies would be gone);
+   * one whose garrison stays (#59) may be. The conceded border the plan attacks from goes first, then
+   * worth per army needed, fewest needed, id; from the stack beside it with the most to send (as
+   * rule 6 would move it: its keeps stay) it sends what makes it hold (No-Split: the whole stack),
+   * so one stack may hold several; rule 6 then moves the rest, a held border being the front.
+   */
+  function reviveConceded(isEnemy: (id: number) => boolean): void {
+    const attacksFrom = (c: number) =>
+      moves
+        .filter((m) => m.from === c && m.kind === 'attack')
+        .map((m) => m.to)
+        .sort((a, b) => a - b);
+    const need = (c: number, threat: number): number => {
+      let k = 0;
+      while ((toTake(stayAt(c) + (arrived.get(c) ?? 0) + k + unitsAt(c)) ?? Infinity) <= threat) {
+        k++;
+        if (k > 10_000) return Infinity;
+      }
+      return k;
+    };
+    const candidates = threatened
+      .filter((t) => conceded.has(t.id) && mineSet.has(t.id) && borders.has(t.id))
+      .filter((t) => !moves.some((m) => m.from === t.id && m.kind === 'transfer'))
+      .map((t) => ({ t, threat: borders.get(t.id)!.threat, k: need(t.id, borders.get(t.id)!.threat), from: attacksFrom(t.id) }))
+      .filter((c) => c.k > 0 && Number.isFinite(c.k))
+      .sort(
+        (a, b) =>
+          Number(b.from.length > 0) - Number(a.from.length > 0) ||
+          b.t.worth / b.k - a.t.worth / a.k ||
+          a.k - b.k ||
+          a.t.id - b.t.id,
+      );
+    for (const c of candidates) {
+      const id = c.t.id;
+      // What each idle stack beside it can send, as rule 6 would move it.
+      const sources = neighborsOf(g, id)
+        .filter((t) => mineSet.has(t) && !conceded.has(t) && !locked.has(t) && !myCommanders.has(t) && !orderOf(t))
+        .filter((t) => !neighborsOf(g, t).some((x) => isEnemy(x)))
+        .map((t) => {
+          const n = avail.get(t)!;
+          const part = Math.min(n, Math.max(0, stayAt(t) - keepOf(t).keep), capStepRoom(pc, ps, t, id));
+          return { t, n, part: noSplit && part < n ? 0 : part };
+        })
+        .filter((x) => x.part >= c.k)
+        .sort((a, b) => b.part - a.part || a.t - b.t);
+      const src = sources[0];
+      if (!src) continue;
+      // What makes it hold (No-Split: the whole stack); the rest stays idle for the next border and
+      // rule 6, which now passes through this one.
+      const k = noSplit ? src.part : c.k;
+      avail.set(src.t, src.n - k);
+      const reason = `holds ${label(id)} after all (not conceded)`;
+      transfer(src.t, id, k, reason);
+      arrived.set(id, (arrived.get(id) ?? 0) + k);
+      conceded.delete(id);
+      locked.add(id);
+      const conceding = `${label(id)} cannot be held `;
+      for (let i = warnings.length - 1; i >= 0; i--)
+        if (warnings[i]!.startsWith(conceding) && warnings[i]!.endsWith(': conceded')) warnings.splice(i, 1);
+      const total = stayAt(id) + (arrived.get(id) ?? 0) + unitsAt(id);
+      rationale.push(
+        `Hold ${label(id)} after all (not conceded): transfer ${k} idle armies from ${label(src.t)} into it (${total} armies need ${toTake(total)} to take, above the ~${c.threat} threat; protects +${c.t.value})${
+          c.from.length ? `; the border the plan attacks ${c.from.map(label).join(', ')} from` : ''
+        }. They land only once the transfer runs, so the border holds only if it runs before the attack on it.`,
+      );
+    }
+  }
+  if (s.idleTransfers ?? true) {
+    const isEnemy = (id: number) => {
+      const st = state.get(id);
+      return st?.owner.kind === 'player' && foe(st.owner.playerId) && !pc.truce.noFront(id);
+    };
+    reviveConceded(isEnemy);
     // #121: a capture counts as held only when it lands for sure — a neutral, or an attack on a
     // player sized for its owner's whole deploy (finishing off, fog pressure, a commander strike).
     // An exact-sized attack on a player fails if the owner reinforces first, and a garrison moved
@@ -41,11 +157,7 @@ export function transfers(
     // A conceded border is not "the front": the plan gives it up, so armies never flow into it and
     // distances are not measured through it; idle armies concentrate on a front that holds.
     const passable = (id: number) => held.has(id) && !conceded.has(id);
-    // B2 (T4): a truce's covered territory is no front.
-    const isEnemy = (id: number) => {
-      const st = state.get(id);
-      return st?.owner.kind === 'player' && foe(st.owner.playerId) && !pc.truce.noFront(id);
-    };
+    // B2 (T4): a truce's covered territory is no front (isEnemy, above).
     // Enemy front first (#121): idle armies head for the territories a visible enemy holds; only
     // with no enemy reachable do they head for the nearest territory not mine (neutral or fog).
     // PLAN-TEAMS C3: a teammate's territory is no front either; nothing there is to be taken.
@@ -86,7 +198,7 @@ export function transfers(
         }
         avail.set(t, n - k);
         const reason = `stages toward ${label(st.t)}, the next step of bonus ${bonusName(st.bonusId)}`;
-        moves.push({ from: t, to: step, armies: k, kind: 'transfer', reason });
+        transfer(t, step, k, reason);
         arrived.set(step, (arrived.get(step) ?? 0) + k);
         rationale.push(
           `Move ${k} from ${label(t)} to ${label(step)}: ${reason} (${st.cost} to take from ${label(st.from)}, not affordable this turn)${
@@ -122,26 +234,7 @@ export function transfers(
         .filter((x) => mineSet.has(x) && !conceded.has(x) && (dist.get(x) ?? Infinity) < d && capStepRoom(pc, ps, t, x) > 0)
         .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
       if (step === undefined) continue;
-      // #128: interior only if this turn's attacks on players beside it land. Until they do, it
-      // keeps what holds against the threat there as if they failed (its neighbours' owners'
-      // stacks and deploy as they stand): a +12 bonus was left on 1 beside a capture.
-      const pending = neighborsOf(g, t).filter((x) => captured.has(x) && state.get(x)?.owner.kind === 'player');
-      const ifFail = pending.length ? borderAt(t, () => false) : null;
-      const keep128 = ifFail ? Math.max(0, holdArmies(ifFail.threat) - unitsAt(t)) : 0;
-      // #172: or it is interior now, but a stack two steps away can take the territory in between
-      // this turn and attack it next. The larger hold binds (never the two added together).
-      const far = twoStepHold(t);
-      const twoStep = far !== null && far.stay > keep128 ? far : null;
-      const truceHold = truceKeep(pc, threats, t);
-      const keep = Math.max(
-        keep128,
-        twoStep?.stay ?? 0,
-        coverKeep.has(t) ? coverKeep.get(t)! + guardAt(t) : 0,
-        // #218 (comment): the leftover kept central stays; the armies already there may still go.
-        centralKeep.has(t) ? centralKeep.get(t)! + guardAt(t) : 0,
-        // B2 (T4): beside a truce's covered territory, what holds it there.
-        truceHold,
-      );
+      const { pending, ifFail, twoStep, truceHold, keep } = keepOf(t);
       // No-Split (#124): a transfer sends the whole stack, so one that must keep some sends none.
       const room = capStepRoom(pc, ps, t, step);
       const part = Math.min(n, Math.max(0, stayAt(t) - keep), room);
@@ -163,7 +256,7 @@ export function transfers(
       }
       avail.set(t, n - k);
       const reason = 'moves idle interior armies toward the front';
-      moves.push({ from: t, to: step, armies: k, kind: 'transfer', reason });
+      transfer(t, step, k, reason);
       arrived.set(step, (arrived.get(step) ?? 0) + k);
       rationale.push(
         `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${

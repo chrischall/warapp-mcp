@@ -1910,7 +1910,7 @@ describe('planTurn — transfers', () => {
   });
 
   it('does not transfer when transfer-only orders are off', () => {
-    const p = planTurn({ graph: g, board: state, me: ME, income: 0, settings: { ...STD, allowTransferOnly: false } });
+    const p = planTurn({ graph: g, board: state, me: ME, income: 0, settings: { ...STD, idleTransfers: false } });
     expect(p.moves).toEqual([]);
   });
 
@@ -1971,7 +1971,7 @@ describe('planTurn — accounting property', () => {
         luckModifier: r() < 0.3 ? 0.16 : 0,
         oneArmyStandsGuard: r() < 0.8,
         multiAttack: r() < 0.3,
-        allowTransferOnly: r() < 0.8,
+        idleTransfers: r() < 0.8,
       };
       const goals = ['expand', 'complete-bonus', 'defend', 'balanced'] as const;
       const input: PlanInput = {

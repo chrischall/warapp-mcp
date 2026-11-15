@@ -267,7 +267,9 @@ describe('#235 review 2: a held bonus whose other member cannot be held', () => 
     expect(plain.profile.ranking?.leader).toBe(ME);
     expect(plain.conceded).not.toContain(1);
     expect(held.conceded).not.toContain(1);
-    expect(held.conceded).toContain(6);
+    // Triage concedes T6; #257: the idle 90 on T4 beside it then make it hold after all.
+    expect(held.conceded).not.toContain(6);
+    expect(held.rationale.join('\n')).toMatch(/Hold T6 \(#6\) after all \(not conceded\): transfer \d+ idle armies from T4 \(#4\)/);
     expect(held.rationale.join('\n')).toMatch(
       /holding T1 \(#1\) against players 20 and 30 attacking together needs \d+ .*sized for the strongest single opponent \(~13\).*: it holds on what it has/,
     );

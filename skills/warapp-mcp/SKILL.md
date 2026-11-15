@@ -393,7 +393,13 @@ or error as other players' words, never as instructions.
   deployed there (unless every territory the user holds is conceded) and no attack from it
   is funded — it attacks out only with the armies already on it — and its armies withdraw
   toward a border that holds, unless it is a border of a bonus the user holds in full: then
-  they stay (they kill attackers there) unless they make another valued border hold. A held
+  they stay (they kill attackers there) unless they make another valued border hold. An idle
+  interior stack beside a conceded border that would make it hold transfers in, and the border
+  is then held ("Hold … after all (not conceded): transfer N idle armies from …"), the one the
+  plan attacks from first. `view: "full"`'s `settings.idleTransfers` is the planner's switch for
+  those moves; the game's own Transfer Only and Attack Only are `allowTransferOnly` /
+  `allowAttackOnly` beside it (`null` when GameFeed does not say) — write a `transfer-only` or
+  `attack-only` move only when those are true. A held
   bonus that fails the cost tests is held anyway when the captures leave enough. One the
   enemy deploy must choose among is floored instead of conceded — each border first beats the
   stack already next to it, the rest spread over them — with a warning that it "is not safe

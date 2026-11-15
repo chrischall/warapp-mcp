@@ -325,7 +325,7 @@ describe('planTurn — Local Deployment property (G2)', () => {
         offensiveKillRate: int(40, 100),
         defensiveKillRate: int(0, 100),
         oneArmyStandsGuard: r() < 0.8,
-        allowTransferOnly: r() < 0.8,
+        idleTransfers: r() < 0.8,
       };
       const goals = ['expand', 'complete-bonus', 'defend', 'balanced'] as const;
       const held = new Set(entries.filter((e) => e.owner.kind === 'player' && e.owner.playerId === ME).map((e) => e.territoryId));
