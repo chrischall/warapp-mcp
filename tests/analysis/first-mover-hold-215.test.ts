@@ -262,7 +262,10 @@ describe('#215 review: a conceded border held after all comes before a hold only
     expect(p.rationale.join('\n')).toMatch(/Hold T9 \(#9\) after all \(not conceded\): deploy 17 there, and keep the 2 that would have withdrawn/);
     expect(deployedOn(p, 9)).toBe(17);
     // #215 review: its own 10 (the 2 attacking T4 not yet gone when player 20 moves first) need 10.
-    expect(p.rationale.join('\n')).toMatch(/Deploy 10 to T3 \(#3\) so it holds whoever moves first/);
+    // #265: T3 is a member of B1, which this turn completes, and falls even with the 7 withdrawn
+    // into it, so the leftover brings it to that hold first (5); the worse order adds the other 5.
+    expect(p.rationale.join('\n')).toMatch(/Deploy 5 of the leftover to T3 \(#3\): it is a member of bonus B1 \(#1\), completed this turn/);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 5 to T3 \(#3\) so it holds whoever moves first/);
     expect(deployedOn(p, 3)).toBe(10);
     // T3 has its comfortable margin with the 7 withdrawn into it: the last 3 go to the expansion stack.
     expect(deployedOn(p, 7)).toBe(3);

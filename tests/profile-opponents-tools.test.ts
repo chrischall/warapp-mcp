@@ -141,6 +141,7 @@ interface Opponent {
   seen: { turnsObserved: number; gamesMet?: number };
   habits: Record<string, Habit>;
   labels: string[];
+  lastAttackTurn: number | null;
   counter: string[];
   reinforceExtra?: { mean: number; n: number };
   mayBeTeammate?: true;
@@ -224,6 +225,22 @@ describe('warapp_profile_opponents', () => {
     expect(q.pastGames).toBe('unreadable');
     expect(who(q, BOB_ID).habits.reinforce!.basis).toBe('default');
     expect(readFileSync(profilePlayersPath(dataDir), 'utf8')).toBe('{nope');
+  });
+
+  it('reports the last turn each opponent attacked me beside its labels, in the tool and the plan (#264)', async () => {
+    h = await setUp();
+    // A turn the board cache no longer holds, kept in the per-game file: Bob took a territory of mine on turn 0.
+    await profile(h);
+    const path = profileGamePath(h.dataDir, GAME, ME);
+    const f = JSON.parse(readFileSync(path, 'utf8')) as { turns: Record<string, Record<string, Record<string, unknown>>> };
+    const bobOn1 = f.turns['1']![String(BOB_ID)]!;
+    writeFileSync(path, JSON.stringify({ ...f, turns: { ...f.turns, 0: { [BOB_ID]: { ...bobOn1, attackedMe: true, tookFromMe: [161] } } } }));
+    const p = await profile(h);
+    expect(who(p, BOB_ID).lastAttackTurn).toBe(0);
+    // Cat never attacked me on a turn observed.
+    expect(who(p, CAT_ID).lastAttackTurn).toBeNull();
+    const r = await plan(h);
+    expect(r.reads!.find((x) => x.player.id === BOB_ID)!.lastAttackTurn).toBe(0);
   });
 
   it('keeps the turns in the per-game file, unchanged by reading the same turn twice', async () => {
@@ -353,6 +370,7 @@ describe('warapp_profile_opponents', () => {
 interface Read {
   player: { id: number; name: string };
   labels: string[];
+  lastAttackTurn: number | null;
   habits: Record<string, { value: number; n: number; basis: string }>;
   gamesMet?: number;
   counter?: string[];

@@ -275,6 +275,9 @@ confidence = n / (n + K)
   `turtle` is given only on this game's counts (the report could not separate a quiet player from a
   quiet game). The first report reads `attack` as persisting within a game, not shown to be a
   person's trait, and `stacking` as resting largely on one opponent-game.
+- *As built, #264:* `turtle` is also withheld when the opponent attacked me within the last two turns
+  (`TURTLE_QUIET_TURNS`), and every read reports `lastAttackTurn` beside the labels (the tool and the
+  plan's `reads`), from the primitives (`attackedMe` or a capture from me).
 - **Counter-play**, one fixed line per label:
 
 | Label | Line |
@@ -312,6 +315,14 @@ confidence = n / (n + K)
   folded with `ending: unknown` and deleted, so no id-bearing file outlives the board cache.
   *As built in part B (C not built yet):* a folded file is kept until that age rule deletes it; the
   file keeps the game's seats (format, seat count, AI seats) so the age rule can fold it unread.
+  *As built, #264 (backfill):* a finished game with cached boards but no per-game file (it finished
+  before #263) is observed once from those boards and my cached orders and folded as `live`, the file
+  marked `backfill` and dated as the board cache so it is deleted with it. It runs in `warapp_get_game`
+  and in `warapp_profile_opponents`, which accepts a finished game for it; no request is made (teams only
+  from GameFeed, two seats or the kept team record), and a game the stores already hold is never folded
+  again. Nothing to fold reports "counts start with games played on this build"; a fold that failed
+  (`failed`: a store that cannot be read or written; the next read tries again) and no data directory
+  (`no-data-dir`) report their own notes.
 - **The salt:** `playerRecordSalt` only reads; the code that makes the salt is private to the deal
   store's write path. Export one shared "read or make" function and use it from both stores, so two
   salts can never exist and a malformed one is still never replaced.

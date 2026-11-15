@@ -24,7 +24,7 @@ import { gameIdArg, readAnnotations, respond, untrustedDescription, untrustedTex
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
-import { recordProfile } from './profile-hook.js';
+import { foldFinished, recordProfile } from './profile-hook.js';
 import { counterOf, readOpponents } from './profile-reads.js';
 import { resolveTeamsFor } from './team-source.js';
 import { boardHistory, currentTurn, requireTurnPhase } from './turn.js';
@@ -54,7 +54,11 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
           `per game by this tool, warapp_plan_turn, warapp_track_opponents, warapp_locate_opponents and warapp_get_relations (off with ${PROFILE_ENV}=off: ` +
           'then only the boards read now are counted and nothing is kept). Known teammates are never profiled. While a game of ' +
           'three or more seats has teams that could not be read, nothing is kept (`profile: not-kept`) and every other player is ' +
-          'profiled from the boards read now with `mayBeTeammate: true`. Refuses outside a turn ' +
+          'profiled from the boards read now with `mayBeTeammate: true`. `lastAttackTurn` beside the labels is the last turn it attacked you ' +
+          '(null: no observed turn shows one); `turtle` is never given when that was within the last two turns. ' +
+          'Given a finished game it folds it instead (`fold`: once, from the turns kept while it was played, else a backfill from the boards ' +
+          'cached then — a game finished before profiles were kept; no other request, never a teammate, nothing while its teams are unknown; ' +
+          'when nothing can be folded it says counts start with games played on this build). Refuses any other state outside a turn ' +
           `phase. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read. warapp_plan_turn reports a compact read of each opponent in contact as \`reads\` (and warapp_advise_diplomacy \`retaliate\` and \`attack\`, warapp_scout_player \`met\`) but does not use profiles in its plan.`,
       ),
       _meta: lookupMeta(['profile my opponent', 'what kind of player is my opponent', 'does my opponent reinforce', 'opponent habits', 'is my opponent aggressive']),
@@ -67,6 +71,18 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
     },
     async ({ game_id, player, detail }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
+      // #264: a finished game is folded (once; backfilled from its cached boards when no turns were kept), not refused.
+      if (feed.state === 'Finished') {
+        const fold = await foldFinished(ctx.dataDir, env, feed);
+        return respond(detail, VIEWS, () => ({
+          game: { id: feed.id, name: feed.name === undefined ? null : untrustedText(feed.name), state: feed.state },
+          profile: profileState(env, ctx.dataDir),
+          fold,
+          ...(fold?.status === 'folded'
+            ? { next: 'Each opponent folded here counts toward `gamesMet` and `past-games` in later games; this tool reads a game being played.' }
+            : {}),
+        }));
+      }
       requireTurnPhase(feed);
       const seat = await resolveMe(ctx, feed.players, player);
       const { game, me, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
@@ -104,6 +120,8 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
               habits: Object.fromEntries(HABIT_NAMES.map((n) => [n, est[n]])),
               ...(h.reinforceExtra.n ? { reinforceExtra: { mean: Math.round((h.reinforceExtra.sum / h.reinforceExtra.n) * 100) / 100, n: h.reinforceExtra.n } } : {}),
               labels,
+              // #264: the last turn it attacked me (null: no observed turn shows it).
+              lastAttackTurn: r.lastAttackTurn,
               counter: counterOf(labels),
               ...(full
                 ? {

@@ -656,7 +656,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `PROFILE_PRIOR_WEIGHT` (4) toward a prior: the population pool for this format, then all players, once it has
   `POPULATION_MIN_OPPORTUNITIES` (10) for that habit (an AI seat: the AI pool), else the neutral default; with `n`,
   `confidence`, `basis` (whichever weighs most: `this-game`, `past-games`, `population`, `default`; the prior wins a
-  tie), `seen.gamesMet`, and labels with a counter-play line at confidence 0.5; `profile` is `kept`, `not-kept` (no data dir, or the teams unknown) or `off`.
+  tie), `seen.gamesMet`, and labels with a counter-play line at confidence 0.5, beside `lastAttackTurn` (#264: the last
+  observed turn it attacked me, `null` when none; `turtle` is withheld when that was within `TURTLE_QUIET_TURNS` (2)
+  of the turn being played); `profile` is `kept`, `not-kept` (no data dir, or the teams unknown) or `off`.
   **Across games (B2, `src/profile-store.ts`)** two name-free stores: `profiles/players.json` keyed by the deal
   record's `playerKey` under the ONE shared salt (`playerSaltForWrite` in `src/player-record-store.ts` is the only
   "read or make"), each player with at most 30 per-game entries (keyed by an HMAC of my account and the game) and its
@@ -667,7 +669,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   seats reach the pool only; a human who became an AI is left out of the game. `foldFinishedGame` runs on the first
   read showing the game `Finished` (warapp_get_game, warapp_wait_for_turn's read; no request) and marks the per-game
   file `folded: 'live'`; part C is not built, so the file then goes by the 60-day age rule, and one reaching it (or the
-  200-file bound) unfolded is folded with every ending `unknown` from the seats it kept, then deleted. A store or salt
+  200-file bound) unfolded is folded with every ending `unknown` from the seats it kept, then deleted. **Backfill
+  (#264, `foldFinished` in `src/tools/profile-hook.ts`):** a finished game with no per-game file (finished before
+  #263, or never planned on this build) is observed once from the boards and orders the board cache holds for it
+  (the cached account: a game it played) and folded as `live`, the file marked `backfill` and given the board
+  cache's mtime (so it ages out with it). No request: teams from GameFeed, two seats or the kept team record only
+  (`keptTeams`), unknown teams fold nothing; never a teammate; never twice (a file already there, or the
+  population holding the game's key, is `already-folded`). It runs from warapp_get_game (`profileFold`) and from
+  warapp_profile_opponents, which given a finished game folds it (`fold`) instead of refusing; nothing to fold says
+  "counts start with games played on this build", except a fold that failed (`failed`, retried on the next read)
+  and no data directory (`no-data-dir`), which say so. warapp_wait_for_turn reads no map, so it folds files only. A store or salt
   that cannot be parsed is never overwritten (`pastGames: 'unreadable'`, folds fail). **Profiles inform only:** the planner reads none
   of it until part 0's measurement is reported and the owner approves each hook (P1).
   **Where the read is reported (part D, `src/tools/profile-reads.ts`, read-only, never throws):** one computation
@@ -914,6 +925,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       never withdrawn from, garrisoned from the leftover, warned when that still cannot hold.
       Since #122 a member of a bonus completed this turn that faces an enemy is garrisoned right
       after the completion, before later captures, when the hold pays as a held bonus's would.
+      #265 (`src/analysis/plan/completed.ts`): a member that still falls to the enemy beside it once
+      the captures land gets the leftover's first call (rule 5, when it covers the hold whole —
+      before the worse-order holds, the strike stack and any comfort margin), and a combined
+      capture it is a source of is first rebalanced at the same kills to leave armies on it — no
+      more than its hold needs, never spending what another source kept back when the capture was
+      built (the #121 keep, the #172 two-step hold, the #179 cover).
     - **Defensibility (#19).** A capture that completes a bonus is checked against the frontier
       it leaves: when holding the members a visible enemy could take next turn needs more than
       the next income, `balanced`/`defend` refuse it ("… indefensible …: not completed") and
@@ -923,7 +940,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       more of my start-of-turn stacks in a fixed order (the first attacks only wear it down),
       with exact arithmetic — only at 0% luck under straight rounding (else skipped with a
       warning), and only for a target the passes already chose. `warapp_plan_turn` lists them
-      in `multiSourceCaptures`. `warapp_submit_turn`'s preview (`attackSizes`, #250) judges
+      in `multiSourceCaptures`; one that leaves a weak member of a bonus it completes short is
+      rebalanced at the same kills (#265, above). `warapp_submit_turn`'s preview (`attackSizes`, #250) judges
       attacks on one target the same way, in the order listed, each against what the earlier
       ones leave (`facing`, `softener`, and each leg's own `expectedKills`; with luck an approximation at the
       expectation, where the chance stops at the first leg likely to capture and the legs after it are transfers), and warns "cannot capture"

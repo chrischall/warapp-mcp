@@ -721,7 +721,17 @@
 //     luck: otherwise it is skipped with a warning. It is a fallback inside every
 //     pass, so it only ever takes a target the passes already chose (economic by
 //     the same scoring), and only when no single source suffices. The plan lists
-//     such targets in `multiSourceCaptures`.
+//     such targets in `multiSourceCaptures`. #265: once the captures are known (before the
+//     leftover), a combined capture one of whose sources is a weak member of a bonus this turn
+//     completes (plan/completed.ts: facing an enemy once the captures land, and falling to it) is
+//     rebalanced at the same kills to leave armies on it — any split of the same sources that
+//     still takes the target with no new deploy (each softener short of the last defender) and
+//     lands as many survivors, leaving every other source holding as it held and never spending
+//     what it kept back when the capture was built (#121's safe-border keep, #172's two-step hold,
+//     #179's cover), never below even where the capture had to trade even (rule 0p.3 / 4e), judged
+//     by the armies left on the weak members up to their holds, then the smallest change, then the
+//     fewest lost — once they hold, nothing more moves ("Rebalance the combined capture of …").
+//     Never under No-Split.
 //  4. Bonuses (value > 0) are scored by value / remaining capture cost, ties by
 //     fewest external borders, then id; focused bonuses come first. The economy test charges
 //     what a capture costs, not what it sends (#125): the armies its attackers lose (the
@@ -962,7 +972,12 @@
 //     finisher keep what holds a safe border too; in rule 4e a step
 //     that fails only because of a keep is reported as the hold it would leave short.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
-//     goes to a conceded border. #215: armies withdrawn into a border (rule 1b) land by my own
+//     goes to a conceded border. #265: first (after #121's hold after all, when that runs), each
+//     weak member of a bonus this turn completes (rule 3a's #265) is brought to its hold — a
+//     source of an order too (its size is fixed), except under No-Split, where the deploy would
+//     leave with it — most protected value first, when the leftover covers it whole ("it is a
+//     member of bonus …, completed this turn, and faces the ~N threat"), before the worse-order
+//     holds, the strike stack and any comfort margin. #215: armies withdrawn into a border (rule 1b) land by my own
 //     order, after the opponent's first attack when it moves first, so unless `movesFirst` the
 //     leftover makes each open border that falls without them hold on its own ("so it holds
 //     whoever moves first", most protected value first, only when it can afford the whole hold —
@@ -1344,6 +1359,7 @@ import { holdsPhase, type Threatened, type Unit } from './plan/holds.js';
 import { threatsPhase } from './plan/threats.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
+import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
 import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { leftoverDeploy } from './plan/leftover.js';
@@ -2341,6 +2357,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const open = (id: number) => !conceded.has(id) || mayHold.has(id);
   /** Armies that stay on a border after its deploys, outgoing moves and incoming withdrawals. */
   const stays = (id: number) => avail.get(id)! + guardAt(id) + (incoming.get(id) ?? 0);
+  // ---- #265: a combined capture leaves armies on a weak member of a bonus it completes (plan/captures.ts) ----
+  caps.rebalanceCombined(completedMembers(pc, ps, threats, open, stays).weakMember, stays);
   // ---- concentrate (#72, rule 0p.3c): the 1v1 strike stack's border (plan/strike.ts) ----
   const { stack, smallExpansion } = chooseStrikeStack(pc, ps, book, threats, open, stays);
   // ---- 5. the leftover deploy (plan/leftover.ts) ----

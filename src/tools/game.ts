@@ -4,9 +4,9 @@ import { z } from 'zod';
 import type { WarappClient } from '../client.js';
 import { leavers, type Game, type GameSettings } from '../normalize.js';
 import { recordFinalResult } from '../outlook-log.js';
-import { foldFinishedGame } from '../profile-store.js';
 import { currentTurn, gameIdArg, mapSummary, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
+import { foldFinished, type FinishedFold } from './profile-hook.js';
 
 const VIEWS = ['compact', 'full', 'raw'] as const;
 
@@ -63,7 +63,8 @@ function compact(game: Game) {
 /**
  * `dir` is the data directory: a finished game this server planned gets its final result in the
  * outlook log (#178), and its opponent profile is folded into the cross-game stores (B2,
- * docs/PLAN-PROFILES.md; off with `WARAPP_PLAYER_PROFILE=off` in `env`).
+ * docs/PLAN-PROFILES.md; off with `WARAPP_PLAYER_PROFILE=off` in `env`): the per-game file kept while it
+ * was played, else, once, its cached boards (#264's backfill), reported as `profileFold`.
  */
 export function registerGameTool(server: McpServer, client: WarappClient, dir?: () => string, env?: EnvSource): void {
   server.registerTool(
@@ -77,6 +78,8 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
           'is on and whether the board is available for warapp_analyze_board; the end-of-game, boot and AI settings ' +
           '(`endRules`) and the humans who have not committed with the time left to each boot (`leavers`, when the game boots; from ' +
           'lastTurnTime, whose meaning is unverified). Optional game history and chat. ' +
+          'A finished game is folded once into the opponent profiles (`profileFold`; from the turns kept while it was played, ' +
+          'else from the boards cached then — a backfill; no other request), as warapp_profile_opponents reads them. ' +
           'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
       ),
       _meta: lookupMeta(['warzone game', 'war.app game', 'whose turn is it', 'game status']),
@@ -102,14 +105,17 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
         ...(include_history ? { history: true } : {}),
         ...(include_chat ? { chat: true } : {}),
       });
+      let fold: FinishedFold | undefined;
       if (dir) {
         await recordFinalResult(dir(), game);
-        // The first read that shows the game finished folds its opponent profile (best effort).
-        await foldFinishedGame(dir(), game, env ?? process.env);
+        // The first read that shows the game finished folds its opponent profile, or backfills it from
+        // the cached boards once (#264; best effort, no request).
+        if (game.state === 'Finished') fold = await foldFinished(dir(), env ?? process.env, game);
       }
+      const folded = fold && fold.status !== 'off' ? { profileFold: fold } : {};
       return respond(view, VIEWS, (rung) => {
-        if (rung === 'compact') return compact(game);
-        if (rung === 'full') return { game: { ...game, map: game.map ? mapSummary(game.map) : undefined } };
+        if (rung === 'compact') return { ...compact(game), ...folded };
+        if (rung === 'full') return { game: { ...game, map: game.map ? mapSummary(game.map) : undefined }, ...folded };
         return { game };
       });
     },

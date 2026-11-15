@@ -1,6 +1,7 @@
-// Rule 5, the leftover deploy (#72, #102, #103, #121, #124, #125, #163, #215, #218; #133): the income no
-// capture or hold took goes, in order, to a conceded border it can make hold after all (its
+// Rule 5, the leftover deploy (#72, #102, #103, #121, #124, #125, #163, #215, #218, #265; #133): the
+// income no capture or hold took goes, in order, to a conceded border it can make hold after all (its
 // withdrawal taken back; only without a strike stack, where the leftover would buy comfort), to
+// each member of a bonus this turn's captures complete that falls to the enemy beside it (#265), to
 // the borders that fall without the armies withdrawn into them unless I am known to move first
 // (#215), to the borders short of their hold before the strike stack, then to the strike
 // stack, the short borders' comfortable margins (#218: the rest on the step's source when it
@@ -13,6 +14,7 @@
 import { bonusTerritories } from '../bonuses.js';
 import { bfsDistances, neighborsOf } from '../graph.js';
 import { chargeDeploys } from '../local-deploy.js';
+import { completedMembers } from './completed.js';
 import { COMFORT_MARGIN, type PlannedMove } from './shared.js';
 
 /** #218 (comment): hops the expansion stack may lie farther from my farthest border than the centre before the leftover stays central. */
@@ -404,6 +406,39 @@ export function leftoverDeploy(
       .sort((a, b) => size.get(b)! - size.get(a)! || ecc.get(a)! - ecc.get(b)! || sum.get(a)! - sum.get(b)! || a - b)[0];
     return id === undefined ? undefined : { id, ecc };
   };
+  const { weakMember } = completedMembers(pc, ps, threats, open, stays);
+  /**
+   * #265: a member of a bonus this turn's captures complete that faces an enemy once they land and
+   * falls to it (rule 1c kept it, or the #122 garrison could not fund it) is brought to its hold
+   * before any comfort margin, the worse-order holds and the strike stack — it falls whoever moves
+   * first, and with it the bonus. Live, a 1-army member beside an empty enemy territory that could
+   * deploy 5 stood while the leftover went to a border that already held. Most at stake first, and
+   * only a hold the leftover covers in full: armies on a member that still falls are lost with it
+   * (one it cannot cover keeps its old place in the comfort steps, and is warned of later). A
+   * source of an order is passed over only under No-Split (`orderOf`), where a deploy there would
+   * leave with its whole-stack order; otherwise its order's size is fixed and the deploy stays, so a
+   * combined capture's source the rebalance could not help is topped up here like any member.
+   */
+  const holdCompletedMembers = () => {
+    const weak = [...mine]
+      .filter((id) => !orderOf(id))
+      .flatMap((id) => {
+        const w = weakMember(id);
+        return w ? [{ id, ...w }] : [];
+      })
+      .sort((a, b) => valueOf(b.id) - valueOf(a.id) || a.need - b.need || a.id - b.id);
+    for (const w of weak) {
+      const d = w.need;
+      if (d > ps.budget || d > roomAt(w.id)) continue;
+      deploy(w.id, d);
+      locked.add(w.id);
+      keepFromMargin(w.id);
+      const at = stays(w.id) + unitsAt(w.id);
+      rationale.push(
+        `Deploy ${d} of the leftover to ${label(w.id)}: it is a member of bonus ${bonusName(w.bonusId)}, completed this turn, and faces the ~${w.threat} threat once this turn's captures land (protects +${valueOf(w.id)}); its ${at - unitsAt(w.id)} armies need ${toTake(at)} to take, before any comfort margin.`,
+      );
+    }
+  };
   // ---- leftover deploy ----
   // The borders the comfort steps may pick: open before any border is held after all (a revived
   // border's hold is its whole share of the leftover).
@@ -413,7 +448,10 @@ export function leftoverDeploy(
   // worse-order holds go first, as before.
   // #240 review: judged as the plain plan judged it, so a repulsed attack's sure size revives nothing.
   const reviving = !stack && ps.budget > 0 && shortOf(comfortPool, new Map(), true).length > 0;
-  if (!reviving) worseOrderHolds();
+  if (!reviving) {
+    holdCompletedMembers();
+    worseOrderHolds();
+  }
   if (ps.budget > 0) {
     const foggedNext = (id: number) =>
       neighborsOf(g, id).filter((n) => {
@@ -434,7 +472,10 @@ export function leftoverDeploy(
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
     const takenBack = reviving ? holdAfterAll() : undefined;
-    if (reviving) worseOrderHolds();
+    if (reviving) {
+      holdCompletedMembers();
+      worseOrderHolds();
+    }
     const short = shortOf(comfortPool, takenBack);
     // Holds before the strike stack: a border kept for the bonus this turn completes (rule 1c:
     // the leftover is its only garrison) is topped up to a comfortable margin, and any other
