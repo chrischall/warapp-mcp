@@ -26,7 +26,9 @@
 // #275 (b): `PlanInput.untrusted` — an opponent whose estimate the tripwire (tripwire.ts) broke is sized,
 // at the borders of bonuses I hold in full at the start, for max(its deploy, the caller's figure), in
 // threats.ts's forceAt (a rationale line names those borders); every other border, and an explicit
-// enemyDeploy, are unchanged. Absent, the plan is byte-identical.
+// enemyDeploy, are unchanged. Under Local Deployment that figure is not bounded by where the
+// opponent's bonus pools can land (`deployReaching` bounds the estimate): such a border is
+// over-sized, the conservative direction. Absent, the plan is byte-identical.
 // Rule 1k's commander reserve is read by every phase that spends armies: captures, strike and
 // stand-still keep what holds my commander's territory (#274: where it walks to, when it walks).
 // `byNum` and `pct` live in plan/util.ts.

@@ -16,7 +16,7 @@ import { board, fogged, mine } from './helpers.js';
 
 const ME = 10;
 const FOE = 20;
-const STD = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true };
+const STD = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true, multiAttack: false };
 
 function line(n: number): GameMap {
   const ids = Array.from({ length: n }, (_, i) => i + 1);
@@ -166,6 +166,52 @@ describe('brokenEstimates (#275 b)', () => {
     // Listed first, the attack had its 35.
     boards[0] = at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }, { from: 2, to: 1, armies: 30 }] });
     expect(run(boards)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22 }]);
+  });
+
+  it('reads no held attack under Multi-Attack, or when the settings do not say: a chain brings armies from further', () => {
+    const boards = [
+      at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] }),
+      at(5, [mine(1, 1), mine(2, 20), foe(3, 4), foe(4, 1)]),
+    ];
+    expect(run(boards)).toMatchObject([{ kind: 'held-attack' }]);
+    expect(run(boards, 5, { ...STD, multiAttack: true })).toEqual([]);
+    const { multiAttack: _, ...unsaid } = STD;
+    expect(run(boards, 5, unsaid)).toEqual([]);
+  });
+
+  it('under Multi-Attack (or unsaid) credits a stack that left view from any distance: a chain covers many hops in one turn', () => {
+    // The 50 on 5, two hops from 3, one turn before: out of reach for one step a turn, not for a chain.
+    const G5 = buildGraph(line(5));
+    const far = [
+      at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4), foe(5, 50)]),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4), foe(5, 50)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 52), fogged(4), foe(5, 1)]),
+    ];
+    const run5 = (settings: object) => brokenEstimates({ graph: G5, boards: far, me: ME, settings, start: START, estimateAt: () => 5 });
+    expect(run5(STD)).toMatchObject([{ kind: 'fog-stack', territory: 3 }]);
+    expect(run5({ ...STD, multiAttack: true })).toEqual([]);
+    const { multiAttack: _, ...unsaid } = STD;
+    expect(run5(unsaid)).toEqual([]);
+  });
+
+  it('reads nothing when an opponent may hold an Airlift card: one lands armies anywhere it holds', () => {
+    const fog = [
+      at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)]),
+    ];
+    const capture = [
+      at(4, [mine(1, 1), mine(2, 10), foe(3, 3), fogged(4)], { deploys: [], moves: [] }),
+      at(5, [mine(1, 1), foe(2, 8), foe(3, 1), fogged(4)]),
+    ];
+    const held = [
+      at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] }),
+      at(5, [mine(1, 1), mine(2, 20), foe(3, 4), foe(4, 1)]),
+    ];
+    for (const boards of [fog, capture, held]) {
+      expect(run(boards)).toHaveLength(1);
+      expect(brokenEstimates({ graph: G, boards, me: ME, settings: STD, start: START, airlift: true, estimateAt: () => 5 })).toEqual([]);
+    }
   });
 
   it('needs the previous board: no reading across a gap', () => {

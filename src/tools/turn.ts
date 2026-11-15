@@ -1496,6 +1496,8 @@ export async function livePlanSetup(
     args?: LivePlanArgs;
     /** Read (and on turn 1 write) the award of picks; default true. */
     award?: boolean;
+    /** Whether the teams are known (`resolveTeams`); false: the #275 tripwire reads nothing. Default true. */
+    teamsKnown?: boolean;
   },
 ) {
   const { game, map, me, turn, territories, info, history } = a;
@@ -1627,6 +1629,7 @@ export async function livePlanSetup(
     ...(teams ? { teams } : {}),
     estimates,
     ...(effect.diplomacy.length ? { peace: effect.diplomacy.map((d) => d.player) } : {}),
+    ...(a.teamsKnown === false ? { teamsKnown: false } : {}),
     gameSettings: game.settings,
     map,
   });
@@ -1950,7 +1953,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         chatSummary(ctx, game),
       ]);
       const setup = await livePlanSetup(ctx, {
-        game, map, me, turn, territories, info, history,
+        game, map, me, turn, territories, info, history, teamsKnown,
         args: {
           ...(goal !== undefined ? { goal } : {}),
           focusBonusIds,
@@ -2185,6 +2188,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         estimates,
         ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
         ...(gameContext.players ? { players: gameContext.players } : {}),
+        // #275 (b): no guess against an opponent whose estimate is untrusted.
+        ...(setup.trip.tripwires.length ? { untrusted: setup.trip.tripwires.map((w) => w.player) } : {}),
         seed: guessSeed(game.id, turn, await guessSalt(ctx.dataDir)),
       });
       let guess = guessed.kind === 'guess' ? guessed : undefined;
@@ -2317,7 +2322,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                   : ''
               }`,
         // #275 (a): each border's headroom, the weakest first (compact: the first few).
-        headroom: headroomView(headroom, map, myIncome, rung === 'full'),
+        headroom: headroomView(headroom, map, myIncome, rung === 'full', !teamsKnown),
         ...(rung !== 'full' && headroom.length > HEADROOM_COMPACT ? { headroomMore: headroom.length - HEADROOM_COMPACT } : {}),
         // #72: the offensive options considered, full view only.
         ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
@@ -2649,7 +2654,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           });
         }
         // The teams (the teammate set): GameFeed's, else the game list's (asked once per game, kept).
-        const { game, me } = await resolveTeamsFor(ctx, feed, seat);
+        const { game, me, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
         const turnNumber = currentTurn(game);
         if (turnNumber === null || game.numberOfTurns === undefined) {
           throw new McpToolError(`GameFeed did not say how many turns game ${game.id} has had, so the turn number is unknown.`, {
@@ -3016,6 +3021,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               ...(plays.some((p) => p.kind === 'OrderPriority') ? { orderPriority: true } : {}),
             }),
             modelled,
+            !teamsKnown,
           ),
         );
         // Deploys first (as the client sends them), merged per territory.

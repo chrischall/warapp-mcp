@@ -167,7 +167,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const seat = await resolveMe(ctx, feed.players, player);
       requirePlayingSeat(feed, seat);
       // The teams: GameFeed's, else the game list's (asked once per game, kept).
-      const { game, me, source: teamSource } = await resolveTeamsFor(ctx, feed, seat);
+      const { game, me, source: teamSource, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       const turn = currentTurn(game);
       const [{ territories, info }, history] = await Promise.all([loadLiveGame(ctx, game), boardHistory(ctx, game, me, turn)]);
       const graph = graphOf(map);
@@ -308,6 +308,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(tripTeams ? { teams: tripTeams } : {}),
         estimates,
         ...(effect.diplomacy.length ? { peace: effect.diplomacy.map((d) => d.player) } : {}),
+        ...(teamsKnown ? {} : { teamsKnown: false }),
         gameSettings: game.settings,
         map,
       });
@@ -697,7 +698,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         jointFalls: report.jointFalls.slice(0, LIST_MAX).map(jointView),
         ...(report.jointFalls.length > LIST_MAX ? { jointFallsMore: report.jointFalls.length - LIST_MAX } : {}),
         // #275 (a): each border's headroom, the weakest first (compact: the first few).
-        headroom: headroomView(headroom, map, income, rung === 'full'),
+        headroom: headroomView(headroom, map, income, rung === 'full', !teamsKnown),
         ...(rung !== 'full' && headroom.length > HEADROOM_COMPACT ? { headroomMore: headroom.length - HEADROOM_COMPACT } : {}),
         blindBorders: report.blindBorders.map(name),
         // One turn ahead (#156): what the orders leave within reach of a stack two steps away.

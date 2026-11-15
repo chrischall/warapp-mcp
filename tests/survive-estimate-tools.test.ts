@@ -22,12 +22,15 @@ const ANN = { feed: '3312345644', inGame: 123456 };
 const BOB = { feed: '7176543229', inGame: 765432 };
 const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
 
-function game(turnsDone = '2'): Record<string, unknown> {
+// A 1v1 (the fixture's other seats dropped: with nine seats and no team read, the teams are unknown) with
+// no Airlift in play (one lands armies anywhere: the tripwire reads nothing then).
+function game(turnsDone = '2', o: { allSeats?: boolean; airlift?: boolean } = {}): Record<string, unknown> {
   const f = lobbyFixture();
-  const players = (f.players as Array<Record<string, string>>).map((p, i) =>
-    i === 0 ? { ...p, id: ANN.feed, name: 'Ann' } : i === 1 ? { ...p, id: BOB.feed, name: 'Bob' } : p,
-  );
-  return { ...f, state: 'Playing', numberOfTurns: turnsDone, players, settings: { ...(f.settings as object), SanctionsCard: 'none' } };
+  const players = (f.players as Array<Record<string, string>>)
+    .map((p, i) => (i === 0 ? { ...p, id: ANN.feed, name: 'Ann' } : i === 1 ? { ...p, id: BOB.feed, name: 'Bob' } : p))
+    .slice(0, o.allSeats ? undefined : 2);
+  const settings = { ...(f.settings as object), SanctionsCard: 'none', ...(o.airlift ? {} : { AirliftCard: 'none' }) };
+  return { ...f, state: 'Playing', numberOfTurns: turnsDone, players, settings };
 }
 
 // Fixture map: 159 Hornwood – 161 Sheepshead Hills – 157 Widow's Watch form bonus 118 (+2); 158 Bolton
@@ -160,6 +163,31 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     expect(w.warnings.some((x) => /untrusted/.test(x))).toBe(false);
   });
 
+  it('reads nothing when an opponent may hold an Airlift card: armies it lands look like income', async () => {
+    const dir = await seeded();
+    h = await live(now, dir, [game('2', { airlift: true })]);
+    const p = payload<{ warnings: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.warnings.some((x) => /untrusted/.test(x))).toBe(false);
+    expect((await readSurvival(dir, GAME, Number(ANN.feed))).tripwires).toEqual([]);
+  });
+
+  it('reads nothing while the teams are unknown, and flags each headroom row: the opponent may be a teammate', async () => {
+    const dir = await seeded();
+    h = await live(now, dir, [game('2', { allSeats: true })]);
+    const p = payload<{ warnings: string[]; headroom: Array<HeadroomView & { mayBeTeammate?: boolean }> }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(p.warnings.some((x) => /untrusted/.test(x))).toBe(false);
+    expect((await readSurvival(dir, GAME, Number(ANN.feed))).tripwires).toEqual([]);
+    expect(p.headroom.length).toBeGreaterThan(0);
+    for (const r of p.headroom) expect(r.mayBeTeammate).toBe(true);
+    const c = payload<Checked & { headroom: Array<{ mayBeTeammate?: boolean }> }>(
+      await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [] }),
+    );
+    expect(c.warnings.some((x) => /untrusted/.test(x))).toBe(false);
+    for (const r of c.headroom) expect(r.mayBeTeammate).toBe(true);
+  });
+
   it('reads nothing without the previous board', async () => {
     h = await live(now);
     const p = payload<Checked>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [] }));
@@ -188,6 +216,15 @@ describe('warapp_submit_turn warns of a held bonus left below my income (#275 c)
     ]);
     expect(text).toMatch(/Territory 159 guards bonus 118 \(\+2\) and these orders leave it falling to a deploy of 0 by player 7176543229 on territory 158: below your own income of 7/);
     expect(text).toMatch(/confirmToken/);
+  });
+
+  it('says the opponent may be a teammate while the teams are unknown', async () => {
+    h = await live(held, undefined, [game('2', { allSeats: true })]);
+    const text = await preview([
+      { kind: 'deploy', territory: 157, armies: 7 },
+      { kind: 'move', from: 159, to: 161, armies: 9 },
+    ]);
+    expect(text).toMatch(/Territory 159 guards bonus 118 .*player 7176543229 \(may be a teammate: this game's teams could not be read\)/);
   });
 
   it('says nothing when every border of the bonus has headroom above my income', async () => {

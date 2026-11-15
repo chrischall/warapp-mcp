@@ -183,6 +183,15 @@ describe('borderGuess', () => {
     expect(guess({ settings: { ...STD, localDeployments: true } })).toMatchObject({ kind: 'skipped', reason: 'local-deployment' });
   });
 
+  it('skips an opponent whose estimate is untrusted (#275 b): the plan sized its held-bonus borders above the estimate', () => {
+    const r = guess({ untrusted: [FOE] });
+    expect(r).toMatchObject({ kind: 'skipped', reason: 'untrusted' });
+    expect(r.kind === 'skipped' && r.message).toMatch(/untrusted/);
+    // Another player's mark changes nothing; nor does it under an explicit enemy deploy (a what-if).
+    expect(guess({ untrusted: [OTHER] }).kind).toBe('guess');
+    expect(guess({ untrusted: [FOE], enemyDeploy: 5 }).kind).toBe('guess');
+  });
+
   it('skips a single border and no contact', () => {
     const one = makeMap(5, [
       [1, 3],

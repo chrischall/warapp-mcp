@@ -8,9 +8,10 @@ import { trackGame, type TurnBoard } from '../analysis/opponents.js';
 import { activeTripwires, brokenEstimates, type Tripwire } from '../analysis/tripwire.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { SimSettings } from '../analysis/turn-sim.js';
-import type { GameMap } from '../normalize.js';
+import type { GameMap, GameSettings } from '../normalize.js';
 import { readSurvival, writeSurvival, type Survival } from '../trend.js';
 import { carriesTeam } from '../teams.js';
+import { opponentCanHold } from './card-advice.js';
 import { namer } from './common.js';
 
 /** Headroom rows the compact view lists (the weakest first); the full view lists them all. */
@@ -26,7 +27,10 @@ export interface TripwireRead {
 
 /**
  * The tripwires running on `turn`: the marks kept, and one from each observation on my latest two
- * boards that this turn's estimates (or the ones kept for the turns it reads) cannot explain. Never throws.
+ * boards that this turn's estimates (or the ones kept for the turns it reads) cannot explain. None while
+ * the teams are unknown (`teamsKnown: false`: a game of 3+ seats whose teams could not be read, where an
+ * opponent may be a teammate), and no observation once an opponent may hold an Airlift card (the card
+ * clock). Never throws.
  */
 export async function readTripwires(a: {
   dataDir: string | undefined;
@@ -41,13 +45,15 @@ export async function readTripwires(a: {
   estimates: readonly EnemyDeployEstimate[];
   /** Players a Diplomacy card in force keeps at peace with me: no held attack of mine is read on them. */
   peace?: Iterable<number>;
-  /** The game's settings and map: every player's start, credited to a stack no board ever showed. */
-  gameSettings?: Parameters<typeof trackGame>[1];
+  /** Whether the teams are known (`resolveTeams`); false: nothing is read. Default true. */
+  teamsKnown?: boolean;
+  /** The game's settings and map: every player's start, credited to a stack no board ever showed; the Airlift card. */
+  gameSettings?: GameSettings;
   map?: GameMap;
 }): Promise<TripwireRead> {
   const estimatesNow = new Map(a.estimates.map((e) => [e.playerId, e.estimate]));
   const survival = a.dataDir ? await readSurvival(a.dataDir, a.gameId, a.me) : { estimates: new Map(), tripwires: [] };
-  if (a.turn === null) return { tripwires: [], estimatesNow, survival };
+  if (a.turn === null || a.teamsKnown === false) return { tripwires: [], estimatesNow, survival };
   let fresh: ReturnType<typeof brokenEstimates> = [];
   try {
     const start = trackGame([], a.gameSettings, a.map).start;
@@ -59,6 +65,7 @@ export async function readTripwires(a: {
       settings: a.settings,
       ...(a.teams ? { teams: a.teams } : {}),
       ...(a.peace ? { peace: new Set(a.peace) } : {}),
+      ...(opponentCanHold(a.gameSettings, 'Airlift', a.turn) ? { airlift: true } : {}),
       // The estimate the plan of that turn used when kept, else this turn's.
       estimateAt: (p, t) => survival.estimates.get(t)?.get(p) ?? estimatesNow.get(p) ?? 0,
     });
@@ -119,8 +126,11 @@ export function safeHeadroom(input: HeadroomInput): HeadroomRow[] {
   }
 }
 
-/** The headroom table as the tools show it: names beside ids, each row with whether it is below my income. */
-export function headroomView(rows: readonly HeadroomRow[], map: GameMap, myIncome: number, full: boolean) {
+/**
+ * The headroom table as the tools show it: names beside ids, each row with whether it is below my income.
+ * `mayBeTeammate` (the teams unknown, `resolveTeams`' `known: false`): every row says its opponent may be a teammate.
+ */
+export function headroomView(rows: readonly HeadroomRow[], map: GameMap, myIncome: number, full: boolean, mayBeTeammate = false) {
   const name = namer(map);
   const bonusName = new Map(map.bonuses.map((b) => [b.id, b.name]));
   return rows.slice(0, full ? rows.length : HEADROOM_COMPACT).map((r) => ({
@@ -134,20 +144,22 @@ export function headroomView(rows: readonly HeadroomRow[], map: GameMap, myIncom
     bonuses: r.bonuses.map((b) => ({ id: b.id, name: bonusName.get(b.id) ?? String(b.id), value: b.value })),
     behind: r.behind.map(name),
     behindIncome: r.behindIncome,
+    ...(mayBeTeammate ? { mayBeTeammate: true as const } : {}),
   }));
 }
 
 /**
  * #275 (c): a warning for each border of a held bonus that falls to a single deploy below my own income,
- * by id. A warning, never a refusal.
+ * by id. A warning, never a refusal. `mayBeTeammate`: the teams are unknown, and the warning says so.
  */
-export function headroomWarnings(rows: readonly HeadroomRow[], myIncome: number): string[] {
+export function headroomWarnings(rows: readonly HeadroomRow[], myIncome: number, mayBeTeammate = false): string[] {
   return rows
     .filter((r) => r.bonuses.length > 0 && r.deploy !== null && r.deploy < myIncome)
     .map(
       (r) =>
         `Territory ${r.territory} guards bonus${r.bonuses.length === 1 ? '' : 'es'} ${r.bonuses.map((b) => `${b.id} (+${b.value})`).join(', ')} ` +
-        `and these orders leave it falling to a deploy of ${r.deploy} by player ${r.opponent} on territory ${r.from}` +
+        `and these orders leave it falling to a deploy of ${r.deploy} by player ${r.opponent}` +
+        `${mayBeTeammate ? " (may be a teammate: this game's teams could not be read)" : ''} on territory ${r.from}` +
         `${r.firstMover ? ` (when ${r.firstMover === 'me' ? 'you move' : 'it moves'} first)` : ''}: below your own income of ${myIncome} (#275 headroom). ` +
         'An estimate is a floor; consider more armies there.',
     );

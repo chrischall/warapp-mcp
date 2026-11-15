@@ -16,17 +16,22 @@
 //                income (#123 lesson 5): its armies that left view or shrank are credited too: for each other
 //                territory, from its latest sighting since the stack's own and when within reach (graph
 //                distance at most the turns since that sighting), its movable armies then less its
-//                movable armies there now (all of them when hidden now or another's);
+//                movable armies there now (all of them when hidden now or another's). Under Multi-Attack,
+//                or when the settings do not say, a chain covers many hops in one turn: every such
+//                territory is within reach, whatever its distance;
 //   capture      it took a territory of mine or a visible neutral that needed more attackers
 //                (`armiesToTake` of the defenders) than its stacks beside it could move plus its
 //                estimate. Never when a territory beside it was hidden on the previous board (a
 //                stack of its could have stood there), when a third player stood beside it, under
-//                Multi-Attack (a chain lands from further), or when my orders that turn are unknown
+//                Multi-Attack or when the settings do not say (a chain lands from further), or when my
+//                orders that turn are unknown
 //                and could have moved armies out of mine (or attacked the neutral) first;
 //   held-attack  an attack of mine (my cached orders) failed on a territory of its that held: the
 //                defenders it took to hold (one more than my attackers kill) beyond the armies there,
 //                its estimate and its stacks beside it that could move in. With no luck and straight
-//                rounding only, and not when a territory beside it was hidden. An order sends what is
+//                rounding only, not under Multi-Attack or when the settings do not say (a chain brings
+//                armies from beyond its stacks beside it), and not when a territory beside it was hidden.
+//                An order sends what is
 //                left, so not from a source another stack could have hit first (a territory beside the
 //                source, the target aside, hidden or holding a movable stack not mine on the previous
 //                board), nor from one that ended with fewer armies than my orders left it; and only what
@@ -34,6 +39,10 @@
 //                (flagged in `sent`) attacks nothing, and a player a Diplomacy card may have kept at
 //                peace with me (`peace`) is not read. The target's own stack attacking my source cannot
 //                fake a trip: what it sends leaves the defence.
+// Cards: nothing is read when an opponent may hold an Airlift (`airlift`, the caller's card clock): one
+// lands armies on any territory it holds, into a target, a fogged stack or one beside a capture, and
+// reads as income. A Reinforcement card is income: the estimate compared carries it from the turn the
+// card clock says one can be in hand (#164).
 // `implied` is the deploy per turn the observation needs: what the estimate should have been.
 // The estimate compared is the one the plan used that turn (`estimateAt`), the caller's to supply.
 
@@ -96,6 +105,8 @@ export interface TripInput {
   teams?: ReadonlyMap<number, number>;
   /** Every player's start (the settings' TerritoryLimit × InitialPlayerArmiesPerTerritory), when known. */
   start?: { territories: number; armiesPerTerritory: number };
+  /** An opponent may hold an Airlift card by now: nothing is read (armies it lands look like income). */
+  airlift?: boolean;
   /** Players a Diplomacy card in force may have kept from my attacks: no held attack is read on them. */
   peace?: ReadonlySet<number>;
   /** The deploy estimate the plan used for `player` on turn `turn`. */
@@ -108,9 +119,11 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
   const { graph, me, boards } = input;
   const now = boards.at(-1);
   const prev = boards.at(-2);
-  if (!now || !prev || prev.turn !== now.turn - 1) return [];
+  if (!now || !prev || prev.turn !== now.turn - 1 || input.airlift) return [];
   const T = now.turn;
   const s = input.settings ?? {};
+  // Multi-Attack on, or the settings do not say: a chain moves armies many hops in one turn.
+  const chains = s.multiAttack !== false;
   const rates = { offensiveKillRate: s.offensiveKillRate, defensiveKillRate: s.defensiveKillRate };
   const guard = s.oneArmyStandsGuard === false ? 0 : 1;
   const exact = luckFraction(s.luckModifier) === 0 && (s.roundingMode === undefined || s.roundingMode === 'StraightRound');
@@ -153,7 +166,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     let credit = 0;
     for (const [x, seen] of [...latest].sort((a, b) => a[0] - b[0])) {
       const d = dist.get(x);
-      if (d === undefined || d > T - seen.turn) continue;
+      if (d === undefined || (!chains && d > T - seen.turn)) continue;
       const then = Math.max(0, seen.armies - guard);
       const v = visibleState(cur.get(x));
       const nowArmies = v && playerOf(v) === p ? Math.max(0, v.armies! - guard) : 0;
@@ -196,7 +209,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     // capture: it holds what was mine or a visible neutral's.
     const wasOwner = playerOf(was);
     if (wasOwner !== p && (wasOwner === me || was.owner.kind === 'neutral')) {
-      if (s.multiAttack || !clearAround(id)) continue;
+      if (chains || !clearAround(id)) continue;
       const third = neighborsOf(graph, id).some((n) => {
         const o = playerOf(visibleState(before.get(n)));
         return o !== undefined && o !== p && o !== me;
@@ -221,7 +234,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     }
 
     // held-attack: my attack on its territory failed, and it still holds it.
-    if (wasOwner === p && exact && myOrders && clearAround(id) && !input.peace?.has(p)) {
+    if (wasOwner === p && exact && !chains && myOrders && clearAround(id) && !input.peace?.has(p)) {
       const transferOnly = new Set((myOrders.sent ?? []).filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
       const fromIds = [...new Set(myOrders.moves.filter((m) => m.to === id && !transferOnly.has(`${m.from}:${id}`)).map((m) => m.from))].sort(byNum);
       let attackers = 0;
