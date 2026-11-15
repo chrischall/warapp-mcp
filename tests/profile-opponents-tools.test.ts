@@ -9,6 +9,7 @@ import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { emptyHabits } from '../src/analysis/opponent-profile.js';
 import { foldGame, profileGamePath, profilePlayersPath } from '../src/profile-store.js';
+import { observeSettings } from '../src/tools/profile-hook.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -157,6 +158,16 @@ interface Profile {
 const profile = async (hh: Harness, args: Record<string, unknown> = {}) =>
   payload<Profile>(await hh.call('warapp_profile_opponents', { game_id: GAME, player: ME, ...args }));
 const who = (p: Profile, id: number) => p.opponents.find((o) => o.player.id === id)!;
+
+describe('observeSettings', () => {
+  it('passes Multi-Attack on when the settings state it, and leaves it unstated otherwise (it may be on)', () => {
+    const game = (settings: Record<string, unknown> | undefined) => ({ settings }) as unknown as Parameters<typeof observeSettings>[0];
+    expect(observeSettings(game({ cards: [], raw: {}, multiAttack: true })).multiAttack).toBe(true);
+    expect(observeSettings(game({ cards: [], raw: {}, multiAttack: false })).multiAttack).toBe(false);
+    expect('multiAttack' in observeSettings(game({ cards: [], raw: {} }))).toBe(false);
+    expect('multiAttack' in observeSettings(game(undefined))).toBe(false);
+  });
+});
 
 describe('warapp_profile_opponents', () => {
   it('is listed as read-only and says profiles inform only', async () => {

@@ -24,7 +24,10 @@ const its = (id: number, armies: number) => mine(id, armies, OPP);
 const other = (id: number, armies: number) => mine(id, armies, OTHER);
 const attack = (from: number, to: number, armies: number, deploys: MyOrders['deploys'] = []): MyOrders => ({ deploys, moves: [{ from, to, armies }] });
 
-/** The cards in play default to none; `'unknown'` leaves them unstated (settings not read). */
+/**
+ * The cards in play default to none; `'unknown'` leaves them unstated (settings not read). Multi-Attack
+ * defaults off; `{ multiAttack: undefined }` leaves it unstated.
+ */
 function observe(
   previous: BoardState,
   current: BoardState,
@@ -33,7 +36,8 @@ function observe(
   opponents = [OPP],
   cards: readonly string[] | 'unknown' = [],
 ) {
-  return observeTurn({ graph: g, me: ME, previous, current, orders, settings, opponents, ...(cards === 'unknown' ? {} : { cards }) });
+  const s = { multiAttack: false, ...settings };
+  return observeTurn({ graph: g, me: ME, previous, current, orders, settings: s, opponents, ...(cards === 'unknown' ? {} : { cards }) });
 }
 /** Territories 1 and 2 (3's other neighbours) shown as neutrals, so a test of 3 sees every neighbour. */
 const shown = [neutral(1, 2), neutral(2, 2)];
@@ -181,6 +185,42 @@ describe('observeTurn: attackedMe, contact, captures', () => {
     expect(of(observe(prev, now, attack(3, 2, 5))).attackedMe).toBeNull();
     // The transfer landed: 3 is tested and quiet.
     expect(of(observe(prev, board([neutral(1, 2), mine(2, 6), mine(3, 5), its(4, 6)]), attack(3, 2, 5))).attackedMe).toBe(false);
+  });
+
+  it('a move into the border from a territory I only took this turn (a Multi-Attack chain) may cover a hit: no "no"', () => {
+    // I hold 5 (5) and 7 (10); it holds 4 (9); 6 is neutral (2). 7 takes 6 with 6 (5 survive), then 6
+    // sends 3 on to 5. Its hit kills 3 on 5 and my 3 bring it back to 5: what the orders leave
+    // without the chained armies (5), so the border looks quiet.
+    const ring = [neutral(1, 2), neutral(2, 2), neutral(3, 2)];
+    const prev = board([...ring, its(4, 9), mine(5, 5), neutral(6, 2), mine(7, 10)]);
+    const chain: MyOrders = { deploys: [], moves: [{ from: 7, to: 6, armies: 6 }, { from: 6, to: 5, armies: 3 }] };
+    const multi = { multiAttack: true };
+    expect(of(observe(prev, board([...ring, its(4, 6), mine(5, 5), mine(6, 2), mine(7, 4)]), chain, multi)).attackedMe).toBeNull();
+    // Below what the orders leave without the chain, it was still hit.
+    expect(of(observe(prev, board([...ring, its(4, 6), mine(5, 4), mine(6, 2), mine(7, 4)]), chain, multi)).attackedMe).toBe(true);
+    // The capture alone, nothing chained on: 5 is tested and quiet.
+    const take: MyOrders = { deploys: [], moves: [{ from: 7, to: 6, armies: 6 }] };
+    expect(of(observe(prev, board([...ring, its(4, 9), mine(5, 5), mine(6, 5), mine(7, 4)]), take, multi)).attackedMe).toBe(false);
+  });
+
+  it('under Multi-Attack another player within two steps may have chained through its neighbour: no reading', () => {
+    // 3 borders its 4; another player holds 5, beyond 4. Under Multi-Attack that player may have taken
+    // 4 and gone on into 3 (4 retaken or not) and the drop on 3 would be blamed on it.
+    const orders: MyOrders = { deploys: [], moves: [] };
+    const prev = board([...shown, mine(3, 5), its(4, 9), other(5, 9)]);
+    const now = board([...shown, mine(3, 2), its(4, 9), other(5, 9)]);
+    expect(of(observe(prev, now, orders, { multiAttack: true }, [OPP, OTHER])).attackedMe).toBeNull();
+    // Unstated Multi-Attack (settings not read) may be on: the same.
+    expect(of(observe(prev, now, orders, { multiAttack: undefined }, [OPP, OTHER])).attackedMe).toBeNull();
+    // Off, only a neighbour can have hit it.
+    expect(of(observe(prev, now, orders, {}, [OPP, OTHER])).attackedMe).toBe(true);
+    // On, with every territory within two steps shown and no other player there, it is read.
+    const alone = board([...shown, mine(3, 5), its(4, 9), neutral(5, 2)]);
+    expect(of(observe(alone, board([...shown, mine(3, 2), its(4, 9), neutral(5, 2)]), orders, { multiAttack: true })).attackedMe).toBe(true);
+    expect(of(observe(alone, board([...shown, mine(3, 5), its(4, 9), neutral(5, 2)]), orders, { multiAttack: true })).attackedMe).toBe(false);
+    // On, with a territory two steps away whose owner board T hides: it may hold another player.
+    const hidden = board([...shown, mine(3, 5), its(4, 9), fogged(5)]);
+    expect(of(observe(hidden, board([...shown, mine(3, 2), its(4, 9), fogged(5)]), orders, { multiAttack: true })).attackedMe).toBeNull();
   });
 
   it('a neighbour whose owner the earlier board hides may hold the attacker: no reading', () => {

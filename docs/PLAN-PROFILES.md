@@ -163,6 +163,13 @@ Exact definitions:
   otherwise `null`. Survivors of a move out of the border that did not end on a territory of mine (a
   failed attack, or a transfer that met a territory taken first) may come back and cover a hit, so
   such a border still reads true on a drop below that figure but never counts toward a `false`.
+  The same holds for a border a move of mine enters from a territory not mine on `previous` (a
+  Multi-Attack chain through a territory I took that turn): those armies are left out of the figure
+  and may cover a hit. Under Multi-Attack (or when the settings do not say, `ObserveInput.settings
+  .multiAttack` absent) a border is tested only when every territory within two steps has its owner
+  shown on `previous` and none is a third player's: such a player may have chained through the shown
+  neighbour (or a neutral) into my border, and the drop would be blamed on the neighbour. A chain
+  longer than two steps is not ruled out.
 - **`reinforce`:** one opportunity per move of mine onto a territory X that `previous` shows as its
   with `D` armies, when all of these hold: combat is exact (0% luck, straight rounding); it is my
   only move onto X that turn; my source S ends the turn mine with exactly the armies my orders
@@ -198,7 +205,9 @@ observed the same way and flagged; part B pools it.
 
 **Tests** (`tests/analysis/opponent-profile.test.ts`, synthetic boards from `helpers.ts`): each
 definition in miniature, including each "no opportunity" exit (luck on, two moves onto X, source
-hit first, a fog reveal on X, orders unknown), and that re-deriving from the same turns is stable.
+hit first, a fog reveal on X, orders unknown; for `attackedMe`, a chained move in and, under
+Multi-Attack, another player or a hidden owner within two steps), and that re-deriving from the same
+turns is stable.
 
 ### A2. Keeping the turns (`src/profile-store.ts`)
 

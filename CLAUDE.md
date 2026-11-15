@@ -632,7 +632,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   may have Gift captures from me cannot be told (`tookFromMe: null`: no retake counted, no "did not attack";
   a gift of mine is no capture); a failure is read only when the armies back match the exact result; a border with a neighbour whose owner is hidden
   is not tested, and one a move of mine left without landing on a territory of mine (a failed attack, its survivors
-  may come back) reads only a drop, never a "did not attack"; boards from GameFeed history (`TurnBoard.source: 'history'`) are never observed.
+  may come back), or entered from a territory I only took this turn (a Multi-Attack chain), reads only a drop, never
+  a "did not attack"; under Multi-Attack (or when the settings do not say) a border is read only when every territory
+  within two steps shows its owner and none is a third player's (it may have chained through the neighbour); boards from GameFeed history (`TurnBoard.source: 'history'`) are never observed.
   `src/profile-store.ts` keeps every observed turn at
   `<dataDir>/profiles/games/<gameId>-<myId>.json` (real ids, counts only; a turn observed again is
   overwritten; newest 200 files, none unwritten past the board cache's 60 days), written by `recordProfile` (`src/tools/profile-hook.ts`) right after

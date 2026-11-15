@@ -44,7 +44,8 @@ export interface ObserveInput {
   current: BoardState;
   /** My orders on turn T, when known. */
   orders?: MyOrders | undefined;
-  settings: Pick<PlannerSettings, 'offensiveKillRate' | 'defensiveKillRate' | 'luckModifier' | 'roundingMode' | 'oneArmyStandsGuard'>;
+  /** `multiAttack` absent: the settings did not say, and it may be on. */
+  settings: Pick<PlannerSettings, 'offensiveKillRate' | 'defensiveKillRate' | 'luckModifier' | 'roundingMode' | 'oneArmyStandsGuard' | 'multiAttack'>;
   /** The players observed: my opponents (never me, never a teammate). */
   opponents: readonly number[];
   /**
@@ -92,9 +93,14 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  *   not surely land (its target not mine on T+1, as after a failed attack or a transfer that met a
  *   territory taken first, or entered by another order of mine too, which may have retaken it after
  *   this move failed) may come back and cover a hit, so such a border still reads yes on a drop but never tests a "no";
- *   nor does one whose moves out leave it at the guard or less (war.app sends what is left, so a hit
- *   landing first shrinks the move, not the border: a withdrawal of every movable army).
- *   Without orders only a capture says
+ *   nor does one a move of mine enters from a territory not mine on T (a Multi-Attack chain through
+ *   a territory I took this turn: armies the figure leaves out), nor one whose moves out leave it at
+ *   the guard or less (war.app sends what is left, so a hit landing first shrinks the move, not the
+ *   border: a withdrawal of every movable army).
+ *   Under Multi-Attack (or when the settings do not say) a border is read only when every territory
+ *   within two steps has its owner shown on T and none is another player's: a third player may have
+ *   chained through the shown neighbour (or a neutral) into mine, and the drop would be blamed on it.
+ *   A longer chain is not ruled out. Without orders only a capture says
  *   so, else `null`; with orders and no testable territory, `null` too.
  * - `reinforce`: one opportunity per attack of mine onto X (its, with D armies on T) when combat is
  *   exact, it is my only move onto X, X carries no special unit, no move of mine leaves X, X shows its
@@ -162,6 +168,18 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
     if (c.card === 'Airlift') for (const t of [c.from, c.to]) if (t !== undefined) untested.add(t);
   /** Every neighbour of `id` has its owner shown on board T (no hidden player could have hit it). */
   const allShown = (id: number) => neighborsOf(graph, id).every((n) => ownerShown(was.get(n)) !== undefined);
+  // Multi-Attack (or unstated, so maybe on): a player can chain captures in one turn.
+  const multiAttack = settings.multiAttack !== false;
+  /** The territories within two steps of `id`, itself left out. */
+  const twoSteps = (id: number) => {
+    const out = new Set<number>();
+    for (const n of neighborsOf(graph, id)) {
+      out.add(n);
+      for (const m of neighborsOf(graph, n)) out.add(m);
+    }
+    out.delete(id);
+    return [...out];
+  };
   const outOf = (id: number) => moves.filter((m) => m.from === id);
   const into = (id: number) => moves.filter((m) => m.to === id);
   const sum = (ms: readonly { armies: number }[]) => ms.reduce((n, m) => n + Math.max(0, m.armies), 0);
@@ -208,6 +226,17 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         if (!stacks.length) continue;
         const others = enemiesNext(id);
         if (others.size !== 1 || !allShown(id)) continue;
+        // Under Multi-Attack a third player may have chained through its territory (or a neutral) into
+        // mine and the drop would be blamed on it: only a border with every territory within two steps
+        // shown, none another player's, is read (a longer chain is not ruled out).
+        if (
+          multiAttack &&
+          twoSteps(id).some((t) => {
+            const o = shownOwner(was.get(t));
+            return ownerShown(was.get(t)) === undefined || (o !== undefined && o !== me && o !== p);
+          })
+        )
+          continue;
         const transfersIn = into(id).filter((m) => mineWas(m.from));
         if (transfersIn.some((m) => enemiesNext(m.from).size > 0 || !allShown(m.from))) continue;
         const expected = a.armies + (deploys.get(id) ?? 0) - sum(outOf(id)) + sum(transfersIn);
@@ -221,7 +250,10 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         // A move out that drains it to the guard sends only what is left: a hit landing first shrinks
         // the move, not the border, which still ends at `expected`: no "no" from here either.
         const drained = outOf(id).some((m) => m.armies > 0) && expected <= guard;
-        if (!drained && !outOf(id).some((m) => m.armies > 0 && !landed(m))) tested = true;
+        // A move in from a territory not mine on T (one I took this turn: a Multi-Attack chain) brings
+        // armies the figure leaves out, which can cover a hit: a drop is still a yes, never a "no".
+        const chainedIn = into(id).some((m) => m.armies > 0 && !mineWas(m.from));
+        if (!drained && !chainedIn && !outOf(id).some((m) => m.armies > 0 && !landed(m))) tested = true;
       }
       // A quiet border is a "no" only when captures can be told too (a capture elsewhere would be a yes).
       if (attackedMe === null && tested && tookFromMe !== null) attackedMe = false;

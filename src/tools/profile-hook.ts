@@ -20,6 +20,7 @@ export function observeSettings(game: Game): ObserveInput['settings'] {
     ...(s?.luckModifier !== undefined ? { luckModifier: s.luckModifier } : {}),
     ...(s?.roundingMode !== undefined ? { roundingMode: s.roundingMode } : {}),
     ...(s?.oneArmyStandsGuard !== undefined ? { oneArmyStandsGuard: s.oneArmyStandsGuard } : {}),
+    ...(s?.multiAttack !== undefined ? { multiAttack: s.multiAttack } : {}),
   };
 }
 
