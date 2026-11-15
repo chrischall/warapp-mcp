@@ -574,9 +574,25 @@ players; `warapp_submit_picks` warns in a team game when the list is shorter. Th
 teammate's to `teammateStarts`; a fogged one stays an opponent's (team vision unverified). The output is
 unchanged outside a team game, and the golden corpus (turn plans) is untouched.
 
-TODO (C2, coordination — a later PR): read the teammate's list (C1's `TeammateOrders` picks, then
-`GetTerritoryPicks`, V6), report the overlap, penalise a pick into a bonus the teammate also picks into,
-offer the mirrored alternative beside the split one, and shorten the list only when the lists are disjoint.
+*As built (C2, coordination):* `warapp_plan_picks` reads each playing teammate's list with `readTeammatePicks`
+(`src/tools/team.ts`, shared with `warapp_get_team`): the live board's `TeammateOrders` picks (V5), else
+`GetTerritoryPicks` with the teammate's in-game id (V6); an AI seat or a refusal is unknown (`picks: null`). Both are
+UNVERIFIED live and the result's `team.coordination.notes` says so. `planPicks` takes `team.lists`; with none read, or
+only empty ones, it is the plan it was (a test pins it equal). With a list, the plan is the **split** one: each
+teammate's top (its first territory-limit pickable ids) leaves my candidates and is `friendly` in the opening
+simulation — never captured, so a bonus with one in it never completes for me and is no progress (a bonus pays one
+holder: that is the penalty), no threat, and a known teammate start (the threat model's unknown teammate starts drop by
+as many). `team.coordination` reports the `overlap` (each pick on my list a teammate also lists, both positions),
+`sharedBonuses` (bonuses their top picks into with a member on my list), `shortened` (my list cut from starts × all
+players to my starts plus the opponents' — only when it is disjoint from every teammate's whole list, re-planned at that
+length and kept only if still disjoint), and **`mirrored`**: when every teammate's top is full and distinct, my primary
+and each top are laid on the positions a reversing award gives one player when we all list the same top (two of us:
+positions 1 and 4, 2 and 3; three: 1–3 then reversed), so each start group — and any pair in it that only works in one
+hand — stays in one hand; `splits` names the bonuses a repeating order (the other order that fits; unverified) would
+split between us and so lose, judged by the opening simulation of each hand. Its `submitPicks` is the shared top then my
+own fallback. It assumes no opponent takes a top pick first (one that does moves every later pick to the other hand),
+which the rationale says. `warapp_submit_picks`' team warning about a short list now says a shorter list is safe only
+when no teammate lists any of its picks. Turn plans are untouched: the golden corpus is byte-identical.
 
 ### C3. The planner with a teammate
 
