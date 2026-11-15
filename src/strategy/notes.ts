@@ -1930,8 +1930,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     text:
       'A Bomb halves a stack after its deployment and before any attack, so the capture drops from five ' +
       'thirds of the stack to about five sixths: 83 instead of 166 against 100. With one, a stack about equal ' +
-      'to theirs captures the turn you play it (in the game client); facing one, keep the stacks beside its ' +
-      'holder split.',
+      'to theirs captures the turn you play it; facing one, keep the stacks beside its holder split. ' +
+      'warapp_submit_turn plays it (unverified live).',
     source: S.bomb,
     basis: 'derived',
   },
