@@ -610,7 +610,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   attack on a hold of mine — my loss there needs at least loss ÷ the offensive kill rate attackers, luck
   included, all from its stacks beside it at the start of the turn without Multi-Attack — bounds that
   turn's deploy from below when it is the only other player beside the hold and every neighbour was in
-  view, `repelledFloor`, in the planner too given `previousOrders`),
+  view, `repelledFloor`, in the planner too given `previousOrders`; a hold counts only when every transfer
+  of mine into it surely arrived whole — its source mine on both boards, showing exactly what my orders
+  leave there, and either left more than the guard or beside no other player — and on a turn an
+  opponent may have played a Bomb (`PlannerSettings.bombFrom`, the card clock's fastest turn) half the
+  hold before any move, rounded up, is taken out of the loss first),
   unexplained armies (earned since first seen − visible army change − visible losses − likely
   combat deaths) and inferred bonuses (combinations of up to three bonuses it could hold that
   best fit the income gap, within reach and affordable, none listed when too many fit — see the

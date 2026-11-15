@@ -154,6 +154,120 @@ describe('(1) a failed attack on a hold of mine bounds the attacker\'s deploy', 
   });
 });
 
+describe('(1) review: a transfer into the hold counts only when it surely arrived whole', () => {
+  // My T1 (10) borders A's T2 (5) and my T3 (50); B's T4 (200) borders T3. I order 49 from T3 to T1.
+  // A never attacks: T1 shows 10 afterwards.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4],
+      [
+        [1, 2],
+        [1, 3],
+        [3, 4],
+      ],
+      [],
+    ),
+  );
+  const S: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70 };
+  const before = board([mine(1, 10), enemy(2, 5), mine(3, 50), enemy(4, 200, B)]);
+  const orders: MyOrders = { deploys: [], moves: [{ from: 3, to: 1, armies: 49 }] };
+  const ctx = { me: ME, guard: 1, expected: 5, most: 10, myOrders: orders };
+
+  it('a source taken before the transfer ran sent nothing: no floor', () => {
+    const after = board([mine(1, 10), enemy(2, 5), enemy(3, 120, B), enemy(4, 1, B)]);
+    expect(observeDeploy(g, after, before, A, S, ctx)).toMatchObject({ repelled: [], repelledFloor: 0, deploy: 0 });
+  });
+
+  it('a source still mine that lost armies my orders do not explain may have sent less: no floor', () => {
+    // B attacked T3 and failed, and T3 shows 20, not the 1 my orders leave there.
+    const shows20 = board([mine(1, 10), enemy(2, 5), mine(3, 20), enemy(4, 150, B)]);
+    expect(observeDeploy(g, shows20, before, A, S, ctx)).toMatchObject({ repelled: [], repelledFloor: 0, deploy: 0 });
+    // B attacked T3 first and killed 30; my order sent what was left (19), so T3 shows the 1 my orders
+    // leave there either way, and T1 shows 29: a loss of 30 on T1 that never happened.
+    const masked = board([mine(1, 29), enemy(2, 5), mine(3, 1), enemy(4, 150, B)]);
+    expect(observeDeploy(g, masked, before, A, S, ctx)).toMatchObject({ repelled: [], repelledFloor: 0, deploy: 0 });
+  });
+
+  it('a source that kept what my orders leave there, and could not have lost any unseen, sent it all: the hold is read', () => {
+    // No other player beside T3: T3 shows the 1 my order leaves; T1 should show 59 and shows 10.
+    const quiet = board([mine(1, 10), enemy(2, 5), mine(3, 50), neutral(4, 2)]);
+    const o = observeDeploy(g, board([mine(1, 10), enemy(2, 5), mine(3, 1), neutral(4, 2)]), quiet, A, S, ctx);
+    expect(o.repelled).toEqual([1]);
+    expect(o.repelledFloor).toBe(fewestAttackersToKill(49, S)! - 4);
+    // B beside T3, but my order left 10 there and T3 shows 10: a loss before the order would show.
+    const left10: MyOrders = { deploys: [], moves: [{ from: 3, to: 1, armies: 40 }] };
+    const p = observeDeploy(g, board([mine(1, 10), enemy(2, 5), mine(3, 10), enemy(4, 200, B)]), before, A, S, { ...ctx, myOrders: left10 });
+    expect(p.repelled).toEqual([1]);
+    expect(p.repelledFloor).toBe(fewestAttackersToKill(40, S)! - 4);
+  });
+});
+
+describe('(1) review: a Bomb card may explain half the hold', () => {
+  // The (1) board: T1 (122) to 4 beside A's stacks of 100, 70 and 106 (276).
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5],
+      [
+        [1, 2],
+        [1, 3],
+        [1, 4],
+        [1, 5],
+      ],
+      [],
+    ),
+  );
+  const S: PlannerSettings = { offensiveKillRate: 30, defensiveKillRate: 75, oneArmyStandsGuard: false, baseIncome: 5 };
+  const at = (t1: number, stacks: [number, number, number]) =>
+    board([mine(1, t1), enemy(2, stacks[0]), enemy(3, stacks[1]), enemy(4, stacks[2]), mine(5, 10)]);
+  const ctx = { me: ME, guard: 0, expected: 10, most: 155, myOrders: NO_ORDERS };
+
+  it('with a Bomb possible, the half a bomb takes (rounded up) is left out before the loss reads as attackers', () => {
+    // Small stacks (60): 118 − 61 = 57 lost to attackers needs 190 of them, 130 beyond the stacks.
+    const small = observeDeploy(g, at(4, [20, 20, 20]), at(122, [20, 20, 20]), A, S, { ...ctx, bomb: true });
+    expect(small.repelledFloor).toBe(fewestAttackersToKill(57, S)! - 60);
+    // The 276 beside it explain 190: no floor at all (without the bomb it read +116).
+    expect(observeDeploy(g, at(4, [50, 95, 79]), at(122, [100, 70, 106]), A, S, { ...ctx, bomb: true }).repelledFloor).toBe(0);
+    expect(observeDeploy(g, at(4, [50, 95, 79]), at(122, [100, 70, 106]), A, S, ctx).repelledFloor).toBe(116);
+  });
+
+  it('a loss a bomb alone explains reads nothing', () => {
+    expect(observeDeploy(g, at(61, [20, 20, 20]), at(122, [20, 20, 20]), A, S, { ...ctx, bomb: true }).repelled).toEqual([]);
+  });
+
+  it("the plan judges last turn by the card clock's first Bomb turn", () => {
+    const plan = (turn: number) =>
+      planTurn({
+        graph: g,
+        board: at(4, [50, 95, 79]),
+        previousBoard: at(122, [100, 70, 106]),
+        previousOrders: NO_ORDERS,
+        me: ME,
+        income: 5,
+        settings: { ...S, bombFrom: 10 },
+        turn,
+      });
+    // Planning turn 11: turn 10, the one read, could carry a Bomb.
+    expect(plan(11).rationale.join('\n')).not.toMatch(/attacked T1 \(#1\) and failed/);
+    // Planning turn 10: turn 9 could not.
+    expect(plan(10).rationale.join('\n')).toMatch(/attacked T1 \(#1\) and failed: .*at least \+116/);
+  });
+
+  it('the tracker judges each turn by it too', () => {
+    const track = (bombFrom: number) =>
+      trackOpponents(
+        g,
+        [
+          { turn: 29, board: at(122, [100, 70, 106]), orders: NO_ORDERS },
+          { turn: 30, board: at(4, [50, 95, 79]) },
+        ],
+        ME,
+        { ...S, bombFrom },
+      )[0]!.turns[0]!.repelledFloor;
+    expect(track(29)).toBe(0);
+    expect(track(30)).toBe(116);
+  });
+});
+
 describe('(2) a capture of a neutral in view needs attackers its stacks in view cannot have sent', () => {
   // My T10 borders three 12-army wastelands (T11, T21, T31), each beside the fog (T12, in a +40
   // bonus). Player A shows T13 (5) beside the fog and me. At 20% each wasteland needs 58 attackers;
@@ -221,6 +335,33 @@ describe('(2) a capture of a neutral in view needs attackers its stacks in view 
     const after = board([...at([11]).territories.filter((t) => t.territoryId !== 13), enemy(13, 2)]);
     const o = observeDeploy(g2, after, before, A, S, { me: ME, guard: 0, expected: 20, most: 45 });
     expect(o.unseenAttackers).toEqual([]);
+  });
+
+  it('with some from view, the attackers out of sight are what it needed less what came from view', () => {
+    // #271 review: T13 sent 10 of the 58 the capture needed; 48 came from out of sight (the 38
+    // standing there beyond the cost, plus the cost), as in the case where none came from view.
+    const g2 = buildGraph(
+      makeMap(
+        [10, 11, 12, 13, 21, 31],
+        [
+          [10, 11],
+          [10, 21],
+          [10, 31],
+          [10, 13],
+          [11, 12],
+          [11, 13],
+          [21, 12],
+          [31, 12],
+          [13, 12],
+        ],
+        [[902, 40, [12]]],
+      ),
+    );
+    const before = board([...at([]).territories.filter((t) => t.territoryId !== 13), enemy(13, 60)]);
+    const after = board([...at([11]).territories.filter((t) => t.territoryId !== 13), enemy(13, 50)]);
+    const o = observeDeploy(g2, after, before, A, S, { me: ME, guard: 0, expected: 20, most: 45 });
+    expect(o.unseenAttackers).toEqual([11]);
+    expect(o.unseenAttackerArmies).toBe(58 - 10);
   });
 
   const history = (turns: [number, number[]][]) => turns.map(([turn, taken]) => ({ turn, board: at(taken) }));

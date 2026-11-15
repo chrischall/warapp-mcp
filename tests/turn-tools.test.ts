@@ -1120,6 +1120,11 @@ describe('plannerSettings', () => {
     // Wastelands (#167): passed through when there are any.
     expect(plannerSettings({ cards: [], raw: {}, wastelands: { count: 3, size: 12 } })).toEqual({ wastelands: { count: 3, size: 12 } });
     expect(plannerSettings({ cards: [], raw: {}, wastelands: { count: 0, size: 0 } })).toEqual({});
+    // #271 review: the first turn an opponent may play a Bomb (the card clock's fastest), when one is in play.
+    const bomb = (over: Record<string, unknown>) => plannerSettings({ cards: ['Bomb'], raw: { BombCard: { NumPieces: 3, InitialPieces: 0, MinimumPiecesPerTurn: 0, Weight: 1, ...over } } });
+    expect(bomb({ NumPieces: 10, MinimumPiecesPerTurn: 1 }).bombFrom).toBeGreaterThan(1);
+    expect(bomb({ NumPieces: 1, InitialPieces: 1 })).toEqual({ bombFrom: 1 });
+    expect(plannerSettings({ cards: ['Reinforcement'], raw: { ReinforcementCard: { NumPieces: 1, InitialPieces: 1, MinimumPiecesPerTurn: 0, Weight: 1 } } }).bombFrom).toBeUndefined();
   });
 });
 

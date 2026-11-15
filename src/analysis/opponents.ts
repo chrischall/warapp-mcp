@@ -100,6 +100,7 @@ import { bonusTerritories } from './bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import {
+  bombPossibleOn,
   enemyDeployEstimates,
   failedAttackKills,
   holdLosses,
@@ -1430,7 +1431,7 @@ export function trackOpponents(
           ? observeSigned(g, after, before, playerId, settings, context)
           : { ...e.observation, signed: e.observedRaw! };
       // #271 (1): a failed attack on a hold of mine bounds its deploy from below, fog or not.
-      const repelled = orders ? repelledFloor(g, before, after, me, playerId, orders, settings, guard) : null;
+      const repelled = orders ? repelledFloor(g, before, after, me, playerId, orders, settings, guard, bombPossibleOn(settings, from)) : null;
       const floor = repelled?.floor ?? 0;
       const raw = Math.max(
         measured ? Math.max(0, observeSigned(g, after, before, playerId, settings, context).signed + measured) : Math.max(0, signed),

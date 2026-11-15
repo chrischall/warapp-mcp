@@ -195,6 +195,17 @@ export interface PlannerSettings {
    * a bonus (its size unknown) is then costed with the expected surcharge of being one.
    */
   wastelands?: { count: number; size: number };
+  /**
+   * #271 review: the first turn an opponent may play a Bomb card (the card clock's fastest turn), when
+   * one is in play; absent, none can be. A bomb on a hold of mine reads as a failed attack, so on a turn
+   * one may have been played {@link repelledFloor} leaves out the half it could take ({@link bombPossibleOn}).
+   */
+  bombFrom?: number;
+}
+
+/** #271 review: whether an opponent may have played a Bomb on `turn` (unknown turn: yes, when one is in play). */
+export function bombPossibleOn(settings: PlannerSettings, turn: number | null | undefined): boolean {
+  return settings.bombFrom !== undefined && (turn === null || turn === undefined || turn >= settings.bombFrom);
 }
 
 export interface PlanOptions {
@@ -1159,6 +1170,11 @@ export interface ObserveContext {
    * a shrink, so they count back ({@link failedAttackKills}). Requires `me`.
    */
   myOrders?: MyOrders;
+  /**
+   * #271 review: an opponent may have played a Bomb card on the turn read ({@link bombPossibleOn}):
+   * {@link repelledFloor} leaves out the half of a hold a bomb could take. Default false.
+   */
+  bomb?: boolean;
 }
 
 /**
@@ -1220,6 +1236,16 @@ export interface HoldLoss {
   defenders: number;
   /** What it lost beyond what my orders explain: the defenders plus what I moved in, less what the later board shows. */
   loss: number;
+  /** What stood there before any move: my armies there plus what I deployed there (what a Bomb halves). */
+  standing: number;
+  /**
+   * #271 review: every transfer counted in (`loss` adds it at its ordered size) surely arrived whole:
+   * its source is mine on both boards, kept what my orders leave there (lost nothing they do not
+   * explain, issued no attack of mine that failed) and could send everything ordered from it. Else the
+   * order may have sent less (an order sends what is left) or nothing (a territory captured first),
+   * so `loss` may overstate. True when nothing came in.
+   */
+  inflowSure: boolean;
 }
 
 /**
@@ -1230,7 +1256,7 @@ export interface HoldLoss {
  * my own attack came back to it, so its loss is not known. The opponent tracker's attacks on my holds
  * and the #271 bound ({@link repelledFloor}) both read these.
  */
-export function holdLosses(g: MapGraph, before: BoardState, after: BoardState, me: number, orders: MyOrders): HoldLoss[] {
+export function holdLosses(g: MapGraph, before: BoardState, after: BoardState, me: number, orders: MyOrders, guard = 1): HoldLoss[] {
   const was = new Map(before.territories.map((t) => [t.territoryId, t]));
   const now = new Map(after.territories.map((t) => [t.territoryId, t]));
   const owns = (t: TerritoryState | undefined, p: number) => t?.owner.kind === 'player' && t.owner.playerId === p;
@@ -1239,19 +1265,43 @@ export function holdLosses(g: MapGraph, before: BoardState, after: BoardState, m
   for (const d of orders.deploys) deployed.set(d.territoryId, (deployed.get(d.territoryId) ?? 0) + Math.max(0, d.armies));
   const sent = new Map<number, number>();
   const came = new Map<number, number>();
+  /** The sources of what `came`, by the hold they sent to. */
+  const cameFrom = new Map<number, Set<number>>();
   const failedFrom = new Set<number>();
   for (const m of orders.moves) {
     const armies = Math.max(0, m.armies);
     sent.set(m.from, (sent.get(m.from) ?? 0) + armies);
-    if (held(m.to) && owns(visibleState(was.get(m.from)), me)) came.set(m.to, (came.get(m.to) ?? 0) + armies);
+    if (held(m.to) && owns(visibleState(was.get(m.from)), me)) {
+      came.set(m.to, (came.get(m.to) ?? 0) + armies);
+      if (armies > 0) cameFrom.set(m.to, (cameFrom.get(m.to) ?? new Set()).add(m.from));
+    }
     if (!owns(visibleState(was.get(m.to)), me) && !owns(visibleState(now.get(m.to)), me)) failedFrom.add(m.from);
   }
+  /**
+   * #271 review: a source that surely sent all ordered from it ({@link HoldLoss.inflowSure}): mine on
+   * both boards, no failed attack of mine out of it, nothing moved into it (when that arrived is not
+   * known), and it shows exactly what my orders leave there. An order sends what is left down to the
+   * guard, so a loss before it shows only when my orders leave more than the guard there; else only
+   * when no other player (nor the fog) was beside it to attack or bomb it.
+   */
+  const sentWhole = (id: number) => {
+    if (!held(id) || failedFrom.has(id) || came.has(id)) return false;
+    const left = visibleState(was.get(id))!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0);
+    if (left < 0 || visibleState(now.get(id))!.armies! !== left) return false;
+    if (left > guard) return true;
+    return neighborsOf(g, id).every((n) => {
+      const o = ownerShown(was.get(n))?.owner;
+      return o !== undefined && (o.kind === 'neutral' || (o.kind === 'player' && o.playerId === me));
+    });
+  };
   const out: HoldLoss[] = [];
   for (const id of [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum)) {
     if (!g.territoryById.has(id) || !held(id) || failedFrom.has(id)) continue;
-    const defenders = Math.max(0, visibleState(was.get(id))!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0));
+    const standing = visibleState(was.get(id))!.armies! + (deployed.get(id) ?? 0);
+    const defenders = Math.max(0, standing - (sent.get(id) ?? 0));
     const loss = defenders + (came.get(id) ?? 0) - visibleState(now.get(id))!.armies!;
-    if (loss > 0) out.push({ territoryId: id, defenders, loss });
+    const inflowSure = [...(cameFrom.get(id) ?? [])].every(sentWhole);
+    if (loss > 0) out.push({ territoryId: id, defenders, loss, standing, inflowSure });
   }
   return out;
 }
@@ -1277,7 +1327,12 @@ export interface RepelledAttacks {
  * showed its owner on the earlier board, every territory of `playerId` beside it showed its armies,
  * and `playerId` is the only other player beside it. Over every such hold the bound is the larger of
  * the best single hold and all of them together (the attackers summed against the stacks beside any
- * of them, each counted once). A Bomb card played on the hold reads as an attack too.
+ * of them, each counted once).
+ * #271 review: a hold reads only when what I moved in surely arrived whole ({@link HoldLoss.inflowSure}),
+ * so the bound uses the least my orders can have brought. On a turn an opponent may have played a Bomb
+ * card (`bomb`, {@link bombPossibleOn}), which halves a territory of mine beside the bomber after the
+ * deploys and reads as an attack, the most it could take (half the stack before any move, rounded up)
+ * is left out of the loss first.
  */
 export function repelledFloor(
   g: MapGraph,
@@ -1288,6 +1343,7 @@ export function repelledFloor(
   orders: MyOrders,
   settings: PlannerSettings = {},
   guard = (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
+  bomb = false,
 ): RepelledAttacks {
   const none: RepelledAttacks = { territories: [], attackers: 0, supply: 0, floor: 0 };
   if (settings.multiAttack) return none;
@@ -1297,7 +1353,10 @@ export function repelledFloor(
     return Math.max(0, st.armies! - guard) + specialUnitStrength(st.specialUnits?.filter((u) => u.playerId === playerId));
   };
   const holds: { id: number; attackers: number; beside: number[] }[] = [];
-  for (const h of holdLosses(g, before, after, me, orders)) {
+  for (const h of holdLosses(g, before, after, me, orders, guard)) {
+    if (!h.inflowSure) continue;
+    const loss = h.loss - (bomb ? Math.ceil(h.standing / 2) : 0);
+    if (loss <= 0) continue;
     const ns = neighborsOf(g, h.territoryId);
     if (ns.some((n) => !ownerShown(was.get(n)))) continue;
     const others = new Set<number>();
@@ -1313,7 +1372,7 @@ export function repelledFloor(
       }
     }
     if (hidden || others.size !== 1 || !others.has(playerId)) continue;
-    const attackers = fewestAttackersToKill(h.loss, settings, settings.luckModifier, settings.roundingMode);
+    const attackers = fewestAttackersToKill(loss, settings, settings.luckModifier, settings.roundingMode);
     if (attackers === null) continue;
     holds.push({ id: h.territoryId, attackers, beside });
   }
@@ -1616,7 +1675,9 @@ export function observeSigned(
           unseen = need === null ? 0 : Math.min(arrived, Math.max(0, need - cost - claimed - came));
           if (unseen > 0) {
             unseenAttackers.push(t.territoryId);
-            unseenAttackerArmies += unseen + (claimed + came === 0 ? cost : 0);
+            // The attackers out of sight: what the capture needed less what came from view
+            // (need − claimed − came), within what stands there.
+            unseenAttackerArmies += unseen + cost;
           }
         }
         if (claimed > 0) ambiguous.push({ id: t.territoryId, armies: arrived, kind: 'capture' });
@@ -1671,7 +1732,7 @@ export function observeSigned(
   // #271 (1): a failed attack on a hold of mine bounds its deploy from below, fog or not.
   const repelled =
     context.me !== undefined && context.myOrders
-      ? repelledFloor(g, previous, board, context.me, playerId, context.myOrders, rates, guard)
+      ? repelledFloor(g, previous, board, context.me, playerId, context.myOrders, rates, guard, context.bomb === true)
       : { territories: [], floor: 0 };
   const floor = repelled.floor;
   return {
@@ -1886,6 +1947,8 @@ export function enemyDeployEstimates(
           expected: Math.max(visible, trackBound ?? tracked ?? priorFigure ?? 0),
           most: couldEarn,
           ...(when.previousOrders ? { myOrders: when.previousOrders } : {}),
+          // #271 review: the turn read is the one before the turn planned.
+          ...(bombPossibleOn(settings, when.turn == null ? null : when.turn - 1) ? { bomb: true } : {}),
         })
       : null;
     // #235 1c: the track's newest turn, when it ends on this board and its bound cut armies that

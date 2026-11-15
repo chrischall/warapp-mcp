@@ -124,7 +124,7 @@ import {
 import { writeGameRecord } from '../replay.js';
 import { gameOutlook } from '../analysis/outlook.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
-import { cardArmyCeiling } from '../strategy/card-clock.js';
+import { cardArmyCeiling, cardClock } from '../strategy/card-clock.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { readPickRecord } from '../pick-list.js';
@@ -295,6 +295,9 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.noSplit) out.noSplit = true;
   if (s.armyCap !== undefined && s.armyCap !== null && s.armyCap > 0) out.armyCap = s.armyCap;
   if (s.wastelands && s.wastelands.count > 0) out.wastelands = { ...s.wastelands };
+  // #271 review: the first turn an opponent may play a Bomb (a bomb reads as a failed attack on my hold).
+  const bombFrom = cardClock(s)?.cards.find((c) => c.card === 'Bomb')?.firstPlayableTurn.fastest;
+  if (bombFrom !== undefined && bombFrom !== null) out.bombFrom = bombFrom;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game. The

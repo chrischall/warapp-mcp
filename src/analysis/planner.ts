@@ -264,7 +264,11 @@
 //     not: my loss there (what my orders do not explain) needed at least `fewestAttackersToKill`
 //     attackers (luck included), all from its stacks beside the hold at the start of the turn (less
 //     the guard) plus what it deployed there — counted when every neighbour showed its owner, its own
-//     showed their armies, it is the only other player beside the hold, and Multi-Attack is off. A
+//     showed their armies, it is the only other player beside the hold, and Multi-Attack is off;
+//     only when every transfer of mine into the hold surely arrived whole (`HoldLoss.inflowSure`: its
+//     source mine on both boards, showing exactly what my orders leave there, and left more than the
+//     guard or beside no other player), and on a turn an opponent may have played a Bomb
+//     (`bombPossibleOn`, `PlannerSettings.bombFrom`) after taking out half the hold, rounded up. A
 //     capture of a neutral in view beside the fog that needed more attackers (`fewestAttackersToTake`)
 //     than its stacks in view sent (`unseenAttackers`) reads what stands there beyond those as deploy
 //     within #123's bound, the rest a move out of the fog. Its stacks in view beside a capture, hidden
