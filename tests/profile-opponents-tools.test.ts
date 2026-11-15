@@ -110,7 +110,7 @@ interface Opponent {
 interface Profile {
   game: { id: number; turn: number };
   player: { id: number; name: string };
-  profile: 'kept' | 'off';
+  profile: 'kept' | 'not-kept' | 'off';
   opponents: Opponent[];
   untrusted_content?: boolean;
 }

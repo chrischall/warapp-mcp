@@ -26,8 +26,8 @@ export interface TurnPrimitives {
   reinforce: { n: number; e: number; extra: number };
   /** Where its visible growth went: the largest growth on one territory and the total; `null` with fewer than two territories or no growth. */
   stack: { top: number; total: number } | null;
-  /** Territories it took from me, ascending. */
-  tookFromMe: number[];
+  /** Territories it took from me, ascending; `null` when captures cannot be told (a Gift of mine may have gone unrecorded). */
+  tookFromMe: number[] | null;
   /** Territories I took from it, ascending. */
   lostToMe: number[];
 }
@@ -99,7 +99,14 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  *   exact result against D (which covers an attack big enough to take D that failed); an X weaker
  *   than D is an opportunity without an event. `extra` is the least defenders above D explaining it.
  * - `stack`: over its territories visible on both boards, growth = max(0, now − then).
- * - `tookFromMe` / `lostToMe`: ownership changes between it and me, owners shown on both boards.
+ * - `tookFromMe` / `lostToMe`: ownership changes between it and me, owners shown on both boards;
+ *   `tookFromMe` is `null` (cannot tell) when a Gift of mine may have gone unrecorded, and then a
+ *   quiet border never makes `attackedMe` false (only a drop makes it true).
+ *
+ * Assumed for `reinforce`: on a failure, the armies back on S are the exact result against the
+ * defenders X's survivors imply (else no reading: a capture it took back later in the turn returns
+ * none). On a capture, a later fight that thins my survivors on X is not told apart from defenders
+ * above D, and reads as an event.
  *
  * My orders as cached (`MyOrders`): `moves` holds only plain orders; a percentage, Attack Only or
  * Transfer Only order is in `sent` alone, and card plays in `cards`. A territory such an order leaves
@@ -107,8 +114,8 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  * reading (its armies are not known); `iAttacked` counts every non-transfer order of `sent`. When the
  * orders do not record card plays (`cards` absent: a cache written before they were) and the game may
  * have Airlift, nothing is tested from armies at all, and when it may have Gift — orders unknown
- * included — a territory of mine that became its is no capture (it may have been my gift), so a game
- * with Gift and no orders of mine never reads one. A territory recorded as my Gift is no capture
+ * included — captures cannot be told (`tookFromMe: null`; it may have been my gift), so a game with
+ * Gift and no orders of mine never reads one, nor counts a turn as one without. A territory recorded as my Gift is no capture
  * either. Not filtered: its own Gift of a territory to me reads as `lostToMe` (my orders cannot say).
  */
 export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
@@ -167,14 +174,14 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
     const ownsNow = (id: number) => shownOwner(now.get(id)) === p;
 
     const contact = ids.some((id) => ownsWas(id) && neighborsOf(graph, id).some(mineWas));
-    const tookFromMe = giftUnknown ? [] : ids.filter((id) => mineWas(id) && ownsNow(id) && !gifted.has(id));
+    const tookFromMe = giftUnknown ? null : ids.filter((id) => mineWas(id) && ownsNow(id) && !gifted.has(id));
     const lostToMe = ids.filter((id) => ownsWas(id) && mineNow(id));
     const iAttacked =
       moves.some((m) => ownsWas(m.to) && m.armies > 0 && !transferOnly.has(`${m.from}:${m.to}`)) ||
       sent.some((m) => ownsWas(m.to) && !m.transferOnly && sentCount(m) > plain(m));
 
     // attackedMe
-    let attackedMe: boolean | null = tookFromMe.length ? true : null;
+    let attackedMe: boolean | null = tookFromMe?.length ? true : null;
     if (attackedMe === null && orders && !airliftUnknown) {
       let tested = false;
       for (const id of ids) {
@@ -198,7 +205,8 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
           break;
         }
       }
-      if (attackedMe === null && tested) attackedMe = false;
+      // A quiet border is a "no" only when captures can be told too (a capture elsewhere would be a yes).
+      if (attackedMe === null && tested && tookFromMe !== null) attackedMe = false;
     }
 
     // reinforce
@@ -241,6 +249,11 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
           const returned = sNow.armies - base;
           if (returned < 0 || returned > A) continue;
           d = Math.max(leastFailing(A, D, off, def), xNow.armies > 0 ? xNow.armies + K : 0);
+          // What comes back must be the exact result against the defenders X's survivors imply: a
+          // capture it took back later in the turn (none back, X its again) or another fight on X
+          // does not match and is no reading.
+          const met = xNow.armies > 0 ? xNow.armies + K : d;
+          if (A - Math.min(A, straightKills(met, def)) !== returned) continue;
         }
         reinforce.n++;
         if (d > D) {
@@ -317,7 +330,7 @@ export interface ObservedPrimitives {
  * - `retaliate`: turns I attacked it, an event when it attacked me on one of the next two turns;
  *   counted only when both are observed and told, or one says it did;
  * - `retake`: territories I took from it, an event when it took them back within two turns;
- *   counted only when both turns are observed, or it did.
+ *   counted only when both turns are observed with their captures told, or it did.
  */
 export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
   const by = new Map<number, TurnPrimitives>();
@@ -361,7 +374,7 @@ export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
       h.stacking.sq += share * share;
     }
     if (p.iAttacked) count(h.retaliate, within2(t, (q) => q.attackedMe));
-    for (const id of p.lostToMe) count(h.retake, within2(t, (q) => q.tookFromMe.includes(id)));
+    for (const id of p.lostToMe) count(h.retake, within2(t, (q) => (q.tookFromMe === null ? null : q.tookFromMe.includes(id))));
   }
   // The first contact: the earliest turn in contact.
   const first = order.find((t) => by.get(t)!.contact);

@@ -31,6 +31,12 @@ export function profileEnabled(env: EnvSource = process.env): boolean {
   return v === undefined || !/^(off|0|false|no)$/i.test(v.trim());
 }
 
+/** What the profile tool says of its store: `kept` (stored per game), `not-kept` (on, but no data dir to keep it in) or `off`. */
+export function profileState(env: EnvSource, dataDir: string | undefined): 'kept' | 'not-kept' | 'off' {
+  if (!profileEnabled(env)) return 'off';
+  return dataDir ? 'kept' : 'not-kept';
+}
+
 export const profileGamesDir = (dir: string) => join(dir, 'profiles', 'games');
 export const profileGamePath = (dir: string, gameId: number, playerId: number) => join(profileGamesDir(dir), `${gameId}-${playerId}.json`);
 
@@ -55,9 +61,9 @@ function primitivesOf(v: unknown): TurnPrimitives | undefined {
   if (!isRec(r) || !isInt(r.n) || !isInt(r.e) || !isInt(r.extra)) return undefined;
   const s = v.stack;
   if (s !== null && !(isRec(s) && isInt(s.top) && isInt(s.total))) return undefined;
-  const took = ids(v.tookFromMe);
+  const took = v.tookFromMe === null ? null : ids(v.tookFromMe);
   const lost = ids(v.lostToMe);
-  if (!took || !lost) return undefined;
+  if (took === undefined || !lost) return undefined;
   return {
     contact: v.contact,
     attackedMe: v.attackedMe as boolean | null,

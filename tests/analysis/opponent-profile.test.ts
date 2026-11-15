@@ -103,6 +103,12 @@ describe('observeTurn: reinforce', () => {
     expect(of(observe(ten, board([mine(3, 21), its(4, 1)]), attack(3, 4, 5))).reinforce.n).toBe(0);
   });
 
+  it('a failure whose returned armies do not match the exact result against the defenders it implies is no reading (a capture it took back)', () => {
+    // My 5 take its 2 and 4 stand on 4; it retakes 4 later in the turn, leaving 3: none of mine came
+    // back, where defenders that leave 3 would have sent 1 back.
+    expect(of(observe(before, board([mine(3, 5), its(4, 3)]), attack(3, 4, 5))).reinforce.n).toBe(0);
+  });
+
   it('gives no reading from a source holding a special unit of mine (a commander fights as 7)', () => {
     const cmd = { kind: 'commander' as const, id: 'c', playerId: ME };
     const withCommander = board([{ ...mine(3, 10), specialUnits: [cmd] }, its(4, 2)]);
@@ -196,12 +202,26 @@ describe('observeTurn: attackedMe, contact, captures', () => {
     const now = board([its(3, 2), its(4, 9)]);
     const gift: MyOrders = { deploys: [], moves: [], cards: [{ card: 'Gift', target: 3 }] };
     expect(of(observe(prev, now, gift, {}, [OPP], ['Gift']))).toMatchObject({ tookFromMe: [], attackedMe: null });
-    // No orders known in a game with Gift (or cards unknown): the change may be a gift.
-    expect(of(observe(prev, now, undefined, {}, [OPP], ['Gift']))).toMatchObject({ tookFromMe: [], attackedMe: null });
-    expect(of(observe(prev, now, undefined, {}, [OPP], 'unknown'))).toMatchObject({ tookFromMe: [], attackedMe: null });
+    // No orders known in a game with Gift (or cards unknown): the change may be a gift, so captures cannot be told.
+    expect(of(observe(prev, now, undefined, {}, [OPP], ['Gift']))).toMatchObject({ tookFromMe: null, attackedMe: null });
+    expect(of(observe(prev, now, undefined, {}, [OPP], 'unknown'))).toMatchObject({ tookFromMe: null, attackedMe: null });
+    // Orders known but their card plays not recorded (an old cache) in a game with Gift: the same.
+    expect(of(observe(prev, now, { deploys: [], moves: [] }, {}, [OPP], ['Gift']))).toMatchObject({ tookFromMe: null, attackedMe: null });
     // Without the card in play, or with my card plays recorded as none, it is a capture.
     expect(of(observe(prev, now, undefined, {}, [OPP], ['Airlift']))).toMatchObject({ tookFromMe: [3], attackedMe: true });
     expect(of(observe(prev, now, { deploys: [], moves: [], cards: [] }, {}, [OPP], ['Gift']))).toMatchObject({ tookFromMe: [3], attackedMe: true });
+  });
+
+  it('while captures cannot be told (a Gift unrecorded), quiet borders never read as no attack', () => {
+    // Gift in play, Airlift not, my orders cached without their card plays: 3 keeps what my orders
+    // leave, but 5 may have been taken from me (or given away): no "no".
+    const prev = board([...shown, mine(3, 5), its(4, 9), mine(5, 3)]);
+    const orders: MyOrders = { deploys: [], moves: [] };
+    expect(of(observe(prev, board([...shown, mine(3, 5), its(4, 9), its(5, 3)]), orders, {}, [OPP], ['Gift']))).toMatchObject({ tookFromMe: null, attackedMe: null });
+    // A drop on a border still says it attacked.
+    expect(of(observe(prev, board([...shown, mine(3, 2), its(4, 9), its(5, 3)]), orders, {}, [OPP], ['Gift'])).attackedMe).toBe(true);
+    // With my card plays recorded the quiet border is a "no".
+    expect(of(observe(prev, board([...shown, mine(3, 5), its(4, 9), mine(5, 3)]), { ...orders, cards: [] }, {}, [OPP], ['Gift'])).attackedMe).toBe(false);
   });
 
   it('a border two players stand beside cannot say which attacked', () => {
@@ -283,6 +303,24 @@ describe('habitsOf', () => {
     // Both later turns told and quiet: non-events.
     const quiet = [turns[0]!, turns[1]!, { turn: 7, primitives: turn({ attackedMe: false }) }];
     expect(habitsOf(quiet)).toMatchObject({ retaliate: { e: 0, n: 1 }, retake: { e: 0, n: 1 } });
+  });
+
+  it('a Gift game with my orders unknown on the next two turns counts no retake, even when it took the territory back', () => {
+    // Turn 5: I take 4 (recorded). Turns 6 and 7: no orders of mine known; it takes 4 back on turn 6.
+    const t5 = observe(board([...shown, mine(3, 10), its(4, 2)]), board([...shown, mine(3, 5), mine(4, 4)]), { ...attack(3, 4, 5), cards: [] }, {}, [OPP], ['Gift']);
+    const t6 = observe(board([...shown, mine(3, 5), mine(4, 4), its(5, 9)]), board([...shown, mine(3, 5), its(4, 3), its(5, 2)]), undefined, {}, [OPP], ['Gift']);
+    const t7 = observe(board([...shown, mine(3, 5), its(4, 3)]), board([...shown, mine(3, 5), its(4, 3)]), undefined, {}, [OPP], ['Gift']);
+    expect(of(t5).lostToMe).toEqual([4]);
+    expect(of(t6).tookFromMe).toBeNull();
+    const h = habitsOf([
+      { turn: 5, primitives: of(t5) },
+      { turn: 6, primitives: of(t6) },
+      { turn: 7, primitives: of(t7) },
+    ]);
+    expect(h.retake).toEqual({ e: 0, n: 0 });
+    // A turn whose captures cannot be told never counts as "no retake", but one that saw the retake still counts.
+    expect(habitsOf([{ turn: 5, primitives: turn({ lostToMe: [4] }) }, { turn: 6, primitives: turn({ tookFromMe: null }) }, { turn: 7, primitives: turn() }]).retake).toEqual({ e: 0, n: 0 });
+    expect(habitsOf([{ turn: 5, primitives: turn({ lostToMe: [4] }) }, { turn: 6, primitives: turn({ tookFromMe: null }) }, { turn: 7, primitives: turn({ tookFromMe: [4] }) }]).retake).toEqual({ e: 1, n: 1 });
   });
 
   it('is stable: the same turns in any order, or listed twice, give the same habits', () => {

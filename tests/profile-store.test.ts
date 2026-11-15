@@ -10,6 +10,7 @@ import {
   MAX_PROFILE_GAME_FILES,
   profileEnabled,
   profileGamePath,
+  profileState,
   profileGamesDir,
   readProfileTurns,
   recordBehaviour,
@@ -38,6 +39,15 @@ describe('profileEnabled', () => {
     expect(profileEnabled({})).toBe(true);
     expect(profileEnabled({ WARAPP_PLAYER_PROFILE: 'on' })).toBe(true);
     for (const v of ['off', 'OFF', '0', 'false', 'no', ' no ']) expect(profileEnabled({ WARAPP_PLAYER_PROFILE: v })).toBe(false);
+  });
+});
+
+describe('profileState', () => {
+  it('is kept with a data dir, not kept without one, and off when switched off', () => {
+    expect(profileState({}, '/data')).toBe('kept');
+    expect(profileState({}, undefined)).toBe('not-kept');
+    expect(profileState({ WARAPP_PLAYER_PROFILE: 'off' }, '/data')).toBe('off');
+    expect(profileState({ WARAPP_PLAYER_PROFILE: 'off' }, undefined)).toBe('off');
   });
 });
 
@@ -108,6 +118,16 @@ describe('recordBehaviour', () => {
     const fresh = tmp();
     await recordBehaviour(fresh, input(boards(1, 3)), off);
     expect(existsSync(join(fresh, 'profiles'))).toBe(false);
+  });
+
+  it('keeps captures that could not be told as null, never as none', async () => {
+    const dir = tmp();
+    // A Gift in play and my card plays not recorded: what it took from me cannot be told.
+    const b = boards(1, 3);
+    await recordBehaviour(dir, { ...input(b), cards: ['Gift'] }, {});
+    const turns = (await readProfileTurns(dir, GAME, ME, {})).get(OPP)!;
+    expect(turns.map((t) => t.primitives.tookFromMe)).toEqual([null, null]);
+    expect(turns.map((t) => t.primitives.attackedMe)).toEqual([null, null]);
   });
 
   it('reads an unusable file as empty, drops unusable entries, and never throws', async () => {

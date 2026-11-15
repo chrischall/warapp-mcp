@@ -20,7 +20,7 @@ import {
 } from '../analysis/opponent-profile.js';
 import type { TurnBoard } from '../analysis/opponents.js';
 import { boardStateFromLive } from '../live.js';
-import { observeBoards, PROFILE_ENV, profileEnabled, readProfileTurns } from '../profile-store.js';
+import { observeBoards, PROFILE_ENV, profileEnabled, profileState, readProfileTurns } from '../profile-store.js';
 import { writeGameRecord } from '../replay.js';
 import { writeBoardCache } from '../trend.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
@@ -99,7 +99,7 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
         return {
           game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), turn },
           player: { id: me.id, name: untrustedText(me.name) },
-          profile: on ? 'kept' : 'off',
+          profile: profileState(env, ctx.dataDir),
           opponents: opponents.map((id) => {
             const p = players.get(id);
             const turns = turnsOf(id);

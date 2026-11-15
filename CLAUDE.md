@@ -628,8 +628,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake) from the
   whole list, so re-deriving never double-counts. A territory an order only `sent` holds (percentage, Attack
   Only, Transfer Only) or my Airlift touches is never read from armies; orders cached without their card plays
-  (`MyOrders.cards`, cached since A1) read nothing from armies when the game may have Airlift, and no capture
-  from me when it may have Gift (a gift of mine is no capture); a border with a neighbour whose owner is hidden
+  (`MyOrders.cards`, cached since A1) read nothing from armies when the game may have Airlift, and when it
+  may have Gift captures from me cannot be told (`tookFromMe: null`: no retake counted, no "did not attack";
+  a gift of mine is no capture); a failure is read only when the armies back match the exact result; a border with a neighbour whose owner is hidden
   is not tested; boards from GameFeed history (`TurnBoard.source: 'history'`) are never observed.
   `src/profile-store.ts` keeps every observed turn at
   `<dataDir>/profiles/games/<gameId>-<myId>.json` (real ids, counts only; a turn observed again is
@@ -638,7 +639,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   warapp_locate_opponents and warapp_get_relations. `WARAPP_PLAYER_PROFILE=off`: nothing read or written.
   Teammates are never profiled. Read-only `warapp_profile_opponents` reports each habit shrunk toward a
   neutral default (`PROFILE_PRIOR_WEIGHT` 4) with `n`, `confidence`, `basis` (`this-game` / `default`),
-  and labels with a counter-play line at confidence 0.5. **Profiles inform only:** the planner reads none
+  and labels with a counter-play line at confidence 0.5; `profile` is `kept`, `not-kept` (no data dir) or `off`. **Profiles inform only:** the planner reads none
   of it until part 0's measurement is reported and the owner approves each hook (P1).
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
