@@ -88,7 +88,9 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  *   + my deploys − my moves out + my transfers in (a transfer in counts only from a source next to no
  *   other player's territory, which nobody could have hit first). Survivors of a move out that did
  *   not end on a territory of mine (a failed attack, or a transfer that met a territory taken first)
- *   may come back and cover a hit, so such a border still reads yes on a drop but never tests a "no".
+ *   may come back and cover a hit, so such a border still reads yes on a drop but never tests a "no";
+ *   nor does one whose moves out leave it at the guard or less (war.app sends what is left, so a hit
+ *   landing first shrinks the move, not the border: a withdrawal of every movable army).
  *   Without orders only a capture says
  *   so, else `null`; with orders and no testable territory, `null` too.
  * - `reinforce`: one opportunity per attack of mine onto X (its, with D armies on T) when combat is
@@ -208,7 +210,10 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         }
         // A move out that did not end on a territory of mine (a failed attack, or a transfer that met
         // a territory taken first) may send survivors back, which can cover a hit: no "no" from here.
-        if (!outOf(id).some((m) => m.armies > 0 && !mineNow(m.to))) tested = true;
+        // A move out that drains it to the guard sends only what is left: a hit landing first shrinks
+        // the move, not the border, which still ends at `expected`: no "no" from here either.
+        const drained = outOf(id).some((m) => m.armies > 0) && expected <= guard;
+        if (!drained && !outOf(id).some((m) => m.armies > 0 && !mineNow(m.to))) tested = true;
       }
       // A quiet border is a "no" only when captures can be told too (a capture elsewhere would be a yes).
       if (attackedMe === null && tested && tookFromMe !== null) attackedMe = false;

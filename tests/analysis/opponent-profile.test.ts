@@ -153,6 +153,19 @@ describe('observeTurn: attackedMe, contact, captures', () => {
     expect(of(observe(prev, board([...shown, mine(3, 2), mine(4, 3)]), o)).attackedMe).toBe(false);
   });
 
+  it('a move out that drains the border to the guard shrinks rather than the border when hit first: no "no"', () => {
+    // 3 holds 10 and withdraws 9 to 2. Its 5 on 4 hit 3 first, leaving 7, so the withdrawal sends 6
+    // and 3 ends with 1, exactly what the orders leave (10 − 9).
+    const prev = board([neutral(1, 2), mine(2, 1), mine(3, 10), its(4, 5)]);
+    const o = attack(3, 2, 9);
+    expect(of(observe(prev, board([neutral(1, 2), mine(2, 7), mine(3, 1), its(4, 1)]), o)).attackedMe).toBeNull();
+    // With the guard off, a withdrawal of all 10 is the same.
+    const off = { oneArmyStandsGuard: false };
+    expect(of(observe(prev, board([neutral(1, 2), mine(2, 7), mine(3, 0), its(4, 1)]), attack(3, 2, 10), off)).attackedMe).toBeNull();
+    // A move out that leaves more than the guard is still tested.
+    expect(of(observe(prev, board([neutral(1, 2), mine(2, 9), mine(3, 2), its(4, 5)]), attack(3, 2, 8))).attackedMe).toBe(false);
+  });
+
   it('a transfer that met a territory taken first may send its survivors back: no "no"', () => {
     // 3 transfers 5 to 2; another player took 2 first, so the transfer attacked it and failed.
     const prev = board([neutral(1, 2), mine(2, 1), mine(3, 10), its(4, 6)]);
