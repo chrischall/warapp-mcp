@@ -309,6 +309,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         orderPriority,
         ...(settings.localDeployments ? { localDeployments: true } : {}),
         leader,
+        // Not reported here: skip the search for the smallest deploy that kills it.
+        killedBy: false,
       });
 
       const name = namer(map);
@@ -487,9 +489,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             : report.safe === false && report.safeIfTruceHolds === null
               ? ' Every reply tried breaks a truce (safeIfTruceHolds is null).'
               : '';
-      const commanderLine = guard ? commanderText(guard, report.atRisk.commander) : undefined;
+      // The count and `needs` come from one run (the commander check's), so the line never pairs a count
+      // the full run found with armies the targeted run says hold.
+      const commanderLine = guard ? commanderText(guard, guard.killers) : undefined;
       const summary =
-        (report.atRisk.commander > 0 && commanderLine ? `${commanderLine} ` : '') +
+        (guard && (guard.killers > 0 || guard.lostUnanswered) && commanderLine ? `${commanderLine} ` : '') +
         (report.safe === null
           ? `Nothing could be tested this turn: no opposing stack in view touches you.${blind}${ahead}`
           : report.safe
@@ -608,7 +612,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
                 territory: name(guard.territory),
                 armies: guard.armies,
                 needs: guard.needs,
-                replies: report.atRisk.commander,
+                replies: guard.killers,
                 distance: guard.distance,
               },
             }

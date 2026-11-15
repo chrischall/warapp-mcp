@@ -134,11 +134,11 @@ import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } fr
 import { recordBrokenByMe } from './relations.js';
 import { withTeammateOrders } from '../team-orders.js';
 import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, teamHandLeft, unclaimedFirst } from '../team-cards.js';
-import { carriesTeam, isTeamGame, teammatesOf } from '../teams.js';
+import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
-import { commanderSafety, myCommanderTerritory } from '../analysis/commander-safety.js';
+import { commanderSafety, myCommanderTerritory, type CommanderSafety } from '../analysis/commander-safety.js';
 import type { SimOrder } from '../analysis/turn-sim.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -1646,27 +1646,40 @@ export async function livePlanSetup(
   };
 }
 
+/** Card plays that may change the armies or the owner of my commander's territory, which the commander check does not simulate. */
+const UNSIMULATED_NEAR_COMMANDER: ReadonlySet<CardPlayKind> = new Set(['Airlift', 'Blockade', 'EmergencyBlockade', 'Bomb', 'Gift']);
+
 /**
- * #274: whether these orders leave my commander takeable by one opponent's single deploy, each reply
- * sized at the larger of its estimate (as warapp_check_plan has it, from the cached boards only: no
- * GameFeed request) and my own income. Undefined when it is not on the board or no reply tried kills it.
+ * #274: whether these orders leave my commander takeable by a single-deploy reply, each sized at the
+ * larger of the opponent's estimate (as warapp_check_plan has it, from the cached boards only: no
+ * GameFeed request) and my own income. One computation for warapp_submit_turn's refusal and
+ * warapp_plan_turn's commander block, so the plan never calls safe what the submit refuses: the same
+ * opponents (`stressOpponents`: every owner on the board and every player still playing), teams,
+ * free-for-all lead (#180: two opponents striking together) and Order Priority. Undefined when my
+ * commander is not on the board; `risk` and `text` only when a reply tried kills it.
  */
-async function commanderRiskOf(
+async function commanderCheck(
   ctx: LiveContext,
   a: {
     game: Game;
     me: Player;
     map: GameMap;
     seen: BoardState;
-    turn: number;
+    turn: number | null;
     info: unknown;
     hand: readonly Card[];
     income: number;
     deploys: { territoryId: number; armies: number }[];
     moves: SimOrder[];
     orderPriority: boolean;
+    /** warapp_plan_turn's enemy_deploy what-if: a floor on every reply, never below what the submit tries. */
+    floor?: number;
+    /** Search for the smallest deploy that kills it (warapp_plan_turn's block); the submit skips it. */
+    killedBy?: boolean;
+    /** The card plays sent with the orders, which this check does not simulate. */
+    cards?: readonly CardPlayKind[];
   },
-): Promise<{ risk: CommanderRisk; text: string } | undefined> {
+): Promise<{ safety: CommanderSafety; replyDeploy: number; risk?: CommanderRisk; text?: string } | undefined> {
   if (myCommanderTerritory(a.seen, a.me.id) === undefined) return undefined;
   const graph = graphOf(a.map);
   const settings = plannerSettings(a.game.settings);
@@ -1691,7 +1704,8 @@ async function commanderRiskOf(
     info: a.info,
     ...(opening ? { opening } : {}),
   });
-  const sized = so.opponents.map((o) => ({ ...o, deploy: Math.max(o.deploy, a.income) }));
+  const sizeOf = (deploy: number) => Math.max(deploy, a.income, a.floor ?? 0);
+  const sized = so.opponents.map((o) => ({ ...o, deploy: sizeOf(o.deploy) }));
   const safety = commanderSafety({
     graph,
     board,
@@ -1704,26 +1718,40 @@ async function commanderRiskOf(
     orderPriority: a.orderPriority,
     ...(settings.localDeployments ? { localDeployments: true } : {}),
     leader: so.leader,
+    killedBy: a.killedBy ?? false,
   });
-  if (!safety || (safety.killers === 0 && !safety.lostUnanswered)) return undefined;
+  if (!safety) return undefined;
   const w = safety.worst;
   const opponent = w ? so.opponents.find((o) => o.id === w.opponent) : undefined;
-  const replyDeploy = opponent ? Math.max(opponent.deploy, a.income) : Math.max(a.income, ...so.opponents.map((o) => o.deploy));
+  const replyDeploy = opponent ? sizeOf(opponent.deploy) : sizeOf(Math.max(0, ...so.opponents.map((o) => o.deploy)));
+  if (safety.killers === 0 && !safety.lostUnanswered) return { safety, replyDeploy };
   const where = `your commander on territory ${safety.territory}`;
+  const partner = w?.partner !== undefined ? so.opponents.find((o) => o.id === w.partner) : undefined;
+  const reply =
+    w && opponent
+      ? partner
+        ? `player ${w.opponent} (deploying ${replyDeploy} on territory ${w.deployTo}) and player ${partner.id} (deploying ${sizeOf(partner.deploy)}${
+            w.partnerDeployTo !== undefined ? ` on territory ${w.partnerDeployTo}` : ''
+          }) striking it together kill it, as two opponents may gang up on the leader of a free-for-all`
+        : `a single deploy of ${replyDeploy} by player ${w.opponent} on territory ${w.deployTo}${w.to !== undefined ? `, attacking territory ${w.to}` : ''}, kills it`
+      : 'a single deploy kills it';
+  const unsimulated = [...new Set((a.cards ?? []).filter((k) => UNSIMULATED_NEAR_COMMANDER.has(k)))];
   const text = safety.lostUnanswered
     ? `These orders lose ${where} with nobody answering (an attack it goes along on fails).`
-    : `These orders leave ${where} takeable: ${
-        w && opponent
-          ? `a single deploy of ${replyDeploy} by player ${w.opponent} on territory ${w.deployTo}${w.to !== undefined ? `, attacking territory ${w.to}` : ''}, kills it`
-          : 'a single deploy kills it'
-      } (${safety.killers} of the replies tried, each sized at the larger of the opponent's estimate${
+    : `These orders leave ${where} takeable: ${reply} (${safety.killers} of the replies tried, each sized at the larger of the opponent's estimate${
         opponent ? ` ${opponent.deploy}` : ''
-      } and your income ${a.income}). ${
+      } and your income ${a.income}${a.floor !== undefined ? ` and enemy_deploy ${a.floor}` : ''}). ${
         safety.needs !== null
           ? `It needs ${safety.needs} armies there (${safety.armies} after your orders) to survive every one.`
           : 'No number of armies there holds it against every one.'
+      }${
+        unsimulated.length
+          ? ` The card plays (${unsimulated.join(', ')}) are not simulated in this check: an Airlift onto that territory, or a Blockade or Gift of it, is not counted, so this may misjudge it.`
+          : ''
       }`;
   return {
+    safety,
+    replyDeploy,
     risk: { territory: safety.territory, armies: safety.armies, needs: safety.needs, replyDeploy, replies: safety.killers },
     text,
   };
@@ -2089,38 +2117,32 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       });
       // #274: my commander every turn (a Commanders game, it on the board): where the plan leaves it, the
       // armies there, the moves to the nearest enemy or fog, and the smallest single deploy that kills it.
-      // Replies are sized as warapp_submit_turn sizes them: the larger of each estimate and my income.
-      const myIncome = income - cards.extraArmies;
-      const teamsOf = new Map<number, number>();
-      for (const p of game.players) if (carriesTeam(p.team)) teamsOf.set(p.id, p.team);
-      const myTeam = teamsOf.get(me.id);
-      const guard = myCommanderTerritory(board, me.id) !== undefined
-        ? commanderSafety({
-            graph,
-            board,
-            me: me.id,
-            deploys: plan.deploys,
-            moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })),
-            opponents: estimates
-              .filter((e) => e.playerId !== me.id && (myTeam === undefined || teamsOf.get(e.playerId) !== myTeam))
-              .map((e) => ({ id: e.playerId, deploy: Math.max(enemy_deploy ?? e.estimate, myIncome), ...(e.base !== undefined ? { base: e.base } : {}) })),
-            settings,
-            ...(teamsOf.size ? { teams: new Map(teamsOf) } : {}),
-            ...(settings.localDeployments ? { localDeployments: true } : {}),
-          })
-        : undefined;
-      const replyDeploy = guard ? Math.max(myIncome, ...estimates.map((e) => enemy_deploy ?? e.estimate)) : 0;
+      // The very check warapp_submit_turn runs on these orders (commanderCheck: its opponents, teams,
+      // free-for-all lead and Order Priority, each reply at the larger of its estimate and my income), so
+      // the block never calls safe what the submit would refuse; enemy_deploy only raises the replies.
+      const checked = await commanderCheck(ctx, {
+        game,
+        me,
+        map,
+        seen,
+        turn,
+        info,
+        hand,
+        income: setup.boardIncome,
+        deploys: plan.deploys,
+        moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })),
+        orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+        ...(enemy_deploy !== undefined ? { floor: enemy_deploy } : {}),
+        killedBy: true,
+      });
+      const guard = checked?.safety;
+      const replyDeploy = checked?.replyDeploy ?? 0;
       const commanderLine = guard
         ? `Your commander on territory ${guard.territory}: ${guard.armies} armies there after the plan, ${
             guard.distance === null ? 'no enemy or fog on the map' : `${guard.distance} move${guard.distance === 1 ? '' : 's'} from the nearest enemy or fog`
           }; ${guard.killedBy ? `a single deploy of ${guard.killedBy.deploy} by player ${guard.killedBy.opponent} kills it` : 'no single deploy reaches it this turn'}.`
         : undefined;
-      if (guard && (guard.killers > 0 || guard.lostUnanswered))
-        warnings.unshift(
-          `${commanderLine} The plan leaves it takeable at a deploy of ${replyDeploy} (the larger of the estimate and your income): it needs ${
-            guard.needs ?? 'more'
-          } armies there. warapp_submit_turn refuses these orders unless accept_commander_risk is true.`,
-        );
+      if (checked?.text) warnings.unshift(`${commanderLine} ${checked.text} warapp_submit_turn refuses these orders unless accept_commander_risk is true.`);
       const guessed = borderGuess({
         graph,
         // #270: a static seat's territories are neutrals here, as in the plan the guess splits.
@@ -2516,8 +2538,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'and warns about one that cannot capture. An order that attacks (or a Bomb that hits) a territory an active or in-notice truce ' +
         'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
         'and, once the orders are committed, the ledger records it broken-by-me. In a Commanders game, orders that ' +
-        'leave your commander takeable by one opponent\'s single deploy (each reply sized at the larger of its estimate ' +
-        'and your income, on the live board) are refused with the armies that would hold, unless `accept_commander_risk` ' +
+        'leave your commander takeable by one opponent\'s single deploy, or two striking together when you lead a ' +
+        'free-for-all (each reply sized at the larger of its estimate and your income, on the live board) are refused with the armies that would hold, unless `accept_commander_risk` ' +
         'is true (the result then records `commanderRiskAccepted`). Always sent as ' +
         'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
         `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
@@ -2827,9 +2849,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         }
         // #274: in a Commanders game, orders that leave my commander takeable by one deploy are refused
         // unless accepted on purpose; each reply sized at the larger of the opponent's estimate and my income.
-        const commanderRisk =
+        const commanderChecked =
           game.settings?.commanders === true
-            ? await commanderRiskOf(ctx, {
+            ? await commanderCheck(ctx, {
                 game,
                 me,
                 map,
@@ -2849,8 +2871,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                   ...(m.attackTeammates ? { attackTeammates: true } : {}),
                 })),
                 orderPriority: plays.some((p) => p.kind === 'OrderPriority'),
+                cards: plays.map((p) => p.kind),
               })
             : undefined;
+        const commanderRisk = commanderChecked?.risk && commanderChecked.text ? { risk: commanderChecked.risk, text: commanderChecked.text } : undefined;
         if (commanderRisk && accept_commander_risk !== true) {
           throw new McpToolError(`${commanderRisk.text} Nothing was sent.`, {
             hint:

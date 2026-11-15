@@ -12,7 +12,8 @@
 //              territory (carried along when my orders move the commander from there) until no reply
 //              kills it. `armies` when none does; null past {@link SEARCH_CAP};
 //   killedBy   the smallest deploy, the same for every opponent, at which some single reply kills it
-//              (null when none up to {@link SEARCH_CAP} does: no stack of theirs is in reach this turn).
+//              (null when none up to {@link SEARCH_CAP} does: no stack of theirs is in reach this turn;
+//              also null with `killedBy: false`, which skips that search: warapp_submit_turn never reads it).
 //
 // Only the replies that strike the commander's territory are tried (`targets`), and never the
 // look-ahead, so it is cheap enough to run inside warapp_submit_turn. What the stress test does not
@@ -26,7 +27,10 @@ import { simulateTurn } from './turn-sim.js';
 /** Armies, or a deploy, past which the searches stop. */
 export const SEARCH_CAP = 1_000_000;
 
-export type CommanderSafetyInput = Omit<StressInput, 'targets' | 'lookAhead' | 'maxReplies'>;
+export type CommanderSafetyInput = Omit<StressInput, 'targets' | 'lookAhead' | 'maxReplies'> & {
+  /** Search for the smallest deploy that kills it (default true); false skips some 20–40 stress runs. */
+  killedBy?: boolean;
+};
 
 export interface CommanderSafety {
   /** Where it stands after my orders, and where it stood before them. */
@@ -69,7 +73,8 @@ function smallest(lo: number, ok: (n: number) => boolean): number | null {
   return hi;
 }
 
-export function commanderSafety(input: CommanderSafetyInput): CommanderSafety | undefined {
+export function commanderSafety(options: CommanderSafetyInput): CommanderSafety | undefined {
+  const { killedBy: searchKilledBy = true, ...input } = options;
   const { graph, board, me } = input;
   const from = myCommanderTerritory(board, me);
   if (from === undefined) return undefined;
@@ -105,7 +110,7 @@ export function commanderSafety(input: CommanderSafetyInput): CommanderSafety | 
 
   // The smallest deploy, the same for every opponent, that kills it.
   const killing = (d: number) => run({ opponents: input.opponents.map((o) => ({ ...o, deploy: d })) });
-  const killedAt = input.opponents.length && !lostUnanswered ? smallest(0, (d) => kills(killing(d)) > 0) : null;
+  const killedAt = searchKilledBy && input.opponents.length && !lostUnanswered ? smallest(0, (d) => kills(killing(d)) > 0) : null;
   const killer = killedAt === null ? undefined : killing(killedAt).replies.find((r) => r.commanderLost);
 
   // Moves to the nearest territory of an opponent (a teammate's is not one) or in the fog.

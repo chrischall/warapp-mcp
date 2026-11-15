@@ -98,9 +98,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `src/tools/stress-opponents.ts` (shared with `warapp_check_plan`), the cached boards only, never a GameFeed
   request — unless `accept_commander_risk: true`, which the preview warns of first and the result records
   (`commanderRiskAccepted`); never refused without commanders or with the commander safe. `warapp_check_plan`
-  reports `commander` and leads its summary with it when `atRisk.commander > 0`; `warapp_plan_turn` carries a
-  `commander` block every turn (and a first warning when the plan's orders would be refused). The planner itself
-  is unchanged: it never moves the commander yet (#274 items 2–3).
+  reports `commander` and leads its summary with it when the commander check's own run finds a reply that kills
+  it (its count and `needs` from that one run); `warapp_plan_turn` carries a `commander` block every turn (and a
+  first warning when the plan's orders would be refused), computed by the submit's own check (`commanderCheck` in
+  `src/tools/turn.ts`: the same opponents, teams, free-for-all lead — two opponents striking together when I lead
+  — and Order Priority; `enemy_deploy` only raises the replies), so it never calls safe what the submit refuses.
+  The submit skips the `killedBy` search, and card plays (an Airlift onto the commander's territory, a Blockade,
+  a Gift, a Bomb) are not simulated: its refusal names them when sent. The planner itself is unchanged: it never
+  moves the commander yet (#274 items 2–3).
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
   researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or

@@ -141,6 +141,32 @@ describe('commanderSafety', () => {
     expect(r.distance).toBe(2);
     expect(r.killedBy).toBeNull();
   });
+
+  it('killedBy: false skips the deploy search and changes nothing else', () => {
+    const base = { graph, board: starBoard(), me: ME, deploys: [], moves: [], settings: GUARD_OFF, opponents: [{ id: FOE, deploy: 779 }] } as const;
+    const full = commanderSafety(base)!;
+    const quick = commanderSafety({ ...base, killedBy: false })!;
+    expect(full.killedBy).not.toBeNull();
+    expect(quick.killedBy).toBeNull();
+    expect({ ...quick, killedBy: full.killedBy }).toEqual(full);
+  });
+
+  it('in a free-for-all I lead, two opponents striking it together are tried (#180)', () => {
+    // 1 (mine, commander, 6) between two opponents' stacks: 2 (12) and 3 (12), each deploying 7.
+    const tri = buildGraph(makeMap(3, [[1, 2], [1, 3]]));
+    const CID = 30;
+    const b = board([withCommander(mine(1, 6)), foe(2, 12), mine(3, 12, CID)]);
+    const opponents = [
+      { id: FOE, deploy: 7 },
+      { id: CID, deploy: 7 },
+    ];
+    const input = { graph: tri, board: b, me: ME, deploys: [], moves: [], opponents, settings: STD, killedBy: false } as const;
+    // Alone, 18 attackers kill 11 of 6 + 7: it survives either; together they take it.
+    expect(commanderSafety(input)!.killers).toBe(0);
+    const led = commanderSafety({ ...input, leader: true })!;
+    expect(led.killers).toBeGreaterThan(0);
+    expect(led.worst).toMatchObject({ kind: 'joint', commanderLost: true });
+  });
 });
 
 describe('stressPlan targets (#274)', () => {
