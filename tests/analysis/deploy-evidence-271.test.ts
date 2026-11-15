@@ -43,7 +43,14 @@ function makeMap(ids: number[], edges: [number, number][], bonuses: [number, num
   };
 }
 
-const NO_ORDERS: MyOrders = { deploys: [], moves: [] };
+/** My orders as warapp_submit_turn caches them: every move a plain one (in `sent` too), no card played. */
+const known = (deploys: MyOrders['deploys'], moves: MyOrders['moves']): MyOrders => ({
+  deploys,
+  moves,
+  sent: moves.map(({ from, to }) => ({ from, to })),
+  cards: [],
+});
+const NO_ORDERS: MyOrders = known([], []);
 
 describe('the fewest attackers that can do it', () => {
   it('luck-free and straight-rounded: the exact inverse of the kill count', () => {
@@ -101,7 +108,7 @@ describe('(1) a failed attack on a hold of mine bounds the attacker\'s deploy', 
 
   it('my deploys and moves set what stood there', () => {
     // I deployed 10 on T1 and moved 20 out to T5: 112 defended, 108 died.
-    const orders: MyOrders = { deploys: [{ territoryId: 1, armies: 10 }], moves: [{ from: 1, to: 5, armies: 20 }] };
+    const orders = known([{ territoryId: 1, armies: 10 }], [{ from: 1, to: 5, armies: 20 }]);
     const moved = board([mine(1, 4), enemy(2, 50), enemy(3, 95), enemy(4, 79), mine(5, 30), fogged(6), mine(7, 3), neutral(8, 2)]);
     const o = observeDeploy(g, moved, before, A, S, { ...ctx, myOrders: orders });
     expect(o.repelledFloor).toBe(Math.ceil((100 * 108 - 50) / 30) - 276);
@@ -127,7 +134,7 @@ describe('(1) a failed attack on a hold of mine bounds the attacker\'s deploy', 
   });
 
   it('a hold I attacked out of and failed is not read: my survivors came back to it', () => {
-    const orders: MyOrders = { deploys: [], moves: [{ from: 1, to: 2, armies: 30 }] };
+    const orders = known([], [{ from: 1, to: 2, armies: 30 }]);
     expect(observeDeploy(g, after, before, A, S, { ...ctx, myOrders: orders }).repelledFloor).toBe(0);
   });
 
@@ -170,7 +177,7 @@ describe('(1) review: a transfer into the hold counts only when it surely arrive
   );
   const S: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70 };
   const before = board([mine(1, 10), enemy(2, 5), mine(3, 50), enemy(4, 200, B)]);
-  const orders: MyOrders = { deploys: [], moves: [{ from: 3, to: 1, armies: 49 }] };
+  const orders = known([], [{ from: 3, to: 1, armies: 49 }]);
   const ctx = { me: ME, guard: 1, expected: 5, most: 10, myOrders: orders };
 
   it('a source taken before the transfer ran sent nothing: no floor', () => {
@@ -195,10 +202,108 @@ describe('(1) review: a transfer into the hold counts only when it surely arrive
     expect(o.repelled).toEqual([1]);
     expect(o.repelledFloor).toBe(fewestAttackersToKill(49, S)! - 4);
     // B beside T3, but my order left 10 there and T3 shows 10: a loss before the order would show.
-    const left10: MyOrders = { deploys: [], moves: [{ from: 3, to: 1, armies: 40 }] };
+    const left10 = known([], [{ from: 3, to: 1, armies: 40 }]);
     const p = observeDeploy(g, board([mine(1, 10), enemy(2, 5), mine(3, 10), enemy(4, 200, B)]), before, A, S, { ...ctx, myOrders: left10 });
     expect(p.repelled).toEqual([1]);
     expect(p.repelledFloor).toBe(fewestAttackersToKill(40, S)! - 4);
+  });
+});
+
+describe('(1) review: an order of mine the cached moves do not carry leaves the hold unread', () => {
+  // My T1 (100) borders my T5 (10) and A's T2 (10); my T3 (20) borders T1. I send 99 from T1 to T5
+  // in an order `moves` leaves out (#165: Transfer Only, Attack Only, a percentage) or by Airlift.
+  // T1 shows 1 afterwards and T2 is unchanged: A never attacked.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 5],
+      [
+        [1, 2],
+        [1, 3],
+        [1, 5],
+      ],
+      [],
+    ),
+  );
+  const S: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: false, baseIncome: 5 };
+  const before = board([mine(1, 100), enemy(2, 10), mine(3, 20), mine(5, 10)]);
+  const after = board([mine(1, 1), enemy(2, 10), mine(3, 20), mine(5, 109)]);
+  const ctx = { me: ME, guard: 0, expected: 5, most: 10 };
+  const none = { repelled: [], repelledFloor: 0, deploy: 0, low: 0 };
+
+  it('a Transfer Only order out of it (in `sent`, not in `moves`)', () => {
+    const orders: MyOrders = { deploys: [], moves: [], sent: [{ from: 1, to: 5, transferOnly: true }], cards: [] };
+    expect(observeDeploy(g, after, before, A, S, { ...ctx, myOrders: orders })).toMatchObject(none);
+    // The tracker neither floors the turn nor counts the attack on my hold that never happened.
+    const [t] = trackOpponents(
+      g,
+      [
+        { turn: 29, board: before, orders },
+        { turn: 30, board: after },
+      ],
+      ME,
+      S,
+    );
+    expect(t!.turns[0]).toMatchObject({ repelledFloor: 0, raw: 0, low: 0 });
+  });
+
+  it('a percentage or Attack Only order out of it', () => {
+    const orders: MyOrders = { deploys: [], moves: [], sent: [{ from: 1, to: 5 }], cards: [] };
+    expect(observeDeploy(g, after, before, A, S, { ...ctx, myOrders: orders })).toMatchObject(none);
+    // One such order beside a plain one on the same pair: the pair is not fully carried.
+    const twice: MyOrders = { deploys: [], moves: [{ from: 1, to: 5, armies: 9 }], sent: [{ from: 1, to: 5 }, { from: 1, to: 5 }], cards: [] };
+    expect(observeDeploy(g, after, before, A, S, { ...ctx, myOrders: twice })).toMatchObject(none);
+  });
+
+  it('such an order into it', () => {
+    // T3 sends into T1 by an order `moves` leaves out; what arrived is unknown.
+    const orders: MyOrders = { deploys: [], moves: [], sent: [{ from: 3, to: 1, transferOnly: true }], cards: [] };
+    const shown = board([mine(1, 1), enemy(2, 10), mine(3, 20), mine(5, 10)]);
+    expect(observeDeploy(g, shown, before, A, S, { ...ctx, myOrders: orders })).toMatchObject(none);
+  });
+
+  it('a card play that touches it (an Airlift from or to it, a card on it)', () => {
+    for (const card of [
+      { card: 'Airlift', from: 1, to: 5 },
+      { card: 'Airlift', from: 5, to: 1 },
+      { card: 'Emergency Blockade', target: 1 },
+    ]) {
+      const orders: MyOrders = { deploys: [], moves: [], sent: [], cards: [card] };
+      expect(observeDeploy(g, after, before, A, S, { ...ctx, myOrders: orders })).toMatchObject(none);
+    }
+  });
+
+  it('a transfer in from a source such an order touched is not surely whole', () => {
+    // T3 sends 19 to T1 in `moves`, and an Airlift took T3's armies too: T1's loss is not known.
+    const orders: MyOrders = {
+      deploys: [],
+      moves: [{ from: 3, to: 1, armies: 19 }],
+      sent: [{ from: 3, to: 1 }],
+      cards: [{ card: 'Airlift', from: 3, to: 5 }],
+    };
+    const shown = board([mine(1, 50), enemy(2, 10), mine(3, 1), mine(5, 10)]);
+    expect(observeDeploy(g, shown, before, A, S, { ...ctx, myOrders: orders })).toMatchObject(none);
+  });
+
+  it('orders cached before `sent` and `cards` were kept read nothing: what ran is unknown', () => {
+    const old: MyOrders = { deploys: [], moves: [] };
+    expect(observeDeploy(g, after, before, A, S, { ...ctx, myOrders: old })).toMatchObject(none);
+    const [t] = trackOpponents(
+      g,
+      [
+        { turn: 29, board: before, orders: old },
+        { turn: 30, board: after },
+      ],
+      ME,
+      S,
+    );
+    expect(t!.turns[0]!.repelledFloor).toBe(0);
+  });
+
+  it('the same loss with every order carried still reads', () => {
+    // Nothing of mine moved: T1 went from 100 to 1 under A's attack.
+    const o = observeDeploy(g, after, before, A, S, { ...ctx, myOrders: NO_ORDERS });
+    expect(o.repelled).toEqual([1]);
+    expect(o.repelledFloor).toBe(fewestAttackersToKill(99, S)! - 10);
   });
 });
 

@@ -1249,11 +1249,33 @@ export interface HoldLoss {
 }
 
 /**
+ * #271 review: the territories an order of mine touched that `orders.moves` does not carry, so what
+ * they held after my orders is not known: a move order in `sent` beyond the plain ones `moves` keeps on
+ * the same pair (#165 leaves out Transfer Only, Attack Only and percentage orders), both its ends; and
+ * each territory a card play names (an Airlift's `from` and `to`, a card's `target`).
+ */
+function ordersNotInMoves(orders: MyOrders): Set<number> {
+  const out = new Set<number>();
+  const key = (from: number, to: number) => `${from}>${to}`;
+  const carried = new Map<string, number>();
+  for (const m of orders.moves) carried.set(key(m.from, m.to), (carried.get(key(m.from, m.to)) ?? 0) + 1);
+  for (const o of orders.sent ?? []) {
+    const left = carried.get(key(o.from, o.to)) ?? 0;
+    if (left > 0) carried.set(key(o.from, o.to), left - 1);
+    else out.add(o.from).add(o.to);
+  }
+  for (const c of orders.cards ?? []) for (const id of [c.from, c.to, c.target]) if (id !== undefined) out.add(id);
+  return out;
+}
+
+/**
  * My holds (mine, with armies, on both boards) that lost armies my orders do not explain, by id: the
  * defenders were my armies there plus what I deployed there, less what I sent out; what the later
  * board shows less (what I moved in from a territory mine on the earlier board counted on top) is what
  * an attack on it that failed killed. A hold I attacked out of and failed is skipped: the survivors of
- * my own attack came back to it, so its loss is not known. The opponent tracker's attacks on my holds
+ * my own attack came back to it, so its loss is not known. So is a hold an order `moves` does not carry
+ * touched (#271 review, {@link ordersNotInMoves}: a Transfer Only, Attack Only or percentage order, a
+ * card play), and a transfer from a source one touched is not surely whole. The opponent tracker's attacks on my holds
  * and the #271 bound ({@link repelledFloor}) both read these.
  */
 export function holdLosses(g: MapGraph, before: BoardState, after: BoardState, me: number, orders: MyOrders, guard = 1): HoldLoss[] {
@@ -1268,6 +1290,7 @@ export function holdLosses(g: MapGraph, before: BoardState, after: BoardState, m
   /** The sources of what `came`, by the hold they sent to. */
   const cameFrom = new Map<number, Set<number>>();
   const failedFrom = new Set<number>();
+  const untracked = ordersNotInMoves(orders);
   for (const m of orders.moves) {
     const armies = Math.max(0, m.armies);
     sent.set(m.from, (sent.get(m.from) ?? 0) + armies);
@@ -1285,7 +1308,7 @@ export function holdLosses(g: MapGraph, before: BoardState, after: BoardState, m
    * when no other player (nor the fog) was beside it to attack or bomb it.
    */
   const sentWhole = (id: number) => {
-    if (!held(id) || failedFrom.has(id) || came.has(id)) return false;
+    if (!held(id) || failedFrom.has(id) || came.has(id) || untracked.has(id)) return false;
     const left = visibleState(was.get(id))!.armies! + (deployed.get(id) ?? 0) - (sent.get(id) ?? 0);
     if (left < 0 || visibleState(now.get(id))!.armies! !== left) return false;
     if (left > guard) return true;
@@ -1296,7 +1319,7 @@ export function holdLosses(g: MapGraph, before: BoardState, after: BoardState, m
   };
   const out: HoldLoss[] = [];
   for (const id of [...new Set(after.territories.map((t) => t.territoryId))].sort(byNum)) {
-    if (!g.territoryById.has(id) || !held(id) || failedFrom.has(id)) continue;
+    if (!g.territoryById.has(id) || !held(id) || failedFrom.has(id) || untracked.has(id)) continue;
     const standing = visibleState(was.get(id))!.armies! + (deployed.get(id) ?? 0);
     const defenders = Math.max(0, standing - (sent.get(id) ?? 0));
     const loss = defenders + (came.get(id) ?? 0) - visibleState(now.get(id))!.armies!;
@@ -1332,7 +1355,8 @@ export interface RepelledAttacks {
  * so the bound uses the least my orders can have brought. On a turn an opponent may have played a Bomb
  * card (`bomb`, {@link bombPossibleOn}), which halves a territory of mine beside the bomber after the
  * deploys and reads as an attack, the most it could take (half the stack before any move, rounded up)
- * is left out of the loss first.
+ * is left out of the loss first. Orders cached without `sent` or `cards` (before they were kept) bound
+ * nothing: an order `moves` leaves out, or a card play, may have moved armies out of a hold.
  */
 export function repelledFloor(
   g: MapGraph,
@@ -1346,7 +1370,9 @@ export function repelledFloor(
   bomb = false,
 ): RepelledAttacks {
   const none: RepelledAttacks = { territories: [], attackers: 0, supply: 0, floor: 0 };
-  if (settings.multiAttack) return none;
+  // #271 review: orders cached before `sent` and `cards` were kept may have left out an order or a card
+  // play that moved armies out of a hold: what ran is unknown, so they bound nothing.
+  if (settings.multiAttack || !orders.sent || !orders.cards) return none;
   const was = new Map(before.territories.map((t) => [t.territoryId, t]));
   const sendable = (id: number) => {
     const st = visibleState(was.get(id))!;
@@ -1595,6 +1621,10 @@ export function observeSigned(
    * #271 (3): its territories shown with armies on the earlier board and hidden on the later one: what
    * each could have sent (its armies less the guard), the most a capture beside it can have received
    * from it. Claimed after `shrinkLeft`, in ascending ids, each army once.
+   * #271 review, a known under-read: a stack hidden now is claimed whether or not it emptied, and it is
+   * usually hidden because the capture took my territory and my sight of it with it. So a real
+   * deploy-then-capture beside a source in view both times and such a stack reads its surplus as an
+   * arrival (counted only in `high`), not deploy. Accepted: a merge read as deploy once read +45.
    */
   const hiddenLeft = new Map<number, number>();
   for (const t of previous.territories) {

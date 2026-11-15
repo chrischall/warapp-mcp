@@ -612,7 +612,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn's deploy from below when it is the only other player beside the hold and every neighbour was in
   view, `repelledFloor`, in the planner too given `previousOrders`; a hold counts only when every transfer
   of mine into it surely arrived whole — its source mine on both boards, showing exactly what my orders
-  leave there, and either left more than the guard or beside no other player — and on a turn an
+  leave there, and either left more than the guard or beside no other player — never a hold an order
+  `moves` does not carry touched (a Transfer Only, Attack Only or percentage order in `sent`, a card
+  play in `cards`; orders cached before those were kept bound nothing), and on a turn an
   opponent may have played a Bomb (`PlannerSettings.bombFrom`, the card clock's fastest turn) half the
   hold before any move, rounded up, is taken out of the loss first),
   unexplained armies (earned since first seen − visible army change − visible losses − likely
@@ -945,7 +947,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     sent is ambiguous the same way (`unseenAttackers`), and captures like it on `FOG_CAPTURE_MIN` (3) of the
     last `FOG_CAPTURE_TURNS` (6) turns are income in the tracker (`fogCaptures`: their attackers spread over
     the turns, a carry no quiet turn disproves); its stacks in view beside a capture, hidden the turn after,
-    may have moved in (`arrivals`: never deploy, out of the stock and flow). Each observed turn has a low–high range for the ambiguity. The
+    may have moved in (`arrivals`: never deploy, out of the stock and flow) — a known under-read: such a
+    stack is claimed whether or not it emptied, and it is often hidden only because the capture took my
+    territory and my sight with it, so a real deploy-then-capture beside it counts its surplus in `high` only. Each observed turn has a low–high range for the ambiguity. The
     tracker's `unexplained` armies leave out likely combat deaths (its stack and a neighbour of
     another player both shrank), and inferred bonuses must lie within `INFER_REACH` hops and be
     affordable — none listed when more than `MAX_LISTED_COMBINATIONS` fit.

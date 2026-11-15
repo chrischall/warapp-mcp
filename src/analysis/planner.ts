@@ -267,12 +267,17 @@
 //     showed their armies, it is the only other player beside the hold, and Multi-Attack is off;
 //     only when every transfer of mine into the hold surely arrived whole (`HoldLoss.inflowSure`: its
 //     source mine on both boards, showing exactly what my orders leave there, and left more than the
-//     guard or beside no other player), and on a turn an opponent may have played a Bomb
+//     guard or beside no other player), never a hold an order `moves` does not carry touched (a
+//     Transfer Only, Attack Only or percentage order in `sent`, a card play in `cards`; orders cached
+//     before those were kept read nothing), and on a turn an opponent may have played a Bomb
 //     (`bombPossibleOn`, `PlannerSettings.bombFrom`) after taking out half the hold, rounded up. A
 //     capture of a neutral in view beside the fog that needed more attackers (`fewestAttackersToTake`)
 //     than its stacks in view sent (`unseenAttackers`) reads what stands there beyond those as deploy
 //     within #123's bound, the rest a move out of the fog. Its stacks in view beside a capture, hidden
 //     the turn after, may have moved in (`arrivals`): never deploy (only the high reading counts them).
+//     A known under-read: such a stack is claimed whether or not it emptied, and it is often hidden
+//     only because the capture took my territory and my sight with it, so a real deploy-then-capture
+//     beside one reads its surplus as an arrival, in the high reading only.
 //     A rationale line says each. A rationale line names
 //     the turns compared and the territories counted vs skipped as reveals; the warning
 //     names which source won. Given `tracks` (`trackOpponents` over my board history, S3), an
