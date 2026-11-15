@@ -426,6 +426,15 @@ describe('the estimate and the labels', () => {
     expect(estimate(0, 6, 0.5)).toEqual({ value: 0.2, n: 6, confidence: 0.6, basis: 'this-game' });
   });
 
+  it('withholds the stacking and rusher labels, and gives turtle only on this game (part-0 review)', () => {
+    const base = habitsOf([]);
+    expect(labelsOf(estimateHabits({ ...base, stacking: { n: 10, sum: 9.5, sq: 9.1 } }))).toEqual([]);
+    expect(labelsOf(estimateHabits({ ...base, stacking: { n: 10, sum: 2, sq: 0.5 } }))).toEqual([]);
+    expect(labelsOf(estimateHabits({ ...base, firstStrike: { e: 8, n: 8 }, attack: { e: 8, n: 8 } }))).toEqual([]);
+    const quietPast = estimateHabits({ ...base, attack: { e: 0, n: 8 } });
+    expect(labelsOf({ ...quietPast, attack: { ...quietPast.attack, basis: 'past-games' } })).toEqual([]);
+  });
+
   it('labels only at the confidence bar', () => {
     const base = habitsOf([]);
     expect(labelsOf(estimateHabits({ ...base, reinforce: { e: 6, n: 6 } }))).toEqual(['reinforcer']);

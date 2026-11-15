@@ -606,16 +606,23 @@ export const COUNTER_PLAY: Readonly<Partial<Record<ProfileLabel, string>>> = {
   retakes: 'A capture from it needs a garrison that survives its counter.',
 };
 
-/** The labels the estimates earn, each only at {@link PROFILE_MIN_CONFIDENCE} or more, in a fixed order. */
+/**
+ * The labels the estimates earn, each only at {@link PROFILE_MIN_CONFIDENCE} or more, in a fixed order.
+ *
+ * Withheld until the second part-0 report (review of the first, 2026-11-15):
+ * - `stacker` / `spreader`: the pooled stacking mean is ~0.74, so a fixed 0.75 bar labels most
+ *   opponents and 0.45 none; and a stack that stays put is board state as much as habit.
+ * - `rusher`: `firstStrike` counts once per opponent-game, so its confidence bar needs about a fifth
+ *   meeting with the same player; it cannot fire in practice.
+ * `turtle` is given only on this game's counts: the first report could not separate a quiet player
+ * from a quiet game, so a quiet past is not carried into a label.
+ */
 export function labelsOf(e: Record<HabitName, HabitEstimate>): ProfileLabel[] {
   const sure = (x: HabitEstimate) => x.confidence >= PROFILE_MIN_CONFIDENCE;
   const out: ProfileLabel[] = [];
   if (sure(e.reinforce) && e.reinforce.value >= 0.6) out.push('reinforcer');
   if (sure(e.reinforce) && e.reinforce.value <= 0.3) out.push('rarely-reinforces');
-  if (sure(e.stacking) && e.stacking.value >= 0.75) out.push('stacker');
-  if (sure(e.stacking) && e.stacking.value <= 0.45) out.push('spreader');
-  if (sure(e.firstStrike) && sure(e.attack) && e.firstStrike.value >= 0.6 && e.attack.value >= 0.6) out.push('rusher');
-  if (sure(e.attack) && e.attack.value <= 0.2) out.push('turtle');
+  if (sure(e.attack) && e.attack.basis === 'this-game' && e.attack.value <= 0.2) out.push('turtle');
   if (sure(e.retaliate) && e.retaliate.value >= 0.6) out.push('avenger');
   if (sure(e.retake) && e.retake.value >= 0.6) out.push('retakes');
   return out;

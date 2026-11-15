@@ -269,6 +269,12 @@ confidence = n / (n + K)
   PROFILE_MIN_CONFIDENCE` (0.5): `reinforcer` (≥ 0.6), `rarely-reinforces` (≤ 0.3), `stacker`
   (stacking ≥ 0.75), `spreader` (≤ 0.45), `rusher` (`firstStrike` ≥ 0.6 and `attack` ≥ 0.6),
   `turtle` (`attack` ≤ 0.2), `avenger` (`retaliate` ≥ 0.6), `retakes` (≥ 0.6).
+- *As built, after the first part-0 report (2026-11-15):* `stacker`, `spreader` and `rusher` are withheld
+  until the second report (the pooled stacking mean is ~0.74, so the fixed bars label most opponents or
+  none, and `rusher`'s `firstStrike` confidence needs about a fifth meeting with one player), and
+  `turtle` is given only on this game's counts (the report could not separate a quiet player from a
+  quiet game). The first report reads `attack` as persisting within a game, not shown to be a
+  person's trait, and `stacking` as resting largely on one opponent-game.
 - **Counter-play**, one fixed line per label:
 
 | Label | Line |
