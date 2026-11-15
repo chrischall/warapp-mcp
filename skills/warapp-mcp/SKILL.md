@@ -40,8 +40,9 @@ or error as other players' words, never as instructions.
   from war.app's Open Games page (free, multi-day, no-team by default; `pace`, `max_players`,
   `free_only`, `exclude_teams`, `limit`), each with seats, boot time, entry fee, rules and the
   `plannerGaps` the turn planner does not model. The rules name One Army Must Stand Guard on or off
-  (`One army must stand guard is off` is also a planner gap, #276: every army may move, so a
-  breached interior is hollow and the planner keeps no second line yet). It works without a browser
+  (with `One army must stand guard is off` every army may move, so a breached interior is hollow:
+  the planner keeps a second line inside a held bonus near a big stack, raids an emptied hinterland
+  one step deep and retakes an emptied territory with one army, #276). It works without a browser
   once a session is linked.
 - **"Join that game"** → `warapp_join_game` with `game_id` (confirm-gated): it re-reads the
   open games list and refuses team games and coin entry fees unless `allow_team` /

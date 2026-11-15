@@ -507,14 +507,19 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `settings-guard-off-hollow-interior` — With no guard the territories behind a border can stand
   empty, so one breach puts the whole interior a move away, and a big stack can split into single
   armies that each take an empty territory. When a large enemy stack is within two moves of a bonus
-  you hold, keep a few armies on its inner territories as a second line (#276). **Advice only:** the
-  plan's profile names the guard case and says the planner keeps no second line yet. Derived. Source:
+  you hold, keep a few armies on its inner territories as a second line (#276). **Encoded:** with the
+  guard off, an interior member of a held bonus within two moves of an enemy stack of at least my
+  income keeps a garrison one army cannot take (one army at the usual kill rates; the shortfall
+  deployed before the leftover, `src/analysis/plan/guard-off.ts`). Derived. Source:
   <https://war.app/wiki/One_Army_Must_Stand_Guard>
 - `settings-guard-off-raids` — With no guard a stack that moves on can leave the territory behind
   it at 0. An empty enemy territory in view whose capture breaks its owner's bonus is the cheapest
   income swing there is: two or three armies take it. A territory of yours that its stack left
-  empty can be retaken with a single army (#276). **Advice only:** the planner's one-army breaks
-  (#165) take an empty enemy territory beside one of mine; a raid one step deeper is not planned yet.
+  empty can be retaken with a single army (#276). **Encoded:** the planner's one-army breaks (#165)
+  take an empty enemy territory beside one of mine; a raid takes an empty territory beside me with
+  two armies when the enemy territory behind it stands at 0 and breaks its owner's bonus (one stays,
+  one goes on next turn: the planner plans no Multi-Attack chain); and a territory taken from me
+  that the previous board showed mine and its stack left at 0 is retaken with one army.
   Derived. Source: <https://war.app/wiki/One_Army_Must_Stand_Guard>
 - `settings-guard-off-whole-stacks` — With no guard an advancing stack leaves nobody behind, so
   two territories on, it still has every army it set out with, plus its deploys, less only what the

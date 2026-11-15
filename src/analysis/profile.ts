@@ -44,8 +44,9 @@ export function guardCase(s: { oneArmyStandsGuard?: boolean } | undefined): Guar
       interiorDefence:
         'every army may move, so any territory can stand at 0 and an advancing stack loses nothing per step. ' +
         'Behind a breached border the interior is hollow: one large stack within two moves can split into single armies ' +
-        'that each take an empty territory. The plan keeps one army on each territory beside an enemy (#165) and counts ' +
-        'a stack two steps away whole; it keeps no second line inside a held bonus yet.',
+        'that each take an empty territory. The plan keeps one army on each territory beside an enemy (#165), counts ' +
+        'a stack two steps away whole, keeps a second line inside a held bonus within two moves of a big stack, raids ' +
+        'an emptied hinterland one step deep and retakes an emptied territory of mine with one army (#276).',
     };
   return {
     case: 'on',
