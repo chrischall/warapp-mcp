@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     // Refuses every outbound connection but loopback (see the file's header).
     setupFiles: ['./tests/setup/no-network.ts'],
+    // One temporary folder per run, removed at the end (tests leaked ~1M folders into the system temp).
+    globalSetup: ['./tests/setup/temp-dir.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
