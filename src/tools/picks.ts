@@ -115,7 +115,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           "teammate carries `picks`, and `team.coordination` reports the overlap with your list, the bonuses their top picks into " +
           '(a bonus pays one holder, so yours there are not credited), and a `mirrored` alternative (the same top picks in both ' +
           'lists, with its own submitPicks) beside the split list that `submitPicks` gives — which leaves their top picks to them ' +
-          'and is shortened only when disjoint from their list. ' +
+          'and is shortened only when disjoint from their full-length list. ' +
           `${BRIDGE_NOTE} Read-only on war.app; it never submits picks.`,
       ),
       _meta: lookupMeta(['plan my picks', 'which territories to pick', 'suggest picks', 'warzone picks']),

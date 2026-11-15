@@ -584,13 +584,15 @@ simulation — never captured, so a bonus with one in it never completes for me 
 holder: that is the penalty), no threat, and a known teammate start (the threat model's unknown teammate starts drop by
 as many). `team.coordination` reports the `overlap` (each pick on my list a teammate also lists, both positions),
 `sharedBonuses` (bonuses their top picks into with a member on my list), `shortened` (my list cut from starts × all
-players to my starts plus the opponents' — only when it is disjoint from every teammate's whole list, re-planned at that
-length and kept only if still disjoint), and **`mirrored`**: when every teammate's top is full and distinct, my primary
+players to my starts plus the opponents' — only when it is disjoint from every teammate's whole list and every teammate
+list is as long as the client allows, re-planned at that length and kept only if still disjoint; a shorter teammate list
+can run out when an opponent takes its picks first, and war.app then grants that teammate from what is left, so the
+rationale says why mine was kept long), and **`mirrored`**: when every teammate's top is full and distinct, my primary
 and each top are laid on the positions a reversing award gives one player when we all list the same top (two of us:
 positions 1 and 4, 2 and 3; three: 1–3 then reversed), so each start group — and any pair in it that only works in one
 hand — stays in one hand; `splits` names the bonuses a repeating order (the other order that fits; unverified) would
 split between us and so lose, judged by the opening simulation of each hand. Its `submitPicks` is the shared top then my
-own fallback. It assumes no opponent takes a top pick first (one that does moves every later pick to the other hand),
+own fallback, capped at the client's maximum (players × limit: the top already holds (teammates + 1) × limit). It assumes no opponent takes a top pick first (one that does moves every later pick to the other hand),
 which the rationale says. `warapp_submit_picks`' team warning about a short list now says a shorter list is safe only
 when no teammate lists any of its picks. Turn plans are untouched: the golden corpus is byte-identical.
 

@@ -1908,10 +1908,16 @@ function coordinate(input: PlanPicksInput, teammateCount: number, rawLists: Read
   let core = planCore(input, friendly);
   // Starts × all players covers a pick we both list going to one of us; with the lists disjoint my
   // list needs only my starts and the opponents' (C2).
+  // A teammate list shorter than the client allows can run out (an opponent takes its picks first), and
+  // war.app then grants that teammate from what is left, a pick of mine included: no shortening then.
+  const clientMax = Math.max(0, Math.floor(input.maxPicks));
+  const shortList = lists.findIndex((l) => l.length < clientMax);
   let shortened: { from: number; to: number } | undefined;
+  let keptLong: { length: number } | undefined;
   const long = listOf(core.plan);
   const short = Math.max(core.plan.groups.primary.territoryIds.length, limit * Math.max(1, players - teammates));
-  if (disjoint(long) && short < long.length) {
+  if (disjoint(long) && short < long.length && shortList >= 0) keptLong = { length: lists[shortList]!.length };
+  else if (disjoint(long) && short < long.length) {
     const c = planCore({ ...input, maxPicks: short }, friendly);
     if (disjoint(listOf(c.plan))) {
       core = c;
@@ -1976,7 +1982,8 @@ function coordinate(input: PlanPicksInput, teammateCount: number, rawLists: Read
       top,
       hands: handsOf('reversing'),
       splits,
-      submitPicks: [...top, ...mine.filter((t) => !top.includes(t))],
+      // The shared top, then my own fallback, never past what the client allows (players × limit).
+      submitPicks: [...top, ...mine.filter((t) => !top.includes(t))].slice(0, Math.max(top.length, clientMax)),
     };
   }
 
@@ -1995,6 +2002,11 @@ function coordinate(input: PlanPicksInput, teammateCount: number, rawLists: Read
     rationale.push(
       `Your list is disjoint from your teammate's, so it is shortened from ${shortened.from} to ${shortened.to}: your starts and the opponents' ` +
         '(a pick on both lists could go to either of you; none is).',
+    );
+  if (keptLong)
+    rationale.push(
+      `Your list is disjoint from your teammate's but not shortened: your teammate's list has ${keptLong.length} pick${keptLong.length === 1 ? '' : 's'}, ` +
+        `fewer than the ${clientMax} the client allows, so if an opponent takes them first war.app grants your teammate from what is left, one of yours included.`,
     );
   if (mirrored) {
     rationale.push(

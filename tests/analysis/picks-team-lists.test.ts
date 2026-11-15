@@ -97,15 +97,24 @@ describe('planPicks with a teammate list (C2, coordination)', () => {
   });
 
   it('shortens my list only when it is disjoint from every teammate list', () => {
-    // Only T1 on the teammate's list: mine (without T1) is disjoint, so it needs my start plus the
-    // opponents' (1 × (4 − 1) = 3), not starts × all players (4).
-    const disjoint = plan({ graph: three(), pickable: PICKABLE, team: { teammates: 1, lists: [[1]] } });
+    // T1 and three isolated pickables on the teammate's list, as long as the client allows (4): mine is
+    // disjoint, so it needs my start plus the opponents' (1 × (4 − 1) = 3), not starts × all players (4).
+    const disjoint = plan({ graph: three(), pickable: PICKABLE, team: { teammates: 1, lists: [[1, 20, 21, 22]] } });
     expect(ids(disjoint)).toHaveLength(3);
     expect(disjoint.team!.shortened).toEqual({ from: 4, to: 3 });
     // A teammate listing everything my list could take: the lists overlap and mine stays as long as the client allows.
     const overlapping = plan({ graph: three(), pickable: PICKABLE, team: { teammates: 1, lists: [[1, 2, 3, 4, 5, 6]] } });
     expect(ids(overlapping)).toHaveLength(4);
     expect(overlapping.team!.shortened).toBeUndefined();
+  });
+
+  it('does not shorten my list while a teammate list is shorter than the client allows', () => {
+    // Only T1 on the teammate's list: an opponent taking T1 leaves my teammate to be granted from what is
+    // left, one of my picks included, so my list keeps starts × all players and the rationale says why.
+    const p = plan({ graph: three(), pickable: PICKABLE, team: { teammates: 1, lists: [[1]] } });
+    expect(ids(p)).toHaveLength(4);
+    expect(p.team!.shortened).toBeUndefined();
+    expect(p.rationale.join(' ')).toMatch(/not shortened: your teammate's list has 1 pick, fewer than the 4 the client allows/);
   });
 
   it('the teammate’s known start is no threat and is no longer an unknown start', () => {
@@ -156,6 +165,44 @@ describe('the mirrored alternative (C2): the same top picks in both lists', () =
     expect(m.submitPicks.slice(0, 4)).toEqual(m.top);
     expect(new Set(m.submitPicks).size).toBe(m.submitPicks.length);
     expect(p.rationale.join(' ')).toMatch(/mirrored/i);
+  });
+
+  it('never lists more picks than the client allows (players × limit), shortened or not', () => {
+    // The two pairs and ten isolated pickables 20..29, so my list can fill all 4 players × 2 = 8 places,
+    // and 40..45 on the map but not pickable (a teammate list may carry them).
+    const extra = [24, 25, 26, 27, 28, 29];
+    const unpickable = [40, 41, 42, 43, 44, 45];
+    const wide = {
+      ...input,
+      graph: mkGraph(
+        [[1, 2], [5, 6]],
+        [
+          { id: 101, name: 'Alpha', value: 3, territoryIds: [1, 2] },
+          { id: 103, name: 'Gamma', value: 3, territoryIds: [5, 6] },
+        ],
+        [20, 21, 22, 23, ...extra, ...unpickable],
+      ),
+      pickable: [...pickable, ...extra],
+    };
+    const check = (p: PickPlan) => {
+      const m = p.team!.mirrored!;
+      expect(m.submitPicks.length).toBeLessThanOrEqual(8);
+      expect(m.submitPicks.slice(0, 4)).toEqual(m.top);
+      expect(new Set(m.submitPicks).size).toBe(m.submitPicks.length);
+      // After the shared top, my own fallback in my list's order.
+      const mine = ids(p).filter((t) => !m.top.includes(t));
+      expect(m.submitPicks.slice(4)).toEqual(mine.slice(0, m.submitPicks.length - 4));
+      return m;
+    };
+    // A teammate list short of the limit: mine is not shortened and holds all 8 places; the mirror holds 8 too.
+    const short = plan({ ...wide, team: { teammates: 1, lists: [[5, 6, 20]] } });
+    expect(short.team!.shortened).toBeUndefined();
+    expect(ids(short)).toHaveLength(8);
+    expect(check(short).submitPicks).toHaveLength(8);
+    // A disjoint teammate list as long as the client allows: mine is shortened, the mirror still fits.
+    const cut = plan({ ...wide, team: { teammates: 1, lists: [[5, 6, ...unpickable]] } });
+    expect(cut.team!.shortened).toEqual({ from: 8, to: 6 });
+    check(cut);
   });
 
   it('is not offered when a teammate’s top is not full', () => {
