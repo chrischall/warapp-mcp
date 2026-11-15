@@ -640,9 +640,24 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   warapp_locate_opponents and warapp_get_relations. `WARAPP_PLAYER_PROFILE=off`: nothing read or written.
   Known teammates are never profiled: nothing is kept while `resolveTeams` says a game of 3+ seats has teams it could not
   read (`known: false`; also when GameFeed gives some seats a team and others none), the tool then flags every other
-  player `mayBeTeammate: true`, and each write drops what the file holds for a known teammate. Read-only `warapp_profile_opponents` reports each habit shrunk toward a
-  neutral default (`PROFILE_PRIOR_WEIGHT` 4) with `n`, `confidence`, `basis` (`this-game` / `default`),
-  and labels with a counter-play line at confidence 0.5; `profile` is `kept`, `not-kept` (no data dir, or the teams unknown) or `off`. **Profiles inform only:** the planner reads none
+  player `mayBeTeammate: true`, and each write drops what the file holds for a known teammate. Read-only `warapp_profile_opponents` reports each habit
+  (B1) as this game's counts pooled with the player's faded counts from earlier finished games, shrunk by
+  `PROFILE_PRIOR_WEIGHT` (4) toward a prior: the population pool for this format, then all players, once it has
+  `POPULATION_MIN_OPPORTUNITIES` (10) for that habit (an AI seat: the AI pool), else the neutral default; with `n`,
+  `confidence`, `basis` (whichever weighs most: `this-game`, `past-games`, `population`, `default`; the prior wins a
+  tie), `seen.gamesMet`, and labels with a counter-play line at confidence 0.5; `profile` is `kept`, `not-kept` (no data dir, or the teams unknown) or `off`.
+  **Across games (B2, `src/profile-store.ts`)** two name-free stores: `profiles/players.json` keyed by the deal
+  record's `playerKey` under the ONE shared salt (`playerSaltForWrite` in `src/player-record-store.ts` is the only
+  "read or make"), each player with at most 30 per-game entries (keyed by an HMAC of my account and the game) and its
+  faded totals by format, at most 1000 players by an update counter (no clock); `profiles/population.json` with the
+  human totals per format, the pooled `ai` profile, a games count and its per-game entries (500). `foldGame` moves
+  totals by the difference from the entry stored for the game (never double counts; `history` replaces `live`, never
+  the reverse), and a game new to a player first fades its totals and entry weights by `PROFILE_DECAY` (0.9). AI
+  seats reach the pool only; a human who became an AI is left out of the game. `foldFinishedGame` runs on the first
+  read showing the game `Finished` (warapp_get_game, warapp_wait_for_turn's read; no request) and marks the per-game
+  file `folded: 'live'`; part C is not built, so the file then goes by the 60-day age rule, and one reaching it (or the
+  200-file bound) unfolded is folded with every ending `unknown` from the seats it kept, then deleted. A store or salt
+  that cannot be parsed is never overwritten (`pastGames: 'unreadable'`, folds fail). **Profiles inform only:** the planner reads none
   of it until part 0's measurement is reported and the owner approves each hook (P1).
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the

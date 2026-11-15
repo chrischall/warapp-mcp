@@ -432,6 +432,9 @@ export const HABIT_DEFAULTS: Readonly<Record<HabitName, number>> = {
  */
 export const POPULATION_MIN_OPPORTUNITIES = 10;
 
+/** A player's totals from earlier games are multiplied by this when a game new to it is folded (B2). */
+export const PROFILE_DECAY = 0.9;
+
 /** The formats profiles are pooled by. */
 export const PROFILE_FORMATS = ['1v1', 'ffa', 'team'] as const;
 export type ProfileFormat = (typeof PROFILE_FORMATS)[number];

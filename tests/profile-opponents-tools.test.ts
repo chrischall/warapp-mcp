@@ -7,7 +7,11 @@ import type { MyOrders } from '../src/analysis/opponents.js';
 import type { BoardState } from '../src/board.js';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
-import { profileGamePath } from '../src/profile-store.js';
+import { emptyHabits } from '../src/analysis/opponent-profile.js';
+import { foldGame, profileGamePath, profilePlayersPath } from '../src/profile-store.js';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { writeBoardCache, writeOrdersCache } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
@@ -133,7 +137,7 @@ interface Habit {
 interface Opponent {
   player: { id: number; name: string };
   ai: boolean;
-  seen: { turnsObserved: number };
+  seen: { turnsObserved: number; gamesMet?: number };
   habits: Record<string, Habit>;
   labels: string[];
   counter: string[];
@@ -146,6 +150,7 @@ interface Profile {
   game: { id: number; turn: number };
   player: { id: number; name: string };
   profile: 'kept' | 'not-kept' | 'off';
+  pastGames?: 'unreadable';
   opponents: Opponent[];
   untrusted_content?: boolean;
 }
@@ -186,6 +191,28 @@ describe('warapp_profile_opponents', () => {
     expect(who(full, BOB_ID).counts).toMatchObject({ reinforce: { e: 4, n: 4 } });
     expect(who(full, CAT_ID).counts).toMatchObject({ reinforce: { e: 0, n: 4 } });
     expect(who(full, BOB_ID).turns!.map((t) => t.turn)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('pools an opponent met in an earlier finished game (past-games) and a first meeting with the population', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'warapp-mcp-profile-past-'));
+    // An earlier free-for-all, folded: Bob reinforced all ten attacks of mine there (the whole ffa pool, so its prior is 1).
+    const earlier = { ...emptyHabits(), reinforce: { e: 10, n: 10 }, turns: 8 };
+    expect(await foldGame(dataDir, { me: ME, gameId: GAME + 1, format: 'ffa', players: 3, source: 'live', seats: [{ id: BOB_ID, ai: false, habits: earlier, ending: 'Won' }] }, {})).toBe('folded');
+    h = await setUp({}, undefined, { dataDir });
+    const p = await profile(h);
+    const bob = who(p, BOB_ID);
+    const cat = who(p, CAT_ID);
+    expect(bob.seen).toEqual({ turnsObserved: 4, gamesMet: 1 });
+    expect(bob.habits.reinforce!).toEqual({ value: 1, n: 14, confidence: 0.78, basis: 'past-games' });
+    expect(cat.seen).toEqual({ turnsObserved: 4, gamesMet: 0 });
+    // Cat never met: its prior is the free-for-all pool (10 of 10), weighing as much as its 4 readings.
+    expect(cat.habits.reinforce!).toEqual({ value: 0.5, n: 4, confidence: 0.5, basis: 'population' });
+    // A record that cannot be parsed is left alone, and this game alone is used.
+    writeFileSync(profilePlayersPath(dataDir), '{nope');
+    const q = await profile(h);
+    expect(q.pastGames).toBe('unreadable');
+    expect(who(q, BOB_ID).habits.reinforce!.basis).toBe('default');
+    expect(readFileSync(profilePlayersPath(dataDir), 'utf8')).toBe('{nope');
   });
 
   it('keeps the turns in the per-game file, unchanged by reading the same turn twice', async () => {

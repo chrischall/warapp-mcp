@@ -43,6 +43,7 @@ import {
   emptyHabits,
   habitsOf,
   observeTurn,
+  PROFILE_DECAY,
   PROFILE_FORMATS,
   profileFormatOf,
   scaleHabits,
@@ -332,8 +333,7 @@ async function writeGameFile(path: string, body: ProfileGameFile): Promise<void>
 
 // ---- across games (B2) ----
 
-/** A player's totals are multiplied by this when a game new to it is folded. */
-export const PROFILE_DECAY = 0.9;
+export { PROFILE_DECAY };
 /** Per-game entries kept per player (the oldest dropped first; their counts stay in the totals). */
 export const MAX_PROFILE_ENTRIES = 30;
 /** Players kept (the least recently updated dropped first). */

@@ -295,6 +295,8 @@ confidence = n / (n + K)
 - **The per-game file after a fold:** marked `folded: 'live'` and kept until part C has tried the
   game's history once (or P2 is off), then deleted. A file untouched for `BOARD_CACHE_MAX_AGE_MS` is
   folded with `ending: unknown` and deleted, so no id-bearing file outlives the board cache.
+  *As built in part B (C not built yet):* a folded file is kept until that age rule deletes it; the
+  file keeps the game's seats (format, seat count, AI seats) so the age rule can fold it unread.
 - **The salt:** `playerRecordSalt` only reads; the code that makes the salt is private to the deal
   store's write path. Export one shared "read or make" function and use it from both stores, so two
   salts can never exist and a malformed one is still never replaced.

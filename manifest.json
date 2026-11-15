@@ -90,7 +90,7 @@
     "player_profile": {
       "type": "string",
       "title": "Opponent profiles (optional)",
-      "description": "Counts of what each opponent did on the turns your boards showed (gameplay only, no names or chat), kept per game to profile its habits. On by default; 'off' turns it off.",
+      "description": "Counts of what each opponent did on the turns your boards showed (gameplay only, no names or chat), kept per game to profile its habits, and folded name-free (salted-hash keys) into counts across finished games. On by default; 'off' turns it off.",
       "required": false
     }
   },

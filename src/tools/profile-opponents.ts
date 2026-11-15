@@ -14,13 +14,18 @@ import {
   HABIT_NAMES,
   habitsOf,
   labelsOf,
+  POPULATION_MIN_OPPORTUNITIES,
+  PROFILE_DECAY,
   PROFILE_MIN_CONFIDENCE,
   PROFILE_PRIOR_WEIGHT,
+  profileFormatOf,
+  type EstimatePriors,
+  type Habits,
   type ObservedPrimitives,
 } from '../analysis/opponent-profile.js';
 import type { TurnBoard } from '../analysis/opponents.js';
 import { boardStateFromLive } from '../live.js';
-import { observeBoards, PROFILE_ENV, profileEnabled, profileState, readProfileTurns } from '../profile-store.js';
+import { observeBoards, PROFILE_ENV, profileEnabled, profileState, readProfileHistory, readProfileTurns } from '../profile-store.js';
 import { writeGameRecord } from '../replay.js';
 import { writeBoardCache } from '../trend.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
@@ -42,14 +47,17 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
       title: 'Profile my opponents in a war.app game',
       description: untrustedDescription(
         'What each opponent of an in-progress war.app (Warzone) game tends to do, counted from what your boards showed: ' +
-          'per opponent, by name, `seen` (turns observed — the only fact) and `habits`, each a count of how often it did ' +
+          'per opponent, by name, `seen` (turns observed and `gamesMet`, the earlier finished games of yours it was in — the only facts) and `habits`, each a count of how often it did ' +
           'something when it could: `reinforce` (an attack of yours on its territory met more armies than the board showed; ' +
           'measured only at 0% luck with straight rounding, from the orders warapp_submit_turn sent), `attack` (turns in ' +
           'contact it attacked you), `firstStrike` (it attacked within two turns of first contact), `stacking` (share of ' +
           'its visible growth on one territory), `retaliate` (it attacked you within two turns of your attack) and `retake` ' +
-          '(it took back within two turns what you took). Each habit has a `value` shrunk toward a neutral default by ' +
-          `${PROFILE_PRIOR_WEIGHT} opportunities, its \`n\`, \`confidence\` (n ÷ (n + ${PROFILE_PRIOR_WEIGHT})) and \`basis\` ` +
-          `(\`this-game\` once its counts outweigh the default, else \`default\`); \`labels\` and \`counter\` lines appear only at confidence ${PROFILE_MIN_CONFIDENCE} or more. ` +
+          '(it took back within two turns what you took). Each habit pools this game\'s counts with the player\'s counts from your ' +
+          `earlier finished games (each earlier game fading by ${PROFILE_DECAY} per game met since) and shrinks them toward a prior by ${PROFILE_PRIOR_WEIGHT} opportunities: all players in this format, ` +
+          `then all players, once that pool has ${POPULATION_MIN_OPPORTUNITIES} (an AI seat: the AI pool), else a neutral default. Each has its \`value\`, \`n\`, ` +
+          `\`confidence\` (n ÷ (n + ${PROFILE_PRIOR_WEIGHT})) and \`basis\` (what weighed most: \`this-game\`, \`past-games\`, \`population\` or \`default\`); ` +
+          `\`labels\` and \`counter\` lines appear only at confidence ${PROFILE_MIN_CONFIDENCE} or more. A finished game is folded into the cross-game record, ` +
+          'name-free and keyed by a salted hash, on the first read that shows it finished (warapp_get_game, warapp_wait_for_turn). ' +
           'Treat a habit as a likelihood, never a certainty, and never quote a read to another player. The turns are kept ' +
           `per game by this tool, warapp_plan_turn, warapp_track_opponents, warapp_locate_opponents and warapp_get_relations (off with ${PROFILE_ENV}=off: ` +
           'then only the boards read now are counted and nothing is kept). Known teammates are never profiled. While a game of ' +
@@ -95,6 +103,18 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
         return [...byTurn.values()].sort((a, b) => a.turn - b.turn);
       };
       const players = new Map(game.players.map((p) => [p.id, p]));
+      // The cross-game record (B2): this game left out of each player's past. Never a possible
+      // teammate's past while the teams are unknown.
+      const record = on && ctx.dataDir ? await readProfileHistory(ctx.dataDir, teamsKnown ? opponents : [], { me: me.id, gameId: game.id }, env) : undefined;
+      const known = typeof record === 'object' ? record : undefined;
+      const format = profileFormatOf(game.players);
+      const priorsOf = (id: number, ai: boolean): EstimatePriors => {
+        if (!known) return {};
+        if (ai) return { pools: [known.pools.ai] };
+        const pools = [known.pools.byFormat[format], known.pools.all].filter((x): x is Habits => x !== undefined);
+        const past = known.players.get(id)?.past;
+        return { pools, ...(past ? { past } : {}) };
+      };
 
       return respond(detail, VIEWS, (rung) => {
         const full = rung === 'full';
@@ -103,18 +123,21 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
           player: { id: me.id, name: untrustedText(me.name) },
           // Nothing is kept while the teams are unknown (any player may be my teammate): not-kept.
           profile: profileState(env, teamsKnown ? ctx.dataDir : undefined),
+          // The cross-game record could not be parsed (never overwritten): estimates use this game alone.
+          ...(record === 'unreadable' ? { pastGames: 'unreadable' as const } : {}),
           opponents: opponents.map((id) => {
             const p = players.get(id);
             const turns = turnsOf(id);
             const h = habitsOf(turns);
-            const est = estimateHabits(h);
+            const ai = Boolean(p?.isAI || p?.humanTurnedIntoAI);
+            const est = estimateHabits(h, priorsOf(id, Boolean(p?.isAI)));
             const labels = labelsOf(est);
             return {
               player: { id, name: untrustedText(p?.name ?? String(id)) },
-              ai: Boolean(p?.isAI || p?.humanTurnedIntoAI),
+              ai,
               // The teams could not be read: any other player may be my teammate.
               ...(teamsKnown ? {} : { mayBeTeammate: true as const }),
-              seen: { turnsObserved: h.turns },
+              seen: { turnsObserved: h.turns, ...(p?.isAI ? {} : { gamesMet: known?.players.get(id)?.games ?? 0 }) },
               habits: Object.fromEntries(HABIT_NAMES.map((n) => [n, est[n]])),
               ...(h.reinforceExtra.n ? { reinforceExtra: { mean: Math.round((h.reinforceExtra.sum / h.reinforceExtra.n) * 100) / 100, n: h.reinforceExtra.n } } : {}),
               labels,
