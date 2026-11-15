@@ -167,6 +167,59 @@ describe('commanderSafety', () => {
     expect(led.killers).toBeGreaterThan(0);
     expect(led.worst).toMatchObject({ kind: 'joint', commanderLost: true });
   });
+
+  it('killedBy names the partner when the smallest killing deploy is two opponents striking together', () => {
+    const tri = buildGraph(makeMap(3, [[1, 2], [1, 3]]));
+    const CID = 30;
+    const b = board([withCommander(mine(1, 6)), foe(2, 12), mine(3, 12, CID)]);
+    const opponents = [
+      { id: FOE, deploy: 7 },
+      { id: CID, deploy: 7 },
+    ];
+    const led = commanderSafety({ graph: tri, board: b, me: ME, deploys: [], moves: [], opponents, settings: STD, leader: true })!;
+    expect(led.killedBy).not.toBeNull();
+    // Each opponent deploys the same amount; the two together kill it below what either needs alone.
+    const alone = commanderSafety({ graph: tri, board: b, me: ME, deploys: [], moves: [], opponents, settings: STD })!;
+    expect(led.killedBy!.deploy).toBeLessThan(alone.killedBy!.deploy);
+    expect(led.killedBy!.partner).toBeDefined();
+    expect(new Set([led.killedBy!.opponent, led.killedBy!.partner])).toEqual(new Set([FOE, CID]));
+    expect(alone.killedBy!.partner).toBeUndefined();
+  });
+});
+
+describe('commanderSafety airlifts (#274 review)', () => {
+  // A 3-line: 1 (mine, commander, 6) ─ 2 (foe, 16), and 3 (mine, 3) beside 2 as well.
+  const tri = buildGraph(makeMap(3, [[1, 2], [2, 3]]));
+  const b = () => board([withCommander(mine(1, 6)), foe(2, 16), mine(3, 3)]);
+  const base = { graph: tri, me: ME, moves: [], opponents: [{ id: FOE, deploy: 7 }], settings: STD, killedBy: false } as const;
+
+  it('an Airlift out of the commander\'s territory runs after the deploys and leaves fewer there', () => {
+    const held = commanderSafety({ ...base, board: b(), deploys: [{ territoryId: 1, armies: 7 }] })!;
+    expect(held.killers).toBe(0);
+    const out = commanderSafety({ ...base, board: b(), deploys: [{ territoryId: 1, armies: 7 }], airlifts: [{ from: 1, to: 3, armies: 12 }] })!;
+    expect(out.territory).toBe(1);
+    expect(out.armies).toBe(1);
+    expect(out.killers).toBeGreaterThan(0);
+    expect(out.needs).toBeGreaterThan(1);
+  });
+
+  it('an Airlift onto the commander\'s territory counts', () => {
+    const low = commanderSafety({ ...base, board: b(), deploys: [] })!;
+    expect(low.killers).toBeGreaterThan(0);
+    const fed = commanderSafety({ ...base, board: b(), deploys: [{ territoryId: 3, armies: 7 }], airlifts: [{ from: 3, to: 1, armies: 9 }] })!;
+    expect(fed.armies).toBe(15);
+    expect(fed.killers).toBe(0);
+  });
+
+  it('follows the commander when the Airlift takes it', () => {
+    // Behind 9 on 1 it is safe; airlifted alone to 3 (3 armies) it stands beside the 16.
+    const bb = board([withCommander(mine(1, 20)), foe(2, 16), mine(3, 3)]);
+    const flown = commanderSafety({ ...base, board: bb, deploys: [], airlifts: [{ from: 1, to: 3, armies: 0, commander: true }] })!;
+    expect(flown.from).toBe(1);
+    expect(flown.territory).toBe(3);
+    expect(flown.armies).toBe(3);
+    expect(flown.killers).toBeGreaterThan(0);
+  });
 });
 
 describe('stressPlan targets (#274)', () => {

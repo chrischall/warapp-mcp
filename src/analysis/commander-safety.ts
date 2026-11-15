@@ -11,9 +11,15 @@
 //              stress test resolves battles): found by adding armies on the commander's starting
 //              territory (carried along when my orders move the commander from there) until no reply
 //              kills it. `armies` when none does; null past {@link SEARCH_CAP};
-//   killedBy   the smallest deploy, the same for every opponent, at which some single reply kills it
+//   killedBy   the smallest deploy, made by every opponent at once (a per-opponent deploy, not a total),
+//              at which some reply tried kills it, with the opponent whose reply it is and, when that
+//              reply is two opponents striking together (#180, when I lead a free-for-all), its partner
 //              (null when none up to {@link SEARCH_CAP} does: no stack of theirs is in reach this turn;
 //              also null with `killedBy: false`, which skips that search: warapp_submit_turn never reads it).
+//
+// My Airlifts (`airlifts`, phase 43) run after every deploy and before every move: they are applied
+// to the board with my deploys before anything else (armies off `from` and onto `to`, the commander
+// with them when it goes along), so an Airlift out of, onto or of the commander is counted.
 //
 // Only the replies that strike the commander's territory are tried (`targets`), and never the
 // look-ahead, so it is cheap enough to run inside warapp_submit_turn. What the stress test does not
@@ -27,9 +33,19 @@ import { simulateTurn } from './turn-sim.js';
 /** Armies, or a deploy, past which the searches stop. */
 export const SEARCH_CAP = 1_000_000;
 
+/** One of my Airlifts: `armies` from `from` to `to`, the commander along when `commander`. */
+export interface CommanderAirlift {
+  from: number;
+  to: number;
+  armies: number;
+  commander?: boolean;
+}
+
 export type CommanderSafetyInput = Omit<StressInput, 'targets' | 'lookAhead' | 'maxReplies'> & {
   /** Search for the smallest deploy that kills it (default true); false skips some 20–40 stress runs. */
   killedBy?: boolean;
+  /** My Airlifts this turn: after the deploys, before the moves. */
+  airlifts?: readonly CommanderAirlift[];
 };
 
 export interface CommanderSafety {
@@ -42,7 +58,8 @@ export interface CommanderSafety {
   /** The first reply tried that kills it (worst first, as the stress test ranks them). */
   worst?: StressReply;
   needs: number | null;
-  killedBy: { deploy: number; opponent: number } | null;
+  /** `partner`: the second opponent when the killing reply is two striking together. */
+  killedBy: { deploy: number; opponent: number; partner?: number } | null;
   /** My orders lose it with nobody answering (an attack it goes along on fails). */
   lostUnanswered: boolean;
   /** `false` under luck or weighted rounding: battles resolved at their expectation. */
@@ -53,6 +70,30 @@ export interface CommanderSafety {
 export function myCommanderTerritory(board: BoardState, me: number): number | undefined {
   return board.territories.find((t) => t.owner.kind === 'player' && t.owner.playerId === me && t.specialUnits?.some((u) => u.kind === 'commander' && u.playerId === me))
     ?.territoryId;
+}
+
+/** The board once my deploys and then my Airlifts have run (the commander moved with its Airlift). */
+function airlifted(board: BoardState, me: number, deploys: readonly { territoryId: number; armies: number }[], airlifts: readonly CommanderAirlift[]): BoardState {
+  const territories = board.territories.map((t) => ({ ...t, ...(t.specialUnits ? { specialUnits: [...t.specialUnits] } : {}) }));
+  const at = new Map(territories.map((t) => [t.territoryId, t]));
+  const add = (id: number, n: number) => {
+    const t = at.get(id);
+    if (t) t.armies = Math.max(0, (t.armies ?? 0) + n);
+  };
+  for (const d of deploys) add(d.territoryId, d.armies);
+  for (const a of airlifts) {
+    add(a.from, -a.armies);
+    add(a.to, a.armies);
+    if (!a.commander) continue;
+    const src = at.get(a.from);
+    const dst = at.get(a.to);
+    const unit = src?.specialUnits?.find((u) => u.kind === 'commander' && u.playerId === me);
+    if (!src || !dst || !unit) continue;
+    src.specialUnits = src.specialUnits!.filter((u) => u !== unit);
+    if (!src.specialUnits.length) delete src.specialUnits;
+    dst.specialUnits = [...(dst.specialUnits ?? []), unit];
+  }
+  return { ...board, territories };
 }
 
 /** The smallest n in [lo, SEARCH_CAP] with `ok(n)`, for `ok` false then true; null when `ok(SEARCH_CAP)` is false. */
@@ -74,10 +115,14 @@ function smallest(lo: number, ok: (n: number) => boolean): number | null {
 }
 
 export function commanderSafety(options: CommanderSafetyInput): CommanderSafety | undefined {
-  const { killedBy: searchKilledBy = true, ...input } = options;
+  const { killedBy: searchKilledBy = true, airlifts, ...given } = options;
+  const start = myCommanderTerritory(given.board, given.me);
+  if (start === undefined) return undefined;
+  // My deploys and Airlifts applied first: everything below runs on the board the moves start from.
+  const input = airlifts?.length ? { ...given, board: airlifted(given.board, given.me, given.deploys, airlifts), deploys: [] } : given;
   const { graph, board, me } = input;
-  const from = myCommanderTerritory(board, me);
-  if (from === undefined) return undefined;
+  // Where it stands when the moves begin (its Airlift's destination, when one takes it).
+  const from = myCommanderTerritory(board, me) ?? start;
 
   // Where my orders leave it (they may take it along), with nobody answering.
   const after = simulateTurn({
@@ -127,13 +172,16 @@ export function commanderSafety(options: CommanderSafetyInput): CommanderSafety 
 
   return {
     territory,
-    from,
+    from: start,
     armies,
     distance: reach.length ? Math.min(...reach) : null,
     killers,
     ...(worst ? { worst } : {}),
     needs: extra === null ? null : armies + extra,
-    killedBy: killedAt === null || !killer ? null : { deploy: killedAt, opponent: killer.opponent },
+    killedBy:
+      killedAt === null || !killer
+        ? null
+        : { deploy: killedAt, opponent: killer.opponent, ...(killer.kind === 'joint' && killer.partner !== undefined ? { partner: killer.partner } : {}) },
     lostUnanswered,
     exact: report.exact,
   };

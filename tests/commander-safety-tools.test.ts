@@ -145,15 +145,59 @@ describe('warapp_submit_turn commander check (#274)', () => {
     expect(s.sent).toEqual([]);
   });
 
-  it('says the card plays are not simulated when an Airlift may change the commander\'s armies', async () => {
+  it('counts an Airlift onto the commander\'s territory: 6 + 2 airlifted holds', async () => {
+    const s = server(BOARD(), { hand: [{ id: AIR, type: 6 }] });
+    h = await liveHarness({ feed: [feedGame({ ...CMD, MaxCardsHold: 9 })], pages: ME_PAGE, warapp: s.warapp });
+    const preview = payload<Record<string, unknown>>(
+      await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'card', card: AIR, from: 161, to: 159, armies: 2 }, ...AWAY] }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
+  });
+
+  it('refuses an Airlift that empties the commander\'s territory after the deploys (review: it passed unseen)', async () => {
+    const s = server(BOARD(), { hand: [{ id: AIR, type: 6 }] });
+    h = await liveHarness({ feed: [feedGame({ ...CMD, MaxCardsHold: 9 })], pages: ME_PAGE, warapp: s.warapp });
+    // HOME alone holds (13 there); the Airlift then takes 12 of them to 161, leaving 1 and the commander.
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: [...HOME, { kind: 'card', card: AIR, from: 159, to: 161, armies: 12 }] });
+    expect(res.isError).toBe(true);
+    const text = textOf(res);
+    expect(text).toMatch(/commander on territory 159/);
+    expect(text).toMatch(/\(1 after your orders\)/);
+    expect(text).toMatch(/Airlift/);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('refuses airlifting the commander itself next to the enemy', async () => {
     const s = server(BOARD(), { hand: [{ id: AIR, type: 6 }] });
     h = await liveHarness({ feed: [feedGame({ ...CMD, MaxCardsHold: 9 })], pages: ME_PAGE, warapp: s.warapp });
     const res = await h.call('warapp_submit_turn', {
       game_id: GAME,
-      orders: [{ kind: 'card', card: AIR, from: 161, to: 159, armies: 2 }, ...AWAY],
+      orders: [...HOME, { kind: 'card', card: AIR, from: 159, to: 161, armies: 0, commander: true }],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toMatch(/not simulated.*Airlift/s);
+    expect(textOf(res)).toMatch(/commander on territory 161/);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('refuses a Blockade of the territory a move takes the commander to, which the check does not simulate', async () => {
+    const BL = '99999999aaaaaaaabbbbbbbbcccccccc';
+    const s = server(BOARD(), { hand: [{ id: BL, type: 12 }] });
+    h = await liveHarness({ feed: [feedGame({ ...CMD, MaxCardsHold: 9 })], pages: ME_PAGE, warapp: s.warapp });
+    // 161 is safe ground once 13 + 3 stand there; the Blockade at the end of the turn turns it neutral.
+    const orders = [...HOME, { kind: 'move', from: 159, to: 161, armies: 12, commander: true }, { kind: 'card', card: BL, target: 161 }];
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Blockade.*territory 161.*not simulated/s);
+    expect(textOf(res)).toMatch(/accept_commander_risk/);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('under Local Deployment the refusal hint says the deploy there must come from a pool that reaches it', async () => {
+    const s = server(BOARD());
+    h = await liveHarness({ feed: [feedGame({ ...CMD, LocalDeployments: true })], pages: ME_PAGE, warapp: s.warapp });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: AWAY });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/Local Deployment/);
   });
 
   it('in a free-for-all I lead, refuses orders two opponents together can kill it after', async () => {
@@ -226,6 +270,38 @@ describe('warapp_plan_turn commander block (#274)', () => {
     const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: p.orders });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/accept_commander_risk/);
+  });
+
+  it('under an enemy_deploy what-if, the warning says the submit (which sizes replies without it) would not refuse', async () => {
+    // The plan holds it at my income (6 + 7 there), but not against a deploy of 30.
+    h = await liveHarness({ feed: [feedGame(CMD)], pages: ME_PAGE, warapp: server(BOARD()).warapp });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, enemy_deploy: 30 }));
+    expect(p.commander!.safe).toBe(false);
+    expect(p.warnings[0]).toMatch(/commander on territory 159/);
+    expect(p.warnings[0]).toMatch(/enemy_deploy/);
+    expect(p.warnings[0]).not.toMatch(/refuses these orders/);
+    expect(p.warnings[0]).toMatch(/would not refuse/);
+  });
+
+  it('with Commanders off in the settings, the warning names no refusal', async () => {
+    const board = BOARD().map((t) => (t.id === 158 ? { ...t, armies: 40 } : t));
+    h = await liveHarness({ feed: [feedGame({ Commanders: false })], pages: ME_PAGE, warapp: server(board).warapp });
+    const p = await plan();
+    expect(p.commander!.safe).toBe(false);
+    const w = p.warnings.find((x) => /commander on territory 159/.test(x))!;
+    expect(w).not.toMatch(/refuses these orders/);
+    expect(w).toMatch(/does not check/);
+  });
+
+  it('killedBy names the partner when two opponents striking together are the smallest deploy that kills it', async () => {
+    const s = server(FFA_BOARD, { ffa: true });
+    h = await liveHarness({ feed: [feedGame(CMD, {}, { ffa: true })], pages: ME_PAGE, warapp: s.warapp });
+    const p = await plan();
+    const k = p.commander!.killedBy as { deploy: number; player: { id: number }; partner?: { id: number } } | null;
+    expect(k).not.toBeNull();
+    expect(k!.partner).toBeDefined();
+    expect(new Set([k!.player.id, k!.partner!.id])).toEqual(new Set([Number(BOB.feed), Number(CID.feed)]));
+    expect(p.commander!.text).toMatch(/each opponent/);
   });
 
   it('no block in a game without commanders', async () => {

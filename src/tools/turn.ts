@@ -138,7 +138,7 @@ import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
-import { commanderSafety, myCommanderTerritory, type CommanderSafety } from '../analysis/commander-safety.js';
+import { commanderSafety, myCommanderTerritory, type CommanderAirlift, type CommanderSafety } from '../analysis/commander-safety.js';
 import type { SimOrder } from '../analysis/turn-sim.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -1646,8 +1646,12 @@ export async function livePlanSetup(
   };
 }
 
-/** Card plays that may change the armies or the owner of my commander's territory, which the commander check does not simulate. */
-const UNSIMULATED_NEAR_COMMANDER: ReadonlySet<CardPlayKind> = new Set(['Airlift', 'Blockade', 'EmergencyBlockade', 'Bomb', 'Gift']);
+/**
+ * Card plays that turn my territory over, which the commander check does not simulate (an Airlift it
+ * does): played on a territory my commander stands on before or after my orders, they may lose it,
+ * so the submit refuses them there unless accepted. A Bomb only hits a territory not mine.
+ */
+const UNSIMULATED_NEAR_COMMANDER: ReadonlySet<CardPlayKind> = new Set(['Blockade', 'EmergencyBlockade', 'Gift']);
 
 /**
  * #274: whether these orders leave my commander takeable by a single-deploy reply, each sized at the
@@ -1656,7 +1660,9 @@ const UNSIMULATED_NEAR_COMMANDER: ReadonlySet<CardPlayKind> = new Set(['Airlift'
  * warapp_plan_turn's commander block, so the plan never calls safe what the submit refuses: the same
  * opponents (`stressOpponents`: every owner on the board and every player still playing), teams,
  * free-for-all lead (#180: two opponents striking together) and Order Priority. Undefined when my
- * commander is not on the board; `risk` and `text` only when a reply tried kills it.
+ * commander is not on the board; `risk` and `text` only when a reply tried kills it, or when a card
+ * play it does not simulate (a Blockade or a Gift) lands on a territory the commander stands on before
+ * or after my orders (`cards` names them). My Airlifts are simulated (`airlifts`).
  */
 async function commanderCheck(
   ctx: LiveContext,
@@ -1676,10 +1682,12 @@ async function commanderCheck(
     floor?: number;
     /** Search for the smallest deploy that kills it (warapp_plan_turn's block); the submit skips it. */
     killedBy?: boolean;
-    /** The card plays sent with the orders, which this check does not simulate. */
-    cards?: readonly CardPlayKind[];
+    /** My Airlifts, which run after the deploys and before the moves. */
+    airlifts?: readonly CommanderAirlift[];
+    /** The territories the other card plays sent with the orders target; those in {@link UNSIMULATED_NEAR_COMMANDER} are not simulated. */
+    cardTargets?: readonly { kind: CardPlayKind; territory: number }[];
   },
-): Promise<{ safety: CommanderSafety; replyDeploy: number; risk?: CommanderRisk; text?: string } | undefined> {
+): Promise<{ safety: CommanderSafety; replyDeploy: number; risk?: CommanderRisk; text?: string; cards?: string[] } | undefined> {
   if (myCommanderTerritory(a.seen, a.me.id) === undefined) return undefined;
   const graph = graphOf(a.map);
   const settings = plannerSettings(a.game.settings);
@@ -1719,12 +1727,35 @@ async function commanderCheck(
     ...(settings.localDeployments ? { localDeployments: true } : {}),
     leader: so.leader,
     killedBy: a.killedBy ?? false,
+    ...(a.airlifts?.length ? { airlifts: a.airlifts } : {}),
   });
   if (!safety) return undefined;
   const w = safety.worst;
   const opponent = w ? so.opponents.find((o) => o.id === w.opponent) : undefined;
   const replyDeploy = opponent ? sizeOf(opponent.deploy) : sizeOf(Math.max(0, ...so.opponents.map((o) => o.deploy)));
-  if (safety.killers === 0 && !safety.lostUnanswered) return { safety, replyDeploy };
+  const its = new Set([safety.from, safety.territory]);
+  const cards = [
+    ...new Set(
+      (a.cardTargets ?? [])
+        .filter((c) => UNSIMULATED_NEAR_COMMANDER.has(c.kind) && its.has(c.territory))
+        .map((c) => `${c.kind === 'EmergencyBlockade' ? 'an Emergency Blockade' : c.kind === 'Gift' ? 'a Gift' : 'a Blockade'} of territory ${c.territory}`),
+    ),
+  ];
+  const cardText = cards.length
+    ? `These orders play ${cards.join(' and ')}, where your commander stands${
+        safety.from === safety.territory ? '' : ' before or after your orders'
+      }: that card play is not simulated by the commander check, and a territory blockaded or gifted is lost with the commander on it.`
+    : '';
+  if (safety.killers === 0 && !safety.lostUnanswered) {
+    if (!cards.length) return { safety, replyDeploy };
+    return {
+      safety,
+      replyDeploy,
+      risk: { territory: safety.territory, armies: safety.armies, needs: null, replyDeploy, replies: 0 },
+      text: cardText,
+      cards,
+    };
+  }
   const where = `your commander on territory ${safety.territory}`;
   const partner = w?.partner !== undefined ? so.opponents.find((o) => o.id === w.partner) : undefined;
   const reply =
@@ -1735,7 +1766,6 @@ async function commanderCheck(
           }) striking it together kill it, as two opponents may gang up on the leader of a free-for-all`
         : `a single deploy of ${replyDeploy} by player ${w.opponent} on territory ${w.deployTo}${w.to !== undefined ? `, attacking territory ${w.to}` : ''}, kills it`
       : 'a single deploy kills it';
-  const unsimulated = [...new Set((a.cards ?? []).filter((k) => UNSIMULATED_NEAR_COMMANDER.has(k)))];
   const text = safety.lostUnanswered
     ? `These orders lose ${where} with nobody answering (an attack it goes along on fails).`
     : `These orders leave ${where} takeable: ${reply} (${safety.killers} of the replies tried, each sized at the larger of the opponent's estimate${
@@ -1744,16 +1774,13 @@ async function commanderCheck(
         safety.needs !== null
           ? `It needs ${safety.needs} armies there (${safety.armies} after your orders) to survive every one.`
           : 'No number of armies there holds it against every one.'
-      }${
-        unsimulated.length
-          ? ` The card plays (${unsimulated.join(', ')}) are not simulated in this check: an Airlift onto that territory, or a Blockade or Gift of it, is not counted, so this may misjudge it.`
-          : ''
-      }`;
+      }${a.airlifts?.length ? ' Your Airlifts are counted (they run after the deploys and before the moves).' : ''}${cardText ? ` ${cardText}` : ''}`;
   return {
     safety,
     replyDeploy,
     risk: { territory: safety.territory, armies: safety.armies, needs: safety.needs, replyDeploy, replies: safety.killers },
     text,
+    ...(cards.length ? { cards } : {}),
   };
 }
 
@@ -1826,9 +1853,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'starting armies on turn 1), whether you were awarded first or second and who moves first this turn under ' +
           "a `Cycle` move order, and with commanders the opponent's first award when the award pins it. " +
           'In a Commanders game, `commander` reports your commander every turn: its territory, the armies there after the ' +
-          'plan, `movesToEnemy` (to the nearest enemy or fogged territory), `killedBy` (the smallest single enemy deploy that ' +
-          'kills it, null when none reaches it this turn) and whether it holds at the larger of the estimate and your income ' +
-          '(`safe`, `needs`); when it does not, the first warning says so, since warapp_submit_turn refuses such orders. ' +
+          'plan, `movesToEnemy` (to the nearest enemy or fogged territory), `killedBy` (the smallest deploy, made by each ' +
+          'opponent, at which a reply kills it, with `player` and, when two opponents striking together are that reply, ' +
+          '`partner`; null when none reaches it this turn) and whether it holds at the larger of the estimate and your income ' +
+          '(`safe`, `needs`); when it does not, the first warning says so and whether warapp_submit_turn would refuse such ' +
+          'orders (not without Commanders in the settings, nor when only an `enemy_deploy` what-if makes it unsafe). ' +
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board. ' +
@@ -2140,9 +2169,44 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const commanderLine = guard
         ? `Your commander on territory ${guard.territory}: ${guard.armies} armies there after the plan, ${
             guard.distance === null ? 'no enemy or fog on the map' : `${guard.distance} move${guard.distance === 1 ? '' : 's'} from the nearest enemy or fog`
-          }; ${guard.killedBy ? `a single deploy of ${guard.killedBy.deploy} by player ${guard.killedBy.opponent} kills it` : 'no single deploy reaches it this turn'}.`
+          }; ${
+            guard.killedBy
+              ? `a deploy of ${guard.killedBy.deploy} by each opponent kills it (${
+                  guard.killedBy.partner !== undefined
+                    ? `players ${guard.killedBy.opponent} and ${guard.killedBy.partner} striking it together`
+                    : `player ${guard.killedBy.opponent}'s reply`
+                })`
+              : 'no single deploy reaches it this turn'
+          }.`
         : undefined;
-      if (checked?.text) warnings.unshift(`${commanderLine} ${checked.text} warapp_submit_turn refuses these orders unless accept_commander_risk is true.`);
+      if (checked?.text) {
+        // Name the submit's refusal only when the submit would make it (#274 review): it checks only a
+        // Commanders game, and sizes the replies without enemy_deploy.
+        let submit: string;
+        if (game.settings?.commanders !== true) {
+          submit = 'warapp_submit_turn does not check the commander in this game (Commanders is not on in its settings).';
+        } else if (enemy_deploy === undefined) {
+          submit = 'warapp_submit_turn refuses these orders unless accept_commander_risk is true.';
+        } else {
+          const plain = await commanderCheck(ctx, {
+            game,
+            me,
+            map,
+            seen,
+            turn,
+            info,
+            hand,
+            income: setup.boardIncome,
+            deploys: plan.deploys,
+            moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })),
+            orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+          });
+          submit = plain?.text
+            ? 'warapp_submit_turn refuses these orders unless accept_commander_risk is true (it finds the risk without enemy_deploy too).'
+            : `This is under enemy_deploy ${enemy_deploy}: warapp_submit_turn, which sizes the replies without it, would not refuse these orders.`;
+        }
+        warnings.unshift(`${commanderLine} ${checked.text} ${submit}`);
+      }
       const guessed = borderGuess({
         graph,
         // #270: a static seat's territories are neutrals here, as in the plan the guess splits.
@@ -2214,7 +2278,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 territory: name(guard.territory),
                 armies: guard.armies,
                 movesToEnemy: guard.distance,
-                killedBy: guard.killedBy ? { deploy: guard.killedBy.deploy, player: playerRef(guard.killedBy.opponent) } : null,
+                killedBy: guard.killedBy
+                  ? {
+                      deploy: guard.killedBy.deploy,
+                      player: playerRef(guard.killedBy.opponent),
+                      ...(guard.killedBy.partner !== undefined ? { partner: playerRef(guard.killedBy.partner) } : {}),
+                    }
+                  : null,
                 safe: guard.killers === 0 && !guard.lostUnanswered,
                 needs: guard.needs,
                 replyDeploy,
@@ -2539,7 +2609,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
         'and, once the orders are committed, the ledger records it broken-by-me. In a Commanders game, orders that ' +
         'leave your commander takeable by one opponent\'s single deploy, or two striking together when you lead a ' +
-        'free-for-all (each reply sized at the larger of its estimate and your income, on the live board) are refused with the armies that would hold, unless `accept_commander_risk` ' +
+        'free-for-all (each reply sized at the larger of its estimate and your income, on the live board; your Airlifts counted, ' +
+        'after the deploys and before the moves) are refused with the armies that would hold, and so is a Blockade or Gift ' +
+        'of a territory your commander stands on before or after the orders, unless `accept_commander_risk` ' +
         'is true (the result then records `commanderRiskAccepted`). Always sent as ' +
         'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
         `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
@@ -2871,16 +2943,33 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                   ...(m.attackTeammates ? { attackTeammates: true } : {}),
                 })),
                 orderPriority: plays.some((p) => p.kind === 'OrderPriority'),
-                cards: plays.map((p) => p.kind),
+                // The Airlifts are simulated (after the deploys, before the moves); a Blockade or Gift of the
+                // commander's territory is not, and is refused there unless accepted.
+                airlifts: plays.flatMap((p) =>
+                  p.kind === 'Airlift' && p.targets?.from && p.targets.to
+                    ? [{ from: p.targets.from.id, to: p.targets.to.id, armies: p.targets.armies ?? 0, ...(p.targets.commander ? { commander: true } : {}) }]
+                    : [],
+                ),
+                cardTargets: plays.flatMap((p) => {
+                  const t = p.target ?? p.targets?.territory;
+                  return t ? [{ kind: p.kind, territory: t.id }] : [];
+                }),
               })
             : undefined;
         const commanderRisk = commanderChecked?.risk && commanderChecked.text ? { risk: commanderChecked.risk, text: commanderChecked.text } : undefined;
         if (commanderRisk && accept_commander_risk !== true) {
+          const anyway = 'To submit these orders anyway (ask the owner first), resend with accept_commander_risk: true.';
+          // Under Local Deployment a deploy there must come from a pool that reaches it (#274 review).
+          const local = game.settings?.localDeployments === true
+            ? ' Under Local Deployment only free income or the pool of a bonus that contains that territory may be deployed there; an Airlift onto it is the other way.'
+            : '';
           throw new McpToolError(`${commanderRisk.text} Nothing was sent.`, {
             hint:
-              commanderRisk.risk.needs !== null
-                ? `Put at least ${commanderRisk.risk.needs} armies on territory ${commanderRisk.risk.territory} after your orders (deploy more there, or move fewer out), or move the commander away from the enemy; warapp_check_plan shows every reply. To submit these orders anyway (ask the owner first), resend with accept_commander_risk: true.`
-                : 'Move the commander away from the enemy; warapp_check_plan shows every reply. To submit these orders anyway (ask the owner first), resend with accept_commander_risk: true.',
+              commanderRisk.risk.replies === 0 && commanderChecked?.cards?.length
+                ? `Play the card on a territory your commander does not stand on, or keep the commander off it. ${anyway}`
+                : commanderRisk.risk.needs !== null
+                  ? `Put at least ${commanderRisk.risk.needs} armies on territory ${commanderRisk.risk.territory} after your orders (deploy more there, airlift fewer off it, or move fewer out), or move the commander away from the enemy; warapp_check_plan shows every reply.${local} ${anyway}`
+                  : `Move the commander away from the enemy; warapp_check_plan shows every reply. ${anyway}`,
           });
         }
         if (commanderRisk) warnings.unshift(`accept_commander_risk is true: ${commanderRisk.text}`);

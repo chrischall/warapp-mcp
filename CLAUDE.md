@@ -102,10 +102,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   it (its count and `needs` from that one run); `warapp_plan_turn` carries a `commander` block every turn (and a
   first warning when the plan's orders would be refused), computed by the submit's own check (`commanderCheck` in
   `src/tools/turn.ts`: the same opponents, teams, free-for-all lead — two opponents striking together when I lead
-  — and Order Priority; `enemy_deploy` only raises the replies), so it never calls safe what the submit refuses.
-  The submit skips the `killedBy` search, and card plays (an Airlift onto the commander's territory, a Blockade,
-  a Gift, a Bomb) are not simulated: its refusal names them when sent. The planner itself is unchanged: it never
-  moves the commander yet (#274 items 2–3).
+  — and Order Priority; `enemy_deploy` only raises the replies), so it never calls safe what the submit refuses;
+  its first warning names the submit's refusal only when the submit would make it (Commanders on, and the risk
+  found without `enemy_deploy`). `killedBy` is one deploy made by every opponent at once, with `partner` when the
+  killing reply is a joint strike. My Airlifts are simulated (`airlifts`: applied with my deploys before the moves,
+  the commander moved with one that takes it); a Blockade or Gift of a territory the commander stands on before or
+  after the orders is not simulated and is refused unless accepted. The submit skips the `killedBy` search. The
+  planner itself is unchanged: it never moves the commander yet (#274 items 2–3).
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
   researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or
