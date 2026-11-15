@@ -170,11 +170,8 @@ function readDuel(list: readonly number[], granted: readonly number[], awards: n
   };
 }
 
-/** Move orders under which the award order carries into the turns (GameFeed's `MoveOrder`). */
-const CYCLIC_ORDERS = new Set(['Cycle', 'NoLuckCycle']);
-
-/** A cyclic move order (GameFeed's `MoveOrder`): the order reverses every turn. */
-export const isCyclicMoveOrder = (moveOrder: string | undefined): boolean => moveOrder !== undefined && CYCLIC_ORDERS.has(moveOrder);
+/** A cyclic move order (GameFeed's `MoveOrder`): the order reverses every turn. Lives in plan/shared.ts (a leaf). */
+export { isCyclicMoveOrder } from './plan/shared.js';
 
 /**
  * Who moves first on `turn` in a two-player game, from my place in the award: under a `Cycle`

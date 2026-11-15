@@ -153,6 +153,12 @@ export const NEUTRAL_BORDER_COST = 0.25;
 
 export type PlanGoal = 'balanced' | 'expand' | 'complete-bonus' | 'defend';
 
+/** Move orders under which the award order carries into the turns (GameFeed's `MoveOrder`). */
+const CYCLIC_ORDERS = new Set(['Cycle', 'NoLuckCycle']);
+
+/** A cyclic move order (GameFeed's `MoveOrder`): the order reverses every turn. */
+export const isCyclicMoveOrder = (moveOrder: string | undefined): boolean => moveOrder !== undefined && CYCLIC_ORDERS.has(moveOrder);
+
 export interface PlannerSettings {
   offensiveKillRate?: number;
   defensiveKillRate?: number;
@@ -299,6 +305,11 @@ export interface PlanGameContext {
    * (`openingIncome`); with the fog prior on, that opponent's prior is the larger of it and my income.
    */
   opening?: ReadonlyMap<number, number>;
+  /**
+   * GameFeed's `MoveOrder` (PLAN-TEAMS C3.6: under a cyclic order a joint capture says whose attack must
+   * run first). Read only by the team report.
+   */
+  moveOrder?: string;
   /** #178: the end-of-game settings the profile reads (`Game.endRules`): who the game ends with. */
   endRules?: { aisSurrenderWhenOneHumanRemains?: boolean };
   /**

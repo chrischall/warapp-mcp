@@ -633,6 +633,7 @@ export function neverStandStill(
         const id = completedBy(p);
         return id !== undefined && costOfPick(p.st.t) <= pc.paybackTurns * g.bonusById.get(id)!.value;
       };
+      const teamFocused = (p: Pick): p is Extract<Pick, { kind: 'enemy' }> => p.kind === 'enemy' && pc.teamFocus.has(p.st.player);
       const keyOf = (p: Pick) => [
         p.kind === 'enemy' && p.st.secondFront && !completing(p) ? 1 : 0,
         shortOf(p.st),
@@ -640,9 +641,13 @@ export function neverStandStill(
         costOfPick(p.st.t),
         loss.get(p.st.t)!.sent,
         p.kind === 'enemy' && !p.st.bonus ? 1 : 0,
+        // PLAN-TEAMS C3.4: a player my teammate attacks this turn ranks above an equal capture.
+        teamFocused(p) ? 0 : 1,
         p.kind === 'neutral' ? rank4e.get(p.st.t)! : Infinity,
         p.st.t,
       ];
+      /** The rank keys before the team focus's (PLAN-TEAMS C3.4). */
+      const FOCUS_KEY = 6;
       const reasonFor = (p: Pick) => {
         const r = p.kind === 'neutral' ? reasonOf(p.st) : enemyReason(p.st);
         // In contact the reason names what the capture costs (#112).
@@ -891,6 +896,11 @@ export function neverStandStill(
         if (repays(taken) && !repays(p))
           return [
             `${label(t)} ${after}: taking ${label(taken.st.t)} completes bonus ${bonusName(completedBy(taken)!)} this turn, which repays its cost of ${costOfPick(taken.st.t)} within ${pc.paybackTurns} turns`,
+          ];
+        // PLAN-TEAMS C3.4: equal but for the team focus.
+        if (teamFocused(taken) && !teamFocused(p) && keyOf(p).slice(0, FOCUS_KEY).every((k, i) => k === keyOf(taken)[i]))
+          return [
+            `${label(t)} ${after}: they are otherwise equal, and my teammate attacks player ${taken.st.player} this turn (PLAN-TEAMS C3.4: their entered orders, read unverified)`,
           ];
         const c = costOfPick(t);
         const tc = costOfPick(taken.st.t);

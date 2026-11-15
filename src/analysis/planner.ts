@@ -19,7 +19,7 @@
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
 //   7r. reports, the offence report, 1i (#109), the final plan .. plan/report.ts
 //   T1–T9. truces (B2, `relations`): the rule logic .............. plan/relations.ts
-//   PLAN-TEAMS C3.3, `team.sharedBonuses` ....................... plan/team.ts
+//   PLAN-TEAMS C3.3–C3.6, `team`, the team focus (C3.4) ........ plan/team.ts
 // Rule 1k's commander reserve is read by every phase that spends armies: captures, strike and
 // stand-still keep what holds my commander's territory. `byNum` and `pct` live in plan/util.ts.
 // plan/shared.ts is a leaf (it imports no phase and not planner.ts), and the phases import one
@@ -740,6 +740,14 @@
 //     not (a focus on it is ignored with a warning); its other members are plain expansion. The
 //     plan's `team.sharedBonuses` (plan/team.ts) lists each such bonus I hold members of too, and
 //     who holds the most (`nearer`), from the start-of-turn board. No-team plans are unchanged.
+//     Team focus (PLAN-TEAMS C3.4): with my teammates' entered orders read (V5, unverified), a
+//     capture of a player one of them attacks this turn ranks above one that is otherwise equal —
+//     right after the score in the balanced greedy (breaks, counter-attacks), before the last
+//     tie-breaks in rule 4e's contact ranking — and a rationale line says so. With none read,
+//     nothing changes. The team section also reports, advisory only (plan/team.ts): a teammate's
+//     border my idle armies would make hold (`team.support`, C3.5; a move onto a teammate is V7)
+//     and a target we take only together, on the turn simulator in both orders
+//     (`team.jointCaptures`, C3.6).
 //  4c. Net income (#70). Maps with overlapping bonuses (each sea tile a single-territory
 //     −4 bonus and a member of a +22 group) are scored by every capture's effect on
 //     income: `incomeGain` — the one income rule's (`boardIncome`, #85) total after the
@@ -1295,7 +1303,7 @@ import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
 import { newPlanState } from './plan/state.js';
-import { teamReport } from './plan/team.js';
+import { teamFocusLine, teamReport } from './plan/team.js';
 import { applyBorderCaps, armiesFreed, partnerFronts, reportBreakLosses, reportTruce, trucePass } from './plan/relations.js';
 
 export * from './plan/shared.js';
@@ -1573,6 +1581,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       borders: number;
       /** A break's or counter's territory to capture (#215: retried once a source is unlocked). */
       target?: number;
+      /** PLAN-TEAMS C3.4: the player holding `target`. */
+      owner?: number;
       run: () => void;
     }
     const rank = { unit: 0, hold: 0, complete: 1, advance: 2, break: 3, counter: 3 } as const;
@@ -1749,6 +1759,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         focus: false,
         borders: analyzeBonus(g, b.bonusId)!.borderTerritoryIds.length,
         target: o.t,
+        owner: b.player,
         run: spend(() => {
           // Already broken (by a border attacking its only threat): one capture is enough.
           if (broken(b)) return;
@@ -1787,6 +1798,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         focus: false,
         borders: 0,
         target: t,
+        owner: c.player,
         run: spend(() => {
           if (captured.has(t)) return;
           if (!tryCapture(t, reason)) return;
@@ -1947,18 +1959,23 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       candidates.push(c);
       unitOf.set(c, u);
     }
-    candidates.sort(
-      (a, b) =>
-        Number(b.focus) - Number(a.focus) ||
-        // #201: ahead, every held bonus is held for the worst case before any capture (said below).
-        (holdPasses === 'worst' ? Number(b.kind === 'unit') - Number(a.kind === 'unit') : 0) ||
-        (oneVsOne ? Number(a.kind === 'advance') - Number(b.kind === 'advance') : 0) ||
-        b.score - a.score ||
-        a.cost - b.cost ||
-        a.borders - b.borders ||
-        rank[a.kind] - rank[b.kind] ||
-        a.id - b.id,
-    );
+    // PLAN-TEAMS C3.4: a capture of a player my teammate attacks this turn ranks above an equal one.
+    const teamFocused = (c: Candidate) => Number(c.owner !== undefined && pc.teamFocus.has(c.owner));
+    const ahead = (a: Candidate, b: Candidate) =>
+      Number(b.focus) - Number(a.focus) ||
+      // #201: ahead, every held bonus is held for the worst case before any capture (said below).
+      (holdPasses === 'worst' ? Number(b.kind === 'unit') - Number(a.kind === 'unit') : 0) ||
+      (oneVsOne ? Number(a.kind === 'advance') - Number(b.kind === 'advance') : 0) ||
+      b.score - a.score;
+    const after = (a: Candidate, b: Candidate) =>
+      a.cost - b.cost || a.borders - b.borders || rank[a.kind] - rank[b.kind] || a.id - b.id;
+    candidates.sort((a, b) => ahead(a, b) || teamFocused(b) - teamFocused(a) || after(a, b));
+    if (pc.teamFocus.size)
+      for (const [i, c] of candidates.entries()) {
+        if (!teamFocused(c)) continue;
+        const passed = candidates.slice(i + 1).find((d) => !teamFocused(d) && ahead(c, d) === 0 && after(c, d) > 0);
+        if (passed) rationale.push(teamFocusLine(pc, c, passed));
+      }
     if (holdPasses === 'worst' && candidates.some((c) => c.kind === 'unit'))
       rationale.push(
         `Ahead (#201): every held bonus is held for the worst case (each threatened border against the whole deploy) before any capture, completions included — the leader takes the option that still works when the opponent guesses right.`,
@@ -2616,7 +2633,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // #218: the main front's forecast at my whole income, for the game outlook to share.
   if (ps.front) plan.front = ps.front;
   // PLAN-TEAMS C3.3: the bonuses I share with a teammate (plan/team.ts).
-  const team = teamReport(pc);
+  const team = teamReport(pc, { ps, threats, hd, deploys: plan.deploys });
   if (team) plan.team = team;
   if (truceReport) {
     // T6: what a break would cost, against the plan's final orders (plan/relations.ts).
