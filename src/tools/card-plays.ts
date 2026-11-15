@@ -56,7 +56,7 @@ const FIELD_HELP: Readonly<Record<CardPlayKind, string>> = {
   EmergencyBlockade: '`target`: your territory to turn into a neutral wall before the attacks',
   Bomb: "`target`: a territory next to one of yours, not yours or a teammate's (its armies are halved)",
   Reconnaissance: '`target`: the territory to see',
-  Spy: '`player`: the player whose territories to see',
+  Spy: "`player`: the player whose territories to see (0 or \"neutral\": the neutral, when the game's Spy card allows it)",
   Sanctions: "`player`: the player whose income it cuts",
   Gift: '`target`: your territory to give, and `player`: who receives it',
   Diplomacy: '`players`: the two players who may not attack each other (usually you and one opponent)',
@@ -212,6 +212,18 @@ function heldBonusesWith(ctx: CardPlayContext, territory: number): Array<{ id: n
     .sort((a, b) => a.id - b.id);
 }
 
+/** The neutral as a Spy card names it (target 0; the client bundle's `GameOrderPlayCardSpy`). */
+const NEUTRAL_PLAYER: CardPlayer = { id: 0, inGameId: 0, name: 'neutral' };
+/** Whether a player reference means the neutral: 0, or the word "neutral". */
+const isNeutralRef = (ref: Ref) => ref === 0 || (typeof ref === 'string' && /^\s*(0|neutral)\s*$/i.test(ref));
+/** The game's Spy card may target the neutral (`SpyCard.CanSpyOnNeutral`; absent reads as no). */
+function canSpyOnNeutral(settings: GameSettings | undefined): boolean {
+  const raw = settings?.raw.SpyCard;
+  if (typeof raw !== 'object' || raw === null) return false;
+  const v = (raw as Record<string, unknown>).CanSpyOnNeutral;
+  return v === true || (typeof v === 'string' && v.toLowerCase() === 'true');
+}
+
 /** The Sanctions percentage (`SanctionsCard.Percentage`), when the settings carry one. */
 function sanctionsPercentage(settings: GameSettings | undefined): number | undefined {
   const raw = settings?.raw.SanctionsCard;
@@ -234,7 +246,17 @@ export function resolveCardTargets(kind: CardPlayKind, cardName: string, input: 
   }
   switch (kind) {
     case 'Spy': {
-      // GameValidateOrders: 80 CannotSpyOnTeammateOrSelf, 79 CannotSpyOnThatPlayer (not playing).
+      // GameValidateOrders: target 0 is the neutral, allowed only when the game's CardGameSpy has
+      // CanSpyOnNeutral (else 225); 80 CannotSpyOnTeammateOrSelf, 79 CannotSpyOnThatPlayer (not playing).
+      if (isNeutralRef(input.player!)) {
+        if (!canSpyOnNeutral(ctx.settings)) {
+          throw new McpToolError("This game's Spy card cannot spy on the neutral (war.app refuses it: error 225).", {
+            hint: 'Spy on an opponent instead: you see their territories for the rest of the turn.',
+          });
+        }
+        warnings.push('Spy on the neutral: you see the neutral territories for the rest of the turn.');
+        return { fields: { player: 0 }, player: NEUTRAL_PLAYER, warnings };
+      }
       const p = player(ctx, input.player!, cardName);
       if (isMe(ctx, p) || isTeammate(ctx, p)) {
         throw new McpToolError(`A Spy card cannot target ${isMe(ctx, p) ? 'yourself' : `your teammate ${who(p)}`} (war.app refuses it: error 80).`, {
@@ -267,7 +289,8 @@ export function resolveCardTargets(kind: CardPlayKind, cardName: string, input: 
     }
     case 'Diplomacy': {
       // GameValidateOrders: 20 InvalidPlayer, 214 CannotDoDiplomacyBetweenTeammates (the same player twice
-      // is one team), 381 DiplomacyPlayerInvalid (not playing).
+      // is one team), 381 DiplomacyPlayerInvalid (not playing) — checked for both named players, the first
+      // and then the second, so either one out is refused.
       const refs = input.players!;
       if (refs.length !== 2) {
         throw new McpToolError(`A Diplomacy card names exactly two players, not ${refs.length}.`, { hint: `Diplomacy: ${FIELD_HELP.Diplomacy}.` });
@@ -336,6 +359,11 @@ export function resolveCardTargets(kind: CardPlayKind, cardName: string, input: 
         );
       }
       ctx.seen.gifted.add(t.id);
+      if (!isTeammate(ctx, p)) {
+        warnings.push(
+          `Gift to an opponent: territory ${t.id} goes to player ${p.id}, an opponent (not you or a teammate) — it strengthens them, and its armies fight for them from this turn.`,
+        );
+      }
       warnings.push(
         `Gift: territory ${t.id} and every army on it (this turn's deploys there included) go to player ${p.id} before the attacks run` +
           (ctx.movesFrom.has(t.id) ? '; the moves from it in these orders will not run, since it is no longer yours by then.' : '.'),
@@ -449,8 +477,11 @@ function airlift(input: CardTargetInput, ctx: CardPlayContext, warnings: string[
       hint: "An Airlift lands on your own territory or a teammate's; attack to take a territory.",
     });
   }
-  if (!Number.isInteger(armies) || armies < 1) {
-    throw new McpToolError(`An Airlift sends at least one army, not ${armies}.`, { hint: 'Give `armies` as a whole number of 1 or more.' });
+  // The validator does not check the count: an Airlift of the commander alone sends 0 armies.
+  if (!Number.isInteger(armies) || armies < 0 || (armies === 0 && !input.commander)) {
+    throw new McpToolError(`An Airlift sends at least one army, not ${armies} (0 armies only with \`commander\`: the commander alone).`, {
+      hint: 'Give `armies` as a whole number of 1 or more, or 0 with `commander: true`.',
+    });
   }
   const there = (standingOf(ctx, f.id)?.armies ?? 0) + (ctx.deployedOn.get(f.id) ?? 0);
   const total = (ctx.seen.airliftedFrom.get(f.id) ?? 0) + armies;

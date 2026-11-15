@@ -425,9 +425,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (phase 15), Airlift (43), Gift (47), Diplomacy (75), Sanctions (80), tags and fields from each
   `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). `warapp_submit_turn` takes their targets
   (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
-  never gifted or airlifted to a teammate; no Spy on me or a teammate; no Diplomacy between teammates)
-  plus Sanctions on my own side (an opponent instead when the percentage is negative); what an Airlift
-  sends leaves its source's later moves (armies it lands cannot move that turn). **Bomb** (tag 20, phase 30,
+  never gifted or airlifted to a teammate; no Spy on me or a teammate, nor on the neutral — target 0 — unless
+  the game's `SpyCard.CanSpyOnNeutral`; no Diplomacy between teammates, nor naming a player out — the
+  validator checks both named players for 381) plus Sanctions on my own side (an opponent instead when the
+  percentage is negative); an Airlift of the commander alone sends 0 armies (the validator does not check
+  the count); what an Airlift sends leaves its source's later moves (armies it lands cannot move that
+  turn); a Gift to an opponent gets its own preview line naming the recipient by id as an opponent. **Bomb** (tag 20, phase 30,
   `GameOrderPlayCardBomb`) and **Emergency Blockade** (tag 8, phase 37, `GameOrderPlayCardAbandon`) each write one
   int32 territory, UNVERIFIED live too: a Bomb is refused on my own or a teammate's territory (526) or one next to
   none of mine (527); an Emergency Blockade on a territory not mine (95), twice on one (96), on my commander's

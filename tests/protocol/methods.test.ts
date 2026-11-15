@@ -695,6 +695,10 @@ describe('targeted card play orders (bundle writers, UNVERIFIED live)', () => {
     );
   });
 
+  it('Spy on the neutral writes target 0 (GameOrderPlayCardSpy; CardGameSpy.CanSpyOnNeutral, UNVERIFIED live)', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Spy', cardId: card, playerId: 777, player: 0 }))).toBe('06' + '00000000' + guid + base);
+  });
+
   it('Reconnaissance (16) writes the target territory', () => {
     expect(hex((w) => writeCardPlayOrder(w, { card: 'Reconnaissance', cardId: card, playerId: 777, target: 42 }))).toBe(
       '10' + '2A000000' + guid + base,

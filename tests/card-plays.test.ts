@@ -266,6 +266,59 @@ describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED li
     expect(textOf(no)).toMatch(/percentage is negative .*not go on an opponent/);
   });
 
+  it("spies on the neutral (target 0) when the game's Spy card can, by 0 or by name (G2)", async () => {
+    const neutralSpy = settings({ SpyCard: { ...piece, Duration: 1, CanSpyOnNeutral: true } });
+    for (const player of [0, 'neutral']) {
+      const s = server(HAND);
+      h = await liveHarness({ feed: [game({ settings: neutralSpy }), game({ settings: neutralSpy }), game({ settings: neutralSpy, turns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+      const { preview } = await confirmed({ game_id: GAME, orders: [{ kind: 'card', card: 'Spy', player }, DEPLOY] });
+      expect(Array.from(s.sent[0]!)).toEqual(
+        expectedBytes([{ kind: 'card', card: 'Spy', cardId: SPY, player: 0 }, { kind: 'deploy', territoryId: 159, armies: 5 }], 3),
+      );
+      const spy = (preview as unknown as Preview).preview.willSend.orders.find((o) => (o.card as { name: string }).name === 'Spy')!;
+      expect(spy).toMatchObject({ player: { id: 0, name: expect.stringMatching(/neutral/) } });
+      await h.harness.close();
+      h = undefined;
+    }
+  });
+
+  it('airlifts my commander alone (armies 0 with commander: the validator does not check the count) (G2)', async () => {
+    const board = BOARD.map((t) => (t.id === 159 ? { ...t, units: [{ kind: 'commander' as const, id: CMDR, owner: ANN.inGame }] } : t));
+    const s = server(HAND, board);
+    const commanders = settings({ Commanders: true });
+    h = await liveHarness({
+      feed: [game({ settings: commanders }), game({ settings: commanders }), game({ settings: commanders, turns: '3' })],
+      pages: ME_PAGE,
+      warapp: s.warapp,
+    });
+    await confirmed({ game_id: GAME, orders: [{ kind: 'card', card: 'Airlift', from: 159, to: 161, armies: 0, commander: true }, DEPLOY] });
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes(
+        [
+          { kind: 'deploy', territoryId: 159, armies: 5 },
+          { kind: 'card', card: 'Airlift', cardId: AIR, from: 159, to: 161, armies: 0, commander: { id: CMDR, owner: ANN.inGame } },
+        ],
+        3,
+      ),
+    );
+  });
+
+  it('names an opponent receiving a Gift as an opponent, by id, in its own preview line (G2)', async () => {
+    const s = server(HAND);
+    h = await liveHarness({ feed: [game({ team: true })], pages: ME_PAGE, warapp: s.warapp });
+    const r = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'card', card: 'Gift', target: 161, player: 'Bob' }, DEPLOY] });
+    expect(r.isError).toBeFalsy();
+    const warnings = (payload(r) as unknown as Preview).preview.warnings ?? [];
+    expect(warnings).toContainEqual(expect.stringMatching(/^Gift to an opponent: territory 161 goes to player 7176543229, an opponent \(not you or a teammate\)/));
+    expect(warnings.join('\n')).not.toMatch(/Bob/);
+    // A Gift to a teammate has no such line.
+    await h.harness.close();
+    const s2 = server(HAND);
+    h = await liveHarness({ feed: [game({ team: true })], pages: ME_PAGE, warapp: s2.warapp });
+    const mate = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'card', card: 'Gift', target: 161, player: 'Cat' }, DEPLOY] });
+    expect(((payload(mate) as unknown as Preview).preview.warnings ?? []).join('\n')).not.toMatch(/Gift to an opponent/);
+  });
+
   const commanderBoard = BOARD.map((t) => (t.id === 159 ? { ...t, units: [{ kind: 'commander' as const, id: CMDR, owner: ANN.inGame }] } : t));
   const refusals: Array<{
     name: string;
@@ -350,6 +403,23 @@ describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED li
       orders: [{ kind: 'card', card: 'Surveillance', bonus: 118 }],
       settings: settings({ OverriddenBonuses: [{ bonusID: 118, value: 0 }] }),
       message: /worth 0 .*error 224/,
+    },
+    {
+      name: 'a Spy on the neutral when the game\'s Spy card cannot (G2)',
+      orders: [{ kind: 'card', card: 'Spy', player: 0 }],
+      message: /cannot spy on the neutral.*error 225/,
+    },
+    {
+      name: 'an Airlift of no armies without the commander (G2)',
+      orders: [{ kind: 'card', card: 'Airlift', from: 159, to: 161, armies: 0 }],
+      message: /sends at least one army, not 0.*|0 armies only with `commander`/,
+    },
+    {
+      name: 'a Diplomacy naming a second player no longer playing: the validator checks both (G2)',
+      orders: [{ kind: 'card', card: 'Diplomacy', players: ['Ann', 'Bob'] }],
+      hand: DIPLOMACY_HAND,
+      bob: { state: 'SurrenderAccepted' },
+      message: /no longer playing.*error 381/,
     },
     { name: 'a Spy on a player with no in-game id', orders: [{ kind: 'card', card: 'Spy', player: 'Bob' }], bob: { id: '1001' }, message: /no in-game id/ },
   ];

@@ -227,7 +227,10 @@ const turnOrderArg = z.discriminatedUnion('kind', [
       ),
     player: playerRef
       .optional()
-      .describe('Spy: the opponent to see. Sanctions: the player whose income it cuts. Gift: who receives `target`. Id or name.'),
+      .describe(
+        "Spy: the opponent to see (0 or \"neutral\": the neutral, when the game's Spy card allows it). Sanctions: the player whose " +
+          'income it cuts. Gift: who receives `target`. Id or name.',
+      ),
     players: z
       .array(playerRef)
       .length(2)
@@ -236,7 +239,12 @@ const turnOrderArg = z.discriminatedUnion('kind', [
     bonus: territoryRef.optional().describe('Surveillance: the bonus to see (id or name).'),
     from: territoryRef.optional().describe('Airlift: your territory the armies leave (id or name).'),
     to: territoryRef.optional().describe("Airlift: your or a teammate's territory they land on (id or name), anywhere on the map."),
-    armies: armiesArg.optional().describe('Airlift: armies to send (at most what stands on `from` after the deploys).'),
+    armies: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Airlift: armies to send (at most what stands on `from` after the deploys; 0 only with `commander`: the commander alone).'),
     commander: z
       .boolean()
       .optional()
