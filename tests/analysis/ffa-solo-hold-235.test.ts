@@ -302,7 +302,8 @@ describe('#235 review 2: a held bonus whose other member cannot be held', () => 
     expect(reached).toBeGreaterThan(0);
     expect(skipped).toBeLessThan(100);
     console.log(`#235 review 2 sweep: reached ${reached}, skipped ${skipped} of 1,008`);
-  });
+    // 2,016 plans: about half a second alone, past the 5 s default under coverage on a loaded machine.
+  }, 60_000);
 });
 
 describe('#235 review 2: a cut after captures counts its per-territory income on the holdings it is cut from', () => {
