@@ -267,7 +267,9 @@ describe('#235 review 2: a held bonus whose other member cannot be held', () => 
     expect(plain.profile.ranking?.leader).toBe(ME);
     expect(plain.conceded).not.toContain(1);
     expect(held.conceded).not.toContain(1);
-    expect(held.conceded).toContain(6);
+    // Triage concedes T6; #257: the idle 90 on T4 beside it then make it hold after all.
+    expect(held.conceded).not.toContain(6);
+    expect(held.rationale.join('\n')).toMatch(/Hold T6 \(#6\) after all \(not conceded\): transfer \d+ idle armies from T4 \(#4\)/);
     expect(held.rationale.join('\n')).toMatch(
       /holding T1 \(#1\) against players 20 and 30 attacking together needs \d+ .*sized for the strongest single opponent \(~13\).*: it holds on what it has/,
     );
@@ -300,7 +302,8 @@ describe('#235 review 2: a held bonus whose other member cannot be held', () => 
     expect(reached).toBeGreaterThan(0);
     expect(skipped).toBeLessThan(100);
     console.log(`#235 review 2 sweep: reached ${reached}, skipped ${skipped} of 1,008`);
-  });
+    // 2,016 plans: about half a second alone, past the 5 s default under coverage on a loaded machine.
+  }, 60_000);
 });
 
 describe('#235 review 2: a cut after captures counts its per-territory income on the holdings it is cut from', () => {

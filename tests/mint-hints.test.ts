@@ -27,6 +27,7 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_track_opponents: 'lookup',
   warapp_locate_opponents: 'lookup',
   warapp_get_chat: 'lookup',
+  warapp_chat_inbox: 'whats-new',
   warapp_get_team: 'lookup',
   warapp_team_brief: 'lookup',
   warapp_get_relations: 'lookup',

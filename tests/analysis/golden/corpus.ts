@@ -266,7 +266,7 @@ function makeInput(r: Rng, idx: number): PlanInput {
   if (r.chance(0.4)) settings.roundingMode = r.pick(['StraightRound', 'WeightedRandom', 'Unknown']);
   if (r.chance(0.2)) settings.oneArmyStandsGuard = r.chance(0.3);
   if (r.chance(0.25)) settings.multiAttack = r.chance(0.7);
-  if (r.chance(0.15)) settings.allowTransferOnly = r.chance(0.5);
+  if (r.chance(0.15)) settings.idleTransfers = r.chance(0.5);
   if (r.chance(0.15)) settings.bonusArmyPer = r.pick([0, 2, 3, 5]);
   if (r.chance(0.3)) settings.baseIncome = r.pick([0, 3, 5, 5, 8]);
   if (r.chance(0.15)) settings.localDeployments = true;
@@ -348,6 +348,12 @@ export function suiteInputs(): PlanInput[] {
   const graphs = new Map<string, unknown>();
   return raw.inputs.map((j) => {
     const input = decode(j) as Record<string, unknown>;
+    // #257: inputs captured before the rename carry the planner's switch under its old name.
+    const settings = input.settings as Record<string, unknown> | undefined;
+    if (settings && 'allowTransferOnly' in settings) {
+      settings.idleTransfers = settings.allowTransferOnly;
+      delete settings.allowTransferOnly;
+    }
     const key = input.graph as string;
     if (!graphs.has(key)) graphs.set(key, decode(raw.graphs[key]!));
     input.graph = graphs.get(key);

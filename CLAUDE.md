@@ -173,6 +173,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   new. GameFeed chat in a shape no reader knows goes out as `raw` with every string through `untrustedBody`. `warapp_plan_turn` reports `chat.unread` from the GameFeed chat of its own
   game read (no extra request), so every count is under `unknown` (its `note` says so). Third-party names in
   results (sender, recipient, game) go through `untrustedText`.
+  `warapp_chat_inbox` (#256, read-only, hosted too; a tool of its own, since it takes no game and pages a list)
+  reads every game `GetMyGames` lists but a finished one (`chatGameIds`: lobbies, picking, playing), in
+  ascending id order, one at a time and at most `MAX_INBOX_GAMES` (10) per call (`next` = the last id read,
+  passed back as `cursor`), each exactly as `warapp_get_chat` reads it; a game with new messages shows only
+  those (`limit` newest, `markedUnshown`), the others are `quiet`, and a failed read is in `failed`, never
+  thrown. Only `mark_seen: true` writes the cursor (every channel, `markChatSeen`, shared with `warapp_get_chat`).
   `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
   one) and refuses `to` when `PrivateMessaging` is false; it reads the reply's message list back
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
@@ -588,6 +594,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   jump turn are named (`fromMe`, with the low–high reading when the capture is priced at the guard).
   No line when a later observed turn also reads more than the factor × that most: the income then
   rests on more than one turn. A carried figure cut below the jump since says so in the line.
+  The line leads with its verdict in about a dozen words (#254: confirmed / kept / not confirmed, kept
+  as a lower bound), then one short sentence of numbers; every figure is in `income.jump`.
   The figure never changes for it.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
@@ -766,7 +774,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     47 armies from done, and fell to the 33 that could reach it whoever moved first.
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin (with several, each is brought to its margin first, and a conceded border the leftover
-    can make hold is held after all before any margin, #121), else the top expansion's stack — never to a conceded border (the old "most enemies
+    can make hold is held after all before any margin, #121; #257: so is one an idle interior stack
+    beside it makes hold by transferring in, rule 6's first step, the border the plan attacks from
+    first), else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border). #218: once every short border has its margin, the
     rest goes to the source of the step the leftover would save toward (#125) when that source is a
     border of equal defensive value (same player, threat, enemy territories, protected value and

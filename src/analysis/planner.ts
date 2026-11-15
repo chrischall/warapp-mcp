@@ -1011,7 +1011,16 @@
 //  6. Idle armies on interior territories transfer one step toward the front,
 //     only into territories held at the start of the turn and never into, or
 //     measured through, a conceded border
-//     (only when transfer-only orders are allowed). The front is the territories a visible
+//     (unless `idleTransfers` is off: the planner's own switch, not war.app's AllowTransferOnly,
+//     which toggles the per-order Transfer Only mode, #257). First (#257), an idle interior stack
+//     (no enemy beside it, not my commander's) moves into a conceded border beside it when that
+//     transfer plus what the plan leaves there (its deploys included) makes the border hold against
+//     the threat it was conceded on: the border is then held, not conceded ("Hold X after all (not
+//     conceded): transfer N idle armies from Y into it …"), the conceded border the plan attacks
+//     from first, then worth per army needed. It sends what makes it hold (No-Split: the whole
+//     stack), so one stack may hold several; never into a border a withdrawal leaves. Live, 10
+//     idle armies walked to a territory beside empty neutrals while the conceded border the plan
+//     attacked from, just as near, would have held with them. The front is the territories a visible
 //     enemy holds; only a stack no enemy can be reached from heads for the nearest territory
 //     not mine (neutral or fog; never a teammate's, PLAN-TEAMS C3) instead (#121: idle armies walked toward a worthless neutral
 //     while the enemy front was short, and a stack beside one never moved). This turn's
@@ -1058,7 +1067,8 @@
 //     attacks, a conceded border, my commander's, or one beside the step itself) walk one step
 //     toward its source first, when it is no farther than the enemy front ("Move N from … to …:
 //     stages toward …"): live, a stack two steps from the one neutral its bonus lacked stood
-//     still for five turns.
+//     still for five turns. A transfer between the same two territories is planned once: a later
+//     one is added to it.
 //  7r. Reports (#167; every goal, around rule 7). Exchange: every attack on a
 //     player's territory is judged by `classifyExchange` (src/analysis/exchange.ts) — kills, losses
 //     and capture against its defenders now, plus its owner's estimated deploy there, plus its whole

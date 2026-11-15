@@ -415,11 +415,24 @@ describe('warapp_plan_turn', () => {
       oneArmyStandsGuard: true,
       multiAttack: false,
       baseIncome: 5,
-      allowTransferOnly: true,
+      // #257: the planner's own switch (idle interior armies may transfer), under its own name…
+      idleTransfers: true,
+      // …and the game's per-order options as GameFeed states them (the lobby fixture has both off).
+      allowTransferOnly: false,
+      allowAttackOnly: false,
       // G4: the rules the planner obeys are always echoed, off or on.
       localDeployments: false,
       noSplit: false,
     });
+  });
+
+  it('full echoes the game\'s Transfer Only and Attack Only as null when GameFeed does not state them (#257)', async () => {
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>) };
+    delete settings.AllowTransferOnly;
+    delete settings.AllowAttackOnly;
+    h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+    expect(p.settings).toMatchObject({ idleTransfers: true, allowTransferOnly: null, allowAttackOnly: null });
   });
 
   it('with no goal the game profile picks it; compact shows format, phase and standing (S1)', async () => {

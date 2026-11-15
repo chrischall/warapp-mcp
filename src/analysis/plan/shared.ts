@@ -168,8 +168,12 @@ export interface PlannerSettings {
   /** Default `true`. */
   oneArmyStandsGuard?: boolean;
   multiAttack?: boolean;
-  /** Default `true`: idle interior armies may transfer. */
-  allowTransferOnly?: boolean;
+  /**
+   * Default `true`: idle interior armies may transfer (rule 6). The planner's own switch, not war.app's
+   * AllowTransferOnly (#257): that toggles the per-order Transfer Only mode, while every planned move is
+   * sent as AttackTransfer, which transfers between my own territories in any game.
+   */
+  idleTransfers?: boolean;
   /** One army of income per this many territories held (0 or absent: off). */
   bonusArmyPer?: number;
   /** Every player's base income (the game's MinimumArmyBonus; default {@link DEFAULT_BASE_INCOME}). */

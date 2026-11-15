@@ -307,7 +307,7 @@ describe('warapp_track_opponents', () => {
     const bob = p!.opponents.find((o) => o.player.name === 'Bob')!;
     expect(bob.observed.map((o) => o.deploy)).toEqual([5, 5, 40]);
     expect(bob.income).toMatchObject({ estimate: 40, method: 'max-observed', jump: expect.objectContaining({ turn: 5, observed: 40, verdict: 'supported' }) });
-    const line = /Player Bob's tracked income ~40\/turn rests on one turn: turn 5 \+40.*could not have banked/;
+    const line = /Player Bob's \+40 on one turn \(turn 5\): confirmed — armies it could not have banked; do not lower it\./;
     expect(p!.warnings.join('\n')).toMatch(line);
     const plan = payload<{ warnings: string[] }>(await h!.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(plan.warnings.join('\n')).toMatch(line);

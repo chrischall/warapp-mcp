@@ -12,7 +12,8 @@ comes later, after the live-board branch merges). Build on `src/analysis/*` and 
 Input: the map graph + bonuses (existing analysis types), a `BoardState`, `me` (player id),
 `income` (armies to deploy this turn — the caller computes it; also expose a helper using the
 existing income code), settings `{ offensiveKillRate, defensiveKillRate, luckModifier,
-roundingMode, oneArmyStandsGuard, multiAttack, allowTransferOnly }`, and options
+roundingMode, oneArmyStandsGuard, multiAttack, idleTransfers }` (#257: the planner's own switch
+for idle transfers, once named `allowTransferOnly`), and options
 `{ goal?: 'expand' | 'complete-bonus' | 'defend', focusBonusIds?, reserve? }`.
 
 Output:

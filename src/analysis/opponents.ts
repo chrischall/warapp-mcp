@@ -65,7 +65,8 @@
 // against its armies in view before plus what it was seen to earn since. More, even leaving out the
 // armies that only came into view (the jump turn's own #123 ambiguous armies among them: read as
 // deploy, they may be a stack out of the fog), is armies it could not have banked; otherwise the warning hedges
-// (old armies revealed, or armies it banked out of view). Given its starting armies, the whole game
+// (old armies revealed, or armies it banked out of view). #254: the warning leads with that verdict
+// in about a dozen words, then one sentence of numbers; the full figures are `incomeJump`. Given its starting armies, the whole game
 // is weighed at the most it was seen to earn on any observed turn before the jump. The armies on
 // territory it took from me on the jump turn are named. Its losses seen leave out the likely combat
 // deaths ({@link combatLosses}: a guess that can read a transfer as a fight). No warning when a later
@@ -1149,46 +1150,47 @@ export function incomeJump(
   };
 }
 
-/** #250: the sentence for an {@link IncomeJump} (the subject — "Player X's" — prefixed by the caller). */
+/**
+ * #250: the line for an {@link IncomeJump} (the subject — "Player X's" — prefixed by the caller). #254:
+ * the verdict comes first in about a dozen words, then one sentence of numbers; every figure is in
+ * the track tool's `income.jump`.
+ */
 export function incomeJumpText(j: IncomeJump, income: number, earlier: readonly ObservedTurn[]): string {
   const seen = j.armiesNow + j.lossesSeen;
   const banked = j.armiesBefore + j.earnedSince;
-  const readings = earlier.map((p) => `turn ${p.from} +${p.earned}`).join(', ');
+  const readings = earlier.map((p) => `+${p.earned}`).join(', ');
   const onJump = j.earnedSince - earlier.reduce((s, p) => s + p.earned, 0);
+  const proven = j.verdict === 'supported' && seen - j.cameIntoView > banked;
+  const verdict = proven
+    ? 'confirmed — armies it could not have banked; do not lower it'
+    : j.verdict === 'supported'
+      ? 'kept — more armies than its earlier rate allows; not proof of this turn'
+      : `not confirmed, kept as a lower bound; could be ${j.verdict === 'reveal' ? 'old armies revealed' : 'armies it had banked'}`;
+  const lead = `+${j.observed} on one turn (turn ${j.turn}): ${verdict}.`;
+  // A carried figure (#119) may have been cut since: a bonus it held visibly broken, or more than it could earn.
+  const cut = income < j.observed ? ` Tracked ~${income}/turn, less ${j.observed - income} since (a bonus broken, or more than it could earn).` : '';
+  // #123: armies the jump turn read as deploy that may be a stack out of the fog.
+  const amb = j.ambiguous ? ` Turn ${j.turn} reads +${j.low} to +${j.high}: ${j.ambiguous} may be a stack out of the fog.` : '';
   const m = j.fromMe;
   const fromMe = m
-    ? `, ${m.armies} of them on territor${m.territories.length === 1 ? 'y' : 'ies'} ${m.territories.join(', ')}, taken from me on turn ${j.turn}${
-        m.guardPriced ? ` — priced at the guard I may have left (my orders that turn are unknown), so turn ${j.turn} reads +${m.low} to +${m.high}` : ''
+    ? `, ${m.armies} on territor${m.territories.length === 1 ? 'y' : 'ies'} ${m.territories.join(', ')} taken from me${
+        m.guardPriced ? ` (priced at the guard I may have left: turn ${j.turn} reads +${m.low} to +${m.high})` : ''
       }`
     : '';
-  // A carried figure (#119) may have been cut since: a bonus it held visibly broken, or more than it could earn.
-  const cut =
-    income < j.observed
-      ? ` (carried since, less ${j.observed - income}: a bonus it visibly held was broken, or it could no longer earn that much)`
-      : '';
-  const head = `tracked income ~${income}/turn rests on one turn: turn ${j.turn} +${j.observed}${cut}, more than ${INCOME_JUMP_FACTOR}× the most it was seen to earn on the turns before it (${j.before}). Its armies in view on turn ${j.turn + 1} (${j.armiesNow}${fromMe}) plus what it was seen to lose since turn ${j.since} (${j.lossesSeen}) come to ${seen}, against what it had in view on turn ${j.since} (${j.armiesBefore}) plus what it was seen to earn since (${j.earnedSince}: ${readings}, and its visible income ${onJump} on turn ${j.turn}) = ${banked}`;
-  const believed =
-    'so the high turn is believed: most likely the first true reading after turns it deployed out of sight. Do not lower it without new evidence.';
-  // #123: armies the jump turn read as deploy that may be a stack out of the fog.
-  const amb = j.ambiguous
-    ? ` Turn ${j.turn} reads +${j.low} to +${j.high}: ${j.ambiguous} of its armies (growth beside the fog, or a capture's surplus) were read as deploy and may be a stack walking out of the fog, so they count as come into view.`
-    : '';
-  if (j.verdict === 'supported' && seen - j.cameIntoView > banked)
-    return `${head}: more by ${seen - banked}${
-      j.cameIntoView ? `, ${seen - j.cameIntoView - banked} even leaving out the ${j.cameIntoView} armies that only came into view` : ''
-    } — armies it could not have banked, ${believed}${amb}`;
-  if (j.verdict === 'supported' && j.stock) {
-    const k = j.stock;
-    const had = j.armiesNow + k.lossesAll;
-    return `${head}${seen > banked ? `, more only counting the ${j.cameIntoView} armies that came into view since` : ''}. But at the most it was seen to earn on any turn before it (${k.rate} a turn) from turn 1 through turn ${j.turn}, it would have received at most ${k.received} (starting armies ${k.start} + ${k.rate} × ${k.turns} turns), and it shows ${j.armiesNow} in view after it and has been seen to lose ${k.lossesAll}: ${had}, more by ${had - k.received} — armies it could not have had at that rate wherever they stood (Reinforcement cards aside), so this turn or its income before it was higher than read (each earlier reading is a lower bound too, so this does not prove the high turn itself). The figure is kept: it may be the first true reading after turns it deployed out of sight.${amb}`;
-  }
-  // Neither test proved it: what the whole game allows at the earlier rate, when known.
-  const whole = j.stock
-    ? ` At the most it was seen to earn on any turn before it (${j.stock.rate} a turn) it could have received up to ${j.stock.received} by turn ${j.turn} (starting armies ${j.stock.start} + ${j.stock.rate} × ${j.stock.turns} turns), enough for the ${j.armiesNow + j.stock.lossesAll} it shows in view and has been seen to lose.`
-    : '';
-  if (j.verdict === 'reveal')
-    return `${head}: more only counting the ${j.cameIntoView} armies that came into view since (territories out of view on a board from turn ${j.since} to turn ${j.turn}, or read as arriving out of the fog): those could be old armies revealed, so the high turn is not confirmed.${amb}${whole} The figure is kept (each observed deploy is a lower bound).`;
-  return `${head}: no more, so the high turn could be armies it had banked out of view coming into view, not income.${amb}${whole} The figure is kept (each observed deploy is a lower bound), but it is not confirmed.`;
+  const sum = ` Over ${INCOME_JUMP_FACTOR}× the ${j.before} before it; ${j.armiesNow} in view on turn ${j.turn + 1}${fromMe} + ${j.lossesSeen} lost = ${seen}, vs ${j.armiesBefore} on turn ${j.since} + ${j.earnedSince} earned (${readings ? `${readings}, then ` : ''}+${onJump} visible on turn ${j.turn}) = ${banked}`;
+  const k = j.stock;
+  const had = k ? j.armiesNow + k.lossesAll : 0;
+  const rate = k ? `at ${k.rate} a turn` : '';
+  const from = k ? `(starting armies ${k.start} + ${k.rate} × ${k.turns} turns)` : '';
+  let tail: string;
+  if (proven) tail = `: more by ${seen - banked}${j.cameIntoView ? `, ${seen - j.cameIntoView - banked} without the ${j.cameIntoView} that came into view` : ''}.`;
+  else if (j.verdict === 'supported' && k)
+    tail = `; ${rate} it could have received at most ${k.received} ${from}, yet shows ${had} with its losses, more by ${had - k.received}: armies it could not have had at that rate (cards aside).`;
+  else
+    tail = `${j.verdict === 'reveal' ? `: more only counting the ${j.cameIntoView} armies that came into view` : ': no more'}.${
+      k ? ` ${rate[0]!.toUpperCase()}${rate.slice(1)} it could have received up to ${k.received} by turn ${j.turn} ${from}, enough for the ${had}.` : ''
+    }`;
+  return `${lead}${cut}${amb}${sum}${tail}`;
 }
 
 /**

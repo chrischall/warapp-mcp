@@ -26,6 +26,7 @@ const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
   4: 'Finished',
   5: 'DistributingTerritories',
 };
+const GAME_WAITING = 2;
 const GAME_PLAYING = 3;
 const GAME_DISTRIBUTING = 5;
 
@@ -175,6 +176,18 @@ export function activeGameIds(games: readonly RawMyGame[], myInGameId: number): 
     .filter((g) => g.stateCode === GAME_PLAYING || g.stateCode === GAME_DISTRIBUTING)
     .filter((g) => g.players.some((p) => p.id === myInGameId && p.stateCode === PLAYER_PLAYING))
     .map((g) => g.id);
+}
+
+/**
+ * Games whose chat is live (#256): lobbies, games being picked and games being played — every
+ * game in the list but a finished one, whatever my seat's state. Ascending id order, so a cursor
+ * (the last id read) resumes the list even when games join or leave it between calls.
+ */
+export function chatGameIds(games: readonly RawMyGame[]): number[] {
+  return games
+    .filter((g) => g.stateCode === GAME_WAITING || g.stateCode === GAME_PLAYING || g.stateCode === GAME_DISTRIBUTING)
+    .map((g) => g.id)
+    .sort((a, b) => a - b);
 }
 
 /** The longest line `view: 'brief'` answers (the context-groups contract). */
