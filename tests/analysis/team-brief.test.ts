@@ -120,7 +120,20 @@ describe('briefConflicts', () => {
       mateMoves([{ from: 4, to: 3, armies: 5, mode: 'attack-transfer' }]),
     ]);
     const out = briefConflicts({ g, board: b, me: ME, allies, moves: [attack(1, 2, 4)], bonusesCompleted: [101] });
-    expect(out).toEqual([{ kind: 'bonus', bonus: 101, territory: 3, teammate: MATE }]);
+    expect(out).toEqual([{ kind: 'bonus', bonus: 101, territory: 3, teammate: MATE, completes: true }]);
+  });
+
+  it('their capture in a bonus my plan only advances (a capture into it, not completing it): still one holder (G3)', () => {
+    const b = board([t(1, ME, 8), t(2, 'neutral', 1), t(3, 'neutral', 1), t(4, MATE, 9), t(5, 'neutral', 1)], [
+      mateMoves([
+        { from: 4, to: 3, armies: 5, mode: 'attack-transfer' },
+        // Bonus 102 (4–5): no capture of mine goes into it.
+        { from: 4, to: 5, armies: 2, mode: 'attack-transfer' },
+      ]),
+    ]);
+    const out = briefConflicts({ g, board: b, me: ME, allies, moves: [attack(1, 2, 4)], bonusesCompleted: [] });
+    // A direct member of bonus 101 only: the superbonus 104 above it is no advance of mine.
+    expect(out).toEqual([{ kind: 'bonus', bonus: 101, territory: 3, teammate: MATE, completes: false }]);
   });
 
   it('their order onto a territory of mine: an attack with attack_teammates, else a move whose effect is unverified', () => {
