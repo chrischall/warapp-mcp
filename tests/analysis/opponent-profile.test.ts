@@ -91,6 +91,27 @@ describe('observeTurn: reinforce', () => {
     expect(of(observe(before, board([mine(3, 1), its(4, 2)]), attack(3, 4, 12))).reinforce.n).toBe(0);
   });
 
+  it('an X weaker than the board showed is an opportunity without an event, captured or not', () => {
+    // The board shows 10 on 4; it attacked out of 4 first and left 5. My 10 capture it, and more
+    // survive (10 − round(3.5)) than the 3 exact against 10: a reading, not dropped.
+    const ten = board([mine(3, 20), its(4, 10)]);
+    expect(of(observe(ten, board([mine(3, 10), mine(4, 6)]), attack(3, 4, 10))).reinforce).toEqual({ n: 1, e: 0, extra: 0 });
+    // It left 4 instead; my 5 cannot take 4 (7 needed): they kill 3 and lose round(2.8) = 3, so 2 come
+    // back, more than the none an attack against 10 could bring back.
+    expect(of(observe(ten, board([mine(3, 17), its(4, 1)]), attack(3, 4, 5))).reinforce).toEqual({ n: 1, e: 0, extra: 0 });
+    // More back than were sent: not a reading.
+    expect(of(observe(ten, board([mine(3, 21), its(4, 1)]), attack(3, 4, 5))).reinforce.n).toBe(0);
+  });
+
+  it('gives no reading from a source holding a special unit of mine (a commander fights as 7)', () => {
+    const cmd = { kind: 'commander' as const, id: 'c', playerId: ME };
+    const withCommander = board([{ ...mine(3, 10), specialUnits: [cmd] }, its(4, 2)]);
+    expect(of(observe(withCommander, board([mine(3, 6), its(4, 2)]), attack(3, 4, 5))).reinforce.n).toBe(0);
+    // A unit not mine on the source is not this exit.
+    const theirs = board([{ ...mine(3, 10), specialUnits: [{ ...cmd, playerId: OPP }] }, its(4, 2)]);
+    expect(of(observe(theirs, board([mine(3, 6), its(4, 2)]), attack(3, 4, 5))).reinforce.n).toBe(1);
+  });
+
   it('counts a deploy on the source in what my orders leave', () => {
     const p = of(observe(board([mine(3, 3), its(4, 2)]), board([mine(3, 1), mine(4, 4)]), attack(3, 4, 5, [{ territoryId: 3, armies: 3 }])));
     expect(p.reinforce).toEqual({ n: 1, e: 0, extra: 0 });

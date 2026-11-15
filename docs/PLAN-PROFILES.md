@@ -168,6 +168,9 @@ Exact definitions:
   - It is an **event** when X stood stronger than `D` when my attack ran: X not captured although
     `armies ≥ armiesToTake(D)`; or captured with fewer survivors than the exact result against `D`;
     or, for an attack that could not capture, more defenders left than the exact result.
+  - An X weaker than `D` (more survivors on a capture, more of mine back on a failure) is an
+    opportunity without an event, never dropped: dropping it would push the rate up. A source holding
+    a special unit of mine gives no reading (a commander going along fights as 7).
   - `extra` adds the armies above `D` implied by the result (the least that explains it).
   - A deploy and a transfer in cannot be told apart under fog. Both count: either way the target was
     stronger than it looked, which is what sizing needs.

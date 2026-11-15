@@ -71,7 +71,7 @@ export function exactCombat(s: ObserveInput['settings']): boolean {
   return luckFraction(s.luckModifier) === 0 && s.roundingMode !== 'WeightedRandom';
 }
 
-/** The least defenders, from `from` up, an attack of `armies` fails against (exact combat); `null` past a bound. */
+/** The least defenders, from `from` up, an attack of `armies` fails against (exact combat); `from` when none is found within the bound. */
 function leastFailing(armies: number, from: number, off: number, def: number): number {
   for (let d = Math.max(0, from); d < from + 10_000; d++) {
     const need = armiesToTake(d, { offensiveKillRate: off, defensiveKillRate: def });
@@ -91,11 +91,13 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  * - `reinforce`: one opportunity per attack of mine onto X (its, with D armies on T) when combat is
  *   exact, it is my only move onto X, X carries no special unit, no move of mine leaves X, X shows its
  *   armies on T+1 (still its, or mine), and my source S is mine on both boards with no transfer in,
- *   affordable orders out, every other move out of it landed, and exactly the armies my orders leave
- *   (on a capture), or those plus at most the survivors an attack against D could bring back (on a
- *   failure). An event when X stood stronger than D: captured with fewer survivors than the exact
- *   result, or not captured with more defenders left than the exact result against D (which covers an
- *   attack big enough to take D that failed). `extra` is the least defenders above D explaining it.
+ *   affordable orders out, every other move out of it landed, no special unit of mine on it (a
+ *   commander going along fights as 7, which the move's armies do not count), and exactly the armies
+ *   my orders leave (on a capture), or those plus at most the A armies sent (on a failure: an X
+ *   weaker than D kills fewer, so more come back). An event when X stood stronger than D: captured
+ *   with fewer survivors than the exact result, or not captured with more defenders left than the
+ *   exact result against D (which covers an attack big enough to take D that failed); an X weaker
+ *   than D is an opportunity without an event. `extra` is the least defenders above D explaining it.
  * - `stack`: over its territories visible on both boards, growth = max(0, now − then).
  * - `tookFromMe` / `lostToMe`: ownership changes between it and me, owners shown on both boards.
  *
@@ -216,6 +218,8 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         const sWas = seen(was.get(m.from));
         const sNow = seen(now.get(m.from));
         if (sWas?.owner !== me || sNow?.owner !== me) continue;
+        // A commander of mine may go with the attack (fighting as 7): its kills are not `m.armies`'.
+        if (visibleState(was.get(m.from))?.specialUnits?.some((u) => u.playerId === me)) continue;
         if (into(m.from).length) continue;
         const sent = outOf(m.from);
         const available = sWas.armies + (deploys.get(m.from) ?? 0);
@@ -228,14 +232,14 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         let d: number;
         if (captured) {
           if (sNow.armies !== base) continue;
-          const exactSurvivors = A - straightKills(D, def);
-          if (xNow.armies > exactSurvivors) continue; // fewer defenders than shown: not this habit
-          // The least defenders whose kills leave exactly what stands on X.
+          // The least defenders from D up whose kills leave what stands on X: D itself when more
+          // survived than the exact result (X weaker than shown: an opportunity, not an event).
           d = D;
           while (d < D + 10_000 && A - straightKills(d, def) > xNow.armies) d++;
         } else {
+          // At most A come back (fewer defenders than D kill fewer of mine); less than none: S was hit.
           const returned = sNow.armies - base;
-          if (returned < 0 || returned > Math.max(0, A - straightKills(D, def))) continue;
+          if (returned < 0 || returned > A) continue;
           d = Math.max(leastFailing(A, D, off, def), xNow.armies > 0 ? xNow.armies + K : 0);
         }
         reinforce.n++;
