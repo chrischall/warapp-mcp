@@ -2514,6 +2514,19 @@ describe('cards in effect in the turn tools (PLAN-TEAMS D3, unverified decoder)'
     expect(w).not.toMatch(/the modelled income does not apply/);
   });
 
+  it('G2: Sanctions on an opponent show in cardsInEffect and cut its estimate read off the board', async () => {
+    const onBob: SyntheticActiveCard = { card: 'Sanctions', target: BOB.inGame, by: ANN.inGame, guid: G2, expiresAfterTurn: 3 };
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([onBob]) }) });
+    const p = payload<EffectPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(p.cardsInEffect).toMatchObject({
+      sanctionsOnOthers: [{ player: expect.objectContaining({ id: Number(BOB.feed) }), percentage: 0.6, untilTurn: 4, estimateCut: true }],
+      verified: false,
+    });
+    expect(p.cardsInEffect).not.toHaveProperty('sanctionsOnMe');
+    expect(p.income).toBe(5);
+    expect(p.warnings.join('\n')).toMatch(/Player 7176543229 is under Sanctions \(60%, until turn 4, .*\): its estimate is cut from ~5 to ~2/);
+  });
+
   it('with no card in effect the plan is the one made without the decoder', async () => {
     h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([]) }) });
     const a = payload<EffectPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));

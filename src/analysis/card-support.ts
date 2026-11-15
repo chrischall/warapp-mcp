@@ -123,29 +123,45 @@ export interface Strength {
 }
 
 export interface SanctionsAdvice {
-  player: number;
+  /** The player to sanction; absent: every opponent in sight was passed over (`skipped` says why). */
+  player?: number;
   why: string;
+  /** G2: opponents passed over, and why (a truce partner, a Diplomacy card with me in force). */
+  skipped?: string[];
 }
 
 /**
  * Sanctions on the strongest opponent (the leader, or the strongest other player when I lead); with a
- * negative percentage the card raises income, so on me. `undefined` with no opponent in sight.
+ * negative percentage the card raises income, so on me. G2: an opponent in `pass` (a truce partner, a
+ * player a Diplomacy card keeps at peace with me) is passed over, its reason stated. `undefined` with no
+ * opponent in sight.
  */
-export function sanctionsAdvice(input: { me: number; players: readonly Strength[]; percentage?: number }): SanctionsAdvice | undefined {
+export function sanctionsAdvice(input: {
+  me: number;
+  players: readonly Strength[];
+  percentage?: number;
+  pass?: ReadonlyMap<number, string>;
+}): SanctionsAdvice | undefined {
   const { me, players, percentage } = input;
   if (percentage !== undefined && percentage < 0) {
     return { player: me, why: `Sanctions on yourself: this game's percentage is negative (${Math.round(percentage * 100)}%), so the card raises the target's income.` };
   }
   const ranked = [...players].sort((a, b) => b.strength - a.strength || a.playerId - b.playerId);
-  const top = ranked.find((p) => p.playerId !== me);
-  if (!top) return undefined;
+  const opponents = ranked.filter((p) => p.playerId !== me);
+  if (!opponents.length) return undefined;
+  const skipped = opponents.flatMap((p) => (input.pass?.has(p.playerId) ? [`player ${p.playerId}: ${input.pass.get(p.playerId)}`] : []));
+  const passed = skipped.length ? ` Passed over: ${skipped.join('; ')}.` : '';
+  const top = opponents.find((p) => !input.pass?.has(p.playerId));
+  if (!top) return { why: `Hold the Sanctions card: no opponent in sight is one to sanction.${passed}`, skipped };
   const lead = ranked[0]!.playerId === me;
   const pct = percentage !== undefined ? ` by ${Math.round(percentage * 100)}%` : '';
+  const strongest = top === opponents[0];
   return {
     player: top.playerId,
     why:
-      `Sanctions on player ${top.playerId}: ${lead ? 'you lead, and it is the strongest opponent' : 'it leads'} on strength (visible armies + ` +
-      `income: ${top.strength}). A sanction cuts its income${pct} from its next turn, so a cut costs the largest player most; play it the turn before you attack.`,
+      `Sanctions on player ${top.playerId}: ${lead ? `you lead, and it is the strongest opponent${strongest ? '' : ' left'}` : strongest ? 'it leads' : 'it is the strongest opponent left'} on strength (visible armies + ` +
+      `income: ${top.strength}). A sanction cuts its income${pct} from its next turn, so a cut costs the largest player most; play it the turn before you attack.${passed}`,
+    ...(skipped.length ? { skipped } : {}),
   };
 }
 

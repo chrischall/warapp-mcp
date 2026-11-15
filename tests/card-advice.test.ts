@@ -153,6 +153,13 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     expect(adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')], plan })).view.sanctions?.player).toBe(FOE.id);
   });
 
+  it('G2: Sanctions pass over a truce partner, saying why', () => {
+    const truces = [{ player: FOE2.id, state: 'active' as const, coveredMine: [4] }];
+    const { view, warnings } = adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')], truces }));
+    expect(view.sanctions).toMatchObject({ player: FOE.id, skipped: [expect.stringMatching(/^player 8811111299: your truce with it is in force/)] });
+    expect(warnings.join('\n')).toMatch(/Sanctions on player 7176543229: .*Passed over: player 8811111299: your truce/);
+  });
+
   it('advises an Airlift onto a border that falls without it', () => {
     const territories = [me(1, 20), me(2, 1), me(3, 1), me(4, 2), foe(5, 10), neutral(6, 2)];
     const { view } = adviseCards(input({ territories, hand: [card(6, 'Airlift')] }));

@@ -207,6 +207,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
           : undefined;
       const income = incomeFor(graph, board, me.id, game.settings);
+      // PLAN-TEAMS D3: the cards in effect the decoder is sure of (G2: Sanctions on another player cut
+      // its estimate read off the board, as warapp_plan_turn does).
+      const effect = boardCardsInEffect(game, me, turn, info);
       const { estimates } = planEnemyEstimates({
         graph,
         board,
@@ -237,6 +240,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
         },
         turn,
+        ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
       });
       const myTeam = carriesTeam(me.team) ? me.team : undefined;
       const teamOf = new Map(game.players.map((p) => [p.id, p.team]));
@@ -271,7 +275,6 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // `income` is the board's, card armies out — the same figure warapp_plan_turn passes.
       // PLAN-TEAMS D3: a Diplomacy card in effect that the decoder is sure of is a truce here in any format
       // (T9: the game enforces it). Its player stays among the opponents too: the decoder is unverified.
-      const effect = boardCardsInEffect(game, me, turn, info);
       const truces =
         (await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks, diplomacy: effect.diplomacy }))
           ?.relations ?? [];

@@ -1535,6 +1535,8 @@ export async function livePlanSetup(
     ...(turn !== null ? { turn } : {}),
     game: gameContext,
     ...(tracks ? { tracks } : {}),
+    // G2 (D3): Sanctions on another player the decoder is sure of cut its estimate read off the board.
+    ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
     options: {
       // No goal: the game profile picks it and tunes the plan (an explicit goal overrides it).
       adapt: true,
@@ -1898,6 +1900,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(tracks ? { tracks } : {}),
         game: gameContext,
         turn,
+        ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
       });
       const guessed = borderGuess({
         graph,
@@ -2065,10 +2068,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           : {}),
         ...(plan.advice ? { advice: plan.advice.map((a) => ({ ...a, player: playerRef(a.player) })) } : {}),
         // PLAN-TEAMS D3: the cards in effect the plan relied on (an unverified decoder, so `verified: false`).
-        ...(effect.diplomacy.length || sanction.applied
+        ...(effect.diplomacy.length || sanction.applied || effect.sanctionsOnOthers.length
           ? {
               cardsInEffect: {
                 ...(effect.diplomacy.length ? { diplomacy: effect.diplomacy.map((d) => ({ player: playerRef(d.player), untilTurn: d.untilTurn })) } : {}),
+                // G2: Sanctions on other players; `estimateCut` says whether the plan cut its estimate
+                // (only a figure read off the board: an observed deploy may already carry the cut).
+                ...(effect.sanctionsOnOthers.length
+                  ? {
+                      sanctionsOnOthers: effect.sanctionsOnOthers.map((x) => ({
+                        player: playerRef(x.player),
+                        percentage: x.percentage,
+                        untilTurn: x.untilTurn,
+                        estimateCut: estimates.find((e) => e.playerId === x.player)?.sanctioned?.applied === true,
+                      })),
+                    }
+                  : {}),
                 ...(sanction.applied
                   ? { sanctionsOnMe: effect.sanctionsOnMe.map((x) => ({ percentage: x.percentage, untilTurn: x.untilTurn })), incomeBefore: setup.boardIncome, incomeAfter: sanction.income }
                   : {}),

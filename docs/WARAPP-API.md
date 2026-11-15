@@ -134,8 +134,15 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   the two-step hold, the frontier's hold cost and a completion's defensibility — and `warapp_check_plan`'s
   `exposedNextTurn`, which tries every opponent) and
   cuts the user's income by the Sanctions; the result's `cardsInEffect` says so with `verified: false`.
-  Sanctions on an opponent are only reported: its observed deploys may already carry the cut. The submit
-  check stays soft.
+  Sanctions on an opponent (G2) show in `cardsInEffect.sanctionsOnOthers` and cut its deploy estimate
+  by the same rule when the figure is read off the board (`visible`, `exact`; `estimateCut: true`); an
+  observed or tracked figure may already carry the cut, and a prior is a guess, so those stay whole with a
+  warning. `warapp_check_plan` works from the same estimates. The submit check stays soft.
+- **`SanctionsCard.Percentage`'s scale — UNVERIFIED.** The bundle's `CardGameSanctions` reads `Percentage`
+  as a double and cuts income by (1 − Percentage), so a fraction (0.6 = 60%); the code reads GameFeed's
+  `SanctionsCard.Percentage` the same way (the lobby fixture carries 0.6), but no game with an active
+  Sanctions card has been seen, so whether GameFeed could send 60 instead is not known. A value above 1
+  is treated as unusable (`cardsInEffect` relies on no such card).
 - **A team's hand (#163) — UNVERIFIED live.** The wiki says a team shares one hand and one card
   limit. `warapp_plan_turn` and `warapp_submit_turn` read the hand as every card under the user's
   and the teammates' in-game ids (each GUID once); how war.app keys a team's hand has not been

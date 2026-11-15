@@ -19,7 +19,7 @@ type CardOrder = { kind: 'card'; card: string } & Record<string, unknown>;
 
 export interface SupportView {
   diplomacy?: { player: number; borders: number[]; armies: number; overTruce?: string; skipped?: string[]; order: CardOrder };
-  sanctions?: { player: number; order: CardOrder };
+  sanctions?: { player: number; skipped?: string[]; order: CardOrder };
   airlift?: { from: number; to: number; armies: number; teammate?: number; order: CardOrder };
   gift?: { player: number; bonus: number; territories: number[]; orders: CardOrder[] };
 }
@@ -98,11 +98,17 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
 
   const san = first(CARD_SANCTIONS);
   if (san) {
-    const s = sanctionsAdvice({ me: me.id, players: strengths(input), ...(percentage(input.game) !== undefined ? { percentage: percentage(input.game)! } : {}) });
-    if (s) {
-      view.sanctions = { player: s.player, order: { kind: 'card', card: san.id, player: s.player } };
+    // G2: a truce partner and a player a Diplomacy card keeps at peace with me are passed over, the reason stated.
+    const pass = new Map<number, string>();
+    for (const t of input.truces)
+      pass.set(t.player, `your truce with it is ${t.state === 'notice' ? 'in notice' : 'in force'} — a sanction on a partner invites a break`);
+    for (const p of input.atPeace) pass.set(p, 'a Diplomacy card between you is in force — it cannot attack you, so sanction a player who can');
+    const pct = percentage(input.game);
+    const s = sanctionsAdvice({ me: me.id, players: strengths(input), ...(pct !== undefined ? { percentage: pct } : {}), ...(pass.size ? { pass } : {}) });
+    if (s?.player !== undefined) {
+      view.sanctions = { player: s.player, ...(s.skipped?.length ? { skipped: s.skipped } : {}), order: { kind: 'card', card: san.id, player: s.player } };
       warnings.push(`${s.why} ${PLAY_IT}`);
-    }
+    } else if (s) warnings.push(s.why);
   }
 
   const air = first(CARD_AIRLIFT);

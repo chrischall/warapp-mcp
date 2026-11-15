@@ -460,7 +460,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   completion's defensibility (R3) — `nextTurnAt` in `plan/threats.ts` (G2). `warapp_check_plan` keeps the
   player among the opponents, so `exposedNextTurn` counts it anyway. Sanctions on me cut `warapp_plan_turn`'s income by the bundle's
   rule (per card, round((1 − Percentage) × income), .5 up, cap 10000; not under Local Deployment, which
-  warns). Sanctions on others only show (an observed deploy may already carry them). Anything not sure is
+  warns). Sanctions on others (G2) show in `cardsInEffect.sanctionsOnOthers` and cut that opponent's
+  estimate when it is read off the board (`visible`/`exact`; `applySanctions` in `plan/estimates.ts`); an
+  observed, tracked or prior figure stays whole with a warning (it may already carry the cut). The
+  `SanctionsCard.Percentage` scale (a fraction) is UNVERIFIED for GameFeed. The Sanctions advice passes
+  over a truce partner and a player a Diplomacy card keeps at peace with me, saying why. Anything not sure is
   a warning and changes nothing; the plan reports `cardsInEffect` (`verified: false`), and
   `warapp_check_plan` counts a card as a truce (`safeIfTruceHolds`; `safe` still tries its player).
   With no active card every plan is unchanged (golden).

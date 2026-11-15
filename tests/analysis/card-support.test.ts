@@ -101,6 +101,22 @@ describe('sanctionsAdvice (D2)', () => {
     expect(s.why).toMatch(/you lead, and it is the strongest opponent/);
   });
 
+  it('G2: passes over a truce partner and a player at peace with me by a Diplomacy card, saying why', () => {
+    const players = [{ playerId: ME, strength: 30 }, { playerId: A, strength: 50 }, { playerId: B, strength: 40 }, { playerId: MATE, strength: 35 }];
+    const pass = new Map([
+      [A, 'your truce with player 20 is in force'],
+      [B, 'a Diplomacy card between you is in force'],
+    ]);
+    const s = sanctionsAdvice({ me: ME, players, pass })!;
+    expect(s.player).toBe(MATE);
+    expect(s.skipped).toEqual(['player 20: your truce with player 20 is in force', 'player 30: a Diplomacy card between you is in force']);
+    expect(s.why).toMatch(/Passed over: player 20: your truce .*; player 30: a Diplomacy card/);
+    // Everyone passed over: hold the card, and say why.
+    const none = sanctionsAdvice({ me: ME, players: players.slice(0, 3), pass })!;
+    expect(none.player).toBeUndefined();
+    expect(none.why).toMatch(/^Hold the Sanctions card: .*Passed over: player 20/);
+  });
+
   it('a negative percentage raises income, so it goes on me; nothing with no opponent', () => {
     expect(sanctionsAdvice({ me: ME, players: [{ playerId: A, strength: 9 }], percentage: -0.5 })?.player).toBe(ME);
     expect(sanctionsAdvice({ me: ME, players: [{ playerId: ME, strength: 9 }] })).toBeUndefined();
