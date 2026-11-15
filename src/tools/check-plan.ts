@@ -44,6 +44,11 @@ const COMPACT_OTHERS = 2;
 /** The most territories or bonuses any one list names; the rest are a count. */
 const LIST_MAX = 10;
 const ORDER_PRIORITY = cardTypeByName('Order Priority');
+/** Card plays that change the board this test does not simulate, each with what the test does instead. */
+const UNSIMULATED_CARDS = new Map<number | undefined, (on: string) => string>([
+  [cardTypeByName('Bomb'), (on) => `The Bomb${on} is not simulated: the test fights at its armies before the Bomb halves them.`],
+  [cardTypeByName('Emergency Blockade'), (on) => `The Emergency Blockade${on} is not simulated: the test keeps it yours, armies unchanged.`],
+]);
 
 /** What the stress test does not try, said with every answer so "safe" is never read as more. */
 export const CHECK_PLAN_NOT_COVERED = [
@@ -103,7 +108,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         orders: turnOrdersArg.describe(
           'The orders to test, in the order you would submit them: deploys and moves by territory id or name (the ' +
             '`orders` array warapp_plan_turn returns). An Order Priority card play makes your first order run before ' +
-            "everyone's; other card plays and discards are ignored by the test (in a team game, one your teammate has " +
+            "everyone's; other card plays and discards are ignored by the test (a Bomb or Emergency Blockade is named " +
+            'in `warnings` as not simulated; in a team game, a card your teammate has ' +
             "already entered is warned of). A move's options (mode, percent, commander, " +
             'attack_teammates) are carried out as war.app would.',
         ),
@@ -173,6 +179,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       };
       let orderPriority = false;
       const ignored: string[] = [];
+      const unsimulatedCards: string[] = [];
       const friends = friendsOf(game.players, me);
       const mine = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me.id ? [t.territoryId] : [])));
       for (const o of orders) {
@@ -213,6 +220,16 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           // By GUID it is looked up in my hand; by type name the name is enough (this is a what-if).
           const guid = normalizeGuid(o.card.trim());
           const type = guid !== undefined ? hand.find((c) => c.id === guid)?.type : cardTypeByName(o.card);
+          const unsimulated = type !== undefined ? UNSIMULATED_CARDS.get(type) : undefined;
+          if (unsimulated) {
+            let on = '';
+            try {
+              if (o.target !== undefined) on = ` on ${resolveTerritory(map, o.target).id}`;
+            } catch {
+              // A target not on the map: warapp_submit_turn refuses it; the warning names no territory.
+            }
+            unsimulatedCards.push(unsimulated(on));
+          }
           if (type !== undefined && type === ORDER_PRIORITY) orderPriority = true;
           else if (type === undefined || cardTypeName(type) !== 'Reinforcement') ignored.push('a card play other than Order Priority or Reinforcement');
         }
@@ -528,6 +545,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...sanction.warnings,
         ...effect.unsure,
         ...[claimedCardWarning(claimedCardUses(uses, claimed))].filter((w): w is string => w !== undefined),
+        ...unsimulatedCards,
         ...(deployed !== sanction.income
           ? [
               `The orders deploy ${deployed} and your income is ${sanction.income}: the test used the orders as given (a Reinforcement card adds to the income; otherwise war.app refuses a wrong total).`,
