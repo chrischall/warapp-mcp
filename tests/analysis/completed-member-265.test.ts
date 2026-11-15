@@ -62,6 +62,8 @@ describe('#265: a weak member of a bonus completed this turn', () => {
     // 14 + 15 against the 19-stack: T1's 13 wear it down, T2 takes the last 11 with 18 (4 deployed
     // there, all T2 can spare). T1 is left on its guard beside T4, whose owner can deploy 5: it
     // needs 4 to hold, and the leftover is 3. Before #265 the 3 went to T2's comfort margin.
+    // T1 is a source of the combined capture the rebalance leaves as built: with No-Split off its
+    // order's size is fixed, so the leftover's deploy there stays.
     const p = plan(14, 15, 7);
     expect(attacks(p)).toEqual([
       [1, 3, 13],
@@ -192,6 +194,40 @@ describe('#265 review: the rebalance of a combined capture', () => {
       [2, 3, 18],
     ]);
     expect(p.rationale.join('\n')).not.toMatch(/Rebalance the combined capture/);
+  });
+
+  it('under No-Split reads no keep, so no two-step hold that never shaped an order is stated', () => {
+    // A No-Split combined capture sends whole stacks: what a source would keep back (#121, #172,
+    // #179) never sizes it, and the rebalance does not run. Reading the keeps anyway marked T2's
+    // two-step hold (T10 via T9) as binding, and the plan stated a hold that kept nothing back.
+    // Here T1 does not face T4, and T3 is a neutral, so neither source must hold.
+    const EDGES3: [number, number][] = [[1, 3], [2, 3], [1, 2], [5, 4], [2, 5], [5, 6], [5, 7], [4, 8], [7, 8], [2, 9], [9, 10]];
+    const MAP3: GameMap = {
+      ...MAP2,
+      id: 3,
+      territories: IDS2.map((id) => ({
+        id,
+        name: `T${id}`,
+        connectedTo: EDGES3.filter(([a, b]) => a === id || b === id).map(([a, b]) => (a === id ? b : a)),
+      })),
+    };
+    const p = planTurn({
+      graph: buildGraph(MAP3),
+      board: board([
+        mine(1, 3), mine(2, 11), neutral(3, 10), theirs(4, 1), mine(5, 4), mine(6, 1), theirs(7, 1), theirs(8, 1),
+        neutral(9, 1), theirs(10, 1),
+      ]),
+      me: ME,
+      income: 5,
+      settings: { ...STD, noSplit: true },
+      options: { goal: 'complete-bonus' },
+    });
+    expect(attacks(p)).toEqual([
+      [1, 3, 2],
+      [2, 3, 15],
+    ]);
+    expect(p.multiSourceCaptures).toEqual([3]);
+    expect(p.rationale.join('\n')).not.toMatch(/two steps away/);
   });
 
   it('does not run with luck, where no combined capture is built', () => {

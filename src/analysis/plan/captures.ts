@@ -676,8 +676,12 @@ export function captureHelper(
       }
     }
     // #265 review: what each source keeps back from this attack (#121, #172, #179), read before the
-    // capture lands, so a later rebalance never spends it.
-    const keeps = new Map([...plan.softeners.map((x) => x.from), plan.finisher].map((x) => [x, keepOf(x, t)] as const));
+    // capture lands, so a later rebalance never spends it. Not under No-Split: the rebalance never
+    // runs there, no keep sizes a whole-stack order, and reading one marks a two-step hold that
+    // shaped nothing as binding (keepOf records it for the report).
+    const keeps = noSplit
+      ? new Map<number, number>()
+      : new Map([...plan.softeners.map((x) => x.from), plan.finisher].map((x) => [x, keepOf(x, t)] as const));
     const before = { avail: new Map(avail), incoming: new Map(incoming), deployed: new Map(deployed), budget: ps.budget };
     deploy(plan.finisher, plan.need);
     for (const x of plan.softeners) {
@@ -741,7 +745,7 @@ export function captureHelper(
       .join(', then ')}, then from ${label(plan.finisher)} with ${plan.armies}${plan.need ? ` (deploy ${plan.need} there)` : ''}, taking the last ${plan.left}: ${reason}.`;
   /**
    * #265: each combined capture as built — the defenders it was sized on (`start`; `real`, those
-   * standing there now), what each source kept back from it (`keeps`: keepOf, #121/#172/#179) and
+   * standing there now), what each source kept back from it (`keeps`: keepOf, #121/#172/#179; empty under No-Split) and
    * whether it had to trade at least even (`even`, rule 0p.3 / 4e) — for {@link rebalanceCombined}.
    * An entry whose moves have changed since (a restore, a capture undone) is ignored there.
    */

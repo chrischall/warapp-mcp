@@ -414,7 +414,10 @@ export function leftoverDeploy(
    * first, and with it the bonus. Live, a 1-army member beside an empty enemy territory that could
    * deploy 5 stood while the leftover went to a border that already held. Most at stake first, and
    * only a hold the leftover covers in full: armies on a member that still falls are lost with it
-   * (one it cannot cover keeps its old place in the comfort steps, and is warned of later).
+   * (one it cannot cover keeps its old place in the comfort steps, and is warned of later). A
+   * source of an order is passed over only under No-Split (`orderOf`), where a deploy there would
+   * leave with its whole-stack order; otherwise its order's size is fixed and the deploy stays, so a
+   * combined capture's source the rebalance could not help is topped up here like any member.
    */
   const holdCompletedMembers = () => {
     const weak = [...mine]

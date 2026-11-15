@@ -973,10 +973,11 @@
 //     that fails only because of a keep is reported as the hold it would leave short.
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border. #265: first (after #121's hold after all, when that runs), each
-//     weak member of a bonus this turn completes (rule 3a's #265) that issues no order is brought to
-//     its hold, most protected value first, when the leftover covers it whole ("it is a member of
-//     bonus …, completed this turn, and faces the ~N threat"), before the worse-order holds, the
-//     strike stack and any comfort margin. #215: armies withdrawn into a border (rule 1b) land by my own
+//     weak member of a bonus this turn completes (rule 3a's #265) is brought to its hold — a
+//     source of an order too (its size is fixed), except under No-Split, where the deploy would
+//     leave with it — most protected value first, when the leftover covers it whole ("it is a
+//     member of bonus …, completed this turn, and faces the ~N threat"), before the worse-order
+//     holds, the strike stack and any comfort margin. #215: armies withdrawn into a border (rule 1b) land by my own
 //     order, after the opponent's first attack when it moves first, so unless `movesFirst` the
 //     leftover makes each open border that falls without them hold on its own ("so it holds
 //     whoever moves first", most protected value first, only when it can afford the whole hold —
