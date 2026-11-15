@@ -127,6 +127,8 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     h = await live(now, dir);
     const p = payload<{ warnings: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.warnings[0]).toMatch(new RegExp(`^Player ${BOB.feed}'s deploy estimate .*untrusted until turn 5.*capture on territory 157 needed 16 armies where the estimate allowed 7`));
+    // The figure the warning names is the one the plan was sized for: the larger of 14 and my income.
+    expect(p.warnings[0]).toMatch(/are sized for 14 /);
     const kept = await readSurvival(dir, GAME, Number(ANN.feed));
     expect(kept.tripwires).toEqual([
       { player: Number(BOB.feed), since: 3, until: 5, kind: 'capture', territory: 157, observed: 16, allowed: 7, implied: 14 },
@@ -138,7 +140,7 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     const dir = await seeded();
     h = await live(now, dir);
     const p = payload<Checked>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [] }));
-    expect(p.warnings[0]).toMatch(/untrusted/);
+    expect(p.warnings[0]).toMatch(/untrusted.*are sized for 14 /);
     // My income is 5: the larger of 14 and 5.
     expect(p.enemyDeploy).toEqual([{ player: { id: Number(BOB.feed), name: 'Bob' }, deploy: 14, source: 'untrusted' }]);
     expect((await readSurvival(dir, GAME, Number(ANN.feed))).tripwires).toEqual([]);
@@ -168,12 +170,13 @@ describe('warapp_submit_turn warns of a held bonus left below my income (#275 c)
 
   it('names the border, the deploy that takes it and my income, and still previews', async () => {
     h = await live(held);
-    // Walking 9 off Hornwood leaves 1, which Bob's 3 take with no deploy when I move first.
+    // Walking 9 off Hornwood leaves 1, which Bob's 3 take with no deploy whoever moves first: moving
+    // first, he holds his attack back behind a filler order until my transfer has gone.
     const text = await preview([
       { kind: 'deploy', territory: 157, armies: 7 },
       { kind: 'move', from: 159, to: 161, armies: 9 },
     ]);
-    expect(text).toMatch(/Territory 159 guards bonus 118 \(\+2\) and these orders leave it falling to a deploy of 0 by player 7176543229 on territory 158 \(when you move first\): below your own income of 7/);
+    expect(text).toMatch(/Territory 159 guards bonus 118 \(\+2\) and these orders leave it falling to a deploy of 0 by player 7176543229 on territory 158: below your own income of 7/);
     expect(text).toMatch(/confirmToken/);
   });
 

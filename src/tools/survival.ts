@@ -4,7 +4,7 @@
 // warapp_check_plan and warapp_submit_turn only read.
 import { headroomTable, type HeadroomInput, type HeadroomRow } from '../analysis/headroom.js';
 import type { EnemyDeployEstimate } from '../analysis/plan/shared.js';
-import type { TurnBoard } from '../analysis/opponents.js';
+import { trackGame, type TurnBoard } from '../analysis/opponents.js';
 import { activeTripwires, brokenEstimates, type Tripwire } from '../analysis/tripwire.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { SimSettings } from '../analysis/turn-sim.js';
@@ -39,13 +39,18 @@ export async function readTripwires(a: {
   settings: SimSettings;
   teams?: ReadonlyMap<number, number>;
   estimates: readonly EnemyDeployEstimate[];
+  /** The game's settings and map: every player's start, credited to a stack no board ever showed. */
+  gameSettings?: Parameters<typeof trackGame>[1];
+  map?: GameMap;
 }): Promise<TripwireRead> {
   const estimatesNow = new Map(a.estimates.map((e) => [e.playerId, e.estimate]));
   const survival = a.dataDir ? await readSurvival(a.dataDir, a.gameId, a.me) : { estimates: new Map(), tripwires: [] };
   if (a.turn === null) return { tripwires: [], estimatesNow, survival };
   let fresh: ReturnType<typeof brokenEstimates> = [];
   try {
+    const start = trackGame([], a.gameSettings, a.map).start;
     fresh = brokenEstimates({
+      ...(start ? { start } : {}),
       graph: a.graph,
       boards: a.boards,
       me: a.me,
@@ -75,14 +80,22 @@ const KIND_TEXT: Record<Tripwire['kind'], string> = {
   'held-attack': 'an attack of yours it held',
 };
 
-/** One warning per untrusted opponent, by id (the first warning of the answer). */
-export function tripwireWarnings(tripwires: readonly Tripwire[], myIncome: number, estimateOf: (player: number) => number | undefined): string[] {
+/**
+ * One warning per untrusted opponent, by id (the first warning of the answer). `sizedFor` is the figure
+ * the plan or the stress test used for it (`untrustedDeploy` on the income they used), so the warning
+ * never names another.
+ */
+export function tripwireWarnings(
+  tripwires: readonly Tripwire[],
+  sizedFor: (w: Tripwire) => number,
+  estimateOf: (player: number) => number | undefined,
+): string[] {
   return tripwires.map((w) => {
     const est = estimateOf(w.player);
     return (
       `Player ${w.player}'s deploy estimate${est !== undefined ? ` (${est})` : ''} is untrusted until turn ${w.until} (#275): on turn ${w.since} ` +
       `${KIND_TEXT[w.kind]} on territory ${w.territory} needed ${w.observed} armies where the estimate allowed ${w.allowed}, ` +
-      `about ${w.implied} a turn. Borders of your held bonuses facing it are sized for ${untrustedDeploy(w, myIncome)} ` +
+      `about ${w.implied} a turn. Borders of your held bonuses facing it are sized for ${sizedFor(w)} ` +
       '(the larger of that and your own income), and warapp_check_plan tries that deploy by default.'
     );
   });

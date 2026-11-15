@@ -39,8 +39,9 @@ const at = (turn: number, entries: TerritoryState[], orders?: TripBoard['orders'
   board: board(entries),
   ...(orders ? { orders } : {}),
 });
-const run = (boards: TripBoard[], estimate = 5, settings: object = STD) =>
-  brokenEstimates({ graph: G, boards, me: ME, settings, estimateAt: () => estimate });
+const START = { territories: 2, armiesPerTerritory: 5 };
+const run = (boards: TripBoard[], estimate = 5, settings: object = STD, start: { territories: number; armiesPerTerritory: number } | null = START) =>
+  brokenEstimates({ graph: G, boards, me: ME, settings, ...(start ? { start } : {}), estimateAt: () => estimate });
 
 describe('brokenEstimates (#275 b)', () => {
   it('trips on a stack out of the fog larger than the estimate times the turns it was unseen', () => {
@@ -56,6 +57,20 @@ describe('brokenEstimates (#275 b)', () => {
     // 15 is within 1.5 × 12: nothing.
     boards[2] = at(5, [mine(1, 5), mine(2, 5), foe(3, 15), fogged(4)]);
     expect(run(boards)).toEqual([]);
+  });
+
+  it('credits its starting armies to a stack no board ever showed: an opening reveal does not trip', () => {
+    // A 1v1 with 2 starts of 5 and income 5: first seen on turn 3 with 15 (a start of 5 and two deploys),
+    // or 20 (both starts walked together and two deploys). Allowed: 10 starting + 10 deployed.
+    for (const armies of [15, 20]) {
+      const boards = [at(2, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]), at(3, [mine(1, 5), mine(2, 5), foe(3, armies), fogged(4)])];
+      expect(run(boards)).toEqual([]);
+    }
+    // 60 is far beyond that: 20 allowed; 50 beyond its start over two turns is 25 a turn.
+    const boards = [at(2, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]), at(3, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)])];
+    expect(run(boards)).toEqual([{ player: FOE, turn: 3, kind: 'fog-stack', territory: 3, observed: 60, allowed: 20, implied: 25 }]);
+    // Its start unknown (the settings do not give it): a stack never seen is not read.
+    expect(run(boards, 5, STD, null)).toEqual([]);
   });
 
   it('trips on a capture that needed more attackers than the stacks beside it plus the estimate', () => {
@@ -88,6 +103,25 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run(boards)).toEqual([{ player: FOE, turn: 5, kind: 'held-attack', territory: 3, observed: 22, allowed: 10, implied: 17 }]);
     // With luck, a failed attack proves nothing.
     expect(run(boards, 5, { ...STD, luckModifier: 0.16 })).toEqual([]);
+  });
+
+  it('reads no held attack from a source another stack could have hit first', () => {
+    // Foe's 50 on 1 beside my source 2: an attack of it on its earlier slot shrinks my attack, which
+    // sends what is left; the failure says nothing about the defence of 3.
+    const boards = [
+      at(4, [foe(1, 50), mine(2, 40), foe(3, 8), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 39 }] }),
+      at(5, [foe(1, 1), mine(2, 5), foe(3, 3), foe(4, 1)]),
+    ];
+    expect(run(boards)).toEqual([]);
+    // Nor when my source ended with fewer than my orders left it (something hit it), whoever did.
+    const quiet = [
+      at(4, [mine(1, 1), mine(2, 45), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] }),
+      at(5, [mine(1, 1), mine(2, 5), foe(3, 4), foe(4, 1)]),
+    ];
+    expect(run(quiet)).toEqual([]);
+    // With the 10 my orders left there (and survivors back), the same failure trips.
+    quiet[1] = at(5, [mine(1, 1), mine(2, 20), foe(3, 4), foe(4, 1)]);
+    expect(run(quiet)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22 }]);
   });
 
   it('needs the previous board: no reading across a gap', () => {

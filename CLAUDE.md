@@ -677,12 +677,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   write keeps the game's settings beside it (`<dataDir>/games/<gameId>.json`, see "Offline replay").
 - **Surviving a wrong estimate (#275, pattern 1).** An estimate is a floor. `src/analysis/headroom.ts`
   (pure; `headroomTable`) gives, for every border of mine after my orders, the smallest single deploy on a
-  neighbouring enemy stack that takes it (turn simulator, both move orders unless known), the bonuses it
-  breaks and the bonus income one step behind; `warapp_plan_turn` and `warapp_check_plan` return it as
+  neighbouring enemy stack that takes it (turn simulator, both move orders unless known; the attack is tried
+  at every place in the zigzag the opponent can reach by holding it back behind filler orders — before my
+  first order, between two, after my last — so a border my later orders drain is judged as drained), the
+  bonuses it breaks and the bonus income one step behind; `warapp_plan_turn` and `warapp_check_plan` return it as
   `headroom`, and `warapp_submit_turn` warns (never refuses) when a held bonus's border falls to less than
   my income. `src/analysis/tripwire.ts` (pure) reads my two latest boards: a stack out of the fog, a capture,
   or an attack of mine held, needing `TRIP_RATIO` (1.5) × what the estimate allowed (and `TRIP_MIN_EXCESS`
-  more), marks that opponent untrusted for `UNTRUSTED_TURNS` (3). The marks and each turn's per-opponent
+  more), marks that opponent untrusted (a stack no board ever showed is credited its whole start, from the
+  settings, and is not read when they do not give it; a held attack is not read from a source another stack
+  beside it could have hit first, or that ended below what my orders left it: an order sends what is left) for `UNTRUSTED_TURNS` (3). The marks and each turn's per-opponent
   estimates live in the board cache file (`estimates`, `tripwires`, ids only; `readSurvival`/`writeSurvival`
   in `src/trend.ts`, kept by every cache writer), written by `warapp_plan_turn` only. While untrusted, the
   planner sizes borders of bonuses held in full at the start for max(estimate, the figure) where the figure

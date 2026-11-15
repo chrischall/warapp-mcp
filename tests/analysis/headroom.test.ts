@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { headroomTable, type HeadroomInput } from '../../src/analysis/headroom.js';
+import { HEADROOM_CAP, headroomTable, smallest, type HeadroomInput } from '../../src/analysis/headroom.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
 
@@ -52,15 +52,57 @@ describe('headroomTable (#275 a)', () => {
   });
 
   it('takes the worse move order when the first mover is unknown, and says which one it needs', () => {
-    // A transfer of 8 out of the border: moving first, I leave 2 there, which 3 attackers take.
+    // A transfer of 9 into the border from 1: moving first, I land it before the attack; the
+    // opponent moving first takes the 2 there before it lands, and must then hold against my 9, which
+    // now attack: 7 attackers (a deploy of 5) leave 6, which 9 cannot take.
+    const entries = [mine(1, 10), mine(2, 2), foe(3, 3)];
+    const moves = [{ from: 1, to: 2, armies: 9 }];
+    const [either] = table(LINE3, entries, { moves });
+    expect(either).toMatchObject({ territory: 2, armies: 11, deploy: 5, firstMover: 'opponent' });
+    // Known to move first, I meet it with 11, which need 18 attackers: 2 + 16.
+    const [early] = table(LINE3, entries, { moves, firstMover: 'me' });
+    expect(early).toMatchObject({ territory: 2, deploy: 16 });
+    expect(early!.firstMover).toBeUndefined();
+  });
+
+  it('lets the opponent attack after my orders that drain the border, whoever moves first', () => {
+    // A transfer of 8 out of the border leaves 2, which 3 attackers take: an opponent moving first
+    // delays its attack behind a filler order rather than meet all 10.
     const entries = [mine(1, 1), mine(2, 10), foe(3, 3)];
     const moves = [{ from: 2, to: 1, armies: 8 }];
-    const [either] = table(LINE3, entries, { moves });
-    expect(either).toMatchObject({ territory: 2, armies: 2, deploy: 1, firstMover: 'me' });
-    // The opponent known to move first meets all 10.
-    const [late] = table(LINE3, entries, { moves, firstMover: 'opponent' });
-    expect(late).toMatchObject({ territory: 2, deploy: 14 });
-    expect(late!.firstMover).toBeUndefined();
+    for (const firstMover of [undefined, 'opponent', 'me'] as const) {
+      const [row] = table(LINE3, entries, { moves, ...(firstMover ? { firstMover } : {}) });
+      expect(row).toMatchObject({ territory: 2, armies: 2, deploy: 1 });
+      expect(row!.firstMover).toBeUndefined();
+    }
+  });
+
+  it('finds the drain when it is my second order', () => {
+    // 1 ─ 2 ─ 3 ─ 4, 2 ─ 5, 1 ─ 6: I take neutral 6 from 1, then empty 2 into neutral 5. The stack
+    // of 3 attacks the 1 left on 2 after both, with no deploy.
+    const map = makeMap(6, [[1, 2], [2, 3], [3, 4], [2, 5], [1, 6]], []);
+    const entries = [mine(1, 10), mine(2, 20), foe(3, 3), foe(4, 3), neutral(5, 2), neutral(6, 2)];
+    const moves = [
+      { from: 1, to: 6, armies: 9 },
+      { from: 2, to: 5, armies: 19 },
+    ];
+    for (const firstMover of [undefined, 'opponent', 'me'] as const) {
+      const rows = table(map, entries, { moves, ...(firstMover ? { firstMover } : {}) });
+      expect(rows.find((r) => r.territory === 2)).toMatchObject({ armies: 1, deploy: 0, from: 3 });
+    }
+  });
+
+  it('searches no further than the cap', () => {
+    expect(smallest((d) => d >= HEADROOM_CAP, HEADROOM_CAP - 3)).toBe(HEADROOM_CAP);
+    const asked: number[] = [];
+    expect(
+      smallest((d) => {
+        asked.push(d);
+        return false;
+      }, HEADROOM_CAP - 3),
+    ).toBeNull();
+    expect(Math.max(...asked)).toBe(HEADROOM_CAP);
+    expect(smallest(() => false, HEADROOM_CAP)).toBeNull();
   });
 
   it('is 0 for a border the stack already takes, and lists the weakest border first', () => {

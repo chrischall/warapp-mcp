@@ -1626,6 +1626,8 @@ export async function livePlanSetup(
     settings,
     ...(teams ? { teams } : {}),
     estimates,
+    gameSettings: game.settings,
+    map,
   });
   const untrusted = trip.tripwires.map((w) => ({ player: w.player, deploy: untrustedDeploy(w, boardIncome) }));
   const input: PlanInput = {
@@ -2048,7 +2050,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #275 (b): an untrusted estimate is the first thing said.
       const myIncome = income - cards.extraArmies;
       const warnings = [
-        ...tripwireWarnings(setup.trip.tripwires, myIncome, (p) => setup.trip.estimatesNow.get(p)),
+        // The figure the planner used (the board's income, before Sanctions on me), never recomputed.
+        ...tripwireWarnings(
+          setup.trip.tripwires,
+          (w) => setup.input.untrusted?.find((u) => u.player === w.player)?.deploy ?? untrustedDeploy(w, setup.boardIncome),
+          (p) => setup.trip.estimatesNow.get(p),
+        ),
         ...(me.hasCommittedOrders
           ? [
               'You have already committed orders this turn; warapp_submit_turn will refuse until you withdraw them ' +

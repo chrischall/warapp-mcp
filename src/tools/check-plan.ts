@@ -307,6 +307,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         settings,
         ...(tripTeams ? { teams: tripTeams } : {}),
         estimates,
+        gameSettings: game.settings,
+        map,
       });
       const untrustedOf = new Map(trip.tripwires.map((w) => [w.player, untrustedDeploy(w, income)]));
       const opponents = so.opponents.map((o) => {
@@ -569,7 +571,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       });
       const warnings = [
         // #275 (b): an untrusted estimate is the first thing said (not under an explicit enemy_deploy).
-        ...(enemy_deploy === undefined ? tripwireWarnings(trip.tripwires, income, (p) => estimates.find((x) => x.playerId === p)?.estimate) : []),
+        ...(enemy_deploy === undefined ? tripwireWarnings(trip.tripwires, (w) => untrustedOf.get(w.player) ?? untrustedDeploy(w, income), (p) => estimates.find((x) => x.playerId === p)?.estimate) : []),
         ...(award ? assumedWarning(award) : []),
         // #270: the static seats whose territories the test read as neutrals.
         ...[...seatTerritories(award?.board ?? seen, seats)]

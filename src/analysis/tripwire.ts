@@ -10,7 +10,9 @@
 // The observations, each read off two consecutive boards of mine (the previous turn's and this one's):
 //   fog-stack    a stack of its comes out of the fog (visible now, not on the previous board) larger
 //                than the armies last seen there (when it held it then) plus its estimate for every
-//                turn since that board (since turn 1 when no board here shows it);
+//                turn since that board. When no board here shows it, since turn 1 and with its whole
+//                start credited (`start`: territories × armies each — every start may have walked in
+//                there); with its start unknown such a stack is not read;
 //   capture      it took a territory of mine or a visible neutral that needed more attackers
 //                (`armiesToTake` of the defenders) than its stacks beside it could move plus its
 //                estimate. Never when a territory beside it was hidden on the previous board (a
@@ -20,7 +22,11 @@
 //   held-attack  an attack of mine (my cached orders) failed on a territory of its that held: the
 //                defenders it took to hold (one more than my attackers kill) beyond the armies there,
 //                its estimate and its stacks beside it that could move in. With no luck and straight
-//                rounding only, and not when a territory beside it was hidden.
+//                rounding only, and not when a territory beside it was hidden. An order sends what is
+//                left, so not from a source another stack could have hit first (a territory beside the
+//                source, the target aside, hidden or holding a movable stack not mine on the previous
+//                board), nor from one that ended with fewer armies than my orders left it. The target's
+//                own stack attacking my source cannot fake a trip: what it sends leaves the defence.
 // `implied` is the deploy per turn the observation needs: what the estimate should have been.
 // The estimate compared is the one the plan used that turn (`estimateAt`), the caller's to supply.
 
@@ -81,6 +87,8 @@ export interface TripInput {
   me: number;
   settings?: SimSettings;
   teams?: ReadonlyMap<number, number>;
+  /** Every player's start (the settings' TerritoryLimit × InitialPlayerArmiesPerTerritory), when known. */
+  start?: { territories: number; armiesPerTerritory: number };
   /** The deploy estimate the plan used for `player` on turn `turn`. */
   estimateAt: (player: number, turn: number) => number;
 }
@@ -129,9 +137,11 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     if (!was) {
       let last: TripBoard | undefined;
       for (const b of boards.slice(0, -1)) if (visibleState(index(b.board).get(id))) last = b;
+      // Never seen: its start may have walked in; unknown, nothing is read.
+      if (!last && !input.start) continue;
       const from = last?.turn ?? 1;
       const seen = last ? visibleState(index(last.board).get(id)) : undefined;
-      const base = seen && playerOf(seen) === p ? seen.armies! : 0;
+      const base = seen ? (playerOf(seen) === p ? seen.armies! : 0) : input.start!.territories * input.start!.armiesPerTerritory;
       let deploys = 0;
       for (let k = from; k < T; k++) deploys += est(p, k);
       const turns = Math.max(1, T - from);
@@ -172,9 +182,23 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       let attackers = 0;
       for (const f of fromIds) {
         const src = visibleState(before.get(f));
-        if (playerOf(src) !== me || playerOf(visibleState(cur.get(f))) !== me) continue;
+        const after = visibleState(cur.get(f));
+        if (playerOf(src) !== me || playerOf(after) !== me) continue;
         const sent = myOrders.moves.filter((m) => m.from === f && m.to === id).reduce((n, m) => n + m.armies, 0);
         const added = myOrders.deploys.filter((d) => d.territoryId === f).reduce((n, d) => n + d.armies, 0);
+        // Another stack beside the source could have shrunk it first: my attack then sent less.
+        const exposed = neighborsOf(graph, f).some((n) => {
+          if (n === id) return false;
+          const t = visibleState(before.get(n));
+          if (!t) return true;
+          const o = playerOf(t);
+          return o !== undefined && !friend(o) && t.armies! > guard;
+        });
+        if (exposed) continue;
+        // …or it ended below what my orders left it (survivors and transfers in only add).
+        const outAll = myOrders.moves.filter((m) => m.from === f).reduce((n, m) => n + m.armies, 0);
+        const inAll = myOrders.moves.filter((m) => m.to === f).reduce((n, m) => n + m.armies, 0);
+        if (after!.armies! < src!.armies! + added - outAll + inAll) continue;
         attackers = Math.max(attackers, Math.min(sent, src!.armies! + added - guard));
       }
       if (attackers <= 0) continue;

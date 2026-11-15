@@ -9,7 +9,11 @@
 // A border is a territory I hold after my orders, unanswered (captures included), beside a territory
 // of an opponent whose armies are in view. For each such stack the opponent deploys d on it and attacks
 // the border with everything the stack can move (its commander too), on the turn simulator
-// (turn-sim.ts) with my deploys and orders, under both move orders unless the first mover is known.
+// (turn-sim.ts) with my deploys and orders, under both move orders unless the first mover is known, and
+// at every place in the zigzag it can reach: it may hold the attack back behind filler orders (assumed
+// to have them), so it lands before my first order, between two, or after my last — a border my later
+// orders drain is met drained. Places where the same number of my orders touching the border or the
+// stack has run are alike, and only one of each is tried.
 // The border's headroom is the smallest d that leaves the opponent holding it at the end of the turn,
 // over every stack beside it and both orders; 0 when a stack already takes it with no deploy. One
 // opponent and one attack: two stacks together, several opponents, chains, cards and Local Deployment's
@@ -76,10 +80,27 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
   const rates = { offensiveKillRate: input.settings?.offensiveKillRate, defensiveKillRate: input.settings?.defensiveKillRate };
   const guard = input.settings?.oneArmyStandsGuard === false ? 0 : 1;
 
-  const run = (attack: { player: number; from: number; to: number; deploy: number } | undefined, first: 'me' | 'opponent'): SimResult =>
+  // The opponent may hold its attack back behind filler orders (any transfer of its own), so it can land
+  // after any number of my orders: before my first, between two, or after my last. The fillers run between
+  // two territories of its own outside the map (ids past the map's), which touch nothing on the board.
+  const maxId = Math.max(0, ...graph.territoryById.keys(), ...start.keys());
+  const FILL_A = maxId + 1;
+  const FILL_B = maxId + 2;
+  const fillGraph: MapGraph = {
+    ...graph,
+    neighbors: new Map([...graph.neighbors, [FILL_A, [FILL_B]], [FILL_B, [FILL_A]]]),
+  };
+  const fillStart = (player: number) =>
+    new Map([...start, [FILL_A, { owner: player, armies: myOrders.length + 2 + guard }], [FILL_B, { owner: player, armies: guard }]]);
+
+  const run = (
+    attack: { player: number; from: number; to: number; deploy: number; fillers: number } | undefined,
+    first: 'me' | 'opponent',
+  ): SimResult =>
     simulateTurn({
-      graph,
+      graph: attack?.fillers ? fillGraph : graph,
       board,
+      ...(attack?.fillers ? { start: fillStart(attack.player) } : {}),
       deploys: [...myDeploys, ...(attack && attack.deploy > 0 ? [{ player: attack.player, territoryId: attack.from, armies: attack.deploy }] : [])],
       orders: [
         { player: me, orders: myOrders },
@@ -88,6 +109,7 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
               {
                 player: attack.player,
                 orders: [
+                  ...Array.from({ length: attack.fillers }, () => ({ from: FILL_A, to: FILL_B, armies: 1 })),
                   {
                     from: attack.from,
                     to: attack.to,
@@ -104,6 +126,39 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
       ...(teams ? { teams } : {}),
       ...(input.orderPriority ? { orderPriority: [me] } : {}),
     });
+
+  /**
+   * The filler counts worth trying for an attack from `s` on `b`: the attack, as the opponent's order
+   * `k` (0-based), runs after `mineBefore(k)` of my orders (zigzag, every order taking its slot). Two
+   * counts are alike when the same number of my orders touching `b` or `s` (from or to) ran before the
+   * attack: the attack meets the same armies and the same later orders. One count per kind, fewest first.
+   */
+  const fillerCounts = (b: number, s: number, first: 'me' | 'opponent'): number[] => {
+    const n = myOrders.length;
+    const meFirst = input.orderPriority === true || first === 'me';
+    const mineBefore = (k: number): number => {
+      let mine = 0;
+      let theirs = 0;
+      for (let round = 0; ; round++) {
+        const row = (round % 2 === 0) === meFirst ? ['me', 'them'] : ['them', 'me'];
+        for (const who of row) {
+          if (who === 'me') mine = Math.min(n, mine + 1);
+          else if (theirs++ === k) return mine;
+        }
+      }
+    };
+    const touches = myOrders.map((o) => o.from === b || o.to === b || o.from === s || o.to === s);
+    const seen = new Set<number>();
+    const out: number[] = [];
+    for (let k = 0; k <= n; k++) {
+      const m = mineBefore(k);
+      const kind = touches.slice(0, m).filter(Boolean).length;
+      if (seen.has(kind)) continue;
+      seen.add(kind);
+      out.push(k);
+    }
+    return out;
+  };
 
   const baseline = run(undefined, 'me');
   const mineAfter = new Set([...baseline.territories].filter(([, t]) => t.owner === me).map(([id]) => id));
@@ -127,16 +182,15 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
     const orders: ('me' | 'opponent')[] = input.firstMover ? [input.firstMover] : ['me', 'opponent'];
     for (const s of stacks) {
       const player = start.get(s)!.owner as number;
-      const takes = (d: number, first: 'me' | 'opponent') => {
-        const r = run({ player, from: s, to: b, deploy: d }, first);
-        return r.territories.get(b)?.owner === player;
-      };
+      const takes = (d: number, first: 'me' | 'opponent', fills: readonly number[]) =>
+        fills.some((fillers) => run({ player, from: s, to: b, deploy: d, fillers }, first).territories.get(b)?.owner === player);
       const found = orders.map((first) => {
         // A guess from the board after my orders: what takes it, less what the stack sends.
         const defenders = there.armies + (there.commander === me ? COMMANDER_STRENGTH : 0);
         const sends = Math.max(0, (start.get(s)?.armies ?? 0) - guard) + (start.get(s)?.commander === player ? COMMANDER_STRENGTH : 0);
         const guess = Math.max(0, (armiesToTake(defenders, rates) ?? HEADROOM_CAP) - sends);
-        return { first, deploy: smallest((d) => takes(d, first), Math.min(guess, HEADROOM_CAP)) };
+        const fills = fillerCounts(b, s, first);
+        return { first, deploy: smallest((d) => takes(d, first, fills), Math.min(guess, HEADROOM_CAP)) };
       });
       const min = found.reduce<number | null>((m, f) => (f.deploy === null ? m : m === null ? f.deploy : Math.min(m, f.deploy)), null);
       const firstMover =
@@ -170,7 +224,7 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
  * The smallest d in [0, HEADROOM_CAP] with `ok(d)`, `ok` taken to be monotone (more armies never take
  * less), starting from `guess`; `null` when even the cap fails.
  */
-function smallest(ok: (d: number) => boolean, guess: number): number | null {
+export function smallest(ok: (d: number) => boolean, guess: number): number | null {
   let lo: number;
   let hi: number;
   if (ok(guess)) {
@@ -186,9 +240,10 @@ function smallest(ok: (d: number) => boolean, guess: number): number | null {
     }
     if (lo === 0 && ok(0)) return 0;
   } else {
+    if (guess >= HEADROOM_CAP) return null;
     lo = guess;
     let step = Math.max(1, guess);
-    hi = guess + step;
+    hi = Math.min(HEADROOM_CAP, guess + step);
     while (!ok(hi)) {
       if (hi >= HEADROOM_CAP) return null;
       lo = hi;
