@@ -575,10 +575,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   why in numbers: its armies in view after the jump plus its losses seen against its armies in
   view before plus what it was seen to earn since, leaving out the armies that only came into view
   (on territories some board from the first of those turns to the jump did not show, or read as out
-  of the fog — a capture from a neutral or player in view on every board is no reveal);
-  and, with its starting armies known, the whole game at the earlier rate (start + rate × turns),
+  of the fog — a capture from a neutral or player in view on every board is no reveal; what it had
+  in view there on the first board is not counted twice);
+  and, with its starting armies known, the whole game at the earlier rate (start + rate × turns, the
+  rate the most it was seen to earn on ANY observed turn before the jump, not only the two just before),
   which no reveal of old armies can explain. Either beaten → believed; else it hedges (old armies
-  revealed, or armies banked out of view). The figure never changes for it.
+  revealed, or armies banked out of view). The armies standing on territory it took from me on the
+  jump turn are named (`fromMe`, with the low–high reading when the capture is priced at the guard).
+  The figure never changes for it.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in

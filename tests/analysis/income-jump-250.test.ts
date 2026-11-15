@@ -180,6 +180,74 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     expect(big!.warnings.join(' ')).toMatch(/could be old armies.*could have received up to 172 by turn 9 \(starting armies 100 \+ 8 × 9 turns\), enough for the 151/);
   });
 
+  it('the whole-game rate is the most it was seen to earn on any turn before the jump, not only the two just before it', () => {
+    // +30 on turn 4, then +8, +5, then +47 on turn 7. An 80 on T5 in view on turns 4–5 and out of
+    // view after could explain the jump (112 in view against 132 + 18 banked). At 8 a turn the whole
+    // game would read 6 + 8 × 7 = 62 against the 112 and call it believed; it was seen to earn 30 on
+    // turn 4, and at 30 a turn 6 + 210 = 216 covers it: the hedge stands.
+    const h = fogged(5);
+    const [t] = trackOpponents(
+      g,
+      history(
+        [4, at(20, enemy(4, 2), enemy(5, 80))],
+        [5, at(50, enemy(4, 2), enemy(5, 80))],
+        [6, at(58, enemy(4, 2), h)],
+        [7, at(63, enemy(4, 2), h)],
+        [8, at(110, enemy(4, 2), h)],
+      ),
+      ME,
+      STD,
+      { players: [{ id: ME }, { id: ENEMY }], start: { territories: 3, armiesPerTerritory: 2 } },
+    );
+    expect(t!.turns.map((x) => x.observed)).toEqual([30, 8, 5, 47]);
+    expect(t!.income).toBe(47);
+    expect(t!.incomeJump).toMatchObject({
+      turn: 7,
+      before: 8,
+      since: 5,
+      armiesBefore: 132,
+      armiesNow: 112,
+      verdict: 'banked',
+      stock: { start: 6, rate: 30, turns: 7, received: 216 },
+    });
+    const line = t!.warnings.find((w) => /one turn/.test(w));
+    expect(line).toMatch(/could be armies it had banked/);
+    expect(line).toMatch(/\(30 a turn\) it could have received up to 216/);
+    expect(line).not.toMatch(/could not have had/);
+  });
+
+  it('a stack in view on the first board of the evidence, out of view between and back after, counts only what it gained as come into view', () => {
+    // 80 on T5 on turn 7 (in the armies it had then), hidden on turns 8–9, 80 again on turn 10: no
+    // reveal, so 99 + 2 + 80 = 181 against 102 + 18 is believed. At 100 the 20 more may be a reveal.
+    const hidden = fogged(5);
+    const evidence = (t5: number) =>
+      trackOpponents(
+        g,
+        history(
+          [7, at(20, enemy(4, 2), enemy(5, 80))],
+          [8, at(28, enemy(4, 2), hidden)],
+          [9, at(33, enemy(4, 2), hidden)],
+          [10, at(99, enemy(4, 2), enemy(5, t5))],
+        ),
+        ME,
+        STD,
+      )[0]!;
+    const back = evidence(80);
+    expect(back.incomeJump).toMatchObject({ verdict: 'supported', armiesBefore: 102, armiesNow: 181, cameIntoView: 0 });
+    expect(back.warnings.find((w) => /one turn/.test(w))).toMatch(/could not have banked/);
+    expect(evidence(100).incomeJump).toMatchObject({ armiesNow: 201, cameIntoView: 20 });
+  });
+
+  it('names the part of the jump that stands on territory it took from me', () => {
+    // +8, +5, then on turn 9 it deploys on T3 and takes my T2 (5 armies, my orders unknown): 70 stand there.
+    const b10 = board([mine(1, 5), enemy(2, 70), enemy(3, 19), enemy(4, 2), enemy(5, 2), fogged(6), fogged(7), fogged(8)]);
+    const [t] = trackOpponents(g, history([7, at(20)], [8, at(28)], [9, at(33)], [10, b10]), ME, STD);
+    expect(t!.incomeJump?.fromMe).toMatchObject({ territories: [2], armies: 70, guardPriced: true });
+    const line = t!.warnings.find((w) => /one turn/.test(w));
+    expect(line).toMatch(/70 of them on territory 2, taken from me on turn 9/);
+    expect(line).toMatch(/priced at the guard I may have left/);
+  });
+
   it('carried after the window moves on (no decay, #119): the line still names the turn that set it', () => {
     const [t] = trackOpponents(
       g,
