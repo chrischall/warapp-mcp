@@ -109,7 +109,8 @@ import { commitmentWarnings } from '../analysis/commitments.js';
 import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
 import { recordBrokenByMe } from './relations.js';
 import { withTeammateOrders } from '../team-orders.js';
-import { teammatesOf } from '../teams.js';
+import { teamCardClaims, teamCardRoles, teamHandLeft } from '../team-cards.js';
+import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 
@@ -127,6 +128,28 @@ const TEAM_SHARED_NOTE =
   "the start of the turn; `others` counts the members neither of us holds, a teammate's territory in the fog among them " +
   '(team vision unverified). Advisory: ' +
   'agree in team chat which of you takes each.';
+
+/** PLAN-TEAMS C3.5: what `team.support` means. */
+const TEAM_SUPPORT_NOTE =
+  "A teammate's border that falls to the threats in view (the plan's own threat model) given the orders they have " +
+  "entered — their deploys there in, their orders out of it out, armies moved in left out — where your idle armies beside it " +
+  '(what the plan leaves unused beyond what holds your own territory) would make it hold. Advisory: what a plain move ' +
+  "onto a teammate's territory does is not yet verified live (V7), so it is never in `orders`, and the teammate's orders " +
+  'come from the live board, also unverified (V5). The same idle armies may be counted by a joint capture too.';
+/** PLAN-TEAMS C3.6: what `team.jointCaptures` means. */
+const TEAM_JOINT_NOTE =
+  "A target neither your teammate's entered attack nor yours takes alone, resolved on the turn simulator from those " +
+  "attacks only (every other order of the turn left out): yours are the plan's own when it attacks it (`inPlan`), else " +
+  'your idle armies beside it. `cases` gives both orders of the two attacks and whether it falls (and to whom), also if ' +
+  "its owner first lands its whole deploy estimate there; under a cyclic move order `mustGoFirst` says whose attack must " +
+  "run first ('either' when both orders take it). Advisory: never added to `orders`; agree it in team chat. The teammate's " +
+  'orders come from the live board (unverified, V5).';
+/** PLAN-TEAMS C3.7: what `cards.team` means. */
+const TEAM_CARDS_NOTE =
+  "Who plays each card of the team hand this turn: a teammate for a card they have already entered a play or discard " +
+  "of (so the team never uses one card twice; the plan chooses from the rest), you for a card your orders play or " +
+  'discard, nobody for a card held. Read from their entered orders on the live board (unverified, V5); how war.app keys ' +
+  "a team's hand is unverified too (V8).";
 
 const territoryRef = z.union([z.string(), z.number()]);
 const armiesArg = z.coerce.number().int().min(1);
@@ -1173,7 +1196,13 @@ export async function livePlanSetup(
   const hand = readHand(info, owners);
   const handUnknown = rules.inPlay.length > 0 && !handReadable(info, owners);
   const inGame = cardGame(game);
-  const cards = chooseCardPlays(hand, rules, inGame);
+  // PLAN-TEAMS C3.7: a card my teammate has entered a play or discard of is theirs this turn, so my plan
+  // chooses from the rest (their orders: V5; the team hand's keying: V8 — both unverified live).
+  const { left: myHand, claimed: teamClaimed } = teamHandLeft(
+    hand,
+    inGame.team ? teamCardClaims(seen.teammateOrders, new Set(teammatesOf(game.players, me).map((p) => p.id))) : [],
+  );
+  const cards = chooseCardPlays(myHand, rules, inGame);
   // The board's income, card armies out: what the truces' trust reads (as warapp_check_plan passes it).
   const boardIncome = incomeFor(graph, board, me.id, game.settings);
   const income = boardIncome + cards.extraArmies;
@@ -1221,6 +1250,8 @@ export async function livePlanSetup(
     turn,
     ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
     ...(game.settings?.commanders !== undefined ? { commanders: game.settings.commanders } : {}),
+    // PLAN-TEAMS C3.6: a joint capture under a cyclic order says whose attack must run first.
+    ...(isTeamGame(game.players) && game.settings?.moveOrder !== undefined ? { moveOrder: game.settings.moveOrder } : {}),
     cards: rules.inPlay.length > 0,
     // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
     symmetricStart: symmetricStart(game.settings),
@@ -1258,7 +1289,7 @@ export async function livePlanSetup(
       ...(goal !== undefined ? { goal } : {}),
       focusBonusIds,
       ...(opponents > 0 ? { opponents } : {}),
-      holdsOrderPriority: holdsOrderPriority(hand, cards),
+      holdsOrderPriority: holdsOrderPriority(myHand, cards),
       ...(playsOrderPriority(cards) ? { orderPriorityForced: true } : {}),
       ...(reserve !== undefined ? { reserve } : {}),
       ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
@@ -1275,7 +1306,7 @@ export async function livePlanSetup(
     },
   };
   return {
-    graph, seen, award, board, opening, mover, settings, rules, owners, hand, handUnknown, inGame, cards,
+    graph, seen, award, board, opening, mover, settings, rules, owners, hand, myHand, teamClaimed, handUnknown, inGame, cards,
     boardIncome, income, trend, previousOrders, tracks, outlookInput, outlook, picking, opponents, gameContext, truces, input,
   };
 }
@@ -1357,6 +1388,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           "(warapp_send_chat's `commitments`): a warning says when its moves would break one still in force. " +
           "In a team game a bonus with a teammate's territory in it is never planned toward (one owner per bonus), and " +
           '`team.sharedBonuses` lists each bonus you and a teammate both hold members of and who is `nearer` to holding it. ' +
+          "With a teammate's entered orders on the live board (unverified live): an otherwise equal capture on the opponent they " +
+          'attack goes first; `team.support` (their border your idle armies would make hold) and `team.jointCaptures` (a target ' +
+          'neither takes alone) are advice, never in `orders`; `cards.team` says who plays each card, leaving theirs to them. ' +
           '`firstMover` is who the plan takes to move first this turn (null when unknown) and its `source`: ' +
           '"explicit" (`first_mover`), "award", or "remembered" — a turn this server kept, alternated (two players, ' +
           'cyclic order). ' +
@@ -1470,7 +1504,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         },
       });
-      const { graph, seen, award, board, mover, rules, hand, handUnknown, inGame, cards, income, trend, previousOrders, tracks } = setup;
+      const { graph, seen, award, board, mover, rules, hand, myHand, teamClaimed, handUnknown, inGame, cards, income, trend, previousOrders, tracks } = setup;
       const { settings, outlookInput, gameContext, truces } = setup;
       let { outlook } = setup;
       const plan = planTurn(setup.input);
@@ -1534,7 +1568,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
       // and the cards in effect. Advice only: the orders below are the plan's.
       const advice = rules.inPlay.length
-        ? adviseCards({ game, me, turn, info, hand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})`, truceCovered: new Set((truces?.relations ?? []).filter((r) => r.state === 'active' || r.state === 'notice').flatMap((r) => r.coveredTheirs)) })
+        ? adviseCards({ game, me, turn, info, hand: myHand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})`, truceCovered: new Set((truces?.relations ?? []).filter((r) => r.state === 'active' || r.state === 'notice').flatMap((r) => r.coveredTheirs)) })
         : { view: {}, warnings: [] };
       // B4: the planner does not read what my chat messages promised (words change no estimate), so a
       // plan that breaks a commitment still in force says so here; warapp_submit_turn warns again.
@@ -1550,6 +1584,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...mover.warnings,
         ...(handUnknown ? [UNREADABLE_HAND] : []),
         ...(inGame.team && rules.inPlay.length ? [TEAM_HAND] : []),
+        ...teamClaimed.map(
+          (c) =>
+            `${c.card.name} (${c.card.id}): player ${c.player} has already entered a ${c.kind} of it, so this plan leaves it to them ` +
+            '(PLAN-TEAMS C3.7: read from their entered orders, unverified live).',
+        ),
         ...cards.warnings,
         ...advice.warnings,
         ...(cards.extraArmies > 0 ? [cardIncomeNote(income, cards.extraArmies)] : []),
@@ -1563,7 +1602,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       ];
       // The plan advises Order Priority (a withdrawal, a commander strike): play the one I
       // hold, so the orders as returned carry it rather than only the advice.
-      const advised = plan.cardAdvice === 'order-priority' ? advisedOrderPriority(hand, cards) : undefined;
+      const advised = plan.cardAdvice === 'order-priority' ? advisedOrderPriority(myHand, cards) : undefined;
       const plays = advised ? [...cards.plays, advised] : cards.plays;
       const orders = [
         ...cards.discards.map((c) => ({ kind: 'discard' as const, card: c.id })),
@@ -1686,6 +1725,23 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           discards: cards.discards.map(cardView),
           armiesFromCards: cards.extraArmies,
           ...(Object.keys(advice.view).length ? { advice: advice.view } : {}),
+          // PLAN-TEAMS C3.7: in a team game, who plays each card of the team hand this turn.
+          ...(inGame.team && hand.length
+            ? {
+                team: {
+                  roles: teamCardRoles(hand, teamClaimed, {
+                    plays: [
+                      ...plays,
+                      ...(advice.view.orderDelay && orders.some((o) => o.kind === 'card' && o.card === advice.view.orderDelay!.card)
+                        ? myHand.filter((c) => c.id === advice.view.orderDelay!.card)
+                        : []),
+                    ],
+                    discards: cards.discards,
+                  }).map((r) => ({ ...r, by: r.by === null || r.by === 'me' ? r.by : playerRef(r.by) })),
+                  note: TEAM_CARDS_NOTE,
+                },
+              }
+            : {}),
         },
         deploys: plan.deploys.map((d) => ({ territory: name(d.territoryId), armies: d.armies })),
         moves: plan.moves.map((m) => ({
@@ -1753,6 +1809,49 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                   nearer: b.nearer === null ? 'even' : b.nearer === me.id ? 'me' : playerRef(b.nearer),
                 })),
                 note: TEAM_SHARED_NOTE,
+                // C3.5: a teammate's border my idle armies would make hold (advisory, V7).
+                ...(plan.team.support
+                  ? {
+                      support: {
+                        borders: plan.team.support.map((x) => ({
+                          territory: name(x.territory),
+                          teammate: playerRef(x.teammate),
+                          armies: x.armies,
+                          threat: x.threat,
+                          player: playerRef(x.player),
+                          need: x.need,
+                          from: x.from.map((f) => ({ territory: name(f.territory), armies: f.armies })),
+                        })),
+                        note: TEAM_SUPPORT_NOTE,
+                      },
+                    }
+                  : {}),
+                // C3.6: a target my teammate and I take only together (advisory).
+                ...(plan.team.jointCaptures
+                  ? {
+                      jointCaptures: {
+                        targets: plan.team.jointCaptures.map((j) => {
+                          const who = (id: number) => (id === me.id ? ('me' as const) : playerRef(id));
+                          return {
+                            target: name(j.target),
+                            owner: playerRef(j.owner),
+                            teammate: j.teammate.map((x) => ({ player: playerRef(x.player), from: name(x.from), armies: x.armies, ...(x.percent ? { percent: true } : {}) })),
+                            mine: j.mine.map((x) => ({ from: name(x.from), armies: x.armies })),
+                            inPlan: j.inPlan,
+                            cases: j.cases.map((c) => ({
+                              first: who(c.first),
+                              captured: c.captured,
+                              by: c.by === null ? null : who(c.by),
+                              capturedIfReinforced: c.capturedIfReinforced,
+                            })),
+                            ...(j.mustGoFirst !== undefined ? { mustGoFirst: j.mustGoFirst === null ? 'either' : who(j.mustGoFirst) } : {}),
+                            exact: j.exact,
+                          };
+                        }),
+                        note: TEAM_JOINT_NOTE,
+                      },
+                    }
+                  : {}),
               },
             }
           : {}),
