@@ -131,5 +131,42 @@ describe('#260: an idle stack steps toward the enemy front through a conceded bo
     expect(p.moves.some((m) => m.kind === 'attack' && m.from === 2 && m.to === D)).toBe(true);
     expect(p.moves.some((m) => m.kind === 'transfer' && m.from === 2)).toBe(true);
     expect(into(p, 2)).toBe(0);
-});
+  });
+
+  it('never steps a stack beside an enemy at the start of the turn, though a certain strike makes it interior', () => {
+    // T1 (40) strikes the opponent's commander on T6 for sure; once T6 falls T1 is interior and the
+    // enemy front (T10, whose bonus B900 the conceded T2 breaks) lies only through T2. T1 still
+    // faces T6 now, so it is no idle interior stack: its armies do not walk into the conceded T2
+    // (8 would make it hold while it was still reported conceded).
+    const C = 6;
+    const E = 12;
+    const ids = [U, 2, 3, S, D, 11, 20, 21, C, E];
+    const edges: [number, number][] = [[U, 2], [U, S], [U, C], [2, D], [2, 3], [3, 11], [S, 20], [S, 21], [D, 11], [D, E]];
+    const p = planTurn({
+      graph: buildGraph(makeMap(ids, edges, [{ id: 900, name: 'B900', value: 5, territoryIds: [D, E], bonusIds: [] }])),
+      board: board([
+        at(U, 40, ME),
+        at(2, 3, ME),
+        at(3, 1, ME),
+        at(S, 12, ME),
+        at(D, 1, FOE),
+        at(11, 30, FOE),
+        at(20, 6, 'neutral'),
+        at(21, 6, 'neutral'),
+        { ...at(C, 1, FOE), specialUnits: [{ kind: 'commander', id: 'c', playerId: FOE }] },
+        at(E, 1, FOE),
+      ]),
+      me: ME,
+      income: 9,
+      settings: { ...RULES, baseIncome: 5 },
+    });
+    expect(p.conceded).toContain(2);
+    expect(p.moves.some((m) => m.kind === 'attack' && m.from === 2 && m.to === D)).toBe(true);
+    expect(into(p, 2)).toBe(0);
+    // As before #260: rule 6 measures T1 by the nearest territory not mine (the neutrals past S),
+    // and the strike keeps the 11 that hold T1 until T6 falls.
+    expect(into(p, S)).toBe(8);
+    expect(p.moves.find((m) => m.kind === 'attack' && m.from === U && m.to === C)?.armies).toBe(30);
+    expect(why(p)).not.toMatch(/is reached only through a border the plan concedes/);
+  });
 });

@@ -10,7 +10,9 @@
 // conceded — the conceded border the plan attacks from first, as #121's revival from the leftover.
 // #260: when none revives and the enemy front is reached only through a conceded border the plan
 // attacks an enemy from, an idle stack still heads for it — into that border — when the nearest
-// territory not mine is no nearer; never into another conceded border or one a withdrawal leaves.
+// territory not mine is no nearer; never into another conceded border or one a withdrawal leaves,
+// and never from a stack beside a visible enemy at the start of the turn (interior only once a
+// strike lands).
 import { bfsDistances, neighborsOf } from '../graph.js';
 import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
@@ -229,8 +231,14 @@ export function transfers(
       }
     }
     for (const t of mine) {
+      // Only an interior stack: one beside a visible enemy at the start of the turn (interior only
+      // once this turn's strike lands) keeps its armies for that strike and its own border, as
+      // #257's revival keeps them.
       const via =
-        !distEnemy.has(t) && distEnemyVia.has(t) && distEnemyVia.get(t)! <= (distAny.get(t) ?? Infinity);
+        !distEnemy.has(t) &&
+        distEnemyVia.has(t) &&
+        distEnemyVia.get(t)! <= (distAny.get(t) ?? Infinity) &&
+        !neighborsOf(g, t).some((x) => isEnemy(x));
       const dist = distEnemy.has(t) ? distEnemy : via ? distEnemyVia : distAny;
       const n = avail.get(t)!;
       if (n <= 0 || locked.has(t)) continue;
