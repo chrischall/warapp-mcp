@@ -133,6 +133,41 @@ describe('#260: an idle stack steps toward the enemy front through a conceded bo
     expect(into(p, 2)).toBe(0);
   });
 
+  it('holds a conceded border two idle stacks make hold together, not reporting it conceded', () => {
+    // Review of #260: T1 and T5 (7 each) are interior, both beside T2 and T3 (1 each, beside the
+    // opponent's 1-army T10). Neither alone revives a border (#257 tries one stack at a time), but
+    // both step into T2, the border the plan attacks T10 from, and together they make it hold. The
+    // plan must then hold T2, not keep reporting it conceded.
+    const T5 = 5;
+    const p = plan(2, 3, {
+      ids: [T5],
+      edges: [[U, 2], [U, 3], [T5, 2], [T5, 3], [U, S], [2, D], [3, D], [S, 20], [S, 21], [D, 11]],
+      armies: [at(U, 7, ME), at(T5, 7, ME), at(2, 1, ME), at(3, 1, ME), at(S, 12, ME), at(D, 1, FOE), at(11, 30, FOE), at(20, 6, 'neutral'), at(21, 6, 'neutral')],
+    });
+    expect(p.moves.find((m) => m.kind === 'attack' && m.to === D)?.from).toBe(2);
+    expect(into(p, 2)).toBe(12);
+    expect(p.conceded).not.toContain(2);
+    expect(p.conceded).toContain(3);
+    expect(p.warnings.join('\n')).not.toMatch(/T2 \(#2\) cannot be held/);
+    expect(why(p)).toMatch(/Hold T2 \(#2\) after all \(not conceded\): the 12 idle armies transferred into it from T1 \(#1\), T5 \(#5\)/);
+  });
+
+  it('never reports a border conceded that the steps into it make hold, at 8 or 9 a stack either', () => {
+    const T5 = 5;
+    for (const n of [8, 9]) {
+      const p = plan(2, 3, {
+        ids: [T5],
+        edges: [[U, 2], [U, 3], [T5, 2], [T5, 3], [U, S], [2, D], [3, D], [S, 20], [S, 21], [D, 11]],
+        armies: [at(U, n, ME), at(T5, n, ME), at(2, 1, ME), at(3, 1, ME), at(S, 12, ME), at(D, 1, FOE), at(11, 30, FOE), at(20, 6, 'neutral'), at(21, 6, 'neutral')],
+      });
+      expect(into(p, 2)).toBe(2 * (n - 1));
+      expect(p.conceded).not.toContain(2);
+      expect(why(p)).toMatch(/Hold T2 \(#2\) after all \(not conceded\)/);
+      // The step lines no longer call T2 a border the plan concedes.
+      expect(why(p)).not.toMatch(/to T2 \(#2\): moves idle interior armies toward the front \(the enemy front/);
+    }
+  });
+
   it('never steps a stack beside an enemy at the start of the turn, though a certain strike makes it interior', () => {
     // T1 (40) strikes the opponent's commander on T6 for sure; once T6 falls T1 is interior and the
     // enemy front (T10, whose bonus B900 the conceded T2 breaks) lies only through T2. T1 still

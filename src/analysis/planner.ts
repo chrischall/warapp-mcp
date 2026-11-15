@@ -1054,7 +1054,10 @@
 //     plan attacked from missed holding by one; the stress test preferred them there. Only an
 //     interior stack steps so: never one beside a visible enemy at the start of the turn, interior
 //     only once a strike lands (its armies stay for that strike's #226 margin, sized after rule 6;
-//     in the golden corpus a first strike's fell from 26 to 6 before this was kept). Only a stack
+//     in the golden corpus a first strike's fell from 26 to 6 before this was kept). When the steps
+//     into a conceded border make it hold together (two stacks, each too small for #257 alone), it is
+//     held after all, as #257 says ("Hold X after all (not conceded): the N idle armies transferred
+//     into it from Y, Z make it hold together …"), never left reported conceded. Only a stack
 //     no enemy can be reached from heads for the nearest territory
 //     not mine (neutral or fog; never a teammate's, PLAN-TEAMS C3) instead (#121: idle armies walked toward a worthless neutral
 //     while the enemy front was short, and a stack beside one never moved). This turn's

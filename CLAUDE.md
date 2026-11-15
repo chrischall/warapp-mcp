@@ -871,7 +871,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     an enemy from, rule 6 still steps the stack into that border rather than to a neutral edge no
     nearer, never into another conceded border or one a withdrawal leaves, and only from a stack
     no visible enemy borders at the start of the turn — one interior only once a strike lands keeps
-    its armies for that strike's #226 margin, which is sized after rule 6), else the top expansion's stack — never to a conceded border (the old "most enemies
+    its armies for that strike's #226 margin, which is sized after rule 6; when several such steps
+    together make the border hold, it is held after all, not reported conceded), else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border). #218: once every short border has its margin, the
     rest goes to the source of the step the leftover would save toward (#125) when that source is a
     border of equal defensive value (same player, threat, enemy territories, protected value and

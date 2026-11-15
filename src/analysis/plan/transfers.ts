@@ -13,6 +13,7 @@
 // territory not mine is no nearer; never into another conceded border or one a withdrawal leaves,
 // and never from a stack beside a visible enemy at the start of the turn (interior only once a
 // strike lands).
+// When those steps together make the border hold, it is held after all, never left reported conceded.
 import { bfsDistances, neighborsOf } from '../graph.js';
 import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
@@ -230,6 +231,9 @@ export function transfers(
         );
       }
     }
+    // #260 (review): the via steps into each conceded border, so that one that several steps make
+    // hold together (#257 tries one stack at a time) is held after all, not reported conceded.
+    const viaInto = new Map<number, { from: number[]; lines: { i: number; front: string }[] }>();
     for (const t of mine) {
       // Only an interior stack: one beside a visible enemy at the start of the turn (interior only
       // once this turn's strike lands) keeps its armies for that strike and its own border, as
@@ -294,11 +298,21 @@ export function transfers(
       if (via) {
         const targets = attacksFrom(step);
         const beside = neighborsOf(g, step).filter((x) => !held.has(x) && isEnemy(x)).sort((a, b) => a - b);
+        // An attack target that lands for sure is held, so it is not the front beside the step.
+        const landing = targets.filter((x) => !beside.includes(x));
         front = ` (the enemy front${beside.length ? `, ${beside.map(label).join(', ')},` : ''} is reached only through a border the plan concedes, and no farther than the nearest territory not mine${
           conceded.has(step)
-            ? `; ${label(step)} is the border the plan attacks ${targets.map(label).join(', ')} from; they are lost with it if it falls`
+            ? `; ${label(step)} is the border the plan attacks ${targets.map(label).join(', ')} from${
+                landing.length ? ` (${landing.map(label).join(', ')}, a capture that lands this turn, not the front)` : ''
+              }; they are lost with it if it falls`
             : ''
         })`;
+      }
+      if (via && conceded.has(step)) {
+        const v = viaInto.get(step) ?? { from: [], lines: [] };
+        v.from.push(t);
+        v.lines.push({ i: rationale.length, front });
+        viaInto.set(step, v);
       }
       rationale.push(
         `Transfer ${k} from ${label(t)} to ${label(step)}: ${reason}${front}${
@@ -314,6 +328,34 @@ export function transfers(
             ? ` (${stayAt(t)} stay: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat})`
             : ''
         }.`,
+      );
+    }
+    // #260 (review): what the via steps landed may make a conceded border hold — two idle stacks
+    // each too small to revive it alone (#257) — and then it is held, not conceded: the plan says
+    // so as #257 does, and its "cannot be held" warning goes. One they leave short stays conceded.
+    for (const [id, v] of [...viaInto].sort((a, b) => a[0] - b[0])) {
+      const threat = borders.get(id)?.threat;
+      if (threat === undefined) continue;
+      const total = stayAt(id) + (arrived.get(id) ?? 0) + unitsAt(id);
+      if ((toTake(total) ?? Infinity) <= threat) continue;
+      conceded.delete(id);
+      locked.add(id);
+      const conceding = `${label(id)} cannot be held `;
+      for (let i = warnings.length - 1; i >= 0; i--)
+        if (warnings[i]!.startsWith(conceding) && warnings[i]!.endsWith(': conceded')) warnings.splice(i, 1);
+      const sent = moves.filter((m) => m.kind === 'transfer' && m.to === id && v.from.includes(m.from)).reduce((n, m) => n + m.armies, 0);
+      for (const { i, front } of v.lines)
+        rationale[i] = rationale[i]!.replace(front, ` (into ${label(id)}, which these transfers make hold: it is held after all)`);
+      const value = threatened.find((x) => x.id === id)?.value ?? 0;
+      const from = attacksFrom(id);
+      rationale.push(
+        `Hold ${label(id)} after all (not conceded): the ${sent} idle armies transferred into it from ${v.from
+          .slice()
+          .sort((a, b) => a - b)
+          .map(label)
+          .join(', ')} make it hold together (${total} armies need ${toTake(total)} to take, above the ~${threat} threat; protects +${value})${
+          from.length ? `; the border the plan attacks ${from.map(label).join(', ')} from` : ''
+        }. They land only once the transfers run, so the border holds only if they run before the attack on it.`,
       );
     }
   }
