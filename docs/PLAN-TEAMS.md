@@ -98,7 +98,7 @@ or elsewhere called them open or gave a different default, these replace it.
 | # | Decision | Decided (2026-11-14) |
 |---|---|---|
 | D1 | Automate chat at all, given the Terms | **Proceed.** Every send stays confirm-gated. The Terms finding is recorded in `docs/WARAPP-API.md` with its links. |
-| D2 | Who sends | **The play session sends** within the honesty line (D3) without the owner approving each message. Each send still passes the confirm gate (D1). |
+| D2 | Who sends | **Automated chat is OFF until the owner enables it** (2026-11-15: "not ready for automated chat", superseding the 2026-11-14 answer that let the play session send without asking). The tools stay built; chat is read; `warapp_advise_diplomacy` may inform the play session's own decisions. When enabled, each send passes the confirm gate (D1). |
 | D3 | The honesty line | **The default line:** no false statement of fact, no promise the plan does not intend, withholding is free, never claim to be human, a truce ends with the agreed notice. |
 | D4 | Order | A, then B, then C (the plan's order; the owner did not change it). |
 | D5 | A cross-game record of who kept deals | **On, local and hosted** (a hosted child keeps it in its per-user data dir; the tools are registered and the record enabled there). Keyed by a salted hash of the GameFeed player id: no raw id or name in the file. It keeps, per agreement and name-free: the game format, the turns agreed and ended, the terms' shape, the outcome (kept; ended with notice and whether it was honoured; broken by them or by me), the break turn and flag kind, the context at the break (endgame, who led, outgrowing), whether they retaliated or proposed again; and per-player tallies derived from those. Bounded (entries per player, players). Isolated, so `WARAPP_PLAYER_RECORD=off` switches it off. |
@@ -754,7 +754,7 @@ corpus is unchanged.
   which territories, how many turns' notice, the cap, when it ends. One short message.
 - Record every agreement with `warapp_record_agreement`. Declare every promise in `commitments`.
 - End a truce with the agreed notice. Never claim to be a human; say an AI assists when asked.
-- Sending follows D2.
+- Sending follows D2: off until the owner enables it.
 - In a team game: `warapp_get_team` and `warapp_team_brief` every turn, the brief early in the turn,
   commit late.
 
