@@ -114,8 +114,8 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   armies are outside the cap**: the bundle adds them after it, and the client's own guide says they
   are not income and always pay in full (unverified live). `incomeDetail` (`src/analysis/plan/shared.ts`)
   computes it, so `warapp_plan_turn` (which reports `incomeCapped`: `uncapped`, `cap`, `armies`, `limit`,
-  `received`, `cut`) and `warapp_submit_turn`'s deploy check use the cut figure; while it rests on two
-  data points the check stays a preview warning that states the arithmetic (over the cap it reads "is 0
+  `received`, `cut`) and `warapp_submit_turn`'s deploy check use the cut figure; the formula is verified by six live cases, but where card armies
+  and Local Deployment's pools fall is not, so the check stays a preview warning that states the arithmetic (over the cap it reads "is 0
   (over the cap by N)"); `warapp_check_plan` checks the
   deploy total against the cut figure too. The fog prior (`planEnemyEstimates`' `incomeCap`), the standing
   and `warapp_check_plan`'s leader test read my income before the cut: they compare economies, and the cap
