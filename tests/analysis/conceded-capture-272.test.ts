@@ -46,11 +46,11 @@ const map = makeMap(
   [[900, 4, [1, 2, 3, 4, 5]], [901, 5, [8, 10, 11]]],
 );
 const g = buildGraph(map);
-const field = (four = 0, five = 0, owner: number | 'neutral' = WEAK): BoardState =>
+const field = (four = 0, five = 0, owner: number | 'neutral' = WEAK, three = 3): BoardState =>
   board([
     at(1, 2, ME),
     at(2, 3, ME),
-    at(3, 3, ME),
+    at(3, three, ME),
     at(4, four, owner),
     at(5, five, owner),
     at(8, 30, BIG),
@@ -76,6 +76,15 @@ describe('#272 item 1: a conceded border attacks out for a free step into a bonu
     expect(text).not.toMatch(/a conceded border never attacks out/);
     // Rule 1c keeps a border of a bonus this turn completes: nothing withdraws from it.
     expect(p.moves.filter((m) => m.kind === 'transfer' && m.from === 3)).toEqual([]);
+  });
+
+  it('armies left over stay on the border: the bonus its attack completes keeps it (rule 1c), nothing withdraws', () => {
+    // 3 holds 12: two attack out, the rest would have withdrawn had rule 1c judged the border first.
+    const p = plan(field(0, 0, WEAK, 12));
+    expect(attacksFrom(p, 3)).toEqual([4, 5]);
+    expect(p.conceded ?? []).not.toContain(3);
+    expect(p.moves.filter((m) => m.kind === 'transfer' && m.from === 3)).toEqual([]);
+    expect(p.rationale.join('\n')).toMatch(/Keep T3 \(#3\) \(not conceded\): this turn's captures complete bonus B900 \(#900\) \(\+4\)/);
   });
 
   it('a territory holding more than near-empty is not attacked out of the conceded border', () => {

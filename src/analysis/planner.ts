@@ -657,7 +657,7 @@
 //     army): withdrawing turns "might lose it" into "certainly loses it". A warning says which
 //     case applied ("… is conceded but might still hold" / "… cannot be held"); a kept border
 //     may also take the leftover deploy.
-//     #272, before it withdraws (plan/conceded-out.ts): a conceded border attacks out with its own
+//     #272, before rule 1c re-values the borders and it withdraws (plan/conceded-out.ts): a conceded border attacks out with its own
 //     armies (no deploy) into a neighbour holding at most CONCEDED_OUT_MAX (2) armies — a neutral,
 //     or a foe's with no special unit, never a truce's, a player's only off `expand` — whose capture
 //     completes a positive bonus or advances one I am building (another member mine or captured;
@@ -2303,9 +2303,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       for (const c of candidates)
         if (c.target !== undefined && !captured.has(c.target) && targets.get(c.target)?.sources.some((x) => unlocked.has(x))) c.run();
     settleContested();
-    reconsider();
-    // #272: a conceded border attacks out for a free step into a bonus before it withdraws.
+    // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
+    // before rule 1c re-values the borders, so one whose bonus this completes is kept).
     attackOutOfConceded(pc, ps, book, hd, tgt, caps);
+    reconsider();
     withdraw();
   } else {
     for (const p of byCloseness) {
@@ -2317,12 +2318,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       garrisonCompleted();
     }
     settleContested();
+    // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
+    // before rule 1c re-values the borders, so one whose bonus this completes is kept).
+    if (acting) attackOutOfConceded(pc, ps, book, hd, tgt, caps);
     reconsider();
-    if (acting) {
-      // #272: a conceded border attacks out for a free step into a bonus before it withdraws.
-      attackOutOfConceded(pc, ps, book, hd, tgt, caps);
-      withdraw();
-    }
+    if (acting) withdraw();
   }
 
   // #203: a lead step the bonus passes did not take is an ordinary enemy territory again: out of

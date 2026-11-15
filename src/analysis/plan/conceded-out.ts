@@ -12,7 +12,7 @@
 // first, then by bonus value, cost, a teammate's focus (C3.4) and id, repeated while a capture makes another complete. R3 does
 // not refuse it (the armies would otherwise leave the border it gives up); a completed bonus then
 // keeps the border as rule 1c keeps any member of a bonus this turn completes. The rest withdraw.
-// planPass runs it just before rule 1b's withdrawal.
+// planPass runs it just before rule 1c's re-valuation and rule 1b's withdrawal.
 import { bonusTerritories } from '../bonuses.js';
 import { neighborsOf } from '../graph.js';
 import type { Captures } from './captures.js';
@@ -62,7 +62,8 @@ export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook
         if (st.owner.kind !== 'player' && st.owner.kind !== 'neutral') continue;
         if (defenceAt(t) > CONCEDED_OUT_MAX) continue;
         const cost = costAt(t);
-        if (cost === null || cost > n || gainWith([t]) < 0) continue;
+        // What the capture must send: a repulsed territory's sure size (#240) may be more.
+        if (cost === null || tgt.sizeOf(t, cost) > n || gainWith([t]) < 0) continue;
         const { completes, advances } = stepOf(t);
         // No-Split: the whole stack goes, none withdraws — only for a completion.
         const ids = completes.length ? completes : noSplit ? [] : advances;
@@ -103,8 +104,10 @@ export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook
       if (added) targets.delete(c.t);
       continue;
     }
+    // What the attack sends (a repulsed territory's sure size may be more than its plain cost, #240).
+    const sent = ps.moves.filter((m) => m.kind === 'attack' && m.from === c.from && m.to === c.t).reduce((n, m) => n + m.armies, 0);
     rationale.push(
-      `Attack out of conceded ${label(c.from)} before withdrawing: ${label(c.t)} holds ${defenceAt(c.t)}, and ${c.cost} of the armies leaving the border anyway take it, ${c.completes ? 'completing' : 'advancing'} bonus ${bonusName(c.bonus)} (+${c.value}) (#272).`,
+      `Attack out of conceded ${label(c.from)} before withdrawing: ${label(c.t)} holds ${defenceAt(c.t)}, and ${sent} of the armies leaving the border anyway take it, ${c.completes ? 'completing' : 'advancing'} bonus ${bonusName(c.bonus)} (+${c.value}) (#272).`,
     );
     if (passed)
       rationale.push(
