@@ -151,6 +151,14 @@ describe('observeTurn: attackedMe, contact, captures', () => {
     expect(of(observe(prev, board([...shown, mine(3, 1), its(4, 1)]), o)).attackedMe).toBe(true);
     // A capture sends none back: the border is tested.
     expect(of(observe(prev, board([...shown, mine(3, 2), mine(4, 3)]), o)).attackedMe).toBe(false);
+    // Two of my borders attack 4: 3's attack fails and sends 4 home, then 5's 19 capture it. 4 is mine
+    // after the turn, yet 3's survivors came back: 3 should end with 6 and ends with 3 (it was hit),
+    // which the orders alone (10 − 8 = 2) cannot tell. No "no".
+    const two = board([...shown, mine(3, 10), its(4, 6), mine(5, 20), neutral(6, 2)]);
+    const both: MyOrders = { deploys: [], moves: [{ from: 3, to: 4, armies: 8 }, { from: 5, to: 4, armies: 19 }] };
+    expect(of(observe(two, board([...shown, mine(3, 3), mine(4, 5), mine(5, 1), neutral(6, 2)]), both)).attackedMe).toBeNull();
+    // Below what the orders leave, it was still hit.
+    expect(of(observe(two, board([...shown, mine(3, 1), mine(4, 5), mine(5, 1), neutral(6, 2)]), both)).attackedMe).toBe(true);
   });
 
   it('a move out that drains the border to the guard shrinks rather than the border when hit first: no "no"', () => {

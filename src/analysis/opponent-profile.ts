@@ -87,8 +87,9 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  *   boards, next to a visible stack of its and of no other player, holds fewer armies than T's count
  *   + my deploys − my moves out + my transfers in (a transfer in counts only from a source next to no
  *   other player's territory, which nobody could have hit first). Survivors of a move out that did
- *   not end on a territory of mine (a failed attack, or a transfer that met a territory taken first)
- *   may come back and cover a hit, so such a border still reads yes on a drop but never tests a "no";
+ *   not surely land (its target not mine on T+1, as after a failed attack or a transfer that met a
+ *   territory taken first, or entered by another order of mine too, which may have retaken it after
+ *   this move failed) may come back and cover a hit, so such a border still reads yes on a drop but never tests a "no";
  *   nor does one whose moves out leave it at the guard or less (war.app sends what is left, so a hit
  *   landing first shrinks the move, not the border: a withdrawal of every movable army).
  *   Without orders only a capture says
@@ -96,7 +97,7 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  * - `reinforce`: one opportunity per attack of mine onto X (its, with D armies on T) when combat is
  *   exact, it is my only move onto X, X carries no special unit, no move of mine leaves X, X shows its
  *   armies on T+1 (still its, or mine), and my source S is mine on both boards with no transfer in,
- *   affordable orders out, every other move out of it landed, no special unit of mine on it (a
+ *   affordable orders out, every other move out of it surely landed (as above), no special unit of mine on it (a
  *   commander going along fights as 7, which the move's armies do not count), and exactly the armies
  *   my orders leave (on a capture), or those plus at most the A armies sent (on a failure: an X
  *   weaker than D kills fewer, so more come back). An event when X stood stronger than D: captured
@@ -162,6 +163,10 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
   const outOf = (id: number) => moves.filter((m) => m.from === id);
   const into = (id: number) => moves.filter((m) => m.to === id);
   const sum = (ms: readonly { armies: number }[]) => ms.reduce((n, m) => n + Math.max(0, m.armies), 0);
+  /** A move of mine that surely ended on its target: the target is mine after the turn and no other
+   *  order of mine entered it (another could have failed first and been retaken, or retaken it after
+   *  this one met it taken), so none of its survivors can have gone back to the source. */
+  const landed = (m: { to: number }) => mineNow(m.to) && into(m.to).length === 1 && !untested.has(m.to);
   /** A player's territory next to `id` on board T, other than me. */
   const enemiesNext = (id: number) => {
     const out = new Set<number>();
@@ -208,12 +213,13 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
           attackedMe = true;
           break;
         }
-        // A move out that did not end on a territory of mine (a failed attack, or a transfer that met
-        // a territory taken first) may send survivors back, which can cover a hit: no "no" from here.
+        // A move out that did not surely land (a failed attack, a transfer that met a territory taken
+        // first, or a move into a territory another order of mine also entered, which may have been
+        // taken or retaken in between) may send survivors back, which can cover a hit: no "no" here.
         // A move out that drains it to the guard sends only what is left: a hit landing first shrinks
         // the move, not the border, which still ends at `expected`: no "no" from here either.
         const drained = outOf(id).some((m) => m.armies > 0) && expected <= guard;
-        if (!drained && !outOf(id).some((m) => m.armies > 0 && !mineNow(m.to))) tested = true;
+        if (!drained && !outOf(id).some((m) => m.armies > 0 && !landed(m))) tested = true;
       }
       // A quiet border is a "no" only when captures can be told too (a capture elsewhere would be a yes).
       if (attackedMe === null && tested && tookFromMe !== null) attackedMe = false;
@@ -242,7 +248,7 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         const sent = outOf(m.from);
         const available = sWas.armies + (deploys.get(m.from) ?? 0);
         if (sum(sent) > available - guard) continue;
-        if (sent.some((o) => o !== m && !mineNow(o.to))) continue;
+        if (sent.some((o) => o !== m && !landed(o))) continue;
         const base = available - sum(sent);
         const A = m.armies;
         const D = x.armies;
