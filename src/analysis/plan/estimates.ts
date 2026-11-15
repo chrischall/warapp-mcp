@@ -289,6 +289,16 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     const e = custom ? undefined : estimates.get(player);
     return e ? incomeOf(e) : deployOf(player);
   };
+  // #275 (b): the untrusted marks, and the members of the positive bonuses I hold in full at the start.
+  const untrusted = new Map((custom ? [] : (input.untrusted ?? [])).map((u) => [u.player, Math.max(0, Math.floor(u.deploy))]));
+  const guardedByHeld = new Set<number>();
+  if (untrusted.size)
+    for (const b of g.map.bonuses) {
+      if (b.value <= 0) continue;
+      const ts = bonusTerritories(g, b.id);
+      if (ts.length && ts.every((t) => mineAtStart.has(t))) for (const t of ts) guardedByHeld.add(t);
+    }
+  const untrustedAt = (player: number, t: number): number => (guardedByHeld.has(t) ? (untrusted.get(player) ?? 0) : 0);
   /**
    * #201: the planning horizon. Once the outlook (#178) says the game is decided — winning or losing
    * for OUTLOOK_TURNS turns running — every payback test counts the turns the game has left instead
@@ -352,6 +362,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     estimates,
     deployOf,
     incomeOfPlayer,
+    untrustedAt,
     decidedGame,
     paybackTurns,
   };

@@ -1,0 +1,225 @@
+// The broken-estimate tripwire (#275 b). Pure and deterministic.
+//
+// An opponent's deploy estimate is a floor: what the board proves it earns. Five of eighteen lost
+// games were lost to holds sized for one (an estimate of 15 met 70–120; 41 met about 170). One
+// observation that the estimate cannot explain is enough to stop trusting it: when what an opponent
+// did needed TRIP_RATIO (1.5) × or more of what its estimate allowed, and at least TRIP_MIN_EXCESS
+// armies more, its estimate is marked untrusted for UNTRUSTED_TURNS turns (`activeTripwires`; the
+// tools keep the marks in the board cache, src/trend.ts, by player id only).
+//
+// The observations, each read off two consecutive boards of mine (the previous turn's and this one's):
+//   fog-stack    a stack of its comes out of the fog (visible now, not on the previous board) larger
+//                than the armies last seen there (when it held it then) plus its estimate for every
+//                turn since that board (since turn 1 when no board here shows it);
+//   capture      it took a territory of mine or a visible neutral that needed more attackers
+//                (`armiesToTake` of the defenders) than its stacks beside it could move plus its
+//                estimate. Never when a territory beside it was hidden on the previous board (a
+//                stack of its could have stood there), when a third player stood beside it, under
+//                Multi-Attack (a chain lands from further), or when my orders that turn are unknown
+//                and could have moved armies out of mine (or attacked the neutral) first;
+//   held-attack  an attack of mine (my cached orders) failed on a territory of its that held: the
+//                defenders it took to hold (one more than my attackers kill) beyond the armies there,
+//                its estimate and its stacks beside it that could move in. With no luck and straight
+//                rounding only, and not when a territory beside it was hidden.
+// `implied` is the deploy per turn the observation needs: what the estimate should have been.
+// The estimate compared is the one the plan used that turn (`estimateAt`), the caller's to supply.
+
+import type { BoardState, TerritoryState } from '../board.js';
+import { armiesToTake, luckFraction, straightKills } from './combat.js';
+import type { MapGraph } from './graph.js';
+import { neighborsOf } from './graph.js';
+import type { MyOrders } from './opponents.js';
+import { visibleState } from './plan/shared.js';
+import type { SimSettings } from './turn-sim.js';
+
+/** An observation trips when it needs at least this many times what the estimate allows. */
+export const TRIP_RATIO = 1.5;
+/** …and at least this many armies more (small numbers are noise). */
+export const TRIP_MIN_EXCESS = 5;
+/** Turns an opponent's estimate stays untrusted, the turn of the observation included. */
+export const UNTRUSTED_TURNS = 3;
+
+export type TripKind = 'fog-stack' | 'capture' | 'held-attack';
+
+export interface TripObservation {
+  player: number;
+  /** The turn whose board shows it. */
+  turn: number;
+  kind: TripKind;
+  territory: number;
+  /** Armies the observation needed. */
+  observed: number;
+  /** What the estimate allowed. */
+  allowed: number;
+  /** The deploy per turn it implies. */
+  implied: number;
+}
+
+/** An opponent whose estimate is untrusted from turn `since` to turn `until`, and the observation that tripped it. */
+export interface Tripwire {
+  player: number;
+  since: number;
+  until: number;
+  kind: TripKind;
+  territory: number;
+  observed: number;
+  allowed: number;
+  implied: number;
+}
+
+export interface TripBoard {
+  turn: number;
+  board: BoardState;
+  /** My orders on that turn, when this server sent them. */
+  orders?: MyOrders;
+}
+
+export interface TripInput {
+  graph: MapGraph;
+  /** My boards, oldest first; the last is the turn being played. */
+  boards: readonly TripBoard[];
+  me: number;
+  settings?: SimSettings;
+  teams?: ReadonlyMap<number, number>;
+  /** The deploy estimate the plan used for `player` on turn `turn`. */
+  estimateAt: (player: number, turn: number) => number;
+}
+
+const byNum = (a: number, b: number) => a - b;
+
+export function brokenEstimates(input: TripInput): TripObservation[] {
+  const { graph, me, boards } = input;
+  const now = boards.at(-1);
+  const prev = boards.at(-2);
+  if (!now || !prev || prev.turn !== now.turn - 1) return [];
+  const T = now.turn;
+  const s = input.settings ?? {};
+  const rates = { offensiveKillRate: s.offensiveKillRate, defensiveKillRate: s.defensiveKillRate };
+  const guard = s.oneArmyStandsGuard === false ? 0 : 1;
+  const exact = luckFraction(s.luckModifier) === 0 && (s.roundingMode === undefined || s.roundingMode === 'StraightRound');
+  const teams = input.teams;
+  const friend = (p: number) => p === me || (teams !== undefined && teams.get(p) !== undefined && teams.get(p) === teams.get(me));
+  const index = (b: BoardState) => new Map(b.territories.map((t) => [t.territoryId, t]));
+  const cur = index(now.board);
+  const before = index(prev.board);
+  const playerOf = (t: TerritoryState | undefined): number | undefined => (t?.owner.kind === 'player' ? t.owner.playerId : undefined);
+  const est = (p: number, turn: number) => Math.max(0, input.estimateAt(p, turn));
+  const out: TripObservation[] = [];
+  const trip = (o: Omit<TripObservation, 'turn'>) => {
+    if (o.observed >= TRIP_RATIO * o.allowed && o.observed - o.allowed >= TRIP_MIN_EXCESS) out.push({ ...o, turn: T });
+  };
+  /** Every neighbour of `id` was in view on the previous board. */
+  const clearAround = (id: number) => neighborsOf(graph, id).every((n) => visibleState(before.get(n)) !== undefined);
+  /** What `p` could move from its stacks beside `id` on the previous board. */
+  const stacksBeside = (id: number, p: number) =>
+    neighborsOf(graph, id).reduce((n, x) => {
+      const t = visibleState(before.get(x));
+      return n + (playerOf(t) === p ? Math.max(0, t!.armies! - guard) : 0);
+    }, 0);
+  const myOrders = prev.orders;
+
+  for (const id of [...cur.keys()].sort(byNum)) {
+    const t = visibleState(cur.get(id));
+    const p = playerOf(t);
+    if (p === undefined || friend(p) || !graph.territoryById.has(id)) continue;
+    const was = visibleState(before.get(id));
+    const armies = t!.armies!;
+
+    // fog-stack: out of the fog this turn.
+    if (!was) {
+      let last: TripBoard | undefined;
+      for (const b of boards.slice(0, -1)) if (visibleState(index(b.board).get(id))) last = b;
+      const from = last?.turn ?? 1;
+      const seen = last ? visibleState(index(last.board).get(id)) : undefined;
+      const base = seen && playerOf(seen) === p ? seen.armies! : 0;
+      let deploys = 0;
+      for (let k = from; k < T; k++) deploys += est(p, k);
+      const turns = Math.max(1, T - from);
+      trip({ player: p, kind: 'fog-stack', territory: id, observed: armies, allowed: base + deploys, implied: Math.ceil((armies - base) / turns) });
+      continue;
+    }
+
+    // capture: it holds what was mine or a visible neutral's.
+    const wasOwner = playerOf(was);
+    if (wasOwner !== p && (wasOwner === me || was.owner.kind === 'neutral')) {
+      if (s.multiAttack || !clearAround(id)) continue;
+      const third = neighborsOf(graph, id).some((n) => {
+        const o = playerOf(visibleState(before.get(n)));
+        return o !== undefined && o !== p && o !== me;
+      });
+      if (third) continue;
+      let defenders = was.armies!;
+      if (wasOwner === me) {
+        if (!myOrders) continue;
+        const out = myOrders.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0);
+        const added = myOrders.deploys.filter((d) => d.territoryId === id).reduce((n, d) => n + d.armies, 0);
+        defenders = Math.max(guard, defenders + added - out);
+      } else {
+        // My own attack on the neutral would have worn it down first.
+        const mineBeside = neighborsOf(graph, id).some((n) => playerOf(before.get(n)) === me);
+        if (mineBeside && (!myOrders || myOrders.moves.some((m) => m.to === id))) continue;
+      }
+      const needed = armiesToTake(defenders, rates);
+      if (needed === null) continue;
+      const stacks = stacksBeside(id, p);
+      trip({ player: p, kind: 'capture', territory: id, observed: needed, allowed: stacks + est(p, T - 1), implied: needed - stacks });
+      continue;
+    }
+
+    // held-attack: my attack on its territory failed, and it still holds it.
+    if (wasOwner === p && exact && myOrders && clearAround(id)) {
+      const fromIds = [...new Set(myOrders.moves.filter((m) => m.to === id).map((m) => m.from))].sort(byNum);
+      let attackers = 0;
+      for (const f of fromIds) {
+        const src = visibleState(before.get(f));
+        if (playerOf(src) !== me || playerOf(visibleState(cur.get(f))) !== me) continue;
+        const sent = myOrders.moves.filter((m) => m.from === f && m.to === id).reduce((n, m) => n + m.armies, 0);
+        const added = myOrders.deploys.filter((d) => d.territoryId === f).reduce((n, d) => n + d.armies, 0);
+        attackers = Math.max(attackers, Math.min(sent, src!.armies! + added - guard));
+      }
+      if (attackers <= 0) continue;
+      const defenders = straightKills(attackers, s.offensiveKillRate ?? 60) + 1;
+      const stacks = stacksBeside(id, p);
+      const standing = was.armies!;
+      trip({
+        player: p,
+        kind: 'held-attack',
+        territory: id,
+        observed: defenders,
+        allowed: standing + est(p, T - 1) + stacks,
+        implied: defenders - standing - stacks,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * The opponents whose estimates are untrusted on `turn`: the marks kept (`stored`) still running, and
+ * a mark from each fresh observation (the one implying most per player). A player marked again starts
+ * its {@link UNTRUSTED_TURNS} over, keeping whichever observation implies more. Ascending by player.
+ */
+export function activeTripwires(stored: readonly Tripwire[], fresh: readonly TripObservation[], turn: number): Tripwire[] {
+  const by = new Map<number, Tripwire>();
+  for (const w of stored) if (w.until >= turn && w.since <= turn) by.set(w.player, w);
+  const newest = new Map<number, TripObservation>();
+  for (const o of fresh) {
+    const had = newest.get(o.player);
+    if (!had || o.implied > had.implied) newest.set(o.player, o);
+  }
+  for (const [p, o] of newest) {
+    const had = by.get(p);
+    const keep = had && had.implied > o.implied ? had : { ...o };
+    by.set(p, {
+      player: p,
+      since: o.turn,
+      until: o.turn + UNTRUSTED_TURNS - 1,
+      kind: keep.kind,
+      territory: keep.territory,
+      observed: keep.observed,
+      allowed: keep.allowed,
+      implied: keep.implied,
+    });
+  }
+  return [...by.values()].sort((a, b) => a.player - b.player);
+}

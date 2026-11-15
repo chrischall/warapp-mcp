@@ -140,6 +140,7 @@ import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { myCommanderTerritory } from '../analysis/commander-safety.js';
 import { commanderCheckOn, guessKeepsCommander, type CommanderCheck, type CommanderCheckInput, type CommanderRisk } from './commander-check.js';
+import { HEADROOM_COMPACT, headroomView, headroomWarnings, keepTripwires, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
@@ -1596,11 +1597,43 @@ export async function livePlanSetup(
   const truces = await truceRelations(ctx, {
     game, me, turn, graph, board: seen, boards: history.boards, myIncome: boardIncome, tracks, diplomacy: effect.diplomacy,
   });
+  // The per-opponent estimates the plan works from (as planTurn reads them), for the tripwire and the border guess.
+  const { estimates } = planEnemyEstimates({
+    graph,
+    board,
+    me: me.id,
+    // #253: the fog prior reads my income before the army cap's cut, as the planner's does.
+    income: income - cards.extraArmies,
+    ...(incomeCap ? { incomeCap } : {}),
+    settings,
+    ...(trend ? { previousBoard: trend.board } : {}),
+    ...(trend && previousOrders ? { previousOrders } : {}),
+    ...(tracks ? { tracks } : {}),
+    game: gameContext,
+    turn,
+    ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
+  });
+  // #275 (b): the opponents whose estimate an observation broke: their held-bonus borders are sized for
+  // the larger of what tripped it and my own income (the board's, card armies out).
+  const teams = teamsOf(game.players);
+  const trip = await readTripwires({
+    dataDir: ctx.dataDir,
+    gameId: game.id,
+    me: me.id,
+    turn,
+    graph,
+    boards: turn !== null ? [...history.boards, { turn, board: seen }] : [],
+    settings,
+    ...(teams ? { teams } : {}),
+    estimates,
+  });
+  const untrusted = trip.tripwires.map((w) => ({ player: w.player, deploy: untrustedDeploy(w, boardIncome) }));
   const input: PlanInput = {
     graph,
     board,
     me: me.id,
     income,
+    ...(untrusted.length ? { untrusted } : {}),
     cardArmies: cards.extraArmies,
     ...(incomeCap ? { incomeCap } : {}),
     ...(truces?.relations.length ? { relations: truces.relations } : {}),
@@ -1642,7 +1675,7 @@ export async function livePlanSetup(
   return {
     graph, seen, award, board, opening, mover, settings, rules, owners, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards,
     boardIncome, income, trend, previousOrders, tracks, outlookInput, outlook, picking, opponents, gameContext, truces, input,
-    effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true,
+    effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true, estimates, trip, teams,
   };
 }
 
@@ -1787,6 +1820,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board. ' +
+          '`headroom` lists, weakest first, each border of yours with the smallest single deploy by a neighbouring opponent that ' +
+          'takes it after the plan\'s orders (carried out on the turn simulator, both move orders unless the first mover is known), ' +
+          'whether that is below your income, and what falls with it (the bonuses it breaks, the territories behind it and their ' +
+          'bonus income): an estimate is a floor, so this says how wrong it may be. When one observation broke an opponent\'s ' +
+          'estimate by 1.5× or more (a stack out of the fog, a capture, or an attack of yours it held, needing more than the estimate ' +
+          'allowed), the first warning says so for the next 3 turns, and the borders of your held bonuses facing it are sized for the ' +
+          'larger of what it implied and your own income. ' +
           'With an army cap, `income` is what the cap leaves, min(income, cap × income − your armies on the board) (verified by ' +
           'six live cases; the line names a cut), and `incomeCapped` gives the arithmetic; Reinforcement card armies come on top. ' +
           'In a free-for-all, `relations` reports each truce recorded with warapp_record_agreement as the plan treated it ' +
@@ -1917,7 +1957,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         },
       });
-      const { graph, seen, award, board, mover, rules, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards, income, trend, previousOrders, tracks } = setup;
+      const { graph, seen, award, board, mover, rules, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards, income, trend, tracks } = setup;
       const { settings, outlookInput, gameContext, truces, effect, sanction } = setup;
       let { outlook } = setup;
       const plan = planTurn(setup.input);
@@ -1955,6 +1995,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const whatIf = goal !== undefined || enemy_deploy !== undefined;
       if (ctx.dataDir && turn !== null)
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
+      // #275 (b): this turn's estimates and the untrusted marks, for the next turns' tripwire.
+      await keepTripwires(ctx.dataDir, game.id, me.id, turn, setup.trip);
       // The opponent profile (docs/PLAN-PROFILES.md A2): the turns these boards show, never on a what-if plan.
       if (ctx.dataDir && turn !== null && !whatIf)
         await recordProfile(ctx.dataDir, opts.env, game, me, [...history.boards, { turn, board: seen }], teamsKnown);
@@ -2003,7 +2045,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // B4: the planner does not read what my chat messages promised (words change no estimate), so a
       // plan that breaks a commitment still in force says so here; warapp_submit_turn warns again.
       const promised = turn !== null ? await promiseWarnings(ctx, { game, me, turn, graph, board: seen, moves: plan.moves }) : [];
+      // #275 (b): an untrusted estimate is the first thing said.
+      const myIncome = income - cards.extraArmies;
       const warnings = [
+        ...tripwireWarnings(setup.trip.tripwires, myIncome, (p) => setup.trip.estimatesNow.get(p)),
         ...(me.hasCommittedOrders
           ? [
               'You have already committed orders this turn; warapp_submit_turn will refuse until you withdraw them ' +
@@ -2056,21 +2101,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // The border guess (docs/STRATEGY.md "Guessing at a border"): a randomized split of the deploys
       // the plan spends on one opponent's borders, when no fixed split holds them all. Optional: the
       // plan's own orders stay as they are; guessOrders carries the draw.
-      const { estimates } = planEnemyEstimates({
-        graph,
-        board,
-        me: me.id,
-        // #253: the fog prior reads my income before the army cap's cut, as the planner's does.
-        income: income - cards.extraArmies,
-        ...(setup.incomeCap ? { incomeCap: setup.incomeCap } : {}),
-        settings,
-        ...(trend ? { previousBoard: trend.board } : {}),
-        ...(trend && previousOrders ? { previousOrders } : {}),
-        ...(tracks ? { tracks } : {}),
-        game: gameContext,
-        turn,
-        ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
-      });
+      const { estimates } = setup;
       // #274: my commander every turn (a Commanders game, it on the board): where the plan leaves it, the
       // armies there, the moves to the nearest enemy or fog, and the smallest single deploy that kills it.
       // The very check warapp_submit_turn runs on these orders (commanderCheck: its opponents, teams,
@@ -2173,6 +2204,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           guessSkip = { reason: 'commander', message };
         }
       }
+      // #275 (a): the smallest single deploy that takes each border of mine after the plan's orders.
+      const headroom = safeHeadroom({
+        graph,
+        board,
+        me: me.id,
+        deploys: plan.deploys,
+        moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })),
+        settings,
+        ...(setup.teams ? { teams: setup.teams } : {}),
+        ...(mover.firstMover !== undefined && mover.verified ? { firstMover: mover.firstMover } : {}),
+        ...(advised ? { orderPriority: true } : {}),
+      });
       const guessOrders = guess ? guessOrdersOf(orders, guess) : undefined;
 
       return respond(view, VIEWS, (rung) => ({
@@ -2263,6 +2306,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                   ? `; the plan counts on ${plan.frontier.income}`
                   : ''
               }`,
+        // #275 (a): each border's headroom, the weakest first (compact: the first few).
+        headroom: headroomView(headroom, map, myIncome, rung === 'full'),
+        ...(rung !== 'full' && headroom.length > HEADROOM_COMPACT ? { headroomMore: headroom.length - HEADROOM_COMPACT } : {}),
         // #72: the offensive options considered, full view only.
         ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
         // #167: each attack on a player judged by its exchange, full view only.
@@ -2559,7 +2605,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ. ' +
         'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
         'several attacks on one target in the order listed, each against what the earlier ones leave) ' +
-        'and warns about one that cannot capture. An order that attacks (or a Bomb that hits) a territory an active or in-notice truce ' +
+        'and warns about one that cannot capture; it also warns (never refuses) when the orders leave a border of a bonus you hold ' +
+        'falling to a single deploy below your own income (the headroom table, as warapp_plan_turn has it). An order that attacks (or a Bomb that hits) a territory an active or in-notice truce ' +
         'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
         'and, once the orders are committed, the ledger records it broken-by-me. In a Commanders game, orders that ' +
         'leave your commander takeable by one opponent\'s single deploy, or two striking together when you lead a ' +
@@ -2936,6 +2983,31 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         );
         const hopeless = hopelessAttackWarning(attacks, label);
         if (hopeless) warnings.push(hopeless);
+        // #275 (c): a border of a held bonus these orders leave falling to a deploy below my own income.
+        // A warning, never a refusal; the stress test (warapp_check_plan) tries the replies in full.
+        const subTeams = teamsOf(game.players);
+        warnings.push(
+          ...headroomWarnings(
+            safeHeadroom({
+              graph: graphOf(map),
+              board,
+              me: me.id,
+              deploys: deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies })),
+              moves: moves.map((m, i) => ({
+                from: m.from.id,
+                to: m.to.id,
+                armies: m.percent ? (options.estimates.get(i) ?? 0) : m.armies,
+                ...(m.mode === 'attack-only' || m.mode === 'transfer-only' ? { mode: m.mode } : {}),
+                ...(m.commander ? { withCommander: true } : {}),
+                ...(m.attackTeammates ? { attackTeammates: true } : {}),
+              })),
+              settings: plannerSettings(game.settings),
+              ...(subTeams ? { teams: subTeams } : {}),
+              ...(plays.some((p) => p.kind === 'OrderPriority') ? { orderPriority: true } : {}),
+            }),
+            modelled,
+          ),
+        );
         // Deploys first (as the client sends them), merged per territory.
         const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
         for (const d of deploys) {

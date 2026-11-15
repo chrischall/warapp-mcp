@@ -17,11 +17,16 @@
 //
 // And, by turn, the next income the plan of that turn expected (`expected.nextIncome`, #194): the
 // next turn's plan compares its income with it ("since last turn").
+//
+// And (#275 b) the survival side store: by turn, the deploy estimate each opponent was planned
+// against (`estimates`), and the opponents whose estimate a tripwire marked untrusted
+// (`tripwires`, src/analysis/tripwire.ts). Player ids and numbers only, never a name.
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { boardFromStanding, type BoardState, type TerritoryState } from './board.js';
 import { playersByInGameId } from './live.js';
 import type { MyOrders } from './analysis/opponents.js';
+import type { TripKind, Tripwire } from './analysis/tripwire.js';
 import type { Player } from './normalize.js';
 import { asInt } from './scalars.js';
 
@@ -166,31 +171,49 @@ interface CachedBoards {
   orders?: Record<string, MyOrders>;
   /** The next income the plan of each turn expected (#194); absent when none was planned. */
   expected?: Record<string, number>;
+  /** #275: by turn, each opponent's deploy estimate the plan used, by player id. */
+  estimates?: Record<string, Record<string, number>>;
+  /** #275: the opponents whose estimate is untrusted, and why. */
+  tripwires?: Tripwire[];
 }
 
-type RawCache = { turns: Record<string, unknown>; orders: Record<string, unknown>; expected: Record<string, unknown> };
+type RawCache = {
+  turns: Record<string, unknown>;
+  orders: Record<string, unknown>;
+  expected: Record<string, unknown>;
+  estimates: Record<string, unknown>;
+  tripwires: unknown[];
+};
+
+const EMPTY = (): RawCache => ({ turns: {}, orders: {}, expected: {}, estimates: {}, tripwires: [] });
 
 /** The raw cache for `gameId` as `playerId` saw it: boards, orders and expected incomes by turn; empty when absent or unusable. */
 async function readCache(dir: string, gameId: number, playerId: number): Promise<RawCache> {
   try {
     const c: unknown = JSON.parse(await readFile(boardCachePath(dir, gameId), 'utf8'));
-    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId) return { turns: {}, orders: {}, expected: {} };
-    const orders = isRec(c.orders) ? c.orders : {};
-    const expected = isRec(c.expected) ? c.expected : {};
-    if (isRec(c.turns)) return { turns: c.turns, orders, expected };
+    if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId) return EMPTY();
+    const rest = {
+      orders: isRec(c.orders) ? c.orders : {},
+      expected: isRec(c.expected) ? c.expected : {},
+      estimates: isRec(c.estimates) ? c.estimates : {},
+      tripwires: Array.isArray(c.tripwires) ? (c.tripwires as unknown[]) : [],
+    };
+    if (isRec(c.turns)) return { turns: c.turns, ...rest };
     // A single-board cache written before turns were kept.
-    if (typeof c.turn === 'number') return { turns: { [String(c.turn)]: c.board }, orders, expected };
-    return { turns: {}, orders, expected };
+    if (typeof c.turn === 'number') return { turns: { [String(c.turn)]: c.board }, ...rest };
+    return { turns: {}, ...rest };
   } catch {
-    return { turns: {}, orders: {}, expected: {} };
+    return EMPTY();
   }
 }
 
-/** The cache's optional parts as written back: the orders and expected incomes, when any are kept. */
-function extras(cache: RawCache): Pick<CachedBoards, 'orders' | 'expected'> {
+/** The cache's optional parts as written back: the orders, expected incomes and survival store, when any are kept. */
+function extras(cache: RawCache): Pick<CachedBoards, 'orders' | 'expected' | 'estimates' | 'tripwires'> {
   return {
     ...(Object.keys(cache.orders).length ? { orders: cache.orders as Record<string, MyOrders> } : {}),
     ...(Object.keys(cache.expected).length ? { expected: cache.expected as Record<string, number> } : {}),
+    ...(Object.keys(cache.estimates).length ? { estimates: cache.estimates as Record<string, Record<string, number>> } : {}),
+    ...(cache.tripwires.length ? { tripwires: cache.tripwires as Tripwire[] } : {}),
   };
 }
 
@@ -415,5 +438,76 @@ export async function readCachedPlayer(dir: string, gameId: number): Promise<num
     return isRec(c) && c.gameId === gameId && typeof c.playerId === 'number' ? c.playerId : undefined;
   } catch {
     return undefined;
+  }
+}
+
+const TRIP_KINDS: ReadonlySet<string> = new Set<TripKind>(['fog-stack', 'capture', 'held-attack']);
+
+/** A kept tripwire, loosely: `undefined` when unusable. */
+function tripwireOf(w: unknown): Tripwire | undefined {
+  if (!isRec(w) || typeof w.kind !== 'string' || !TRIP_KINDS.has(w.kind)) return undefined;
+  const nums = ['player', 'since', 'until', 'territory', 'observed', 'allowed', 'implied'] as const;
+  if (!nums.every((k) => isNum(w[k]))) return undefined;
+  return {
+    player: w.player as number,
+    since: w.since as number,
+    until: w.until as number,
+    kind: w.kind as TripKind,
+    territory: w.territory as number,
+    observed: w.observed as number,
+    allowed: w.allowed as number,
+    implied: w.implied as number,
+  };
+}
+
+/** #275: the survival side store for `gameId` as `playerId` sees it. */
+export interface Survival {
+  /** Turn → opponent → the deploy estimate the plan used. */
+  estimates: Map<number, Map<number, number>>;
+  /** The untrusted marks kept (running or not: the reader decides). */
+  tripwires: Tripwire[];
+}
+
+/** The survival side store (#275 b) kept for `gameId` as `playerId`; empty when none. Never throws. */
+export async function readSurvival(dir: string, gameId: number, playerId: number): Promise<Survival> {
+  const cache = await readCache(dir, gameId, playerId);
+  const estimates = new Map<number, Map<number, number>>();
+  for (const turn of newestTurns(cache.estimates)) {
+    const rec = cache.estimates[String(turn)];
+    if (!isRec(rec)) continue;
+    const row = new Map<number, number>();
+    for (const [k, v] of Object.entries(rec)) if (/^\d+$/.test(k) && isNum(v) && v >= 0) row.set(Number(k), v);
+    if (row.size) estimates.set(turn, row);
+  }
+  const tripwires = cache.tripwires.map(tripwireOf).filter((w): w is Tripwire => w !== undefined);
+  return { estimates, tripwires };
+}
+
+/**
+ * Keep turn `turn`'s opponent estimates and the untrusted marks now running (#275 b) for `gameId` as
+ * `playerId`, with the newest {@link CACHED_TURNS} turns of estimates; the marks replace those kept.
+ * Never throws.
+ */
+export async function writeSurvival(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  turn: number,
+  s: { estimates: ReadonlyMap<number, number>; tripwires: readonly Tripwire[] },
+): Promise<boolean> {
+  try {
+    const cache = await readCache(dir, gameId, playerId);
+    const all = { ...cache.estimates, [String(turn)]: Object.fromEntries([...s.estimates].map(([p, e]) => [String(p), e])) };
+    const estimates: Record<string, unknown> = {};
+    for (const n of newestTurns(all)) estimates[String(n)] = all[String(n)];
+    await writeCache(dir, {
+      gameId,
+      playerId,
+      turns: cache.turns as Record<string, BoardState>,
+      ...extras({ ...cache, estimates, tripwires: [...s.tripwires] }),
+    });
+    return true;
+  } catch {
+    return false;
   }
 }

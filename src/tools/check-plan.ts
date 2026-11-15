@@ -18,6 +18,7 @@ import { withTeammateOrders } from '../team-orders.js';
 import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
 import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
+import { HEADROOM_COMPACT, headroomView, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
@@ -109,6 +110,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           "award of picks showed (as in warapp_plan_turn): the opponent's proven starts stand on the board the " +
           'orders are tried on even while fogged, and `award.firstMover` is who moves first this turn under a ' +
           '`Cycle` move order (not NoLuckCycle, where play speed sets it) — pass it as `first_mover` to judge by it; both orders are still tried by default. ' +
+          '`headroom` lists, weakest first, each border of yours with the smallest single deploy by a neighbouring opponent that ' +
+          'takes it after these orders, and what falls with it (the bonuses it breaks, the territories behind it and their bonus ' +
+          'income). An opponent whose estimate one observation broke (see warapp_plan_turn) is tried at the larger of what it ' +
+          'implied and your own income (`enemyDeploy` source `untrusted`), said in the first warning. ' +
           'In a free-for-all with a truce in force (the agreement ledger), its partner is still tried — `safe` is safe ' +
           'against a break too — each reply that attacks a territory a truce covers is marked `breaksTruce`, and ' +
           '`safeIfTruceHolds` is the verdict over the other replies (null when every reply is a break). ' +
@@ -137,7 +142,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           .describe(
             'Armies every opponent is assumed to deploy this turn. Default, per opponent: the estimate ' +
               'warapp_plan_turn uses (base income plus the bonuses it visibly holds, or its observed or tracked ' +
-              'income when larger; in a 1v1 that started even, an opponent bordering the fog at least your own income). ' +
+              'income when larger; in a 1v1 that started even, an opponent bordering the fog at least your own income; while an ' +
+              'observation has made its estimate untrusted, the larger of what it implied and your own income). ' +
               'Income in the fog is unseen, so raise it to test a stronger opponent.',
           ),
         first_mover: z
@@ -287,7 +293,26 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(opening ? { opening } : {}),
         ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
       });
-      const { tracks, income, effect, friend, opponents, teams, inView, leader } = so;
+      const { tracks, income, effect, friend, teams, inView, leader, estimates } = so;
+      // #275 (b): an opponent whose estimate an observation broke is tried at the larger of what tripped it
+      // and my own income (never below its estimate). Read only: warapp_plan_turn keeps the marks.
+      const tripTeams = teamsOf(game.players);
+      const trip = await readTripwires({
+        dataDir: ctx.dataDir,
+        gameId: game.id,
+        me: me.id,
+        turn,
+        graph,
+        boards: turn !== null ? [...history.boards, { turn, board: seen }] : [],
+        settings,
+        ...(tripTeams ? { teams: tripTeams } : {}),
+        estimates,
+      });
+      const untrustedOf = new Map(trip.tripwires.map((w) => [w.player, untrustedDeploy(w, income)]));
+      const opponents = so.opponents.map((o) => {
+        const untrusted = untrustedOf.get(o.id);
+        return enemy_deploy !== undefined || untrusted === undefined ? o : { ...o, deploy: Math.max(untrusted, o.deploy) };
+      });
 
       // B2 T6: the truces in force (the ledger, as warapp_plan_turn reads it). Their partners stay among
       // the opponents tried, so `safe` still means safe against a break; `safeIfTruceHolds` leaves the
@@ -530,7 +555,21 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             ? `None of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried costs you a territory, a capture or a bonus.${blind}${inexact}${dodged}${ahead}`
             : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${truceLine}${inexact}${dodged}${ahead}`);
       const deployed = deploys.reduce((n, d) => n + d.armies, 0);
+      // #275 (a): the smallest single deploy that takes each border of mine after these orders.
+      const headroom = safeHeadroom({
+        graph,
+        board,
+        me: me.id,
+        deploys,
+        moves,
+        settings,
+        ...(teams.size ? { teams } : {}),
+        ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
+        orderPriority,
+      });
       const warnings = [
+        // #275 (b): an untrusted estimate is the first thing said (not under an explicit enemy_deploy).
+        ...(enemy_deploy === undefined ? tripwireWarnings(trip.tripwires, income, (p) => estimates.find((x) => x.playerId === p)?.estimate) : []),
         ...(award ? assumedWarning(award) : []),
         // #270: the static seats whose territories the test read as neutrals.
         ...[...seatTerritories(award?.board ?? seen, seats)]
@@ -605,7 +644,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           .map((o) => ({
             player: { id: o.id, name: playerName.get(o.id) ?? String(o.id) },
             deploy: o.deploy,
-            source: enemy_deploy !== undefined ? 'enemy_deploy' : 'estimate',
+            source: enemy_deploy !== undefined ? 'enemy_deploy' : untrustedOf.has(o.id) ? 'untrusted' : 'estimate',
           })),
         // #180: in a free-for-all, whether you lead (any two opponents are then tried together).
         leader,
@@ -654,6 +693,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           : {}),
         jointFalls: report.jointFalls.slice(0, LIST_MAX).map(jointView),
         ...(report.jointFalls.length > LIST_MAX ? { jointFallsMore: report.jointFalls.length - LIST_MAX } : {}),
+        // #275 (a): each border's headroom, the weakest first (compact: the first few).
+        headroom: headroomView(headroom, map, income, rung === 'full'),
+        ...(rung !== 'full' && headroom.length > HEADROOM_COMPACT ? { headroomMore: headroom.length - HEADROOM_COMPACT } : {}),
         blindBorders: report.blindBorders.map(name),
         // One turn ahead (#156): what the orders leave within reach of a stack two steps away.
         exposedNextTurn: report.exposedNextTurn.slice(0, LIST_MAX).map(exposureView),

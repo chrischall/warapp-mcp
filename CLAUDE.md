@@ -675,6 +675,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `src/trend.ts`) only for turns the cache lacks, not at all when the two previous turns are
   cached; it reports `trendSource`. A board the decoder refuses is never written there. Each
   write keeps the game's settings beside it (`<dataDir>/games/<gameId>.json`, see "Offline replay").
+- **Surviving a wrong estimate (#275, pattern 1).** An estimate is a floor. `src/analysis/headroom.ts`
+  (pure; `headroomTable`) gives, for every border of mine after my orders, the smallest single deploy on a
+  neighbouring enemy stack that takes it (turn simulator, both move orders unless known), the bonuses it
+  breaks and the bonus income one step behind; `warapp_plan_turn` and `warapp_check_plan` return it as
+  `headroom`, and `warapp_submit_turn` warns (never refuses) when a held bonus's border falls to less than
+  my income. `src/analysis/tripwire.ts` (pure) reads my two latest boards: a stack out of the fog, a capture,
+  or an attack of mine held, needing `TRIP_RATIO` (1.5) × what the estimate allowed (and `TRIP_MIN_EXCESS`
+  more), marks that opponent untrusted for `UNTRUSTED_TURNS` (3). The marks and each turn's per-opponent
+  estimates live in the board cache file (`estimates`, `tripwires`, ids only; `readSurvival`/`writeSurvival`
+  in `src/trend.ts`, kept by every cache writer), written by `warapp_plan_turn` only. While untrusted, the
+  planner sizes borders of bonuses held in full at the start for max(estimate, the figure) where the figure
+  is max(implied, my income) (`PlanInput.untrusted`, forceAt; not under `enemyDeploy`), `warapp_check_plan`
+  tries that figure by default (source `untrusted`), and both say so in the first warning.
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
   turn, income = the most of the last three observed turns (or its stock and flow when more),
