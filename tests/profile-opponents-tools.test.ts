@@ -1,7 +1,7 @@
 // warapp_profile_opponents (docs/PLAN-PROFILES.md A3), and the profile hook in the board-caching
 // tools (A2): a synthetic three-player game on the anonymized lobby fixture's map in which Bob
 // reinforces every territory I attack and Cat never does. No war.app traffic.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { MyOrders } from '../src/analysis/opponents.js';
 import type { BoardState } from '../src/board.js';
@@ -11,6 +11,7 @@ import { profileGamePath } from '../src/profile-store.js';
 import { writeBoardCache, writeOrdersCache } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -26,13 +27,16 @@ const ME = Number(ANN.feed);
 const BOB_ID = Number(BOB.feed);
 const CAT_ID = Number(CAT.feed);
 
-/** A three-player game on turn `turn` (0% luck, straight rounding, 60/70: the fixture's settings). */
-function game(turn: number, names = ['Ann', 'Bob', 'Cat']): Record<string, unknown> {
+/**
+ * A three-player game on turn `turn` (0% luck, straight rounding, 60/70: the fixture's settings);
+ * with `teams`, GameFeed puts Ann and Bob on team 0 and Cat on team 1.
+ */
+function game(turn: number, names = ['Ann', 'Bob', 'Cat'], teams = false): Record<string, unknown> {
   const f = lobbyFixture();
   const ids = [ANN, BOB, CAT];
   const players = (f.players as Array<Record<string, string>>)
     .slice(0, 3)
-    .map((p, i) => ({ ...p, id: ids[i]!.feed, name: names[i]!, state: 'Playing' }));
+    .map((p, i) => ({ ...p, id: ids[i]!.feed, name: names[i]!, state: 'Playing', ...(teams ? { team: i < 2 ? '0' : '1' } : {}) }));
   return { ...f, state: 'Playing', numberOfTurns: String(turn - 1), players, settings: { ...(f.settings as object), InitialPlayerArmiesPerTerritory: 5, TerritoryLimit: 2 } };
 }
 
@@ -75,14 +79,28 @@ function live(turn: number): SyntheticTerritory[] {
     { id: 135, fogLevel: a[135].owner === ME ? 1 : 2, owner: a[135].owner === ME ? ANN.inGame : CAT.inGame, armies: a[135].armies },
   ];
 }
-const showing = (territories: SyntheticTerritory[]) => (req: DecodedRequest): Partial<ReplyFrame> => {
+/** The game list: the game as a free-for-all (no team on any seat), or failing (`'fail'`: teams unknown). */
+type List = 'ffa' | 'fail';
+const showing = (territories: SyntheticTerritory[], list: List = 'ffa') => (req: DecodedRequest): Partial<ReplyFrame> => {
+  if (req.method === Method.GetMyGames) {
+    if (list === 'fail') throw new Error('game list unavailable');
+    const players = [ANN, BOB, CAT].map((p, i) => ({ id: p.inGame, name: ['Ann', 'Bob', 'Cat'][i]!, state: 2, committed: false }));
+    return { body: (w) => writeMyGamesReturn(w, [{ id: GAME, name: 'synthetic', lastTurn: 4, state: 3, players }]) };
+  }
   if (req.method !== Method.GetLatestGameInfo) throw new Error(`unexpected method ${req.method}`);
   return { body: (w) => writeLatestGameInfo(w, territories, [ANN.inGame]) };
 };
 
 /** Turns 1–4 cached with my orders, the live board on turn 5. */
-async function setUp(env: Record<string, string> = {}, names?: string[]): Promise<Harness> {
-  const hh = await liveHarness({ feed: [game(5, names)], warapp: showing(live(5)), env });
+async function setUp(env: Record<string, string> = {}, names?: string[], o: { list?: List; teams?: boolean; dataDir?: string } = {}): Promise<Harness> {
+  const hh = await liveHarness({
+    feed: [game(5, names, o.teams)],
+    warapp: showing(live(5), o.list),
+    // Signed in as Ann, so the game list can be read for the teams.
+    pages: { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` },
+    env,
+    ...(o.dataDir ? { dataDir: o.dataDir } : {}),
+  });
   for (let t = 1; t <= 4; t++) {
     await writeBoardCache(hh.dataDir, GAME, ME, t, cached(t));
     await writeOrdersCache(hh.dataDir, GAME, ME, t, orders());
@@ -193,6 +211,51 @@ describe('warapp_profile_opponents', () => {
     expect(p.profile).toBe('off');
     expect(existsSync(profileGamePath(h.dataDir, GAME, ME))).toBe(false);
     expect(who(p, BOB_ID).habits.reinforce!.n).toBe(4);
+  });
+
+  describe('teammates are never kept (section 15)', () => {
+    /** The opponent ids each stored turn holds. */
+    const storedIds = (dir: string) => {
+      const f = JSON.parse(readFileSync(profileGamePath(dir, GAME, ME), 'utf8')) as { turns: Record<string, Record<string, unknown>> };
+      return [...new Set(Object.values(f.turns).flatMap((t) => Object.keys(t)))].sort();
+    };
+
+    it('in a team game whose teams GameFeed carries, only the other team is profiled or kept', async () => {
+      h = await setUp({}, undefined, { teams: true });
+      const p = await profile(h);
+      expect(p.profile).toBe('kept');
+      expect(p.opponents.map((o) => o.player.id)).toEqual([CAT_ID]);
+      expect(storedIds(h.dataDir)).toEqual([String(CAT_ID)]);
+      expect(readFileSync(profileGamePath(h.dataDir, GAME, ME), 'utf8')).not.toContain(String(BOB_ID));
+    });
+
+    it('while the teams cannot be read (game list failing), nothing is kept, by any tool, and the tool says so', async () => {
+      h = await setUp({}, undefined, { list: 'fail' });
+      for (const tool of ['warapp_plan_turn', 'warapp_track_opponents', 'warapp_locate_opponents', 'warapp_get_relations'])
+        await h.call(tool, { game_id: GAME, player: ME });
+      const p = await profile(h);
+      expect(p.profile).toBe('not-kept');
+      expect(existsSync(profileGamePath(h.dataDir, GAME, ME))).toBe(false);
+    });
+
+    it('entries kept for a player before it was known as my teammate are dropped on the next write', async () => {
+      // Read as a free-for-all first: Bob and Cat both kept.
+      h = await setUp();
+      await profile(h);
+      const dir = h.dataDir;
+      expect(storedIds(dir)).toEqual([String(BOB_ID), String(CAT_ID)].sort());
+      // A turn the board cache no longer holds (observed once, never again): only a drop removes it.
+      const path = profileGamePath(dir, GAME, ME);
+      const f = JSON.parse(readFileSync(path, 'utf8')) as { turns: Record<string, unknown> };
+      writeFileSync(path, JSON.stringify({ ...f, turns: { ...f.turns, 0: f.turns['1'] } }));
+      await h.harness.close();
+      // GameFeed now shows Bob on my team: the next write keeps Cat only.
+      h = await setUp({}, undefined, { teams: true, dataDir: dir });
+      await h.call('warapp_track_opponents', { game_id: GAME, player: ME });
+      expect(storedIds(dir)).toEqual([String(CAT_ID)]);
+      expect(Object.keys((JSON.parse(readFileSync(path, 'utf8')) as { turns: object }).turns)).toEqual(['0', '1', '2', '3', '4']);
+      expect(who(await profile(h), CAT_ID).seen.turnsObserved).toBe(5); // Its turn 0 stays.
+    });
   });
 
   it('neutralises a hostile player name', async () => {

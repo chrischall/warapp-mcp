@@ -39,8 +39,11 @@ export function profiledOpponents(game: Game, me: Player): number[] {
 
 /**
  * The hook after each board-cache write (A2): observe `boards` (my history plus the board just read,
- * my orders attached) and store each turn. Nothing without a data directory, or with
- * `WARAPP_PLAYER_PROFILE=off`. Never throws.
+ * my orders attached) and store each turn. Nothing without a data directory, with
+ * `WARAPP_PLAYER_PROFILE=off`, or while `teamsKnown` is false (`resolveTeams`' `known`: a game of
+ * more than two seats whose teams could not be read, where any player may be my teammate, and
+ * teammates are never profiled). Each write also drops what the file holds for my known teammates.
+ * Never throws.
  */
 export async function recordProfile(
   dataDir: string | undefined,
@@ -48,8 +51,9 @@ export async function recordProfile(
   game: Game,
   me: Player,
   boards: readonly TurnBoard[],
+  teamsKnown: boolean,
 ): Promise<void> {
-  if (!dataDir) return;
+  if (!dataDir || !teamsKnown) return;
   try {
     await recordBehaviour(
       dataDir,
@@ -60,6 +64,7 @@ export async function recordProfile(
         settings: observeSettings(game),
         ...cardsInPlay(game),
         opponents: profiledOpponents(game, me),
+        teammates: teammatesOf(game.players, me).map((p) => p.id),
         boards,
       },
       env ?? process.env,

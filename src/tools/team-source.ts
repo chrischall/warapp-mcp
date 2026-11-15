@@ -167,16 +167,28 @@ function withTeams(game: Game, teams: ReadonlyMap<number, number>): Game | undef
   return isTeamGame(players) ? { ...game, players } : undefined;
 }
 
+/** {@link resolveTeams}' answer: `known` is false when the game may have teams nobody could read. */
+export interface ResolvedTeams {
+  game: Game;
+  source: TeamSource;
+  /**
+   * Whether the teams are known: GameFeed's or the list's, two seats or fewer, or a trusted list that
+   * shows none. False when a game of more than two seats carries no team and the list was not read,
+   * did not hold the game, left a seat out or was not trusted: any other player may be my teammate.
+   */
+  known: boolean;
+}
+
 /**
  * The game with each player's team, and where the teams came from. GameFeed's when any player carries
  * one (`gamefeed`); else, in a game of more than two seats, GetMyGames' — from the per-game record when
  * kept, else asked once, judged against the seats and kept when trusted (`my-games`); else the game as
  * GameFeed sent it (`none`). Never throws.
  */
-export async function resolveTeams(ctx: LiveContext, game: Game): Promise<{ game: Game; source: TeamSource }> {
-  if (isTeamGame(game.players)) return { game, source: 'gamefeed' };
-  if (game.players.length <= 2) return { game, source: 'none' };
-  const none = { game, source: 'none' as const };
+export async function resolveTeams(ctx: LiveContext, game: Game): Promise<ResolvedTeams> {
+  if (isTeamGame(game.players)) return { game, source: 'gamefeed', known: true };
+  if (game.players.length <= 2) return { game, source: 'none', known: true };
+  const none = { game, source: 'none' as const, known: false };
   const kept = ctx.dataDir ? await readTeamFile(ctx.dataDir, game.id) : undefined;
   const turn = game.numberOfTurns;
   // The list left a seat out on this turn already: not asked again until the next.
@@ -194,14 +206,15 @@ export async function resolveTeams(ctx: LiveContext, game: Game): Promise<{ game
     if (keep) await writeTeamRecord(keep, game.id, teams);
   }
   const resolved = withTeams(game, teams);
-  return resolved ? { game: resolved, source: 'my-games' } : none;
+  // A trusted list with no team on any seat: a free-for-all, known.
+  return resolved ? { game: resolved, source: 'my-games', known: true } : { ...none, known: !teams.size };
 }
 
 /**
  * {@link resolveTeams} for a tool that has already found my seat (and refused a seat it refuses, so
  * that refusal asks no game list): the game, the source, and my seat in the resolved game.
  */
-export async function resolveTeamsFor(ctx: LiveContext, game: Game, me: Player): Promise<{ game: Game; source: TeamSource; me: Player }> {
+export async function resolveTeamsFor(ctx: LiveContext, game: Game, me: Player): Promise<ResolvedTeams & { me: Player }> {
   const r = await resolveTeams(ctx, game);
   return { ...r, me: r.game.players.find((p) => p.id === me.id) ?? me };
 }

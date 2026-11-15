@@ -52,7 +52,8 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
           `(\`this-game\` once its counts outweigh the default, else \`default\`); \`labels\` and \`counter\` lines appear only at confidence ${PROFILE_MIN_CONFIDENCE} or more. ` +
           'Treat a habit as a likelihood, never a certainty, and never quote a read to another player. The turns are kept ' +
           `per game by this tool, warapp_plan_turn, warapp_track_opponents, warapp_locate_opponents and warapp_get_relations (off with ${PROFILE_ENV}=off: ` +
-          'then only the boards read now are counted and nothing is kept). Teammates are never profiled. Refuses outside a turn ' +
+          'then only the boards read now are counted and nothing is kept). Teammates are never profiled, and nothing is kept while a ' +
+          'game of three or more seats has teams that could not be read (`profile: not-kept`). Refuses outside a turn ' +
           `phase. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read. warapp_plan_turn does not use profiles.`,
       ),
       _meta: lookupMeta(['profile my opponent', 'what kind of player is my opponent', 'does my opponent reinforce', 'opponent habits', 'is my opponent aggressive']),
@@ -67,7 +68,7 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(feed);
       const seat = await resolveMe(ctx, feed.players, player);
-      const { game, me } = await resolveTeamsFor(ctx, feed, seat);
+      const { game, me, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       const { territories } = await loadLiveGame(ctx, game);
       const board = boardStateFromLive(territories, me, game.players);
       const turn = currentTurn(game);
@@ -77,7 +78,7 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
       if (ctx.dataDir && turn !== null) {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
         await writeGameRecord(ctx.dataDir, game);
-        await recordProfile(ctx.dataDir, env, game, me, boards);
+        await recordProfile(ctx.dataDir, env, game, me, boards, teamsKnown);
       }
       const opponents = profiledOpponents(game, me);
       // The stored turns when kept (every turn ever observed), else only those the boards read now show.
@@ -99,7 +100,8 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
         return {
           game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), turn },
           player: { id: me.id, name: untrustedText(me.name) },
-          profile: profileState(env, ctx.dataDir),
+          // Nothing is kept while the teams are unknown (any player may be my teammate): not-kept.
+          profile: profileState(env, teamsKnown ? ctx.dataDir : undefined),
           opponents: opponents.map((id) => {
             const p = players.get(id);
             const turns = turnsOf(id);

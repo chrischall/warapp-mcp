@@ -64,7 +64,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
       requireTurnPhase(feed);
       const seat = await resolveMe(ctx, feed.players, player);
       // The teams, once my seat is found: GameFeed's, else the game list's (asked once per game, kept).
-      const { game, me } = await resolveTeamsFor(ctx, feed, seat);
+      const { game, me, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       const map = mapOf(game);
       const { territories } = await loadLiveGame(ctx, game);
       const graph = graphOf(map);
@@ -77,7 +77,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
       if (ctx.dataDir && turn !== null) {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
         await writeGameRecord(ctx.dataDir, game);
-        await recordProfile(ctx.dataDir, deps.env, game, me, boards);
+        await recordProfile(ctx.dataDir, deps.env, game, me, boards, teamsKnown);
       }
       const name = namer(map);
       const players = new Map(game.players.map((p) => [p.id, p.name]));

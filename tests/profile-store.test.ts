@@ -1,6 +1,6 @@
 // The in-game opponent profile on disk (docs/PLAN-PROFILES.md A2): every observed turn kept, a turn
 // observed again overwritten, the off switch, the file modes, a bad file read as empty, the bound.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -97,6 +97,25 @@ describe('recordBehaviour', () => {
     const empty = tmp();
     expect(await recordBehaviour(empty, input(boards(3, 3)), {})).toBe(false);
     expect(existsSync(profileGamesDir(empty))).toBe(false);
+  });
+
+  it('drops every entry of a known teammate, even with nothing new to observe', async () => {
+    const dir = tmp();
+    try {
+      await recordBehaviour(dir, input(boards(1, 4)), {});
+      expect((await readProfileTurns(dir, GAME, ME, {})).get(OPP)).toHaveLength(3);
+      // Later known as my teammate: one board (nothing to observe) still clears what was kept for it.
+      expect(await recordBehaviour(dir, { ...input(boards(5, 5)), opponents: [], teammates: [OPP] }, {})).toBe(true);
+      expect((await readProfileTurns(dir, GAME, ME, {})).has(OPP)).toBe(false);
+      expect(Object.keys((JSON.parse(readFileSync(profileGamePath(dir, GAME, ME), 'utf8')) as { turns: object }).turns)).toEqual(['1', '2', '3']);
+      // Nothing left to drop and nothing to observe: no write.
+      expect(await recordBehaviour(dir, { ...input(boards(5, 5)), opponents: [], teammates: [OPP] }, {})).toBe(false);
+      // Observed turns never keep a teammate either.
+      await recordBehaviour(dir, { ...input(boards(1, 4)), teammates: [OPP] }, {});
+      expect((await readProfileTurns(dir, GAME, ME, {})).has(OPP)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('is 0600 in a 0700 folder, and holds ids and counts only', async () => {

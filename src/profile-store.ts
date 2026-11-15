@@ -31,7 +31,10 @@ export function profileEnabled(env: EnvSource = process.env): boolean {
   return v === undefined || !/^(off|0|false|no)$/i.test(v.trim());
 }
 
-/** What the profile tool says of its store: `kept` (stored per game), `not-kept` (on, but no data dir to keep it in) or `off`. */
+/**
+ * What the profile tool says of its store: `kept` (stored per game), `not-kept` (on, but no data dir to
+ * keep it in; the tool passes none while a game's teams are unknown) or `off`.
+ */
 export function profileState(env: EnvSource, dataDir: string | undefined): 'kept' | 'not-kept' | 'off' {
   if (!profileEnabled(env)) return 'off';
   return dataDir ? 'kept' : 'not-kept';
@@ -128,6 +131,8 @@ export interface BehaviourInput {
   cards?: readonly string[] | undefined;
   /** My opponents (never me, never a teammate). */
   opponents: readonly number[];
+  /** My known teammates: whatever the file holds for them (kept before the teams were known) is dropped. */
+  teammates?: readonly number[] | undefined;
   /** My boards of the game, each with my orders on that turn when known (`boardHistory` plus the live board). */
   boards: readonly TurnBoard[];
 }
@@ -192,20 +197,31 @@ async function prune(dir: string): Promise<void> {
 /**
  * Observe every consecutive pair of `input.boards` and store each turn's record, overwriting that
  * turn's entry (planning a turn twice rewrites, never adds); turns not observed this time stay.
- * Writes nothing when profiling is off or nothing could be observed. Never throws; `false` when
- * nothing was written.
+ * Every entry for one of `input.teammates` is dropped. Writes nothing when profiling is off, or when
+ * nothing could be observed and no teammate's entry was there. Never throws; `false` when nothing
+ * was written.
  */
 export async function recordBehaviour(dir: string, input: BehaviourInput, env: EnvSource = process.env): Promise<boolean> {
   if (!profileEnabled(env)) return false;
   try {
     const observed = observeBoards(input);
-    if (!observed.size) return false;
+    const friends = new Set((input.teammates ?? []).map(String));
+    if (!observed.size && !friends.size) return false;
     const path = profileGamePath(dir, input.gameId, input.me);
     return await withPathLock(path, async () => {
       const turns = await readTurns(dir, input.gameId, input.me);
+      // Never keep a teammate: an entry written while the teams were unknown goes now.
+      let dropped = false;
+      for (const entry of Object.values(turns))
+        for (const o of Object.keys(entry))
+          if (friends.has(o)) {
+            delete entry[o];
+            dropped = true;
+          }
+      if (!observed.size && !dropped) return false;
       for (const [t, byOpponent] of observed) {
         const entry: Record<string, TurnPrimitives> = {};
-        for (const [o, p] of [...byOpponent].sort(([a], [b]) => a - b)) entry[String(o)] = p;
+        for (const [o, p] of [...byOpponent].sort(([a], [b]) => a - b)) if (!friends.has(String(o))) entry[String(o)] = p;
         turns[String(t)] = entry;
       }
       const body: ProfileGameFile = { version: 1, gameId: input.gameId, playerId: input.me, turns };

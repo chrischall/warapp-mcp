@@ -1771,7 +1771,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const seat = await resolveMe(ctx, feed.players, player);
       requirePlayingSeat(feed, seat);
       // The teams: GameFeed's, else the game list's (asked once per game, kept).
-      const { game, me, source: teamSource } = await resolveTeamsFor(ctx, feed, seat);
+      const { game, me, source: teamSource, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       const [{ territories, info }, history, chat] = await Promise.all([
         loadLiveGame(ctx, game),
         boardHistory(ctx, game, me, turn),
@@ -1828,7 +1828,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
       // The opponent profile (docs/PLAN-PROFILES.md A2): the turns these boards show, never on a what-if plan.
       if (ctx.dataDir && turn !== null && !whatIf)
-        await recordProfile(ctx.dataDir, opts.env, game, me, [...history.boards, { turn, board: seen }]);
+        await recordProfile(ctx.dataDir, opts.env, game, me, [...history.boards, { turn, board: seen }], teamsKnown);
       if (ctx.dataDir && turn !== null) await writeGameRecord(ctx.dataDir, game);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       // B2: what each honoured truce freed this turn and what a break would have cost (T6), for "has it
