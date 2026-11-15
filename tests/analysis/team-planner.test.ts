@@ -235,6 +235,34 @@ describe("C3.5: support for a teammate's border (advisory)", () => {
   });
 });
 
+describe("C3.5: support allots each of my idle armies once", () => {
+  // 1 ─ 4 (mine, nothing to attack) ─ 5 and 8 (my teammate, 3 each) ─ 6 (player 20, 10) and 9 (player 21, 12).
+  // 4 borders both of their borders: 5 needs 6 of my armies, 8 needs 8.
+  const g = graphOf([[1, [4]], [4, [1, 5, 8]], [5, [4, 6]], [6, [5]], [8, [4, 9]], [9, [8]]]);
+  const settings = { ...STD, baseIncome: 5 };
+  const plan = (stack: number) =>
+    planTurn({
+      graph: g,
+      board: { ...board([mine(1, 2), mine(4, stack), player(5, 3, MATE), player(6, 10, 20), player(8, 3, MATE), player(9, 12, 21)]), ...entered({}) },
+      me: ME,
+      income: 5,
+      settings,
+      game: { players: PLAYERS, turn: 8 },
+      options: { adapt: true },
+    });
+  it('never offers the same idle armies to two borders: the one needing fewest first', () => {
+    // 6 + 5 deployed = 11 on 4, 10 idle: 6 for 5 leaves 4, short of 8's 8.
+    expect(plan(6).team?.support).toEqual([{ territory: 5, teammate: MATE, armies: 3, threat: 14, player: 20, need: 6, from: [{ territory: 4, armies: 6 }] }]);
+  });
+  it('offers both when the idle armies cover both', () => {
+    // 10 + 5 = 15 on 4, 14 idle: 6 for 5 and 8 for 8.
+    expect(plan(10).team?.support?.map((s) => [s.territory, s.from])).toEqual([
+      [5, [{ territory: 4, armies: 6 }]],
+      [8, [{ territory: 4, armies: 8 }]],
+    ]);
+  });
+});
+
 describe('C3.6: joint captures (advisory)', () => {
   // 4 (mine) and 5 (my teammate) both face player 20's 6 (20 armies); neither takes it alone.
   const g = graphOf([[1, [4]], [4, [1, 5, 6]], [5, [4, 6]], [6, [4, 5, 7]], [7, [6]]]);

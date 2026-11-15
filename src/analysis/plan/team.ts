@@ -5,7 +5,7 @@
 // (`team.sharedBonuses`), from the start-of-turn board; a teammate's territory in the fog is unknown.
 // C3.4–C3.6 read my teammates' entered orders (`board.teammateOrders`, V5: unverified live) and do nothing
 // without them: the opponents they attack (`teamFocusOf`, a tie-break in the capture rankings), their
-// borders my idle armies would make hold (`team.support`) and the targets we take only together, on the
+// borders my idle armies would make hold (`team.support`, each idle army offered once) and the targets we take only together, on the
 // turn simulator (`team.jointCaptures`). Both reports are advisory: a move onto a teammate's territory is
 // unverified (V7), and nothing here changes the plan's orders.
 import type { BoardState } from '../../board.js';
@@ -76,7 +76,10 @@ export interface TeamSupport {
   player: number;
   /** Armies it is short of holding. */
   need: number;
-  /** My territories beside it and the idle armies each would send (largest first), together at least `need`. */
+  /**
+   * My territories beside it and the idle armies each would send (largest first), together at least `need`.
+   * Each idle army is offered to one border only (G3), so the offers can all be taken at once.
+   */
   from: { territory: number; armies: number }[];
 }
 
@@ -197,11 +200,16 @@ function idleAt(pc: TeamCtx, v: TeamPlanView, x: number): number {
   return Math.max(0, (ps.avail.get(x) ?? 0) - keep);
 }
 
-/** PLAN-TEAMS C3.5: the teammates' borders my idle armies would make hold, by territory id. */
+/**
+ * PLAN-TEAMS C3.5: the teammates' borders my idle armies would make hold, by territory id. Each source's idle
+ * armies are allotted once (G3): the borders are served in order of the armies they need, fewest first (then
+ * by id), each from its sources with the most left, and a border its sources can no longer cover is left out
+ * — so no two offers count the same armies.
+ */
 export function teamSupport(pc: TeamCtx, v: TeamPlanView): TeamSupport[] {
   const orders = mateOrders(pc);
   if (!orders.size) return [];
-  const out: TeamSupport[] = [];
+  const short: Omit<TeamSupport, 'from'>[] = [];
   const gone = (n: number) => v.ps.captured.has(n);
   for (const t of [...pc.territories.keys()].sort(byNum)) {
     const st = pc.territories.get(t)!;
@@ -220,23 +228,34 @@ export function teamSupport(pc: TeamCtx, v: TeamPlanView): TeamSupport[] {
     if ((pc.toTake(armies + units) ?? Infinity) > th.threat) continue;
     // Positive: toTake is monotone, and what stands there does not hold.
     const need = v.threats.holdArmies(th.threat) - armies - units;
-    const sources = [...neighborsOf(pc.g, t)]
-      .map((x) => ({ territory: x, armies: idleAt(pc, v, x) }))
-      .filter((x) => x.armies > 0)
-      .sort((a, b) => b.armies - a.armies || a.territory - b.territory);
-    const from: TeamSupport['from'] = [];
-    let left = need;
-    for (const x of sources) {
-      if (left <= 0) break;
-      // No-Split: a move sends the whole stack.
-      const k = pc.noSplit ? x.armies : Math.min(x.armies, left);
-      from.push({ territory: x.territory, armies: k });
-      left -= k;
-    }
-    if (left > 0) continue;
-    out.push({ territory: t, teammate: mate, armies, threat: th.threat, player: th.player, need, from });
+    short.push({ territory: t, teammate: mate, armies, threat: th.threat, player: th.player, need });
   }
-  return out;
+  // What each of my territories still has idle, spent as borders are served.
+  const left = new Map<number, number>();
+  const idle = (x: number) => {
+    if (!left.has(x)) left.set(x, idleAt(pc, v, x));
+    return left.get(x)!;
+  };
+  const out: TeamSupport[] = [];
+  for (const b of [...short].sort((x, y) => x.need - y.need || x.territory - y.territory)) {
+    const sources = [...neighborsOf(pc.g, b.territory)]
+      .map((x) => ({ territory: x, armies: idle(x) }))
+      .filter((x) => x.armies > 0)
+      .sort((a, c) => c.armies - a.armies || a.territory - c.territory);
+    const from: TeamSupport['from'] = [];
+    let rest = b.need;
+    for (const x of sources) {
+      if (rest <= 0) break;
+      // No-Split: a move sends the whole stack.
+      const k = pc.noSplit ? x.armies : Math.min(x.armies, rest);
+      from.push({ territory: x.territory, armies: k });
+      rest -= k;
+    }
+    if (rest > 0) continue;
+    for (const f of from) left.set(f.territory, idle(f.territory) - f.armies);
+    out.push({ ...b, from });
+  }
+  return out.sort((x, y) => x.territory - y.territory);
 }
 
 /** The turn simulator's settings from the planner's. */
