@@ -35,7 +35,7 @@ import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { boardHistory, currentTurn, plannerSettings, requireTurnPhase } from './turn.js';
-import { resolveTeams } from './team-source.js';
+import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 /** The most entries any one list names on the compact view; the rest are a count. */
@@ -158,10 +158,10 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
     async ({ game_id, player, view }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(feed);
-      // The teams: GameFeed's, else the game list's (asked once per game, kept).
-      const { game } = await resolveTeams(ctx, feed);
+      const seat = await resolveMe(ctx, feed.players, player);
+      // The teams, once my seat is found: GameFeed's, else the game list's (asked once per game, kept).
+      const { game, me } = await resolveTeamsFor(ctx, feed, seat);
       const map = mapOf(game);
-      const me = await resolveMe(ctx, game.players, player);
       const { territories } = await loadLiveGame(ctx, game);
       const graph = graphOf(map);
       // The board war.app showed: the model takes the starts the award proves as `proven`, never

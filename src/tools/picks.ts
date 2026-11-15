@@ -123,20 +123,20 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
     async ({ game_id, view, spread }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requirePickPhase(feed);
-      // The teams: GameFeed's, else the game list's (asked once per game, kept).
-      const { game, source: teamSource } = await resolveTeams(ctx, feed);
-      const map = mapOf(game);
-      const territories = await loadLiveTerritories(ctx, game);
+      const territories = await loadLiveTerritories(ctx, feed);
       const pickable = territories.filter((t) => !t.fogged && t.owner === OWNER_PICKABLE).map((t) => t.territoryId);
       if (!pickable.length) {
-        throw new McpToolError(`The live board of game ${game.id} has no pickable territories.`, {
+        throw new McpToolError(`The live board of game ${feed.id} has no pickable territories.`, {
           hint: 'Check warapp_get_live_board: picks may already be closed, or this game distributes territories automatically.',
         });
       }
       const neutralArmies = new Map(pickingNeutrals(territories));
       // Kept for the turns to come: where a player could have started (warapp_locate_opponents), and
       // (#201) the neutrals' sizes, which the fog may hide later (wastelands).
-      await keepPickable(ctx, game, pickable, [...neutralArmies]);
+      await keepPickable(ctx, feed, pickable, [...neutralArmies]);
+      // The teams, after the refusals: GameFeed's, else the game list's (asked once per game, kept).
+      const { game, source: teamSource } = await resolveTeams(ctx, feed);
+      const map = mapOf(game);
       const warnings: string[] = [];
       let territoryLimit = game.settings?.territoryLimit;
       if (territoryLimit === undefined || territoryLimit <= 0) {

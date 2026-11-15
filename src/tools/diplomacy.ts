@@ -42,7 +42,7 @@ import { mapOf } from './map.js';
 import { recordFor, relationPlayers, scopeFrom } from './relations.js';
 import { resolvePlayer } from './resolve.js';
 import { boardHistory, livePlanSetup, requirePlayingSeat, requireTurnPhase } from './turn.js';
-import { resolveTeams } from './team-source.js';
+import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_SCOPE_ITEMS = 200;
@@ -141,8 +141,10 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
     async ({ game_id, player, offer, view }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(feed);
-      // The teams: GameFeed's, else the game list's (asked once per game, kept).
-      const { game } = await resolveTeams(ctx, feed);
+      const seat = await resolveMe(ctx, feed.players, player);
+      requirePlayingSeat(feed, seat);
+      // The teams, after the seat refusals: GameFeed's, else the game list's (asked once per game, kept).
+      const { game, me } = await resolveTeamsFor(ctx, feed, seat);
       const ffa = ffaRefusal(game);
       if (ffa)
         throw new McpToolError(`No truce advice for game ${game.id}: ${ffa}. Truces are advised only in a free-for-all.`, {
@@ -150,8 +152,6 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
         });
       const map = mapOf(game);
       const graph = graphOf(map);
-      const me = await resolveMe(ctx, game.players, player);
-      requirePlayingSeat(game, me);
       const turn = currentTurn(game);
       const players = relationPlayers(game.players);
       // An offer is checked before any board read: a refused partner or scope reads nothing.

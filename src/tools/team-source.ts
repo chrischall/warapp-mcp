@@ -6,8 +6,10 @@
 // Cost: GetMyGames is asked at most once per game. Its answer — the game's in-game ids and team
 // numbers, or that the game carries none — is kept at `<dataDir>/teams/<gameId>.json` (NAME-FREE: ids
 // and team numbers only; 0600 in a 0700 folder, atomic, best effort, the newest MAX_TEAM_RECORDS kept),
-// since a game's teams do not change. A failed GetMyGames read, or a list that does not hold the game,
-// leaves the teams unknown (as GameFeed sent them) and is not kept: the next call asks again.
+// since a game's teams do not change once it has started. A lobby's answer is used but never kept (a
+// player who joins later would have no entry), and a kept record that lacks a seated player's in-game id
+// is not trusted: the list is asked again. A failed GetMyGames read, or a list that does not hold the
+// game, leaves the teams unknown (as GameFeed sent them) and is not kept: the next call asks again.
 
 import { readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -94,6 +96,15 @@ async function myGamesTeamsOf(ctx: LiveContext, gameId: number): Promise<Map<num
   }
 }
 
+/** GameFeed's state for a game still filling its seats. */
+const LOBBY_STATE = 'WaitingForPlayers';
+
+/** Whether a kept record names every seated player of `game` (an empty one — no teams — always does). */
+function coversSeats(game: Game, teams: ReadonlyMap<number, number>): boolean {
+  if (!teams.size) return true;
+  return [...playersByInGameId(game.players).keys()].every((id) => teams.has(id));
+}
+
 /** `game` with each player's team from `teams` (in-game id → team), for the players it can match. */
 function withTeams(game: Game, teams: ReadonlyMap<number, number>): Game | undefined {
   if (!teams.size) return undefined;
@@ -116,18 +127,20 @@ export async function resolveTeams(ctx: LiveContext, game: Game): Promise<{ game
   if (isTeamGame(game.players)) return { game, source: 'gamefeed' };
   if (game.players.length <= 2) return { game, source: 'none' };
   let teams = ctx.dataDir ? await readTeamRecord(ctx.dataDir, game.id) : undefined;
+  if (teams && !coversSeats(game, teams)) teams = undefined;
   if (!teams) {
     teams = await myGamesTeamsOf(ctx, game.id);
     if (!teams) return { game, source: 'none' };
-    if (ctx.dataDir) await writeTeamRecord(ctx.dataDir, game.id, teams);
+    // Kept only once the seats are settled: a lobby can still fill.
+    if (ctx.dataDir && game.state !== LOBBY_STATE) await writeTeamRecord(ctx.dataDir, game.id, teams);
   }
   const resolved = withTeams(game, teams);
   return resolved ? { game: resolved, source: 'my-games' } : { game, source: 'none' };
 }
 
 /**
- * {@link resolveTeams} for a tool that has already found my seat (and refused what it refuses, so a
- * refusal reads nothing more): the game, the source, and my seat in the resolved game.
+ * {@link resolveTeams} for a tool that has already found my seat (and refused a seat it refuses, so
+ * that refusal asks no game list): the game, the source, and my seat in the resolved game.
  */
 export async function resolveTeamsFor(ctx: LiveContext, game: Game, me: Player): Promise<{ game: Game; source: TeamSource; me: Player }> {
   const r = await resolveTeams(ctx, game);

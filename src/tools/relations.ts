@@ -48,7 +48,7 @@ import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 import { boardHistory, plannerSettings } from './turn.js';
-import { resolveTeams } from './team-source.js';
+import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_SCOPE_ITEMS = 200;
@@ -455,10 +455,12 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
       }),
     },
     async ({ game_id, player, view }) => {
-      const { game } = await resolveTeams(ctx, await ctx.client.getGame(game_id, { settings: true }));
+      const feed = await ctx.client.getGame(game_id, { settings: true });
+      const seat = await resolveMe(ctx, feed.players, player);
+      // The teams, once my seat is found: GameFeed's, else the game list's (asked once per game, kept).
+      const { game, me } = await resolveTeamsFor(ctx, feed, seat);
       const map = mapOf(game);
       const graph = graphOf(map);
-      const me = await resolveMe(ctx, game.players, player);
       const turn = currentTurn(game) ?? 0;
       const ledger = (ctx.dataDir ? await readLedger(ctx.dataDir, game.id, me.id) : undefined) ?? emptyLedger(game.id, me.id);
       const notes: string[] = [RELATIONS_NOTE];
@@ -590,11 +592,12 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           hint: 'Record an agreement once the game has started (picks included).',
         });
       }
-      // The teams (a teammate is refused as a partner): GameFeed's, else the game list's (asked once per game, kept).
-      const { game } = await resolveTeams(ctx, feed);
+      const seat = await resolveMe(ctx, feed.players, args.player);
+      // The teams (a teammate is refused as a partner), once my seat is found: GameFeed's, else the game
+      // list's (asked once per game, kept).
+      const { game, me } = await resolveTeamsFor(ctx, feed, seat);
       const map = mapOf(game);
       const graph = graphOf(map);
-      const me = await resolveMe(ctx, game.players, args.player);
       const turn = Math.max(0, currentTurn(game) ?? 0);
       const players = relationPlayers(game.players);
       const refuse = (why: string, hint: string): never => {

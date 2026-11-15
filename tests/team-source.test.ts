@@ -131,6 +131,20 @@ describe('team source: GetMyGames when GameFeed sends no team', () => {
     expect(JSON.stringify(preview)).not.toMatch(/cannot capture/);
   });
 
+  it('submit_turn without the game list reads the same move into Bob\'s land as an attack (the control)', async () => {
+    h = await liveHarness({ feed: [game()], pages: ME_PAGE, warapp: server('fail') });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 159, armies: 5 },
+        { kind: 'move', from: 159, to: 158, armies: 1 },
+      ],
+    });
+    expect(res.isError, textOf(res)).toBeFalsy();
+    const preview = payload<{ preview: { attacks?: unknown[] } }>(res);
+    expect((preview.preview.attacks ?? []).length).toBeGreaterThan(0);
+  });
+
   it('check_plan reports the source and counts no teammate as an opponent', async () => {
     h = await liveHarness({ feed: [game()], pages: ME_PAGE, warapp: server() });
     const p = payload<{ teamSource?: string }>(
@@ -149,6 +163,20 @@ describe('team source: GetMyGames when GameFeed sends no team', () => {
     expect(textOf(rec)).toMatch(/is your teammate/);
     // Both read the kept teams after the first: one request in all.
     expect(listReads()).toBe(1);
+  });
+
+  it('a seat refusal asks no game list: an eliminated player, or one not in the game', async () => {
+    const out = game();
+    (out.players as Array<Record<string, string>>)[0]!.state = 'Eliminated';
+    h = await liveHarness({ feed: [out], pages: ME_PAGE, warapp: server() });
+    const advice = await h.call('warapp_advise_diplomacy', { game_id: GAME });
+    expect(advice.isError).toBe(true);
+    expect(textOf(advice)).toMatch(/no longer playing/);
+    for (const tool of ['warapp_track_opponents', 'warapp_locate_opponents', 'warapp_get_relations']) {
+      const res = await h.call(tool, { game_id: GAME, player: 'Nobody' });
+      expect(res.isError, tool).toBe(true);
+    }
+    expect(listReads()).toBe(0);
   });
 
   it('GameFeed with teams: the game list is never asked', async () => {
@@ -177,6 +205,39 @@ describe('team source: GetMyGames when GameFeed sends no team', () => {
     expect(payload<PlanView>(await h.call('warapp_plan_turn', { game_id: GAME }))).not.toHaveProperty('teamSource');
     expect(listReads()).toBe(1);
     expect(await readTeamRecord(h.dataDir, GAME)).toEqual(new Map());
+  });
+
+  it('a lobby read is not kept: once the game starts with a fourth player, the list is asked again and gives them their team', async () => {
+    const lobby = { ...game({ seats: 3 }), state: 'WaitingForPlayers', numberOfTurns: '-1' };
+    const listed = (players: typeof LIST_TEAMS, state: number) => ({
+      body: (w: Parameters<NonNullable<ReplyFrame['body']>>[0]) => writeMyGamesReturn(w, [{ id: GAME, name: 'synthetic', lastTurn: 2, state, players }]),
+    });
+    let asked = 0;
+    h = await liveHarness({
+      feed: [lobby, game()],
+      pages: ME_PAGE,
+      // The first read (the lobby) lists the three players seated so far; later reads list all four.
+      warapp: server(() => (++asked === 1 ? listed(LIST_TEAMS.slice(0, 3), 1) : listed(LIST_TEAMS, 3))),
+    });
+    const first = await h.call('warapp_get_team', { game_id: GAME });
+    expect(first.isError, textOf(first)).toBeFalsy();
+    expect(existsSync(teamRecordPath(h.dataDir, GAME))).toBe(false);
+    const started = payload<{ team: { source: string }; opponents: Array<{ id: number; team: number | null }> }>(
+      await h.call('warapp_get_team', { game_id: GAME }),
+    );
+    expect(listReads()).toBe(2);
+    expect(started.team.source).toBe('my-games');
+    expect(started.opponents.find((o) => o.id === Number(DEE.feed))?.team).toBe(5);
+    expect(await readTeamRecord(h.dataDir, GAME)).toEqual(new Map(LIST_TEAMS.map((p) => [p.id, p.team])));
+  });
+
+  it('a kept record that lacks a seated player is not trusted: the list is asked again', async () => {
+    h = await liveHarness({ feed: [game()], pages: ME_PAGE, warapp: server() });
+    await writeTeamRecord(h.dataDir, GAME, new Map(LIST_TEAMS.slice(0, 3).map((p) => [p.id, p.team])));
+    const p = payload<{ opponents: Array<{ id: number; team: number | null }> }>(await h.call('warapp_get_team', { game_id: GAME }));
+    expect(listReads()).toBe(1);
+    expect(p.opponents.find((o) => o.id === Number(DEE.feed))?.team).toBe(5);
+    expect((await readTeamRecord(h.dataDir, GAME))?.get(DEE.inGame)).toBe(5);
   });
 
   it('a list that does not hold the game is not kept: teams unknown, asked again next time', async () => {

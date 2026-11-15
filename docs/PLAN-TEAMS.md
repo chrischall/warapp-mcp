@@ -519,8 +519,15 @@ none does, the game has more than two seats and the signed-in account can be rea
 `none`. Cost control: the answer (in-game ids → team numbers, or none when the list holds the game without
 teams) is kept name-free at `<dataDir>/teams/<gameId>.json` (0600 in a 0700 folder, atomic, newest 200), so the
 extra request happens once per game, not per plan; a failed read or a list without the game is not kept and
-leaves the teams unknown, as before. Each tool resolves after its cheap refusals (turn phase, seat), so a
-refusal reads nothing more. The planner's input is unchanged in shape (only where a team comes from changed),
+leaves the teams unknown, as before. A lobby's answer (`WaitingForPlayers`) is used but never kept, since a
+player who joins later would have no entry, and a kept record that lacks a seated player's in-game id is not
+trusted: the list is asked again. Each tool resolves after its refusals on the turn phase and my seat
+(`requirePlayingSeat` where the tool has one, else after my seat is found; `warapp_plan_picks` after its
+pickable-board refusal), so those refusals ask no game list. Two tools still read GameFeed's team alone, by
+choice: `warapp_strategy` (registered with the GameFeed client only — no bridge, and hosted too — so a team
+game GameFeed sends without teams gets the free-for-all notes) and `warapp_leave_game`'s team-game warning (a
+lobby, whose answer is never kept, so wiring it would add a bridged GetMyGames read — a 30 s stall on a frozen
+tab — to every leave preview for one sentence of warning). The planner's input is unchanged in shape (only where a team comes from changed),
 so the golden corpus is byte-identical. The source is reported as `teamSource` by `warapp_plan_turn` and
 `warapp_check_plan` (team games only) and as `team.source` by `warapp_plan_picks` and `warapp_get_team`.
 `BoardState.teammateOrders`
