@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { trackOpponents, type TurnBoard } from '../../src/analysis/opponents.js';
+import { type IncomeJump, incomeJumpText, trackOpponents, type TurnBoard } from '../../src/analysis/opponents.js';
 import type { PlannerSettings } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
@@ -300,6 +300,81 @@ describe('#250: a tracked income set by one high turn says why it is believed', 
     const [twice] = trackOpponents(g, history([7, at(20)], [8, at(28)], [9, at(33)], [10, at(49)]), ME, STD);
     expect(twice!.income).toBe(16);
     expect(twice!.incomeJump).toBeUndefined();
+  });
+
+  it('a later turn that also reads high backs the jump: the income rests on two turns, so no line', () => {
+    // The hidden-stack shape above (it would read `banked`), then turn 10 reads +60 on T3 as well:
+    // [8, 5, 66, 60]. The income stays 66, and no line may say it rests on one turn.
+    const hidden = fogged(5);
+    const [t] = trackOpponents(
+      g,
+      history(
+        [7, at(20, enemy(4, 2), enemy(5, 80))],
+        [8, at(28, enemy(4, 2), hidden)],
+        [9, at(33, enemy(4, 2), hidden)],
+        [10, at(99, enemy(4, 2), hidden)],
+        [11, at(159, enemy(4, 2), hidden)],
+      ),
+      ME,
+      STD,
+    );
+    expect(t!.turns.map((x) => x.observed)).toEqual([8, 5, 66, 60]);
+    expect(t!.income).toBe(66);
+    expect(t!.incomeJump).toBeUndefined();
+    expect(t!.warnings.join(' ')).not.toMatch(/rests on one turn/);
+    expect(t!.warnings.join(' ')).not.toMatch(/not confirmed/);
+  });
+
+  it('a later turn back at the earlier rate does not back it: the line stays', () => {
+    const hidden = fogged(5);
+    const [t] = trackOpponents(
+      g,
+      history(
+        [7, at(20, enemy(4, 2), enemy(5, 80))],
+        [8, at(28, enemy(4, 2), hidden)],
+        [9, at(33, enemy(4, 2), hidden)],
+        [10, at(99, enemy(4, 2), hidden)],
+        [11, at(115, enemy(4, 2), hidden)],
+      ),
+      ME,
+      STD,
+    );
+    expect(t!.turns.map((x) => x.observed)).toEqual([8, 5, 66, 16]);
+    expect(t!.incomeJump).toMatchObject({ turn: 9, verdict: 'banked' });
+  });
+
+  it('a carried figure cut below the jump says why it is lower than the turn that set it', () => {
+    const j: IncomeJump = {
+      turn: 9,
+      observed: 66,
+      before: 8,
+      since: 7,
+      armiesBefore: 24,
+      earnedSince: 18,
+      armiesNow: 103,
+      lossesSeen: 0,
+      cameIntoView: 0,
+      ambiguous: 0,
+      low: 66,
+      high: 66,
+      verdict: 'supported',
+    };
+    expect(incomeJumpText(j, 66, [])).not.toMatch(/carried/);
+    expect(incomeJumpText(j, 50, [])).toMatch(/^tracked income ~50\/turn rests on one turn: turn 9 \+66 \(carried since, less 16/);
+  });
+
+  it('the likely combat deaths are no proof: a transfer beside my shrinking stack is not counted as a loss', () => {
+    // Turn 7 to 8: T3 sends 10 to T4 (which gains 8 more) while my T2 shrinks 5 to 3. The tracker reads
+    // a likely fight there (combat 2) for the unexplained armies; the jump's losses seen leave it out.
+    const b = (t2: number, t3: number, t4: number) =>
+      board([mine(1, 5), mine(2, t2), enemy(3, t3), enemy(4, t4), enemy(5, 2), fogged(6), fogged(7), fogged(8)]);
+    const [t] = trackOpponents(g, history([7, b(5, 20, 2)], [8, b(3, 10, 20)], [9, b(3, 15, 20)], [10, b(3, 81, 20)]), ME, STD);
+    expect(t!.turns.map((x) => [x.observed, x.combat, x.losses])).toEqual([
+      [8, 2, 0],
+      [5, 0, 0],
+      [66, 0, 0],
+    ]);
+    expect(t!.incomeJump).toMatchObject({ turn: 9, lossesSeen: 0 });
   });
 
   it('a jump on the first observed turn has no turn before it to stand out from: no line', () => {

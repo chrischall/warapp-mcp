@@ -3005,6 +3005,24 @@ describe('attackSizes: several attacks on one target are sized together (#130)',
     expect(attacks.every((a) => a.cannotCapture === undefined)).toBe(true);
     expect(attacks[0]!.winChance).toBeGreaterThan(0);
   });
+
+  it('with luck the legs after the likely captor are transfers at the expectation, and its chance leaves them out (#250)', () => {
+    const luck = { ...twentyEighty, luckModifier: 0.16 };
+    const legs = [
+      { from: T(161), to: T(157), armies: 33 },
+      { from: T(159), to: T(157), armies: 33 },
+    ];
+    const alone = attackSizes(sevenOn157, ANN.inGame, [legs[0]!], luck)[0]!.winChance;
+    expect(alone).toBeGreaterThanOrEqual(0.5);
+    expect(alone).toBeLessThan(1);
+    const attacks = attackSizes(sevenOn157, ANN.inGame, legs, luck);
+    // The first leg is the likely captor: at the expectation the target is mine and the second leg a
+    // transfer (facing 0, as in an exact run). What the second could still do were the first to fail
+    // is left out of the chance: a cautious estimate, never above what the legs could achieve.
+    expect(attacks.map((a) => a.softener)).toEqual([undefined, undefined]);
+    expect(attacks.map((a) => a.facing)).toEqual([7, 0]);
+    expect(attacks.map((a) => a.winChance)).toEqual([alone, alone]);
+  });
 });
 
 describe('Multi-Attack in the turn tools (#130)', () => {

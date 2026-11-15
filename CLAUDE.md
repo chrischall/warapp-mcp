@@ -572,7 +572,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   observed turns just before it is usually the first true reading after turns it deployed out of
   sight (a play session lowered a real +66 after +8 and +5 and lost). `incomeJump` weighs the boards
   and a track warning (so a `warapp_plan_turn` warning too; `income.jump` in the track tool) says
-  why in numbers: its armies in view after the jump plus its losses seen against its armies in
+  why in numbers: its armies in view after the jump plus its losses seen (not the likely combat
+  deaths, a guess that can read a transfer as a fight) against its armies in
   view before plus what it was seen to earn since, leaving out the armies that only came into view
   (on territories some board from the first of those turns to the jump did not show, or read as out
   of the fog — a capture from a neutral or player in view on every board is no reveal; what it had
@@ -585,6 +586,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   says some turn was higher than read, not the jump turn itself). Either beaten → believed; else it hedges (old armies
   revealed, or armies banked out of view). The armies standing on territory it took from me on the
   jump turn are named (`fromMe`, with the low–high reading when the capture is priced at the guard).
+  No line when a later observed turn also reads more than the factor × that most: the income then
+  rests on more than one turn. A carried figure cut below the jump since says so in the line.
   The figure never changes for it.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
@@ -816,7 +819,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       warning), and only for a target the passes already chose. `warapp_plan_turn` lists them
       in `multiSourceCaptures`. `warapp_submit_turn`'s preview (`attackSizes`, #250) judges
       attacks on one target the same way, in the order listed, each against what the earlier
-      ones leave (`facing`, `softener`; at the expectation with luck), and warns "cannot capture"
+      ones leave (`facing`, `softener`; at the expectation with luck, where the chance stops at the
+      first leg likely to capture — a cautious estimate — and the legs after it are transfers), and warns "cannot capture"
       only when the whole sequence falls short — never sized as one stack, which rounds once.
     - **Frontier cost (#71, rule 4d).** Every capture's score pays for the frontier it adds:
       `NEUTRAL_BORDER_COST` per border it opens (minus per border it closes), plus, under

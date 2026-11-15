@@ -924,11 +924,11 @@ export function hopelessAttackWarning(
 
 /** Attacks on one target run in the order listed (#250). */
 interface Sequence {
-  /** The chance that one of them captures. */
+  /** The chance that one of them captures (with luck, up to the likely captor only: a cautious estimate). */
   chance: number;
-  /** The defenders each attack meets (rounded at the expectation). */
+  /** The defenders each attack meets (rounded at the expectation); 0 after the captor, a transfer then. */
   facing: number[];
-  /** The first attack expected to capture (exact: the one that does); absent when none is. */
+  /** The first attack expected to capture (exact: the one that does; with luck, chance ≥ 0.5); absent when none is. */
   captor?: number;
 }
 
@@ -938,7 +938,11 @@ interface Sequence {
  * commander's strength, which falls only whole — and an attack that wipes out both sides leaves
  * one defender (`turn-sim`'s rule). Exact at 0% luck under straight rounding, as the planner's
  * combined captures (rule 3a) are; otherwise each failed attack kills its expected share and the
- * chance is 1 − Π(1 − each attack's chance against what it meets), an estimate.
+ * chance is 1 − Π(1 − each attack's chance against what it meets) over the attacks up to the first
+ * one likely to capture (chance ≥ 0.5). The attacks after it are left out of the chance — what they
+ * would meet were it to fail is unknown (a failure kills less than its expected share) — so the
+ * figure is a cautious estimate, never more than the attacks could do; at the expectation the target
+ * is mine by then and they are transfers (facing 0), as in an exact run.
  */
 function attackSequence(armies: number, units: number, powers: readonly number[], combat: CombatSettings): Sequence {
   const off = combat.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
@@ -951,13 +955,11 @@ function attackSequence(armies: number, units: number, powers: readonly number[]
   for (const [i, a] of powers.entries()) {
     const meets = Math.round(left) + strength;
     facing.push(meets);
-    if (captor !== undefined) continue;
     const chance = winChance(a, meets, combat);
     miss *= 1 - chance;
     if (exact ? chance === 1 : chance >= 0.5) {
       captor = i;
-      if (exact) break;
-      continue;
+      break;
     }
     const kills = exact ? straightKills(a, off) : expectedKills(a, off);
     if (kills >= left + strength) {
@@ -967,7 +969,7 @@ function attackSequence(armies: number, units: number, powers: readonly number[]
     } else if (kills >= left) left = 0;
     else left -= kills;
   }
-  // After the captor in an exact run the target is mine: the later moves are transfers.
+  // After the captor the target is mine (at the expectation, with luck): the later moves are transfers.
   while (facing.length < powers.length) facing.push(0);
   const chance = exact ? (captor !== undefined ? 1 : 0) : 1 - miss;
   return { chance, facing, ...(captor !== undefined ? { captor } : {}) };
