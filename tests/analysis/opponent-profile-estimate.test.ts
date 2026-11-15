@@ -8,12 +8,15 @@ import {
   emptyHabits,
   estimateHabits,
   HABIT_DEFAULTS,
+  habitsOf,
   labelsOf,
+  lastAttackTurn,
   POPULATION_MIN_OPPORTUNITIES,
   PROFILE_LABELS,
   profileFormatOf,
   scaleHabits,
   type Habits,
+  type ObservedPrimitives,
 } from '../../src/analysis/opponent-profile.js';
 
 const withRate = (name: 'reinforce' | 'attack' | 'firstStrike' | 'retaliate' | 'retake', e: number, n: number, turns = 0): Habits => ({
@@ -97,5 +100,40 @@ describe('estimateHabits across games', () => {
 
   it('has one counter-play line for every label but spreader', () => {
     for (const l of PROFILE_LABELS) expect(Boolean(COUNTER_PLAY[l])).toBe(l !== 'spreader');
+  });
+});
+
+// #264: a turtle label hid an attack two turns earlier. The last turn an opponent attacked me is
+// reported beside its labels, and `turtle` is withheld when that was within the last two turns.
+describe('lastAttackTurn and the turtle label (#264)', () => {
+  const at = (turn: number, attackedMe: boolean | null, tookFromMe: number[] = []): ObservedPrimitives => ({
+    turn,
+    primitives: { contact: true, attackedMe, iAttacked: false, reinforce: { n: 0, e: 0, extra: 0 }, stack: null, tookFromMe, lostToMe: [] },
+  });
+  /** Ten turns in contact, quiet but for an attack on `hit`. */
+  const quietBut = (hit: number) => Array.from({ length: 10 }, (_, i) => at(i + 1, i + 1 === hit));
+
+  it('is the last turn it attacked me, a capture included, and null when it never did', () => {
+    expect(lastAttackTurn(quietBut(4))).toBe(4);
+    expect(lastAttackTurn([at(2, true), at(5, null, [17]), at(6, false), at(7, null)])).toBe(5);
+    expect(lastAttackTurn([at(1, false), at(2, null)])).toBeNull();
+    expect(lastAttackTurn([])).toBeNull();
+    // Order does not matter.
+    expect(lastAttackTurn([at(6, true), at(2, true)])).toBe(6);
+  });
+
+  it('withholds turtle when it attacked me in either of the last two turns, and gives it otherwise', () => {
+    const labels = (hit: number, turn: number | null) => {
+      const turns = quietBut(hit);
+      return labelsOf(estimateHabits(habitsOf(turns)), { lastAttackTurn: lastAttackTurn(turns), turn });
+    };
+    // 1 attack in 10 turns in contact: a turtle on the rate.
+    expect(labelsOf(estimateHabits(habitsOf(quietBut(8))))).toEqual(['turtle']);
+    // Playing turn 11: an attack on turn 8 is three turns back; on 9 or 10 it is recent.
+    expect(labels(8, 11)).toEqual(['turtle']);
+    expect(labels(9, 11)).toEqual([]);
+    expect(labels(10, 11)).toEqual([]);
+    // The turn unknown: nothing to judge recency by, the rate stands.
+    expect(labels(10, null)).toEqual(['turtle']);
   });
 });

@@ -13,6 +13,7 @@ import {
   HABIT_NAMES,
   habitsOf,
   labelsOf,
+  lastAttackTurn,
   PROFILE_MIN_CONFIDENCE,
   profileFormatOf,
   type EstimatePriors,
@@ -42,6 +43,8 @@ export interface OpponentRead {
   habits: Habits;
   estimates: Record<HabitName, HabitEstimate>;
   labels: ProfileLabel[];
+  /** The last turn it attacked me in this game (#264); `null` when no observed turn shows one. */
+  lastAttackTurn: number | null;
   /** Earlier finished games of mine it was in (absent for an AI seat). */
   gamesMet?: number;
 }
@@ -85,18 +88,22 @@ export async function readOpponents(o: {
   const known = typeof record === 'object' ? record : undefined;
   const format = profileFormatOf(game.players);
   const players = new Map(game.players.map((p) => [p.id, p]));
+  // The turn being played: the newest board handed in (the live one), else none (#264).
+  const turn = boards.length ? Math.max(...boards.map((b) => b.turn)) : null;
   const reads = opponents.map((id): OpponentRead => {
     const p = players.get(id);
     const turns = turnsOf(id);
     const habits = habitsOf(turns);
     const estimates = estimateHabits(habits, priorsOf(known, format, id, Boolean(p?.isAI)));
+    const last = lastAttackTurn(turns);
     return {
       id,
       ai: Boolean(p?.isAI || p?.humanTurnedIntoAI),
       turns,
       habits,
       estimates,
-      labels: labelsOf(estimates),
+      labels: labelsOf(estimates, { lastAttackTurn: last, turn }),
+      lastAttackTurn: last,
       ...(p?.isAI ? {} : { gamesMet: known?.players.get(id)?.games ?? 0 }),
     };
   });

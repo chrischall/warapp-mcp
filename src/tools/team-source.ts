@@ -213,6 +213,20 @@ export async function resolveTeams(ctx: LiveContext, game: Game): Promise<Resolv
 }
 
 /**
+ * The teams of `game` as far as they are known without asking anything (#264's backfill of a finished
+ * game reads no game list): GameFeed's, two seats or fewer, or the record kept at `<dataDir>/teams`
+ * when it covers every seat; else `known: false`. Never throws.
+ */
+export async function keptTeams(dataDir: string | undefined, game: Game): Promise<ResolvedTeams> {
+  if (isTeamGame(game.players)) return { game, source: 'gamefeed', known: game.players.every((p) => carriesTeam(p.team)) };
+  if (game.players.length <= 2) return { game, source: 'none', known: true };
+  const teams = dataDir ? await readTeamRecord(dataDir, game.id) : undefined;
+  if (!teams || !coversSeats(game, teams)) return { game, source: 'none', known: false };
+  const resolved = withTeams(game, teams);
+  return resolved ? { game: resolved, source: 'my-games', known: true } : { game, source: 'none', known: !teams.size };
+}
+
+/**
  * {@link resolveTeams} for a tool that has already found my seat (and refused a seat it refuses, so
  * that refusal asks no game list): the game, the source, and my seat in the resolved game.
  */

@@ -117,6 +117,8 @@ interface ProfileGameFile {
   seats?: ProfileSeats;
   /** Folded into the cross-game stores, from what (B2). */
   folded?: 'live' | 'history';
+  /** Observed after the game finished, from the boards cached while it was played (#264's backfill). */
+  backfill?: true;
 }
 
 type Rec = Record<string, unknown>;
@@ -171,6 +173,7 @@ async function readGameFile(dir: string, gameId: number, playerId: number): Prom
       turns: out,
       ...(seats ? { seats } : {}),
       ...(f.folded === 'live' || f.folded === 'history' ? { folded: f.folded } : {}),
+      ...(f.backfill === true ? { backfill: true as const } : {}),
     };
   } catch {
     return { turns: {} };
@@ -220,6 +223,8 @@ export interface BehaviourInput {
   boards: readonly TurnBoard[];
   /** The game's seats, kept for a fold by the age rule (B2). */
   seats?: ProfileSeats | undefined;
+  /** A finished game observed from its cached boards (#264): the file is marked `backfill`. */
+  backfill?: boolean | undefined;
 }
 
 /**
@@ -326,6 +331,7 @@ export async function recordBehaviour(dir: string, input: BehaviourInput, env: E
         turns,
         ...(seats ? { seats } : {}),
         ...(stored.folded ? { folded: stored.folded } : {}),
+        ...(input.backfill || stored.backfill ? { backfill: true as const } : {}),
       };
       await writeGameFile(path, body);
       return true;
@@ -747,7 +753,7 @@ export async function foldFinishedGame(dir: string, game: Pick<Game, 'id' | 'sta
           turns[t] = Object.fromEntries(Object.entries(byOpponent).filter(([o]) => byId.has(Number(o)) && !friends.has(Number(o))));
         const r = await foldFile(dir, game.id, me, { turns }, seats, (id) => endingOf(byId.get(id)?.state), env);
         if (r !== 'folded') return false;
-        await writeGameFile(path, { version: 1, gameId: game.id, playerId: me, turns: file.turns, seats, folded: 'live' });
+        await writeGameFile(path, { version: 1, gameId: game.id, playerId: me, turns: file.turns, seats, folded: 'live', ...(file.backfill ? { backfill: true as const } : {}) });
         return true;
       });
       if (done) folded++;
@@ -756,4 +762,38 @@ export async function foldFinishedGame(dir: string, game: Pick<Game, 'id' | 'sta
     // Best effort.
   }
   return folded;
+}
+
+/**
+ * The per-game file of `gameId` as `playerId` saw it (#264): `none` when there is none, `folded` when
+ * it was folded, else `kept`. Never throws (an unreadable file reads as `kept`: never backfilled over).
+ */
+export async function profileFileState(dir: string, gameId: number, playerId: number): Promise<'none' | 'kept' | 'folded'> {
+  try {
+    await stat(profileGamePath(dir, gameId, playerId));
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'none' : 'kept';
+  }
+  return (await readGameFile(dir, gameId, playerId)).folded ? 'folded' : 'kept';
+}
+
+/**
+ * Whether the cross-game stores already hold `gameId` as folded by `me` (#264: a per-game file the
+ * age rule or the file bound removed after its fold). Reads the population's entries under the game's
+ * key; `false` when no salt was ever made. A store or salt that cannot be read counts as folded, so a
+ * backfill never runs over it. Never throws, never writes.
+ */
+export async function profileGameFolded(dir: string, me: number, gameId: number): Promise<boolean> {
+  try {
+    const population = await readPopulation(dir);
+    if (population === 'unreadable') return true;
+    const saltText = await readFile(playerRecordSaltPath(dir), 'utf8').catch((e: NodeJS.ErrnoException) => (e.code === 'ENOENT' ? null : ''));
+    if (saltText === null) return false;
+    const salt = await playerRecordSalt(dir);
+    if (!salt) return true;
+    const key = profileGameKey(salt, me, gameId);
+    return population.entries.some((e) => e.key === key);
+  } catch {
+    return true;
+  }
 }

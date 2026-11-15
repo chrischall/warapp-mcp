@@ -606,6 +606,32 @@ export const COUNTER_PLAY: Readonly<Partial<Record<ProfileLabel, string>>> = {
   retakes: 'A capture from it needs a garrison that survives its counter.',
 };
 
+/** Turns back from the one being played within which an attack on me withholds `turtle` (#264). */
+export const TURTLE_QUIET_TURNS = 2;
+
+/** When an opponent last attacked me, against the turn being played, for {@link labelsOf} (#264). */
+export interface LabelRecency {
+  /** {@link lastAttackTurn} of its observed turns. */
+  lastAttackTurn?: number | null;
+  /** The turn being played; `null` or absent when unknown (recency is then not judged). */
+  turn?: number | null;
+}
+
+const attackedRecently = (r: LabelRecency): boolean =>
+  r.lastAttackTurn != null && r.turn != null && r.lastAttackTurn >= r.turn - TURTLE_QUIET_TURNS;
+
+/**
+ * The last turn an opponent attacked me (#264): the latest observed turn whose primitives say it did
+ * (`attackedMe`, or a territory it took from me); `null` when none does. A turn T is what happened
+ * between my boards of T and T + 1, so on turn N an attack on N − 1 or N − 2 is "the last two turns".
+ */
+export function lastAttackTurn(turns: readonly ObservedPrimitives[]): number | null {
+  let last: number | null = null;
+  for (const t of turns)
+    if ((t.primitives.attackedMe === true || (t.primitives.tookFromMe?.length ?? 0) > 0) && (last === null || t.turn > last)) last = t.turn;
+  return last;
+}
+
 /**
  * The labels the estimates earn, each only at {@link PROFILE_MIN_CONFIDENCE} or more, in a fixed order.
  *
@@ -615,14 +641,16 @@ export const COUNTER_PLAY: Readonly<Partial<Record<ProfileLabel, string>>> = {
  * - `rusher`: `firstStrike` counts once per opponent-game, so its confidence bar needs about a fifth
  *   meeting with the same player; it cannot fire in practice.
  * `turtle` is given only on this game's counts: the first report could not separate a quiet player
- * from a quiet game, so a quiet past is not carried into a label.
+ * from a quiet game, so a quiet past is not carried into a label. Nor is it given when it attacked me
+ * within the last {@link TURTLE_QUIET_TURNS} turns (`recent`, #264): a quiet rate beside a fresh
+ * attack gives the wrong picture of that border.
  */
-export function labelsOf(e: Record<HabitName, HabitEstimate>): ProfileLabel[] {
+export function labelsOf(e: Record<HabitName, HabitEstimate>, recent: LabelRecency = {}): ProfileLabel[] {
   const sure = (x: HabitEstimate) => x.confidence >= PROFILE_MIN_CONFIDENCE;
   const out: ProfileLabel[] = [];
   if (sure(e.reinforce) && e.reinforce.value >= 0.6) out.push('reinforcer');
   if (sure(e.reinforce) && e.reinforce.value <= 0.3) out.push('rarely-reinforces');
-  if (sure(e.attack) && e.attack.basis === 'this-game' && e.attack.value <= 0.2) out.push('turtle');
+  if (sure(e.attack) && e.attack.basis === 'this-game' && e.attack.value <= 0.2 && !attackedRecently(recent)) out.push('turtle');
   if (sure(e.retaliate) && e.retaliate.value >= 0.6) out.push('avenger');
   if (sure(e.retake) && e.retake.value >= 0.6) out.push('retakes');
   return out;

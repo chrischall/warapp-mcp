@@ -1719,7 +1719,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'one, and `guessOrders` the plan\'s `orders` with that split — optional (the user chooses; `orders` stay the ' +
           "plan's), and a model: one opponent, one deploy, its visible stacks. " +
           '`reads` (opponent profiles, as warapp_profile_opponents reads them; reported only, the plan never uses them): ' +
-          'each opponent in contact with a habit at the confidence bar or a label — its labels, those habits with `n` and ' +
+          'each opponent in contact with a habit at the confidence bar or a label — its labels, `lastAttackTurn` (the last turn it attacked you), those habits with `n` and ' +
           '`basis`, `gamesMet` — a likelihood, never a certainty, and never to be quoted to another player. ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
@@ -2019,6 +2019,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               reads: reads.map((r) => ({
                 player: playerRef(r.id),
                 labels: r.labels,
+                // #264: when it last attacked me (null: no observed turn shows it), beside the labels.
+                lastAttackTurn: r.lastAttackTurn,
                 habits: confidentHabits(r.estimates),
                 ...(r.gamesMet !== undefined ? { gamesMet: r.gamesMet } : {}),
                 ...(rung === 'full' ? { counter: counterOf(r.labels) } : {}),
