@@ -42,6 +42,7 @@ import { mapOf } from './map.js';
 import { recordFor, relationPlayers, scopeFrom } from './relations.js';
 import { resolvePlayer } from './resolve.js';
 import { boardHistory, livePlanSetup, requirePlayingSeat, requireTurnPhase } from './turn.js';
+import { resolveTeams } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_SCOPE_ITEMS = 200;
@@ -138,8 +139,10 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
       }),
     },
     async ({ game_id, player, offer, view }) => {
-      const game = await ctx.client.getGame(game_id, { settings: true });
-      requireTurnPhase(game);
+      const feed = await ctx.client.getGame(game_id, { settings: true });
+      requireTurnPhase(feed);
+      // The teams: GameFeed's, else the game list's (asked once per game, kept).
+      const { game } = await resolveTeams(ctx, feed);
       const ffa = ffaRefusal(game);
       if (ffa)
         throw new McpToolError(`No truce advice for game ${game.id}: ${ffa}. Truces are advised only in a free-for-all.`, {

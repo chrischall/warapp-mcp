@@ -33,6 +33,7 @@ import {
   requireTurnPhase,
   turnOrdersArg,
 } from './turn.js';
+import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -130,11 +131,13 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       }),
     },
     async ({ game_id, player, orders, enemy_deploy, first_mover, view }) => {
-      const game = await ctx.client.getGame(game_id, { settings: true });
-      requireTurnPhase(game);
-      const map = mapOf(game);
-      const me = await resolveMe(ctx, game.players, player);
-      requirePlayingSeat(game, me);
+      const feed = await ctx.client.getGame(game_id, { settings: true });
+      requireTurnPhase(feed);
+      const map = mapOf(feed);
+      const seat = await resolveMe(ctx, feed.players, player);
+      requirePlayingSeat(feed, seat);
+      // The teams: GameFeed's, else the game list's (asked once per game, kept).
+      const { game, me, source: teamSource } = await resolveTeamsFor(ctx, feed, seat);
       const turn = currentTurn(game);
       const [{ territories, info }, history] = await Promise.all([loadLiveGame(ctx, game), boardHistory(ctx, game, me, turn)]);
       const graph = graphOf(map);
@@ -512,6 +515,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           : {}),
         summary,
         exact: report.exact,
+        // Where the teams came from (GameFeed, else the game list), in a team game only.
+        ...(teamSource !== 'none' ? { teamSource } : {}),
         firstMover: first_mover ?? 'unknown',
         // #166: what the award of picks showed, the move order it implies included (absent with no pick list kept).
         ...(award ? { award: awardView(award, game, turn, name) } : {}),

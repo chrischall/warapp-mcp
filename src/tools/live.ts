@@ -38,6 +38,7 @@ import { loadLiveTerritories, loadPicks, requireApprovedAccount, writeAccount, t
 import { mapOf } from './map.js';
 import { resolvePlayer, resolveTerritory } from './resolve.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
+import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_PICK_ARGS = 200;
@@ -347,11 +348,13 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
       }),
       inputSchema: submitSchema,
       async plan({ game_id, player, territories }) {
-        const game = await ctx.client.getGame(parseGameId(game_id), { settings: true });
-        const map = mapOf(game);
+        const feed = await ctx.client.getGame(parseGameId(game_id), { settings: true });
+        const map = mapOf(feed);
         // A write through the bridge always acts as the signed-in account, whatever `player` says
         // (issue #7): a different player, an unknown account and an account without a seat are refused.
-        const me = await requireMySeat(ctx, game, { player, playing: false });
+        const seat = await requireMySeat(ctx, feed, { player, playing: false });
+        // The teams (the team-game warning): GameFeed's, else the game list's (asked once per game, kept).
+        const { game, me } = await resolveTeamsFor(ctx, feed, seat);
         const picks = territories.map((t) => resolveTerritory(map, t));
         const seen = new Set<number>();
         for (const t of picks) {

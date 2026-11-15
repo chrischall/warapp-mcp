@@ -48,6 +48,7 @@ import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 import { boardHistory, plannerSettings } from './turn.js';
+import { resolveTeams } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_SCOPE_ITEMS = 200;
@@ -454,7 +455,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
       }),
     },
     async ({ game_id, player, view }) => {
-      const game = await ctx.client.getGame(game_id, { settings: true });
+      const { game } = await resolveTeams(ctx, await ctx.client.getGame(game_id, { settings: true }));
       const map = mapOf(game);
       const graph = graphOf(map);
       const me = await resolveMe(ctx, game.players, player);
@@ -583,12 +584,14 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         });
       }
       const dir = ctx.dataDir;
-      const game = await ctx.client.getGame(args.game_id, { settings: true });
-      if (game.state !== 'Playing' && game.state !== 'DistributingTerritories') {
-        throw new McpToolError(`Game ${game.id} is ${game.state}: agreements are recorded only while it is being played. Nothing was recorded.`, {
+      const feed = await ctx.client.getGame(args.game_id, { settings: true });
+      if (feed.state !== 'Playing' && feed.state !== 'DistributingTerritories') {
+        throw new McpToolError(`Game ${feed.id} is ${feed.state}: agreements are recorded only while it is being played. Nothing was recorded.`, {
           hint: 'Record an agreement once the game has started (picks included).',
         });
       }
+      // The teams (a teammate is refused as a partner): GameFeed's, else the game list's (asked once per game, kept).
+      const { game } = await resolveTeams(ctx, feed);
       const map = mapOf(game);
       const graph = graphOf(map);
       const me = await resolveMe(ctx, game.players, args.player);

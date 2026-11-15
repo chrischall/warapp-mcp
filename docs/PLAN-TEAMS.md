@@ -508,10 +508,22 @@ untouched. Choices and departures:
   orders or picks they have entered, the team hand, unread team chat.
 
 *As built (C1):* `isTeamGame` / `teammatesOf` in `src/teams.ts` are the one test (the submit's teammate
-set no longer throws on an AI seat). The GetMyGames fallback (`gameWithTeams`, `src/tools/team.ts`) is
-used by `warapp_get_team` only; the planner and the other tools still read GameFeed's team, so a team game
-GameFeed sends without teams still plans as a free-for-all until V1 is checked (applying the fallback in
-the shared live-game load costs one GetMyGames call per plan: an owner decision). `BoardState.teammateOrders`
+set no longer throws on an AI seat). *Team source (as built, owner decision 2026-11-14 "Wire it in now"):*
+the GetMyGames fallback is one helper, `resolveTeams` / `resolveTeamsFor` (`src/tools/team-source.ts`), used
+by every tool that decides teams — `warapp_plan_turn` (`friendsOf`, the planner's game context, card
+advice), `warapp_check_plan`, `warapp_submit_turn` (the teammate set), `warapp_advise_diplomacy` and
+`warapp_record_agreement` (team refusals), `warapp_get_relations`, `warapp_plan_picks` / `warapp_submit_picks`,
+`warapp_track_opponents` / `warapp_locate_opponents`, `warapp_send_chat` (team channel, commitments) and
+`warapp_get_team`. GameFeed's team wins when any player carries one (`gamefeed`); GetMyGames is asked only when
+none does, the game has more than two seats and the signed-in account can be read (`my-games`); otherwise
+`none`. Cost control: the answer (in-game ids → team numbers, or none when the list holds the game without
+teams) is kept name-free at `<dataDir>/teams/<gameId>.json` (0600 in a 0700 folder, atomic, newest 200), so the
+extra request happens once per game, not per plan; a failed read or a list without the game is not kept and
+leaves the teams unknown, as before. Each tool resolves after its cheap refusals (turn phase, seat), so a
+refusal reads nothing more. The planner's input is unchanged in shape (only where a team comes from changed),
+so the golden corpus is byte-identical. The source is reported as `teamSource` by `warapp_plan_turn` and
+`warapp_check_plan` (team games only) and as `team.source` by `warapp_plan_picks` and `warapp_get_team`.
+`BoardState.teammateOrders`
 is set by `withTeammateOrders` (`src/team-orders.ts`, keyed by GameFeed id, my own entry left out) on the
 live boards of `warapp_plan_turn`, `warapp_check_plan`, `warapp_submit_turn` and `warapp_get_team` whenever
 `LatestGameInfo` carries the dict, and absent otherwise, so 1v1 and FFA boards and the golden corpus are

@@ -50,10 +50,12 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   docs/WEB-PROTOCOL.md "Open games"). The in-game `LatestGameInfo` carries no player list (read
   from the client bundle: orders, standings, turn, teammate orders, toasts), so GameFeed is the
   only source the plan reads; without `team` a team game reads as an FFA. Every tool asks one test
-  (`isTeamGame` / `teammatesOf`, `src/teams.ts`; C1). `warapp_get_team` alone falls back on
-  `GetMyGames`' `GameInfoPlayer` team (from the client bundle, UNVERIFIED live) when GameFeed sends
-  none, matching players by in-game id, and reports which source gave the team (V1 in
-  `docs/PLAN-TEAMS.md`).
+  (`isTeamGame` / `teammatesOf`, `src/teams.ts`; C1). Every tool that decides teams loads them
+  through `resolveTeams` (`src/tools/team-source.ts`): when no player in GameFeed's game carries a
+  team and the game has more than two seats, it falls back on `GetMyGames`' `GameInfoPlayer` team
+  (from the client bundle, UNVERIFIED live), matching players by in-game id, asked once per game and
+  kept at `<dataDir>/teams/<gameId>.json` (ids and team numbers only); a failed read is not kept.
+  The tools report which source gave the team (`gamefeed` / `my-games`; V1 in `docs/PLAN-TEAMS.md`).
 - `settings` uses real JSON types (numbers, booleans, objects). A card is enabled when its
   `<Name>Card` value is an object and disabled when the value is the string `"none"`.
   `ArmyCap` is the string `"null"` when there is no cap. `Map` is the map id.
