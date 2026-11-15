@@ -9,6 +9,12 @@ import { planTurn, type PlanInput, type RepulsedTarget, type TurnPlan } from '..
 import type { BoardState } from '../../src/board.js';
 import { DEFAULT_STRIDE, SYNTHETIC_COUNT, suiteInputs, syntheticInput } from './golden/corpus.js';
 
+/**
+ * #272: the evidence's reinforcement each turn, above any deploy estimate, so every repulsed territory is
+ * sized for its owner's whole deploy (the most it reinforced, never above the estimate) as #240 sized it.
+ */
+const REINFORCED = 1000;
+
 /** Synthetic boards the review sweep (stride 1) found, off the default stride. */
 const FOUND = [197, 879, 1107];
 
@@ -23,8 +29,8 @@ function repulsedNextToMe(input: PlanInput): RepulsedTarget[] {
             territoryId: t.territoryId,
             playerId: t.owner.playerId,
             attacks: [
-              { turn: 1, armies: 1, before: 1, after: 2, kills: 0 },
-              { turn: 2, armies: 1, before: 2, after: 3, kills: 0 },
+              { turn: 1, armies: 1, before: 1, after: REINFORCED, kills: 0 },
+              { turn: 2, armies: 1, before: REINFORCED, after: 2 * REINFORCED, kills: 0 },
             ],
           },
         ]
@@ -103,8 +109,8 @@ describe('#240 review: one repulsed territory at a time, across the whole corpus
               territoryId: t,
               playerId: owner,
               attacks: [
-                { turn: 1, armies: 1, before: 1, after: 2, kills: 0 },
-                { turn: 2, armies: 1, before: 2, after: 3, kills: 0 },
+                { turn: 1, armies: 1, before: 1, after: REINFORCED, kills: 0 },
+                { turn: 2, armies: 1, before: REINFORCED, after: 2 * REINFORCED, kills: 0 },
               ],
             },
           ],

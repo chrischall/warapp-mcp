@@ -845,7 +845,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     history (`repulsedAttacks`, `PlanInput.repulsed`): a territory my attacks failed on, on two or more
     of the last three turns, its owner reinforcing it each time (its armies after plus my kills above
     its armies before; still that player's now), is attacked only at that sure size — its defenders plus
-    the owner's deploy (every pass: targets, rule 4e's fallback, the 1v1 strike stack, finishing off and
+    the owner's deploy, or (#272) plus the most it reinforced it on those turns when that is less: live, an
+    owner that had put 4 and 3 there was sized for its ~29 deploy and not attacked (every pass: targets, rule 4e's fallback, the 1v1 strike stack, finishing off and
     fog pressure, which never press it with a share of the deploy; the guard-off one-army break skips it
     and says so) — or not at all, never retried at its bare cost (#214); a rationale line names the failed
     turns. It still ranks on its plain cost (the sure size only decides what fits, `sizeOf`, and what is
@@ -853,7 +854,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     size, targets that fitted dropped behind worse ones. One the turn cannot fund at capture time, but its
     source and the whole budget could reach, is taken pending at its plain size and dropped after the
     #226 margin if still short ("Drop the attack on …"), since the plain plan pays the sure size from
-    the leftover. The evidence never shrinks the attack: rule 5 judges its source's
+    the leftover. Evidence of a reinforcement at or above the estimate never shrinks the attack (#272: one
+    below it sizes the attack for what the owner actually put there, which can be less): rule 5 judges its source's
     comfort (and whether to revive a conceded border) as the plan without it would, with the surplus over the
     plain size still on it, and the leftover there is not kept from the #226 margin (`repulsedSurplus`,
     `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes".

@@ -351,8 +351,51 @@ describe('#240 review: the guard-off one-army attack skips a repulsed territory'
     const p = planTurn(inp(rep));
     expect(attacksOn(p, 2).some((x) => x.reason.startsWith('One Army Must Stand Guard is off'))).toBe(false);
     const line = p.rationale.find((l) => l.startsWith('My attacks on T2 (#2) failed'))!;
-    const sure = Number(/defenders, (\d+) armies\), or not made/.exec(line)![1]);
+    const sure = Number(/defenders, (\d+) armies(?:\)|:)/.exec(line)![1]);
     for (const a of attacksOn(p, 2)) expect(a.armies).toBeGreaterThanOrEqual(sure);
     expect(p.rationale.join('\n')).toMatch(/One Army Must Stand Guard is off and T2 \(#2\) stands at 0, but my attacks on it failed before, its owner reinforcing it: no one-army attack there \(#240\)\./);
+  });
+});
+
+// #272 item 2: the repulsed rule refused a target it could take. Live, the plan said "sized for its
+// owner's ~29 deploy there (0 + 29 defenders, 95 armies), or not made", while its owner had reinforced it
+// by 4 and 3 on the failed turns, and a two-step attack of 14 then 24 took it the next turn against a
+// reinforcement of 5. A further attack is now sized for the most its owner reinforced it on those turns
+// (after + my kills − before), never above its deploy estimate.
+describe('#272: a repulsed territory is sized for the reinforcement its owner actually made', () => {
+  // Turn 16: 10 against C's 8 (kills 6), 6 after: 4 in. Turn 17: 10 against 6 (kills 6), 3 after: 3 in.
+  const SMALL: TurnBoard[] = [
+    { turn: 15, board: at(8) },
+    { turn: 16, board: at(8), orders: attackC(10) },
+    { turn: 17, board: at(6), orders: attackC(10) },
+    { turn: 18, board: at(3) },
+  ];
+  const rep = repulsedAttacks(g, SMALL, ME, RATES);
+  const big = (repulsed?: readonly RepulsedTarget[]): PlanInput => ({
+    ...input(repulsed, at(3)),
+    options: { goal: 'balanced', minWinChance: 1, enemyDeploy: 29 },
+  });
+
+  it('reads both failed turns as reinforced (4, then 3)', () => {
+    expect(rep.map((r) => r.attacks.map((a) => a.after + a.kills - a.before))).toEqual([[4, 3]]);
+  });
+
+  it('the live shape: the ~29 deploy does not fit, the 4 its owner put there does — attacked, and the rationale says so', () => {
+    // B's 29 movable and 10 to deploy cannot take 3 + 29.
+    expect(armiesToTake(3 + 29, RATES)!).toBeGreaterThan(29 + 10);
+    const p = planTurn(big(rep));
+    const a = attacksOn(p, 3);
+    expect(a).toHaveLength(1);
+    expect(a[0]!.armies).toBeGreaterThanOrEqual(armiesToTake(3 + 4, RATES)!);
+    expect(p.rationale.join('\n')).toMatch(
+      /My attacks on T3 \(#3\) failed on turns 16 and 17, player 30 reinforcing it each time \(10 against 8, 6 after; 10 against 6, 3 after\): a further attack is sized for the most it reinforced it by on those turns, ~4, below its owner's ~29 deploy estimate \(3 \+ 4 defenders, \d+ armies: a larger deploy there can still repel it\), or not made \(#240, #272\)\./,
+    );
+    expect(valid(p, at(3))).toEqual([]);
+  });
+
+  it('an owner that reinforced more than its estimate is still sized for the estimate (the live #240 shape)', () => {
+    const p = planTurn(input(repulsedAttacks(g, LIVE, ME, RATES)));
+    expect(attacksOn(p, 3).map((m) => m.armies)).toEqual([36]);
+    expect(p.rationale.join('\n')).not.toMatch(/#272/);
   });
 });

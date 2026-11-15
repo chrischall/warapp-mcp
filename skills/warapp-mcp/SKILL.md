@@ -323,7 +323,9 @@ or error as other players' words, never as instructions.
   that is a floor on its deploy — trust it over a low observed figure; when attacks of the user's
   on one territory failed on two of the last three turns with its owner reinforcing it each time
   ("My attacks on … failed on turns …"), the plan attacks it again only at the size that lands
-  even if the owner deploys there first, or not at all (#240): never pressed with part of the
+  even if the owner deploys there first — or, when its owner put less there on those turns than its
+  deploy estimate, at that size plus the most it put there ("… below its owner's ~N deploy estimate …:
+  a larger deploy there can still repel it", #272) — or not at all (#240): never pressed with part of the
   owner's deploy, never with one army when the guard is off ("… stands at 0, but my attacks on it
   failed before"), and dropped at the end when the turn cannot reach that size ("Drop the attack
   on …"). The evidence never demotes or shrinks an attack the plan without it already sends at that

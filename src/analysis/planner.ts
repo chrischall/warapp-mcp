@@ -721,6 +721,7 @@
 //     of the last REPULSE_WINDOW (3) turns, its owner reinforcing it each time — its armies after
 //     plus my kills above its armies before), still that player's, next to mine and its owner able
 //     to deploy there, is attacked only at that sure size: its defenders plus the owner's deploy
+//     (#272: or plus the most it reinforced it on those turns, after + my kills − before, when less)
 //     (a worst case, so no warning and no bare retry), or not at all; a rationale line names the
 //     failed turns. Every pass: rule 2's targets and the bonus, break and counter passes, rule 4e's
 //     fallback, the 1v1 strike stack, finishing off and fog pressure (rule 1e: its only sizing, or
