@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MAX_PAGE_CHARS, parseCommonGames, parseProfile, profileUrl, commonGamesUrl } from '../src/scout.js';
 import { ANCHOR_CASES } from './scout-cases.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
+import { emptyHabits } from '../src/analysis/opponent-profile.js';
+import { foldGame } from '../src/profile-store.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -372,4 +374,51 @@ describe('warapp_scout_player', () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/war\.app tab/);
   });
+
+  describe('met: the cross-game read when the profile store has the player (PLAN-PROFILES part D)', () => {
+    const ME = 3312345644;
+    /** A data directory where one earlier finished free-for-all with Bob is folded: Bob reinforced 9 of 10 attacks of mine. */
+    async function folded(): Promise<string> {
+      const { mkdtempSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-scout-met-'));
+      const habits = { ...emptyHabits(), reinforce: { e: 9, n: 10 }, turns: 7 };
+      expect(await foldGame(dir, { me: ME, gameId: GAME + 1, format: 'ffa', players: 3, source: 'live', seats: [{ id: Number(BOB.token), ai: false, habits, ending: 'Won' }] }, {})).toBe('folded');
+      return dir;
+    }
+    interface Met {
+      games: number;
+      labels: string[];
+      habits: Record<string, { value: number; n: number; confidence: number; basis: string }>;
+    }
+
+    it('adds games met and the read, by id or named in a game, with no id or name of mine', async () => {
+      const dataDir = await folded();
+      h = await liveHarness({ feed: [gameWithBob()], pages: PAGES, dataDir });
+      for (const args of [{ player: BOB.token }, { game_id: GAME, player: 'bob' }]) {
+        const res = await h.call('warapp_scout_player', args);
+        const met = payload<{ met: Met }>(res).met;
+        expect(met.games).toBe(1);
+        // Shrunk toward the all-formats pool, which holds that game alone (9 of 10): (0.9 × 4 + 9) ÷ 14.
+        expect(met.habits.reinforce).toEqual({ value: 0.9, n: 10, confidence: 0.71, basis: 'past-games' });
+        expect(met.labels).toContain('reinforcer');
+        expect(textOf(res)).not.toContain(String(ME));
+      }
+    });
+
+    it('is absent for a player never met, and with profiling off', async () => {
+      const dataDir = await folded();
+      h = await liveHarness({ pages: { ...PAGES, ...(await zedPages()) }, dataDir });
+      expect(payload(await h.call('warapp_scout_player', { player: ZED_TOKEN }))).not.toHaveProperty('met');
+      await h.harness.close();
+      h = await liveHarness({ pages: PAGES, dataDir, env: { WARAPP_PLAYER_PROFILE: 'off' } });
+      expect(payload(await h.call('warapp_scout_player', { player: BOB.token }))).not.toHaveProperty('met');
+    });
+  });
 });
+
+const ZED_TOKEN = '5524681355';
+async function zedPages(): Promise<Record<string, string>> {
+  return { [`https://war.app/Profile?p=${ZED_TOKEN}`]: PROFILE_HTML, [`https://war.app/CommonGames?p=${ZED_TOKEN}`]: COMMON_HTML };
+}

@@ -336,3 +336,97 @@ describe('warapp_profile_opponents', () => {
     expect(bob.player.name.slice(1, -1)).not.toContain('⟧');
   });
 });
+
+// Part D (docs/PLAN-PROFILES.md section 11): the read reported where it gets used. Reported only:
+// the planner reads none of it (the golden corpus is byte-identical).
+interface Read {
+  player: { id: number; name: string };
+  labels: string[];
+  habits: Record<string, { value: number; n: number; basis: string }>;
+  gamesMet?: number;
+  counter?: string[];
+}
+const plan = async (hh: Harness, args: Record<string, unknown> = {}) =>
+  payload<{ reads?: Read[]; orders: unknown[] }>(await hh.call('warapp_plan_turn', { game_id: GAME, player: ME, ...args }));
+
+describe("warapp_plan_turn's reads (part D)", () => {
+  it('reports each opponent in contact with its labels and only the habits at the confidence bar', async () => {
+    h = await setUp();
+    const p = await plan(h);
+    // Cat lost its last territory beside mine on turn 4: not in contact, not reported.
+    expect(p.reads!.map((r) => r.player.id)).toEqual([BOB_ID]);
+    const bob = p.reads![0]!;
+    expect(bob.player.name).toBe('⟦Bob⟧');
+    expect(bob.labels).toContain('reinforcer');
+    expect(bob.habits.reinforce).toEqual({ value: 0.75, n: 4, basis: 'default' });
+    // Only habits at the bar (confidence 0.5: n of 4 or more), with n and basis.
+    const full = who(await profile(h), BOB_ID).habits;
+    for (const [name, x] of Object.entries(full)) {
+      if (x.confidence >= 0.5) expect(bob.habits[name], name).toEqual({ value: x.value, n: x.n, basis: x.basis });
+      else expect(bob.habits[name], name).toBeUndefined();
+    }
+    expect(bob.gamesMet).toBe(0);
+    // The compact plan leaves the counter-play lines to the full view.
+    expect(bob.counter).toBeUndefined();
+    const f = await plan(h, { view: 'full' });
+    expect(f.reads![0]!.counter![0]).toMatch(/Attack two of its territories/);
+  });
+
+  it('changes no order: the plan is the same with profiling off, and then reports no reads', async () => {
+    h = await setUp();
+    const on = await plan(h);
+    await h.harness.close();
+    h = await setUp({ WARAPP_PLAYER_PROFILE: 'off' });
+    const off = await plan(h);
+    expect(off.reads).toBeUndefined();
+    expect(off.orders).toEqual(on.orders);
+  });
+
+  it('reports no reads while the teams cannot be read (any player may be my teammate)', async () => {
+    h = await setUp({}, undefined, { list: 'fail' });
+    expect((await plan(h)).reads).toBeUndefined();
+  });
+
+  it('is reported on a what-if plan too, which still keeps nothing', async () => {
+    h = await setUp();
+    const p = await plan(h, { goal: 'defend' });
+    expect(p.reads!.map((r) => r.player.id)).toEqual([BOB_ID]);
+    expect(existsSync(profileGamePath(h.dataDir, GAME, ME))).toBe(false);
+  });
+});
+
+describe("warapp_advise_diplomacy's habits beside the record (part D)", () => {
+  interface Neighbour {
+    player: { id: number };
+    record?: string;
+    habits?: Record<string, { value: number; n: number; confidence: number; basis: string }>;
+  }
+  const advise = async (hh: Harness) =>
+    payload<{ neighbours: Neighbour[] }>(await hh.call('warapp_advise_diplomacy', { game_id: GAME, player: ME }));
+
+  it("shows each neighbour's retaliate and attack as warapp_profile_opponents reads them, and writes nothing", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'warapp-mcp-profile-diplomacy-'));
+    // An earlier free-for-all, folded: Bob attacked me on 6 of 8 turns in contact and hit back after 4 of 5 attacks of mine.
+    const earlier = { ...emptyHabits(), attack: { e: 6, n: 8 }, retaliate: { e: 4, n: 5 }, turns: 8 };
+    expect(await foldGame(dataDir, { me: ME, gameId: GAME + 1, format: 'ffa', players: 3, source: 'live', seats: [{ id: BOB_ID, ai: false, habits: earlier, ending: 'Won' }] }, {})).toBe('folded');
+    h = await setUp({}, undefined, { dataDir });
+    const a = await advise(h);
+    // Advice writes nothing: no turn is kept by it.
+    expect(existsSync(profileGamePath(dataDir, GAME, ME))).toBe(false);
+    const bob = a.neighbours.find((n) => n.player.id === BOB_ID)!;
+    expect(bob.record).toBeDefined();
+    const read = who(await profile(h), BOB_ID).habits;
+    expect(bob.habits).toEqual({ retaliate: read.retaliate, attack: read.attack });
+    expect(bob.habits!.attack!.basis).toBe('past-games');
+  });
+
+  it('shows none with profiling off or while the teams cannot be read', async () => {
+    h = await setUp({ WARAPP_PLAYER_PROFILE: 'off' });
+    expect((await advise(h)).neighbours.every((n) => n.habits === undefined)).toBe(true);
+    await h.harness.close();
+    h = await setUp({}, undefined, { list: 'fail' });
+    const a = await advise(h);
+    expect(a.neighbours.every((n) => n.habits === undefined)).toBe(true);
+    expect(existsSync(profileGamePath(h.dataDir, GAME, ME))).toBe(false);
+  });
+});

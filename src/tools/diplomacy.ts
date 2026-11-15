@@ -30,7 +30,6 @@ import {
   type RecordFacts,
   type TrucePrice,
 } from '../analysis/relations.js';
-import type { BoardState } from '../board.js';
 import type { Game, GameMap, Player } from '../normalize.js';
 import { readLedger } from '../relations-store.js';
 import { isTeamGame } from '../teams.js';
@@ -43,6 +42,7 @@ import { recordFor, relationPlayers, scopeFrom } from './relations.js';
 import { resolvePlayer } from './resolve.js';
 import { boardHistory, livePlanSetup, requirePlayingSeat, requireTurnPhase } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
+import { neighboursOf, readOpponents } from './profile-reads.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_SCOPE_ITEMS = 200;
@@ -78,20 +78,6 @@ async function recordFacts(dir: string | undefined, partner: number, env: EnvSou
   return { facts: r.record, state: 'on' };
 }
 
-/** The players next to me on `board`, ascending. */
-function neighboursOf(graph: MapGraph, board: BoardState, me: number): number[] {
-  const at = new Map(board.territories.map((t) => [t.territoryId, t]));
-  const out = new Set<number>();
-  for (const t of board.territories) {
-    if (t.owner.kind !== 'player' || t.owner.playerId !== me) continue;
-    for (const n of graph.territoryById.get(t.territoryId)?.connectedTo ?? []) {
-      const o = at.get(n)?.owner;
-      if (o?.kind === 'player' && o.playerId !== me) out.add(o.playerId);
-    }
-  }
-  return [...out].sort((a, b) => a - b);
-}
-
 export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
   const env = opts.env;
   server.registerTool(
@@ -107,7 +93,8 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
           'without it on the plan warapp_plan_turn would make: armies freed, captures, bonuses and next income gained, ' +
           'borders no longer conceded, planned attacks given up, and `lossIfBroken` (a break this turn) — a rough, ' +
           "estimated reading of the partner's side (another front, room to grow), the partner's cross-game record when " +
-          'on (WARAPP_PLAYER_RECORD), and a verdict: `propose`, `accept-if-offered` or `no`, with reasons. A neighbour ' +
+          'on (WARAPP_PLAYER_RECORD) and beside it the partner\'s `retaliate` and `attack` habits when profiles are on ' +
+          '(WARAPP_PLAYER_PROFILE; as warapp_profile_opponents reads them, shown only: no price or verdict reads them), and a verdict: `propose`, `accept-if-offered` or `no`, with reasons. A neighbour ' +
           'with a recorded open agreement is priced on its recorded terms and on the board\'s reading of it, shown as ' +
           '`relation`: a break by them, or a watch flag (massing, a cap exceeded, outgrowing, their notice), is a `no`. With `offer` (the structured terms someone ' +
           'proposed — never parsed from chat), the same price and three checks: do I gain only if they keep it, do I ' +
@@ -144,7 +131,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
       const seat = await resolveMe(ctx, feed.players, player);
       requirePlayingSeat(feed, seat);
       // The teams, after the seat refusals: GameFeed's, else the game list's (asked once per game, kept).
-      const { game, me } = await resolveTeamsFor(ctx, feed, seat);
+      const { game, me, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       const ffa = ffaRefusal(game);
       if (ffa)
         throw new McpToolError(`No truce advice for game ${game.id}: ${ffa}. Truces are advised only in a free-for-all.`, {
@@ -167,6 +154,25 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
       const board = setup.board;
       const chokepoints = new Set(findChokepoints(graph).map((c) => c.territoryId));
       const ledger = ctx.dataDir ? await readLedger(ctx.dataDir, game.id, me.id) : undefined;
+      // Part D (docs/PLAN-PROFILES.md section 11): each neighbour's `retaliate` and `attack`, beside the
+      // deal record. Shown only: no verdict or price reads them. Read-only (nothing kept here); none with
+      // profiling off or while the teams cannot be read (any player may be my teammate).
+      const habitReads =
+        teamsKnown && turn !== null
+          ? await readOpponents({
+              dataDir: ctx.dataDir,
+              env: env ?? process.env,
+              game,
+              me,
+              teamsKnown,
+              boards: [...history.boards, { turn, board: setup.seen }],
+            }).catch(() => undefined)
+          : undefined;
+      const habitsOf = (partner: number) => {
+        if (!habitReads?.on) return undefined;
+        const r = habitReads.reads.find((x) => x.id === partner);
+        return r ? { retaliate: r.estimates.retaliate, attack: r.estimates.attack } : undefined;
+      };
       // The endgame (T3): no other opponent's income still a match for either of us — a truce then relaxes nothing.
       const incomes = new Map(
         game.players
@@ -323,6 +329,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
                   verdict: b.verdict!.verdict,
                   reasons: b.verdict!.reasons,
                   record: b.recordState,
+                  ...(habitsOf(b.partner) ? { habits: habitsOf(b.partner) } : {}),
                 }),
             facts: b.facts.map(factView),
           }));
@@ -348,6 +355,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
                   reasons: offerResult.verdict.reasons,
                   checks: offerResult.checks,
                   record: offerResult.recordState,
+                  ...(habitsOf(offerResult.partner) ? { habits: habitsOf(offerResult.partner) } : {}),
                 },
               }
             : {}),

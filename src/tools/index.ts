@@ -116,7 +116,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerLeaveGameTool(server, live);
   registerSurrenderTool(server, live);
   registerBeginTurnTool(server, live);
-  registerScoutTool(server, live);
+  registerScoutTool(server, live, deps.env ? { env: deps.env } : {});
   registerTurnTools(server, live, deps.env ? { env: deps.env } : {});
   registerCheckPlanTool(server, live);
   registerOpponentsTool(server, live, deps.env ? { env: deps.env } : {});

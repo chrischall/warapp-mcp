@@ -8,32 +8,24 @@ import type { EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
-  COUNTER_PLAY,
-  estimateHabits,
   HABIT_DEFAULTS,
   HABIT_NAMES,
-  habitsOf,
-  labelsOf,
   POPULATION_MIN_OPPORTUNITIES,
   PROFILE_DECAY,
   PROFILE_MIN_CONFIDENCE,
   PROFILE_PRIOR_WEIGHT,
-  profileFormatOf,
-  type EstimatePriors,
-  type Habits,
-  type ObservedPrimitives,
 } from '../analysis/opponent-profile.js';
 import type { TurnBoard } from '../analysis/opponents.js';
 import { boardStateFromLive } from '../live.js';
-import { observeBoards, PROFILE_ENV, profileEnabled, profileState, readProfileHistory, readProfileTurns } from '../profile-store.js';
+import { PROFILE_ENV, profileState } from '../profile-store.js';
 import { writeGameRecord } from '../replay.js';
 import { writeBoardCache } from '../trend.js';
-import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
+import { gameIdArg, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
-import { mapOf } from './map.js';
-import { cardsInPlay, observeSettings, profiledOpponents, recordProfile } from './profile-hook.js';
+import { recordProfile } from './profile-hook.js';
+import { counterOf, readOpponents } from './profile-reads.js';
 import { resolveTeamsFor } from './team-source.js';
 import { boardHistory, currentTurn, requireTurnPhase } from './turn.js';
 
@@ -63,7 +55,7 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
           'then only the boards read now are counted and nothing is kept). Known teammates are never profiled. While a game of ' +
           'three or more seats has teams that could not be read, nothing is kept (`profile: not-kept`) and every other player is ' +
           'profiled from the boards read now with `mayBeTeammate: true`. Refuses outside a turn ' +
-          `phase. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read. warapp_plan_turn does not use profiles.`,
+          `phase. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read. warapp_plan_turn reports a compact read of each opponent in contact as \`reads\` (and warapp_advise_diplomacy \`retaliate\` and \`attack\`, warapp_scout_player \`met\`) but does not use profiles in its plan.`,
       ),
       _meta: lookupMeta(['profile my opponent', 'what kind of player is my opponent', 'does my opponent reinforce', 'opponent habits', 'is my opponent aggressive']),
       annotations: readAnnotations('Profile war.app opponents'),
@@ -83,38 +75,13 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
       const turn = currentTurn(game);
       const history = await boardHistory(ctx, game, me, turn);
       const boards: TurnBoard[] = turn !== null ? [...history.boards, { turn, board }] : [];
-      const on = profileEnabled(env);
       if (ctx.dataDir && turn !== null) {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
         await writeGameRecord(ctx.dataDir, game);
         await recordProfile(ctx.dataDir, env, game, me, boards, teamsKnown);
       }
-      const opponents = profiledOpponents(game, me);
-      // The stored turns when kept (every turn ever observed), else only those the boards read now show.
-      const stored = on && ctx.dataDir ? await readProfileTurns(ctx.dataDir, game.id, me.id, env) : new Map<number, ObservedPrimitives[]>();
-      const fresh = observeBoards({ gameId: game.id, me: me.id, graph: graphOf(mapOf(game)), settings: observeSettings(game), ...cardsInPlay(game), opponents, boards });
-      const turnsOf = (o: number): ObservedPrimitives[] => {
-        const byTurn = new Map<number, ObservedPrimitives>();
-        for (const t of stored.get(o) ?? []) byTurn.set(t.turn, t);
-        for (const [t, m] of fresh) {
-          const p = m.get(o);
-          if (p) byTurn.set(t, { turn: t, primitives: p });
-        }
-        return [...byTurn.values()].sort((a, b) => a.turn - b.turn);
-      };
+      const { record, reads } = await readOpponents({ dataDir: ctx.dataDir, env, game, me, teamsKnown, boards });
       const players = new Map(game.players.map((p) => [p.id, p]));
-      // The cross-game record (B2): this game left out of each player's past. Never a possible
-      // teammate's past while the teams are unknown.
-      const record = on && ctx.dataDir ? await readProfileHistory(ctx.dataDir, teamsKnown ? opponents : [], { me: me.id, gameId: game.id }, env) : undefined;
-      const known = typeof record === 'object' ? record : undefined;
-      const format = profileFormatOf(game.players);
-      const priorsOf = (id: number, ai: boolean): EstimatePriors => {
-        if (!known) return {};
-        if (ai) return { pools: [known.pools.ai] };
-        const pools = [known.pools.byFormat[format], known.pools.all].filter((x): x is Habits => x !== undefined);
-        const past = known.players.get(id)?.past;
-        return { pools, ...(past ? { past } : {}) };
-      };
 
       return respond(detail, VIEWS, (rung) => {
         const full = rung === 'full';
@@ -125,23 +92,19 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
           profile: profileState(env, teamsKnown ? ctx.dataDir : undefined),
           // The cross-game record could not be parsed (never overwritten): estimates use this game alone.
           ...(record === 'unreadable' ? { pastGames: 'unreadable' as const } : {}),
-          opponents: opponents.map((id) => {
+          opponents: reads.map((r) => {
+            const { id, turns, habits: h, estimates: est, labels } = r;
             const p = players.get(id);
-            const turns = turnsOf(id);
-            const h = habitsOf(turns);
-            const ai = Boolean(p?.isAI || p?.humanTurnedIntoAI);
-            const est = estimateHabits(h, priorsOf(id, Boolean(p?.isAI)));
-            const labels = labelsOf(est);
             return {
               player: { id, name: untrustedText(p?.name ?? String(id)) },
-              ai,
+              ai: r.ai,
               // The teams could not be read: any other player may be my teammate.
               ...(teamsKnown ? {} : { mayBeTeammate: true as const }),
-              seen: { turnsObserved: h.turns, ...(p?.isAI ? {} : { gamesMet: known?.players.get(id)?.games ?? 0 }) },
+              seen: { turnsObserved: h.turns, ...(r.gamesMet !== undefined ? { gamesMet: r.gamesMet } : {}) },
               habits: Object.fromEntries(HABIT_NAMES.map((n) => [n, est[n]])),
               ...(h.reinforceExtra.n ? { reinforceExtra: { mean: Math.round((h.reinforceExtra.sum / h.reinforceExtra.n) * 100) / 100, n: h.reinforceExtra.n } } : {}),
               labels,
-              counter: labels.flatMap((l) => (COUNTER_PLAY[l] ? [COUNTER_PLAY[l]] : [])),
+              counter: counterOf(labels),
               ...(full
                 ? {
                     counts: {
