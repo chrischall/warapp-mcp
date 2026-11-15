@@ -593,6 +593,11 @@ export function reportOffence(
               : ''
       }`;
     };
+    /** #253: why rule 4h, the army cap's spend of idle armies, did not take it either. */
+    const capNote = (n: number) => {
+      const why = ps.capRefused.get(n);
+      return why ? `; the army cap's spend of idle armies (rule 4h) tried it: it ${why}` : '';
+    };
     // Capped (#130 trimmed the response before): the first NOT_ATTACKING_REASONS by id with their
     // reasons, the rest named.
     const told = left.slice(0, NOT_ATTACKING_REASONS);
@@ -600,7 +605,7 @@ export function reportOffence(
     if (left.length)
       rationale.push(
         `Not attacking ${left.length === 1 ? 'the enemy territory' : `${left.length} enemy territories`} next to mine: ${told
-          .map((n) => `${label(n)} (player ${(state.get(n)!.owner as { playerId: number }).playerId}, ${state.get(n)!.armies} armies): ${reasonFor(n)}`)
+          .map((n) => `${label(n)} (player ${(state.get(n)!.owner as { playerId: number }).playerId}, ${state.get(n)!.armies} armies): ${reasonFor(n)}${capNote(n)}`)
           .join('; ')}${rest.length ? `; and ${rest.length} more: ${rest.map(label).join(', ')}` : ''}.`,
       );
   }

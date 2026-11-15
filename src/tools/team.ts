@@ -9,7 +9,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { incomeFor } from '../analysis/plan/shared.js';
+import { visibleIncomeFor } from '../analysis/plan/shared.js';
 import { cardRules, handReadable, readHand } from '../cards.js';
 import { parseGameId } from '../client.js';
 import { boardStateFromLive, playersByInGameId } from '../live.js';
@@ -156,7 +156,7 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
           kind: p.isAI || p.humanTurnedIntoAI ? 'ai' : 'human',
           state: p.state ?? null,
           committed: p.hasCommittedOrders,
-          visibleIncome: board && inGame !== undefined ? incomeFor(graphOf(map), board, p.id, game.settings) : null,
+          visibleIncome: board && inGame !== undefined ? visibleIncomeFor(graphOf(map), board, p.id, game.settings) : null,
           orders: entry?.orders ? ordersView(entry.orders) : null,
           picks,
         });

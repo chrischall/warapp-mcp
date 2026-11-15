@@ -32,7 +32,8 @@ import {
   expectedKills,
   specialUnitStrength,
   winChance,
-  incomeFor,
+  incomeDetail,
+  armyCapPoolsUncertainty,
   deployCheckUncertainties,
   overrideUncertainties,
   neighborsOf,
@@ -1275,14 +1276,16 @@ function sinceLastView(
   const bonus = (id: number) => map.bonuses.find((b) => b.id === id)?.name ?? String(id);
   const player = (id: number) => ({ id, name: players.find((p) => p.id === id)?.name ?? String(id) });
   const when = `when turn ${previousTurn} was planned`;
+  // #253: a cut by the army cap is named, so a shortfall it explains is not read as a border lost.
+  const inc = s.capCut ? `Income ${s.income} (the army cap took ${s.capCut.cut} of ${s.capCut.uncapped})` : `Income ${s.income}`;
   const head =
     s.expected === null
-      ? `Income ${s.income}; turn ${previousTurn} was not planned here.`
+      ? `${inc}; turn ${previousTurn} was not planned here.`
       : s.income < s.expected
-        ? `Income ${s.income}, ${s.expected - s.income} below the ${s.expected} expected ${when}.`
+        ? `${inc}, ${s.expected - s.income} below the ${s.expected} expected ${when}.`
         : s.income > s.expected
-          ? `Income ${s.income}, ${s.income - s.expected} above the ${s.expected} expected ${when}.`
-          : `Income ${s.income}, as expected ${when}.`;
+          ? `${inc}, ${s.income - s.expected} above the ${s.expected} expected ${when}.`
+          : `${inc}, as expected ${when}.`;
   const broken = s.bonusesBroken ?? [];
   const lost = s.territoriesLost ?? [];
   const parts = [
@@ -1306,6 +1309,7 @@ function sinceLastView(
     expected: s.expected,
     expectedTurn: s.expectedTurn,
     shortfall: s.shortfall,
+    ...(s.capCut ? { armyCapCut: s.capCut } : {}),
     ...(hasBoard
       ? {
           bonusesBroken: broken.map((b) => ({ id: b.bonusId, name: bonus(b.bonusId), value: b.value })),
@@ -1502,7 +1506,10 @@ export async function livePlanSetup(
   const cards = chooseCardPlays(myHand, rules, inGame);
   const myCards = myHand.filter((c) => isMyCard(c, inGame.me));
   // The board's income, card armies out: what the truces' trust reads (as warapp_check_plan passes it).
-  const boardIncome = incomeFor(graph, board, me.id, game.settings);
+  // #253: cut by the army cap (min(income, cap × income − my armies on the board)), before Sanctions.
+  const incomeOnBoard = incomeDetail(graph, board, me.id, game.settings);
+  const boardIncome = incomeOnBoard.income;
+  const incomeCap = incomeOnBoard.cap;
   // PLAN-TEAMS D3: the cards in effect the decoder is sure of — Sanctions on me cut this turn's income,
   // a Diplomacy card with a player makes it no foe this turn (T9).
   const effect = boardCardsInEffect(game, me, turn, info);
@@ -1575,6 +1582,7 @@ export async function livePlanSetup(
     me: me.id,
     income,
     cardArmies: cards.extraArmies,
+    ...(incomeCap ? { incomeCap } : {}),
     ...(truces?.relations.length ? { relations: truces.relations } : {}),
     settings,
     ...(trend ? { previousBoard: trend.board } : {}),
@@ -1614,7 +1622,7 @@ export async function livePlanSetup(
   return {
     graph, seen, award, board, opening, mover, settings, rules, owners, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards,
     boardIncome, income, trend, previousOrders, tracks, outlookInput, outlook, picking, opponents, gameContext, truces, input,
-    effect, sanction,
+    effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true,
   };
 }
 
@@ -1689,6 +1697,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board. ' +
+          'With an army cap, `income` is what the cap leaves, min(income, cap × income − your armies on the board) (two ' +
+          'live cases; the line names a cut), and `incomeCapped` gives the arithmetic; Reinforcement card armies come on top. ' +
           'In a free-for-all, `relations` reports each truce recorded with warapp_record_agreement as the plan treated it ' +
           '(no covered territory of the partner attacked while it is active or in notice; a covered border facing only ' +
           'the partner held against its stacks with no deploy, except your commander\'s, a valuable border, or while trust ' +
@@ -1847,6 +1857,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               income: income - cards.extraArmies,
               expected: expectedNow,
               expectedTurn: turn - 1,
+              armyCap: setup.incomeCap,
             })
           : undefined;
       // A what-if plan (an explicit goal or enemy_deploy) keeps the board but not its expected income:
@@ -1923,7 +1934,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(cards.extraArmies > 0 ? [cardIncomeNote(income, cards.extraArmies)] : []),
         ...sanction.warnings,
         ...effect.unsure,
-        ...deployCheckUncertainties(game.settings, { sanctionsApplied: sanction.applied }).map((r) => `Income ${income} may be off: ${r}`),
+        ...deployCheckUncertainties(game.settings, {
+          sanctionsApplied: sanction.applied,
+          ...(setup.incomeCap ? { armyCap: setup.incomeCap } : {}),
+        }).map((r) => `Income ${income} may be off: ${r}`),
+        ...(setup.capUnknown ? [`Income ${income} is not cut by the army cap: an army count of yours is unreadable on the board.`] : []),
+        ...[armyCapPoolsUncertainty(setup.incomeCap, settings.localDeployments)].filter((r): r is string => r !== undefined),
         ...(tracks ?? []).flatMap((t) => t.warnings),
         ...plan.warnings,
         ...promised,
@@ -1953,7 +1969,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         graph,
         board,
         me: me.id,
+        // #253: the fog prior reads my income before the army cap's cut, as the planner's does.
         income: income - cards.extraArmies,
+        ...(setup.incomeCap ? { incomeCap: setup.incomeCap } : {}),
         settings,
         ...(trend ? { previousBoard: trend.board } : {}),
         ...(trend && previousOrders ? { previousOrders } : {}),
@@ -2008,6 +2026,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             }
           : {}),
         income,
+        // #253: the army cap's arithmetic (min(income, round(cap × income) − my armies on the board)), when the game has one.
+        ...(setup.incomeCap ? { incomeCapped: setup.incomeCap } : {}),
         enemyDeploy: plan.enemyDeploy,
         // #127: who moves first this turn and how it is known; null when unknown.
         firstMover: mover.view,
@@ -2482,7 +2502,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         }
         // #165: each move's options, refused unless the game allows them.
         const options = checkMoveOptions({ moves, board: territories, myInGameId: playerId, settings: game.settings, teammates, deployedOn });
-        const modelled = incomeFor(graphOf(map), board, me.id, game.settings);
+        // #253: the army cap's cut included (min(income, round(cap × income) − my armies on the board)).
+        const incomeOnBoard = incomeDetail(graphOf(map), board, me.id, game.settings);
+        const modelled = incomeOnBoard.income;
         const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
         // #130: war.app's own number, given after an error 11, replaces the model for the check.
         const income = (givenIncome ?? modelled) + cardArmies;
@@ -2545,13 +2567,24 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             const armies = reinforcementArmies(c, rules);
             return armies === undefined ? [] : [{ id: c.id, armies }];
           }),
-          incomeUncertain: givenIncome !== undefined ? [] : deployCheckUncertainties(game.settings),
+          incomeUncertain:
+            givenIncome !== undefined
+              ? []
+              : deployCheckUncertainties(game.settings, incomeOnBoard.cap ? { armyCap: incomeOnBoard.cap } : {}),
           poolsUncertain: [
             ...overrideUncertainties(game.settings),
             ...(overridden ? [`The ${overridden}, so the bonus pools may differ too.`] : []),
+            // J1 review: the cap's cut total is modelled, how war.app takes it out of the pools is not.
+            ...[armyCapPoolsUncertainty(incomeOnBoard.cap, game.settings?.localDeployments)].filter((r): r is string => r !== undefined),
           ],
         });
         if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
+        // J1 review: as warapp_plan_turn says, an unreadable army count of mine leaves the cap unapplied.
+        else if (givenIncome === undefined && incomeOnBoard.capUnknown)
+          warnings.unshift(
+            `Deploys checked against income ${modelled}, not cut by the army cap: an army count of yours is unreadable on the board, ` +
+              "so the cap's cut could not be worked out (pass the game's own number as income if it differs).",
+          );
         if (breaks.length)
           warnings.unshift(
             `${breaksText(breaks, moves, bombPlays)}. break_agreement is true: once these orders are committed the ledger records ` +

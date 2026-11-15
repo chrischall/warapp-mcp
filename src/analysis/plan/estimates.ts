@@ -22,7 +22,7 @@ import {
 import { neighborsOf, type MapGraph } from '../graph.js';
 import type { MyOrders, OpponentTrack } from '../opponents.js';
 import { OUTLOOK_TURNS } from '../outlook.js';
-import { boardIncome, DEFAULT_BASE_INCOME } from '../player.js';
+import { boardIncome, DEFAULT_BASE_INCOME, type ArmyCapIncome } from '../player.js';
 import {
   AHEAD_PRESSURE_FACTOR,
   captureCost,
@@ -104,6 +104,9 @@ export function alliesOf(me: number, players: readonly ProfilePlayer[] | undefin
  * prior (#119, {@link fogPrior}) when the game context allows it, and the turn being played (the
  * opening board is the first turn's only, #128). {@link planTurn} and warapp_check_plan both use
  * it, so they work from the same figures. `income` is my board income, card armies left out.
+ * #253: with `incomeCap` (the army cap's arithmetic for this turn) `income` is what the cap leaves,
+ * and the fog prior reads it with the cut added back: the cap is mine alone, so the prior compares
+ * what I earn, not what I am paid. Without it, `income` is read as given.
  * Every visible player is listed, teammates included (the caller filters them).
  */
 export function planEnemyEstimates(input: {
@@ -111,6 +114,8 @@ export function planEnemyEstimates(input: {
   board: BoardState;
   me: number;
   income: number;
+  /** #253: the army cap's arithmetic, when `income` is the cut figure: the prior adds the cut back. */
+  incomeCap?: ArmyCapIncome;
   settings?: PlannerSettings;
   previousBoard?: BoardState;
   /** #226: my orders on the turn `previousBoard` was played: a failed attack's kills count back. */
@@ -122,7 +127,8 @@ export function planEnemyEstimates(input: {
   sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
 }): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined; priorSkipped?: string } {
   const ctx = input.game ?? {};
-  const { prior, skipped } = fogPrior(input.board, input.me, ctx, input.income);
+  const capCut = input.incomeCap ? Math.max(0, Math.floor(input.incomeCap.uncapped - input.incomeCap.received)) : 0;
+  const { prior, skipped } = fogPrior(input.board, input.me, ctx, input.income + capCut);
   const turn = input.turn ?? ctx.turn ?? null;
   const estimates = enemyDeployEstimates(input.graph, input.board, input.me, input.settings ?? {}, input.previousBoard, input.tracks, prior, {
     turn,
@@ -167,6 +173,10 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
   const baseIncome = Math.max(0, Math.floor(s.baseIncome ?? DEFAULT_BASE_INCOME));
   const opts = input.options ?? {};
   const income = Math.max(0, Math.floor(input.income));
+  // #253: what I earn before the army cap's cut. The fog prior and the standing compare economies,
+  // and the cap is mine alone, so they read it; what I deploy (`income`) is what the cap leaves.
+  const capCut = input.incomeCap ? Math.max(0, Math.floor(input.incomeCap.uncapped - input.incomeCap.received)) : 0;
+  const earnedIncome = income + capCut;
   const ctx = input.game ?? {};
   /** My teammates (#128): players on my team, never a threat, a target or an estimate. */
   const allies = alliesOf(me, ctx.players);
@@ -178,7 +188,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     graph: g,
     board,
     me,
-    income: income - Math.max(0, Math.floor(input.cardArmies ?? 0)),
+    income: earnedIncome - Math.max(0, Math.floor(input.cardArmies ?? 0)),
     settings: s,
     ...(input.previousBoard ? { previousBoard: input.previousBoard } : {}),
     ...(input.previousOrders ? { previousOrders: input.previousOrders } : {}),
@@ -211,7 +221,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     ...(ctx.turn !== undefined ? { turn: ctx.turn } : {}),
     ...(ctx.picking !== undefined ? { picking: ctx.picking } : {}),
     ...(ctx.endRules ? { endRules: ctx.endRules } : {}),
-    income,
+    income: earnedIncome,
     // #164 x #167: an opponent's Reinforcement card is a one-off deploy, not income: the standing
     // and the FFA ranking read each estimate less its card. PLAN-TEAMS C3: teammates' estimates go
     // too, for the team standing (the profile keeps them off the opponents' side).
@@ -305,6 +315,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     baseIncome,
     opts,
     income,
+    earnedIncome,
+    ...(input.incomeCap ? { incomeCap: input.incomeCap } : {}),
     game: ctx,
     allies,
     foe,
@@ -665,7 +677,7 @@ export function planContext(input: PlanInput): PlanCtx {
  * every plan, in this order.
  */
 export function noteEstimates(ctx: PlanCtx, state: PlanState): void {
-  const { board, s, opts, income, estimateList, profile, auto, strike, goal, minimal, pressureFactor, decidedGame } = ctx;
+  const { board, s, opts, earnedIncome: income, estimateList, profile, auto, strike, goal, minimal, pressureFactor, decidedGame } = ctx;
   const { rates, minWin, exactCombat, bombOn, luck, weightedRounding, noSplit, armiesBehindVs } = ctx;
   const { warnings, rationale } = state;
   const profileText = `${profile.format}, ${profile.phase}, ${profile.standing}`;

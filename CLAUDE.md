@@ -371,7 +371,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   earlier move in the list enters; each move out counts the armies moved in earlier in the list, an upper
   bound — adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
   the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a
-  setting the income model does not compute, e.g. an army cap; after an error 11 the caller passes
+  setting the income model does not compute or rests on few live cases (the army cap: war.app pays
+  min(income, round(cap × income) − my armies on the board), the cap on this turn's income, verified by two
+  live cases on 2026-11-15, `incomeDetail`, #253; an unreadable army count of mine leaves it uncut, and plan
+  and submit preview both say so; card armies are
+  outside it; plan, submit and `warapp_check_plan` deploy on the cut figure, `warapp_plan_turn` reports `incomeCapped`;
+  the fog prior, the standing and check_plan's leader test read my income before the cut, the truces'
+  trust reads the cut figure on purpose (what I can deploy this turn), and another
+  player's income is never cut: its fogged armies are unknown; under Local Deployment a cut makes the
+  pool split a guess, `armyCapPoolsUncertainty`: the plan warns and the pool check only warns); after an error 11 the caller passes
   the game's own number as `income`, which replaces the model for the check), and refuses outside a turn phase or when my
   `hasCommittedOrders` is already true (a second `SendOrders` replacing the first is
   unverified; the client uses "Modify orders" = `UnCommit`, which `warapp_uncommit_turn` sends). **Success is read from game state, never
@@ -844,6 +852,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     army first, never weighed against spreading); otherwise it stays contested as before. Live, a +4
     bonus's one border was floored and spread on 9 armies while 15 went to an advance into a bonus
     47 armies from done, and fell to the 33 that could reach it whoever moved first.
+  - **The army cap prices idle armies (#253, rule 4h, `src/analysis/plan/cap-spend.ts`).** When my
+    armies after this turn plus next income exceed the cap, the income above it is lost, so captures of
+    neutrals and of foe territories holding at most 1 army (no truce, teammate or commander) are taken
+    from idle armies while each one's expected loss is below the income the cap would eat, every hold
+    kept. It runs whatever else the plan captures (rule 4e's army-cap fallback, #104, runs only when the
+    plan captures nothing: live, a plan that completed a bonus parked 54 armies beside enemy territories
+    of 0 and 1). The rationale names the cap's arithmetic, the "Not attacking" line says when rule 4h
+    tried a territory and why it did not take it, and a warning names what idle armies still cost.
+    `sinceLastTurn` names a cut ("the army cap took N of M", `armyCapCut` in `full`), so a shortfall the
+    cap explains is not read as a border lost.
   - **Leftover** goes to the held border with the most at stake still short of a comfortable
     margin (with several, each is brought to its margin first, and a conceded border the leftover
     can make hold is held after all before any margin, #121; #257: so is one an idle interior stack

@@ -235,8 +235,12 @@ describe('never stand still in the opening (#104)', () => {
     const p = plan(b, 5, { game: { ...FFA, turn: 9 }, settings: { ...STD, armyCap: 4 } });
     // #132: a lone 1-army enemy beside me is not contact in an FFA.
     expect(p.profile.phase).toBe('expansion');
-    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 4, armies: 6 })]);
+    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 4, armies: 6 }));
     expect(p.rationale.join('\n')).toMatch(/22 armies after deploy exceed the army cap of 20 \(4× income 5\)/);
+    // #253, rule 4h: the cap still binds next turn (19 armies after the ~3 lost, 4 × 5 = 20), so the
+    // 1-army enemy on 22 is taken too, from 2's idle armies: it loses ~1, below the ~4 at stake.
+    expect(attacks(p).filter((m) => m.to !== 4)).toEqual([expect.objectContaining({ from: 2, to: 22 })]);
+    expect(p.rationale.join('\n')).toMatch(/Take T22 \(#22\) for the army cap \(rule 4h, #253\): my ~19 armies after this turn reach the army cap next turn \(4× income 5 = 20\): ~4 of next turn's income 5 would be lost/);
     expect(valid(p, b, 5)).toEqual([]);
     // Under the cap (5× income = 25) the contact fallback (#107) takes the same step, without the cap's reason.
     const under = plan(b, 5, { game: { ...FFA, turn: 9 }, settings: { ...STD, armyCap: 5 } });
@@ -260,12 +264,30 @@ describe('never stand still in the opening (#104)', () => {
     expect(p.warnings.join('\n')).not.toMatch(/standing still/i);
   });
 
-  it('the army cap warning names only what is still not modelled', () => {
+  it('(d, #253) with the cap\'s cut known, the fallback says the income was cut and why spending is free', () => {
+    const b = board(
+      opening(11, [player(22, 1, P2)]).territories.map((t) => (t.territoryId === 2 ? mine(2, 6) : t)),
+    );
+    // 17 armies on the board, income 5, cap 4×: round(4 × 5) − 17 = 3 received.
+    const incomeCap = { uncapped: 5, cap: 4, armies: 17, limit: 20, received: 3, cut: true };
+    const p = planTurn({ graph: g, board: b, me: ME, income: 3, settings: { ...STD, armyCap: 4 }, game: { ...FFA, turn: 9 }, incomeCap });
+    expect(attacks(p).length).toBeGreaterThan(0);
+    const text = p.rationale.join('\n');
+    expect(text).toMatch(/my 17 armies on the board reach the army cap of 20 \(4× income 5\): income is cut to 3, so armies left standing cost income next turn and spending them is free/);
+    expect(text).not.toMatch(/after deploy exceed/);
+    expect(valid(p, b, 3)).toEqual([]);
+    // Not cut: no cap reason (the contact or expansion fallback may still run on its own).
+    const free = { uncapped: 5, cap: 8, armies: 17, limit: 40, received: 5, cut: false };
+    const q = planTurn({ graph: g, board: b, me: ME, income: 5, settings: { ...STD, armyCap: 8 }, game: { ...FFA, turn: 9 }, incomeCap: free });
+    expect(q.rationale.join('\n')).not.toMatch(/army cap/);
+  });
+
+  it('the army cap warning states the formula and its two live cases (#253)', () => {
     const s = { armyCap: 8, cards: [] } as unknown as GameSettings;
     const w = incomeUncertainties(s).join('\n');
     expect(w).toMatch(/army cap \(8× income\)/);
-    expect(w).toMatch(/income model does not apply it/);
-    expect(w).not.toMatch(/the model does not apply it/);
+    expect(w).toMatch(/two live cases/);
+    expect(w).not.toMatch(/does not apply it/);
   });
 });
 

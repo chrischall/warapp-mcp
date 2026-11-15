@@ -8,7 +8,8 @@ import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { enemyDeployEstimates, incomeFor, planTurn, type PlannerSettings } from '../../src/analysis/planner.js';
-import { analyzePlayer, incomeUncertainties, territoryIncome } from '../../src/analysis/player.js';
+import { analyzePlayer, armyCapIncome, armyCapText, incomeUncertainties, territoryIncome } from '../../src/analysis/player.js';
+import { incomeDetail } from '../../src/analysis/plan/shared.js';
 import type { GameMap, GameSettings } from '../../src/normalize.js';
 import { board, mine, neutral } from './helpers.js';
 
@@ -160,5 +161,76 @@ describe('incomeUncertainties', () => {
     expect(r).toMatch(/60%/);
     expect(incomeUncertainties(settings({ minimumArmyBonus: 5, cards: ['Sanctions'] })).join('\n')).toMatch(/sanctions/i);
     expect(incomeUncertainties(settings({ minimumArmyBonus: 5, cards: ['Reinforcement', 'Spy'] }))).toEqual([]);
+  });
+});
+
+describe('the army cap (#253): received = min(income, round(cap × income) − my armies on the board)', () => {
+  it('the live case: 8× income 52 with 375 armies on the board pays 41 (52 drew error 11, 41 committed)', () => {
+    expect(armyCapIncome(52, 8, 375)).toEqual({ uncapped: 52, cap: 8, armies: 375, limit: 416, received: 41, cut: true });
+    const g = buildGraph(lineMap(4));
+    const s = board([mine(1, 200), mine(2, 100), mine(3, 75), neutral(4, 2)]);
+    const rules = settings({ minimumArmyBonus: 52, armyCap: 8 });
+    expect(incomeFor(g, s, ME, rules)).toBe(41);
+    expect(incomeDetail(g, s, ME, rules)).toEqual({
+      income: 41,
+      cap: { uncapped: 52, cap: 8, armies: 375, limit: 416, received: 41, cut: true },
+    });
+    // Another player's armies do not count against mine.
+    const theirs = board([mine(1, 200), mine(2, 100), mine(3, 75), mine(4, 500, ENEMY)]);
+    expect(incomeFor(g, theirs, ME, rules)).toBe(41);
+  });
+
+  it('no cap: unchanged', () => {
+    expect(armyCapIncome(52, null, 375)).toBeUndefined();
+    expect(armyCapIncome(52, undefined, 375)).toBeUndefined();
+    const g = buildGraph(lineMap(4));
+    const s = board([mine(1, 200), mine(2, 100), mine(3, 75), neutral(4, 2)]);
+    expect(incomeFor(g, s, ME, settings({ minimumArmyBonus: 52, armyCap: null }))).toBe(52);
+    expect(incomeDetail(g, s, ME, settings({ minimumArmyBonus: 52 }))).toEqual({ income: 52 });
+  });
+
+  it('below the cap: unchanged, and reported as not cut', () => {
+    expect(armyCapIncome(52, 8, 300)).toEqual({ uncapped: 52, cap: 8, armies: 300, limit: 416, received: 52, cut: false });
+    // Exactly reaching the cap pays in full.
+    expect(armyCapIncome(52, 8, 364)).toMatchObject({ received: 52, cut: false });
+    const g = buildGraph(lineMap(4));
+    const s = board([mine(1, 200), mine(2, 100), neutral(3, 2), neutral(4, 2)]);
+    expect(incomeFor(g, s, ME, settings({ minimumArmyBonus: 52, armyCap: 8 }))).toBe(52);
+  });
+
+  it('at or over the cap pays nothing, never a negative income', () => {
+    expect(armyCapIncome(52, 8, 416)).toMatchObject({ received: 0, cut: true });
+    expect(armyCapIncome(52, 8, 900)).toMatchObject({ received: 0, cut: true });
+  });
+
+  it('the arithmetic text floors a negative limit at 0 and says by how much the armies are over the cap', () => {
+    expect(armyCapText(armyCapIncome(52, 8, 375)!)).toBe('8 × 52 = 416, less your 375 armies on the board, is 41');
+    expect(armyCapText(armyCapIncome(52, 8, 416)!)).toBe('8 × 52 = 416, less your 416 armies on the board, is 0');
+    expect(armyCapText(armyCapIncome(52, 8, 420)!)).toBe('8 × 52 = 416, less your 420 armies on the board, is 0 (over the cap by 4)');
+  });
+
+  it("rounds a fractional cap's limit to the nearest, .5 down (the client's rounding)", () => {
+    expect(armyCapIncome(5, 2.5, 10)).toMatchObject({ limit: 12, received: 2 });
+    expect(armyCapIncome(5, 2.6, 10)).toMatchObject({ limit: 13, received: 3 });
+  });
+
+  it('an unreadable army count of mine leaves the cap unapplied', () => {
+    const g = buildGraph(lineMap(3));
+    const s = board([mine(1, 400), { ...mine(2, 0), armies: null }, neutral(3, 2)]);
+    expect(incomeDetail(g, s, ME, settings({ minimumArmyBonus: 52, armyCap: 8 }))).toEqual({ income: 52, capUnknown: true });
+  });
+
+  it('the uncertainty states the formula, that it rests on two live cases, and that card armies are outside it', () => {
+    const text = incomeUncertainties(settings({ minimumArmyBonus: 52, armyCap: 8 })).join('\n');
+    expect(text).toMatch(/min\(income, 8 × income − your armies on the board\)/);
+    expect(text).toMatch(/two live cases/);
+    expect(text).toMatch(/this turn's income/);
+    expect(text).toMatch(/Reinforcement card/);
+    expect(text).not.toMatch(/does not apply it/);
+    const computed = incomeUncertainties(settings({ minimumArmyBonus: 52, armyCap: 8 }), {
+      armyCap: { uncapped: 52, cap: 8, armies: 375, limit: 416, received: 41, cut: true },
+    }).join('\n');
+    expect(computed).toMatch(/8 × 52 = 416, less your 375 armies on the board, is 41: income 41, not 52/);
+    expect(computed).toMatch(/two live cases/);
   });
 });

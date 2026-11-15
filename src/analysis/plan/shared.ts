@@ -23,7 +23,7 @@ import type { GameOutlook } from '../outlook.js';
 import type { BorderOutcome, Exchange } from '../exchange.js';
 import type { TwoStepReach } from '../lookahead.js';
 import type { MoveSlot } from '../schedule.js';
-import { boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome } from '../player.js';
+import { armyCapIncome, boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome, type ArmyCapIncome } from '../player.js';
 import type { GameProfile, ProfilePlayer } from '../profile.js';
 import { byNum } from './util.js';
 import type { TeamView } from './team.js';
@@ -345,6 +345,12 @@ export interface PlanInput {
   /** Armies to deploy this turn (see {@link incomeFor}), card armies included. */
   income: number;
   /**
+   * #253: the army cap's arithmetic (incomeDetail's `cap`) when the game has one: `income` is then
+   * already the received figure. The fog prior and the standing read the income before the cut, and
+   * rule 4e's cap fallback reads the cut itself. Absent: the old test (`armyCap` × `income`).
+   */
+  incomeCap?: ArmyCapIncome;
+  /**
    * The part of `income` that comes from this turn's card plays (Reinforcement): it is not
    * earned again next turn, so `expected.nextIncome` leaves it out. Default 0.
    */
@@ -538,6 +544,8 @@ export interface TurnPlan {
     /**
      * Next turn's income if every territory the plan keeps and captures is held — conceded
      * borders included (#109: see `nextIncomeIfConcededFall`). One income rule ({@link boardIncome}).
+     * #253: under an army cap it is this turn's capped income plus what the plan's captures gain, not
+     * a re-run of the cap (next turn's cut depends on the armies spent and on the larger income).
      */
     nextIncome: number;
     /**
@@ -1820,14 +1828,55 @@ export function defaultEnemyDeploy(
 
 /**
  * This turn's income on the board, cards aside: {@link boardIncome} over the territories `me`
- * holds. warapp_plan_turn and warapp_submit_turn both use it (plus the armies of the card
- * plays in their orders), so the plan's deploy total is the total the submit check requires.
+ * holds, cut by the game's army cap (#253, {@link armyCapIncome}: min(income, round(cap × income)
+ * − my armies on the board)). warapp_plan_turn and warapp_submit_turn both use it (plus the armies
+ * of the card plays in their orders, which the cap leaves alone), so the plan's deploy total is the
+ * total the submit check requires.
  */
 export function incomeFor(g: MapGraph, board: BoardState, me: number, settings?: GameSettings): number {
+  return incomeDetail(g, board, me, settings).income;
+}
+
+/**
+ * Another player's income from what the board shows, before any army cap: base, bonuses and cities
+ * over the territories it visibly holds. The cap is not applied (#253): its fogged armies are
+ * unknown, so a cut from its visible armies alone would depend on the fog. My own income is
+ * {@link incomeFor}.
+ */
+export function visibleIncomeFor(g: MapGraph, board: BoardState, player: number, settings?: GameSettings): number {
   const held = new Set<number>();
   for (const t of board.territories)
-    if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.owner.playerId === me) held.add(t.territoryId);
+    if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.owner.playerId === player) held.add(t.territoryId);
   return boardIncome(g, held, incomeRules(settings)).total;
+}
+
+/**
+ * {@link incomeFor} with the army cap's arithmetic: `cap` when the game has one and every territory
+ * of mine shows its armies (my own always should); `capUnknown` when one does not, and the income is
+ * then left uncut. The cap reads my armies from the start-of-turn standing as war.app showed it:
+ * callers may pass a board with the award or a prior merged in (livePlanSetup's `board`), which must
+ * never change my own territories' armies — a merge that did would move the cap's cut.
+ */
+export function incomeDetail(
+  g: MapGraph,
+  board: BoardState,
+  me: number,
+  settings?: GameSettings,
+): { income: number; cap?: ArmyCapIncome; capUnknown?: true } {
+  const held = new Set<number>();
+  let armies = 0;
+  let unread = false;
+  for (const t of board.territories) {
+    if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player' || t.owner.playerId !== me) continue;
+    held.add(t.territoryId);
+    if (t.armies === null) unread = true;
+    else armies += t.armies;
+  }
+  const income = boardIncome(g, held, incomeRules(settings)).total;
+  if (settings?.armyCap === undefined || settings.armyCap === null || !(settings.armyCap > 0)) return { income };
+  if (unread) return { income, capUnknown: true };
+  const cap = armyCapIncome(income, settings.armyCap, armies)!;
+  return { income: cap.received, cap };
 }
 
 export interface Target {

@@ -10,6 +10,7 @@
 import type { BoardState } from '../board.js';
 import { bonusTerritories } from './bonuses.js';
 import type { MapGraph } from './graph.js';
+import type { ArmyCapIncome } from './player.js';
 
 interface SinceLastInput {
   graph: MapGraph;
@@ -24,6 +25,8 @@ interface SinceLastInput {
   expected?: number | undefined;
   /** The turn whose plan made `expected`. */
   expectedTurn?: number | undefined;
+  /** #253: the army cap's arithmetic this turn, when the game has a cap (a cut is named in the line). */
+  armyCap?: ArmyCapIncome | undefined;
 }
 
 export interface SinceLast {
@@ -32,6 +35,11 @@ export interface SinceLast {
   expectedTurn: number | null;
   /** How far this turn's income fell short of the expected (0 when it met it); null without one. */
   shortfall: number | null;
+  /**
+   * #253: the army cap took `cut` of this turn's income `uncapped` (before Sanctions); absent without a cut.
+   * A shortfall the cut explains is no lost border: the plan of the previous turn did not price the cap.
+   */
+  capCut?: { uncapped: number; cut: number };
   /** Positive bonuses I held on the previous board and no longer hold; absent without that board. */
   bonusesBroken?: Array<{ bonusId: number; value: number }>;
   /** Territories I held on the previous board and no longer hold, with the player who has them when shown. */
@@ -56,6 +64,8 @@ export function sinceLastTurn(input: SinceLastInput): SinceLast {
     expectedTurn: expected === null ? null : (input.expectedTurn ?? null),
     shortfall: expected === null ? null : Math.max(0, expected - income),
   };
+  const c = input.armyCap;
+  if (c?.cut) out.capCut = { uncapped: c.uncapped, cut: c.uncapped - c.received };
   if (!previous) return out;
   const before = heldBy(previous, me, graph);
   const now = heldBy(current, me, graph);

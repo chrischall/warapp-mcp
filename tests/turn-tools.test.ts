@@ -95,6 +95,7 @@ interface PlanPayload {
   goalSource: 'profile' | 'explicit';
   profile: Record<string, unknown>;
   income: number;
+  incomeCapped?: Record<string, unknown>;
   enemyDeploy: number;
   deploys: Array<{ territory: Named; armies: number }>;
   moves: Array<{ from: Named; to: Named; armies: number; kind: string; reason?: string }>;
@@ -124,6 +125,33 @@ describe('warapp_plan_turn', () => {
     h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.warnings.join('\n')).toMatch(/income 5 may be off.*army cap/i);
+  });
+
+  it('the army cap (#253): plans on what the cap leaves and reports the arithmetic', async () => {
+    // 9 armies of mine on the board, income 5, cap 2×: round(2 × 5) − 9 = 1.
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 2 };
+    h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(1);
+    expect(p.incomeCapped).toEqual({ uncapped: 5, cap: 2, armies: 9, limit: 10, received: 1, cut: true });
+    expect(p.deploys.reduce((n, d) => n + d.armies, 0)).toBe(1);
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/2 × 5 = 10, less your 9 armies on the board, is 1: income 1, not 5/);
+    expect(w).toMatch(/two live cases/);
+    expect(w).not.toMatch(/army cap[^\n]*does not apply it/);
+  });
+
+  it('the army cap (#253): below the cap the income is unchanged, and no cap means no incomeCapped', async () => {
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 3 };
+    h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(5);
+    expect(p.incomeCapped).toEqual({ uncapped: 5, cap: 3, armies: 9, limit: 15, received: 5, cut: false });
+    await h.harness.close();
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const q = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(q.income).toBe(5);
+    expect(q.incomeCapped).toBeUndefined();
   });
 
   it('a speed first turn with no board yet says to call warapp_begin_turn, then plan and submit at once', async () => {
@@ -921,6 +949,26 @@ describe('warapp_plan_turn — threat trend', () => {
     });
   });
 
+  it('(h) since last turn names a cut by the army cap (#253)', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    const dir = h.dataDir;
+    await h.harness.close();
+    // Turn 4 under a 2× cap: 9 armies on the board, income 5, round(2 × 5) − 9 = 1 is paid.
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 2 };
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3', settings }), game('Playing', { numberOfTurns: '3', settings })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }),
+    });
+    const compact = payload<PlanPayload & { sinceLastTurn: string }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(compact.sinceLastTurn).toMatch(/^Income 1 \(the army cap took 4 of 5\), \d+ below the \d+ expected when turn 3 was planned\./);
+    const full = payload<{ sinceLastTurn: { armyCapCut?: unknown } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }),
+    );
+    expect(full.sinceLastTurn.armyCapCut).toEqual({ uncapped: 5, cut: 4 });
+  });
+
   it('(h) a what-if plan (an explicit goal or enemy_deploy) keeps no expected income for since last turn (#194)', async () => {
     h = await liveHarness({ feed: [game('Playing'), game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'expand' });
@@ -1369,6 +1417,38 @@ describe('warapp_submit_turn', () => {
     const text = JSON.stringify(preview);
     expect(text).toMatch(/deploy 4 armies.*modelled income is 5/);
     expect(text).toMatch(/army cap/i);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('the army cap (#253): the deploy check counts what the cap leaves', async () => {
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 2 };
+    // 9 armies on the board, income 5, cap 2×: 1 is received.
+    let s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: s.warapp });
+    const exact = JSON.stringify(payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 1 }] })));
+    expect(exact).not.toMatch(/These orders deploy/);
+    expect(exact).toMatch(/"income":1\b/);
+    await h.harness.close();
+    s = ordersServer();
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: s.warapp });
+    const full = JSON.stringify(payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] })));
+    expect(full).toMatch(/deploy 5 armies.*modelled income is 1/);
+    expect(full).toMatch(/2 × 5 = 10, less your 9 armies on the board, is 1/);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('the army cap (#253): an army count of mine the board does not show leaves the income uncut, and the preview says so', async () => {
+    // Hornwood shown owner-only: its armies are unread, so the cap's arithmetic cannot be done.
+    const unread = BOARD.map((t) => (t.id === 161 ? { ...t, fogLevel: 3, fogged: true } : t));
+    const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 2 };
+    const s = ordersServer();
+    h = await liveHarness({
+      feed: [game('Playing', { settings })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(unread), [Method.SendOrders]: () => ({ body: (w) => w.bool(true).bool(false) }) }),
+    });
+    const text = JSON.stringify(payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] })));
+    expect(text).toMatch(/Deploys checked against income 5, not cut by the army cap: an army count of yours is unreadable on the board/);
     expect(s.sent).toEqual([]);
   });
 
@@ -2834,6 +2914,53 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
       game_id: GAME,
       orders: [{ kind: 'deploy', territory: 9090, armies: 21 }],
     });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toMatch(/Local Deployment/);
+  });
+
+  // J1 review: the army cap under Local Deployment. Income 21 (2 + 12 + 7), 4 armies of mine, cap 1×:
+  // round(1 × 21) − 4 = 17 is paid. How war.app takes the 4 cut from the pools is not known, so the
+  // model's trim (12 + 5, 0 anywhere) is a guess: the pool check warns, never refuses, and the plan says so.
+  const cappedSettings = () => ({ ...overrideSettings(LIVE), ArmyCap: 1 });
+
+  it('the army cap under Local Deployment: the plan warns that the pools are a guess', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: cappedSettings() })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(17);
+    expect(p.warnings.join('\n')).toMatch(
+      /Local Deployment: the army cap cuts your income from 21 to 17, and which bonus pools the 4 come out of is not known/,
+    );
+  });
+
+  it('the army cap under Local Deployment: a split the trimmed pools reject warns instead of refusing', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: cappedSettings() })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
+    });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 9090, armies: 14 },
+        { kind: 'deploy', territory: 3241, armies: 3 },
+      ],
+    });
+    expect(res.isError).toBeFalsy();
+    const text = textOf(res);
+    expect(text).toMatch(/outside the held bonuses' own pools/);
+    expect(text).toMatch(/modelled pools may be off.*army cap cuts your income from 21 to 17/);
+  });
+
+  it('the army cap with no cut under Local Deployment keeps the hard pool check', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: { ...overrideSettings(LIVE), ArmyCap: 8 } })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
+    });
+    const bad = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 9090, armies: 21 }] });
     expect(bad.isError).toBe(true);
     expect(textOf(bad)).toMatch(/Local Deployment/);
   });

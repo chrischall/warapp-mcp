@@ -12,6 +12,7 @@ import type { MapGraph } from '../graph.js';
 import type { Refusal } from './captures.js';
 import type { Truce, TrucePass } from './relations.js';
 import type { GameProfile } from '../profile.js';
+import type { ArmyCapIncome } from '../player.js';
 import type {
   CardAdvice,
   EnemyDeployEstimate,
@@ -33,6 +34,10 @@ export interface OpponentsCtx {
   baseIncome: number;
   opts: PlanOptions;
   income: number;
+  /** #253: `income` before the army cap's cut (equal to it with no cut): the prior and the standing read it. */
+  earnedIncome: number;
+  /** #253: the army cap's arithmetic this turn, when the caller computed it. */
+  incomeCap?: ArmyCapIncome;
   /** The game context (`input.game`); planPass calls it `ctx`. */
   game: PlanGameContext;
   /** My teammates (#128): players on my team, never a threat, a target or an estimate. */
@@ -257,6 +262,11 @@ export interface PlanState {
    * value is the rationale line, stated by the report only for a border the plan does not concede.
    */
   soloHeld: Map<number, string>;
+  /**
+   * #253, rule 4h: the candidates the army cap's spend of idle armies tried and did not take, with why
+   * (a clause after the territory's name): the offence report's "Not attacking" line repeats it.
+   */
+  capRefused: Map<number, string>;
 }
 
 /** PLAN-TEAMS C3: a territory a teammate visibly holds (never one in a no-team game). */
@@ -300,5 +310,6 @@ export function newPlanState(): PlanState {
     spendKeeps: false,
     firstOnlySkip: new Map(),
     soloHeld: new Map(),
+    capRefused: new Map(),
   };
 }
