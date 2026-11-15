@@ -677,7 +677,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`keptTeams`), unknown teams fold nothing; never a teammate; never twice (a file already there, or the
   population holding the game's key, is `already-folded`). It runs from warapp_get_game (`profileFold`) and from
   warapp_profile_opponents, which given a finished game folds it (`fold`) instead of refusing; nothing to fold says
-  "counts start with games played on this build". warapp_wait_for_turn reads no map, so it folds files only. A store or salt
+  "counts start with games played on this build", except a fold that failed (`failed`, retried on the next read)
+  and no data directory (`no-data-dir`), which say so. warapp_wait_for_turn reads no map, so it folds files only. A store or salt
   that cannot be parsed is never overwritten (`pastGames: 'unreadable'`, folds fail). **Profiles inform only:** the planner reads none
   of it until part 0's measurement is reported and the owner approves each hook (P1).
   **Where the read is reported (part D, `src/tools/profile-reads.ts`, read-only, never throws):** one computation

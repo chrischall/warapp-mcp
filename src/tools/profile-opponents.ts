@@ -24,7 +24,7 @@ import { gameIdArg, readAnnotations, respond, untrustedDescription, untrustedTex
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
-import { foldFinished, NOTHING_TO_FOLD, recordProfile } from './profile-hook.js';
+import { foldFinished, recordProfile } from './profile-hook.js';
 import { counterOf, readOpponents } from './profile-reads.js';
 import { resolveTeamsFor } from './team-source.js';
 import { boardHistory, currentTurn, requireTurnPhase } from './turn.js';
@@ -73,11 +73,11 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
       const feed = await ctx.client.getGame(game_id, { settings: true });
       // #264: a finished game is folded (once; backfilled from its cached boards when no turns were kept), not refused.
       if (feed.state === 'Finished') {
-        const fold = ctx.dataDir ? await foldFinished(ctx.dataDir, env, feed) : undefined;
+        const fold = await foldFinished(ctx.dataDir, env, feed);
         return respond(detail, VIEWS, () => ({
           game: { id: feed.id, name: feed.name === undefined ? null : untrustedText(feed.name), state: feed.state },
           profile: profileState(env, ctx.dataDir),
-          fold: fold ?? (profileState(env, undefined) === 'off' ? { status: 'off' as const } : { status: 'nothing' as const, reason: 'no-boards' as const, note: NOTHING_TO_FOLD }),
+          fold,
           ...(fold?.status === 'folded'
             ? { next: 'Each opponent folded here counts toward `gamesMet` and `past-games` in later games; this tool reads a game being played.' }
             : {}),

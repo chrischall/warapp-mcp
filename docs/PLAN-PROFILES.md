@@ -320,7 +320,9 @@ confidence = n / (n + K)
   marked `backfill` and dated as the board cache so it is deleted with it. It runs in `warapp_get_game`
   and in `warapp_profile_opponents`, which accepts a finished game for it; no request is made (teams only
   from GameFeed, two seats or the kept team record), and a game the stores already hold is never folded
-  again. Nothing to fold reports "counts start with games played on this build".
+  again. Nothing to fold reports "counts start with games played on this build"; a fold that failed
+  (`failed`: a store that cannot be read or written; the next read tries again) and no data directory
+  (`no-data-dir`) report their own notes.
 - **The salt:** `playerRecordSalt` only reads; the code that makes the salt is private to the deal
   store's write path. Export one shared "read or make" function and use it from both stores, so two
   salts can never exist and a malformed one is still never replaced.

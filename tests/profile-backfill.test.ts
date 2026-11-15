@@ -4,14 +4,15 @@
 // request beyond the GameFeed read; teammates never, unknown teams never, never twice. Synthetic
 // three-player game on the anonymized lobby fixture's map (the boards of
 // tests/profile-opponents-tools.test.ts): Bob reinforces every territory I attack, Cat never does.
-import { existsSync, readFileSync, statSync, unlinkSync, utimesSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { MyOrders } from '../src/analysis/opponents.js';
 import type { BoardState } from '../src/board.js';
-import { normalizeMap } from '../src/normalize.js';
+import { normalizeGame, normalizeMap } from '../src/normalize.js';
 import { profileGamePath, profilePlayersPath, profilePopulationPath, readProfileHistory, recordBehaviour } from '../src/profile-store.js';
 import { graphOf } from '../src/tools/common.js';
-import { NOTHING_TO_FOLD } from '../src/tools/profile-hook.js';
+import { FOLD_FAILED, foldFinished, NO_DATA_DIR, NOTHING_TO_FOLD } from '../src/tools/profile-hook.js';
 import { writeTeamRecord } from '../src/tools/team-source.js';
 import { boardCachePath, writeBoardCache, writeOrdersCache } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
@@ -162,6 +163,30 @@ describe('the backfill of a finished game (#264)', () => {
     await writeTeamRecord(h.dataDir, GAME, new Map());
     expect((await getGame(h)).profileFold).toBeUndefined();
     expect(existsSync(profilePlayersPath(h.dataDir))).toBe(false);
+  });
+
+  it('says the fold failed, not that counts start with this build, when turns kept while it was played could not be folded', async () => {
+    h = await liveHarness({ feed: [game('Playing'), game('Finished')] });
+    const dir = h.dataDir;
+    await cache(dir);
+    await writeTeamRecord(dir, GAME, new Map());
+    const graph = graphOf(normalizeMap(game('Playing').map));
+    const boards = [1, 2, 3].map((t) => ({ turn: t, board: board(t), ...(t < 3 ? { orders: orders() } : {}) }));
+    await recordBehaviour(dir, { gameId: GAME, me: ME, graph, settings: {}, opponents: [BOB, CAT], boards }, {});
+    // A cross-game store that is not JSON is never overwritten: the fold fails.
+    mkdirSync(dirname(profilePlayersPath(dir)), { recursive: true });
+    writeFileSync(profilePlayersPath(dir), 'not json');
+    await getGame(h); // Playing: nothing.
+    const r = await getGame(h);
+    expect(r.profileFold).toEqual({ status: 'nothing', reason: 'failed', note: FOLD_FAILED });
+    expect(FOLD_FAILED).not.toBe(NOTHING_TO_FOLD);
+    expect(FOLD_FAILED).not.toMatch(/counts start with games played on this build/);
+  });
+
+  it('with no data directory says so, not that no board was cached', async () => {
+    const finished = normalizeGame(game('Finished'));
+    expect(await foldFinished(undefined, {}, finished)).toEqual({ status: 'nothing', reason: 'no-data-dir', note: NO_DATA_DIR });
+    expect(await foldFinished(undefined, { WARAPP_PLAYER_PROFILE: 'off' }, finished)).toEqual({ status: 'off' });
   });
 
   it('a game whose per-game file was kept while it was played folds that file (live), not its boards', async () => {
