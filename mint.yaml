@@ -87,6 +87,18 @@ env:
       How the live-game tools reach war.app on a LOCAL install: auto (default —
       the chrome-less direct transport when a session is linked, else the
       browser bridge), direct, or fetchproxy. A hosted child keeps the bridge.
+  - name: WARAPP_PLAYER_RECORD
+    required: false
+    help: >-
+      The cross-game record of how other players kept truces (name-free, keyed
+      by a salted hash; owner decision D5, on by default, hosted as well). Set
+      off to switch it off.
+  - name: WARAPP_PLAYER_PROFILE
+    required: false
+    help: >-
+      Opponent profiles: gameplay counts per game and across games (name-free,
+      keyed by the same salted hash; owner decision P4, on by default, hosted
+      as well). Set off to switch it off.
   - name: WARAPP_SESSION_FILE
     required: false
     help: >-
